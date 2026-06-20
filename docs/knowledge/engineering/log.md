@@ -1114,3 +1114,9 @@
 * **Update**: Removed `ComboboxState.selected_label`, `SelectState.trigger_label` / `SelectState.selected_value` / `SelectState.active_value`, and `CommandState.active_value` plus the mirrored test/gallery assertions. The choice states now keep the stable selected value contracts and derive display labels and active values from option data and listbox state in the render path.
 * **Verification**: `cargo fmt -p open-gpui-ui-components --all`, `cargo check -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the cleanup.
 * **Decision**: Keep scanning adjacent choice components for the next evidence-backed redundant state; do not remove `Tabs` fields without stronger proof.
+
+## 2026-06-20
+
+* **Update**: Moved the gallery shell's page-local Focus & A11y state (`focus_message`, `a11y_counter`, `a11y_enabled`) into `examples/ui-foundation-gallery/src/pages/focus_a11y.rs`, and moved the Overlay page's open/hover/controlled-open state into `examples/ui-foundation-gallery/src/pages/overlay.rs`. `shell.rs` now keeps only cross-page/navigation state and delegates page-local mutations through page modules.
+* **Verification**: `cargo check -p open-gpui-ui-foundation-gallery --tests` passed after the extraction; the earlier Components-page `accesskit_consumer` exit line still was not reproducible in this checkout.
+* **Decision**: Keep the shell/page-state extraction as the current gallery cleanup seam. If the next pass finds no additional evidence-backed drift, commit this refactor and move to the next explicit slice.

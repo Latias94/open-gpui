@@ -42,6 +42,131 @@ pub const SIGNALS: &[&str] = &[
     "OverlaySize",
 ];
 
+const OVERLAY_CONTROLLED_SAMPLE_COUNT: usize = 7;
+
+#[repr(usize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OverlayControlledSample {
+    HoverCard,
+    Popover,
+    Dialog,
+    AlertDialog,
+    Sheet,
+    Menu,
+    ContextMenu,
+}
+
+/// Mutable shell state for the overlay page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct OverlayPageState {
+    open: bool,
+    hovered_tooltip_sample: Option<&'static str>,
+    overlay_controlled_open: OverlayControlledOpenState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct OverlayControlledOpenState {
+    open: [bool; OVERLAY_CONTROLLED_SAMPLE_COUNT],
+}
+
+impl OverlayControlledOpenState {
+    #[cfg(test)]
+    const ALL: [OverlayControlledSample; OVERLAY_CONTROLLED_SAMPLE_COUNT] = [
+        OverlayControlledSample::HoverCard,
+        OverlayControlledSample::Popover,
+        OverlayControlledSample::Dialog,
+        OverlayControlledSample::AlertDialog,
+        OverlayControlledSample::Sheet,
+        OverlayControlledSample::Menu,
+        OverlayControlledSample::ContextMenu,
+    ];
+
+    const fn is_open(self, sample: OverlayControlledSample) -> bool {
+        self.open[sample as usize]
+    }
+
+    fn set_open(&mut self, sample: OverlayControlledSample, open: bool) -> bool {
+        let index = sample as usize;
+        let current = self.open[index];
+        if current == open {
+            return false;
+        }
+
+        self.open[index] = open;
+        true
+    }
+
+    fn reset(&mut self) -> bool {
+        if self.open.iter().all(|open| !*open) {
+            return false;
+        }
+
+        self.open = [false; OVERLAY_CONTROLLED_SAMPLE_COUNT];
+        true
+    }
+}
+
+impl OverlayPageState {
+    /// Returns whether the demo overlay is open.
+    pub(crate) fn overlay_open(self) -> bool {
+        self.open
+    }
+
+    /// Returns the currently hovered tooltip sample id.
+    pub(crate) fn hovered_tooltip_sample(self) -> Option<&'static str> {
+        self.hovered_tooltip_sample
+    }
+
+    /// Returns whether a controlled sample overlay is open.
+    pub(crate) fn is_controlled_open(self, sample: OverlayControlledSample) -> bool {
+        self.overlay_controlled_open.is_open(sample)
+    }
+
+    /// Opens or closes the demo overlay and returns whether the state changed.
+    pub(crate) fn set_overlay_open(&mut self, open: bool) -> bool {
+        if self.open == open {
+            return false;
+        }
+
+        self.open = open;
+        true
+    }
+
+    /// Updates the hovered tooltip sample and returns whether the state changed.
+    pub(crate) fn set_hovered_tooltip_sample(&mut self, sample: Option<&'static str>) -> bool {
+        if self.hovered_tooltip_sample == sample {
+            return false;
+        }
+
+        self.hovered_tooltip_sample = sample;
+        true
+    }
+
+    /// Updates a controlled sample open flag and returns whether the state changed.
+    pub(crate) fn set_controlled_open(
+        &mut self,
+        sample: OverlayControlledSample,
+        open: bool,
+    ) -> bool {
+        self.overlay_controlled_open.set_open(sample, open)
+    }
+
+    /// Clears the controlled sample open flags and returns whether the state changed.
+    pub(crate) fn close_controlled_overlays(&mut self) -> bool {
+        self.overlay_controlled_open.reset()
+    }
+
+    /// Clears page-local state when navigating away.
+    pub(crate) fn reset_on_page_change(&mut self) -> bool {
+        let mut changed = false;
+        if self.hovered_tooltip_sample.take().is_some() {
+            changed = true;
+        }
+        changed |= self.overlay_controlled_open.reset();
+        changed
+    }
+}
+
 /// Geometry used by the overlay demo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OverlayDemoGeometry {
@@ -708,6 +833,40 @@ impl ContextMenuSample {
     /// Returns the stable debug selector used by the gallery shell and tests.
     pub fn debug_selector(&self) -> String {
         format!("gallery:overlay-context-menu-sample:{}", self.id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overlay_page_state_tracks_open_hover_and_controlled_flags() {
+        let mut state = OverlayPageState::default();
+
+        assert!(!state.overlay_open());
+        assert_eq!(state.hovered_tooltip_sample(), None);
+        assert!(!state.is_controlled_open(OverlayControlledSample::HoverCard));
+        for sample in OverlayControlledOpenState::ALL {
+            assert!(!state.is_controlled_open(sample));
+        }
+        assert!(state.set_overlay_open(true));
+        assert!(state.overlay_open());
+        assert!(!state.set_hovered_tooltip_sample(None));
+        assert!(state.set_hovered_tooltip_sample(Some("tooltip")));
+        assert_eq!(state.hovered_tooltip_sample(), Some("tooltip"));
+        assert!(state.set_controlled_open(OverlayControlledSample::HoverCard, true));
+        assert!(state.is_controlled_open(OverlayControlledSample::HoverCard));
+        assert!(!state.is_controlled_open(OverlayControlledSample::Popover));
+        assert!(!state.set_controlled_open(OverlayControlledSample::HoverCard, true));
+        assert!(state.close_controlled_overlays());
+        assert!(!state.is_controlled_open(OverlayControlledSample::HoverCard));
+        assert!(state.set_overlay_open(false));
+        assert!(state.reset_on_page_change());
+        assert!(!state.overlay_open());
+        assert_eq!(state.hovered_tooltip_sample(), None);
+        assert!(!state.close_controlled_overlays());
+        assert!(!state.reset_on_page_change());
     }
 }
 

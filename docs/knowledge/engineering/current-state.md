@@ -9,11 +9,11 @@ timestamp: 2026-06-20
 
 - Goal: Continue UI component contract alignment and remove evidence-backed behavioral drift without preserving old compatibility layers.
 - Branch: `main`
-- Last verified: `cargo test -p open-gpui-ui-foundation-gallery --bin open-gpui-ui-foundation-gallery initial_page_parses_equals_form`; `cargo test -p open-gpui-ui-foundation-gallery --bin open-gpui-ui-foundation-gallery initial_page_parses_split_form_and_falls_back`; `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_composition`; direct `cargo run -p open-gpui-ui-foundation-gallery -- --page components` stayed alive until timeout instead of reproducing the earlier `accesskit_consumer` exit.
-- Done: Re-checked the Components-page crash line and `repo-ref/fret`'s scroll/list-box helper layering. The reference repo still points at thin entry points with deeper helper modules, which supports the current-crate productization roadmap rather than a new headless boundary.
-- In progress: No evidence-backed UI drift remains from the current scan; the old Components-page exit is currently not reproducible in this checkout.
+- Last verified: `cargo check -p open-gpui-ui-foundation-gallery --tests` after moving focus/a11y and overlay shell-local state into page modules, formatting with `cargo fmt --all -- examples/ui-foundation-gallery/src/shell.rs examples/ui-foundation-gallery/src/pages/focus_a11y.rs examples/ui-foundation-gallery/src/pages/overlay.rs examples/ui-foundation-gallery/tests/foundation_gallery.rs`, and confirming the old Components-page crash still is not reproducible in this checkout.
+- Done: Re-checked the Components-page crash line and `repo-ref/fret`'s scroll/list-box helper layering. Also moved Focus & A11y and Overlay page-local shell state out of `shell.rs` into page modules so the shell only retains cross-page/navigation state.
+- In progress: The gallery shell refactor is mid-cleanup but compile-healthy; the remaining work is to finish review and decide whether to commit the page-state extraction.
 - Blocked: None.
-- Next action: Wait for a fresh failing path before changing code, or move to the next explicit product slice.
+- Next action: Run targeted gallery tests, then either commit the shell/page-state extraction or stop if no further evidence-backed drift appears.
 
 # Citations
 
