@@ -961,12 +961,12 @@ fn close_recovery_restore_failure_does_not_overwrite_had_panel_focus_fact(cx: &m
     host.update(cx, |host, cx| {
         host.viewport_runtime()
             .record_panel_focus(host.space().clone(), item("a"));
-        assert!(host.request_viewport_focus_command(
-            crate::DockViewportFocusCommand::new(
+        assert!(
+            host.request_viewport_focus_command(crate::DockViewportFocusCommand::new(
                 DockViewportFocusCommandSource::CloseRecovery,
                 DockViewportFocusRequest::panel("b"),
-            )
-        ));
+            ))
+        );
         cx.notify();
     });
     cx.run_until_parked();

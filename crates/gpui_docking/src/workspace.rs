@@ -1,6 +1,6 @@
 use crate::{
-    host::DockHostOptions, DockGraph, DockGraphMutationError, DockItemId, DockOp, DockPanel,
-    DockPanelDescriptor, DockPanelRegistry, DockPolicy, DockSpaceId,
+    DockGraph, DockGraphMutationError, DockItemId, DockOp, DockPanel, DockPanelDescriptor,
+    DockPanelRegistry, DockPolicy, DockSpaceId, host::DockHostOptions,
 };
 
 /// Owner for one logical docking workspace.

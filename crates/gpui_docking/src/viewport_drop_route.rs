@@ -494,7 +494,8 @@ impl DockViewportDropRouteRequest {
         release_origin: DockPayloadDropReleaseOrigin,
     ) -> Self {
         let (release_position, coordinate_space) = if platform_signals.has_global_window_bounds() {
-            if let Some(host_window_bounds) = release_point.host_window_bounds.global_screen_bounds()
+            if let Some(host_window_bounds) =
+                release_point.host_window_bounds.global_screen_bounds()
             {
                 (
                     open_gpui::point(
@@ -598,8 +599,7 @@ impl DockViewportDropRouteRequest {
         if hovered_window_no_input_pass_through
             && !self.platform_signals.hovered_window_ignores_no_input()
         {
-            target_context
-                .without_trusted_hovered_window_authority()
+            target_context.without_trusted_hovered_window_authority()
         } else {
             target_context
         }
@@ -618,7 +618,8 @@ impl DockViewportDropRouteRequest {
         suggested_window_bounds: Option<WindowBounds>,
         target_context: DockViewportTargetContext,
     ) -> Self {
-        let platform_signals = DockViewportPlatformSignals::from_target_context(target_context.clone());
+        let platform_signals =
+            DockViewportPlatformSignals::from_target_context(target_context.clone());
         Self::new(
             source_space,
             source_node,
@@ -637,7 +638,8 @@ impl DockViewportDropRouteRequest {
     ) -> DockViewportPointerCoordinateSpace {
         match release_origin {
             DockPayloadDropReleaseOrigin::HoveredHost => {
-                if target_context.trusted_hovered_window_matches_event_receiver(event_receiver_window)
+                if target_context
+                    .trusted_hovered_window_matches_event_receiver(event_receiver_window)
                 {
                     DockViewportPointerCoordinateSpace::TrustedHoveredWindowLocal
                 } else {

@@ -9,9 +9,8 @@ use crate::{
     DockViewportRouteTarget, DockViewportRuntime, DockViewportRuntimeHandle,
     DockViewportShouldCloseStatus, DockViewportStaleStatusReason, DockViewportTargetContext,
     DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
-    DockViewportTearOffPlacementSource,
-    DockViewportTearOffRequest, DockViewportWindowActivation, DockViewportWindowFacts,
-    DockWorkspace, SplitAxis,
+    DockViewportTearOffPlacementSource, DockViewportTearOffRequest, DockViewportWindowActivation,
+    DockViewportWindowFacts, DockWorkspace, SplitAxis,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -885,13 +884,11 @@ fn unavailable_backend_focus_reconcile_preserves_pending_viewport_activation(
         })
         .expect("viewport should open through runtime");
     assert!(
-        runtime.record_pending_activation(
-            crate::DockViewportActivationTransaction::new(
-                main_space.clone(),
-                opened.window(),
-                DockViewportFocusRequest::panel("a"),
-            ),
-        )
+        runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
+            main_space.clone(),
+            opened.window(),
+            DockViewportFocusRequest::panel("a"),
+        ),)
     );
     cx.set_platform_focused_window_available(false);
 
@@ -1309,13 +1306,11 @@ fn backend_focus_command_consumes_pending_viewport_activation(cx: &mut TestAppCo
         .expect("viewport should open through runtime");
     runtime.record_panel_focus(main_space.clone(), item("a"));
     assert!(
-        runtime.record_pending_activation(
-            crate::DockViewportActivationTransaction::new(
-                main_space.clone(),
-                opened.window(),
-                DockViewportFocusRequest::panel("a"),
-            ),
-        )
+        runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
+            main_space.clone(),
+            opened.window(),
+            DockViewportFocusRequest::panel("a"),
+        ),)
     );
     opened
         .window()
@@ -1370,13 +1365,11 @@ fn backend_focus_unavailable_does_not_consume_pending_viewport_activation(cx: &m
         .expect("viewport should open through runtime");
     runtime.record_panel_focus(main_space.clone(), item("a"));
     assert!(
-        runtime.record_pending_activation(
-            crate::DockViewportActivationTransaction::new(
-                main_space.clone(),
-                opened.window(),
-                DockViewportFocusRequest::panel("a"),
-            ),
-        )
+        runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
+            main_space.clone(),
+            opened.window(),
+            DockViewportFocusRequest::panel("a"),
+        ),)
     );
     cx.set_platform_focused_window_available(false);
 
@@ -1435,13 +1428,11 @@ fn backend_confirmed_activation_consumes_pending_viewport_activation(cx: &mut Te
             DockViewportFocusCommand::platform_activation(DockViewportFocusRequest::panel("a"))
         ));
     });
-    runtime.record_pending_activation(
-        crate::DockViewportActivationTransaction::new(
-            main_space.clone(),
-            opened.window(),
-            DockViewportFocusRequest::panel("a"),
-        ),
-    );
+    runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
+        main_space.clone(),
+        opened.window(),
+        DockViewportFocusRequest::panel("a"),
+    ));
     assert_eq!(
         runtime
             .runtime_status()
@@ -1491,13 +1482,11 @@ fn backend_confirmed_activation_while_mouse_is_pressed_preserves_pending_viewpor
 
     runtime.record_panel_focus(main_space.clone(), item("a"));
     assert!(
-        runtime.record_pending_activation(
-            crate::DockViewportActivationTransaction::new(
-                main_space.clone(),
-                opened.window(),
-                DockViewportFocusRequest::panel("a"),
-            ),
-        )
+        runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
+            main_space.clone(),
+            opened.window(),
+            DockViewportFocusRequest::panel("a"),
+        ),)
     );
 
     cx.set_platform_mouse_button_is_pressed(open_gpui::MouseButton::Left, Some(true));

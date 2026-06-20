@@ -1,8 +1,8 @@
 use crate::{
-    host::DockHostOptions, DockAction, DockActionApplyError, DockActionOutcome, DockClassId,
-    DockGraph, DockGraphValidationError, DockItemId, DockLayout, DockLayoutValidationError,
-    DockNodeId, DockPanel, DockPanelAttachError, DockPanelDescriptor, DockPanelRegistration,
-    DockPanelRegistry, DockPolicy, DockSpaceId, DockWorkspace, EditorDockLayoutSpec,
+    DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockGraph,
+    DockGraphValidationError, DockItemId, DockLayout, DockLayoutValidationError, DockNodeId,
+    DockPanel, DockPanelAttachError, DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry,
+    DockPolicy, DockSpaceId, DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
 };
 use open_gpui::{AnyView, Bounds, Pixels};
 

@@ -4,11 +4,10 @@ use crate::{
     DockViewportClosePolicy, DockViewportDropOutcomeKind, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
     DockViewportFocusCommand, DockViewportFocusRequest, DockViewportOpenStatus,
-    DockViewportPlatformSignals,
-    DockViewportRouteStatus, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
-    DockViewportStaleStatusReason, DockViewportTargetContext, DockViewportTearOffBeginOutcome,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockViewportTearOffTick,
-    DockViewportWindowFacts, DockWorkspace, DropZone, SplitAxis,
+    DockViewportPlatformSignals, DockViewportRouteStatus, DockViewportRuntimeHandle,
+    DockViewportShouldCloseStatus, DockViewportStaleStatusReason, DockViewportTargetContext,
+    DockViewportTearOffBeginOutcome, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    DockViewportTearOffTick, DockViewportWindowFacts, DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::DockDropRoutePreviewKind,
@@ -640,7 +639,11 @@ fn viewport_runtime_handle_merge_back_close_without_source_focus_blurs_fallback(
             view.downcast::<crate::DockHost>()
                 .expect("runtime viewport should render DockHost")
                 .update(cx, |host, cx| {
-                    assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("b")))));
+                    assert!(host.request_viewport_focus_command(
+                        DockViewportFocusCommand::viewport_activation(
+                            DockViewportFocusRequest::panel(item("b"))
+                        )
+                    ));
                     cx.notify();
                 });
             assert_ne!(window.focused(cx), Some(panel_b_focus.clone()));
