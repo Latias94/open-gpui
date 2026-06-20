@@ -291,6 +291,7 @@ pub struct ComboboxState {
     label: String,
     placeholder: String,
     query: String,
+    selected_value: Option<String>,
     total_option_count: usize,
     filtered_option_count: usize,
     empty_label: String,
@@ -431,6 +432,7 @@ impl ComboboxState {
             label,
             placeholder,
             query,
+            selected_value,
             total_option_count,
             filtered_option_count,
             empty_label,
@@ -496,7 +498,7 @@ impl ComboboxState {
 
     /// Returns selected option value.
     pub fn selected_value(&self) -> Option<&str> {
-        self.listbox.selected_value()
+        self.selected_value.as_deref()
     }
 
     /// Returns active option value.
