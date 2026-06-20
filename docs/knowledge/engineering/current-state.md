@@ -1,22 +1,26 @@
 ---
 type: Current State
-title: Open GPUI current engineering state
+title: open-gpui docking and gallery state
 status: active
-timestamp: 2026-06-20
+source_session: 019ec6c8-5566-7062-8458-21ebe1360573
+git_branch: main
+git_commit: 54304fc
+verified_by: cargo nextest run -p open-gpui-docking --tests
 ---
 
 # Current State
 
-- Goal: Continue UI component contract alignment and remove evidence-backed behavioral drift without preserving old compatibility layers.
+- Goal: 继续审查 open-gpui 的 gallery / docking 行为契约一致性，允许无畏重构，但只收真实问题。
 - Branch: `main`
-- Last verified: `cargo fmt --all --check` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` after tightening the Components-page choice/search contract so `Select`, `Combobox`, and `Command` now keep `selected_value` and `active_value` distinct in gallery samples and tests.
-- Done: Re-checked the Components-page crash line and `repo-ref/fret`'s scroll/list-box helper layering. Also moved Focus & A11y and Overlay page-local shell state out of `shell.rs` into page modules so the shell only retains cross-page/navigation state. The latest choice/search scan did not find a safe deletion seam, so the work shifted to explicit contract hardening and was committed as `b66b5a0`.
-- In progress: Current automatically discoverable gallery contract drift is closed. The checkout still has unrelated `crates/gpui_docking/*` dirty files that were intentionally not staged or committed in this pass.
-- In progress: The current `crates/gpui_docking/*` dirt is a close-recovery contract cleanup pass. The suspected `close_recovery_does_not_reveal_hidden_recorded_panel` failure was a test-source mismatch, not a runtime regression. Close-recovery and merge-back tests now pass on focused `cargo nextest run -p open-gpui-docking` checks.
-- Blocked: None.
-- Next action: If continuing the architecture loop, either commit the current `gpui_docking` cleanup or start a fresh plan for the next UI component slice; do not re-open the completed gallery choice/search contract pass without new evidence.
+- Last verified: `origin/main` 已同步到 `54304fc test(docking): align close recovery focus source`
+- Done: `f5e5d3a` 和 `54304fc` 都已推送，close-recovery 测试源错误已修正。
+- Done: 复核了剩余 `crates/gpui_docking/*` 脏改动，未发现语义差异，基本都是导入重排和换行整理。
+- In progress: 仍有一批未提交的 `crates/gpui_docking/*` 脏改动，当前判断可作为格式噪音暂缓，不先动。
+- Blocked: 暂无。
+- Next action: 根据 `repo-ref/fret` 的参考结果，继续把后续 UI 设计聚焦到薄门面、可见区边界和流式诊断这三层。
 
 # Citations
 
-[1] [Plan](../../plans/2026-06-18-001-refactor-ui-component-contract-alignment-plan.md)
-[2] [Verification](verification/menu-runtime-focus-regression-20260620.md)
+[1] Commit `54304fc` - `test(docking): align close recovery focus source`
+[2] Commit `f5e5d3a` - `test(docking): cover close recovery focus source explicitly`
+[3] Session `019ec6c8-5566-7062-8458-21ebe1360573`
