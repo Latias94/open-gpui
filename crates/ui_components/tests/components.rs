@@ -10,8 +10,8 @@ use open_gpui_ui_components::{
     DialogOpenMode, Field, FocusRing, HoverCard, HoverCardContentKind, HoverCardDelayPolicy,
     HoverCardOpenIntent, HoverCardOpenMode, IconButton, Kbd, Label, Listbox, ListboxGroup,
     ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor, ListboxOptionKind,
-    ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode, Popover,
-    PopoverOpenMode, Progress, ProgressVisualMode, RadioGroup, RadioGroupState, RadioItem,
+    ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode, MenuSelection,
+    Popover, PopoverOpenMode, Progress, ProgressVisualMode, RadioGroup, RadioGroupState, RadioItem,
     RadioItemDescriptor, RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState,
     ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, Separator, Sheet,
     SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
@@ -782,6 +782,92 @@ fn menu_navigation_and_activation_skip_disabled_and_separator_items() {
 }
 
 #[test]
+fn menu_runtime_keyboard_navigation_keeps_runtime_focused_value_after_rerender() {
+    let state = Menu::new("runtime-menu", "Runtime menu")
+        .open(true)
+        .focused_value("copy")
+        .items([
+            MenuItem::action("cut", "Cut"),
+            MenuItem::action("copy", "Copy"),
+            MenuItem::action("select-all", "Select all"),
+        ])
+        .state();
+
+    assert_eq!(state.focused_value(), Some("copy"));
+    assert_eq!(
+        state.navigation_target("down").map(|item| item.value()),
+        Some("select-all")
+    );
+}
+
+#[open_gpui::test]
+fn menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<MenuSelection>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+
+            div().size_full().child(
+                Menu::new("runtime-menu", "Runtime menu")
+                    .focused_value("copy")
+                    .item(MenuItem::action("cut", "Cut"))
+                    .item(MenuItem::action("copy", "Copy"))
+                    .item(MenuItem::action("select-all", "Select all"))
+                    .on_select(move |selection, _, _| {
+                        selections.borrow_mut().push(selection);
+                    }),
+            )
+        }
+    }
+
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let trigger = cx
+        .debug_bounds("menu:runtime-menu:trigger")
+        .expect("runtime menu trigger should render");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("menu:runtime-menu:content").is_some(),
+        "runtime menu content should render when opened"
+    );
+
+    cx.simulate_keystrokes("down");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        selections.borrow().is_empty(),
+        "arrow navigation should move the runtime focus without selecting"
+    );
+
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let after_enter = selections.borrow().clone();
+    assert_eq!(after_enter.len(), 1);
+    assert_eq!(after_enter[0].index(), 2);
+    assert_eq!(after_enter[0].value(), "select-all");
+    assert_eq!(after_enter[0].label(), "Select all");
+}
+
+#[test]
 fn menu_state_models_default_open_disabled_and_policy_overrides() {
     let state = Menu::new("disabled-menu", "Disabled")
         .default_open(true)
@@ -865,6 +951,99 @@ fn context_menu_state_defaults_focus_to_first_focusable_item_when_open() {
 
     assert_eq!(state.menu().focused_value(), Some("duplicate"));
     assert!(state.menu().items()[0].kind() == MenuItemKind::Separator);
+}
+
+#[test]
+fn context_menu_state_navigation_target_prefers_runtime_focused_value() {
+    let anchor = point(px(280.0), px(160.0));
+    let state = ContextMenu::new("runtime-context-menu", "Runtime context menu")
+        .open(true)
+        .anchor_point(anchor)
+        .focused_value("copy")
+        .item(MenuItem::action("cut", "Cut"))
+        .item(MenuItem::action("copy", "Copy"))
+        .item(MenuItem::action("select-all", "Select all"))
+        .state();
+
+    assert_eq!(state.menu().focused_value(), Some("copy"));
+    assert_eq!(
+        state
+            .menu()
+            .navigation_target("down")
+            .map(|item| item.value()),
+        Some("select-all")
+    );
+}
+
+#[open_gpui::test]
+fn context_menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<MenuSelection>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+
+            div().size_full().child(
+                ContextMenu::new("runtime-context-menu", "Runtime context menu")
+                    .anchor_point(point(px(280.0), px(160.0)))
+                    .focused_value("copy")
+                    .item(MenuItem::action("cut", "Cut"))
+                    .item(MenuItem::action("copy", "Copy"))
+                    .item(MenuItem::action("select-all", "Select all"))
+                    .on_select(move |selection, _, _| {
+                        selections.borrow_mut().push(selection);
+                    }),
+            )
+        }
+    }
+
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let hotspot = cx
+        .debug_bounds("context-menu:runtime-context-menu:hotspot")
+        .expect("runtime context menu hotspot should render");
+    cx.simulate_mouse_down(hotspot.center(), MouseButton::Right, Default::default());
+    cx.simulate_mouse_up(hotspot.center(), MouseButton::Right, Default::default());
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("context-menu:runtime-context-menu:surface")
+            .is_some(),
+        "runtime context menu surface should render when opened"
+    );
+
+    cx.simulate_keystrokes("down");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        selections.borrow().is_empty(),
+        "arrow navigation should move the runtime focus without selecting"
+    );
+
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let after_enter = selections.borrow().clone();
+    assert_eq!(after_enter.len(), 1);
+    assert_eq!(after_enter[0].index(), 2);
+    assert_eq!(after_enter[0].value(), "select-all");
+    assert_eq!(after_enter[0].label(), "Select all");
 }
 
 #[test]

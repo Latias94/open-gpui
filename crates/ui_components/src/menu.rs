@@ -5,8 +5,8 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, ElementId, IntoElement, KeyDownEvent, ParentElement, RenderOnce,
-    SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
+    AnyElement, App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent, ParentElement,
+    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -18,8 +18,8 @@ use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, gpui_overlay_state,
-    outside_press_open_change,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState,
+    focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
 };
 use crate::roving_focus::{first_enabled, last_enabled, next_enabled};
 use crate::theme::ThemeResolver;
@@ -458,7 +458,7 @@ impl MenuState {
         let items = descriptors
             .into_iter()
             .enumerate()
-            .map(|(index, item)| {
+            .map(|(_index, item)| {
                 let focused = focused_index == Some(index);
                 MenuItemState {
                     index,
@@ -724,7 +724,6 @@ pub struct Menu {
     initial_focus_intent: InitialFocusIntent,
     focus_restore_intent: FocusRestoreIntent,
     tokens: ThemeTokens,
-    on_escape_close: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
 }
@@ -732,7 +731,10 @@ pub struct Menu {
 #[derive(Debug, Clone)]
 struct MenuRuntime {
     open: bool,
+    did_initial_focus: bool,
+    trigger_focus: FocusHandle,
     focused_value: Option<String>,
+    content_focus: FocusHandle,
 }
 
 impl Menu {
@@ -754,7 +756,6 @@ impl Menu {
             initial_focus_intent: InitialFocusIntent::FirstFocusable,
             focus_restore_intent: FocusRestoreIntent::Trigger,
             tokens: ThemeTokens::default(),
-            on_escape_close: None,
             on_open_change: None,
             on_select: None,
         }
@@ -843,7 +844,6 @@ impl Menu {
         handler: impl Fn(bool, &mut Window, &mut App) + 'static,
     ) -> Self {
         let handler = Rc::new(handler);
-        self.on_escape_close = Some(handler.clone());
         self.on_open_change = Some(handler);
         self
     }
@@ -888,8 +888,13 @@ impl RenderOnce for Menu {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let descriptors: Vec<MenuItemDescriptor> =
             self.items.iter().map(MenuItem::descriptor).collect();
+        let trigger_focus = cx.focus_handle();
+        let content_focus = cx.focus_handle();
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| MenuRuntime {
             open: self.default_open,
+            did_initial_focus: false,
+            trigger_focus: trigger_focus.clone(),
+            content_focus: content_focus.clone(),
             focused_value: self.focused_value.clone(),
         });
         let runtime_state = runtime.read(cx).clone();
@@ -900,15 +905,16 @@ impl RenderOnce for Menu {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
                 if !resolved_open {
+                    runtime.did_initial_focus = false;
                     runtime.focused_value = None;
                 }
             });
         }
 
-        let focused_value = self
+        let focused_value = runtime_state
             .focused_value
             .as_deref()
-            .or(runtime_state.focused_value.as_deref());
+            .or(self.focused_value.as_deref());
         let state = MenuState::resolve(
             self.size,
             self.disabled,
@@ -924,15 +930,23 @@ impl RenderOnce for Menu {
             self.focus_restore_intent.clone(),
             self.tokens,
         );
+        let runtime_state = runtime.read(cx).clone();
         let id = self.id;
         let debug_id = id.to_string();
         let trigger_id: ElementId = (id.clone(), "trigger").into();
         let content_id: ElementId = (id.clone(), "content").into();
         let trigger_label = self.trigger_label;
         let items = self.items;
-        let on_escape_close = self.on_escape_close;
         let on_open_change = self.on_open_change;
         let on_select = self.on_select;
+        let focus_restore = state.focus_restore_intent().clone();
+        let initial_focus = state.initial_focus_intent().clone();
+        let trigger_focus = runtime_state.trigger_focus.clone();
+        let content_focus = runtime_state.content_focus.clone();
+        let trigger_focus_for_escape = trigger_focus.clone();
+        let focus_restore_for_escape = focus_restore.clone();
+        let trigger_focus_for_content = trigger_focus.clone();
+        let focus_restore_for_content = focus_restore.clone();
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
@@ -952,6 +966,15 @@ impl RenderOnce for Menu {
             .with_offset(ui_px(4.0)),
             overlay_adapter.snap_margin(),
         );
+
+        if open && !runtime_state.did_initial_focus {
+            runtime.update(cx, |runtime, _| {
+                runtime.did_initial_focus = true;
+            });
+            if let Some(focus) = menu_initial_focus_handle(&runtime, &initial_focus, cx) {
+                window.defer(cx, move |window, cx| focus.focus(window, cx));
+            }
+        }
 
         div()
             .id(id.clone())
@@ -991,14 +1014,24 @@ impl RenderOnce for Menu {
                     .aria_expanded(open)
                     .aria_disabled(disabled)
                     .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                    .track_focus(&trigger_focus)
                     .when(open, |this| {
                         let runtime = runtime.clone();
-                        let on_escape_close = on_escape_close.clone();
+                        let on_open_change = on_open_change.clone();
+                        let trigger_focus = trigger_focus_for_escape.clone();
+                        let focus_restore = focus_restore_for_escape.clone();
                         this.on_key_down(move |event: &KeyDownEvent, window, cx| {
                             if event.keystroke.key.as_str() == "escape" {
                                 cx.stop_propagation();
                                 window.prevent_default();
-                                close_menu(runtime.clone(), on_escape_close.clone(), window, cx);
+                                close_menu(
+                                    runtime.clone(),
+                                    trigger_focus.clone(),
+                                    focus_restore.clone(),
+                                    on_open_change.clone(),
+                                    window,
+                                    cx,
+                                );
                             }
                         })
                     })
@@ -1016,6 +1049,7 @@ impl RenderOnce for Menu {
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = next_open;
                                     if !next_open {
+                                        runtime.did_initial_focus = false;
                                         runtime.focused_value = None;
                                     }
                                 });
@@ -1039,7 +1073,9 @@ impl RenderOnce for Menu {
                                 debug_id.clone(),
                                 state.clone(),
                                 runtime.clone(),
-                                on_escape_close.clone(),
+                                trigger_focus_for_content.clone(),
+                                content_focus.clone(),
+                                focus_restore_for_content.clone(),
                                 on_open_change.clone(),
                                 on_select.clone(),
                             )),
@@ -1056,7 +1092,9 @@ fn menu_content_element(
     debug_id: String,
     state: MenuState,
     runtime: open_gpui::Entity<MenuRuntime>,
-    on_escape_close: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
+    trigger_focus: FocusHandle,
+    content_focus: FocusHandle,
+    focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
 ) -> impl IntoElement {
@@ -1067,14 +1105,16 @@ fn menu_content_element(
     let key_runtime = runtime.clone();
     let key_open_change = on_open_change.clone();
     let key_select = on_select.clone();
-    let escape_runtime = runtime.clone();
-    let escape_open_change = on_escape_close.clone();
+    let trigger_focus_for_keydown = trigger_focus.clone();
+    let focus_restore_for_keydown = focus_restore.clone();
+    let trigger_focus_for_outside = trigger_focus.clone();
+    let focus_restore_for_outside = focus_restore.clone();
 
     div()
         .id(content_id)
         .debug_selector({
-            let debug_id = debug_id.clone();
-            move || format!("menu:{debug_id}:content")
+            let content_debug_id = debug_id.clone();
+            move || format!("menu:{content_debug_id}:content")
         })
         .min_w(gpui_px_from_ui(metrics.min_width()))
         .max_w(gpui_px_from_ui(metrics.max_width()))
@@ -1093,6 +1133,7 @@ fn menu_content_element(
         .occlude()
         .tab_group()
         .focusable()
+        .track_focus(&content_focus)
         .ui_role(state.content_role())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             let key = event.keystroke.key.as_str();
@@ -1100,8 +1141,10 @@ fn menu_content_element(
                 cx.stop_propagation();
                 window.prevent_default();
                 close_menu(
-                    escape_runtime.clone(),
-                    escape_open_change.clone(),
+                    key_runtime.clone(),
+                    trigger_focus_for_keydown.clone(),
+                    focus_restore_for_keydown.clone(),
+                    key_open_change.clone(),
                     window,
                     cx,
                 );
@@ -1111,9 +1154,9 @@ fn menu_content_element(
             if let Some(target) = key_state.navigation_target(key) {
                 cx.stop_propagation();
                 window.prevent_default();
-                let value = target.value().to_owned();
+                let target_value = target.value().to_owned();
                 key_runtime.update(cx, |runtime, _| {
-                    runtime.focused_value = Some(value);
+                    runtime.focused_value = Some(target_value);
                 });
                 return;
             }
@@ -1124,20 +1167,37 @@ fn menu_content_element(
                 if let Some(on_select) = key_select.as_ref() {
                     on_select(selection, window, cx);
                 }
-                close_menu(key_runtime.clone(), key_open_change.clone(), window, cx);
+                close_menu(
+                    key_runtime.clone(),
+                    trigger_focus_for_keydown.clone(),
+                    focus_restore_for_keydown.clone(),
+                    key_open_change.clone(),
+                    window,
+                    cx,
+                );
             }
         })
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
             this.on_mouse_down_out(move |_, window, cx| {
-                close_menu(runtime.clone(), on_open_change.clone(), window, cx);
+                close_menu(
+                    runtime.clone(),
+                    trigger_focus_for_outside.clone(),
+                    focus_restore_for_outside.clone(),
+                    on_open_change.clone(),
+                    window,
+                    cx,
+                );
             })
         })
         .children(menu_item_elements(
             items,
             state,
+            debug_id,
             runtime,
+            trigger_focus,
+            focus_restore,
             on_open_change,
             on_select,
         ))
@@ -1146,7 +1206,10 @@ fn menu_content_element(
 fn menu_item_elements(
     items: Vec<MenuItem>,
     state: MenuState,
+    debug_id: String,
     runtime: open_gpui::Entity<MenuRuntime>,
+    trigger_focus: FocusHandle,
+    focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
 ) -> Vec<AnyElement> {
@@ -1157,9 +1220,15 @@ fn menu_item_elements(
     items
         .into_iter()
         .zip(states)
-        .map(|(item, item_state)| match item_state.kind() {
+        .enumerate()
+        .map(|(_, (item, item_state))| match item_state.kind() {
             MenuItemKind::Separator => div()
                 .id(format!("menu-separator:{}", item_state.index()))
+                .debug_selector({
+                    let separator_debug_id = debug_id.clone();
+                    let separator_index = item_state.index();
+                    move || format!("menu:{separator_debug_id}:separator:{separator_index}")
+                })
                 .h(gpui_px_from_ui(metrics.separator_height()))
                 .my_1()
                 .bg(ThemeResolver::resolve(colors.separator()))
@@ -1170,10 +1239,18 @@ fn menu_item_elements(
                 let global_handler = on_select.clone();
                 let runtime = runtime.clone();
                 let on_open_change = on_open_change.clone();
+                let trigger_focus = trigger_focus.clone();
+                let focus_restore = focus_restore.clone();
+                let item_label = item_state.label().to_owned();
                 let focused = item_state.focused();
                 let disabled = item_state.disabled();
                 div()
                     .id(format!("menu-item:{}", item_state.value()))
+                    .debug_selector({
+                        let item_debug_id = debug_id.clone();
+                        let item_value = item_state.value().to_owned();
+                        move || format!("menu:{item_debug_id}:item:{item_value}")
+                    })
                     .min_h(gpui_px_from_ui(metrics.item_height()))
                     .px(gpui_px_from_ui(metrics.item_padding_x()))
                     .py(gpui_px_from_ui(metrics.item_padding_y()))
@@ -1191,10 +1268,8 @@ fn menu_item_elements(
                         colors.foreground()
                     }))
                     .ui_role(Role::MenuItem)
-                    .aria_label(item_state.label().to_owned())
+                    .aria_label(item_label.clone())
                     .aria_disabled(disabled)
-                    .focusable()
-                    .tab_stop(item_state.focused())
                     .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                     .when(!disabled, |this| {
                         this.cursor_pointer()
@@ -1212,10 +1287,17 @@ fn menu_item_elements(
                                 if let Some(global_handler) = global_handler.as_ref() {
                                     global_handler(selection, window, cx);
                                 }
-                                close_menu(runtime.clone(), on_open_change.clone(), window, cx);
+                                close_menu(
+                                    runtime.clone(),
+                                    trigger_focus.clone(),
+                                    focus_restore.clone(),
+                                    on_open_change.clone(),
+                                    window,
+                                    cx,
+                                );
                             })
                     })
-                    .child(item_state.label().to_owned())
+                    .child(item_label)
                     .into_any_element()
             }
         })
@@ -1224,16 +1306,37 @@ fn menu_item_elements(
 
 fn close_menu(
     runtime: open_gpui::Entity<MenuRuntime>,
+    trigger_focus: FocusHandle,
+    focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     window: &mut Window,
     cx: &mut App,
 ) {
     runtime.update(cx, |runtime, _| {
         runtime.open = false;
+        runtime.did_initial_focus = false;
         runtime.focused_value = None;
     });
     if let Some(on_open_change) = on_open_change.as_ref() {
         on_open_change(false, window, cx);
+    }
+    if focus_restore_requests_trigger(&focus_restore) {
+        window.defer(cx, move |window, cx| trigger_focus.focus(window, cx));
+    }
+}
+
+fn menu_initial_focus_handle(
+    runtime: &open_gpui::Entity<MenuRuntime>,
+    intent: &InitialFocusIntent,
+    cx: &App,
+) -> Option<FocusHandle> {
+    match intent {
+        InitialFocusIntent::None => None,
+        InitialFocusIntent::FirstFocusable => Some(runtime.read(cx).content_focus.clone()),
+        InitialFocusIntent::Target(_) => None,
+        InitialFocusIntent::TargetOrFirstFocusable(_) => {
+            Some(runtime.read(cx).content_focus.clone())
+        }
     }
 }
 
