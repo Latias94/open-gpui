@@ -5,8 +5,8 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels,
-    Point, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, anchored,
+    App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent, MouseButton, ParentElement,
+    Pixels, Point, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, anchored,
     deferred, div, px,
 };
 use open_gpui_ui_core::{
@@ -22,8 +22,8 @@ use crate::menu::{
     MenuSelection, MenuState,
 };
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayResolvedState, gpui_overlay_state, gpui_point_from_ui,
-    outside_press_open_change, ui_point_from_gpui,
+    GpuiOverlayPlacement, OverlayResolvedState, focus_restore_requests_trigger, gpui_overlay_state,
+    gpui_point_from_ui, outside_press_open_change, ui_point_from_gpui,
 };
 use crate::theme::ThemeResolver;
 
@@ -167,7 +167,6 @@ pub struct ContextMenu {
     initial_focus_intent: InitialFocusIntent,
     focus_restore_intent: FocusRestoreIntent,
     tokens: ThemeTokens,
-    on_escape_close: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
 }
@@ -176,7 +175,11 @@ pub struct ContextMenu {
 struct ContextMenuRuntime {
     open: bool,
     anchor_point: Point<Pixels>,
+    did_initial_focus: bool,
+    seeded_focused_value: bool,
     focused_value: Option<String>,
+    content_focus: FocusHandle,
+    trigger_focus: FocusHandle,
 }
 
 impl ContextMenu {
@@ -196,7 +199,6 @@ impl ContextMenu {
             initial_focus_intent: InitialFocusIntent::FirstFocusable,
             focus_restore_intent: FocusRestoreIntent::Trigger,
             tokens: ThemeTokens::default(),
-            on_escape_close: None,
             on_open_change: None,
             on_select: None,
         }
@@ -274,7 +276,6 @@ impl ContextMenu {
         handler: impl Fn(bool, &mut Window, &mut App) + 'static,
     ) -> Self {
         let handler = Rc::new(handler);
-        self.on_escape_close = Some(handler.clone());
         self.on_open_change = Some(handler);
         self
     }
@@ -315,10 +316,16 @@ impl Sizable for ContextMenu {
 
 impl RenderOnce for ContextMenu {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let content_focus = cx.focus_handle();
+        let trigger_focus = cx.focus_handle();
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| ContextMenuRuntime {
             open: self.default_open,
             anchor_point: self.anchor_point,
+            did_initial_focus: false,
+            seeded_focused_value: false,
             focused_value: self.focused_value.clone(),
+            content_focus: content_focus.clone(),
+            trigger_focus: trigger_focus.clone(),
         });
         let runtime_state = runtime.read(cx).clone();
         let controlled_open = self.open;
@@ -333,15 +340,20 @@ impl RenderOnce for ContextMenu {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
                 if !resolved_open {
+                    runtime.did_initial_focus = false;
+                    runtime.seeded_focused_value = false;
                     runtime.focused_value = None;
                 }
             });
         }
 
-        let focused_value = self
-            .focused_value
-            .as_deref()
-            .or(runtime_state.focused_value.as_deref());
+        let focused_value = if runtime_state.seeded_focused_value {
+            runtime_state.focused_value.as_deref()
+        } else {
+            self.focused_value
+                .as_deref()
+                .or(runtime_state.focused_value.as_deref())
+        };
         let state = ContextMenuState::resolve(
             self.size,
             Some(resolved_open),
@@ -361,14 +373,27 @@ impl RenderOnce for ContextMenu {
         let hotspot_id: ElementId = (id.clone(), "hotspot").into();
         let items = self.items;
         let label = self.label;
-        let on_escape_close = self.on_escape_close;
         let on_open_change = self.on_open_change;
         let on_select = self.on_select;
+        let focus_restore = state.menu().focus_restore_intent().clone();
+        let initial_focus = state.menu().initial_focus_intent().clone();
+        let runtime_state = runtime.read(cx).clone();
+        let trigger_focus = runtime_state.trigger_focus.clone();
+        let content_focus = runtime_state.content_focus.clone();
         let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement =
             GpuiOverlayPlacement::resolve(state.placement_input(), overlay_adapter.snap_margin());
         let open_runtime = runtime.clone();
         let open_change = on_open_change.clone();
+
+        if state.open() && !runtime_state.did_initial_focus {
+            runtime.update(cx, |runtime, _| {
+                runtime.did_initial_focus = true;
+            });
+            if let Some(focus) = context_menu_initial_focus_handle(&runtime, &initial_focus, cx) {
+                window.defer(cx, move |window, cx| focus.focus(window, cx));
+            }
+        }
 
         div()
             .id(id.clone())
@@ -406,6 +431,7 @@ impl RenderOnce for ContextMenu {
                     .ui_role(Role::Button)
                     .aria_label(label.clone())
                     .focusable()
+                    .track_focus(&trigger_focus)
                     .tab_stop(true)
                     .focus_visible({
                         let focus_ring = state.menu().focus_ring();
@@ -429,7 +455,9 @@ impl RenderOnce for ContextMenu {
                                 debug_id.clone(),
                                 state.clone(),
                                 runtime.clone(),
-                                on_escape_close.clone(),
+                                trigger_focus.clone(),
+                                content_focus.clone(),
+                                focus_restore.clone(),
                                 on_open_change.clone(),
                                 on_select.clone(),
                             )),
@@ -446,7 +474,9 @@ fn context_menu_surface(
     debug_id: String,
     state: ContextMenuState,
     runtime: open_gpui::Entity<ContextMenuRuntime>,
-    on_escape_close: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
+    trigger_focus: FocusHandle,
+    content_focus: FocusHandle,
+    focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
 ) -> impl IntoElement {
@@ -457,12 +487,11 @@ fn context_menu_surface(
     let key_runtime = runtime.clone();
     let key_open_change = on_open_change.clone();
     let key_select = on_select.clone();
-    let escape_runtime = runtime.clone();
-    let escape_open_change = on_escape_close.clone();
+    let surface_debug_id = debug_id.clone();
 
     div()
         .id(surface_id)
-        .debug_selector(move || format!("context-menu:{debug_id}:surface"))
+        .debug_selector(move || format!("context-menu:{surface_debug_id}:surface"))
         .min_w(gpui_px_from_ui(metrics.min_width()))
         .max_w(gpui_px_from_ui(metrics.max_width()))
         .p(gpui_px_from_ui(metrics.surface_padding()))
@@ -480,51 +509,78 @@ fn context_menu_surface(
         .occlude()
         .tab_group()
         .focusable()
+        .track_focus(&content_focus)
         .ui_role(state.content_role())
-        .on_key_down(move |event: &KeyDownEvent, window, cx| {
-            let key = event.keystroke.key.as_str();
-            if key == "escape" {
-                cx.stop_propagation();
-                window.prevent_default();
-                close_context_menu(
-                    escape_runtime.clone(),
-                    escape_open_change.clone(),
-                    window,
-                    cx,
-                );
-                return;
-            }
-
-            if let Some(target) = key_state.navigation_target(key) {
-                cx.stop_propagation();
-                window.prevent_default();
-                let value = target.value().to_owned();
-                key_runtime.update(cx, |runtime, _| {
-                    runtime.focused_value = Some(value);
-                });
-                return;
-            }
-
-            if let Some(selection) = key_state.activation_for_key(key) {
-                cx.stop_propagation();
-                window.prevent_default();
-                if let Some(on_select) = key_select.as_ref() {
-                    on_select(selection, window, cx);
+        .on_key_down({
+            let trigger_focus = trigger_focus.clone();
+            let focus_restore = focus_restore.clone();
+            move |event: &KeyDownEvent, window, cx| {
+                let key = event.keystroke.key.as_str();
+                if key == "escape" {
+                    cx.stop_propagation();
+                    window.prevent_default();
+                    close_context_menu(
+                        key_runtime.clone(),
+                        trigger_focus.clone(),
+                        focus_restore.clone(),
+                        key_open_change.clone(),
+                        window,
+                        cx,
+                    );
+                    return;
                 }
-                close_context_menu(key_runtime.clone(), key_open_change.clone(), window, cx);
+
+                if let Some(target) = key_state.navigation_target(key) {
+                    cx.stop_propagation();
+                    window.prevent_default();
+                    let target_value = target.value().to_owned();
+                    key_runtime.update(cx, |runtime, _| {
+                        runtime.seeded_focused_value = true;
+                        runtime.focused_value = Some(target_value);
+                    });
+                    return;
+                }
+
+                if let Some(selection) = key_state.activation_for_key(key) {
+                    cx.stop_propagation();
+                    window.prevent_default();
+                    if let Some(on_select) = key_select.as_ref() {
+                        on_select(selection, window, cx);
+                    }
+                    close_context_menu(
+                        key_runtime.clone(),
+                        trigger_focus.clone(),
+                        focus_restore.clone(),
+                        key_open_change.clone(),
+                        window,
+                        cx,
+                    );
+                }
             }
         })
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
+            let trigger_focus = trigger_focus.clone();
+            let focus_restore = focus_restore.clone();
             this.on_mouse_down_out(move |_, window, cx| {
-                close_context_menu(runtime.clone(), on_open_change.clone(), window, cx);
+                close_context_menu(
+                    runtime.clone(),
+                    trigger_focus.clone(),
+                    focus_restore.clone(),
+                    on_open_change.clone(),
+                    window,
+                    cx,
+                );
             })
         })
         .children(context_menu_item_elements(
             items,
             state,
+            debug_id,
             runtime,
+            trigger_focus,
+            focus_restore,
             on_open_change,
             on_select,
         ))
@@ -533,7 +589,10 @@ fn context_menu_surface(
 fn context_menu_item_elements(
     items: Vec<MenuItem>,
     state: ContextMenuState,
+    debug_id: String,
     runtime: open_gpui::Entity<ContextMenuRuntime>,
+    trigger_focus: FocusHandle,
+    focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
 ) -> Vec<open_gpui::AnyElement> {
@@ -544,9 +603,15 @@ fn context_menu_item_elements(
     items
         .into_iter()
         .zip(states)
-        .map(|(item, item_state)| match item_state.kind() {
+        .enumerate()
+        .map(|(_index, (item, item_state))| match item_state.kind() {
             MenuItemKind::Separator => div()
                 .id(format!("context-menu-separator:{}", item_state.index()))
+                .debug_selector({
+                    let separator_debug_id = debug_id.clone();
+                    let separator_index = item_state.index();
+                    move || format!("context-menu:{separator_debug_id}:separator:{separator_index}")
+                })
                 .h(gpui_px_from_ui(metrics.separator_height()))
                 .my_1()
                 .bg(ThemeResolver::resolve(colors.separator()))
@@ -557,10 +622,19 @@ fn context_menu_item_elements(
                 let global_handler = on_select.clone();
                 let runtime = runtime.clone();
                 let on_open_change = on_open_change.clone();
+                let trigger_focus = trigger_focus.clone();
+                let focus_restore = focus_restore.clone();
+                let item_value = item_state.value().to_owned();
+                let item_label = item_state.label().to_owned();
                 let focused = item_state.focused();
                 let disabled = item_state.disabled();
                 div()
                     .id(format!("context-menu-item:{}", item_state.value()))
+                    .debug_selector({
+                        let item_debug_id = debug_id.clone();
+                        let item_value = item_state.value().to_owned();
+                        move || format!("context-menu:{item_debug_id}:item:{item_value}")
+                    })
                     .min_h(gpui_px_from_ui(metrics.item_height()))
                     .px(gpui_px_from_ui(metrics.item_padding_x()))
                     .py(gpui_px_from_ui(metrics.item_padding_y()))
@@ -578,10 +652,8 @@ fn context_menu_item_elements(
                         colors.foreground()
                     }))
                     .ui_role(Role::MenuItem)
-                    .aria_label(item_state.label().to_owned())
+                    .aria_label(item_label.clone())
                     .aria_disabled(disabled)
-                    .focusable()
-                    .tab_stop(item_state.focused())
                     .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                     .when(!disabled, |this| {
                         this.cursor_pointer()
@@ -599,15 +671,21 @@ fn context_menu_item_elements(
                                 if let Some(global_handler) = global_handler.as_ref() {
                                     global_handler(selection, window, cx);
                                 }
+                                runtime.update(cx, |runtime, _| {
+                                    runtime.seeded_focused_value = true;
+                                    runtime.focused_value = Some(item_value.clone());
+                                });
                                 close_context_menu(
                                     runtime.clone(),
+                                    trigger_focus.clone(),
+                                    focus_restore.clone(),
                                     on_open_change.clone(),
                                     window,
                                     cx,
                                 );
                             })
                     })
-                    .child(item_state.label().to_owned())
+                    .child(item_label)
                     .into_any_element()
             }
         })
@@ -616,15 +694,37 @@ fn context_menu_item_elements(
 
 fn close_context_menu(
     runtime: open_gpui::Entity<ContextMenuRuntime>,
+    trigger_focus: FocusHandle,
+    focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     window: &mut Window,
     cx: &mut App,
 ) {
     runtime.update(cx, |runtime, _| {
         runtime.open = false;
+        runtime.did_initial_focus = false;
+        runtime.seeded_focused_value = false;
         runtime.focused_value = None;
     });
     if let Some(on_open_change) = on_open_change.as_ref() {
         on_open_change(false, window, cx);
+    }
+    if focus_restore_requests_trigger(&focus_restore) {
+        window.defer(cx, move |window, cx| trigger_focus.focus(window, cx));
+    }
+}
+
+fn context_menu_initial_focus_handle(
+    runtime: &open_gpui::Entity<ContextMenuRuntime>,
+    intent: &InitialFocusIntent,
+    cx: &App,
+) -> Option<FocusHandle> {
+    match intent {
+        InitialFocusIntent::None => None,
+        InitialFocusIntent::FirstFocusable => Some(runtime.read(cx).content_focus.clone()),
+        InitialFocusIntent::Target(_) => None,
+        InitialFocusIntent::TargetOrFirstFocusable(_) => {
+            Some(runtime.read(cx).content_focus.clone())
+        }
     }
 }
