@@ -4,7 +4,7 @@ title: open-gpui gallery interaction hardening state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 14efadc
+git_commit: d64f5d6
 verified_by:
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_navigation_rail_scrolls_inside_shell components_gallery_smoke_vertical_tabs_scroll_inside_sample components_gallery_smoke_scroll_area_samples_scroll_inside_page components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
   - cargo nextest run -p open-gpui-ui-components scroll_area_default_handle_survives_reconstructed_component_values scroll_area_reset_key_resets_default_runtime_handle scroll_area_runtime_scrolls_horizontal_and_two_axis_content tabs_vertical_tablist_scrolls_when_constrained
@@ -29,6 +29,7 @@ verified_by:
 # Citations
 
 [1] Plan `docs/plans/2026-06-20-001-refactor-ui-gallery-interaction-hardening-plan.md`
-[2] Commit `14efadc` - `fix(gallery): harden components page scroll surfaces`
-[3] AlertDialog gallery gate added on 2026-06-21
-[4] Session `019ec6c8-5566-7062-8458-21ebe1360573`
+[2] Commit `d64f5d6` - `fix(gallery): cover alert dialog dismissal path`
+[3] Commit `14efadc` - `fix(gallery): harden components page scroll surfaces`
+[4] AlertDialog gallery gate added on 2026-06-21
+[5] Session `019ec6c8-5566-7062-8458-21ebe1360573`
