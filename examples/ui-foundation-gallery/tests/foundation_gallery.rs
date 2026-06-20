@@ -2248,6 +2248,57 @@ fn components_gallery_smoke_scroll_area_samples_scroll_inside_page(
 }
 
 #[open_gpui::test]
+fn components_gallery_smoke_navigation_rail_scrolls_inside_shell(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_components_gallery(cx);
+
+    let before = bounds(cx, "gallery:navigation-item:components");
+    let navigation_viewport = bounds(cx, "gallery:navigation-scroll");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: navigation_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let after = bounds(cx, "gallery:navigation-item:components");
+    assert!(
+        after.top() < before.top(),
+        "expected gallery navigation rail to scroll independently inside the shell; before={before:?} after={after:?}"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_vertical_tabs_scroll_inside_sample(cx: &mut open_gpui::TestAppContext) {
+    let cx = open_components_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:component-tabs-sample:workspace-tabs");
+    let before = bounds(
+        cx,
+        "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
+    );
+    let tablist = bounds(cx, "tabs:component-tabs:workspace-tabs:tablist");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: tablist.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-72.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let after = bounds(
+        cx,
+        "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
+    );
+    assert!(
+        after.top() < before.top(),
+        "expected constrained vertical Tabs sample to scroll its rail inside the card; before={before:?} after={after:?}"
+    );
+}
+
+#[open_gpui::test]
 fn components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {

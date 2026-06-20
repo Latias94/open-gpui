@@ -47,10 +47,10 @@ cargo nextest run -p open-gpui-ui-foundation-gallery
 ```
 
 The gallery package includes Components-page runtime smoke coverage for regressions that state-only
-tests can miss: short-viewport page scrolling and navigation reset, Select popup outside dismissal,
-nested ScrollArea wheel scrolling, vertical Tabs rail scrolling, and horizontal plus vertical
-Splitter pointer dragging, and long Sidebar internal navigation scrolling. Run the gallery package
-tests before relying on manual dogfood for those paths.
+tests can miss: short-viewport page scrolling and navigation reset, navigation rail scrolling,
+Select popup outside dismissal, nested ScrollArea wheel scrolling, vertical Tabs rail scrolling,
+horizontal plus vertical Splitter pointer dragging, and long Sidebar internal navigation scrolling.
+Run the gallery package tests before relying on manual dogfood for those paths.
 
 The components package includes runtime smoke coverage for TextInput, RadioGroup, Listbox, Select,
 Combobox, Command, Tabs, and Toolbar keyboard navigation. The focused TextInput test renders a
@@ -206,6 +206,9 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    while the state readout reports the expected axis and reset policy. Scroll each constrained
    ScrollArea once, then continue scrolling the same viewport after the content has moved; it should
    keep moving instead of snapping back to the origin after the redraw caused by the first scroll.
+   The gallery navigation rail should also scroll independently inside its own viewport so deep
+   sections remain reachable on compact windows. The vertical Tabs sample should keep its tab rail
+   scrollable inside the constrained gallery card.
    The Splitter samples should
    show horizontal and vertical panel groups, stable handle affordances, min/max fraction readouts,
    collapsed-panel metadata, and pointer-drag resizing without changing surrounding layout. Drag the

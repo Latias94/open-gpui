@@ -6,6 +6,9 @@ status: active
 
 # Log
 
+- 2026-06-21: Added gallery scroll hardening in `examples/ui-foundation-gallery/src/pages/components/render.rs` and added smoke coverage for navigation rail scrolling, constrained vertical Tabs scrolling, and ScrollArea wheel scrolling in `examples/ui-foundation-gallery/tests/foundation_gallery.rs`.
+- 2026-06-21: Focused gallery and component nextest runs passed, including the existing overlay and splitter runtime gates.
+- 2026-06-21: Updated `docs/verification.md` to record the new Components-page regression gates.
 - 2026-06-20: `f5e5d3a` pushed to `origin/main` for close-recovery test source alignment.
 - 2026-06-20: `54304fc` pushed to `origin/main` for the final close-recovery test fix.
 - 2026-06-20: Remaining dirty files are confined to `crates/gpui_docking/*`; current pass treats them as likely formatting /整理 noise until proven otherwise.

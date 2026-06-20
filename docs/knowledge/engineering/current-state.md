@@ -1,26 +1,30 @@
 ---
 type: Current State
-title: open-gpui docking and gallery state
+title: open-gpui gallery interaction hardening state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
 git_commit: 54304fc
-verified_by: cargo nextest run -p open-gpui-docking --tests
+verified_by:
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_navigation_rail_scrolls_inside_shell components_gallery_smoke_vertical_tabs_scroll_inside_sample components_gallery_smoke_scroll_area_samples_scroll_inside_page components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
+  - cargo nextest run -p open-gpui-ui-components scroll_area_default_handle_survives_reconstructed_component_values scroll_area_reset_key_resets_default_runtime_handle scroll_area_runtime_scrolls_horizontal_and_two_axis_content tabs_vertical_tablist_scrolls_when_constrained
+  - cargo nextest run -p open-gpui-ui-foundation-gallery overlay_gallery_smoke_dismisses_popover_from_outside_press overlay_gallery_smoke_opens_hover_card_from_real_trigger_and_dismisses overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape overlay_gallery_smoke_closes_non_modal_sheet_from_outside_press overlay_gallery_smoke_closes_menu_from_escape_and_outside_press overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses components_gallery_smoke_closes_select_popup_from_outside_press
+  - cargo nextest run -p open-gpui-ui-components overlay_adapter_config_defaults_follow_overlay_kind_policy overlay_open_change_helpers_match_core_policies splitter_runtime_drag_resizes_horizontal_and_vertical_panels splitter_state_normalizes_panel_fractions_and_constraints splitter_resize_delta_clamps_to_adjacent_min_max splitter_runtime_fraction_overrides_still_use_resize_constraints splitter_collapsed_panel_uses_collapsed_fraction
 ---
 
 # Current State
 
-- Goal: 继续审查 open-gpui 的 gallery / docking 行为契约一致性，允许无畏重构，但只收真实问题。
+- Goal: 继续审查 open-gpui 的 gallery / component 行为契约一致性，允许无畏重构，但只收真实问题。
 - Branch: `main`
-- Last verified: `origin/main` 已同步到 `54304fc test(docking): align close recovery focus source`
-- Done: `f5e5d3a` 和 `54304fc` 都已推送，close-recovery 测试源错误已修正。
-- Done: 复核了剩余 `crates/gpui_docking/*` 脏改动，未发现语义差异，基本都是导入重排和换行整理。
-- Done: 当前工作树已清理干净，`main` 与 `origin/main` 对齐。
+- Last verified: 2026-06-21, focused gallery and component nextest commands passed after hardening the Components-page scroll surfaces.
+- Done: Added gallery layout constraints so the navigation rail, ScrollArea sample wrappers, and vertical Tabs sample keep their own overflow surfaces.
+- Done: Added gallery smoke coverage for navigation rail scrolling, constrained vertical Tabs scrolling, and ScrollArea wheel scrolling in the Components page.
+- Done: Confirmed existing overlay and splitter runtime regression gates remain green.
 - Blocked: 暂无。
-- Next action: 如果要继续推进，应新开一轮围绕 scroll / popup / splitter 的计划，而不是回头修旧的 headless 讨论。
+- Next action: stage the plan file, gallery slice, and memory updates; then commit and push if the diff stays clean.
 
 # Citations
 
-[1] Commit `54304fc` - `test(docking): align close recovery focus source`
-[2] Commit `f5e5d3a` - `test(docking): cover close recovery focus source explicitly`
+[1] Plan `docs/plans/2026-06-20-001-refactor-ui-gallery-interaction-hardening-plan.md`
+[2] Gallery regression tests added on 2026-06-21
 [3] Session `019ec6c8-5566-7062-8458-21ebe1360573`

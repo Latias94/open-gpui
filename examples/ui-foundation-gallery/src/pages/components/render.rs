@@ -251,6 +251,7 @@ pub(crate) fn render_components_page(
                                 .child(
                                     div()
                                         .h(px(214.0))
+                                        .min_h(px(0.0))
                                         .flex()
                                         .overflow_hidden()
                                         .rounded_sm()
@@ -583,6 +584,8 @@ pub(crate) fn render_components_page(
                             .child(
                                 div()
                                     .h(px(154.0))
+                                    .min_h(px(0.0))
+                                    .overflow_hidden()
                                     .rounded_sm()
                                     .border_1()
                                     .border_color(rgb(0xe2e4dc))
@@ -1070,8 +1073,9 @@ pub(crate) fn render_components_page(
                                     div()
                                         .when(
                                             state.orientation() == Orientation::Vertical,
-                                            |this| this.h(px(240.0)),
+                                            |this| this.h(px(240.0)).min_h(px(0.0)),
                                         )
+                                        .overflow_hidden()
                                         .child(tabs),
                                 )
                                 .child(component_tabs_state_row(&state))
