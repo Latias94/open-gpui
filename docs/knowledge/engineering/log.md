@@ -5,6 +5,9 @@
 * **Update**: Fixed a `menu.rs` compile regression introduced by a bad enumerate binding in `MenuState::resolve` (`_index` vs `index`). The change unblocked `open-gpui-ui-components` compilation without altering the broader menu/runtime focus work.
 * **Verification**: `cargo check -p open-gpui-ui-components` passed, and `cargo nextest run -p open-gpui-ui-components --test components menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender context_menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender` passed.
 * **Decision**: Keep the UI component contract plan as the active next step. Continue only with evidence-backed behavioral drift, and do not touch unrelated `gpui_docking` files in this thread.
+* **Update**: Re-checked `repo-ref/fret` locally. The scroll/visibility work is split into helper modules (`scroll_area_visibility`, `windowed_rows_surface`) rather than a single new headless boundary, and the pattern reinforces the current-crate productization roadmap.
+* **Verification**: `cargo nextest run -p open-gpui-ui-components` avatar-focused tests and `cargo nextest run -p open-gpui-ui-foundation-gallery official_component_catalog_entries_have_signals_and_sample_selectors components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation` passed.
+* **Decision**: Keep `open-gpui-ui-headless` deferred, keep deleting only evidence-backed duplication inside the current crates, and do not introduce new code changes in this pass.
 
 ## 2026-06-19
 * **Update**: Removed the selection-time `query` payload from `ComboboxSelection`, and simplified the two Combobox runtime selection tests to assert only the real selection contract (`value` / `label`). The component no longer mirrors query text into selection events.
