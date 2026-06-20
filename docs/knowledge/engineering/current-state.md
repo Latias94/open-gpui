@@ -15,9 +15,9 @@ verified_by: cargo nextest run -p open-gpui-docking --tests
 - Last verified: `origin/main` 已同步到 `54304fc test(docking): align close recovery focus source`
 - Done: `f5e5d3a` 和 `54304fc` 都已推送，close-recovery 测试源错误已修正。
 - Done: 复核了剩余 `crates/gpui_docking/*` 脏改动，未发现语义差异，基本都是导入重排和换行整理。
-- In progress: 仍有一批未提交的 `crates/gpui_docking/*` 脏改动，当前判断可作为格式噪音暂缓，不先动。
+- Done: 当前工作树已清理干净，`main` 与 `origin/main` 对齐。
 - Blocked: 暂无。
-- Next action: 根据 `repo-ref/fret` 的参考结果，继续把后续 UI 设计聚焦到薄门面、可见区边界和流式诊断这三层。
+- Next action: 如果要继续推进，应新开一轮围绕 scroll / popup / splitter 的计划，而不是回头修旧的 headless 讨论。
 
 # Citations
 
