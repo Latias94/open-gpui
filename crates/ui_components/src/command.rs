@@ -561,8 +561,6 @@ pub struct CommandState {
     label: String,
     placeholder: String,
     query: String,
-    selected_value: Option<String>,
-    active_value: Option<String>,
     open: bool,
     default_open: bool,
     open_mode: CommandOpenMode,
@@ -781,8 +779,6 @@ impl CommandState {
             label,
             placeholder,
             query,
-            selected_value,
-            active_value: listbox.active_value().map(str::to_owned),
             open,
             default_open,
             open_mode,
@@ -832,12 +828,12 @@ impl CommandState {
 
     /// Returns selected command value.
     pub fn selected_value(&self) -> Option<&str> {
-        self.selected_value.as_deref()
+        self.listbox.selected_value()
     }
 
     /// Returns active command value.
     pub fn active_value(&self) -> Option<&str> {
-        self.active_value.as_deref()
+        self.listbox.active_value()
     }
 
     /// Returns whether the dialog wrapper is open.

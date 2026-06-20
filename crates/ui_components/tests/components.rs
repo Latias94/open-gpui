@@ -3445,7 +3445,6 @@ fn combobox_state_filters_query_without_clearing_selection() {
     assert_eq!(state.filtered_option_count(), 3);
     assert!(state.filtered());
     assert_eq!(state.selected_value(), Some("solid"));
-    assert_eq!(state.selected_label(), Some("Solid"));
     assert_eq!(state.active_value(), Some("react"));
     assert_eq!(state.listbox().role(), Role::ListBox);
     assert_eq!(state.listbox().selected_value(), None);

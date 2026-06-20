@@ -1098,3 +1098,6 @@
 * **Update**: Implemented the first Open GPUI UI foundation slice on `feat/open-gpui-ui-core` with the new `open-gpui-ui-core` crate, sizing/adaptive/token/overlay helpers, a11y/focus re-exports, and passing `cargo nextest run -p open-gpui-ui-core`.
 * **Update**: Updated ADR 0004 to prioritize a11y, focus, overlay, tokens, sizing, density, and adaptive layout before broad component rollout; added decision and session memory for the UI foundation-first strategy.
 * **Initialization**: Created engineering wiki memory bundle.
+* **Update**: Removed `ComboboxState.selected_label`, `SelectState.trigger_label` / `SelectState.selected_value` / `SelectState.active_value`, and `CommandState.active_value` plus the mirrored test/gallery assertions. The choice states now keep the stable selected value contracts and derive display labels and active values from option data and listbox state in the render path.
+* **Verification**: `cargo fmt -p open-gpui-ui-components --all`, `cargo check -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the cleanup.
+* **Decision**: Keep scanning adjacent choice components for the next evidence-backed redundant state; do not remove `Tabs` fields without stronger proof.

@@ -237,9 +237,6 @@ pub struct SelectState {
     open_mode: SelectOpenMode,
     label: String,
     placeholder: String,
-    trigger_label: String,
-    selected_value: Option<String>,
-    active_value: Option<String>,
     placement_side: OverlayPlacementSide,
     placement_alignment: OverlayPlacementAlignment,
     outside_press_policy: OutsidePressPolicy,
@@ -296,16 +293,6 @@ impl SelectState {
             option_descriptors.clone(),
             tokens,
         );
-        let trigger_label = selected_value
-            .and_then(|value| {
-                listbox
-                    .options()
-                    .iter()
-                    .find(|option| option.value() == value && option.focusable())
-            })
-            .map_or_else(|| placeholder.clone(), |option| option.label().to_owned());
-        let selected_value = listbox.selected_value().map(str::to_owned);
-        let active_value = listbox.active_value().map(str::to_owned);
         let presence = if open {
             OverlayPresence::open()
         } else {
@@ -334,9 +321,6 @@ impl SelectState {
             open_mode,
             label,
             placeholder,
-            trigger_label,
-            selected_value,
-            active_value,
             placement_side,
             placement_alignment,
             outside_press_policy,
@@ -388,17 +372,26 @@ impl SelectState {
 
     /// Returns visible trigger label.
     pub fn trigger_label(&self) -> &str {
-        &self.trigger_label
+        self.listbox
+            .selected_value()
+            .and_then(|value| {
+                self.listbox
+                    .options()
+                    .iter()
+                    .find(|option| option.value() == value && option.focusable())
+                    .map(|option| option.label())
+            })
+            .unwrap_or(self.placeholder.as_str())
     }
 
     /// Returns selected option value.
     pub fn selected_value(&self) -> Option<&str> {
-        self.selected_value.as_deref()
+        self.listbox.selected_value()
     }
 
     /// Returns active option value.
     pub fn active_value(&self) -> Option<&str> {
-        self.active_value.as_deref()
+        self.listbox.active_value()
     }
 
     /// Returns preferred placement side.

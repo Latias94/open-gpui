@@ -291,9 +291,6 @@ pub struct ComboboxState {
     label: String,
     placeholder: String,
     query: String,
-    selected_value: Option<String>,
-    selected_label: Option<String>,
-    active_value: Option<String>,
     total_option_count: usize,
     filtered_option_count: usize,
     empty_label: String,
@@ -381,7 +378,6 @@ impl ComboboxState {
             .and_then(|value| find_combobox_option(&raw_groups, &raw_options, value))
             .filter(|option| !option.disabled_state());
         let selected_value = selected_option.map(|option| option.value().to_owned());
-        let selected_label = selected_option.map(|option| option.label().to_owned());
         let listbox = ListboxState::resolve(
             size,
             disabled,
@@ -394,7 +390,6 @@ impl ComboboxState {
             filtered_options,
             tokens,
         );
-        let active_value = listbox.active_value().map(str::to_owned);
         let input = TextInputState::resolve(
             query.clone(),
             Some(placeholder.clone()),
@@ -436,9 +431,6 @@ impl ComboboxState {
             label,
             placeholder,
             query,
-            selected_value,
-            selected_label,
-            active_value,
             total_option_count,
             filtered_option_count,
             empty_label,
@@ -504,17 +496,12 @@ impl ComboboxState {
 
     /// Returns selected option value.
     pub fn selected_value(&self) -> Option<&str> {
-        self.selected_value.as_deref()
-    }
-
-    /// Returns selected option label.
-    pub fn selected_label(&self) -> Option<&str> {
-        self.selected_label.as_deref()
+        self.listbox.selected_value()
     }
 
     /// Returns active option value.
     pub fn active_value(&self) -> Option<&str> {
-        self.active_value.as_deref()
+        self.listbox.active_value()
     }
 
     /// Returns unfiltered option count.

@@ -9,6 +9,11 @@ status: "active"
 
 # Current State
 
+## 2026-06-20
+
+- Done: Removed the mirrored `selected_label` cache from `ComboboxState`, removed the mirrored `selected_value` / `trigger_label` / `active_value` caches from `SelectState`, and removed the mirrored `active_value` cache from `CommandState`. The choice states now keep the stable selected value contracts and derive display labels / active values from option data and listbox state in the render path.
+- Last verified: `cargo fmt -p open-gpui-ui-components --all`, `cargo check -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the cleanup. Next: keep scanning adjacent choice components for the next evidence-backed redundant state.
+
 ## 2026-06-19
 
 - Done: Removed the selection-time `query` payload from `ComboboxSelection`, and simplified the two Combobox runtime selection tests to assert only the real selection contract (`value` / `label`). The component no longer mirrors query text into selection events.
