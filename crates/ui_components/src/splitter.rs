@@ -1,0 +1,801 @@
+//! Splitter component.
+
+use crate::geometry::gpui_px_from_ui;
+use open_gpui::prelude::*;
+use open_gpui::{
+    AnyElement, App, Context, CursorStyle, DefiniteLength, DragMoveEvent, ElementId, Empty, Entity,
+    IntoElement, ParentElement, Pixels, Point, Render, RenderOnce, Styled, Window, div, px,
+    relative, rgb,
+};
+use open_gpui_ui_core::{Orientation, Sizable, Size, UiPx, ui_px};
+
+const EPSILON: f32 = 0.000_1;
+
+/// Panel constraints for a [`Splitter`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitterPanelDescriptor {
+    id: String,
+    fraction: f32,
+    min_fraction: f32,
+    max_fraction: f32,
+    collapsible: bool,
+    collapsed: bool,
+    collapsed_fraction: f32,
+}
+
+impl SplitterPanelDescriptor {
+    /// Creates a panel descriptor with an initial fraction.
+    pub fn new(id: impl Into<String>, fraction: f32) -> Self {
+        Self {
+            id: id.into(),
+            fraction,
+            min_fraction: 0.1,
+            max_fraction: 1.0,
+            collapsible: false,
+            collapsed: false,
+            collapsed_fraction: 0.0,
+        }
+    }
+
+    /// Applies the minimum panel fraction.
+    pub fn min_fraction(mut self, min_fraction: f32) -> Self {
+        self.min_fraction = min_fraction;
+        self
+    }
+
+    /// Applies the maximum panel fraction.
+    pub fn max_fraction(mut self, max_fraction: f32) -> Self {
+        self.max_fraction = max_fraction;
+        self
+    }
+
+    /// Marks the panel as collapsible.
+    pub fn collapsible(mut self, collapsible: bool) -> Self {
+        self.collapsible = collapsible;
+        self
+    }
+
+    /// Seeds whether the panel starts collapsed.
+    pub fn collapsed(mut self, collapsed: bool) -> Self {
+        self.collapsed = collapsed;
+        self
+    }
+
+    /// Applies the fraction used while collapsed.
+    pub fn collapsed_fraction(mut self, collapsed_fraction: f32) -> Self {
+        self.collapsed_fraction = collapsed_fraction;
+        self
+    }
+}
+
+/// Resolved splitter metrics.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SplitterMetrics {
+    handle_thickness: UiPx,
+    handle_hit_size: UiPx,
+    radius: UiPx,
+}
+
+impl SplitterMetrics {
+    /// Resolves metrics from the shared foundation size vocabulary.
+    pub const fn from_size(size: Size) -> Self {
+        Self {
+            handle_thickness: match size {
+                Size::XSmall | Size::Small => ui_px(1.0),
+                Size::Medium | Size::Large => ui_px(2.0),
+            },
+            handle_hit_size: match size {
+                Size::XSmall => ui_px(8.0),
+                Size::Small => ui_px(10.0),
+                Size::Medium => ui_px(12.0),
+                Size::Large => ui_px(14.0),
+            },
+            radius: size.control_radius(),
+        }
+    }
+
+    /// Returns the painted handle thickness.
+    pub const fn handle_thickness(self) -> UiPx {
+        self.handle_thickness
+    }
+
+    /// Returns the pointer hit size reserved for the handle.
+    pub const fn handle_hit_size(self) -> UiPx {
+        self.handle_hit_size
+    }
+
+    /// Returns the splitter corner radius.
+    pub const fn radius(self) -> UiPx {
+        self.radius
+    }
+}
+
+/// Resolved state for one splitter panel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitterPanelState {
+    id: String,
+    fraction: f32,
+    min_fraction: f32,
+    max_fraction: f32,
+    collapsible: bool,
+    collapsed: bool,
+    collapsed_fraction: f32,
+}
+
+impl SplitterPanelState {
+    fn from_descriptor(descriptor: SplitterPanelDescriptor) -> Self {
+        let min_fraction = sanitize_fraction(descriptor.min_fraction).min(1.0);
+        let max_fraction = sanitize_fraction(descriptor.max_fraction)
+            .max(min_fraction)
+            .min(1.0);
+        let collapsible = descriptor.collapsible;
+        let collapsed = collapsible && descriptor.collapsed;
+        let collapsed_fraction = sanitize_fraction(descriptor.collapsed_fraction)
+            .min(max_fraction)
+            .max(0.0);
+        let fraction = if collapsed {
+            collapsed_fraction
+        } else {
+            sanitize_fraction(descriptor.fraction).clamp(min_fraction, max_fraction)
+        };
+
+        Self {
+            id: descriptor.id,
+            fraction,
+            min_fraction,
+            max_fraction,
+            collapsible,
+            collapsed,
+            collapsed_fraction,
+        }
+    }
+
+    /// Returns the stable panel id.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Returns the resolved panel fraction.
+    pub const fn fraction(&self) -> f32 {
+        self.fraction
+    }
+
+    /// Returns the minimum panel fraction.
+    pub const fn min_fraction(&self) -> f32 {
+        self.min_fraction
+    }
+
+    /// Returns the maximum panel fraction.
+    pub const fn max_fraction(&self) -> f32 {
+        self.max_fraction
+    }
+
+    /// Returns whether the panel may collapse.
+    pub const fn collapsible(&self) -> bool {
+        self.collapsible
+    }
+
+    /// Returns whether the panel is currently collapsed.
+    pub const fn collapsed(&self) -> bool {
+        self.collapsed
+    }
+
+    /// Returns the collapsed panel fraction.
+    pub const fn collapsed_fraction(&self) -> f32 {
+        self.collapsed_fraction
+    }
+}
+
+/// Resolved state for one splitter handle.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitterHandleState {
+    index: usize,
+    before_id: String,
+    after_id: String,
+    disabled: bool,
+}
+
+impl SplitterHandleState {
+    /// Returns the zero-based handle index.
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Returns the panel id before the handle.
+    pub fn before_id(&self) -> &str {
+        &self.before_id
+    }
+
+    /// Returns the panel id after the handle.
+    pub fn after_id(&self) -> &str {
+        &self.after_id
+    }
+
+    /// Returns whether resize interaction is disabled for this handle.
+    pub const fn disabled(&self) -> bool {
+        self.disabled
+    }
+}
+
+/// Resolved splitter state used by tests, demos, and rendering.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitterState {
+    group_id: String,
+    orientation: Orientation,
+    size: Size,
+    disabled: bool,
+    panels: Vec<SplitterPanelState>,
+    handles: Vec<SplitterHandleState>,
+    metrics: SplitterMetrics,
+}
+
+impl SplitterState {
+    /// Resolves a splitter state from panel descriptors.
+    pub fn resolve(
+        group_id: impl Into<String>,
+        orientation: Orientation,
+        size: Size,
+        disabled: bool,
+        panels: impl IntoIterator<Item = SplitterPanelDescriptor>,
+    ) -> Self {
+        let mut panels = panels
+            .into_iter()
+            .map(SplitterPanelState::from_descriptor)
+            .collect::<Vec<_>>();
+        normalize_panel_fractions(&mut panels);
+        let handles = resolve_handles(&panels, disabled);
+
+        Self {
+            group_id: group_id.into(),
+            orientation,
+            size,
+            disabled,
+            panels,
+            handles,
+            metrics: SplitterMetrics::from_size(size),
+        }
+    }
+
+    /// Returns the stable splitter group id.
+    pub fn group_id(&self) -> &str {
+        &self.group_id
+    }
+
+    /// Returns the splitter orientation.
+    pub const fn orientation(&self) -> Orientation {
+        self.orientation
+    }
+
+    /// Returns the foundation size.
+    pub const fn size(&self) -> Size {
+        self.size
+    }
+
+    /// Returns whether all resize handles are disabled.
+    pub const fn disabled(&self) -> bool {
+        self.disabled
+    }
+
+    /// Returns resolved panel states.
+    pub fn panels(&self) -> &[SplitterPanelState] {
+        &self.panels
+    }
+
+    /// Returns resolved handle states.
+    pub fn handles(&self) -> &[SplitterHandleState] {
+        &self.handles
+    }
+
+    /// Returns resolved metrics.
+    pub const fn metrics(&self) -> SplitterMetrics {
+        self.metrics
+    }
+
+    /// Returns a new state after applying a fraction delta to a handle.
+    pub fn resized_by(&self, handle_index: usize, delta_fraction: f32) -> Self {
+        if !delta_fraction.is_finite()
+            || delta_fraction.abs() <= EPSILON
+            || handle_index + 1 >= self.panels.len()
+        {
+            return self.clone();
+        }
+
+        let mut next = self.clone();
+        let before = handle_index;
+        let after = handle_index + 1;
+        let delta = if delta_fraction > 0.0 {
+            let grow_room = next.panels[before].max_fraction - next.panels[before].fraction;
+            let shrink_room = next.panels[after].fraction - next.panels[after].min_fraction;
+            delta_fraction
+                .min(grow_room.max(0.0))
+                .min(shrink_room.max(0.0))
+        } else {
+            let shrink_room = next.panels[before].fraction - next.panels[before].min_fraction;
+            let grow_room = next.panels[after].max_fraction - next.panels[after].fraction;
+            -((-delta_fraction)
+                .min(shrink_room.max(0.0))
+                .min(grow_room.max(0.0)))
+        };
+
+        if delta.abs() <= EPSILON {
+            return self.clone();
+        }
+
+        let before_target = next.panels[before].fraction + delta;
+        let after_target = next.panels[after].fraction - delta;
+        let (before_panels, after_panels) = next.panels.split_at_mut(after);
+        if !apply_resize_fraction(&mut before_panels[before], before_target)
+            || !apply_resize_fraction(&mut after_panels[0], after_target)
+        {
+            return self.clone();
+        }
+
+        normalize_panel_fractions(&mut next.panels);
+        next.handles = resolve_handles(&next.panels, next.disabled);
+        next
+    }
+
+    /// Returns a new state with panel fractions overridden by runtime layout state.
+    pub fn with_panel_fractions(&self, fractions: &[f32]) -> Self {
+        if fractions.len() != self.panels.len() {
+            return self.clone();
+        }
+
+        let mut next = self.clone();
+        for (panel, fraction) in next.panels.iter_mut().zip(fractions.iter().copied()) {
+            if panel.collapsed {
+                let fraction = sanitize_fraction(fraction);
+                if fraction + EPSILON < collapsed_restore_threshold(panel) {
+                    panel.fraction = panel.collapsed_fraction;
+                    continue;
+                }
+
+                panel.collapsed = false;
+            }
+
+            panel.fraction =
+                sanitize_fraction(fraction).clamp(panel.min_fraction, panel.max_fraction);
+        }
+        normalize_panel_fractions(&mut next.panels);
+        next.handles = resolve_handles(&next.panels, next.disabled);
+        next
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct SplitterRuntime {
+    panel_ids: Vec<String>,
+    panel_fractions: Vec<f32>,
+    drag_start: Option<SplitterDragStart>,
+}
+
+impl SplitterRuntime {
+    fn sync(&mut self, state: &SplitterState) {
+        let panel_ids = state
+            .panels()
+            .iter()
+            .map(|panel| panel.id().to_owned())
+            .collect::<Vec<_>>();
+
+        if self.panel_ids == panel_ids && self.panel_fractions.len() == state.panels().len() {
+            return;
+        }
+
+        self.panel_ids = panel_ids;
+        self.panel_fractions = state
+            .panels()
+            .iter()
+            .map(SplitterPanelState::fraction)
+            .collect();
+        self.drag_start = None;
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SplitterDragStart {
+    origin: Point<Pixels>,
+    origin_fractions: Vec<f32>,
+    axis_length: Pixels,
+}
+
+#[derive(Clone)]
+struct SplitterDrag {
+    group_id: String,
+    handle_index: usize,
+}
+
+#[derive(Clone)]
+struct SplitterDragPreview;
+
+impl Render for SplitterDragPreview {
+    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+        Empty
+    }
+}
+
+/// A concrete GPUI splitter panel.
+#[derive(IntoElement)]
+pub struct SplitterPanel {
+    descriptor: SplitterPanelDescriptor,
+    content: AnyElement,
+}
+
+impl SplitterPanel {
+    /// Creates a splitter panel.
+    pub fn new(descriptor: SplitterPanelDescriptor, content: impl IntoElement) -> Self {
+        Self {
+            descriptor,
+            content: content.into_any_element(),
+        }
+    }
+
+    /// Returns the panel descriptor.
+    pub fn descriptor(&self) -> SplitterPanelDescriptor {
+        self.descriptor.clone()
+    }
+}
+
+impl RenderOnce for SplitterPanel {
+    fn render(self, _: &mut open_gpui::Window, _: &mut open_gpui::App) -> impl IntoElement {
+        self.content
+    }
+}
+
+/// A concrete GPUI splitter component.
+#[derive(IntoElement)]
+pub struct Splitter {
+    id: ElementId,
+    group_id: String,
+    orientation: Orientation,
+    size: Size,
+    disabled: bool,
+    panels: Vec<SplitterPanel>,
+}
+
+impl Splitter {
+    /// Creates a splitter group.
+    pub fn new(id: impl Into<String>) -> Self {
+        let group_id = id.into();
+
+        Self {
+            id: group_id.clone().into(),
+            group_id,
+            orientation: Orientation::Horizontal,
+            size: Size::Medium,
+            disabled: false,
+            panels: Vec::new(),
+        }
+    }
+
+    /// Applies the splitter orientation.
+    pub fn orientation(mut self, orientation: Orientation) -> Self {
+        self.orientation = orientation;
+        self
+    }
+
+    /// Uses a horizontal row of panels.
+    pub fn horizontal(self) -> Self {
+        self.orientation(Orientation::Horizontal)
+    }
+
+    /// Uses a vertical stack of panels.
+    pub fn vertical(self) -> Self {
+        self.orientation(Orientation::Vertical)
+    }
+
+    /// Disables resize handles.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// Adds a panel to the splitter.
+    pub fn panel(mut self, panel: SplitterPanel) -> Self {
+        self.panels.push(panel);
+        self
+    }
+
+    /// Returns the resolved splitter state.
+    pub fn state(&self) -> SplitterState {
+        SplitterState::resolve(
+            self.group_id.clone(),
+            self.orientation,
+            self.size,
+            self.disabled,
+            self.panels.iter().map(SplitterPanel::descriptor),
+        )
+    }
+}
+
+impl Sizable for Splitter {
+    fn with_size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+}
+
+impl RenderOnce for Splitter {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let base_state = self.state();
+        let runtime =
+            window.use_keyed_state(self.id.clone(), cx, |_, _| SplitterRuntime::default());
+        runtime.update(cx, |runtime, _| runtime.sync(&base_state));
+        let runtime_snapshot = runtime.read(cx).clone();
+        let state = base_state.with_panel_fractions(&runtime_snapshot.panel_fractions);
+        let is_vertical = matches!(state.orientation(), Orientation::Vertical);
+        let metrics = state.metrics();
+        let handles = state.handles().to_vec();
+        let panels = self.panels;
+        let runtime_for_drag = runtime.clone();
+        let drag_state = state.clone();
+
+        div()
+            .id(self.id)
+            .size_full()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
+            .flex()
+            .overflow_hidden()
+            .rounded(gpui_px_from_ui(metrics.radius()))
+            .when(is_vertical, |this| this.flex_col())
+            .when(!is_vertical, |this| this.flex_row())
+            .on_drag_move(move |event: &DragMoveEvent<SplitterDrag>, window, cx| {
+                let drag = event.drag(cx).clone();
+                if drag.group_id != drag_state.group_id() {
+                    return;
+                }
+
+                runtime_for_drag.update(cx, |runtime, _| {
+                    runtime.sync(&drag_state);
+
+                    let axis_length = if is_vertical {
+                        event.bounds.size.height
+                    } else {
+                        event.bounds.size.width
+                    };
+                    if axis_length.as_f32() <= EPSILON {
+                        return;
+                    }
+
+                    if runtime.drag_start.is_none() {
+                        runtime.drag_start = Some(SplitterDragStart {
+                            origin: event.event.position,
+                            origin_fractions: runtime.panel_fractions.clone(),
+                            axis_length,
+                        });
+                    }
+
+                    let Some(start) = runtime.drag_start.clone() else {
+                        return;
+                    };
+
+                    if start.axis_length.as_f32() <= EPSILON {
+                        return;
+                    }
+
+                    let delta_px = if is_vertical {
+                        event.event.position.y - start.origin.y
+                    } else {
+                        event.event.position.x - start.origin.x
+                    };
+                    let delta_fraction = delta_px.as_f32() / start.axis_length.as_f32();
+                    let origin_state = drag_state.with_panel_fractions(&start.origin_fractions);
+                    let resized = origin_state.resized_by(drag.handle_index, delta_fraction);
+                    runtime.panel_fractions = resized
+                        .panels()
+                        .iter()
+                        .map(SplitterPanelState::fraction)
+                        .collect();
+                });
+                window.refresh();
+            })
+            .children(
+                panels
+                    .into_iter()
+                    .enumerate()
+                    .flat_map(move |(index, panel)| {
+                        let panel_state = state.panels()[index].clone();
+                        let mut elements = Vec::with_capacity(2);
+                        elements.push(render_panel(panel_state, panel, is_vertical));
+                        if let Some(handle) = handles.get(index) {
+                            elements.push(render_handle(
+                                state.clone(),
+                                handle.clone(),
+                                runtime.clone(),
+                                metrics,
+                                is_vertical,
+                            ));
+                        }
+                        elements
+                    }),
+            )
+    }
+}
+
+fn render_panel(state: SplitterPanelState, panel: SplitterPanel, is_vertical: bool) -> AnyElement {
+    let panel_selector = format!("splitter-panel:{}", state.id());
+    div()
+        .id(format!("splitter-panel:{}", state.id()))
+        .debug_selector(move || panel_selector)
+        .min_w(px(0.0))
+        .min_h(px(0.0))
+        .overflow_hidden()
+        .flex()
+        .flex_col()
+        .flex_grow(0.0)
+        .flex_shrink(0.0)
+        .flex_basis(DefiniteLength::from(relative(state.fraction())))
+        .when(state.collapsed(), |this| this.opacity(0.0))
+        .when(is_vertical, |this| this.w_full())
+        .when(!is_vertical, |this| this.h_full())
+        .child(panel)
+        .into_any_element()
+}
+
+fn render_handle(
+    splitter_state: SplitterState,
+    state: SplitterHandleState,
+    runtime: Entity<SplitterRuntime>,
+    metrics: SplitterMetrics,
+    is_vertical: bool,
+) -> AnyElement {
+    let cursor = if state.disabled() {
+        CursorStyle::OperationNotAllowed
+    } else if is_vertical {
+        CursorStyle::ResizeRow
+    } else {
+        CursorStyle::ResizeColumn
+    };
+
+    div()
+        .id(format!("splitter-handle:{}", state.index()))
+        .debug_selector({
+            let group_id = splitter_state.group_id().to_owned();
+            let handle_index = state.index();
+            move || format!("splitter:{group_id}:handle:{handle_index}")
+        })
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor(cursor)
+        .when(state.disabled(), |this| this.opacity(0.48))
+        .when(!state.disabled(), |this| {
+            let drag_runtime = runtime.clone();
+            let drag_state = splitter_state.clone();
+            let group_id = splitter_state.group_id().to_owned();
+            let handle_index = state.index();
+
+            this.on_drag(
+                SplitterDrag {
+                    group_id,
+                    handle_index,
+                },
+                move |_, _, _, cx| {
+                    cx.stop_propagation();
+                    drag_runtime.update(cx, |runtime, _| {
+                        runtime.sync(&drag_state);
+                        runtime.drag_start = None;
+                    });
+                    cx.new(|_| SplitterDragPreview)
+                },
+            )
+        })
+        .when(is_vertical, |this| {
+            this.w_full().h(gpui_px_from_ui(metrics.handle_hit_size()))
+        })
+        .when(!is_vertical, |this| {
+            this.h_full().w(gpui_px_from_ui(metrics.handle_hit_size()))
+        })
+        .child(
+            div()
+                .rounded_sm()
+                .bg(rgb(0xc8cdc2))
+                .when(is_vertical, |this| {
+                    this.w_full().h(gpui_px_from_ui(metrics.handle_thickness()))
+                })
+                .when(!is_vertical, |this| {
+                    this.h_full().w(gpui_px_from_ui(metrics.handle_thickness()))
+                }),
+        )
+        .into_any_element()
+}
+
+fn sanitize_fraction(fraction: f32) -> f32 {
+    if fraction.is_finite() {
+        fraction.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+fn collapsed_restore_threshold(panel: &SplitterPanelState) -> f32 {
+    panel.min_fraction.max(panel.collapsed_fraction)
+}
+
+fn apply_resize_fraction(panel: &mut SplitterPanelState, fraction: f32) -> bool {
+    let fraction = sanitize_fraction(fraction);
+    if panel.collapsed {
+        if fraction + EPSILON < collapsed_restore_threshold(panel) {
+            panel.fraction = panel.collapsed_fraction;
+            return false;
+        }
+
+        panel.collapsed = false;
+    }
+
+    panel.fraction = fraction.clamp(panel.min_fraction, panel.max_fraction);
+    true
+}
+
+fn normalize_panel_fractions(panels: &mut [SplitterPanelState]) {
+    if panels.is_empty() {
+        return;
+    }
+
+    fit_panel_sum(panels, 1.0);
+    let sum: f32 = panels.iter().map(|panel| panel.fraction).sum();
+    if sum.is_finite() && sum > EPSILON {
+        let diff = 1.0 - sum;
+        if diff.abs() > EPSILON
+            && let Some(panel) = panels.iter_mut().rev().find(|panel| !panel.collapsed)
+        {
+            panel.fraction = (panel.fraction + diff).clamp(panel.min_fraction, panel.max_fraction);
+        }
+    }
+}
+
+fn fit_panel_sum(panels: &mut [SplitterPanelState], target: f32) {
+    for _ in 0..8 {
+        let sum: f32 = panels.iter().map(|panel| panel.fraction).sum();
+        let diff = target - sum;
+        if !diff.is_finite() || diff.abs() <= EPSILON {
+            return;
+        }
+
+        if diff > 0.0 {
+            let room: f32 = panels
+                .iter()
+                .filter(|panel| !panel.collapsed)
+                .map(|panel| (panel.max_fraction - panel.fraction).max(0.0))
+                .sum();
+            if room <= EPSILON {
+                return;
+            }
+
+            for panel in panels.iter_mut().filter(|panel| !panel.collapsed) {
+                let panel_room = (panel.max_fraction - panel.fraction).max(0.0);
+                let take = diff * (panel_room / room);
+                panel.fraction = (panel.fraction + take).min(panel.max_fraction);
+            }
+        } else {
+            let room: f32 = panels
+                .iter()
+                .filter(|panel| !panel.collapsed)
+                .map(|panel| (panel.fraction - panel.min_fraction).max(0.0))
+                .sum();
+            if room <= EPSILON {
+                return;
+            }
+
+            for panel in panels.iter_mut().filter(|panel| !panel.collapsed) {
+                let panel_room = (panel.fraction - panel.min_fraction).max(0.0);
+                let take = (-diff) * (panel_room / room);
+                panel.fraction = (panel.fraction - take).max(panel.min_fraction);
+            }
+        }
+    }
+}
+
+fn resolve_handles(panels: &[SplitterPanelState], disabled: bool) -> Vec<SplitterHandleState> {
+    panels
+        .windows(2)
+        .enumerate()
+        .map(|(index, pair)| SplitterHandleState {
+            index,
+            before_id: pair[0].id.clone(),
+            after_id: pair[1].id.clone(),
+            disabled: disabled || (pair[0].collapsed && pair[1].collapsed),
+        })
+        .collect()
+}

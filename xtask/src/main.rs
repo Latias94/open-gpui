@@ -59,7 +59,20 @@ fn verify(root: &Path) -> Result<(), ()> {
     run(root, "cargo", &["fmt", "--all", "--check"])?;
     run(root, "cargo", &["check", "--workspace"])?;
     run(root, "cargo", &["check", "-p", "open-gpui-smoke-native"])?;
+    run_ui_component_tests(root)?;
     scan_import_boundary(root)?;
+    Ok(())
+}
+
+fn run_ui_component_tests(root: &Path) -> Result<(), ()> {
+    for package in [
+        "open-gpui-ui-core",
+        "open-gpui-ui-components",
+        "open-gpui-ui-foundation-gallery",
+    ] {
+        run(root, "cargo", &["nextest", "run", "-p", package])?;
+    }
+
     Ok(())
 }
 

@@ -1201,9 +1201,36 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set the nodes this element controls.
+    fn aria_controls(mut self, controls: impl IntoIterator<Item = accesskit::NodeId>) -> Self {
+        self.interactivity().aria_controls = Some(controls.into_iter().collect());
+        self
+    }
+
+    /// Set the nodes that label this element.
+    fn aria_labelled_by(
+        mut self,
+        labelled_by: impl IntoIterator<Item = accesskit::NodeId>,
+    ) -> Self {
+        self.interactivity().aria_labelled_by = Some(labelled_by.into_iter().collect());
+        self
+    }
+
     /// Set the selected state for this element.
     fn aria_selected(mut self, selected: bool) -> Self {
         self.interactivity().aria_selected = Some(selected);
+        self
+    }
+
+    /// Set the required state for this element.
+    fn aria_required(mut self, required: bool) -> Self {
+        self.interactivity().aria_required = Some(required);
+        self
+    }
+
+    /// Set the disabled state for this element.
+    fn aria_disabled(mut self, disabled: bool) -> Self {
+        self.interactivity().aria_disabled = Some(disabled);
         self
     }
 
@@ -1863,7 +1890,11 @@ pub struct Interactivity {
         Vec<(accesskit::Action, crate::window::a11y::A11yActionListener)>,
     pub(crate) override_role: Option<accesskit::Role>,
     pub(crate) aria_label: Option<SharedString>,
+    pub(crate) aria_controls: Option<Vec<accesskit::NodeId>>,
+    pub(crate) aria_labelled_by: Option<Vec<accesskit::NodeId>>,
     pub(crate) aria_selected: Option<bool>,
+    pub(crate) aria_required: Option<bool>,
+    pub(crate) aria_disabled: Option<bool>,
     pub(crate) aria_expanded: Option<bool>,
     pub(crate) aria_toggled: Option<accesskit::Toggled>,
     pub(crate) aria_numeric_value: Option<f64>,
@@ -2172,6 +2203,12 @@ impl Interactivity {
                         .next_frame
                         .debug_bounds
                         .insert(debug_selector.clone(), bounds);
+                    if let Some(focus_handle) = &self.tracked_focus_handle {
+                        window
+                            .next_frame
+                            .debug_focus_handles
+                            .insert(debug_selector.clone(), focus_handle.id);
+                    }
                 }
 
                 self.paint_hover_group_handler(window, cx);
@@ -3057,8 +3094,28 @@ impl Interactivity {
         if let Some(label) = &self.aria_label {
             node.set_label(label.to_string());
         }
+        if let Some(controls) = &self.aria_controls {
+            node.set_controls(controls.clone());
+        }
+        if let Some(labelled_by) = &self.aria_labelled_by {
+            node.set_labelled_by(labelled_by.clone());
+        }
         if let Some(selected) = self.aria_selected {
             node.set_selected(selected);
+        }
+        if let Some(required) = self.aria_required {
+            if required {
+                node.set_required();
+            } else {
+                node.clear_required();
+            }
+        }
+        if let Some(disabled) = self.aria_disabled {
+            if disabled {
+                node.set_disabled();
+            } else {
+                node.clear_disabled();
+            }
         }
         if let Some(expanded) = self.aria_expanded {
             node.set_expanded(expanded);

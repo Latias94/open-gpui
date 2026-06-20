@@ -1,0 +1,31 @@
+[package]
+name = "open-gpui-ui-foundation-gallery"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+publish = false
+description = "Pure foundation gallery example for Open GPUI UI core."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "open-gpui-ui-foundation-gallery"
+path = "src/main.rs"
+
+[dependencies]
+open_gpui.workspace = true
+open_gpui_platform.workspace = true
+open_gpui_ui_components.workspace = true
+open_gpui_ui_core.workspace = true
+
+[dev-dependencies]
+open_gpui = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

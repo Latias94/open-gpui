@@ -17,6 +17,8 @@ members = [
     "crates/http_client",
     "crates/http_client_tls",
     "crates/media",
+    "crates/ui_components",
+    "crates/ui_core",
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/reqwest_client",
@@ -28,6 +30,7 @@ members = [
     "examples/canvas-jellyflow",
     "examples/docking-native",
     "examples/smoke-native",
+    "examples/ui-foundation-gallery",
     "xtask",
 ]
 exclude = [
@@ -51,6 +54,8 @@ open_gpui_canvas = { package = "open-gpui-canvas", version = "0.1.0", path = "cr
 open_gpui_collections = { package = "open-gpui-collections", version = "0.1.0", path = "crates/collections" }
 open_gpui_docking = { package = "open-gpui-docking", version = "0.1.0", path = "crates/gpui_docking" }
 open_gpui_core_util = { package = "open-gpui-core-util", version = "0.1.0", path = "crates/gpui_util" }
+open_gpui_ui_components = { package = "open-gpui-ui-components", version = "0.1.0", path = "crates/ui_components" }
+open_gpui_ui_core = { package = "open-gpui-ui-core", version = "0.1.0", path = "crates/ui_core" }
 open_gpui_http_client = { package = "open-gpui-http-client", version = "0.1.0", path = "crates/http_client" }
 open_gpui_http_client_tls = { package = "open-gpui-http-client-tls", version = "0.1.0", path = "crates/http_client_tls" }
 open_gpui_linux = { package = "open-gpui-linux", version = "0.1.0", path = "crates/gpui_linux", default-features = false }

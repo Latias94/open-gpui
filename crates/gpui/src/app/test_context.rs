@@ -904,8 +904,31 @@ impl VisualTestContext {
     }
 
     /// debug_bounds returns the bounds of the element with the given selector.
-    pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
+    pub fn debug_bounds(&mut self, selector: &str) -> Option<Bounds<Pixels>> {
         self.update(|window, _| window.rendered_frame.debug_bounds.get(selector).copied())
+    }
+
+    /// Returns whether the element with the given debug selector owns the current focus.
+    pub fn debug_selector_is_focused(&mut self, selector: &str) -> bool {
+        self.update(|window, _| {
+            let Some(focus_id) = window.rendered_frame.debug_focus_handles.get(selector) else {
+                return false;
+            };
+            window.focus == Some(*focus_id)
+        })
+    }
+
+    /// Returns the first debug selector associated with the currently focused element.
+    pub fn focused_debug_selector(&mut self) -> Option<String> {
+        self.update(|window, _| {
+            let focused = window.focus?;
+            window
+                .rendered_frame
+                .debug_focus_handles
+                .iter()
+                .filter_map(|(selector, focus_id)| (*focus_id == focused).then(|| selector.clone()))
+                .min()
+        })
     }
 
     /// Draw an element to the window. Useful for simulating events or actions
@@ -1161,8 +1184,41 @@ impl AnyWindowHandle {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Empty, PathPromptOptions, PlatformHoveredWindow, TestAppContext, px, size};
+    use crate::{
+        Context, Empty, FocusHandle, InteractiveElement, IntoElement, ParentElement,
+        PathPromptOptions, PlatformHoveredWindow, Render, StatefulInteractiveElement,
+        TestAppContext, VisualContext, div, px, size,
+    };
     use std::path::PathBuf;
+
+    struct FocusDebugView {
+        first: FocusHandle,
+        second: FocusHandle,
+    }
+
+    impl Render for FocusDebugView {
+        fn render(&mut self, _: &mut crate::Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .child(
+                    div()
+                        .id("first")
+                        .debug_selector(|| "focus-debug:first".into())
+                        .focusable()
+                        .tab_stop(true)
+                        .track_focus(&self.first)
+                        .child("First"),
+                )
+                .child(
+                    div()
+                        .id("second")
+                        .debug_selector(|| "focus-debug:second".into())
+                        .focusable()
+                        .tab_stop(true)
+                        .track_focus(&self.second)
+                        .child("Second"),
+                )
+        }
+    }
 
     #[open_gpui::test]
     async fn test_simulate_path_prompt_response(cx: &mut TestAppContext) {
@@ -1236,5 +1292,41 @@ mod tests {
             cx.update(|app| app.hovered_window()),
             PlatformHoveredWindow::NoWindow
         );
+    }
+
+    #[open_gpui::test]
+    fn test_focused_debug_selector_tracks_rendered_focus(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, cx| FocusDebugView {
+            first: cx.focus_handle(),
+            second: cx.focus_handle(),
+        });
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+        assert_eq!(cx.focused_debug_selector(), None);
+        assert!(!cx.debug_selector_is_focused("focus-debug:first"));
+
+        cx.update_window_entity(&view, |view, window, cx| view.first.focus(window, cx));
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+        assert_eq!(
+            cx.focused_debug_selector().as_deref(),
+            Some("focus-debug:first")
+        );
+        assert!(cx.debug_selector_is_focused("focus-debug:first"));
+        assert!(!cx.debug_selector_is_focused("focus-debug:second"));
+
+        cx.update_window_entity(&view, |view, window, cx| view.second.focus(window, cx));
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+        assert_eq!(
+            cx.focused_debug_selector().as_deref(),
+            Some("focus-debug:second")
+        );
+        assert!(cx.debug_selector_is_focused("focus-debug:second"));
+        assert!(!cx.debug_selector_is_focused("focus-debug:first"));
     }
 }
