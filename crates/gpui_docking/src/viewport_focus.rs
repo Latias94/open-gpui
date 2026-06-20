@@ -1,4 +1,66 @@
-use crate::DockItemId;
+use crate::{DockItemId, DockSpaceId};
+use std::collections::HashMap;
+
+/// Last dock-panel focus state used to restore focus after platform viewport activation.
+#[derive(Debug, Default)]
+pub(crate) struct DockViewportFocusCoordinator {
+    focus_by_space: HashMap<DockSpaceId, DockViewportRecordedFocus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DockViewportRecordedFocus {
+    Panel(DockItemId),
+    NoPanelFocus,
+}
+
+impl DockViewportFocusCoordinator {
+    pub(crate) fn record_panel_focus(&mut self, space: DockSpaceId, item: DockItemId) {
+        self.focus_by_space
+            .insert(space, DockViewportRecordedFocus::Panel(item));
+    }
+
+    pub(crate) fn record_no_panel_focus(&mut self, space: &DockSpaceId) {
+        self.focus_by_space
+            .insert(space.clone(), DockViewportRecordedFocus::NoPanelFocus);
+    }
+
+    pub(crate) fn remove_space(&mut self, space: &DockSpaceId) {
+        self.focus_by_space.remove(space);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn had_panel_focus(&self, space: &DockSpaceId) -> Option<bool> {
+        self.focus_by_space
+            .get(space)
+            .map(|focus| matches!(focus, DockViewportRecordedFocus::Panel(_)))
+    }
+
+    pub(crate) fn focused_panel(&self, space: &DockSpaceId) -> Option<&DockItemId> {
+        match self.focus_by_space.get(space) {
+            Some(DockViewportRecordedFocus::Panel(item)) => Some(item),
+            Some(DockViewportRecordedFocus::NoPanelFocus) | None => None,
+        }
+    }
+
+    pub(crate) fn request_for_platform_activation(
+        &self,
+        space: &DockSpaceId,
+        mouse_down: bool,
+    ) -> Option<DockViewportFocusRequest> {
+        if mouse_down {
+            return None;
+        }
+        match self.focus_by_space.get(space) {
+            Some(DockViewportRecordedFocus::Panel(item)) => {
+                Some(DockViewportFocusRequest::panel(item.clone()))
+            }
+            Some(DockViewportRecordedFocus::NoPanelFocus) => {
+                Some(DockViewportFocusRequest::no_panel_focus())
+            }
+            None => None,
+        }
+    }
+}
 
 /// Explicit viewport focus request tracked by activation and render state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7,8 +69,6 @@ pub enum DockViewportFocusRequest {
     Panel(DockItemId),
     /// Clear focus from dock panels without falling back to another item.
     NoPanelFocus,
-    /// Restore the most recently focused visible dock item, or clear focus if none remains.
-    RestoreLastFocused,
 }
 
 impl DockViewportFocusRequest {
@@ -17,17 +77,63 @@ impl DockViewportFocusRequest {
         Self::Panel(item.into())
     }
 
-    /// Requests focus restoration from the runtime's recorded visible panel history.
-    pub fn restore_last_focused() -> Self {
-        Self::RestoreLastFocused
-    }
-
     /// Requests clearing dock panel focus without restoring another panel.
     pub fn no_panel_focus() -> Self {
         Self::NoPanelFocus
     }
+}
 
-    pub(crate) fn panel_or_no_panel_focus(item: Option<DockItemId>) -> Self {
-        item.map_or_else(Self::no_panel_focus, Self::panel)
+impl PartialEq<DockViewportFocusRequest> for DockViewportFocusCommand {
+    fn eq(&self, other: &DockViewportFocusRequest) -> bool {
+        self.request == *other
+    }
+}
+
+impl PartialEq<DockViewportFocusCommand> for DockViewportFocusRequest {
+    fn eq(&self, other: &DockViewportFocusCommand) -> bool {
+        *self == *other.request()
+    }
+}
+
+/// Origin of a pending viewport focus command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockViewportFocusCommandSource {
+    /// Platform window activation requested focus restoration.
+    PlatformActivation,
+    /// A viewport drop, tear-off, or explicit caller requested focus.
+    ViewportActivation,
+    /// A platform close moved content back into another viewport.
+    CloseRecovery,
+}
+
+/// Pending viewport focus command consumed by the next host render.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockViewportFocusCommand {
+    source: DockViewportFocusCommandSource,
+    request: DockViewportFocusRequest,
+}
+
+impl DockViewportFocusCommand {
+    pub(crate) fn new(
+        source: DockViewportFocusCommandSource,
+        request: DockViewportFocusRequest,
+    ) -> Self {
+        Self { source, request }
+    }
+
+    pub(crate) fn platform_activation(request: DockViewportFocusRequest) -> Self {
+        Self::new(DockViewportFocusCommandSource::PlatformActivation, request)
+    }
+
+    pub(crate) fn viewport_activation(request: DockViewportFocusRequest) -> Self {
+        Self::new(DockViewportFocusCommandSource::ViewportActivation, request)
+    }
+
+    pub(crate) fn request(&self) -> &DockViewportFocusRequest {
+        &self.request
+    }
+
+    pub(crate) fn source(&self) -> DockViewportFocusCommandSource {
+        self.source
     }
 }

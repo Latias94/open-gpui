@@ -1,5 +1,3 @@
-#[cfg(test)]
-use crate::DockViewportSnapshot;
 use crate::{
     DockSpaceId, DockViewportAdapter, DockViewportUnregisterOutcome, DockViewportUnregisterReason,
 };
@@ -32,21 +30,6 @@ impl DockViewportRegisterOutcome {
 }
 
 impl DockViewportAdapter {
-    /// Registers or replaces the window for a logical dock space.
-    ///
-    /// A window can belong to only one dock space at a time. Registering the same window for a
-    /// different space removes its previous space mapping.
-    #[cfg(test)]
-    pub(crate) fn register_viewport(
-        &mut self,
-        space: impl Into<DockSpaceId>,
-        window: impl Into<AnyWindowHandle>,
-    ) -> Option<DockViewportSnapshot> {
-        let space = space.into();
-        let window = window.into();
-        self.registry.register(space, window)
-    }
-
     /// Registers or replaces the window for a logical dock space and reports every removed mapping.
     ///
     /// A single registration can replace two mappings: the previous window for `space`, and the

@@ -1,12 +1,13 @@
 use crate::{
-    DockHost, DockNodeId, DockPolicy,
+    DockEdgeDockSizing, DockHost, DockNodeId, DockPolicy, DropZone,
     drag::DockDragPayload,
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     drop_scene_fact,
+    geometry::DockDropGuideStyle,
     host_interaction_outcome::DockHostInteractionOutcome,
     workspace_move_validation::dock_target_validator,
 };
-use open_gpui::{Bounds, Context, Pixels, Point, Window};
+use open_gpui::{Bounds, Context, Pixels, Point, Size, Window};
 
 impl DockHost {
     pub(crate) fn begin_host_drop_scene_interaction(
@@ -15,20 +16,32 @@ impl DockHost {
         position: Point<Pixels>,
         cx: &Context<Self>,
     ) -> DockHostInteractionOutcome {
-        let (policy, payload_classes) = self.with_workspace(cx, |workspace| {
-            (
-                workspace.policy().clone(),
-                workspace.payload_dock_classes_for_drag_payload(payload),
-            )
-        });
+        let (policy, payload_classes, drop_guide_style, graph) =
+            self.with_workspace(cx, |workspace| {
+                (
+                    workspace.policy().clone(),
+                    workspace.payload_dock_classes_for_drag_payload(payload),
+                    workspace.options().drop_guide_style,
+                    workspace.graph().clone(),
+                )
+            });
         let default_space = self.space().clone();
         let target_validator = dock_target_validator(&default_space, &payload_classes, &policy);
+        let edge_plan_space = default_space.clone();
+        let edge_plan_resolver =
+            move |target_node: DockNodeId, zone: DropZone, sizing: DockEdgeDockSizing| {
+                graph.edge_dock_plan_with_sizing(&edge_plan_space, target_node, zone, sizing)
+            };
+        let payload_size = self.active_payload_drag_size(payload);
         DockHostInteractionOutcome::from_session_changed(
             self.interaction_mut().begin_drop_scene_with_validator(
                 DockHostDropScene::new(position)
+                    .with_payload_size(payload_size)
+                    .with_drop_guide_style(drop_guide_style)
                     .excluding_node(payload.excluded_node_for_drop_scene()),
                 &policy,
                 Some(&target_validator),
+                Some(&edge_plan_resolver),
             ),
         )
     }
@@ -41,21 +54,33 @@ impl DockHost {
         window: &Window,
         cx: &Context<Self>,
     ) -> DockHostInteractionOutcome {
-        let (policy, payload_classes) = self.with_workspace(cx, |workspace| {
-            (
-                workspace.policy().clone(),
-                workspace.payload_dock_classes_for_drag_payload(payload),
-            )
-        });
+        let (policy, payload_classes, drop_guide_style, graph) =
+            self.with_workspace(cx, |workspace| {
+                (
+                    workspace.policy().clone(),
+                    workspace.payload_dock_classes_for_drag_payload(payload),
+                    workspace.options().drop_guide_style,
+                    workspace.graph().clone(),
+                )
+            });
         let default_space = self.space().clone();
         let target_validator = dock_target_validator(&default_space, &payload_classes, &policy);
+        let edge_plan_space = default_space.clone();
+        let edge_plan_resolver =
+            move |target_node: DockNodeId, zone: DropZone, sizing: DockEdgeDockSizing| {
+                graph.edge_dock_plan_with_sizing(&edge_plan_space, target_node, zone, sizing)
+            };
+        let payload_size = self.active_payload_drag_size(payload);
         DockHostInteractionOutcome::from_session_changed(self.push_drop_scene_fact_interaction(
             position,
+            payload_size,
+            drop_guide_style,
             payload.excluded_node_for_drop_scene(),
             fact,
             window,
             &policy,
             Some(&target_validator),
+            Some(&edge_plan_resolver),
         ))
     }
 
@@ -93,11 +118,14 @@ impl DockHost {
     fn push_drop_scene_fact_interaction(
         &mut self,
         position: Point<Pixels>,
+        payload_size: Option<Size<Pixels>>,
+        drop_guide_style: DockDropGuideStyle,
         excluded_tabs: Option<DockNodeId>,
         fact: DockHostDropSceneFact,
         window: &Window,
         policy: &DockPolicy,
         target_validator: Option<&crate::drop_target::DockDropTargetValidator<'_>>,
+        edge_plan_resolver: Option<&crate::drop_target::DockEdgePlanResolver<'_>>,
     ) -> bool {
         let viewport_runtime = self.viewport_runtime().clone();
         let frame = self.interaction().viewport_host_scene_frame().cloned();
@@ -111,10 +139,23 @@ impl DockHost {
         }
         self.interaction_mut().push_drop_scene_fact_with_validator(
             position,
+            payload_size,
+            drop_guide_style,
             excluded_tabs,
             fact,
             policy,
             target_validator,
+            edge_plan_resolver,
         )
+    }
+
+    fn active_payload_drag_size(&self, payload: &DockDragPayload) -> Option<Size<Pixels>> {
+        let drag_session = self.active_payload_drag_session(payload);
+        self.active_payload_drag_tear_off_geometry(drag_session.as_ref())
+            .map(|geometry| {
+                geometry
+                    .preferred_size()
+                    .unwrap_or_else(|| geometry.source_bounds().size)
+            })
     }
 }

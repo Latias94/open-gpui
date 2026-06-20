@@ -163,6 +163,9 @@ pub enum DockActionApplyError {
         /// Platform or GPUI error message returned while opening the window.
         message: String,
     },
+    /// The tear-off route did not carry an authoritative platform-window placement.
+    #[error("tear-off viewport placement is unavailable")]
+    TearOffViewportPlacementUnavailable,
     /// A routed drop payload no longer matched the recorded drag source.
     #[error("dock drop payload for dock space {space} and tabs node {tabs:?} did not match")]
     DropPayloadMismatch {

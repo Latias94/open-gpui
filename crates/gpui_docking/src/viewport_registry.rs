@@ -1,6 +1,6 @@
 use crate::DockSpaceId;
 use crate::DockViewportIdentity;
-use open_gpui::{AnyWindowHandle, Bounds, DisplayId, Pixels, WindowBounds, WindowId};
+use open_gpui::{AnyWindowHandle, App, Bounds, DisplayId, Pixels, Window, WindowBounds, WindowId};
 use std::collections::{BTreeMap, HashMap};
 
 /// State of a registered platform viewport from the routing model's perspective.
@@ -30,6 +30,10 @@ pub(crate) enum DockViewportRouteUnavailableReason {
     RegisteredNotReady,
     /// Route facts exist but were invalidated by a platform change.
     Stale(DockViewportStaleReason),
+    /// The latest platform facts say the window is minimized.
+    Minimized,
+    /// The latest platform facts say the window is a native no-input/click-through viewport.
+    NoInputPassThrough,
     /// Lifecycle claims readiness, but one of the required platform/host fact snapshots is absent.
     MissingRouteFacts,
 }
@@ -39,7 +43,7 @@ pub(crate) enum DockViewportRouteUnavailableReason {
 pub(crate) struct DockViewportLifecycleMachine {
     state: DockViewportLifecycleState,
     facts_generation: u64,
-    focus_stamp: Option<u64>,
+    recent_focus_stamp: Option<u64>,
 }
 
 impl Default for DockViewportLifecycleMachine {
@@ -47,7 +51,7 @@ impl Default for DockViewportLifecycleMachine {
         Self {
             state: DockViewportLifecycleState::RegisteredNotReady,
             facts_generation: 0,
-            focus_stamp: None,
+            recent_focus_stamp: None,
         }
     }
 }
@@ -62,8 +66,8 @@ impl DockViewportLifecycleMachine {
         self.facts_generation
     }
 
-    fn focus_stamp(&self) -> u64 {
-        self.focus_stamp.unwrap_or(0)
+    fn recent_focus_stamp(&self) -> u64 {
+        self.recent_focus_stamp.unwrap_or(0)
     }
 
     fn route_unavailable_reason(&self) -> Option<DockViewportRouteUnavailableReason> {
@@ -103,8 +107,17 @@ impl DockViewportLifecycleMachine {
         true
     }
 
-    fn record_focus(&mut self, focus_stamp: u64) {
-        self.focus_stamp = Some(focus_stamp);
+    fn cancel_platform_close_request(&mut self) -> bool {
+        if !self.is_platform_close_requested() {
+            return false;
+        }
+        self.state = DockViewportLifecycleState::Stale(DockViewportStaleReason::WindowFactsChanged);
+        self.advance_generation();
+        true
+    }
+
+    fn record_recent_focus(&mut self, recent_focus_stamp: u64) {
+        self.recent_focus_stamp = Some(recent_focus_stamp);
     }
 
     fn advance_generation(&mut self) {
@@ -119,26 +132,126 @@ pub(crate) struct DockViewportWindowFacts {
     pub(crate) display_id: Option<DisplayId>,
     /// Platform window state suitable for placement persistence.
     pub(crate) window_bounds: WindowBounds,
-    /// Current window rectangle in global screen coordinates.
-    pub(crate) screen_bounds: Bounds<Pixels>,
+    /// Current window rectangle tagged with the coordinate space the backend can actually report.
+    pub(crate) current_bounds: DockViewportWindowBoundsFrame,
+    /// Current platform pointer-routing state.
+    pub(crate) pointer_routing: DockViewportPointerRouting,
+}
+
+/// Coordinate frame for a live viewport window rectangle.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum DockViewportWindowBoundsFrame {
+    /// Bounds are in a shared desktop coordinate space and may authorize global hit testing.
+    GlobalScreen(Bounds<Pixels>),
+    /// Bounds are only meaningful in the receiver window's local coordinate space.
+    WindowLocal(Bounds<Pixels>),
+}
+
+impl DockViewportWindowBoundsFrame {
+    pub(crate) fn global_screen_bounds(self) -> Option<Bounds<Pixels>> {
+        match self {
+            Self::GlobalScreen(bounds) => Some(bounds),
+            Self::WindowLocal(_) => None,
+        }
+    }
+
+    pub(crate) fn size(self) -> open_gpui::Size<Pixels> {
+        match self {
+            Self::GlobalScreen(bounds) | Self::WindowLocal(bounds) => bounds.size,
+        }
+    }
+}
+
+/// Current platform pointer-routing state for a viewport window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockViewportPointerRouting {
+    /// The window can be hit-tested and routed normally.
+    Routable,
+    /// The window is minimized and must not authorize a route or no-input underlay.
+    Minimized,
+    /// The window is explicitly click-through, so routing may pass through it with backend support.
+    NoInputPassThrough,
+}
+
+/// Platform-window requests reported by the backend and not yet consumed by a fresh host scene.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct DockViewportPlatformRequests {
+    /// The platform has reported an authoritative live resize for this viewport window.
+    pub(crate) resize_requested: bool,
 }
 
 impl DockViewportWindowFacts {
+    #[cfg(test)]
     pub(crate) fn new(
         display_id: Option<DisplayId>,
         window_bounds: WindowBounds,
         screen_bounds: Bounds<Pixels>,
     ) -> Self {
+        Self::with_current_bounds(
+            display_id,
+            window_bounds,
+            DockViewportWindowBoundsFrame::GlobalScreen(screen_bounds),
+        )
+    }
+
+    pub(crate) fn with_current_bounds(
+        display_id: Option<DisplayId>,
+        window_bounds: WindowBounds,
+        current_bounds: DockViewportWindowBoundsFrame,
+    ) -> Self {
         Self {
             display_id,
             window_bounds,
-            screen_bounds,
+            current_bounds,
+            pointer_routing: DockViewportPointerRouting::Routable,
         }
+    }
+
+    pub(crate) fn from_window(window: &Window, cx: &App) -> Self {
+        let current_bounds = if cx.viewport_capabilities().global_window_bounds {
+            DockViewportWindowBoundsFrame::GlobalScreen(window.bounds())
+        } else {
+            DockViewportWindowBoundsFrame::WindowLocal(window.bounds())
+        };
+        let mut facts = Self::with_current_bounds(
+            window.display(cx).map(|display| display.id()),
+            window.window_bounds(),
+            current_bounds,
+        );
+        if window.is_minimized() {
+            facts.pointer_routing = DockViewportPointerRouting::Minimized;
+        } else if !window.accepts_pointer_input() {
+            facts.pointer_routing = DockViewportPointerRouting::NoInputPassThrough;
+        }
+        facts
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_pointer_routing(
+        mut self,
+        pointer_routing: DockViewportPointerRouting,
+    ) -> Self {
+        self.pointer_routing = pointer_routing;
+        self
     }
 
     #[cfg(test)]
     pub(crate) fn from_window_bounds(window_bounds: WindowBounds) -> Self {
         Self::new(None, window_bounds, window_bounds.get_bounds())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn trusted_global_window_bounds_for_test(window_bounds: WindowBounds) -> Self {
+        Self::from_window_bounds(window_bounds)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn local_only_window_bounds_for_test(window_bounds: WindowBounds) -> Self {
+        Self::with_current_bounds(
+            None,
+            window_bounds,
+            DockViewportWindowBoundsFrame::WindowLocal(window_bounds.get_bounds()),
+        )
     }
 
     #[cfg(test)]
@@ -157,10 +270,13 @@ pub(crate) struct DockViewportSnapshot {
     pub(crate) display_id: Option<DisplayId>,
     /// Last known platform window state used for placement persistence.
     pub(crate) window_bounds: Option<WindowBounds>,
-    /// Last known current window rectangle in global screen coordinates.
-    pub(crate) screen_bounds: Option<Bounds<Pixels>>,
+    /// Last known current window rectangle with its backend coordinate frame.
+    pub(crate) current_bounds: Option<DockViewportWindowBoundsFrame>,
     /// Last known dock host bounds in window-local coordinates.
     pub(crate) host_bounds: Option<Bounds<Pixels>>,
+    /// Last known platform pointer-routing state.
+    pub(crate) pointer_routing: DockViewportPointerRouting,
+    platform_requests: DockViewportPlatformRequests,
     lifecycle: DockViewportLifecycleMachine,
 }
 
@@ -171,8 +287,10 @@ impl DockViewportSnapshot {
             window,
             display_id: None,
             window_bounds: None,
-            screen_bounds: None,
+            current_bounds: None,
             host_bounds: None,
+            pointer_routing: DockViewportPointerRouting::Minimized,
+            platform_requests: DockViewportPlatformRequests::default(),
             lifecycle: DockViewportLifecycleMachine::default(),
         }
     }
@@ -187,13 +305,22 @@ impl DockViewportSnapshot {
     }
 
     pub(crate) fn route_unavailable_reason(&self) -> Option<DockViewportRouteUnavailableReason> {
-        if self.has_current_route_facts() {
-            return None;
+        if let Some(reason) = self.lifecycle.route_unavailable_reason() {
+            return Some(reason);
         }
-
-        self.lifecycle
-            .route_unavailable_reason()
-            .or(Some(DockViewportRouteUnavailableReason::MissingRouteFacts))
+        if self.has_missing_route_facts() {
+            return Some(DockViewportRouteUnavailableReason::MissingRouteFacts);
+        }
+        match self.pointer_routing {
+            DockViewportPointerRouting::Routable => {}
+            DockViewportPointerRouting::Minimized => {
+                return Some(DockViewportRouteUnavailableReason::Minimized);
+            }
+            DockViewportPointerRouting::NoInputPassThrough => {
+                return Some(DockViewportRouteUnavailableReason::NoInputPassThrough);
+            }
+        }
+        None
     }
 
     pub(crate) fn is_route_ready(&self) -> bool {
@@ -208,8 +335,16 @@ impl DockViewportSnapshot {
         self.lifecycle.facts_generation()
     }
 
-    pub(crate) fn focus_stamp(&self) -> u64 {
-        self.lifecycle.focus_stamp()
+    pub(crate) fn recent_focus_stamp(&self) -> u64 {
+        self.lifecycle.recent_focus_stamp()
+    }
+
+    pub(crate) fn platform_requests(&self) -> DockViewportPlatformRequests {
+        self.platform_requests
+    }
+
+    pub(crate) fn global_screen_bounds(&self) -> Option<Bounds<Pixels>> {
+        self.current_bounds?.global_screen_bounds()
     }
 
     pub(crate) fn facts_generation_if_current(&self, window_id: WindowId) -> Option<u64> {
@@ -228,22 +363,126 @@ impl DockViewportSnapshot {
 
         let display_id = window_facts.display_id;
         let window_bounds = Some(window_facts.window_bounds);
-        let screen_bounds = Some(window_facts.screen_bounds);
+        let current_bounds = Some(window_facts.current_bounds);
         let host_bounds = Some(host_bounds);
+        let pointer_routing = window_facts.pointer_routing;
         if self.display_id == display_id
             && self.window_bounds == window_bounds
-            && self.screen_bounds == screen_bounds
+            && self.current_bounds == current_bounds
             && self.host_bounds == host_bounds
+            && self.pointer_routing == pointer_routing
             && self.lifecycle.is_route_ready()
+        {
+            if self.platform_requests == DockViewportPlatformRequests::default() {
+                return false;
+            }
+            self.platform_requests = DockViewportPlatformRequests::default();
+            return true;
+        }
+
+        self.display_id = display_id;
+        self.window_bounds = window_bounds;
+        self.current_bounds = current_bounds;
+        self.host_bounds = host_bounds;
+        self.pointer_routing = pointer_routing;
+        self.platform_requests = DockViewportPlatformRequests::default();
+        self.lifecycle.mark_route_ready();
+        true
+    }
+
+    pub(crate) fn apply_platform_window_facts(
+        &mut self,
+        window_facts: DockViewportWindowFacts,
+    ) -> bool {
+        if self.lifecycle.is_platform_close_requested() {
+            return false;
+        }
+
+        self.platform_requests = self.platform_requests_after_window_facts(window_facts);
+
+        if self.can_preserve_route_facts_for_platform_move(window_facts) {
+            return self.replace_window_facts_without_generation(window_facts);
+        }
+
+        let changed = self.replace_window_facts_without_generation(window_facts);
+        self.lifecycle
+            .mark_stale(DockViewportStaleReason::WindowFactsChanged)
+            || changed
+    }
+
+    fn can_preserve_route_facts_for_platform_move(
+        &self,
+        window_facts: DockViewportWindowFacts,
+    ) -> bool {
+        if !self.lifecycle.is_route_ready()
+            || self.host_bounds.is_none()
+            || self.pointer_routing != DockViewportPointerRouting::Routable
+            || window_facts.pointer_routing != DockViewportPointerRouting::Routable
+        {
+            return false;
+        }
+
+        let Some(DockViewportWindowBoundsFrame::GlobalScreen(current)) = self.current_bounds else {
+            return false;
+        };
+        let DockViewportWindowBoundsFrame::GlobalScreen(next) = window_facts.current_bounds else {
+            return false;
+        };
+
+        current.size == next.size
+    }
+
+    fn platform_requests_after_window_facts(
+        &self,
+        window_facts: DockViewportWindowFacts,
+    ) -> DockViewportPlatformRequests {
+        let Some(current_bounds) = self.current_bounds else {
+            return DockViewportPlatformRequests {
+                resize_requested: true,
+            };
+        };
+
+        DockViewportPlatformRequests {
+            resize_requested: self.platform_requests.resize_requested
+                || current_bounds.size() != window_facts.current_bounds.size(),
+        }
+    }
+
+    fn replace_window_facts_without_generation(
+        &mut self,
+        window_facts: DockViewportWindowFacts,
+    ) -> bool {
+        let display_id = window_facts.display_id;
+        let window_bounds = Some(window_facts.window_bounds);
+        let current_bounds = Some(window_facts.current_bounds);
+        let pointer_routing = window_facts.pointer_routing;
+        if self.display_id == display_id
+            && self.window_bounds == window_bounds
+            && self.current_bounds == current_bounds
+            && self.pointer_routing == pointer_routing
         {
             return false;
         }
 
         self.display_id = display_id;
         self.window_bounds = window_bounds;
-        self.screen_bounds = screen_bounds;
-        self.host_bounds = host_bounds;
-        self.lifecycle.mark_route_ready();
+        self.current_bounds = current_bounds;
+        self.pointer_routing = pointer_routing;
+        true
+    }
+
+    pub(crate) fn refresh_pointer_routing(
+        &mut self,
+        pointer_routing: DockViewportPointerRouting,
+    ) -> bool {
+        if self.lifecycle.is_platform_close_requested() || self.pointer_routing == pointer_routing {
+            return false;
+        }
+
+        self.pointer_routing = pointer_routing;
+        if self.lifecycle.is_route_ready() {
+            self.lifecycle.mark_route_ready();
+        }
         true
     }
 
@@ -251,15 +490,22 @@ impl DockViewportSnapshot {
         self.lifecycle.mark_stale(reason)
     }
 
-    pub(crate) fn record_focus(&mut self, focus_stamp: u64) {
-        self.lifecycle.record_focus(focus_stamp);
+    pub(crate) fn cancel_platform_close_request(&mut self) -> bool {
+        self.lifecycle.cancel_platform_close_request()
+    }
+
+    pub(crate) fn record_recent_focus(&mut self, recent_focus_stamp: u64) {
+        self.lifecycle.record_recent_focus(recent_focus_stamp);
     }
 
     fn has_current_route_facts(&self) -> bool {
         self.lifecycle.is_route_ready()
-            && self.window_bounds.is_some()
-            && self.screen_bounds.is_some()
-            && self.host_bounds.is_some()
+            && !self.has_missing_route_facts()
+            && self.pointer_routing == DockViewportPointerRouting::Routable
+    }
+
+    fn has_missing_route_facts(&self) -> bool {
+        self.window_bounds.is_none() || self.current_bounds.is_none() || self.host_bounds.is_none()
     }
 }
 
@@ -268,7 +514,7 @@ impl DockViewportSnapshot {
 pub(crate) struct DockViewportRegistry {
     viewports: BTreeMap<DockSpaceId, DockViewportSnapshot>,
     windows: HashMap<WindowId, DockSpaceId>,
-    next_focus_stamp: u64,
+    next_recent_focus_stamp: u64,
 }
 
 impl DockViewportRegistry {
@@ -320,21 +566,27 @@ impl DockViewportRegistry {
         replaced
     }
 
-    pub(crate) fn record_window_focus(&mut self, window_id: WindowId) {
+    pub(crate) fn record_recent_focus_window(&mut self, window_id: WindowId) -> bool {
         let Some(space) = self.space_for_window_id(window_id).cloned() else {
-            return;
+            return false;
         };
-        self.record_space_focus(&space);
+        self.record_recent_focus_space(&space)
     }
 
-    pub(crate) fn record_space_focus(&mut self, space: &DockSpaceId) {
-        if !self.viewports.contains_key(space) {
-            return;
+    fn record_recent_focus_space(&mut self, space: &DockSpaceId) -> bool {
+        let Some(snapshot) = self.viewports.get(space) else {
+            return false;
+        };
+        if self.next_recent_focus_stamp != 0
+            && snapshot.recent_focus_stamp() == self.next_recent_focus_stamp
+        {
+            return false;
         }
-        self.next_focus_stamp = self.next_focus_stamp.wrapping_add(1);
+        self.next_recent_focus_stamp = self.next_recent_focus_stamp.wrapping_add(1);
         if let Some(snapshot) = self.viewports.get_mut(space) {
-            snapshot.record_focus(self.next_focus_stamp);
+            snapshot.record_recent_focus(self.next_recent_focus_stamp);
         }
+        true
     }
 
     pub(crate) fn unregister_space(&mut self, space: &DockSpaceId) -> Option<DockViewportSnapshot> {
@@ -391,22 +643,25 @@ impl DockViewportRegistry {
         self.viewports.iter()
     }
 
-    pub(crate) fn spaces_by_diagnostic_hit_order(&self) -> Vec<DockSpaceId> {
-        let mut spaces = self.spaces();
-        spaces.sort_by(|left, right| {
-            let left_stamp = self
-                .viewports
-                .get(left)
-                .map(DockViewportSnapshot::focus_stamp)
-                .unwrap_or_default();
-            let right_stamp = self
-                .viewports
-                .get(right)
-                .map(DockViewportSnapshot::focus_stamp)
-                .unwrap_or_default();
-            right_stamp.cmp(&left_stamp).then_with(|| left.cmp(right))
+    pub(crate) fn snapshots_by_recent_focus_order(
+        &self,
+    ) -> Vec<(&DockSpaceId, &DockViewportSnapshot)> {
+        let mut snapshots = self.viewports.iter().collect::<Vec<_>>();
+        snapshots.retain(|(_, snapshot)| snapshot.recent_focus_stamp() != 0);
+        snapshots.sort_by(|(left_space, left), (right_space, right)| {
+            right
+                .recent_focus_stamp()
+                .cmp(&left.recent_focus_stamp())
+                .then_with(|| left_space.cmp(right_space))
         });
-        spaces
+        snapshots
+    }
+
+    pub(crate) fn spaces_by_recent_focus_order(&self) -> Vec<DockSpaceId> {
+        self.snapshots_by_recent_focus_order()
+            .into_iter()
+            .map(|(space, _)| space.clone())
+            .collect()
     }
 
     #[cfg(test)]
@@ -501,7 +756,7 @@ mod tests {
     }
 
     #[test]
-    fn replacing_a_viewport_clears_the_previous_focus_stamp() {
+    fn replacing_a_viewport_clears_the_previous_recent_focus_stamp() {
         let mut registry = DockViewportRegistry::default();
         let alpha = space("alpha");
         let zeta = space("zeta");
@@ -511,17 +766,83 @@ mod tests {
 
         registry.register(alpha.clone(), alpha_window);
         registry.register(zeta.clone(), zeta_window);
-        registry.record_window_focus(alpha_window.window_id());
-        registry.record_window_focus(zeta_window.window_id());
+        registry.record_recent_focus_window(alpha_window.window_id());
+        registry.record_recent_focus_window(zeta_window.window_id());
         assert_eq!(
-            registry.spaces_by_diagnostic_hit_order(),
+            registry.spaces_by_recent_focus_order(),
             vec![zeta.clone(), alpha.clone()]
         );
 
         registry.register(zeta.clone(), rebound_window);
 
         assert_eq!(registry.space_for_window_id(zeta_window.window_id()), None);
-        assert_eq!(registry.spaces_by_diagnostic_hit_order(), vec![alpha, zeta]);
+        assert_eq!(
+            registry.spaces_by_recent_focus_order(),
+            vec![alpha],
+            "a rebound window must not inherit the previous window's recent-focus ordering stamp"
+        );
+    }
+
+    #[test]
+    fn minimized_window_facts_are_not_route_ready() {
+        let mut registry = DockViewportRegistry::default();
+        let main = space("main");
+        let window = handle(1);
+        registry.register(main.clone(), window);
+
+        let snapshot = registry
+            .snapshot_mut(&main)
+            .expect("registered viewport should have a mutable snapshot");
+        assert!(
+            snapshot.update_route_facts(
+                DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(Bounds::new(
+                    open_gpui::point(open_gpui::px(100.0), open_gpui::px(100.0)),
+                    open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
+                )))
+                .with_pointer_routing(DockViewportPointerRouting::Minimized),
+                Bounds::new(
+                    open_gpui::point(open_gpui::px(0.0), open_gpui::px(0.0)),
+                    open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
+                ),
+            )
+        );
+
+        assert!(!snapshot.is_route_ready());
+        assert_eq!(
+            snapshot.route_unavailable_reason(),
+            Some(DockViewportRouteUnavailableReason::Minimized)
+        );
+    }
+
+    #[test]
+    fn no_input_window_facts_are_not_route_ready() {
+        let mut registry = DockViewportRegistry::default();
+        let main = space("main");
+        let window = handle(1);
+        registry.register(main.clone(), window);
+
+        let snapshot = registry
+            .snapshot_mut(&main)
+            .expect("registered viewport should have a mutable snapshot");
+        assert!(
+            snapshot.update_route_facts(
+                DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(Bounds::new(
+                    open_gpui::point(open_gpui::px(100.0), open_gpui::px(100.0)),
+                    open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
+                )))
+                .with_pointer_routing(DockViewportPointerRouting::NoInputPassThrough),
+                Bounds::new(
+                    open_gpui::point(open_gpui::px(0.0), open_gpui::px(0.0)),
+                    open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
+                ),
+            )
+        );
+
+        assert!(!snapshot.is_route_ready());
+        assert_eq!(
+            snapshot.route_unavailable_reason(),
+            Some(DockViewportRouteUnavailableReason::NoInputPassThrough)
+        );
     }
 
     #[test]
@@ -568,5 +889,48 @@ mod tests {
             ))
         );
         assert!(!snapshot.is_route_ready());
+    }
+
+    #[test]
+    fn platform_close_requested_requires_explicit_cancellation_before_route_fact_update() {
+        let mut registry = DockViewportRegistry::default();
+        let main = space("main");
+        let window = handle(1);
+        registry.register(main.clone(), window);
+
+        let snapshot = registry
+            .snapshot_mut(&main)
+            .expect("registered viewport should have a mutable snapshot");
+        assert!(snapshot.update_route_facts(
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(Bounds::new(
+                open_gpui::point(open_gpui::px(100.0), open_gpui::px(100.0)),
+                open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
+            ))),
+            Bounds::new(
+                open_gpui::point(open_gpui::px(0.0), open_gpui::px(0.0)),
+                open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
+            ),
+        ));
+        assert!(snapshot.mark_route_facts_stale(DockViewportStaleReason::PlatformCloseRequested));
+
+        assert!(snapshot.cancel_platform_close_request());
+        assert_eq!(
+            snapshot.lifecycle_state(),
+            DockViewportLifecycleState::Stale(DockViewportStaleReason::WindowFactsChanged)
+        );
+        assert!(!snapshot.is_route_ready());
+
+        assert!(snapshot.update_route_facts(
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(Bounds::new(
+                open_gpui::point(open_gpui::px(120.0), open_gpui::px(120.0)),
+                open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
+            ))),
+            Bounds::new(
+                open_gpui::point(open_gpui::px(0.0), open_gpui::px(0.0)),
+                open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
+            ),
+        ));
+        assert!(snapshot.is_route_ready());
+        assert!(!snapshot.cancel_platform_close_request());
     }
 }

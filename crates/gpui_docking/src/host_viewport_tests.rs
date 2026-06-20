@@ -1,3 +1,7 @@
+#[cfg(test)]
+use crate::viewport_target_resolver::choose_diagnostic_viewport_target;
+#[cfg(test)]
+use crate::viewport_test_support::register_viewport;
 use crate::{
     DockController, DockGraph, DockHost, DockLayoutRect, DockNode, DockSpaceId,
     DockViewportAdapter, DockViewportOpenStatus, DockViewportPlacement,
@@ -6,8 +10,8 @@ use crate::{
     debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{
-    AnyWindowHandle, AppContext as _, TestAppContext, VisualTestContext, WindowBounds, point, px,
-    size,
+    AnyWindowHandle, AppContext as _, TestAppContext, VisualTestContext, WindowBounds,
+    WindowOptions, point, px, size,
 };
 
 #[open_gpui::test]
@@ -100,8 +104,8 @@ fn viewport_platform_signals_separate_hovered_from_active_window(cx: &mut TestAp
     let alpha_handle: AnyWindowHandle = alpha_window.into();
     let zeta_handle: AnyWindowHandle = zeta_window.into();
     let mut adapter = DockViewportAdapter::new();
-    adapter.register_viewport(zeta_space.clone(), zeta_handle);
-    adapter.register_viewport(alpha_space.clone(), alpha_handle);
+    register_viewport(&mut adapter, zeta_space.clone(), zeta_handle);
+    register_viewport(&mut adapter, alpha_space.clone(), alpha_handle);
     for space in [&alpha_space, &zeta_space] {
         adapter.update_snapshot(
             space,
@@ -127,16 +131,17 @@ fn viewport_platform_signals_separate_hovered_from_active_window(cx: &mut TestAp
         .expect("alpha window should be live");
 
     assert!(!capabilities.window_stack);
-    assert_eq!(context.hovered_window(), None);
+    assert_eq!(context.trusted_hovered_window(), None);
     assert_eq!(
         active_window.map(|window| window.window_id()),
         Some(zeta_handle.window_id())
     );
-    assert_eq!(context.window_stack(), &[]);
     assert_eq!(
-        adapter
-            .resolve_diagnostic_viewport_target(point(px(125.0), px(150.0)), &context)
-            .map(|target| target.space().clone()),
+        choose_diagnostic_viewport_target(
+            adapter.global_screen_viewport_hits(point(px(125.0), px(150.0))),
+            &context
+        )
+        .map(|target| target.space().clone()),
         Some(alpha_space.clone()),
         "active window is diagnostic only and should not arbitrate overlapping hits"
     );
@@ -145,14 +150,16 @@ fn viewport_platform_signals_separate_hovered_from_active_window(cx: &mut TestAp
     let hovered_context =
         cx.update(|app| DockViewportPlatformSignals::from_app(app).target_context());
     assert_eq!(
-        hovered_context.hovered_window(),
+        hovered_context.trusted_hovered_window(),
         Some(alpha_handle.window_id()),
         "platform hovered window should be captured by from_app"
     );
     assert_eq!(
-        adapter
-            .resolve_diagnostic_viewport_target(point(px(125.0), px(150.0)), &hovered_context)
-            .map(|target| target.space().clone()),
+        choose_diagnostic_viewport_target(
+            adapter.global_screen_viewport_hits(point(px(125.0), px(150.0))),
+            &hovered_context
+        )
+        .map(|target| target.space().clone()),
         Some(alpha_space),
         "explicit hovered window should win viewport arbitration"
     );
@@ -200,5 +207,57 @@ fn viewport_runtime_handle_opens_with_saved_placement_options(cx: &mut TestAppCo
             .update(cx, |_, window, _| window.window_bounds())
             .expect("opened window should still be live"),
         saved_window_bounds
+    );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_handle_reuses_window_when_saved_display_changes(cx: &mut TestAppContext) {
+    let secondary_space = DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(secondary_space.clone(), secondary_tabs);
+
+    let mut workspace = DockWorkspace::new(secondary_space.clone(), graph);
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                viewport_window_options(240.0, 160.0),
+                app,
+            )
+        })
+        .expect("secondary viewport should open");
+
+    let reopened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                WindowOptions {
+                    display_id: Some(open_gpui::DisplayId::from(999)),
+                    window_bounds: Some(WindowBounds::Windowed(floating_bounds(
+                        0.0, 0.0, 240.0, 160.0,
+                    ))),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("secondary viewport should remain reusable");
+
+    assert_eq!(reopened.status(), DockViewportOpenStatus::Reused);
+    assert_eq!(reopened.window(), opened.window());
+    assert_eq!(
+        reopened
+            .window()
+            .update(cx, |_, window, _| window.window_bounds())
+            .expect("reused window should remain live"),
+        WindowBounds::Windowed(floating_bounds(0.0, 0.0, 240.0, 160.0))
     );
 }

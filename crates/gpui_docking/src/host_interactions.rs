@@ -1,10 +1,14 @@
 #[cfg(test)]
 use crate::interaction::{FloatingDrag, SplitterDrag};
 use crate::{
-    DockHost, DockItemId, DockNodeId, DockSpaceId,
-    drag::{DockDragPayload, DockDragPayloadKind},
+    DockEdgeDockSizing, DockHost, DockItemId, DockNodeId, DockSpaceId, DockViewportFocusCommand,
+    DockViewportFocusRequest, DropZone,
+    drag::DockDragPayload,
     host_interaction_outcome::DockHostInteractionOutcome,
-    interaction::{DockFloatingBoundsRequest, DockPayloadDropRelease, DockSplitterResizeRequest},
+    interaction::{
+        DockFloatingBoundsRequest, DockPayloadDropRelease, DockRuntimeDragSession,
+        DockSplitterResizeRequest,
+    },
     workspace_move_validation::dock_target_validator,
     workspace_transaction::DockWorkspacePayloadDropRequest,
 };
@@ -34,6 +38,27 @@ impl DockHost {
         self.commit_close_item_interaction(&item, cx, false)
     }
 
+    pub(crate) fn begin_payload_drag_interaction(
+        &mut self,
+        payload: &DockDragPayload,
+        cx: &mut Context<Self>,
+    ) -> DockRuntimeDragSession {
+        self.viewport_runtime()
+            .begin_payload_drag_with_app(payload, cx)
+    }
+
+    pub(crate) fn begin_tab_item_drag_interaction(
+        &mut self,
+        tabs: DockNodeId,
+        item: DockItemId,
+        payload: &DockDragPayload,
+        cx: &mut Context<Self>,
+    ) -> (DockHostInteractionOutcome, DockRuntimeDragSession) {
+        let outcome = self.select_tab_interaction(tabs, item, cx);
+        let drag_session = self.begin_payload_drag_interaction(payload, cx);
+        (outcome, drag_session)
+    }
+
     pub(crate) fn begin_splitter_drag_interaction(
         &mut self,
         split: DockNodeId,
@@ -49,7 +74,7 @@ impl DockHost {
             split_extent,
             initial_fractions,
         );
-        DockHostInteractionOutcome::Notify
+        DockHostInteractionOutcome::Notify { changed: false }
     }
 
     pub(crate) fn update_splitter_drag_interaction(
@@ -99,7 +124,7 @@ impl DockHost {
         if outcome.changed() {
             outcome
         } else {
-            DockHostInteractionOutcome::Notify
+            DockHostInteractionOutcome::Notify { changed: false }
         }
     }
 
@@ -127,44 +152,50 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
-        let delivery = self.interaction_mut().take_drop_delivery();
         let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
-        let runtime_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
-        let (policy, payload_classes) = self.with_workspace(cx, |workspace| {
+        let (policy, payload_classes, graph) = self.with_workspace(cx, |workspace| {
             (
                 workspace.policy().clone(),
                 workspace.payload_dock_classes_for_drag_payload(release.payload()),
+                workspace.graph().clone(),
             )
         });
         let default_space = self.space().clone();
         let target_validator = dock_target_validator(&default_space, &payload_classes, &policy);
+        let edge_plan_space = default_space.clone();
+        let edge_plan_resolver =
+            move |target_node: DockNodeId, zone: DropZone, sizing: DockEdgeDockSizing| {
+                graph.edge_dock_plan_with_sizing(&edge_plan_space, target_node, zone, sizing)
+            };
         let mut drop_preview_cleared = false;
         let local_delivery = self.interaction_mut().take_local_drop_delivery(
             &release,
             &policy,
             Some(&target_validator),
+            Some(&edge_plan_resolver),
         );
         let outcome = if let Some(delivery) = local_delivery {
-            let focus_item = self.focus_item_for_drag_payload(delivery.payload(), cx);
-            let outcome = self.commit_resolved_payload_drop_interaction(
+            let (outcome, focus_item) = self.commit_resolved_payload_drop_interaction(
                 delivery.workspace_request(),
                 cx,
                 true,
             );
             self.with_panel_focus_after_local_drop(outcome, focus_item, cx)
         } else if let Some(outcome) =
-            self.commit_runtime_routed_payload_drop_interaction(delivery, &release, window, cx)
+            self.commit_runtime_routed_payload_drop_interaction(&release, window, cx)
         {
             drop_preview_cleared = self.clear_drop_preview_interaction();
             outcome
         } else {
-            return DockHostInteractionOutcome::Notify
+            let _runtime_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
+            return DockHostInteractionOutcome::Notify { changed: false }
                 .merge(DockHostInteractionOutcome::from_session_changed(
                     route_preview_cleared,
                 ))
                 .merge(self.finish_floating_drag_interaction());
         };
 
+        let runtime_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
         outcome
             .merge(DockHostInteractionOutcome::from_session_changed(
                 route_preview_cleared || runtime_preview_cleared || drop_preview_cleared,
@@ -218,15 +249,28 @@ impl DockHost {
         request: DockWorkspacePayloadDropRequest<'_>,
         cx: &mut Context<Self>,
         notify_on_unchanged: bool,
-    ) -> DockHostInteractionOutcome {
-        DockHostInteractionOutcome::from_commit_result(
-            self.mutate_controller_from_host(cx, |controller| {
+    ) -> (DockHostInteractionOutcome, Option<DockItemId>) {
+        match self.mutate_controller_from_host_with(
+            cx,
+            |controller| {
                 controller
                     .workspace_mut()
                     .commit_resolved_payload_drop(request)
-            }),
-            notify_on_unchanged,
-        )
+            },
+            |outcome| outcome.changed(),
+        ) {
+            Ok(outcome) => (
+                DockHostInteractionOutcome::from_commit_result(
+                    Ok(outcome.action()),
+                    notify_on_unchanged,
+                ),
+                outcome.focus_item().cloned(),
+            ),
+            Err(error) => (
+                DockHostInteractionOutcome::from_commit_result(Err(error), notify_on_unchanged),
+                None,
+            ),
+        }
     }
 
     fn commit_resize_split_interaction(
@@ -274,22 +318,6 @@ impl DockHost {
         )
     }
 
-    fn focus_item_for_drag_payload(
-        &self,
-        payload: &DockDragPayload,
-        cx: &Context<Self>,
-    ) -> Option<DockItemId> {
-        match &payload.kind {
-            DockDragPayloadKind::Item { item } => Some(item.clone()),
-            DockDragPayloadKind::Tabs => self.with_workspace(cx, |workspace| {
-                workspace.graph().selected_item_in_tabs(payload.source_node)
-            }),
-            DockDragPayloadKind::Floating { floating } => self.with_workspace(cx, |workspace| {
-                workspace.graph().unique_selected_item_in_subtree(*floating)
-            }),
-        }
-    }
-
     fn with_panel_focus(
         &mut self,
         outcome: DockHostInteractionOutcome,
@@ -298,8 +326,10 @@ impl DockHost {
         if matches!(outcome, DockHostInteractionOutcome::Rejected(_)) {
             return outcome;
         }
-        if self.request_panel_focus(item) {
-            outcome.merge(DockHostInteractionOutcome::Notify)
+        if self.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(
+            DockViewportFocusRequest::panel(item),
+        )) {
+            outcome.merge(DockHostInteractionOutcome::Notify { changed: false })
         } else {
             outcome
         }

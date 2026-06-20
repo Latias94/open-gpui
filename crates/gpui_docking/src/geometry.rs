@@ -1,9 +1,30 @@
 use crate::{DropZone, SplitAxis, split_fraction};
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
 
-const ASSUMED_DOCK_WIDGET_FONT_SIZE: f32 = 16.0;
-const MAX_SPLIT_PREVIEW_EXTENT: f32 = 48.0;
-const MIN_SPLIT_PREVIEW_EXTENT: f32 = 8.0;
+const DEFAULT_DROP_GUIDE_FONT_SIZE: f32 = 16.0;
+const DEFAULT_MIN_SPLIT_PREVIEW_EXTENT: f32 = 8.0;
+const DEFAULT_MAX_SPLIT_PREVIEW_EXTENT: f32 = 48.0;
+
+/// Style inputs used to calculate dock drop guide hit rectangles.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DockDropGuideStyle {
+    /// Font-size equivalent used by the guide cluster sizing formula.
+    pub font_size: Pixels,
+    /// Minimum preview strip extent for edge split guides.
+    pub min_split_preview_extent: Pixels,
+    /// Maximum preview strip extent for edge split guides.
+    pub max_split_preview_extent: Pixels,
+}
+
+impl Default for DockDropGuideStyle {
+    fn default() -> Self {
+        Self {
+            font_size: px(DEFAULT_DROP_GUIDE_FONT_SIZE),
+            min_split_preview_extent: px(DEFAULT_MIN_SPLIT_PREVIEW_EXTENT),
+            max_split_preview_extent: px(DEFAULT_MAX_SPLIT_PREVIEW_EXTENT),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct DockDropGeometry {
@@ -67,6 +88,14 @@ struct DockDropBoxMetrics {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DockDropGuideLayout {
+    pub(crate) center_size: Pixels,
+    pub(crate) inner_side_long: Pixels,
+    pub(crate) inner_side_short: Pixels,
+    pub(crate) inner_offset: Pixels,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct LocalRect {
     x: f32,
     y: f32,
@@ -121,28 +150,65 @@ pub(crate) struct DockSplitHandleLayout {
     pub(crate) center_share: f32,
 }
 
-pub(crate) fn resolve_inner_drop_geometry(
+pub(crate) fn resolve_inner_drop_geometry_with_style(
+    bounds: Bounds<Pixels>,
+    position: Point<Pixels>,
+    style: DockDropGuideStyle,
+) -> Option<DockDropGeometry> {
+    resolve_drop_geometry(bounds, position, DockDropBoxSet::Inner, style)
+}
+
+#[cfg(test)]
+fn resolve_inner_drop_geometry(
     bounds: Bounds<Pixels>,
     position: Point<Pixels>,
 ) -> Option<DockDropGeometry> {
-    resolve_drop_geometry(bounds, position, DockDropBoxSet::Inner)
+    resolve_inner_drop_geometry_with_style(bounds, position, DockDropGuideStyle::default())
 }
 
-pub(crate) fn resolve_outer_drop_geometry(
+pub(crate) fn resolve_outer_drop_geometry_with_style(
+    bounds: Bounds<Pixels>,
+    position: Point<Pixels>,
+    style: DockDropGuideStyle,
+) -> Option<DockDropGeometry> {
+    resolve_drop_geometry(bounds, position, DockDropBoxSet::Outer, style)
+}
+
+#[cfg(test)]
+fn resolve_outer_drop_geometry(
     bounds: Bounds<Pixels>,
     position: Point<Pixels>,
 ) -> Option<DockDropGeometry> {
-    resolve_drop_geometry(bounds, position, DockDropBoxSet::Outer)
+    resolve_outer_drop_geometry_with_style(bounds, position, DockDropGuideStyle::default())
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn drop_boxes(bounds: Bounds<Pixels>, set: DockDropBoxSet) -> Vec<DockDropBox> {
+    drop_boxes_with_style(bounds, set, DockDropGuideStyle::default())
+}
+
+pub(crate) fn nominal_drop_guide_layout(style: DockDropGuideStyle) -> DockDropGuideLayout {
+    let center_half = drop_guide_font_size(style) * 1.5;
+    DockDropGuideLayout {
+        center_size: px(center_half * 2.0),
+        inner_side_long: px(center_half * 2.0),
+        inner_side_short: px(center_half * 0.9 * 2.0),
+        inner_offset: px(center_half * 2.4),
+    }
+}
+
+pub(crate) fn drop_boxes_with_style(
+    bounds: Bounds<Pixels>,
+    set: DockDropBoxSet,
+    style: DockDropGuideStyle,
+) -> Vec<DockDropBox> {
     let width = f32::from(bounds.size.width);
     let height = f32::from(bounds.size.height);
     if !valid_extent(width) || !valid_extent(height) {
         return Vec::new();
     }
 
-    let metrics = drop_box_metrics(width, height);
+    let metrics = drop_box_metrics(width, height, style);
     let mut boxes = Vec::new();
     match set {
         DockDropBoxSet::Inner => {
@@ -175,16 +241,17 @@ fn resolve_drop_geometry(
     bounds: Bounds<Pixels>,
     position: Point<Pixels>,
     set: DockDropBoxSet,
+    style: DockDropGuideStyle,
 ) -> Option<DockDropGeometry> {
     if !bounds.contains(&position) {
         return None;
     }
 
-    let boxes = drop_boxes(bounds, set);
+    let boxes = drop_boxes_with_style(bounds, set, style);
     boxes
         .iter()
         .copied()
-        .find(|drop_box| drop_box_contains_position(bounds, *drop_box, position, set))
+        .find(|drop_box| drop_box_contains_position(bounds, *drop_box, position, set, style))
         .map(|drop_box| DockDropGeometry { drop_box })
 }
 
@@ -407,10 +474,10 @@ fn axis_origin(axis: SplitAxis, split_bounds: Bounds<Pixels>) -> Pixels {
     }
 }
 
-fn drop_box_metrics(width: f32, height: f32) -> DockDropBoxMetrics {
+fn drop_box_metrics(width: f32, height: f32, style: DockDropGuideStyle) -> DockDropBoxMetrics {
     let shortest = width.min(height);
-    let central_half = (ASSUMED_DOCK_WIDGET_FONT_SIZE * 1.5)
-        .min((ASSUMED_DOCK_WIDGET_FONT_SIZE * 0.5).max(shortest / 8.0));
+    let font_size = drop_guide_font_size(style);
+    let central_half = (font_size * 1.5).min((font_size * 0.5).max(shortest / 8.0));
     let center_half = central_half.min(width / 2.0).min(height / 2.0);
     let inner_side_half_long = center_half;
     let inner_side_half_short = (center_half * 0.9).min(width / 2.0).min(height / 2.0);
@@ -419,8 +486,9 @@ fn drop_box_metrics(width: f32, height: f32) -> DockDropBoxMetrics {
     let outer_side_half_short = (central_half * 0.8).min(width / 2.0).min(height / 2.0);
     let outer_offset_x = (width / 2.0 - outer_side_half_short).max(0.0);
     let outer_offset_y = (height / 2.0 - outer_side_half_short).max(0.0);
+    let (min_split_preview_extent, max_split_preview_extent) = split_preview_extent_limits(style);
     let split_preview_extent = (shortest * 0.25)
-        .clamp(MIN_SPLIT_PREVIEW_EXTENT, MAX_SPLIT_PREVIEW_EXTENT)
+        .clamp(min_split_preview_extent, max_split_preview_extent)
         .min(width / 3.0)
         .min(height / 3.0);
     DockDropBoxMetrics {
@@ -433,6 +501,31 @@ fn drop_box_metrics(width: f32, height: f32) -> DockDropBoxMetrics {
         outer_offset_x,
         outer_offset_y,
         split_preview_extent,
+    }
+}
+
+fn drop_guide_font_size(style: DockDropGuideStyle) -> f32 {
+    positive_or_default(style.font_size, DEFAULT_DROP_GUIDE_FONT_SIZE)
+}
+
+fn split_preview_extent_limits(style: DockDropGuideStyle) -> (f32, f32) {
+    let min = positive_or_default(
+        style.min_split_preview_extent,
+        DEFAULT_MIN_SPLIT_PREVIEW_EXTENT,
+    );
+    let max = positive_or_default(
+        style.max_split_preview_extent,
+        DEFAULT_MAX_SPLIT_PREVIEW_EXTENT,
+    );
+    if min <= max { (min, max) } else { (max, min) }
+}
+
+fn positive_or_default(value: Pixels, default: f32) -> f32 {
+    let value = f32::from(value);
+    if value.is_finite() && value > 0.0 {
+        value
+    } else {
+        default
     }
 }
 
@@ -540,6 +633,7 @@ fn drop_box_contains_position(
     drop_box: DockDropBox,
     position: Point<Pixels>,
     set: DockDropBoxSet,
+    style: DockDropGuideStyle,
 ) -> bool {
     if drop_box.hit_bounds.contains(&position) {
         return true;
@@ -550,7 +644,7 @@ fn drop_box_contains_position(
 
     let width = f32::from(bounds.size.width);
     let height = f32::from(bounds.size.height);
-    let metrics = drop_box_metrics(width, height);
+    let metrics = drop_box_metrics(width, height, style);
     let center = bounds.center();
     let local_x = f32::from(position.x - bounds.origin.x);
     let local_y = f32::from(position.y - bounds.origin.y);

@@ -1,9 +1,8 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockPolicyError, DockSpaceId,
-    DockViewportActivationTarget, DockViewportCloseOutcome, DockViewportDropPayload,
+    DockViewportActivationTransaction, DockViewportCloseOutcome, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportFocusRequest, DockViewportShouldCloseOutcome, DockViewportTearOffCancelReason,
-    DockViewportTearOffOpenOutcome,
+    DockViewportFocusRequest, DockViewportShouldCloseOutcome, DockViewportTearOffOpenOutcome,
     viewport_registry::{
         DockViewportRouteUnavailableReason, DockViewportSnapshot, DockViewportStaleReason,
     },
@@ -23,6 +22,8 @@ pub struct DockViewportRuntimeStatus {
     pub last_drop_outcome: Option<DockViewportDropOutcomeRecord>,
     /// Most recent viewport activation requested by a routed drop.
     pub last_activation: Option<DockViewportActivationRecord>,
+    /// Explicit viewport activation waiting for backend focused-window confirmation.
+    pub pending_activation: Option<DockViewportActivationRecord>,
     /// Most recent platform close cleanup outcome.
     pub last_close: Option<DockViewportCloseOutcome>,
     /// Most recent platform should-close query outcome.
@@ -58,6 +59,10 @@ pub enum DockViewportRouteStatus {
         /// Reason the viewport was demoted from route-ready to stale.
         reason: DockViewportStaleStatusReason,
     },
+    /// The latest platform facts say the window is minimized.
+    Minimized,
+    /// The latest platform facts say the window is a native no-input/click-through viewport.
+    NoInputPassThrough,
     /// The lifecycle state was ready, but one of the required route fact snapshots is absent.
     MissingRouteFacts,
 }
@@ -110,8 +115,8 @@ pub enum DockViewportRouteTarget {
     Local {
         /// Source dock space that should commit locally.
         space: DockSpaceId,
-        /// GPUI window id that rendered the source viewport, when known.
-        window_id: Option<WindowId>,
+        /// GPUI window id that rendered the source viewport.
+        window_id: WindowId,
         /// Pointer position in source host coordinates.
         host_position: Point<Pixels>,
     },
@@ -158,10 +163,6 @@ pub enum DockViewportDropOutcomeKind {
     TearOffCompleted,
     /// The route matched an existing pending tear-off.
     TearOffDuplicate,
-    /// The route cancelled a pending tear-off before graph mutation.
-    TearOffCancelled,
-    /// The route opened a viewport but failed graph mutation afterward.
-    TearOffCommitFailed,
     /// The route failed before producing a viewport outcome.
     Error,
 }
@@ -184,6 +185,9 @@ pub struct DockViewportPlatformSyncRecord {
     pub window_id: WindowId,
     /// Requests that were applied through the current GPUI window interface.
     pub applied: Vec<DockViewportPlatformSyncAction>,
+    /// Requests intentionally skipped because the platform backend already reported an
+    /// authoritative live-window request for the same property.
+    pub skipped_requests: Vec<DockViewportPlatformSyncSkipped>,
     /// Requests that could not be applied because GPUI has no matching live mutation interface yet.
     pub unsupported_requests: Vec<DockViewportPlatformSyncUnsupported>,
 }
@@ -223,6 +227,11 @@ pub enum DockViewportPlatformSyncAction {
         /// Requested decoration mode.
         decorations: WindowDecorations,
     },
+    /// Updated native pointer-input routing for a viewport window.
+    PointerInput {
+        /// Whether pointer input is enabled.
+        enabled: bool,
+    },
     /// Updated the macOS traffic-light position.
     TrafficLightPosition {
         /// Requested traffic-light position.
@@ -237,6 +246,15 @@ pub struct DockViewportPlatformSyncUnsupported {
     pub request: DockViewportPlatformSyncRequest,
     /// Why the request was not applied.
     pub reason: DockViewportPlatformSyncUnsupportedReason,
+}
+
+/// Platform-window request intentionally skipped during reused-window sync.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DockViewportPlatformSyncSkipped {
+    /// Skipped request.
+    pub request: DockViewportPlatformSyncRequest,
+    /// Why the request was skipped.
+    pub reason: DockViewportPlatformSyncSkippedReason,
 }
 
 /// Platform-window request shape used by sync diagnostics.
@@ -264,6 +282,11 @@ pub enum DockViewportPlatformSyncRequest {
         /// Requested minimizability.
         requested: bool,
     },
+    /// Requested native pointer-input routing differs from the already-open window.
+    PointerInput {
+        /// Requested pointer input state.
+        requested: bool,
+    },
     /// Requested display differs from the already-open window.
     Display {
         /// Requested display id.
@@ -272,6 +295,11 @@ pub enum DockViewportPlatformSyncRequest {
     /// Requested minimum window size differs from the already-open window.
     WindowMinSize {
         /// Requested minimum size.
+        requested: Size<Pixels>,
+    },
+    /// Requested live content size differs from the already-open window.
+    WindowSize {
+        /// Requested content size.
         requested: Size<Pixels>,
     },
     /// Requested icon differs from the already-open window.
@@ -326,6 +354,13 @@ pub enum DockViewportPlatformSyncUnsupportedReason {
     UnsupportedByWindowApi,
 }
 
+/// Why a platform-window sync request was intentionally skipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportPlatformSyncSkippedReason {
+    /// The platform backend has already reported a live move/resize request for this window.
+    PlatformRequestInProgress,
+}
+
 /// Tear-off transaction outcome recorded by the viewport runtime.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DockViewportTearOffRecord {
@@ -337,10 +372,6 @@ pub struct DockViewportTearOffRecord {
     pub target_space: DockSpaceId,
     /// Payload that was torn off.
     pub payload: DockViewportPayloadRecord,
-    /// Cancel reason when the tear-off was cancelled.
-    pub cancel_reason: Option<DockViewportTearOffCancelReason>,
-    /// Commit error when the viewport opened but graph mutation failed.
-    pub error: Option<DockActionApplyError>,
 }
 
 /// High-level tear-off transaction outcome.
@@ -350,10 +381,6 @@ pub enum DockViewportTearOffOutcomeKind {
     Completed,
     /// A duplicate request reused the existing pending tear-off.
     Duplicate,
-    /// The request was cancelled before graph mutation.
-    Cancelled,
-    /// The viewport opened but graph mutation failed.
-    CommitFailed,
 }
 
 impl DockViewportRuntimeStatus {
@@ -387,7 +414,7 @@ impl DockViewportRuntimeStatus {
         self.last_activation = None;
         if let Ok(outcome) = result {
             self.last_activation = outcome
-                .activation_target()
+                .activation_transaction()
                 .as_ref()
                 .map(DockViewportActivationRecord::from);
             if let DockViewportDropRouteOutcome::TearOff(tear_off) = outcome {
@@ -412,6 +439,13 @@ impl DockViewportRuntimeStatus {
         self.last_platform_sync = Some(record);
     }
 
+    pub(crate) fn set_pending_activation(
+        &mut self,
+        activation: Option<&DockViewportActivationTransaction>,
+    ) {
+        self.pending_activation = activation.map(DockViewportActivationRecord::from);
+    }
+
     pub(crate) fn clear_window_references(&mut self, space: &DockSpaceId, window_id: WindowId) {
         if self
             .last_route
@@ -426,6 +460,13 @@ impl DockViewportRuntimeStatus {
             .is_some_and(|activation| activation.references_window(space, window_id))
         {
             self.last_activation = None;
+        }
+        if self
+            .pending_activation
+            .as_ref()
+            .is_some_and(|activation| activation.references_window(space, window_id))
+        {
+            self.pending_activation = None;
         }
         if self
             .last_platform_sync
@@ -458,6 +499,10 @@ impl DockViewportRouteStatus {
             Some(DockViewportRouteUnavailableReason::Stale(reason)) => Self::Stale {
                 reason: DockViewportStaleStatusReason::from(reason),
             },
+            Some(DockViewportRouteUnavailableReason::Minimized) => Self::Minimized,
+            Some(DockViewportRouteUnavailableReason::NoInputPassThrough) => {
+                Self::NoInputPassThrough
+            }
             Some(DockViewportRouteUnavailableReason::MissingRouteFacts) => Self::MissingRouteFacts,
         }
     }
@@ -485,7 +530,7 @@ impl DockViewportRouteTarget {
     pub fn window_id(&self) -> Option<WindowId> {
         match self {
             Self::KnownViewport { window_id, .. } => Some(*window_id),
-            Self::Local { window_id, .. } => *window_id,
+            Self::Local { window_id, .. } => Some(*window_id),
             Self::TearOff { .. } | Self::Unavailable | Self::Rejected { .. } => None,
         }
     }
@@ -524,9 +569,13 @@ impl DockViewportRouteTarget {
 
     fn from_route(request: &DockViewportDropRouteRequest, route: &DockViewportDropRoute) -> Self {
         match route {
-            DockViewportDropRoute::Local { host_position, .. } => Self::Local {
+            DockViewportDropRoute::Local {
+                host_position,
+                window_id,
+                ..
+            } => Self::Local {
                 space: request.source_space().clone(),
-                window_id: request.target_context().hovered_window(),
+                window_id: *window_id,
                 host_position: *host_position,
             },
             DockViewportDropRoute::KnownViewport { target, .. } => Self::KnownViewport {
@@ -548,7 +597,7 @@ impl DockViewportRouteTarget {
         match self {
             Self::Local {
                 space: route_space,
-                window_id: Some(route_window),
+                window_id: route_window,
                 ..
             }
             | Self::KnownViewport {
@@ -556,11 +605,6 @@ impl DockViewportRouteTarget {
                 window_id: route_window,
                 ..
             } => route_space == space && *route_window == window_id,
-            Self::Local {
-                space: route_space,
-                window_id: None,
-                ..
-            } => route_space == space,
             Self::TearOff { .. } | Self::Unavailable | Self::Rejected { .. } => false,
         }
     }
@@ -615,22 +659,12 @@ impl DockViewportDropOutcomeRecord {
                 action: Some(DockActionOutcome::Unchanged),
                 error: None,
             },
-            DockViewportTearOffOpenOutcome::Cancelled(_cancelled) => Self {
-                kind: DockViewportDropOutcomeKind::TearOffCancelled,
-                action: Some(DockActionOutcome::Unchanged),
-                error: None,
-            },
-            DockViewportTearOffOpenOutcome::CommitFailed(failure) => Self {
-                kind: DockViewportDropOutcomeKind::TearOffCommitFailed,
-                action: None,
-                error: Some(failure.error().clone()),
-            },
         }
     }
 }
 
-impl From<&DockViewportActivationTarget> for DockViewportActivationRecord {
-    fn from(target: &DockViewportActivationTarget) -> Self {
+impl From<&DockViewportActivationTransaction> for DockViewportActivationRecord {
+    fn from(target: &DockViewportActivationTransaction) -> Self {
         Self {
             space: target.space().clone(),
             window_id: target.window().window_id(),
@@ -656,8 +690,6 @@ impl DockViewportTearOffRecord {
                     source_space: request.source_space().clone(),
                     target_space: pending.target_space().clone(),
                     payload: DockViewportPayloadRecord::from_payload(request.payload()),
-                    cancel_reason: None,
-                    error: None,
                 }
             }
             DockViewportTearOffOpenOutcome::Duplicate(pending) => {
@@ -667,32 +699,6 @@ impl DockViewportTearOffRecord {
                     source_space: request.source_space().clone(),
                     target_space: pending.target_space().clone(),
                     payload: DockViewportPayloadRecord::from_payload(request.payload()),
-                    cancel_reason: None,
-                    error: None,
-                }
-            }
-            DockViewportTearOffOpenOutcome::Cancelled(cancelled) => {
-                let pending = cancelled.pending();
-                let request = pending.request();
-                Self {
-                    kind: DockViewportTearOffOutcomeKind::Cancelled,
-                    source_space: request.source_space().clone(),
-                    target_space: pending.target_space().clone(),
-                    payload: DockViewportPayloadRecord::from_payload(request.payload()),
-                    cancel_reason: Some(cancelled.reason()),
-                    error: None,
-                }
-            }
-            DockViewportTearOffOpenOutcome::CommitFailed(failure) => {
-                let pending = failure.pending();
-                let request = pending.request();
-                Self {
-                    kind: DockViewportTearOffOutcomeKind::CommitFailed,
-                    source_space: request.source_space().clone(),
-                    target_space: pending.target_space().clone(),
-                    payload: DockViewportPayloadRecord::from_payload(request.payload()),
-                    cancel_reason: None,
-                    error: Some(failure.error().clone()),
                 }
             }
         }
@@ -707,6 +713,7 @@ mod tests {
         DockViewportWindowFacts,
         drag::DockDragPayload,
         interaction::DockRuntimeDragSession,
+        viewport_registry::DockViewportPointerRouting,
         viewport_test_support::{bounds, handle, space},
     };
     use open_gpui::{WindowBounds, point, px};
@@ -737,6 +744,35 @@ mod tests {
         assert_eq!(ready.route_status, DockViewportRouteStatus::RouteReady);
         assert_eq!(ready.facts_generation, 1);
 
+        assert!(
+            snapshot.update_route_facts(
+                DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                    100.0, 200.0, 320.0, 240.0
+                )))
+                .with_pointer_routing(DockViewportPointerRouting::Minimized),
+                bounds(0.0, 0.0, 320.0, 240.0)
+            )
+        );
+        let minimized = DockViewportLifecycleRecord::from_snapshot(space.clone(), &snapshot);
+        assert_eq!(minimized.route_status, DockViewportRouteStatus::Minimized);
+        assert_eq!(minimized.facts_generation, 2);
+
+        assert!(
+            snapshot.update_route_facts(
+                DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                    100.0, 200.0, 320.0, 240.0
+                )))
+                .with_pointer_routing(DockViewportPointerRouting::NoInputPassThrough),
+                bounds(0.0, 0.0, 320.0, 240.0)
+            )
+        );
+        let no_input = DockViewportLifecycleRecord::from_snapshot(space.clone(), &snapshot);
+        assert_eq!(
+            no_input.route_status,
+            DockViewportRouteStatus::NoInputPassThrough
+        );
+        assert_eq!(no_input.facts_generation, 3);
+
         assert!(snapshot.mark_route_facts_stale(DockViewportStaleReason::WindowFactsChanged));
         let stale = DockViewportLifecycleRecord::from_snapshot(space.clone(), &snapshot);
         assert_eq!(
@@ -745,7 +781,7 @@ mod tests {
                 reason: DockViewportStaleStatusReason::WindowFactsChanged
             }
         );
-        assert_eq!(stale.facts_generation, 2);
+        assert_eq!(stale.facts_generation, 4);
 
         assert!(snapshot.mark_route_facts_stale(DockViewportStaleReason::PlatformCloseRequested));
         let closing = DockViewportLifecycleRecord::from_snapshot(space, &snapshot);
@@ -755,7 +791,7 @@ mod tests {
                 reason: DockViewportStaleStatusReason::PlatformCloseRequested
             }
         );
-        assert_eq!(closing.facts_generation, 3);
+        assert_eq!(closing.facts_generation, 5);
     }
 
     #[test]
@@ -770,14 +806,16 @@ mod tests {
             DockViewportDropPayload::Tabs,
             host_position,
             None,
-            crate::DockViewportPlatformSignals::default().with_hovered_window(handle(7)),
+            crate::DockViewportPlatformSignals::default().with_trusted_hovered_window(handle(7)),
         );
 
         status.record_route(
             &request,
             &DockViewportDropRoute::Local {
                 host_position,
-                authority: crate::DockViewportRouteAuthority::TrustedHoveredWindow,
+                window_id: handle(7).window_id(),
+                facts_generation: 1,
+                authority: crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
             },
         );
 
@@ -815,7 +853,9 @@ mod tests {
             &request,
             &DockViewportDropRoute::Local {
                 host_position,
-                authority: crate::DockViewportRouteAuthority::TrustedHoveredWindow,
+                window_id: handle(7).window_id(),
+                facts_generation: 1,
+                authority: crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
             },
         );
 
@@ -838,7 +878,7 @@ mod tests {
         status.record_drop_result(&Ok(DockViewportDropRouteOutcome::Action(
             crate::DockViewportDropActionOutcome::new(
                 DockActionOutcome::Changed,
-                Some(DockViewportActivationTarget::new(
+                Some(DockViewportActivationTransaction::new(
                     target_space.clone(),
                     target_window,
                     DockViewportFocusRequest::panel(focus_item.clone()),
@@ -875,7 +915,7 @@ mod tests {
         status.record_drop_result(&Ok(DockViewportDropRouteOutcome::Action(
             crate::DockViewportDropActionOutcome::new(
                 DockActionOutcome::Changed,
-                Some(DockViewportActivationTarget::new(
+                Some(DockViewportActivationTransaction::new(
                     target_space.clone(),
                     target_window,
                     DockViewportFocusRequest::no_panel_focus(),
@@ -909,7 +949,8 @@ mod tests {
             DockViewportDropPayload::Tabs,
             host_position,
             None,
-            crate::DockViewportPlatformSignals::default().with_hovered_window(target_window),
+            crate::DockViewportPlatformSignals::default()
+                .with_trusted_hovered_window(target_window),
         );
         status.record_route(
             &request,
@@ -919,13 +960,13 @@ mod tests {
                     target_window,
                     host_position,
                 ),
-                authority: crate::DockViewportRouteAuthority::TrustedHoveredWindow,
+                authority: crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
             },
         );
         status.record_drop_result(&Ok(DockViewportDropRouteOutcome::Action(
             crate::DockViewportDropActionOutcome::new(
                 DockActionOutcome::Changed,
-                Some(DockViewportActivationTarget::new(
+                Some(DockViewportActivationTransaction::new(
                     target.clone(),
                     target_window,
                     DockViewportFocusRequest::panel(focus_item),
@@ -935,6 +976,7 @@ mod tests {
         status.record_platform_sync(DockViewportPlatformSyncRecord {
             window_id: target_window.window_id(),
             applied: Vec::new(),
+            skipped_requests: Vec::new(),
             unsupported_requests: Vec::new(),
         });
 

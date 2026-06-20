@@ -1,10 +1,11 @@
 use crate::{DockItemId, DockNodeId, DockSpaceId};
 
-use super::{DockGraph, DockNode};
+use super::{DockGraph, DockNode, DockTabSelectionState};
 
 pub(in crate::graph) struct DetachedTabs {
     pub(in crate::graph) items: Vec<DockItemId>,
     pub(in crate::graph) selected: Option<DockItemId>,
+    pub(in crate::graph) selection_history: DockTabSelectionState,
 }
 
 impl DockGraph {
@@ -34,10 +35,11 @@ impl DockGraph {
 
         let (items, selected) = match self.nodes.get(tabs) {
             Some(DockNode::Tabs { items, selected }) if !items.is_empty() => {
-                (items.clone(), repair_selected_item(items, selected))
+                (items.clone(), selected.clone())
             }
             _ => return None,
         };
+        let selection_history = self.take_tab_selection_state(tabs);
 
         if let Some(DockNode::Tabs { items, selected }) = self.nodes.get_mut(tabs) {
             items.clear();
@@ -49,14 +51,20 @@ impl DockGraph {
         if simplify {
             self.simplify_space(space);
         }
-        Some(DetachedTabs { items, selected })
+        Some(DetachedTabs {
+            items,
+            selected,
+            selection_history,
+        })
     }
 
     pub(in crate::graph) fn insert_detached_tabs(&mut self, detached: DetachedTabs) -> DockNodeId {
-        self.insert_node(DockNode::Tabs {
+        let tabs = self.insert_node(DockNode::Tabs {
             items: detached.items,
             selected: detached.selected,
-        })
+        });
+        self.restore_tab_selection_state(tabs, detached.selection_history);
+        tabs
     }
 
     pub(in crate::graph) fn insert_item_into_tabs_at(
@@ -64,26 +72,29 @@ impl DockGraph {
         tabs: DockNodeId,
         item: DockItemId,
         index: Option<usize>,
+        selected_in_group: Option<&DockItemId>,
     ) -> bool {
-        let Some(DockNode::Tabs { items, selected }) = self.nodes.get_mut(tabs) else {
-            return false;
+        let next_selected = {
+            let Some(DockNode::Tabs { items, selected }) = self.nodes.get_mut(tabs) else {
+                return false;
+            };
+            if items.contains(&item) {
+                *selected = Some(item.clone());
+            } else {
+                match index {
+                    Some(index) => {
+                        let index = index.min(items.len());
+                        items.insert(index, item.clone());
+                    }
+                    None => {
+                        items.push(item.clone());
+                    }
+                }
+                *selected = Some(item.clone());
+            }
+            selected_in_group.cloned().unwrap_or(item)
         };
-        if items.contains(&item) {
-            *selected = Some(item);
-            return true;
-        }
-
-        let selected_item = item.clone();
-        match index {
-            Some(index) => {
-                let index = index.min(items.len());
-                items.insert(index, item);
-            }
-            None => {
-                items.push(item);
-            }
-        }
-        *selected = Some(selected_item);
+        self.record_tab_selection(tabs, &next_selected);
         true
     }
 
@@ -94,31 +105,32 @@ impl DockGraph {
         index: Option<usize>,
         selected_in_group: Option<&DockItemId>,
     ) -> bool {
-        let Some(DockNode::Tabs { items, selected }) = self.nodes.get_mut(tabs) else {
-            return false;
-        };
         if next_items.is_empty() {
             return true;
         }
 
-        let mut insert_at = index.unwrap_or(items.len()).min(items.len());
-        for item in next_items {
-            if items.contains(item) {
-                continue;
+        let next_selected = {
+            let Some(DockNode::Tabs { items, selected }) = self.nodes.get_mut(tabs) else {
+                return false;
+            };
+
+            let mut insert_at = index.unwrap_or(items.len()).min(items.len());
+            for item in next_items {
+                if items.contains(item) {
+                    continue;
+                }
+                items.insert(insert_at, item.clone());
+                insert_at = insert_at.saturating_add(1);
             }
-            items.insert(insert_at, item.clone());
-            insert_at = insert_at.saturating_add(1);
-        }
-        if let Some(selected_item) = selected_in_group {
-            *selected = Some(selected_item.clone());
-        }
-        if items.is_empty() {
-            *selected = None;
-        } else if selected
-            .as_ref()
-            .is_none_or(|candidate| !items.contains(candidate))
-        {
-            *selected = items.first().cloned();
+            if let Some(selected_item) = selected_in_group {
+                *selected = Some(selected_item.clone());
+                Some(selected_item.clone())
+            } else {
+                None
+            }
+        };
+        if let Some(selected_item) = next_selected {
+            self.record_tab_selection(tabs, &selected_item);
         }
         true
     }
@@ -127,30 +139,28 @@ impl DockGraph {
         &mut self,
         tabs: DockNodeId,
         index: usize,
-        preferred_after_close: Option<&DockItemId>,
     ) -> bool {
-        let Some(DockNode::Tabs { items, selected }) = self.nodes.get_mut(tabs) else {
-            return false;
-        };
-        if index >= items.len() {
-            return false;
-        }
+        let removed = {
+            let Some(DockNode::Tabs { items, selected }) = self.nodes.get_mut(tabs) else {
+                return false;
+            };
+            if index >= items.len() {
+                return false;
+            }
 
-        let removed = items.remove(index);
-        if items.is_empty() {
-            *selected = None;
-        } else if selected.as_ref() == Some(&removed)
-            || selected
-                .as_ref()
-                .is_none_or(|candidate| !items.contains(candidate))
-        {
-            *selected = preferred_after_close
-                .filter(|candidate| items.contains(candidate))
-                .cloned()
-                .or_else(|| {
-                    let next_index = index.min(items.len().saturating_sub(1));
-                    items.get(next_index).cloned()
-                });
+            let removed = items.remove(index);
+            if items.is_empty() {
+                *selected = None;
+            } else if selected.as_ref() == Some(&removed) {
+                *selected = items.first().cloned();
+            }
+            removed
+        };
+        if let Some(state) = self.tab_selection_history.get_mut(&tabs) {
+            state.selected_stamps_by_item.remove(&removed);
+            if state.selected_stamps_by_item.is_empty() {
+                self.tab_selection_history.remove(&tabs);
+            }
         }
         true
     }
@@ -164,11 +174,4 @@ pub(in crate::graph) fn selected_item(
         .as_ref()
         .filter(|candidate| items.contains(candidate))
         .cloned()
-}
-
-pub(in crate::graph) fn repair_selected_item(
-    items: &[DockItemId],
-    selected: &Option<DockItemId>,
-) -> Option<DockItemId> {
-    selected_item(items, selected).or_else(|| items.first().cloned())
 }

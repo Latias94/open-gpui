@@ -303,9 +303,66 @@ fn local_release_after_preview_miss_does_not_commit(cx: &mut TestAppContext) {
                 window,
                 cx,
             );
-            host.interaction_mut().mark_drop_preview_rendered();
+            host.interaction_mut().finish_drop_acceptance_pass();
             host.drop_payload_release_from_render(
                 DockPayloadDropRelease::hovered_host(payload.clone(), space(), release_position),
+                window,
+                cx,
+            )
+        })
+        .expect("host should handle release");
+    cx.run_until_parked();
+
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { items, selected } = controller
+            .graph()
+            .node(right_tabs)
+            .expect("target tabs should exist")
+        else {
+            panic!("target should be tabs");
+        };
+        assert_eq!(items, &vec![item("b")]);
+        assert_eq!(selected.as_ref(), items.first());
+    });
+}
+
+#[open_gpui::test]
+fn source_only_release_does_not_commit_cached_local_delivery_without_hover_authority(
+    cx: &mut TestAppContext,
+) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(500.0), px(240.0)));
+
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("target tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let release_position = target_bounds.center();
+    let payload = DockDragPayload::new_item(space(), left_tabs, item("a"), "Panel A".to_string());
+
+    cx.set_platform_hovered_window(None);
+    window
+        .update(cx, |host, window, cx| {
+            host.begin_host_drop_scene_from_render(
+                &payload,
+                target_bounds,
+                release_position,
+                window,
+                cx,
+            );
+            host.update_drop_scene_fact_from_render(
+                &payload,
+                drop_scene_fact::leaf(right_tabs, right_tabs, target_bounds, false),
+                release_position,
+                window,
+                cx,
+            );
+            host.interaction_mut().finish_drop_acceptance_pass();
+            host.drop_payload_release_from_render(
+                DockPayloadDropRelease::source_only(payload.clone(), space(), release_position),
                 window,
                 cx,
             )
@@ -640,16 +697,38 @@ fn dragging_tab_to_root_edge_resolves_from_render_leaf_fact_root(cx: &mut TestAp
         },
     )
     .expect("source tab selector should be emitted");
-    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
-        .expect("target tabs selector should be emitted");
-    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let target_tabs_selector =
+        selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+            .expect("target tabs selector should be emitted");
+    let root_selector = selector_for(&visual, &host, DockDebugRegion::Split { node: root })
+        .expect("root split selector should be emitted");
+    let root_bounds = debug_bounds(&mut visual, &root_selector);
+    let target_bounds = debug_bounds(&mut visual, &target_tabs_selector);
+    let source_bounds = debug_bounds(&mut visual, &source_tab);
     let start = debug_bounds(&mut visual, &source_tab).center();
-    let threshold = point(start.x + px(24.0), start.y);
-    let end = outer_edge_drop_position(target_bounds, DropZone::Right);
+    let end = outer_edge_drop_position(root_bounds, DropZone::Right);
 
-    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
-    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
-    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    let payload = DockDragPayload::new_item(space(), left_tabs, item("a"), "Panel A".to_string());
+    window
+        .update(cx, |host, window, cx| {
+            host.begin_tab_item_drag_from_render(left_tabs, item("a"), &payload, cx);
+            host.update_payload_drag_tear_off_geometry_from_render(
+                &payload,
+                crate::drag::DockDragTearOffGeometry::from_source_bounds(source_bounds, start)
+                    .with_preferred_size(source_bounds.size),
+            );
+            host.begin_host_drop_scene_from_render(&payload, root_bounds, end, window, cx);
+            host.update_root_drop_scene_from_render(&payload, root, root_bounds, end, window, cx);
+            host.update_drop_scene_fact_from_render(
+                &payload,
+                drop_scene_fact::leaf(root, right_tabs, target_bounds, false),
+                end,
+                window,
+                cx,
+            );
+            true
+        })
+        .expect("host should update root-edge scene");
     cx.run_until_parked();
     let _visual = VisualTestContext::from_window(window.into(), cx);
 
@@ -890,6 +969,7 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
 
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
     visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
 
@@ -933,6 +1013,7 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
             );
         })
         .expect("detached viewport should remain live");
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
 }
 
 #[open_gpui::test]
@@ -986,6 +1067,7 @@ fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext
 
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
     source_visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
 
@@ -1057,6 +1139,7 @@ fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext
             "detached viewport should be empty after docking its tab back"
         );
     });
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
 }
 
 #[open_gpui::test]
@@ -1125,6 +1208,7 @@ fn runtime_secondary_single_tab_outside_release_creates_detached_viewport(cx: &m
 
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
     visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
 
@@ -1158,6 +1242,79 @@ fn runtime_secondary_single_tab_outside_release_creates_detached_viewport(cx: &m
                 .adapter()
                 .window_for_space(&detached_space)
                 .is_some()
+        );
+    });
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
+}
+
+#[open_gpui::test]
+fn runtime_rendered_mouse_up_with_unknown_button_state_does_not_tear_off(cx: &mut TestAppContext) {
+    let source_space = crate::DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("source viewport should open through runtime");
+    let source_window = opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("runtime viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("runtime viewport should expose DockHost root");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(opened.window(), cx);
+
+    let source_tab = selector_for(
+        &visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let outside_window = point(px(900.0), px(900.0));
+
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    assert!(
+        !cx.read(|app| app.has_active_drag()),
+        "ambiguous outside release should stop the active drag session"
+    );
+    assert_eq!(
+        runtime.registered_viewport_spaces(),
+        vec![source_space.clone()],
+        "unknown button state must not authorize a detached viewport"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("a"), item("b")]
         );
     });
 }

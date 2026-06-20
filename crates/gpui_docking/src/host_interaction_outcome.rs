@@ -1,14 +1,15 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockHost, DockViewportActivationTarget,
-    DockViewportDropRouteOutcome, viewport_activation::apply_viewport_activation,
+    DockActionApplyError, DockActionOutcome, DockHost, DockViewportActivationTransaction,
+    DockViewportDropRouteOutcome, viewport_activation::apply_viewport_activation_transaction,
 };
 use open_gpui::Context;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockHostInteractionOutcome {
     Idle,
-    Changed,
-    Notify,
+    Notify {
+        changed: bool,
+    },
     RoutedDrop {
         outcome: DockViewportDropRouteOutcome,
         changed: bool,
@@ -19,31 +20,44 @@ pub(crate) enum DockHostInteractionOutcome {
 impl DockHostInteractionOutcome {
     pub(crate) fn changed(&self) -> bool {
         match self {
-            Self::Changed => true,
+            Self::Notify { changed } => *changed,
             Self::RoutedDrop { outcome, changed } => {
                 *changed
                     || outcome
                         .action_result()
                         .map(DockActionOutcome::changed)
                         .unwrap_or(false)
-                    || outcome.activation_target().is_some()
+                    || outcome.activation_transaction().is_some()
             }
-            Self::Idle | Self::Notify | Self::Rejected(_) => false,
+            Self::Idle | Self::Rejected(_) => false,
         }
     }
 
     pub(crate) fn finish(self, cx: &mut Context<DockHost>) -> bool {
         let changed = self.changed();
         let should_notify = self.should_notify();
-        let activation_changed = apply_viewport_activation(self.activation_target(), cx);
+        let activation_changed =
+            apply_viewport_activation_transaction(self.activation_transaction(), cx).changed();
         if should_notify && !activation_changed {
             cx.notify();
         }
         changed
     }
 
+    pub(crate) fn from_changed() -> Self {
+        Self::Notify { changed: true }
+    }
+
+    pub(crate) fn from_notify() -> Self {
+        Self::Notify { changed: false }
+    }
+
     pub(crate) fn from_session_changed(changed: bool) -> Self {
-        if changed { Self::Notify } else { Self::Idle }
+        if changed {
+            Self::from_notify()
+        } else {
+            Self::Idle
+        }
     }
 
     pub(crate) fn merge(self, other: Self) -> Self {
@@ -54,8 +68,9 @@ impl DockHostInteractionOutcome {
                 outcome,
                 changed: changed || other.changed(),
             },
-            (Self::Changed, _) | (_, Self::Changed) => Self::Changed,
-            (Self::Notify, _) | (_, Self::Notify) => Self::Notify,
+            (Self::Notify { changed }, other) | (other, Self::Notify { changed }) => Self::Notify {
+                changed: changed || other.changed(),
+            },
             (Self::Idle, Self::Idle) => Self::Idle,
         }
     }
@@ -65,8 +80,8 @@ impl DockHostInteractionOutcome {
         notify_on_unchanged: bool,
     ) -> Self {
         match result {
-            Ok(DockActionOutcome::Changed) => Self::Changed,
-            Ok(DockActionOutcome::Unchanged) if notify_on_unchanged => Self::Notify,
+            Ok(DockActionOutcome::Changed) => Self::from_changed(),
+            Ok(DockActionOutcome::Unchanged) if notify_on_unchanged => Self::from_notify(),
             Ok(DockActionOutcome::Unchanged) => Self::Idle,
             Err(error) => Self::Rejected(error),
         }
@@ -75,7 +90,7 @@ impl DockHostInteractionOutcome {
     fn should_notify(&self) -> bool {
         matches!(
             self,
-            Self::Changed | Self::Notify | Self::RoutedDrop { .. } | Self::Rejected(_)
+            Self::Notify { .. } | Self::RoutedDrop { .. } | Self::Rejected(_)
         )
     }
 
@@ -83,7 +98,7 @@ impl DockHostInteractionOutcome {
     pub(crate) fn routed_drop_outcome(&self) -> Option<&DockViewportDropRouteOutcome> {
         match self {
             Self::RoutedDrop { outcome, .. } => Some(outcome),
-            Self::Idle | Self::Changed | Self::Notify | Self::Rejected(_) => None,
+            Self::Idle | Self::Notify { .. } | Self::Rejected(_) => None,
         }
     }
 
@@ -99,10 +114,10 @@ impl DockHostInteractionOutcome {
         }
     }
 
-    fn activation_target(&self) -> Option<DockViewportActivationTarget> {
+    fn activation_transaction(&self) -> Option<DockViewportActivationTransaction> {
         match self {
-            Self::RoutedDrop { outcome, .. } => outcome.activation_target(),
-            Self::Idle | Self::Changed | Self::Notify | Self::Rejected(_) => None,
+            Self::RoutedDrop { outcome, .. } => outcome.activation_transaction(),
+            Self::Idle | Self::Notify { .. } | Self::Rejected(_) => None,
         }
     }
 }
@@ -120,7 +135,7 @@ mod tests {
         let window = handle(1);
         let routed = DockViewportDropRouteOutcome::Action(DockViewportDropActionOutcome::new(
             DockActionOutcome::Changed,
-            Some(DockViewportActivationTarget::new(
+            Some(DockViewportActivationTransaction::new(
                 space(),
                 window,
                 DockViewportFocusRequest::panel(DockItemId::from("a")),
@@ -131,12 +146,14 @@ mod tests {
         assert!(outcome.changed());
         assert_eq!(outcome.routed_drop_outcome(), Some(&routed));
         assert_eq!(
-            outcome.activation_target().map(|target| target.window()),
+            outcome
+                .activation_transaction()
+                .map(|target| target.window()),
             Some(window)
         );
         assert_eq!(
             outcome
-                .activation_target()
+                .activation_transaction()
                 .map(|target| target.focus_request().clone()),
             Some(DockViewportFocusRequest::panel(DockItemId::from("a")))
         );
@@ -147,7 +164,7 @@ mod tests {
         let window = handle(2);
         let routed = DockViewportDropRouteOutcome::Action(DockViewportDropActionOutcome::new(
             DockActionOutcome::Unchanged,
-            Some(DockViewportActivationTarget::new(
+            Some(DockViewportActivationTransaction::new(
                 space(),
                 window,
                 DockViewportFocusRequest::panel(DockItemId::from("a")),

@@ -66,9 +66,7 @@ fn tabs_graph_with_optional_selected(
 ) -> (DockGraph, DockNodeId) {
     let mut graph = DockGraph::new();
     let items: Vec<DockItemId> = items.iter().copied().map(DockItemId::from).collect();
-    let selected = selected
-        .map(DockItemId::from)
-        .filter(|selected| items.contains(selected));
+    let selected = selected.map(DockItemId::from);
     let root = graph.insert_node(DockNode::Tabs { items, selected });
     graph.set_root(space(), root);
     (graph, root)

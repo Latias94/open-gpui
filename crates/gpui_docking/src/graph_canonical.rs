@@ -2,7 +2,7 @@ use crate::{DockNodeId, DockSpaceId, split_fraction::normalize_shares};
 #[cfg(test)]
 use std::collections::HashSet;
 
-use super::{DockGraph, DockNode, SplitAxis, graph_tab_stack::repair_selected_item};
+use super::{DockGraph, DockNode, SplitAxis};
 
 impl DockGraph {
     /// Simplifies every tree in one dock space into canonical form.
@@ -54,18 +54,9 @@ impl DockGraph {
     fn simplify_subtree(&mut self, node: DockNodeId) -> Option<DockNodeId> {
         let node_value = self.nodes.get(node)?.clone();
         match node_value {
-            DockNode::Tabs { items, selected } => {
+            DockNode::Tabs { items, .. } => {
                 if items.is_empty() {
                     return None;
-                }
-                let selected = repair_selected_item(&items, &selected);
-                if let Some(DockNode::Tabs {
-                    items: current_items,
-                    selected: current_selected,
-                }) = self.nodes.get_mut(node)
-                {
-                    *current_items = items;
-                    *current_selected = selected;
                 }
                 Some(node)
             }

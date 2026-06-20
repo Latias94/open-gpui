@@ -1,7 +1,7 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockClassId, DockFloatingContainer, DockGraph,
-    DockGraphDropTarget, DockGraphMutationError, DockNode, DockPanelDescriptor, DockPolicyError,
-    DockSpaceId, DropZone, SplitAxis, host_test_support::*,
+    DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockFloatingContainer,
+    DockGraph, DockGraphDropTarget, DockGraphMutationError, DockNode, DockPanelDescriptor,
+    DockPolicyError, DockSpaceId, DropZone, SplitAxis, host_test_support::*,
 };
 use open_gpui::TestAppContext;
 
@@ -63,6 +63,74 @@ fn workspace_move_tab_validates_declared_source_tabs(cx: &mut TestAppContext) {
     };
     assert_eq!(items, &vec![item("a")]);
     assert_eq!(selected.as_ref(), items.get(0));
+}
+
+#[open_gpui::test]
+fn workspace_move_tabs_center_selects_moved_stack_selected_item(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b"), item("c")],
+        selected: Some(item("c")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("target-a"), item("target-b")],
+        selected: Some(item("target-b")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![source_tabs, target_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root);
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "A", "A"),
+            ("b", "B", "B"),
+            ("c", "C", "C"),
+            ("target-a", "Target A", "Target A"),
+            ("target-b", "Target B", "Target B"),
+        ],
+    );
+    workspace
+        .commit_select_tab(target_tabs, &item("target-a"))
+        .expect("target stack should record local MRU");
+    workspace
+        .commit_select_tab(source_tabs, &item("a"))
+        .expect("source stack should record source-local MRU");
+    workspace
+        .commit_select_tab(source_tabs, &item("c"))
+        .expect("source stack should restore its selected tab before moving");
+
+    workspace
+        .commit_tabs_move(
+            &space(),
+            source_tabs,
+            &space(),
+            DockGraphDropTarget::center(target_tabs),
+        )
+        .expect("moving source tabs into target stack should be valid");
+    workspace.commit_close_item(&space(), &item("c")).expect(
+        "closing moved selected tab should use remaining target-local history or structure",
+    );
+
+    let DockNode::Tabs { items, selected } = workspace
+        .graph()
+        .node(target_tabs)
+        .expect("target tabs should remain")
+    else {
+        panic!("target should be tabs");
+    };
+    assert_eq!(
+        items,
+        &vec![item("target-a"), item("target-b"), item("a"), item("b")]
+    );
+    assert_eq!(
+        selected.as_ref(),
+        Some(&item("target-a")),
+        "source tabbar MRU must not be imported into the target tabbar"
+    );
 }
 
 #[open_gpui::test]
@@ -766,6 +834,373 @@ fn workspace_merge_space_uses_explicit_target_tabs_in_split_target(cx: &mut Test
         &vec![item("target-right"), item("a"), item("b")]
     );
     assert_eq!(right_selected.as_ref(), right_items.get(2));
+}
+
+#[open_gpui::test]
+fn workspace_merge_space_rejects_recently_selected_root_tabs_when_target_has_multiple_roots(
+    cx: &mut TestAppContext,
+) {
+    let target = DockSpaceId::from("target");
+    let detached = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let target_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("left-a"), item("left-b")],
+        selected: Some(item("left-b")),
+    });
+    let target_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("right-a"), item("right-b")],
+        selected: Some(item("right-b")),
+    });
+    let target_root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![target_left, target_right],
+        fractions: vec![0.5, 0.5],
+    });
+    let detached_root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("x")],
+        selected: Some(item("x")),
+    });
+    graph.set_root(target.clone(), target_root);
+    graph.set_root(detached.clone(), detached_root);
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("left-a", "Left A", "Left A"),
+            ("left-b", "Left B", "Left B"),
+            ("right-a", "Right A", "Right A"),
+            ("right-b", "Right B", "Right B"),
+            ("x", "X", "X"),
+        ],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace
+        .apply_action(&DockAction::SelectTab {
+            tabs: target_left,
+            item: item("left-a"),
+        })
+        .expect("left tabs should record a selection stamp");
+    workspace
+        .apply_action(&DockAction::SelectTab {
+            tabs: target_right,
+            item: item("right-a"),
+        })
+        .expect("right tabs should record a selection stamp");
+
+    let err = workspace
+        .commit_merge_space_into(&detached, &target)
+        .expect_err("merge-back must not infer a target tabs stack from tab MRU");
+
+    assert_eq!(
+        err,
+        DockActionApplyError::Graph(DockGraphMutationError::MergeTargetTabsNotUnique {
+            space: target.clone(),
+            tabs_len: 2,
+        })
+    );
+    let DockNode::Tabs { items, selected } = workspace
+        .graph()
+        .node(target_left)
+        .expect("left target tabs should remain untouched")
+    else {
+        panic!("left target should be tabs");
+    };
+    assert_eq!(items, &vec![item("left-a"), item("left-b")]);
+    assert_eq!(selected.as_ref(), Some(&item("left-a")));
+    let DockNode::Tabs { items, selected } = workspace
+        .graph()
+        .node(target_right)
+        .expect("right target tabs should remain untouched")
+    else {
+        panic!("right target should be tabs");
+    };
+    assert_eq!(items, &vec![item("right-a"), item("right-b")]);
+    assert_eq!(selected.as_ref(), Some(&item("right-a")));
+    assert_eq!(workspace.graph().root(&detached), Some(detached_root));
+}
+
+#[open_gpui::test]
+fn workspace_merge_space_preserves_target_tab_mru_for_followup_close(cx: &mut TestAppContext) {
+    let target = DockSpaceId::from("target");
+    let detached = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b"), item("c")],
+        selected: Some(item("c")),
+    });
+    let detached_root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("x")],
+        selected: Some(item("x")),
+    });
+    graph.set_root(target.clone(), target_tabs);
+    graph.set_root(detached.clone(), detached_root);
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "A", "A"),
+            ("b", "B", "B"),
+            ("c", "C", "C"),
+            ("x", "X", "X"),
+        ],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace
+        .commit_select_tab(target_tabs, &item("b"))
+        .expect("selecting target tab should record tab MRU");
+
+    workspace
+        .commit_merge_space_into(&detached, &target)
+        .expect("merge-back should append detached tab into target stack");
+    workspace
+        .commit_close_item(&target, &item("x"))
+        .expect("closing merged selected tab should use preserved target MRU");
+
+    let DockNode::Tabs { items, selected } = workspace
+        .graph()
+        .node(target_tabs)
+        .expect("target tabs should remain")
+    else {
+        panic!("target should be tabs");
+    };
+    assert_eq!(items, &vec![item("a"), item("b"), item("c")]);
+    assert_eq!(selected.as_ref(), Some(&item("b")));
+}
+
+#[open_gpui::test]
+fn workspace_merge_space_does_not_transfer_source_tab_mru_into_target_tabs(
+    cx: &mut TestAppContext,
+) {
+    let target = DockSpaceId::from("target");
+    let detached = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("target-a"), item("target-b")],
+        selected: Some(item("target-b")),
+    });
+    let detached_root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b"), item("c")],
+        selected: Some(item("c")),
+    });
+    graph.set_root(target.clone(), target_tabs);
+    graph.set_root(detached.clone(), detached_root);
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("target-a", "Target A", "Target A"),
+            ("target-b", "Target B", "Target B"),
+            ("a", "A", "A"),
+            ("b", "B", "B"),
+            ("c", "C", "C"),
+        ],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace
+        .commit_select_tab(target_tabs, &item("target-a"))
+        .expect("target tabs should record local MRU");
+    workspace
+        .commit_select_tab(detached_root, &item("a"))
+        .expect("source tabs should record source-local MRU");
+    workspace
+        .commit_select_tab(detached_root, &item("c"))
+        .expect("source tabs should restore its selected tab before merge");
+
+    workspace
+        .commit_merge_space_into(&detached, &target)
+        .expect("source root tabs should merge into target tabs");
+    workspace
+        .commit_close_item(&target, &item("c"))
+        .expect("closing merged selected tab should use target-local MRU");
+
+    let DockNode::Tabs { items, selected } = workspace
+        .graph()
+        .node(target_tabs)
+        .expect("target tabs should remain")
+    else {
+        panic!("target should be tabs");
+    };
+    assert_eq!(
+        items,
+        &vec![item("target-a"), item("target-b"), item("a"), item("b")]
+    );
+    assert_eq!(
+        selected.as_ref(),
+        Some(&item("target-a")),
+        "source tabbar MRU must not be imported into the target tabbar"
+    );
+}
+
+#[open_gpui::test]
+fn workspace_merge_space_root_into_empty_target_preserves_source_tab_mru(cx: &mut TestAppContext) {
+    let source = DockSpaceId::from("source");
+    let target = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b"), item("c")],
+        selected: Some(item("c")),
+    });
+    graph.set_root(source.clone(), source_tabs);
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[("a", "A", "A"), ("b", "B", "B"), ("c", "C", "C")],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace
+        .commit_select_tab(source_tabs, &item("a"))
+        .expect("source tabs should record MRU before merge");
+
+    workspace
+        .commit_merge_space_into(&source, &target)
+        .expect("merge-back into an empty target should preserve source root tabs");
+    workspace
+        .commit_close_item(&target, &item("c"))
+        .expect("closing selected tab should use preserved source MRU");
+
+    let DockNode::Tabs { items, selected } = workspace
+        .graph()
+        .node(source_tabs)
+        .expect("moved root tabs should keep its node id")
+    else {
+        panic!("target root should be tabs");
+    };
+    assert_eq!(items, &vec![item("a"), item("b")]);
+    assert_eq!(selected.as_ref(), Some(&item("a")));
+}
+
+#[open_gpui::test]
+fn workspace_merge_space_floating_forest_preserves_floating_tab_mru(cx: &mut TestAppContext) {
+    let source = DockSpaceId::from("source");
+    let target = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("target")],
+        selected: Some(item("target")),
+    });
+    let floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b"), item("c")],
+        selected: Some(item("c")),
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_tabs,
+    });
+    graph.set_root(target.clone(), target_tabs);
+    graph
+        .floating_containers_mut(source.clone())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(16.0, 24.0, 240.0, 160.0),
+        });
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("target", "Target", "Target"),
+            ("a", "A", "A"),
+            ("b", "B", "B"),
+            ("c", "C", "C"),
+        ],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace
+        .commit_select_tab(floating_tabs, &item("a"))
+        .expect("floating tabs should record MRU before merge");
+
+    workspace
+        .commit_merge_space_into(&source, &target)
+        .expect("floating-only source space should merge its floating forest");
+    workspace
+        .commit_close_item(&target, &item("c"))
+        .expect("closing floating selected tab should use preserved floating MRU");
+
+    let DockNode::Tabs { items, selected } = workspace
+        .graph()
+        .node(floating_tabs)
+        .expect("moved floating tabs should keep its node id")
+    else {
+        panic!("floating child should be tabs");
+    };
+    assert_eq!(items, &vec![item("a"), item("b")]);
+    assert_eq!(selected.as_ref(), Some(&item("a")));
+}
+
+#[open_gpui::test]
+fn workspace_move_floating_center_selects_moved_stack_selected_item(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("target-a"), item("target-b")],
+        selected: Some(item("target-b")),
+    });
+    let floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b"), item("c")],
+        selected: Some(item("c")),
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_tabs,
+    });
+    graph.set_root(space(), target_tabs);
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(16.0, 24.0, 240.0, 160.0),
+        });
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("target-a", "Target A", "Target A"),
+            ("target-b", "Target B", "Target B"),
+            ("a", "A", "A"),
+            ("b", "B", "B"),
+            ("c", "C", "C"),
+        ],
+    );
+    workspace
+        .commit_select_tab(target_tabs, &item("target-a"))
+        .expect("target stack should record local MRU");
+    workspace
+        .commit_select_tab(floating_tabs, &item("a"))
+        .expect("floating tabs should record source-local MRU");
+    workspace
+        .commit_select_tab(floating_tabs, &item("c"))
+        .expect("floating tabs should restore its selected tab before moving");
+
+    workspace
+        .commit_floating_move(
+            &space(),
+            floating,
+            &space(),
+            DockGraphDropTarget::center(target_tabs),
+        )
+        .expect("floating tabs should move into target tabs");
+    workspace.commit_close_item(&space(), &item("c")).expect(
+        "closing moved selected tab should use remaining target-local history or structure",
+    );
+
+    let DockNode::Tabs { items, selected } = workspace
+        .graph()
+        .node(target_tabs)
+        .expect("target tabs should remain")
+    else {
+        panic!("target should be tabs");
+    };
+    assert_eq!(
+        items,
+        &vec![item("target-a"), item("target-b"), item("a"), item("b")]
+    );
+    assert_eq!(
+        selected.as_ref(),
+        Some(&item("target-a")),
+        "floating tabbar MRU must not be imported into the target tabbar"
+    );
 }
 
 #[open_gpui::test]

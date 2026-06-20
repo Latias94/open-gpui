@@ -49,12 +49,13 @@ use crate::{
     ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
     DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
     KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, MouseButton, OwnedMenu,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformViewportCapabilities, Point, Priority, PromptBuilder,
-    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
-    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
-    WindowHandle, WindowId, WindowInvalidator,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformFocusedWindow,
+    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformViewportCapabilities, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
+    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem,
+    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
+    WindowInvalidator,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -1132,9 +1133,14 @@ impl App {
         self.platform.viewport_capabilities()
     }
 
-    /// Returns the application window currently under the mouse cursor, if the platform can report it.
-    pub fn hovered_window(&self) -> Option<AnyWindowHandle> {
+    /// Returns the backend hovered-window signal for the current pointer snapshot.
+    pub fn hovered_window(&self) -> PlatformHoveredWindow {
         self.platform.hovered_window()
+    }
+
+    /// Returns the backend focused-window signal for the current platform snapshot.
+    pub fn focused_window(&self) -> PlatformFocusedWindow {
+        self.platform.focused_window()
     }
 
     /// Returns a handle to the window that is currently focused at the platform level, if one exists.
@@ -2190,7 +2196,7 @@ impl App {
     /// the bindings in the element tree, and any global action listeners.
     pub fn is_action_available(&mut self, action: &dyn Action) -> bool {
         let mut action_available = false;
-        if let Some(window) = self.active_window()
+        if let Some(window) = self.focused_action_window()
             && let Ok(window_action_available) =
                 window.update(self, |_, window, cx| window.is_action_available(action, cx))
         {
@@ -2242,17 +2248,24 @@ impl App {
         self.platform.update_jump_list(menus, entries)
     }
 
-    /// Dispatch an action to the currently active window or global action handler
+    /// Dispatch an action to the currently focused window or global action handler
     /// See [`crate::Action`] for more information on how actions work
     pub fn dispatch_action(&mut self, action: &dyn Action) {
-        if let Some(active_window) = self.active_window() {
-            active_window
+        if let Some(focused_window) = self.focused_action_window() {
+            focused_window
                 .update(self, |_, window, cx| {
                     window.dispatch_action(action.boxed_clone(), cx)
                 })
                 .log_err();
         } else {
             self.dispatch_global_action(action);
+        }
+    }
+
+    fn focused_action_window(&self) -> Option<AnyWindowHandle> {
+        match self.focused_window() {
+            PlatformFocusedWindow::Window(window) => Some(window),
+            PlatformFocusedWindow::NoWindow | PlatformFocusedWindow::Unavailable => None,
         }
     }
 
@@ -2811,7 +2824,9 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
 mod test {
     use std::{cell::RefCell, rc::Rc};
 
-    use crate::{AppContext, TestAppContext};
+    use crate::{AppContext, Empty, TestAppContext, px, size};
+
+    actions!(app_focus_tests, [DispatchProbe]);
 
     #[test]
     fn test_gpui_borrow() {
@@ -2842,5 +2857,36 @@ mod test {
         });
 
         assert_eq!(*observation_count.borrow(), 2);
+    }
+
+    #[crate::test]
+    fn app_dispatch_action_uses_focused_window_authority(cx: &mut TestAppContext) {
+        let window = cx.open_window(size(px(320.0), px(200.0)), |_, _| Empty);
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("test window should be activatable");
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|app| app.active_window()),
+            Some(window.into()),
+            "setup should leave an active application window"
+        );
+
+        let global_dispatch_count = Rc::new(RefCell::new(0));
+        cx.update(|app| {
+            let global_dispatch_count = global_dispatch_count.clone();
+            app.on_action(move |_: &DispatchProbe, _| {
+                *global_dispatch_count.borrow_mut() += 1;
+            });
+        });
+
+        cx.set_platform_focused_window_available(false);
+        cx.update(|app| app.dispatch_action(&DispatchProbe));
+
+        assert_eq!(
+            *global_dispatch_count.borrow(),
+            1,
+            "when backend focus authority is unavailable, app dispatch must not target active_window"
+        );
     }
 }

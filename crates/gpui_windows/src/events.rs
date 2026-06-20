@@ -888,6 +888,10 @@ impl WindowsWindowInner {
     }
 
     fn handle_hit_test_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
+        if !self.state.accepts_pointer_input.get() {
+            return Some(HTTRANSPARENT as _);
+        }
+
         if !self.is_movable || self.state.is_fullscreen() {
             return None;
         }

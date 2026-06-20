@@ -282,15 +282,15 @@ impl WindowsPlatform {
         })
     }
 
-    fn find_current_active_window(&self) -> Option<HWND> {
-        let active_window_hwnd = unsafe { GetActiveWindow() };
-        if active_window_hwnd.is_invalid() {
+    fn find_current_foreground_window(&self) -> Option<HWND> {
+        let foreground_window_hwnd = unsafe { GetForegroundWindow() };
+        if foreground_window_hwnd.is_invalid() {
             return None;
         }
         self.raw_window_handles
             .read()
             .iter()
-            .find(|hwnd| hwnd.as_raw() == active_window_hwnd)
+            .find(|hwnd| hwnd.as_raw() == foreground_window_hwnd)
             .map(|hwnd| hwnd.as_raw())
     }
 
@@ -517,26 +517,34 @@ impl Platform for WindowsPlatform {
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
-        let active_window_hwnd = unsafe { GetActiveWindow() };
-        self.window_from_hwnd(active_window_hwnd)
+        let foreground_window_hwnd = unsafe { GetForegroundWindow() };
+        self.window_from_hwnd(foreground_window_hwnd)
             .map(|inner| inner.handle)
     }
 
-    fn hovered_window(&self) -> Option<AnyWindowHandle> {
+    fn focused_window(&self) -> PlatformFocusedWindow {
+        PlatformFocusedWindow::from_window(self.active_window())
+    }
+
+    fn hovered_window(&self) -> PlatformHoveredWindow {
         let mut cursor_position = POINT::default();
-        unsafe { GetCursorPos(&mut cursor_position).ok()? };
+        if unsafe { GetCursorPos(&mut cursor_position) }.is_err() {
+            return PlatformHoveredWindow::Unavailable;
+        }
         let hovered_window_hwnd = unsafe { WindowFromPoint(cursor_position) };
-        self.window_from_hwnd(hovered_window_hwnd)
-            .map(|inner| inner.handle)
+        PlatformHoveredWindow::from_window(
+            self.window_from_hwnd(hovered_window_hwnd)
+                .map(|inner| inner.handle),
+        )
     }
 
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities {
             global_window_bounds: true,
-            mouse_hovered_window: true,
-            active_window: true,
             display_work_area: true,
             dpi_scale: true,
+            no_input_windows: true,
+            hovered_window_ignores_no_input: true,
             ..Default::default()
         }
     }
@@ -591,7 +599,7 @@ impl Platform for WindowsPlatform {
         options: PathPromptOptions,
     ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
         let (tx, rx) = oneshot::channel();
-        let window = self.find_current_active_window();
+        let window = self.find_current_foreground_window();
         self.foreground_executor()
             .spawn(async move {
                 let _ = tx.send(file_open_dialog(options, window));
@@ -609,7 +617,7 @@ impl Platform for WindowsPlatform {
         let directory = directory.to_owned();
         let suggested_name = suggested_name.map(|s| s.to_owned());
         let (tx, rx) = oneshot::channel();
-        let window = self.find_current_active_window();
+        let window = self.find_current_foreground_window();
         self.foreground_executor()
             .spawn(async move {
                 let _ = tx.send(file_save_dialog(directory, suggested_name, window));

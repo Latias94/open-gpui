@@ -1,10 +1,10 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     DummyKeyboardMapper, ForegroundExecutor, Keymap, MouseButton, NoopTextSystem,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PromptButton, ScreenCaptureFrame,
-    ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task, TestDisplay, TestWindow,
-    ThermalState, WindowAppearance, WindowParams, size,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHeadlessRenderer,
+    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata,
+    Task, TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -23,7 +23,9 @@ pub(crate) struct TestPlatform {
     foreground_executor: ForegroundExecutor,
 
     pub(crate) active_window: RefCell<Option<TestWindow>>,
+    pub(crate) focused_window_available: RefCell<bool>,
     pub(crate) hovered_window: RefCell<Option<TestWindow>>,
+    window_stack: RefCell<Option<Vec<TestWindow>>>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
     pressed_mouse_buttons: Mutex<Option<Vec<MouseButton>>>,
@@ -129,7 +131,9 @@ impl TestPlatform {
             pressed_mouse_buttons: Default::default(),
             active_display: Rc::new(TestDisplay::new()),
             active_window: Default::default(),
+            focused_window_available: RefCell::new(true),
             hovered_window: Default::default(),
+            window_stack: Default::default(),
             expect_restart: Default::default(),
             current_clipboard_item: Mutex::new(None),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -259,6 +263,10 @@ impl TestPlatform {
             .detach();
     }
 
+    pub(crate) fn set_focused_window_available(&self, available: bool) {
+        *self.focused_window_available.borrow_mut() = available;
+    }
+
     pub(crate) fn set_hovered_window(&self, window: Option<TestWindow>) {
         let previous_window = self.hovered_window.borrow_mut().take();
         self.hovered_window.borrow_mut().clone_from(&window);
@@ -274,6 +282,10 @@ impl TestPlatform {
         if let Some(window) = window {
             window.simulate_hover_status_change(true);
         }
+    }
+
+    pub(crate) fn set_window_stack(&self, windows: Option<Vec<TestWindow>>) {
+        *self.window_stack.borrow_mut() = windows;
     }
 
     pub(crate) fn set_mouse_button_is_pressed(&self, button: MouseButton, pressed: Option<bool>) {
@@ -393,20 +405,39 @@ impl Platform for TestPlatform {
             .map(|window| window.0.lock().handle)
     }
 
-    fn hovered_window(&self) -> Option<crate::AnyWindowHandle> {
-        self.hovered_window
-            .borrow()
-            .as_ref()
-            .map(|window| window.0.lock().handle)
+    fn focused_window(&self) -> PlatformFocusedWindow {
+        if *self.focused_window_available.borrow() {
+            PlatformFocusedWindow::from_window(self.active_window())
+        } else {
+            PlatformFocusedWindow::Unavailable
+        }
+    }
+
+    fn hovered_window(&self) -> PlatformHoveredWindow {
+        PlatformHoveredWindow::from_window(
+            self.hovered_window
+                .borrow()
+                .as_ref()
+                .map(|window| window.0.lock().handle),
+        )
+    }
+
+    fn window_stack(&self) -> Option<Vec<crate::AnyWindowHandle>> {
+        self.window_stack.borrow().as_ref().map(|windows| {
+            windows
+                .iter()
+                .map(|window| window.0.lock().handle)
+                .collect()
+        })
     }
 
     fn viewport_capabilities(&self) -> crate::PlatformViewportCapabilities {
         crate::PlatformViewportCapabilities {
             global_window_bounds: true,
-            mouse_hovered_window: true,
-            active_window: true,
+            window_stack: self.window_stack.borrow().is_some(),
             display_work_area: true,
             dpi_scale: true,
+            hovered_window_ignores_no_input: true,
             ..Default::default()
         }
     }

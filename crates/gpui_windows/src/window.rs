@@ -75,6 +75,7 @@ pub struct WindowsWindowState {
     /// Shared with [`WindowsPlatformState::cursor_visible`].
     pub cursor_visible: Arc<AtomicBool>,
     pub nc_button_pressed: Cell<Option<u32>>,
+    accepts_pointer_input: Cell<bool>,
 
     pub display: Cell<WindowsDisplay>,
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
@@ -113,6 +114,7 @@ impl WindowsWindowState {
         appearance: WindowAppearance,
         disable_direct_composition: bool,
         invalidate_devices: Arc<AtomicBool>,
+        accepts_pointer_input: bool,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -171,6 +173,7 @@ impl WindowsWindowState {
             current_cursor: Cell::new(current_cursor),
             cursor_visible,
             nc_button_pressed: Cell::new(nc_button_pressed),
+            accepts_pointer_input: Cell::new(accepts_pointer_input),
             display: Cell::new(display),
             fullscreen: Cell::new(fullscreen),
             initial_placement: Cell::new(initial_placement),
@@ -253,6 +256,7 @@ impl WindowsWindowInner {
             context.appearance,
             context.disable_direct_composition,
             context.invalidate_devices.clone(),
+            context.accepts_pointer_input,
         )?;
 
         Ok(Rc::new(Self {
@@ -340,9 +344,14 @@ impl WindowsWindowInner {
         };
         match open_status.state {
             WindowOpenState::Maximized => unsafe {
-                SetWindowPlacement(self.hwnd, &open_status.placement)
-                    .context("failed to set window placement")?;
-                ShowWindowAsync(self.hwnd, SW_MAXIMIZE).ok()?;
+                if open_status.activate {
+                    SetWindowPlacement(self.hwnd, &open_status.placement)
+                        .context("failed to set window placement")?;
+                    ShowWindowAsync(self.hwnd, SW_MAXIMIZE).ok()?;
+                } else {
+                    apply_window_open_position_without_activation(self.hwnd, &open_status)?;
+                    ShowWindowAsync(self.hwnd, SW_SHOWNOACTIVATE).ok()?;
+                }
             },
             WindowOpenState::Fullscreen => {
                 unsafe {
@@ -352,8 +361,13 @@ impl WindowsWindowInner {
                 self.toggle_fullscreen();
             }
             WindowOpenState::Windowed => unsafe {
-                SetWindowPlacement(self.hwnd, &open_status.placement)
-                    .context("failed to set window placement")?;
+                if open_status.activate {
+                    SetWindowPlacement(self.hwnd, &open_status.placement)
+                        .context("failed to set window placement")?;
+                } else {
+                    apply_window_open_position_without_activation(self.hwnd, &open_status)?;
+                    ShowWindowAsync(self.hwnd, SW_SHOWNOACTIVATE).ok()?;
+                }
             },
         }
         Ok(())
@@ -397,6 +411,7 @@ struct WindowCreateContext {
     directx_devices: DirectXDevices,
     invalidate_devices: Arc<AtomicBool>,
     parent_hwnd: Option<HWND>,
+    accepts_pointer_input: bool,
 }
 
 impl WindowsWindow {
@@ -471,6 +486,12 @@ impl WindowsWindow {
         if !disable_direct_composition {
             dwexstyle |= WS_EX_NOREDIRECTIONBITMAP;
         }
+        if !params.accepts_pointer_input {
+            dwexstyle |= WS_EX_TRANSPARENT;
+        }
+        if !params.focus {
+            dwexstyle |= WS_EX_NOACTIVATE;
+        }
 
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
@@ -500,6 +521,7 @@ impl WindowsWindow {
             directx_devices,
             invalidate_devices,
             parent_hwnd,
+            accepts_pointer_input: params.accepts_pointer_input,
         };
         let creation_result = unsafe {
             CreateWindowExW(
@@ -535,13 +557,22 @@ impl WindowsWindow {
             this.state.scale_factor.get(),
             &this.state.border_offset,
         )?;
+        let open_status = WindowOpenStatus {
+            placement,
+            state: WindowOpenState::Windowed,
+            activate: params.focus,
+        };
         if params.show {
-            unsafe { SetWindowPlacement(hwnd, &placement)? };
+            if params.focus {
+                unsafe { SetWindowPlacement(hwnd, &open_status.placement)? };
+            } else {
+                unsafe {
+                    apply_window_open_position_without_activation(hwnd, &open_status)?;
+                    ShowWindowAsync(hwnd, SW_SHOWNOACTIVATE).ok()?;
+                }
+            }
         } else {
-            this.state.initial_placement.set(Some(WindowOpenStatus {
-                placement,
-                state: WindowOpenState::Windowed,
-            }));
+            this.state.initial_placement.set(Some(open_status));
         }
 
         Ok(Self(this))
@@ -588,6 +619,40 @@ impl PlatformWindow for WindowsWindow {
 
     fn is_maximized(&self) -> bool {
         self.state.is_maximized()
+    }
+
+    fn is_minimized(&self) -> bool {
+        unsafe { IsIconic(self.0.hwnd).as_bool() }
+    }
+
+    fn accepts_pointer_input(&self) -> bool {
+        self.state.accepts_pointer_input.get()
+    }
+
+    fn set_accepts_pointer_input(&mut self, accepts_pointer_input: bool) -> bool {
+        if self.state.accepts_pointer_input.get() == accepts_pointer_input {
+            return true;
+        }
+        unsafe {
+            let mut style = get_window_long(self.0.hwnd, GWL_EXSTYLE);
+            if accepts_pointer_input {
+                style &= !(WS_EX_TRANSPARENT.0 as isize);
+            } else {
+                style |= WS_EX_TRANSPARENT.0 as isize;
+            }
+            set_window_long(self.0.hwnd, GWL_EXSTYLE, style);
+            SetWindowPos(
+                self.0.hwnd,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER,
+            );
+        }
+        self.state.accepts_pointer_input.set(accepts_pointer_input);
+        true
     }
 
     fn window_bounds(&self) -> WindowBounds {
@@ -808,7 +873,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn is_active(&self) -> bool {
-        self.0.hwnd == unsafe { GetActiveWindow() }
+        self.0.hwnd == unsafe { GetForegroundWindow() }
     }
 
     fn is_hovered(&self) -> bool {
@@ -1311,6 +1376,7 @@ impl WindowBorderOffset {
 struct WindowOpenStatus {
     placement: WINDOWPLACEMENT,
     state: WindowOpenState,
+    activate: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -1489,6 +1555,26 @@ fn retrieve_window_placement(
     let bounds = bounds.to_device_pixels(scale_factor);
     placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
     Ok(placement)
+}
+
+unsafe fn apply_window_open_position_without_activation(
+    hwnd: HWND,
+    open_status: &WindowOpenStatus,
+) -> Result<()> {
+    let rect = open_status.placement.rcNormalPosition;
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+            SWP_NOACTIVATE | SWP_NOZORDER,
+        )
+        .context("failed to set window position without activation")?;
+    }
+    Ok(())
 }
 
 fn dwm_set_window_composition_attribute(hwnd: HWND, backdrop_type: u32) {

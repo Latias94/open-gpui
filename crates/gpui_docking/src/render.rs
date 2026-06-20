@@ -1,10 +1,10 @@
 use crate::{
-    DockHost, DockNode, DockNodeId, DockViewportFocusRequest, DockViewportWindowFacts, DropZone,
+    DockHost, DockNode, DockNodeId, DockViewportWindowFacts, DropZone,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::{DockDropPreview, DockDropRoutePreview},
     drop_runtime::DockHostDropSceneFact,
-    drop_scene_fact,
+    drop_scene_fact, geometry,
     host_render_session::{DockHostRenderSession, selected_index},
     interaction::{
         DockPayloadDropRelease, DockRenderedOutsideReleaseDecision,
@@ -29,8 +29,7 @@ impl Render for DockHost {
         self.ensure_viewport_bounds_subscription(window, cx);
         self.ensure_viewport_release_subscription(window, cx);
         let session = self.render_session(cx);
-        self.sync_panel_focus_trackers(session.visible_panel_items().as_slice(), window, cx);
-        self.focus_pending_panel_from_render(&session, window, cx);
+        self.sync_panel_focus_trackers(session.visible_panel_items(), window, cx);
         let drop_host_space = session.space().clone();
         let outside_release_host_space = session.space().clone();
         let viewport_host_scene_frame = Rc::new(RefCell::new(None));
@@ -117,7 +116,10 @@ impl Render for DockHost {
             host = host.bg(rgb(0xf7f8fa));
         }
 
-        host = host.child(self.render_viewport_host_scene_probe(&viewport_host_scene_frame));
+        host = host.child(self.render_viewport_host_scene_probe(
+            &viewport_host_scene_frame,
+            session.drop_guide_style(),
+        ));
 
         if let Some(root) = session.root() {
             host = host.child(self.render_root_node(
@@ -157,57 +159,13 @@ impl Render for DockHost {
             host = host.child(preview);
         }
 
+        self.apply_pending_focus_from_render(&session, window, cx);
+
         host
     }
 }
 
 impl DockHost {
-    fn focus_pending_panel_from_render(
-        &mut self,
-        session: &DockHostRenderSession,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(request) = self.pending_focus_request().cloned() else {
-            return;
-        };
-        match request {
-            DockViewportFocusRequest::Panel(item) => {
-                if session.request_panel_focus(&item, window, cx) {
-                    self.clear_pending_focus_request();
-                    self.remember_panel_focus(item, cx);
-                } else {
-                    window.blur();
-                    self.remember_no_panel_focus();
-                    self.clear_pending_focus_request();
-                }
-            }
-            DockViewportFocusRequest::NoPanelFocus => {
-                window.blur();
-                self.remember_no_panel_focus();
-                self.clear_pending_focus_request();
-            }
-            DockViewportFocusRequest::RestoreLastFocused => {
-                let visible_items = session.visible_panel_items();
-                let Some(item) = self.restore_panel_focus_target(&visible_items) else {
-                    window.blur();
-                    self.remember_no_panel_focus();
-                    self.clear_pending_focus_request();
-                    return;
-                };
-
-                if session.request_panel_focus(&item, window, cx) {
-                    self.remember_panel_focus(item, cx);
-                    self.clear_pending_focus_request();
-                } else {
-                    window.blur();
-                    self.remember_no_panel_focus();
-                    self.clear_pending_focus_request();
-                }
-            }
-        }
-    }
-
     pub(crate) fn render_node(
         &mut self,
         node_id: DockNodeId,
@@ -432,7 +390,7 @@ impl DockHost {
             routed_preview.map(|preview| (preview.preview, Some(preview.payload_title)));
 
         if let Some(preview) = local_preview {
-            self.interaction_mut().mark_drop_preview_rendered();
+            self.interaction_mut().finish_drop_acceptance_pass();
             return Some(self.render_target_drop_preview(session, preview, active_payload_title));
         }
 
@@ -578,10 +536,11 @@ impl DockHost {
             format!("{}:drop-guide:{selector_suffix}", session.selector_prefix()),
         );
 
-        let center_size = px(48.0);
-        let side_long = px(48.0);
-        let side_short = px(43.2);
-        let offset = px(57.6);
+        let guide_layout = geometry::nominal_drop_guide_layout(session.drop_guide_style());
+        let center_size = guide_layout.center_size;
+        let side_long = guide_layout.inner_side_long;
+        let side_short = guide_layout.inner_side_short;
+        let offset = guide_layout.inner_offset;
         let half_center = -center_size / 2.0;
         let half_long = -side_long / 2.0;
         let half_short = -side_short / 2.0;
@@ -654,6 +613,7 @@ impl DockHost {
     pub(crate) fn render_viewport_host_scene_probe(
         &self,
         frame_slot: &DockViewportHostSceneFrameSlot,
+        drop_guide_style: geometry::DockDropGuideStyle,
     ) -> AnyElement {
         let runtime = self.viewport_runtime().clone();
         let space = self.space().clone();
@@ -665,16 +625,17 @@ impl DockHost {
                     mouse_position.x - bounds.origin.x,
                     mouse_position.y - bounds.origin.y,
                 );
+                runtime.reconcile_backend_window_focus(app);
+                runtime.reconcile_viewport_frame(app);
+                let window_handle = window.window_handle();
+                runtime.register_rendered_host_viewport(space.clone(), window_handle);
                 let registration = runtime.begin_viewport_host_scene_frame(
                     space,
-                    window.window_handle().window_id(),
-                    DockViewportWindowFacts::new(
-                        window.display(app).map(|display| display.id()),
-                        window.window_bounds(),
-                        window.bounds(),
-                    ),
+                    window_handle.window_id(),
+                    DockViewportWindowFacts::from_window(window, app),
                     bounds,
                     host_position,
+                    drop_guide_style,
                 );
                 *frame_slot.borrow_mut() = registration.map(|registration| registration.frame);
             },

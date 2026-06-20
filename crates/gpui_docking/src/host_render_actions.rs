@@ -10,8 +10,21 @@ impl DockHost {
     pub(crate) fn begin_payload_drag_from_render(
         &mut self,
         payload: &DockDragPayload,
-    ) -> Option<DockRuntimeDragSession> {
-        Some(self.viewport_runtime().begin_payload_drag(payload))
+        cx: &mut Context<Self>,
+    ) -> DockRuntimeDragSession {
+        self.begin_payload_drag_interaction(payload, cx)
+    }
+
+    pub(crate) fn begin_tab_item_drag_from_render(
+        &mut self,
+        tabs: DockNodeId,
+        item: DockItemId,
+        payload: &DockDragPayload,
+        cx: &mut Context<Self>,
+    ) -> DockRuntimeDragSession {
+        let (outcome, drag_session) = self.begin_tab_item_drag_interaction(tabs, item, payload, cx);
+        outcome.finish(cx);
+        drag_session
     }
 
     pub(crate) fn update_payload_drag_tear_off_geometry_from_render(

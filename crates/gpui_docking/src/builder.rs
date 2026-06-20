@@ -29,8 +29,7 @@ impl DockLayoutBuilder {
         selected: impl Into<DockItemId>,
     ) -> DockNodeId {
         let items: Vec<DockItemId> = items.into_iter().map(Into::into).collect();
-        let selected = selected.into();
-        let selected = items.contains(&selected).then_some(selected);
+        let selected = Some(selected.into());
         self.graph.insert_node(DockNode::Tabs { items, selected })
     }
 

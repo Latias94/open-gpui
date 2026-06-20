@@ -1,8 +1,8 @@
 use crate::{
     DockActionApplyError, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
-    DockViewportDropOutcomeKind, DockViewportDropPayload, DockViewportPlatformSignals,
-    DockViewportRouteTarget, DockViewportRuntimeHandle, DockViewportWindowFacts, DockWorkspace,
-    DropZone, SplitAxis,
+    DockViewportDropOutcomeKind, DockViewportDropPayload, DockViewportDropRouteOutcome,
+    DockViewportPlatformSignals, DockViewportRouteTarget, DockViewportRuntimeHandle,
+    DockViewportWindowFacts, DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
@@ -12,6 +12,7 @@ use crate::{
     },
     geometry::{self, DockDropBoxKind, DockDropBoxSet},
     host_test_support::*,
+    interaction::DockPayloadDropReleaseOrigin,
 };
 use open_gpui::{
     AppContext as _, Bounds, Modifiers, MouseButton, Pixels, Point, TestAppContext,
@@ -81,14 +82,16 @@ impl MatrixPayload {
 }
 
 #[open_gpui::test]
-fn source_only_known_viewport_release_matrix_commits_unique_geometry_hits(cx: &mut TestAppContext) {
+fn source_only_known_viewport_release_matrix_commits_backend_hover_fallback(
+    cx: &mut TestAppContext,
+) {
     for case in matrix_cases() {
         run_source_only_release_case(cx, case);
     }
 }
 
 #[open_gpui::test]
-fn source_only_known_viewport_root_edge_matrix_commits_unique_geometry_hits(
+fn source_only_known_viewport_root_edge_matrix_commits_backend_hover_fallback(
     cx: &mut TestAppContext,
 ) {
     for case in root_only_matrix_cases() {
@@ -97,7 +100,9 @@ fn source_only_known_viewport_root_edge_matrix_commits_unique_geometry_hits(
 }
 
 #[open_gpui::test]
-fn source_only_known_viewport_release_rejects_overlapping_geometry_hits(cx: &mut TestAppContext) {
+fn source_only_known_viewport_release_retargets_overlapping_geometry_from_current_backend_facts(
+    cx: &mut TestAppContext,
+) {
     for case in [
         MatrixCase {
             name: "overlap item to leaf center",
@@ -366,45 +371,29 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
     let drag_session = runtime.begin_payload_drag(&drag_payload);
 
     let result = cx.update(|app| {
-        let request = crate::DockViewportDropRouteRequest::from_platform_signals(
+        let request = crate::DockViewportDropRouteRequest::from_platform_signals_with_origin(
             source_space.clone(),
             nodes.source_tabs,
             case.payload.drop_payload(),
             release_screen_position,
             None,
             source_release_signals,
+            DockPayloadDropReleaseOrigin::SourceOnly,
         )
         .with_drag_session(Some(drag_session.clone()));
         runtime.commit_payload_drop_from_screen(&request, app)
     });
 
-    let outcome = result.unwrap_or_else(|error| {
-        panic!("{}: source-only release should commit: {error}", case.name)
-    });
-    assert!(
-        matches!(
-            outcome,
-            crate::DockViewportDropRouteOutcome::Action(ref action)
-                if action.action() == crate::DockActionOutcome::Changed
-        ),
-        "{}: source-only release should commit as a normal workspace action, got {outcome:?}",
-        case.name
+    assert_source_only_backend_hover_fallback_committed(
+        cx,
+        &controller,
+        &runtime,
+        &source_space,
+        &target_space,
+        result,
+        case,
+        &nodes,
     );
-    let status = runtime.runtime_status();
-    assert!(
-        matches!(
-            status
-                .last_route
-                .as_ref()
-                .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
-                .target,
-            DockViewportRouteTarget::KnownViewport { .. }
-        ),
-        "{}: unique source-only geometry should route to known viewport, got {:?}",
-        case.name,
-        status.last_route
-    );
-    assert_case_graph(cx, &controller, &target_space, case, &nodes);
 }
 
 fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
@@ -486,48 +475,29 @@ fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixC
     let drag_session = runtime.begin_payload_drag(&drag_payload);
 
     let result = cx.update(|app| {
-        let request = crate::DockViewportDropRouteRequest::from_platform_signals(
+        let request = crate::DockViewportDropRouteRequest::from_platform_signals_with_origin(
             source_space.clone(),
             nodes.source_tabs,
             case.payload.drop_payload(),
             release_screen_position,
             None,
             source_release_signals,
+            DockPayloadDropReleaseOrigin::SourceOnly,
         )
         .with_drag_session(Some(drag_session.clone()));
         runtime.commit_payload_drop_from_screen(&request, app)
     });
 
-    let outcome = result.unwrap_or_else(|error| {
-        panic!(
-            "{}: root-only source-only release should commit: {error}",
-            case.name
-        )
-    });
-    assert!(
-        matches!(
-            outcome,
-            crate::DockViewportDropRouteOutcome::Action(ref action)
-                if action.action() == crate::DockActionOutcome::Changed
-        ),
-        "{}: root-only source-only release should commit as a normal workspace action, got {outcome:?}",
-        case.name
+    assert_source_only_backend_hover_fallback_committed(
+        cx,
+        &controller,
+        &runtime,
+        &source_space,
+        &target_space,
+        result,
+        case,
+        &nodes,
     );
-    let status = runtime.runtime_status();
-    assert!(
-        matches!(
-            status
-                .last_route
-                .as_ref()
-                .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
-                .target,
-            DockViewportRouteTarget::KnownViewport { .. }
-        ),
-        "{}: root-only unique source-only geometry should route to known viewport, got {:?}",
-        case.name,
-        status.last_route
-    );
-    assert_case_graph(cx, &controller, &target_space, case, &nodes);
 }
 
 fn run_overlapping_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
@@ -612,6 +582,7 @@ fn run_overlapping_source_only_release_case(cx: &mut TestAppContext, case: Matri
             release_screen_position,
             None,
             source_release_signals,
+            DockPayloadDropReleaseOrigin::SourceOnly,
             app,
         )
     });
@@ -619,7 +590,51 @@ fn run_overlapping_source_only_release_case(cx: &mut TestAppContext, case: Matri
     assert_eq!(
         result,
         Err(DockActionApplyError::DropTargetUnavailable),
-        "{}: overlapping source-only release must not commit from geometry/window-stack fallback",
+        "{}: overlapping source-only release should fail once current backend facts retarget it to the source viewport without a matching current drop target",
+        case.name
+    );
+    let status = runtime.runtime_status();
+    assert!(
+        matches!(
+            &status
+                .last_route
+                .as_ref()
+                .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
+                .target,
+            DockViewportRouteTarget::Local { space, .. } if space == &source_space
+        ),
+        "{}: overlapping source-only release should be retargeted to the source viewport using current backend facts, got {:?}",
+        case.name,
+        status.last_route
+    );
+    assert_case_graph_unmoved(cx, &controller, &source_space, &target_space, case);
+}
+
+fn assert_source_only_backend_hover_fallback_committed(
+    cx: &TestAppContext,
+    controller: &open_gpui::Entity<DockController>,
+    runtime: &DockViewportRuntimeHandle,
+    source_space: &DockSpaceId,
+    target_space: &DockSpaceId,
+    result: Result<DockViewportDropRouteOutcome, DockActionApplyError>,
+    case: MatrixCase,
+    nodes: &MatrixNodes,
+) {
+    let DockViewportDropRouteOutcome::Action(action) = result.unwrap_or_else(|error| {
+        panic!(
+            "{}: source-only backend-hover fallback should commit: {error:?}",
+            case.name
+        )
+    }) else {
+        panic!(
+            "{}: source-only backend-hover fallback should resolve to a workspace action",
+            case.name
+        );
+    };
+    assert_eq!(
+        action.action(),
+        crate::DockActionOutcome::Changed,
+        "{}: source-only backend-hover fallback should mutate the workspace",
         case.name
     );
     let status = runtime.runtime_status();
@@ -630,13 +645,46 @@ fn run_overlapping_source_only_release_case(cx: &mut TestAppContext, case: Matri
                 .as_ref()
                 .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
                 .target,
-            DockViewportRouteTarget::Unavailable
+            DockViewportRouteTarget::KnownViewport { .. }
         ),
-        "{}: overlapping source-only release should be routed as unavailable, got {:?}",
+        "{}: source-only backend-hover fallback should route to the target viewport, got {:?}",
         case.name,
         status.last_route
     );
-    assert_case_graph_unmoved(cx, &controller, &source_space, &target_space, case);
+    assert_eq!(
+        status
+            .last_activation
+            .as_ref()
+            .map(|activation| activation.space.clone()),
+        Some(target_space.clone()),
+        "{}: source-only backend-hover fallback should activate the target viewport",
+        case.name
+    );
+    assert_eq!(
+        status
+            .last_activation
+            .as_ref()
+            .map(|activation| activation.focus_request.clone()),
+        Some(expected_focus_request(case.payload)),
+        "{}: source-only backend-hover fallback should focus the moved payload",
+        case.name
+    );
+    assert_case_graph(cx, controller, target_space, case, nodes);
+    cx.read_entity(controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(source_space),
+            Vec::<DockItemId>::new(),
+            "{}: source payload should leave the source space after backend-hover fallback commit",
+            case.name
+        );
+    });
+}
+
+fn expected_focus_request(payload: MatrixPayload) -> crate::DockViewportFocusRequest {
+    match payload {
+        MatrixPayload::Item => crate::DockViewportFocusRequest::panel("a"),
+        MatrixPayload::Tabs => crate::DockViewportFocusRequest::no_panel_focus(),
+    }
 }
 
 fn assert_case_graph_unmoved(

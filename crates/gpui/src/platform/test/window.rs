@@ -33,7 +33,9 @@ pub(crate) struct TestWindowState {
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
+    is_minimized: bool,
     is_fullscreen: bool,
+    accepts_pointer_input: bool,
 }
 
 #[derive(Clone)]
@@ -85,7 +87,9 @@ impl TestWindow {
             resize_callback: None,
             moved_callback: None,
             input_handler: None,
+            is_minimized: false,
             is_fullscreen: false,
+            accepts_pointer_input: params.accepts_pointer_input,
         })))
     }
 
@@ -145,6 +149,19 @@ impl PlatformWindow for TestWindow {
 
     fn is_maximized(&self) -> bool {
         false
+    }
+
+    fn is_minimized(&self) -> bool {
+        self.0.lock().is_minimized
+    }
+
+    fn accepts_pointer_input(&self) -> bool {
+        self.0.lock().accepts_pointer_input
+    }
+
+    fn set_accepts_pointer_input(&mut self, accepts_pointer_input: bool) -> bool {
+        self.0.lock().accepts_pointer_input = accepts_pointer_input;
+        true
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -223,7 +240,7 @@ impl PlatformWindow for TestWindow {
             let lock = self.0.lock();
             (lock.platform.upgrade(), lock.handle)
         };
-        platform.is_some_and(|platform| platform.hovered_window() == Some(handle))
+        platform.is_some_and(|platform| platform.hovered_window().window() == Some(handle))
     }
 
     fn background_appearance(&self) -> WindowBackgroundAppearance {
@@ -255,7 +272,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn minimize(&self) {
-        unimplemented!()
+        self.0.lock().is_minimized = true;
     }
 
     fn zoom(&self) {

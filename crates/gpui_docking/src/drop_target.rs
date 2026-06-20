@@ -1,11 +1,14 @@
 use crate::{
-    DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DropZone,
-    geometry::{self, DockDropBox, DockDropGeometry},
+    DockEdgeDockPlan, DockEdgeDockSizing, DockNodeId, DockPolicy, DockPolicyError, DockSpaceId,
+    DropZone, SplitAxis,
+    geometry::{self, DockDropBox, DockDropGeometry, DockDropGuideStyle},
 };
-use open_gpui::{Bounds, Pixels, Point};
+use open_gpui::{Bounds, Pixels, Point, Size, px, size};
 
 pub(crate) type DockDropTargetValidator<'a> =
     dyn Fn(&DockResolvedDropTarget) -> Result<(), DockPolicyError> + 'a;
+pub(crate) type DockEdgePlanResolver<'a> =
+    dyn Fn(DockNodeId, DropZone, DockEdgeDockSizing) -> Option<DockEdgeDockPlan> + 'a;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockResolvedDropTarget {
@@ -13,6 +16,8 @@ pub(crate) struct DockResolvedDropTarget {
     pub(crate) source: DockDropResolveSource,
     pub(crate) drop_box: Option<DockDropBox>,
     pub(crate) preview_bounds: Option<Bounds<Pixels>>,
+    pub(crate) edge_sizing: Option<DockEdgeDockSizing>,
+    pub(crate) edge_plan: Option<DockEdgeDockPlan>,
     pub(crate) is_central_region: bool,
 }
 
@@ -138,8 +143,11 @@ pub(crate) struct DockEmptySpaceDropTarget {
 
 pub(crate) struct DockDropResolverInput<'a> {
     pub(crate) position: Point<Pixels>,
+    pub(crate) payload_size: Option<Size<Pixels>>,
+    pub(crate) drop_guide_style: DockDropGuideStyle,
     pub(crate) policy: &'a DockPolicy,
     pub(crate) target_validator: Option<&'a DockDropTargetValidator<'a>>,
+    pub(crate) edge_plan_resolver: Option<&'a DockEdgePlanResolver<'a>>,
     pub(crate) tab_labels: &'a [DockTabLabelDropTarget],
     pub(crate) tab_bars: &'a [DockTabBarDropTarget],
     pub(crate) leaves: &'a [DockLeafDropTarget],
@@ -153,8 +161,11 @@ impl<'a> DockDropResolverInput<'a> {
     pub(crate) fn new(position: Point<Pixels>, policy: &'a DockPolicy) -> Self {
         Self {
             position,
+            payload_size: None,
+            drop_guide_style: DockDropGuideStyle::default(),
             policy,
             target_validator: None,
+            edge_plan_resolver: None,
             tab_labels: &[],
             tab_bars: &[],
             leaves: &[],
@@ -237,7 +248,13 @@ pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<Do
         .rev()
         .filter(|leaf| leaf.bounds.contains(&input.position))
     {
-        let Some(target) = resolve_leaf_drop(leaf, input.position) else {
+        let Some(target) = resolve_leaf_drop(
+            leaf,
+            input.position,
+            input.payload_size,
+            input.drop_guide_style,
+            input.edge_plan_resolver,
+        ) else {
             continue;
         };
         let resolution =
@@ -276,6 +293,8 @@ fn resolve_floating_title_bar_drop(
             source: DockDropResolveSource::FloatingTitleBar,
             drop_box: None,
             preview_bounds: Some(target.preview_bounds),
+            edge_sizing: None,
+            edge_plan: None,
             is_central_region: false,
         })
 }
@@ -300,6 +319,8 @@ fn resolve_tab_bar_drop(input: &DockDropResolverInput<'_>) -> Option<DockResolve
                 source: DockDropResolveSource::TabBar,
                 drop_box: None,
                 preview_bounds: Some(target.bounds),
+                edge_sizing: None,
+                edge_plan: None,
                 is_central_region: target.is_central,
             }
         })
@@ -319,6 +340,8 @@ fn resolve_tab_bar_empty_drop(input: &DockDropResolverInput<'_>) -> Option<DockR
             source: DockDropResolveSource::TabBar,
             drop_box: None,
             preview_bounds: Some(target.bounds),
+            edge_sizing: None,
+            edge_plan: None,
             is_central_region: target.is_central,
         })
 }
@@ -334,7 +357,17 @@ fn resolve_root_edge_drop(
         None => None,
     };
 
-    let geometry = geometry::resolve_outer_drop_geometry(root.bounds, input.position)?;
+    let geometry = geometry::resolve_outer_drop_geometry_with_style(
+        root.bounds,
+        input.position,
+        input.drop_guide_style,
+    )?;
+
+    let (drop_box, preview_bounds, edge_sizing) =
+        edge_drop_metadata(root.bounds, geometry.drop_box, input.payload_size);
+    let edge_plan = input
+        .edge_plan_resolver
+        .and_then(|resolver| resolver(root.root, geometry.zone(), edge_sizing));
 
     Some(DockResolvedDropTarget {
         kind: DockResolvedDropTargetKind::RootEdge {
@@ -343,8 +376,10 @@ fn resolve_root_edge_drop(
             zone: geometry.zone(),
         },
         source: DockDropResolveSource::RootEdge,
-        drop_box: Some(geometry.drop_box),
-        preview_bounds: Some(geometry.preview_bounds()),
+        drop_box: Some(drop_box),
+        preview_bounds: Some(preview_bounds),
+        edge_sizing: Some(edge_sizing),
+        edge_plan,
         is_central_region: false,
     })
 }
@@ -352,9 +387,18 @@ fn resolve_root_edge_drop(
 fn resolve_leaf_drop(
     leaf: &DockLeafDropTarget,
     position: Point<Pixels>,
+    payload_size: Option<Size<Pixels>>,
+    drop_guide_style: DockDropGuideStyle,
+    edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
 ) -> Option<DockResolvedDropTarget> {
-    let geometry = geometry::resolve_inner_drop_geometry(leaf.bounds, position)?;
-    Some(target_from_leaf_geometry(leaf, geometry))
+    let geometry =
+        geometry::resolve_inner_drop_geometry_with_style(leaf.bounds, position, drop_guide_style)?;
+    Some(target_from_leaf_geometry(
+        leaf,
+        geometry,
+        payload_size,
+        edge_plan_resolver,
+    ))
 }
 
 fn resolve_empty_space_drop(input: &DockDropResolverInput<'_>) -> Option<DockResolvedDropTarget> {
@@ -371,6 +415,8 @@ fn resolve_empty_space_drop(input: &DockDropResolverInput<'_>) -> Option<DockRes
             source: DockDropResolveSource::EmptyDockSpace,
             drop_box: None,
             preview_bounds: Some(target.bounds),
+            edge_sizing: None,
+            edge_plan: None,
             is_central_region: target.is_central,
         })
 }
@@ -413,6 +459,8 @@ impl DockResolvedDropTarget {
 fn target_from_leaf_geometry(
     leaf: &DockLeafDropTarget,
     geometry: DockDropGeometry,
+    payload_size: Option<Size<Pixels>>,
+    edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
 ) -> DockResolvedDropTarget {
     let kind = if geometry.drop_box.kind.is_center() {
         DockResolvedDropTargetKind::LeafCenter {
@@ -432,12 +480,111 @@ fn target_from_leaf_geometry(
         DockDropResolveSource::InnerEdge
     };
 
+    if geometry.drop_box.kind.is_center() {
+        return DockResolvedDropTarget {
+            kind,
+            source,
+            drop_box: Some(geometry.drop_box),
+            preview_bounds: Some(geometry.preview_bounds()),
+            edge_sizing: None,
+            edge_plan: None,
+            is_central_region: leaf.is_central,
+        };
+    }
+
+    let (drop_box, preview_bounds, edge_sizing) =
+        edge_drop_metadata(leaf.bounds, geometry.drop_box, payload_size);
+    let edge_plan = edge_plan_resolver
+        .and_then(|resolver| resolver(leaf.target_tabs, geometry.zone(), edge_sizing));
+
     DockResolvedDropTarget {
         kind,
         source,
-        drop_box: Some(geometry.drop_box),
-        preview_bounds: Some(geometry.preview_bounds()),
+        drop_box: Some(drop_box),
+        preview_bounds: Some(preview_bounds),
+        edge_sizing: Some(edge_sizing),
+        edge_plan,
         is_central_region: leaf.is_central,
+    }
+}
+
+fn edge_drop_metadata(
+    target_bounds: Bounds<Pixels>,
+    mut drop_box: DockDropBox,
+    payload_size: Option<Size<Pixels>>,
+) -> (DockDropBox, Bounds<Pixels>, DockEdgeDockSizing) {
+    let zone = drop_box.kind.zone();
+    let preview_bounds = edge_preview_bounds(zone, target_bounds, payload_size);
+    drop_box.preview_bounds = preview_bounds;
+    let axis = zone_axis(zone);
+    let sizing = DockEdgeDockSizing::from_extents(
+        split_extent(axis, preview_bounds),
+        split_extent(axis, target_bounds),
+    );
+    (drop_box, preview_bounds, sizing)
+}
+
+fn edge_preview_bounds(
+    zone: DropZone,
+    target_bounds: Bounds<Pixels>,
+    payload_size: Option<Size<Pixels>>,
+) -> Bounds<Pixels> {
+    let axis = zone_axis(zone);
+    let target_extent = split_extent(axis, target_bounds);
+    let desired_extent = payload_size
+        .map(|size| split_size_extent(axis, size))
+        .filter(|extent| {
+            let extent = f32::from(*extent);
+            extent.is_finite() && extent > 0.0 && extent <= f32::from(target_extent) * 0.5
+        })
+        .unwrap_or_else(|| px(f32::from(target_extent) * 0.5));
+
+    match zone {
+        DropZone::Left => Bounds::new(
+            target_bounds.origin,
+            size(desired_extent, target_bounds.size.height),
+        ),
+        DropZone::Right => Bounds::new(
+            Point::new(
+                target_bounds.origin.x + target_bounds.size.width - desired_extent,
+                target_bounds.origin.y,
+            ),
+            size(desired_extent, target_bounds.size.height),
+        ),
+        DropZone::Top => Bounds::new(
+            target_bounds.origin,
+            size(target_bounds.size.width, desired_extent),
+        ),
+        DropZone::Bottom => Bounds::new(
+            Point::new(
+                target_bounds.origin.x,
+                target_bounds.origin.y + target_bounds.size.height - desired_extent,
+            ),
+            size(target_bounds.size.width, desired_extent),
+        ),
+        DropZone::Center => target_bounds,
+    }
+}
+
+fn zone_axis(zone: DropZone) -> SplitAxis {
+    match zone {
+        DropZone::Left | DropZone::Right => SplitAxis::Horizontal,
+        DropZone::Top | DropZone::Bottom => SplitAxis::Vertical,
+        DropZone::Center => SplitAxis::Horizontal,
+    }
+}
+
+fn split_extent(axis: SplitAxis, bounds: Bounds<Pixels>) -> Pixels {
+    match axis {
+        SplitAxis::Horizontal => bounds.size.width,
+        SplitAxis::Vertical => bounds.size.height,
+    }
+}
+
+fn split_size_extent(axis: SplitAxis, size: Size<Pixels>) -> Pixels {
+    match axis {
+        SplitAxis::Horizontal => size.width,
+        SplitAxis::Vertical => size.height,
     }
 }
 
@@ -1054,12 +1201,86 @@ mod tests {
 
     fn expected_root_edge_preview_bounds(zone: DropZone) -> Bounds<Pixels> {
         match zone {
-            DropZone::Left => Bounds::new(point(px(0.0), px(0.0)), size(px(48.0), px(400.0))),
-            DropZone::Right => Bounds::new(point(px(552.0), px(0.0)), size(px(48.0), px(400.0))),
-            DropZone::Top => Bounds::new(point(px(0.0), px(0.0)), size(px(600.0), px(48.0))),
-            DropZone::Bottom => Bounds::new(point(px(0.0), px(352.0)), size(px(600.0), px(48.0))),
+            DropZone::Left => Bounds::new(point(px(0.0), px(0.0)), size(px(300.0), px(400.0))),
+            DropZone::Right => Bounds::new(point(px(300.0), px(0.0)), size(px(300.0), px(400.0))),
+            DropZone::Top => Bounds::new(point(px(0.0), px(0.0)), size(px(600.0), px(200.0))),
+            DropZone::Bottom => Bounds::new(point(px(0.0), px(200.0)), size(px(600.0), px(200.0))),
             DropZone::Center => unreachable!(),
         }
+    }
+
+    #[test]
+    fn edge_preview_uses_payload_extent_when_payload_fits_half_host() {
+        let root = tabs();
+        let host = Bounds::new(point(px(0.0), px(0.0)), size(px(1000.0), px(600.0)));
+        let target = resolve_layout_drop(DockDropResolverInput {
+            payload_size: Some(size(px(240.0), px(180.0))),
+            leaves: &[DockLeafDropTarget {
+                root,
+                target_tabs: root,
+                bounds: host,
+                is_central: false,
+            }],
+            ..DockDropResolverInput::new(
+                drop_box_center(
+                    host,
+                    DockDropBoxSet::Inner,
+                    DockDropBoxKind::InnerEdge(DropZone::Right),
+                ),
+                &policy(),
+            )
+        })
+        .and_then(DockDropResolution::target)
+        .expect("edge target should resolve");
+
+        assert_eq!(
+            target.preview_bounds,
+            Some(Bounds::new(
+                point(px(760.0), px(0.0)),
+                size(px(240.0), px(600.0))
+            ))
+        );
+        assert_eq!(
+            target.edge_sizing.map(|sizing| sizing.new_child_share()),
+            Some(0.24)
+        );
+    }
+
+    #[test]
+    fn edge_preview_falls_back_to_equal_split_when_payload_exceeds_half_host() {
+        let root = tabs();
+        let host = Bounds::new(point(px(0.0), px(0.0)), size(px(1000.0), px(600.0)));
+        let target = resolve_layout_drop(DockDropResolverInput {
+            payload_size: Some(size(px(640.0), px(180.0))),
+            leaves: &[DockLeafDropTarget {
+                root,
+                target_tabs: root,
+                bounds: host,
+                is_central: false,
+            }],
+            ..DockDropResolverInput::new(
+                drop_box_center(
+                    host,
+                    DockDropBoxSet::Inner,
+                    DockDropBoxKind::InnerEdge(DropZone::Left),
+                ),
+                &policy(),
+            )
+        })
+        .and_then(DockDropResolution::target)
+        .expect("edge target should resolve");
+
+        assert_eq!(
+            target.preview_bounds,
+            Some(Bounds::new(
+                point(px(0.0), px(0.0)),
+                size(px(500.0), px(600.0))
+            ))
+        );
+        assert_eq!(
+            target.edge_sizing.map(|sizing| sizing.new_child_share()),
+            Some(0.5)
+        );
     }
 
     #[test]

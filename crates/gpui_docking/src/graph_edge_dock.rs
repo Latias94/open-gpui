@@ -1,7 +1,7 @@
-use crate::{DockNodeId, DockSpaceId, split_fraction::normalize_shares};
+use crate::{DockEdgeDockSizingScope, DockNodeId, DockSpaceId, split_fraction::normalize_shares};
 use std::collections::HashMap;
 
-use super::{DockEdgeDockPlan, DockGraph, DockNode, DropZone, SplitAxis};
+use super::{DockEdgeDockPlan, DockEdgeDockSizing, DockGraph, DockNode, DropZone, SplitAxis};
 
 impl DockGraph {
     /// Plans the n-ary topology change for an edge dock.
@@ -46,6 +46,8 @@ impl DockGraph {
                 anchor_child,
                 anchor_index,
                 insert_index,
+                sizing: DockEdgeDockSizing::fallback(),
+                sizing_scope: DockEdgeDockSizingScope::WholeSplit,
             });
         }
 
@@ -77,13 +79,33 @@ impl DockGraph {
                     anchor_child,
                     anchor_index,
                     insert_index,
+                    sizing: DockEdgeDockSizing::fallback(),
+                    sizing_scope: DockEdgeDockSizingScope::AnchorChild,
                 });
             }
 
             cur = parent;
         }
 
-        Some(DockEdgeDockPlan::WrapTarget { target, axis, zone })
+        Some(DockEdgeDockPlan::WrapTarget {
+            target,
+            axis,
+            zone,
+            sizing: DockEdgeDockSizing::fallback(),
+        })
+    }
+
+    /// Plans the n-ary topology and initial split sizing for an edge dock.
+    pub(crate) fn edge_dock_plan_with_sizing(
+        &self,
+        space: &DockSpaceId,
+        target: DockNodeId,
+        zone: DropZone,
+        sizing: DockEdgeDockSizing,
+    ) -> Option<DockEdgeDockPlan> {
+        let mut plan = self.edge_dock_plan(space, target, zone)?;
+        plan.set_sizing(sizing);
+        Some(plan)
     }
 
     pub(in crate::graph) fn apply_edge_dock_plan(
@@ -99,6 +121,8 @@ impl DockGraph {
                 anchor_child: _,
                 anchor_index,
                 insert_index,
+                sizing,
+                sizing_scope,
             } => {
                 let Some(DockNode::Split {
                     children,
@@ -108,21 +132,36 @@ impl DockGraph {
                 else {
                     return false;
                 };
-                split_share_and_insert(children, fractions, anchor_index, insert_index, new_child)
+                split_share_and_insert(
+                    children,
+                    fractions,
+                    anchor_index,
+                    insert_index,
+                    new_child,
+                    sizing,
+                    sizing_scope,
+                )
             }
-            DockEdgeDockPlan::WrapTarget { target, axis, zone } => {
+            DockEdgeDockPlan::WrapTarget {
+                target,
+                axis,
+                zone,
+                sizing,
+            } => {
                 let (first, second) = ordered_edge_children(zone, new_child, target);
+                let (first_fraction, second_fraction) =
+                    ordered_edge_fractions(zone, sizing.new_child_share());
                 let split = self.insert_node(DockNode::Split {
                     axis,
                     children: vec![first, second],
-                    fractions: vec![0.5, 0.5],
+                    fractions: vec![first_fraction, second_fraction],
                 });
                 self.replace_node_in_space_tree(space, target, split)
             }
         }
     }
 
-    pub(in crate::graph) fn edge_dock_plan_is_current(
+    pub(crate) fn edge_dock_plan_is_current(
         &self,
         space: &DockSpaceId,
         plan: DockEdgeDockPlan,
@@ -134,6 +173,8 @@ impl DockGraph {
                 anchor_child,
                 anchor_index,
                 insert_index,
+                sizing,
+                sizing_scope: _,
             } => {
                 if zone == DropZone::Center || self.root_for_node_in_space(space, split).is_none() {
                     return false;
@@ -155,10 +196,18 @@ impl DockGraph {
                     && children.get(anchor_index) == Some(&anchor_child)
                     && insert_index <= fractions.len()
                     && edge_insert_index_matches_zone(zone, anchor_index, insert_index)
+                    && sizing.is_valid()
             }
             DockEdgeDockPlan::WrapTarget {
-                target, axis, zone, ..
-            } => zone.axis() == Some(axis) && self.root_for_node_in_space(space, target).is_some(),
+                target,
+                axis,
+                zone,
+                sizing,
+            } => {
+                zone.axis() == Some(axis)
+                    && sizing.is_valid()
+                    && self.root_for_node_in_space(space, target).is_some()
+            }
         }
     }
 
@@ -329,12 +378,23 @@ fn ordered_edge_children(
     }
 }
 
+fn ordered_edge_fractions(zone: DropZone, new_child_share: f32) -> (f32, f32) {
+    let existing_share = 1.0 - new_child_share;
+    match zone {
+        DropZone::Left | DropZone::Top => (new_child_share, existing_share),
+        DropZone::Right | DropZone::Bottom => (existing_share, new_child_share),
+        DropZone::Center => unreachable!(),
+    }
+}
+
 fn split_share_and_insert(
     children: &mut Vec<DockNodeId>,
     fractions: &mut Vec<f32>,
     anchor_index: usize,
     insert_index: usize,
     new_child: DockNodeId,
+    sizing: DockEdgeDockSizing,
+    sizing_scope: DockEdgeDockSizingScope,
 ) -> bool {
     if children.is_empty()
         || children.len() != fractions.len()
@@ -344,10 +404,21 @@ fn split_share_and_insert(
         return false;
     }
 
-    let old = fractions[anchor_index];
-    let keep = old * 0.5;
-    let take = old * 0.5;
-    fractions[anchor_index] = keep;
+    let take = match sizing_scope {
+        DockEdgeDockSizingScope::WholeSplit => sizing.new_child_share(),
+        DockEdgeDockSizingScope::AnchorChild => fractions[anchor_index] * sizing.new_child_share(),
+    };
+    let scale = 1.0 - take;
+    match sizing_scope {
+        DockEdgeDockSizingScope::WholeSplit => {
+            for fraction in fractions.iter_mut() {
+                *fraction *= scale;
+            }
+        }
+        DockEdgeDockSizingScope::AnchorChild => {
+            fractions[anchor_index] -= take;
+        }
+    }
     children.insert(insert_index, new_child);
     fractions.insert(insert_index, take);
     normalize_shares(fractions);

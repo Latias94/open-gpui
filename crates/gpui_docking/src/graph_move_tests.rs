@@ -47,34 +47,17 @@ fn selected_item_queries_do_not_repair_invalid_selection() {
     graph.set_root(space(), root);
 
     assert_eq!(graph.selected_item_in_tabs(root), None);
-    assert_eq!(graph.selected_item_in_subtree(root), None);
 
     graph.simplify_space(&space());
 
-    assert_eq!(graph.selected_item_in_tabs(root), Some(item("a")));
-    graph.assert_canonical_space(&space());
-}
-
-#[test]
-fn unique_selected_item_in_subtree_requires_single_visible_selection() {
-    let mut graph = DockGraph::new();
-    let left = graph.insert_node(DockNode::Tabs {
-        items: vec![item("a")],
-        selected: Some(item("a")),
-    });
-    let right = graph.insert_node(DockNode::Tabs {
-        items: vec![item("b")],
-        selected: Some(item("b")),
-    });
-    let root = graph.insert_node(DockNode::Split {
-        axis: SplitAxis::Horizontal,
-        children: vec![left, right],
-        fractions: vec![0.5, 0.5],
-    });
-    graph.set_root(space(), root);
-
-    assert_eq!(graph.selected_item_in_subtree(root), Some(item("a")));
-    assert_eq!(graph.unique_selected_item_in_subtree(root), None);
+    assert_eq!(graph.selected_item_in_tabs(root), None);
+    assert_eq!(
+        graph.validate(),
+        Err(DockGraphValidationError::TabsSelectedItemMissing {
+            tabs: root,
+            selected: item("missing"),
+        })
+    );
 }
 
 #[test]
@@ -332,7 +315,6 @@ fn checked_close_item_rebinds_collapsed_central_region() {
             .apply_op_checked(&DockOp::CloseItem {
                 space: space(),
                 item: item("a"),
-                preferred_after_close: None,
             })
             .expect("closing a reachable item should be valid")
     );
@@ -351,6 +333,32 @@ fn checked_close_item_rebinds_collapsed_central_region() {
     graph
         .validate()
         .expect("collapsed central region should validate");
+}
+
+#[test]
+fn checked_close_item_without_preference_selects_first_remaining_tab() {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b"), item("c")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(space(), root);
+
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::CloseItem {
+                space: space(),
+                item: item("b"),
+            })
+            .expect("closing the selected item should be valid")
+    );
+
+    let DockNode::Tabs { items, selected } = graph.node(root).expect("root tabs node should exist")
+    else {
+        panic!("expected tabs root");
+    };
+    assert_eq!(items, &vec![item("a"), item("c")]);
+    assert_eq!(selected.as_ref(), items.first());
 }
 
 #[test]
@@ -518,6 +526,8 @@ fn checked_move_item_rejects_stale_edge_plan_without_replanning() {
         anchor_child: left,
         anchor_index: 1,
         insert_index: 2,
+        sizing: crate::DockEdgeDockSizing::fallback(),
+        sizing_scope: crate::DockEdgeDockSizingScope::AnchorChild,
     };
     let before = graph.export_layout();
 

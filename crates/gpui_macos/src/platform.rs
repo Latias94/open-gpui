@@ -38,9 +38,10 @@ use objc::{
 use open_gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
     KeyContext, Keymap, Menu, MenuItem, MouseButton, NavigationDirection, OsMenu, OwnedMenu,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow, Result, SystemMenuType, Task,
-    ThermalState, WindowAppearance, WindowParams,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformViewportCapabilities, PlatformWindow, Result, SystemMenuType, Task, ThermalState,
+    WindowAppearance, WindowParams,
 };
 use open_gpui_util::{
     ResultExt,
@@ -617,6 +618,14 @@ impl Platform for MacPlatform {
         MacWindow::active_window()
     }
 
+    fn focused_window(&self) -> PlatformFocusedWindow {
+        PlatformFocusedWindow::from_window(MacWindow::focused_window())
+    }
+
+    fn hovered_window(&self) -> PlatformHoveredWindow {
+        PlatformHoveredWindow::from_window(MacWindow::hovered_window())
+    }
+
     // Returns the windows ordered front-to-back, meaning that the active
     // window is the first one in the returned vec.
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
@@ -626,11 +635,11 @@ impl Platform for MacPlatform {
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities {
             global_window_bounds: true,
-            active_window: true,
             window_stack: true,
             display_work_area: true,
             dpi_scale: true,
-            window_alpha: true,
+            no_input_windows: true,
+            hovered_window_ignores_no_input: true,
             ..Default::default()
         }
     }

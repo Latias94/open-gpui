@@ -158,11 +158,7 @@ impl DockWorkspace {
         &mut self,
         op: DockOp,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        let changed = self.apply_op_checked(&op)?;
-        if changed {
-            self.prune_tab_focus_history();
-        }
-        Ok(DockActionOutcome::from_changed(changed))
+        Ok(DockActionOutcome::from_changed(self.apply_op_checked(&op)?))
     }
 
     pub(crate) fn commit_select_tab(
@@ -173,7 +169,7 @@ impl DockWorkspace {
         let Some(node) = self.graph().node(tabs) else {
             return Err(DockGraphMutationError::TabsNodeNotFound { tabs }.into());
         };
-        let DockNode::Tabs { items, selected } = node else {
+        let DockNode::Tabs { items, selected: _ } = node else {
             return Err(DockGraphMutationError::NodeIsNotTabs { node: tabs }.into());
         };
         if !items.contains(item) {
@@ -182,15 +178,9 @@ impl DockWorkspace {
                 item: item.clone(),
             });
         }
-        if selected.as_ref() == Some(item) {
-            return Ok(DockActionOutcome::Unchanged);
-        }
-
-        let outcome = self.commit_graph_op(DockOp::SelectTab {
+        self.commit_graph_op(DockOp::SelectTab {
             tabs,
             item: item.clone(),
-        })?;
-        self.refresh_tab_selected_stamp(tabs, item);
-        Ok(outcome)
+        })
     }
 }

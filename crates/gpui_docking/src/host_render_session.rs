@@ -1,8 +1,8 @@
 use crate::{
     DockFloatingContainer, DockHost, DockItemId, DockNode, DockNodeId, DockSpaceId, DockWorkspace,
-    panel_registry::DockPanelRenderRegistration,
+    geometry::DockDropGuideStyle, panel_registry::DockPanelRenderRegistration,
 };
-use open_gpui::{AnyView, Context, Pixels, Window};
+use open_gpui::{AnyView, Context, Pixels};
 use std::collections::HashMap;
 
 pub(crate) enum DockHostPanelRenderResolution {
@@ -27,6 +27,7 @@ pub(crate) struct DockHostRenderSession {
     root: Option<DockNodeId>,
     nodes: HashMap<DockNodeId, DockNode>,
     floating_containers: Vec<DockFloatingContainer>,
+    visible_panel_items: Vec<DockItemId>,
     panels: HashMap<DockItemId, DockPanelRenderRegistration>,
     panel_titles: HashMap<DockItemId, String>,
     panel_closable: HashMap<DockItemId, bool>,
@@ -36,6 +37,7 @@ pub(crate) struct DockHostRenderSession {
     empty_message: String,
     missing_panel_prefix: String,
     splitter_handle_size: Pixels,
+    drop_guide_style: DockDropGuideStyle,
 }
 
 impl DockHostRenderSession {
@@ -45,6 +47,7 @@ impl DockHostRenderSession {
             selector_prefix: format!("dock:{space}"),
             root: workspace.graph().root(&space),
             floating_containers: workspace.graph().floating_containers(&space).to_vec(),
+            visible_panel_items: Vec::new(),
             nodes: HashMap::new(),
             panels: HashMap::new(),
             panel_titles: HashMap::new(),
@@ -57,6 +60,7 @@ impl DockHostRenderSession {
             empty_message: workspace.options().empty_message.clone(),
             missing_panel_prefix: workspace.options().missing_panel_prefix.clone(),
             splitter_handle_size: workspace.options().splitter_handle_size,
+            drop_guide_style: workspace.options().drop_guide_style,
             space,
         };
 
@@ -103,6 +107,7 @@ impl DockHostRenderSession {
         }
 
         if let Some(selected_item) = selected_tab_item(items, selected) {
+            self.visible_panel_items.push(selected_item.clone());
             self.collect_panel_registration(workspace, selected_item);
         }
     }
@@ -159,10 +164,7 @@ impl DockHostRenderSession {
             Some(DockNode::Tabs { items, selected }) => selected_tab_item(items, selected)
                 .map(|item| self.panel_title(item))
                 .unwrap_or_else(default_floating_title),
-            Some(DockNode::Split { children, .. }) => children
-                .first()
-                .map(|child| self.floating_title(*child))
-                .unwrap_or_else(default_floating_title),
+            Some(DockNode::Split { .. }) => default_floating_title(),
             Some(DockNode::Floating { child }) => self.floating_title(*child),
             None => default_floating_title(),
         }
@@ -188,15 +190,8 @@ impl DockHostRenderSession {
         &self.floating_containers
     }
 
-    pub(crate) fn visible_panel_items(&self) -> Vec<DockItemId> {
-        let mut items = Vec::new();
-        if let Some(root) = self.root {
-            self.collect_visible_panel_items_in_subtree(root, &mut items);
-        }
-        for container in &self.floating_containers {
-            self.collect_visible_panel_items_in_subtree(container.node, &mut items);
-        }
-        items
+    pub(crate) fn visible_panel_items(&self) -> &[DockItemId] {
+        &self.visible_panel_items
     }
 
     pub(crate) fn empty_message(&self) -> &str {
@@ -205,6 +200,10 @@ impl DockHostRenderSession {
 
     pub(crate) fn splitter_handle_size(&self) -> Pixels {
         self.splitter_handle_size
+    }
+
+    pub(crate) fn drop_guide_style(&self) -> DockDropGuideStyle {
+        self.drop_guide_style
     }
 
     pub(crate) fn is_central_tabs(&self, node_id: DockNodeId) -> bool {
@@ -265,15 +264,14 @@ impl DockHostRenderSession {
             })
     }
 
-    pub(crate) fn request_panel_focus(
+    pub(crate) fn visible_panel_registration(
         &self,
         item: &DockItemId,
-        window: &mut Window,
-        cx: &mut Context<DockHost>,
-    ) -> bool {
-        self.panels
-            .get(item)
-            .is_some_and(|panel| panel.request_focus(window, cx))
+    ) -> Option<DockPanelRenderRegistration> {
+        if !self.visible_panel_items.contains(item) {
+            return None;
+        }
+        self.panels.get(item).cloned()
     }
 
     fn subtree_contains(&self, root: DockNodeId, target: DockNodeId) -> bool {
@@ -287,35 +285,6 @@ impl DockHostRenderSession {
                 .any(|child| self.subtree_contains(child, target)),
             Some(DockNode::Floating { child }) => self.subtree_contains(*child, target),
             Some(DockNode::Tabs { .. }) | None => false,
-        }
-    }
-
-    fn collect_visible_panel_items_in_subtree(
-        &self,
-        node_id: DockNodeId,
-        items: &mut Vec<DockItemId>,
-    ) {
-        let Some(node) = self.node(node_id) else {
-            return;
-        };
-
-        match node {
-            DockNode::Tabs {
-                items: tabs,
-                selected,
-            } => {
-                if let Some(item) = selected_tab_item(tabs, selected) {
-                    items.push(item.clone());
-                }
-            }
-            DockNode::Split { children, .. } => {
-                for child in children {
-                    self.collect_visible_panel_items_in_subtree(*child, items);
-                }
-            }
-            DockNode::Floating { child } => {
-                self.collect_visible_panel_items_in_subtree(*child, items);
-            }
         }
     }
 }

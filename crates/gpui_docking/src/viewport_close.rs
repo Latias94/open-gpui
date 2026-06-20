@@ -1,4 +1,4 @@
-use crate::{DockItemId, DockSpaceId, DockViewportAdapter};
+use crate::{DockItemId, DockNodeId, DockSpaceId, DockViewportAdapter};
 use open_gpui::{AnyWindowHandle, WindowId};
 
 /// Default behavior for a platform viewport close request.
@@ -77,6 +77,7 @@ impl DockViewportCloseOutcome {
         self.status
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn focus_item(&self) -> Option<&DockItemId> {
         self.merge_back
             .as_ref()
@@ -94,7 +95,16 @@ impl DockViewportCloseOutcome {
 pub(crate) struct DockViewportMergeBackClosePlan {
     source_space: DockSpaceId,
     target_space: DockSpaceId,
+    target: DockMergeBackTarget,
     focus_item: Option<DockItemId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockMergeBackTarget {
+    /// Merge into the target space without binding to a specific target tabs node.
+    SpaceOnly,
+    /// Merge source root tabs into a prevalidated target tabs node.
+    Tabs(DockNodeId),
 }
 
 impl DockViewportMergeBackClosePlan {
@@ -106,16 +116,26 @@ impl DockViewportMergeBackClosePlan {
         Self {
             source_space,
             target_space,
+            target: DockMergeBackTarget::SpaceOnly,
             focus_item,
         }
+    }
+
+    pub(crate) fn with_target(mut self, target: DockMergeBackTarget) -> Self {
+        self.target = target;
+        self
+    }
+
+    pub(crate) fn target_space(&self) -> &DockSpaceId {
+        &self.target_space
     }
 
     pub(crate) fn source_space(&self) -> &DockSpaceId {
         &self.source_space
     }
 
-    pub(crate) fn target_space(&self) -> &DockSpaceId {
-        &self.target_space
+    pub(crate) fn target(&self) -> DockMergeBackTarget {
+        self.target
     }
 
     pub(crate) fn focus_item(&self) -> Option<&DockItemId> {
@@ -255,7 +275,7 @@ mod tests {
     use crate::{
         DockGraph, DockItemId, DockNode, DockViewportAdapter, DockViewportOpenOutcome,
         DockViewportOpenStatus,
-        viewport_test_support::{handle, space},
+        viewport_test_support::{handle, register_viewport, space},
     };
 
     #[test]
@@ -266,8 +286,8 @@ mod tests {
         let first = handle(1);
         let second = handle(2);
 
-        adapter.register_viewport(main.clone(), first);
-        adapter.register_viewport(secondary.clone(), second);
+        register_viewport(&mut adapter, main.clone(), first);
+        register_viewport(&mut adapter, secondary.clone(), second);
 
         let removed = adapter
             .unregister_window_id(first.window_id(), DockViewportUnregisterReason::Closed)
@@ -297,7 +317,7 @@ mod tests {
 
         let mut adapter = DockViewportAdapter::new();
         let window = handle(1);
-        adapter.register_viewport(main.clone(), window);
+        register_viewport(&mut adapter, main.clone(), window);
 
         let outcome = adapter.handle_window_closed(window.window_id());
         assert_eq!(
@@ -315,7 +335,7 @@ mod tests {
         );
 
         let reopened = handle(2);
-        adapter.register_viewport(main.clone(), reopened);
+        register_viewport(&mut adapter, main.clone(), reopened);
         assert_eq!(adapter.window_for_space(&main), Some(reopened));
         assert_eq!(
             adapter.space_for_window_id(reopened.window_id()),
@@ -355,7 +375,7 @@ mod tests {
         let main = space("main");
         let stale_window_id = WindowId::from(1);
         let current_window = handle(2);
-        adapter.register_viewport(main.clone(), current_window);
+        register_viewport(&mut adapter, main.clone(), current_window);
         adapter.insert_stale_window_index_for_test(stale_window_id, main.clone());
 
         assert_eq!(
@@ -409,7 +429,7 @@ mod tests {
         let mut adapter = DockViewportAdapter::new();
         let main = space("main");
         let window = handle(1);
-        adapter.register_viewport(main.clone(), window);
+        register_viewport(&mut adapter, main.clone(), window);
 
         let allowed = adapter
             .should_close_viewport(window.window_id(), DockViewportClosePolicy::RetainLayout);

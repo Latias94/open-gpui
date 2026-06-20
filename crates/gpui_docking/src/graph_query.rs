@@ -101,27 +101,6 @@ impl DockGraph {
         selected_item(items, selected)
     }
 
-    /// Returns the only selected item reachable in a subtree.
-    pub(crate) fn unique_selected_item_in_subtree(&self, root: DockNodeId) -> Option<DockItemId> {
-        let mut selected = Vec::new();
-        self.collect_selected_items_in_subtree_into(root, &mut selected);
-        let mut selected = selected.into_iter();
-        let first = selected.next()?;
-        selected.next().is_none().then_some(first)
-    }
-
-    /// Returns the selected item of a reachable subtree in stable depth-first order.
-    pub(crate) fn selected_item_in_subtree(&self, root: DockNodeId) -> Option<DockItemId> {
-        match self.nodes.get(root)? {
-            DockNode::Tabs { items, selected } => selected_item(items, selected),
-            DockNode::Floating { child } => self.selected_item_in_subtree(*child),
-            DockNode::Split { children, .. } => children
-                .iter()
-                .copied()
-                .find_map(|child| self.selected_item_in_subtree(child)),
-        }
-    }
-
     pub(crate) fn is_visible_split_payload(&self, root: DockNodeId) -> bool {
         match self.nodes.get(root) {
             Some(DockNode::Split { .. }) => true,
@@ -182,27 +161,6 @@ impl DockGraph {
             DockNode::Split { children, .. } => {
                 for child in children {
                     self.collect_tabs_in_subtree_into(*child, out);
-                }
-            }
-        }
-    }
-
-    fn collect_selected_items_in_subtree_into(&self, root: DockNodeId, out: &mut Vec<DockItemId>) {
-        let Some(node) = self.nodes.get(root) else {
-            return;
-        };
-        match node {
-            DockNode::Tabs { items, selected } => {
-                if let Some(item) = selected_item(items, selected) {
-                    out.push(item);
-                }
-            }
-            DockNode::Floating { child } => {
-                self.collect_selected_items_in_subtree_into(*child, out)
-            }
-            DockNode::Split { children, .. } => {
-                for child in children {
-                    self.collect_selected_items_in_subtree_into(*child, out);
                 }
             }
         }

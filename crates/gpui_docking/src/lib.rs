@@ -38,8 +38,8 @@
 //! install a should-close hook so [`DockViewportClosePolicy::Prevent`] can veto platform closes
 //! before cleanup runs. Persist [`DockLayout`] and
 //! [`DockViewportPlacementLayout`] separately: layout restores logical dock spaces, while placement
-//! restores platform-window hints for the runtime adapter. Cross-window drops derive event-window,
-//! active-window, and front-to-back window arbitration from GPUI runtime signals inside the crate.
+//! restores platform-window hints for the runtime adapter. Cross-window drops derive hovered-window
+//! and front-to-back window-stack arbitration from GPUI runtime signals inside the crate.
 //! Panel close/reopen flows should use [`DockController::close_item`],
 //! [`DockController::open_item`], [`DockWorkspace::close_item`], or [`DockWorkspace::open_item`]:
 //! close removes the item from the graph while the panel catalog remains available, and reopen
@@ -47,8 +47,10 @@
 //! drag/drop uses resolved drop transactions internally rather than asking render code or app code
 //! to construct graph-shaped move commands.
 //! Descriptor-only restored panels can bind GPUI content later through
-//! [`DockPanelRegistry::attach_factory`], [`DockWorkspace::attach_panel_factory`], or
-//! [`DockController::attach_panel_factory`] without rewriting restored titles or close policy.
+//! [`DockPanelRegistry::attach_view_handle`] or [`DockController::attach_panel_view`] without
+//! rewriting restored titles or close policy.
+//! Lazy panels should be registered up front with [`DockControllerBuilder::panel_factory`] or
+//! [`DockWorkspace::register_panel_factory`].
 //!
 //! ```rust,no_run
 //! use open_gpui::{AnyView, App};
@@ -128,7 +130,6 @@ mod split_fraction;
 mod viewport;
 mod viewport_activation;
 mod viewport_close;
-mod viewport_close_gate;
 mod viewport_close_plan;
 mod viewport_coordinates;
 mod viewport_drop_authority;
@@ -143,14 +144,12 @@ mod viewport_placement_options;
 mod viewport_placement_validation;
 mod viewport_platform_signals;
 mod viewport_platform_sync;
-mod viewport_pointer_authority;
 mod viewport_registration;
 mod viewport_registry;
 mod viewport_routed_preview;
 mod viewport_runtime;
 mod viewport_runtime_handle;
 mod viewport_runtime_status;
-mod viewport_target;
 mod viewport_target_context;
 mod viewport_target_resolver;
 mod viewport_tear_off;
@@ -163,7 +162,6 @@ mod workspace_move_validation;
 mod workspace_panel_lifecycle;
 mod workspace_panel_transaction;
 mod workspace_resize_transaction;
-mod workspace_tab_focus;
 mod workspace_transaction;
 
 #[cfg(test)]
@@ -201,6 +199,7 @@ mod workspace_selection_tests;
 pub use action::*;
 pub use builder::*;
 pub use controller::*;
+pub use geometry::DockDropGuideStyle;
 pub use graph::*;
 pub use host::*;
 pub use ids::*;
@@ -214,6 +213,9 @@ pub use panel_catalog::*;
 pub use panel_registry::*;
 pub use policy::*;
 pub(crate) use viewport::*;
+pub(crate) use viewport_activation::{
+    DockViewportActivationTransaction, DockViewportWindowActivation,
+};
 pub use viewport_close::*;
 pub(crate) use viewport_close_plan::*;
 pub(crate) use viewport_drop_authority::*;
@@ -225,7 +227,6 @@ pub use viewport_placement::*;
 pub use viewport_placement_adapter::*;
 pub use viewport_placement_validation::*;
 pub(crate) use viewport_platform_signals::*;
-pub(crate) use viewport_pointer_authority::*;
 pub(crate) use viewport_registration::*;
 pub(crate) use viewport_registry::{DockViewportSnapshot, DockViewportWindowFacts};
 pub(crate) use viewport_routed_preview::*;
@@ -236,10 +237,8 @@ pub(crate) use viewport_target_context::*;
 pub(crate) use viewport_target_resolver::*;
 pub use viewport_tear_off::DockViewportTearOffCancelReason;
 pub(crate) use viewport_tear_off::{
-    DockViewportActivationTarget, DockViewportDropActionOutcome, DockViewportDropPayload,
-    DockViewportDropRouteOutcome, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelled,
-    DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
-    DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
+    DockViewportDropActionOutcome, DockViewportDropPayload, DockViewportDropRouteOutcome,
+    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelled, DockViewportTearOffCompleted,
     DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
     DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffTick,
 };

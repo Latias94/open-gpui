@@ -95,9 +95,10 @@ use open_gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
     ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
-    Pixels, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, PlatformViewportCapabilities,
-    PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString, Size, TouchPhase,
-    WindowButtonLayout, WindowParams, point, profiler, px, size,
+    Pixels, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow, PlatformInput,
+    PlatformKeyboardLayout, PlatformViewportCapabilities, PlatformWindow, Point, ScrollDelta,
+    ScrollWheelEvent, SharedString, Size, TouchPhase, WindowButtonLayout, WindowParams, point,
+    profiler, px, size,
 };
 use open_gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -998,12 +999,12 @@ impl LinuxClient for WaylandClient {
             .map(|window| window.handle())
     }
 
-    fn hovered_window(&self) -> Option<AnyWindowHandle> {
-        self.0
-            .borrow()
-            .mouse_focused_window
-            .as_ref()
-            .map(|window| window.handle())
+    fn focused_window(&self) -> PlatformFocusedWindow {
+        PlatformFocusedWindow::from_window(self.active_window())
+    }
+
+    fn hovered_window(&self) -> PlatformHoveredWindow {
+        PlatformHoveredWindow::Unavailable
     }
 
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
@@ -1012,11 +1013,13 @@ impl LinuxClient for WaylandClient {
 
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities {
-            mouse_hovered_window: true,
-            active_window: true,
             dpi_scale: true,
             ..Default::default()
         }
+    }
+
+    fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
+        Some(self.0.borrow().button_pressed == Some(button))
     }
 
     fn compositor_name(&self) -> &'static str {
@@ -1844,7 +1847,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     });
                     state.mouse_focused_window = None;
                     state.mouse_location = None;
-                    state.button_pressed = None;
                     state.cursor_hidden_window = None;
 
                     drop(state);

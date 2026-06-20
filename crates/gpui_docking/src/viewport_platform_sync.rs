@@ -1,7 +1,9 @@
 use crate::{
     DockViewportPlatformSyncAction, DockViewportPlatformSyncRecord,
-    DockViewportPlatformSyncRequest, DockViewportPlatformSyncUnsupported,
+    DockViewportPlatformSyncRequest, DockViewportPlatformSyncSkipped,
+    DockViewportPlatformSyncSkippedReason, DockViewportPlatformSyncUnsupported,
     DockViewportPlatformSyncUnsupportedReason, DockViewportPlatformWindowState,
+    viewport_registry::DockViewportPlatformRequests,
 };
 use open_gpui::{Window, WindowBackgroundAppearance, WindowBounds, WindowKind};
 
@@ -20,13 +22,24 @@ fn unsupported(request: DockViewportPlatformSyncRequest) -> DockViewportPlatform
     }
 }
 
+fn skipped_for_platform_request(
+    request: DockViewportPlatformSyncRequest,
+) -> DockViewportPlatformSyncSkipped {
+    DockViewportPlatformSyncSkipped {
+        request,
+        reason: DockViewportPlatformSyncSkippedReason::PlatformRequestInProgress,
+    }
+}
+
 /// Applies the subset of `WindowOptions` that GPUI exposes as live window mutations.
 pub(crate) fn sync_reused_viewport_window(
     window: &mut Window,
     options: open_gpui::WindowOptions,
+    platform_requests: DockViewportPlatformRequests,
 ) -> DockViewportPlatformSyncRecord {
     let window_id = window.window_handle().window_id();
     let mut applied = Vec::new();
+    let mut skipped_requests = Vec::new();
     let mut unsupported_requests = Vec::new();
 
     if options.focus {
@@ -57,6 +70,17 @@ pub(crate) fn sync_reused_viewport_window(
         unsupported_requests.push(unsupported(DockViewportPlatformSyncRequest::Minimizable {
             requested: options.is_minimizable,
         }));
+    }
+    if options.accepts_pointer_input != window.accepts_pointer_input() {
+        if window.set_accepts_pointer_input(options.accepts_pointer_input) {
+            applied.push(DockViewportPlatformSyncAction::PointerInput {
+                enabled: options.accepts_pointer_input,
+            });
+        } else {
+            unsupported_requests.push(unsupported(DockViewportPlatformSyncRequest::PointerInput {
+                requested: options.accepts_pointer_input,
+            }));
+        }
     }
     if let Some(display_id) = options.display_id {
         unsupported_requests.push(unsupported(DockViewportPlatformSyncRequest::Display {
@@ -137,10 +161,18 @@ pub(crate) fn sync_reused_viewport_window(
         let requested_bounds = window_bounds.get_bounds();
         let current_bounds = window.bounds();
         if current_bounds.size != requested_bounds.size {
-            window.resize(requested_bounds.size);
-            applied.push(DockViewportPlatformSyncAction::Resize {
-                size: requested_bounds.size,
-            });
+            if platform_requests.resize_requested {
+                skipped_requests.push(skipped_for_platform_request(
+                    DockViewportPlatformSyncRequest::WindowSize {
+                        requested: requested_bounds.size,
+                    },
+                ));
+            } else {
+                window.resize(requested_bounds.size);
+                applied.push(DockViewportPlatformSyncAction::Resize {
+                    size: requested_bounds.size,
+                });
+            }
         }
         if current_bounds.origin != requested_bounds.origin {
             unsupported_requests.push(unsupported(DockViewportPlatformSyncRequest::WindowOrigin {
@@ -174,6 +206,7 @@ pub(crate) fn sync_reused_viewport_window(
     DockViewportPlatformSyncRecord {
         window_id,
         applied,
+        skipped_requests,
         unsupported_requests,
     }
 }

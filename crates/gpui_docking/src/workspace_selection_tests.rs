@@ -50,6 +50,50 @@ fn workspace_selecting_selected_tab_is_noop(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn workspace_selecting_selected_tab_records_observed_mru(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph_with_selected(&["a", "b", "c"], "b");
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[("a", "A", "A"), ("b", "B", "B"), ("c", "C", "C")],
+    );
+
+    let outcome = workspace
+        .apply_action(&DockAction::SelectTab {
+            tabs: root,
+            item: item("b"),
+        })
+        .expect("observing selected b should be valid");
+    assert_eq!(outcome, DockActionOutcome::Unchanged);
+
+    workspace
+        .apply_action(&DockAction::SelectTab {
+            tabs: root,
+            item: item("c"),
+        })
+        .expect("selecting c should update history");
+    workspace
+        .apply_action(&DockAction::CloseItem {
+            space: space(),
+            item: item("c"),
+        })
+        .expect("closing selected c should be valid");
+
+    let DockNode::Tabs { selected, .. } = workspace
+        .graph()
+        .node(root)
+        .expect("tabs should remain after closing one item")
+    else {
+        panic!("root should be tabs");
+    };
+    assert_eq!(
+        selected.as_ref(),
+        Some(&item("b")),
+        "unchanged selection should still become MRU, matching ImGui's observed selected tab"
+    );
+}
+
+#[open_gpui::test]
 fn workspace_close_selected_tab_restores_recently_selected_sibling(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a", "b", "c"]);
     let mut workspace = workspace_with_panels(
@@ -92,6 +136,34 @@ fn workspace_close_selected_tab_restores_recently_selected_sibling(cx: &mut Test
         Some(&item("b")),
         "close should restore the most recently selected remaining tab instead of falling back to tab order"
     );
+}
+
+#[open_gpui::test]
+fn workspace_close_selected_tab_without_history_uses_first_remaining_tab(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a", "b", "c"]);
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[("a", "A", "A"), ("b", "B", "B"), ("c", "C", "C")],
+    );
+
+    let outcome = workspace
+        .apply_action(&DockAction::CloseItem {
+            space: space(),
+            item: item("b"),
+        })
+        .expect("closing selected tab should be valid");
+
+    let DockNode::Tabs { items, selected } = workspace
+        .graph()
+        .node(root)
+        .expect("tabs should remain after closing one item")
+    else {
+        panic!("root should be tabs");
+    };
+    assert_eq!(outcome, DockActionOutcome::Changed);
+    assert_eq!(items, &vec![item("a"), item("c")]);
+    assert_eq!(selected.as_ref(), Some(&item("a")));
 }
 
 #[open_gpui::test]

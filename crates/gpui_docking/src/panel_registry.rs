@@ -2,7 +2,7 @@ use crate::{
     DockClassId, DockItemId, DockPanel, DockPanelCatalog, DockPanelDescriptor,
     panel_view::{DockPanelViewHandle, DockPanelViewStore},
 };
-use open_gpui::{AnyView, App, Entity, Focusable, Render, Window};
+use open_gpui::{AnyView, App, Window};
 use thiserror::Error;
 
 /// Render-time registration snapshot for one dock panel.
@@ -115,97 +115,10 @@ impl DockPanelRegistry {
         self.catalog.register(item.into(), descriptor)
     }
 
-    /// Registers a view with a title for a dock item.
-    pub fn register_view(
-        &mut self,
-        item: impl Into<DockItemId>,
-        title: impl Into<String>,
-        view: impl Into<AnyView>,
-    ) -> Option<DockPanel> {
-        self.register(item, DockPanel::new(title, view))
-    }
-
-    /// Registers a focusable GPUI view with a title for a dock item.
-    pub fn register_focusable_view<V>(
-        &mut self,
-        item: impl Into<DockItemId>,
-        title: impl Into<String>,
-        view: Entity<V>,
-    ) -> Option<DockPanel>
-    where
-        V: Focusable + Render,
-    {
-        self.register(item, DockPanel::focusable(title, view))
-    }
-
-    /// Registers a lazily created view factory for a dock item.
-    pub fn register_factory(
-        &mut self,
-        item: impl Into<DockItemId>,
-        title: impl Into<String>,
-        factory: impl Fn(&mut App) -> AnyView + 'static,
-    ) -> Option<DockPanel> {
-        self.register(item, DockPanel::lazy(title, factory))
-    }
-
-    /// Registers a lazily created focusable view factory for a dock item.
-    pub fn register_focusable_factory<V>(
-        &mut self,
-        item: impl Into<DockItemId>,
-        title: impl Into<String>,
-        factory: impl Fn(&mut App) -> Entity<V> + 'static,
-    ) -> Option<DockPanel>
-    where
-        V: Focusable + Render,
-    {
-        self.register(item, DockPanel::lazy_focusable(title, factory))
-    }
-
     /// Attaches view content to existing panel metadata without rewriting the descriptor.
     ///
     /// This is the lazy-restore seam: callers can restore titles and close policy first, then bind
     /// GPUI view lifecycle state when an application module becomes available.
-    pub fn attach_view(
-        &mut self,
-        item: impl Into<DockItemId>,
-        view: impl Into<AnyView>,
-    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError> {
-        self.attach_view_handle(item.into(), DockPanelViewHandle::from_view(view))
-    }
-
-    /// Attaches focusable view content to existing panel metadata without rewriting the descriptor.
-    pub fn attach_focusable_view<V>(
-        &mut self,
-        item: impl Into<DockItemId>,
-        view: Entity<V>,
-    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError>
-    where
-        V: Focusable + Render,
-    {
-        self.attach_view_handle(item.into(), DockPanelViewHandle::focusable_view(view))
-    }
-
-    /// Attaches a lazy view factory to existing panel metadata without rewriting the descriptor.
-    pub fn attach_factory(
-        &mut self,
-        item: impl Into<DockItemId>,
-        factory: impl Fn(&mut App) -> AnyView + 'static,
-    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError> {
-        self.attach_view_handle(item.into(), DockPanelViewHandle::lazy(factory))
-    }
-
-    /// Attaches a lazy focusable view factory to existing panel metadata without rewriting metadata.
-    pub fn attach_focusable_factory<V>(
-        &mut self,
-        item: impl Into<DockItemId>,
-        factory: impl Fn(&mut App) -> Entity<V> + 'static,
-    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError>
-    where
-        V: Focusable + Render,
-    {
-        self.attach_view_handle(item.into(), DockPanelViewHandle::lazy_focusable(factory))
-    }
-
     /// Returns a registered panel by dock item id.
     pub fn get(&self, item: &DockItemId) -> Option<DockPanelRegistration> {
         if !self.views.contains(item) {
@@ -260,7 +173,7 @@ impl DockPanelRegistry {
         self.catalog().is_empty()
     }
 
-    fn attach_view_handle(
+    pub(crate) fn attach_view_handle(
         &mut self,
         item: DockItemId,
         view: DockPanelViewHandle,
@@ -280,7 +193,7 @@ impl DockPanelRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DockClassId, DockItemId, DockPanelDescriptor};
+    use crate::{DockClassId, DockItemId, DockPanel, DockPanelDescriptor};
 
     fn item(id: &str) -> DockItemId {
         DockItemId::from(id)
@@ -290,7 +203,7 @@ mod tests {
     fn registry_read_entries_snapshot_metadata_and_share_view_lifecycle() {
         let registration = {
             let mut registry = DockPanelRegistry::new();
-            registry.register_factory("lazy", "Lazy", |_| unreachable!());
+            registry.register("lazy", DockPanel::lazy("Lazy", |_| unreachable!()));
 
             assert_eq!(
                 registry
@@ -352,7 +265,9 @@ mod tests {
         );
 
         assert!(matches!(
-            registry.attach_factory(item.clone(), |_| unreachable!()),
+            registry.attach_view_handle(item.clone(), crate::panel_view::DockPanelViewHandle::lazy(
+                |_| unreachable!()
+            )),
             Ok(None)
         ));
 
@@ -373,7 +288,10 @@ mod tests {
         let mut registry = DockPanelRegistry::new();
 
         assert!(matches!(
-            registry.attach_factory(item("missing"), |_| unreachable!()),
+            registry.attach_view_handle(
+                item("missing"),
+                crate::panel_view::DockPanelViewHandle::lazy(|_| unreachable!())
+            ),
             Err(DockPanelAttachError::MissingDescriptor { item }) if item == self::item("missing")
         ));
     }
@@ -384,11 +302,17 @@ mod tests {
         let item = item("editor");
         registry.register_descriptor(item.clone(), DockPanelDescriptor::new("Editor"));
         registry
-            .attach_factory(item.clone(), |_| unreachable!())
+            .attach_view_handle(
+                item.clone(),
+                crate::panel_view::DockPanelViewHandle::lazy(|_| unreachable!()),
+            )
             .expect("first attach should succeed");
 
         let previous = registry
-            .attach_factory(item.clone(), |_| unreachable!())
+            .attach_view_handle(
+                item.clone(),
+                crate::panel_view::DockPanelViewHandle::lazy(|_| unreachable!()),
+            )
             .expect("replacement attach should succeed")
             .expect("replacement should return previous registration");
 
@@ -399,7 +323,7 @@ mod tests {
     fn descriptor_updates_do_not_drop_existing_view_lifecycle() {
         let mut registry = DockPanelRegistry::new();
         let item = item("editor");
-        registry.register_factory(item.clone(), "Editor", |_| unreachable!());
+        registry.register(item.clone(), DockPanel::lazy("Editor", |_| unreachable!()));
 
         let previous = registry
             .register_descriptor(item.clone(), DockPanelDescriptor::new("Renamed"))

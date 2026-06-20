@@ -1,6 +1,6 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockNode, DockPanel, DockPanelAttachError,
-    DockPanelDescriptor, DockWorkspace, host_test_support::*,
+    host_test_support::*, DockAction, DockActionApplyError, DockActionOutcome, DockNode, DockPanel,
+    DockPanelAttachError, DockPanelDescriptor, DockPanelRegistry, DockWorkspace,
 };
 use open_gpui::{AppContext as _, TestAppContext};
 use std::{cell::Cell, rc::Rc};
@@ -187,28 +187,30 @@ fn workspace_open_item_transaction_reopens_registered_lazy_panel_without_instant
 }
 
 #[test]
-fn workspace_attach_panel_factory_preserves_restored_metadata() {
-    let (graph, _root) = tabs_graph(&["restored"]);
-    let mut workspace = DockWorkspace::new(space(), graph);
-    workspace.register_panel_descriptor(
+fn panel_registry_attach_view_handle_preserves_restored_metadata() {
+    let (_graph, _root) = tabs_graph(&["restored"]);
+    let mut registry = DockPanelRegistry::new();
+    registry.register_descriptor(
         item("restored"),
         DockPanelDescriptor::new("Restored").closable(false),
     );
 
-    let previous = workspace
-        .attach_panel_factory(item("restored"), |_| unreachable!())
+    let previous = registry
+        .attach_view_handle(
+            item("restored"),
+            crate::panel_view::DockPanelViewHandle::lazy(|_| unreachable!()),
+        )
         .expect("descriptor-backed attach should succeed");
 
     assert!(previous.is_none());
-    let registration = workspace
-        .panels()
+    let registration = registry
         .get(&item("restored"))
         .expect("attached view lifecycle should complete registration");
     assert_eq!(registration.title(), "Restored");
     assert!(!registration.is_closable());
 
     assert!(matches!(
-        workspace.attach_panel_factory(item("missing"), |_| unreachable!()),
+        registry.attach_view_handle(item("missing"), crate::panel_view::DockPanelViewHandle::lazy(|_| unreachable!())),
         Err(DockPanelAttachError::MissingDescriptor { item }) if item == self::item("missing")
     ));
 }

@@ -25,12 +25,13 @@ use crate::linux::{LinuxDispatcher, PriorityQueueCalloopReceiver};
 use open_gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformViewportCapabilities, PlatformWindow, Result, RunnableVariant, Task, ThermalState,
-    WindowAppearance, WindowButtonLayout, WindowParams,
+    PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow,
+    Result, RunnableVariant, Task, ThermalState, WindowAppearance, WindowButtonLayout,
+    WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
-use open_gpui::{Pixels, Point, px};
+use open_gpui::{MouseButton, Pixels, Point, px};
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const SCROLL_LINES: f32 = 3.0;
@@ -90,13 +91,19 @@ pub(crate) trait LinuxClient {
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
-    fn hovered_window(&self) -> Option<AnyWindowHandle> {
-        None
+    fn hovered_window(&self) -> PlatformHoveredWindow {
+        PlatformHoveredWindow::Unavailable
     }
     fn active_window(&self) -> Option<AnyWindowHandle>;
+    fn focused_window(&self) -> PlatformFocusedWindow {
+        PlatformFocusedWindow::Unavailable
+    }
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities::default()
+    }
+    fn mouse_button_is_pressed(&self, _button: MouseButton) -> Option<bool> {
+        None
     }
     fn run(&self);
 
@@ -310,7 +317,11 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         self.inner.active_window()
     }
 
-    fn hovered_window(&self) -> Option<AnyWindowHandle> {
+    fn focused_window(&self) -> PlatformFocusedWindow {
+        self.inner.focused_window()
+    }
+
+    fn hovered_window(&self) -> PlatformHoveredWindow {
         self.inner.hovered_window()
     }
 
@@ -320,6 +331,10 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         self.inner.viewport_capabilities()
+    }
+
+    fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
+        self.inner.mouse_button_is_pressed(button)
     }
 
     fn open_window(

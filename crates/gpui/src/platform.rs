@@ -85,10 +85,6 @@ pub use visual_test::VisualTestPlatform;
 pub struct PlatformViewportCapabilities {
     /// Window bounds are reported in a shared desktop coordinate space.
     pub global_window_bounds: bool,
-    /// The platform can report the application window currently under the mouse cursor.
-    pub mouse_hovered_window: bool,
-    /// The platform can report the active/focused application window.
-    pub active_window: bool,
     /// The platform can report application windows in front-to-back order.
     pub window_stack: bool,
     /// Display visible bounds exclude system-reserved work areas.
@@ -99,12 +95,72 @@ pub struct PlatformViewportCapabilities {
     pub live_window_move: bool,
     /// Native no-input/click-through windows are supported.
     pub no_input_windows: bool,
-    /// Native no-focus-on-appear windows are supported.
-    pub no_focus_on_appearing: bool,
-    /// Native topmost windows are supported.
-    pub topmost_windows: bool,
-    /// Native per-window alpha is supported.
-    pub window_alpha: bool,
+    /// Hovered-window queries pass through native no-input/click-through application windows.
+    pub hovered_window_ignores_no_input: bool,
+}
+
+/// Backend hovered-window signal for multi-viewport routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlatformHoveredWindow {
+    /// The backend cannot reliably report the window under the pointer for this snapshot.
+    #[default]
+    Unavailable,
+    /// The backend reliably reported that no application window is under the pointer.
+    NoWindow,
+    /// The backend reliably reported the application window under the pointer.
+    Window(AnyWindowHandle),
+}
+
+impl PlatformHoveredWindow {
+    /// Converts a reliable optional window into a hovered-window signal.
+    pub fn from_window(window: Option<AnyWindowHandle>) -> Self {
+        window.map_or(Self::NoWindow, Self::Window)
+    }
+
+    /// Returns the hovered application window when the backend reported one.
+    pub fn window(self) -> Option<AnyWindowHandle> {
+        match self {
+            Self::Window(window) => Some(window),
+            Self::Unavailable | Self::NoWindow => None,
+        }
+    }
+
+    /// Returns true when the backend can distinguish no hovered application window from unknown.
+    pub fn is_available(self) -> bool {
+        !matches!(self, Self::Unavailable)
+    }
+}
+
+/// Backend focused-window signal for multi-viewport focus reconciliation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlatformFocusedWindow {
+    /// The backend cannot reliably report the focused application window for this snapshot.
+    #[default]
+    Unavailable,
+    /// The backend reliably reported that no application window is focused.
+    NoWindow,
+    /// The backend reliably reported the focused application window.
+    Window(AnyWindowHandle),
+}
+
+impl PlatformFocusedWindow {
+    /// Converts a reliable optional window into a focused-window signal.
+    pub fn from_window(window: Option<AnyWindowHandle>) -> Self {
+        window.map_or(Self::NoWindow, Self::Window)
+    }
+
+    /// Returns the focused application window when the backend reported one.
+    pub fn window(self) -> Option<AnyWindowHandle> {
+        match self {
+            Self::Window(window) => Some(window),
+            Self::Unavailable | Self::NoWindow => None,
+        }
+    }
+
+    /// Returns true when the backend can distinguish no focused window from unknown.
+    pub fn is_available(self) -> bool {
+        !matches!(self, Self::Unavailable)
+    }
 }
 
 // TODO(jk): return an enum instead of a string
@@ -155,10 +211,13 @@ pub trait Platform: 'static {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
-    fn hovered_window(&self) -> Option<AnyWindowHandle> {
-        None
+    fn hovered_window(&self) -> PlatformHoveredWindow {
+        PlatformHoveredWindow::Unavailable
     }
     fn active_window(&self) -> Option<AnyWindowHandle>;
+    fn focused_window(&self) -> PlatformFocusedWindow {
+        PlatformFocusedWindow::Unavailable
+    }
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
     }
@@ -650,6 +709,9 @@ pub struct RequestFrameOptions {
 pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
     fn is_maximized(&self) -> bool;
+    fn is_minimized(&self) -> bool {
+        false
+    }
     fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn resize(&mut self, size: Size<Pixels>);
@@ -671,6 +733,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn activate(&self);
     fn is_active(&self) -> bool;
     fn is_hovered(&self) -> bool;
+    fn accepts_pointer_input(&self) -> bool {
+        true
+    }
+    fn set_accepts_pointer_input(&mut self, _accepts_pointer_input: bool) -> bool {
+        false
+    }
     fn background_appearance(&self) -> WindowBackgroundAppearance;
     fn set_title(&mut self, title: &str);
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
@@ -1519,6 +1587,10 @@ pub struct WindowOptions {
     /// Whether the window should be minimized by the user
     pub is_minimizable: bool,
 
+    /// Whether the window should receive pointer input. When false and supported by the
+    /// platform, the window is click-through and route resolution may target the window beneath it.
+    pub accepts_pointer_input: bool,
+
     /// The display to create the window on, if this is None,
     /// the window will be created on the main display
     pub display_id: Option<DisplayId>,
@@ -1575,6 +1647,9 @@ pub struct WindowParams {
     /// Whether the window should be minimized by the user
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub is_minimizable: bool,
+
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    pub accepts_pointer_input: bool,
 
     #[cfg_attr(
         any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
@@ -1647,6 +1722,7 @@ impl Default for WindowOptions {
             is_movable: true,
             is_resizable: true,
             is_minimizable: true,
+            accepts_pointer_input: true,
             display_id: None,
             window_background: WindowBackgroundAppearance::default(),
             icon: None,

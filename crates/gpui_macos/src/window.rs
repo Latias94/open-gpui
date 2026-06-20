@@ -484,6 +484,7 @@ struct MacWindowState {
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
     transparent_titlebar: bool,
+    accepts_pointer_input: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
@@ -666,6 +667,7 @@ impl MacWindow {
             is_movable,
             is_resizable,
             is_minimizable,
+            accepts_pointer_input,
             focus,
             show,
             display_id,
@@ -837,6 +839,7 @@ impl MacWindow {
                 closed: Arc::new(AtomicBool::new(false)),
                 accesskit_adapter: None,
                 sheet_parent: None,
+                accepts_pointer_input,
             })));
 
             (*native_window).set_ivar(
@@ -857,6 +860,7 @@ impl MacWindow {
             }
 
             native_window.setMovable_(is_movable as BOOL);
+            let _: () = msg_send![native_window, setIgnoresMouseEvents: !accepts_pointer_input];
 
             if let Some(window_min_size) = window_min_size {
                 native_window.setContentMinSize_(NSSize {
@@ -1020,6 +1024,55 @@ impl MacWindow {
         }
     }
 
+    pub fn focused_window() -> Option<AnyWindowHandle> {
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let key_window: id = msg_send![app, keyWindow];
+            if key_window.is_null() {
+                return None;
+            }
+
+            if is_gpui_window(key_window) {
+                let handle = get_window_state(&*key_window).lock().handle;
+                Some(handle)
+            } else {
+                None
+            }
+        }
+    }
+
+    pub fn hovered_window() -> Option<AnyWindowHandle> {
+        unsafe {
+            let mouse_location = NSEvent::mouseLocation(nil);
+            let app = NSApplication::sharedApplication(nil);
+            let windows: id = msg_send![app, orderedWindows];
+            let count: NSUInteger = msg_send![windows, count];
+            for i in 0..count {
+                let window: id = msg_send![windows, objectAtIndex:i];
+                let visible = window.isVisible() == YES;
+                let miniaturized: BOOL = msg_send![window, isMiniaturized];
+                if !visible || miniaturized == YES {
+                    continue;
+                }
+                let frame = NSWindow::frame(window);
+                if !ns_rect_contains_point(frame, mouse_location) {
+                    continue;
+                }
+
+                if !is_gpui_window(window) {
+                    return None;
+                }
+
+                let window_state = get_window_state(&*window);
+                let state = window_state.lock();
+                if state.accepts_pointer_input {
+                    return Some(state.handle);
+                }
+            }
+            None
+        }
+    }
+
     pub fn ordered_windows() -> Vec<AnyWindowHandle> {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
@@ -1065,6 +1118,13 @@ impl MacWindow {
             }
         }
     }
+}
+
+fn ns_rect_contains_point(rect: NSRect, point: NSPoint) -> bool {
+    point.x >= rect.origin.x
+        && point.x < rect.origin.x + rect.size.width
+        && point.y >= rect.origin.y
+        && point.y < rect.origin.y + rect.size.height
 }
 
 impl Drop for MacWindow {
@@ -1114,6 +1174,33 @@ impl PlatformWindow for MacWindow {
 
     fn is_maximized(&self) -> bool {
         self.0.as_ref().lock().is_maximized()
+    }
+
+    fn is_minimized(&self) -> bool {
+        let this = self.0.as_ref().lock();
+        unsafe {
+            let minimized: BOOL = msg_send![this.native_window, isMiniaturized];
+            minimized == YES
+        }
+    }
+
+    fn accepts_pointer_input(&self) -> bool {
+        self.0.as_ref().lock().accepts_pointer_input
+    }
+
+    fn set_accepts_pointer_input(&mut self, accepts_pointer_input: bool) -> bool {
+        let mut this = self.0.as_ref().lock();
+        if this.accepts_pointer_input == accepts_pointer_input {
+            return true;
+        }
+        this.accepts_pointer_input = accepts_pointer_input;
+        unsafe {
+            let _: () = msg_send![
+                this.native_window,
+                setIgnoresMouseEvents: !accepts_pointer_input
+            ];
+        }
+        true
     }
 
     fn content_size(&self) -> Size<Pixels> {

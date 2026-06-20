@@ -8,9 +8,16 @@ fn registry_replaces_registered_panel(cx: &mut TestAppContext) {
     let first = test_view(cx, "first");
     let second = test_view(cx, "second");
 
-    assert!(registry.register_view(item("a"), "First", first).is_none());
+    assert!(
+        registry
+            .register(
+                item("a"),
+                crate::DockPanel::new("First", first),
+            )
+            .is_none()
+    );
     let previous = registry
-        .register_view(item("a"), "Second", second)
+        .register(item("a"), crate::DockPanel::new("Second", second))
         .expect("second registration should return previous panel");
 
     assert_eq!(previous.title(), "First");
@@ -28,10 +35,10 @@ fn registry_descriptor_lookup_does_not_instantiate_lazy_panel(_cx: &mut TestAppC
     let mut registry = crate::DockPanelRegistry::new();
     let calls = Rc::new(Cell::new(0));
     let factory_calls = calls.clone();
-    registry.register_factory("lazy", "Lazy", move |cx| {
+    registry.register("lazy", crate::DockPanel::lazy("Lazy", move |cx| {
         factory_calls.set(factory_calls.get() + 1);
         cx.new(|cx| TestPanel::new("lazy", cx)).into()
-    });
+    }));
 
     let descriptor = registry
         .descriptor(&item("lazy"))

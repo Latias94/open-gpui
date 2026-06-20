@@ -16,12 +16,9 @@ impl DockGraph {
                         item: item.clone(),
                     });
                 }
-                self.apply_tree_mutation_plan(DockTreeMutationPlan::allow_noop(
-                    op,
-                    DockTreeMutationExpectation::ValidateOnly,
-                ))
+                Ok(self.select_tab(*tabs, item.clone()))
             }
-            DockOp::CloseItem { space, item, .. } => {
+            DockOp::CloseItem { space, item } => {
                 if self.find_item_in_space(space, item).is_none() {
                     return Err(DockGraphMutationError::ItemNotFound {
                         space: space.clone(),

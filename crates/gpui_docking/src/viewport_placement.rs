@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::viewport_target_resolver::choose_diagnostic_viewport_target;
 use crate::{DockLayoutRect, DockSpaceId};
 use open_gpui::WindowBounds;
 use serde::{Deserialize, Serialize};
@@ -108,7 +110,7 @@ mod tests {
     use crate::{
         DockViewportAdapter, DockViewportHit, DockViewportPlacementValidationError,
         DockViewportRestoreReadiness, DockViewportTargetContext, DockViewportWindowFacts,
-        viewport_test_support::{bounds, handle, space},
+        viewport_test_support::{bounds, handle, register_viewport, space},
     };
     use open_gpui::{DisplayId, WindowBounds, WindowOptions, point, px};
 
@@ -117,8 +119,8 @@ mod tests {
         let mut adapter = DockViewportAdapter::new();
         let main = space("main");
         let secondary = space("secondary");
-        adapter.register_viewport(main.clone(), handle(1));
-        adapter.register_viewport(secondary, handle(2));
+        register_viewport(&mut adapter, main.clone(), handle(1));
+        register_viewport(&mut adapter, secondary, handle(2));
         assert!(adapter.update_snapshot(
             &main,
             DockViewportWindowFacts::new(
@@ -140,7 +142,7 @@ mod tests {
         let placement: DockViewportPlacementLayout =
             serde_json::from_str(&json).expect("placement should deserialize");
         let mut restored = DockViewportAdapter::new();
-        restored.register_viewport(main.clone(), handle(99));
+        register_viewport(&mut restored, main.clone(), handle(99));
         assert_eq!(
             restored
                 .check_placement_restore(&placement)
@@ -157,7 +159,7 @@ mod tests {
         assert_eq!(snapshot.window, handle(99));
         assert_eq!(snapshot.display_id, None);
         assert_eq!(snapshot.window_bounds, None);
-        assert_eq!(snapshot.screen_bounds, None);
+        assert_eq!(snapshot.current_bounds, None);
         assert_eq!(snapshot.host_bounds, None);
     }
 
@@ -166,8 +168,8 @@ mod tests {
         let mut adapter = DockViewportAdapter::new();
         let main = space("main");
         let secondary = space("secondary");
-        adapter.register_viewport(main.clone(), handle(1));
-        adapter.register_viewport(secondary.clone(), handle(2));
+        register_viewport(&mut adapter, main.clone(), handle(1));
+        register_viewport(&mut adapter, secondary.clone(), handle(2));
         adapter.update_snapshot(
             &main,
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
@@ -187,8 +189,8 @@ mod tests {
         let placement = adapter.export_placement();
 
         let mut restored = DockViewportAdapter::new();
-        restored.register_viewport(main.clone(), handle(101));
-        restored.register_viewport(secondary.clone(), handle(102));
+        register_viewport(&mut restored, main.clone(), handle(101));
+        register_viewport(&mut restored, secondary.clone(), handle(102));
 
         assert_eq!(
             restored
@@ -205,12 +207,11 @@ mod tests {
             Some(&secondary)
         );
         assert!(
-            restored
-                .resolve_diagnostic_viewport_target(
-                    point(px(935.0), px(245.0)),
-                    &DockViewportTargetContext::new()
-                )
-                .is_none(),
+            choose_diagnostic_viewport_target(
+                restored.global_screen_viewport_hits(point(px(935.0), px(245.0))),
+                &DockViewportTargetContext::new(),
+            )
+            .is_none(),
             "saved placement must not masquerade as live screen coordinates"
         );
         restored.update_snapshot(
@@ -221,12 +222,9 @@ mod tests {
             .with_display_id(Some(DisplayId::new(8))),
             bounds(30.0, 40.0, 240.0, 180.0),
         );
+        let hits = restored.global_screen_viewport_hits(point(px(935.0), px(245.0)));
         assert_eq!(
-            restored
-                .resolve_diagnostic_viewport_target(
-                    point(px(935.0), px(245.0)),
-                    &DockViewportTargetContext::new()
-                )
+            choose_diagnostic_viewport_target(hits, &DockViewportTargetContext::new())
                 .map(|target| target.into_hit()),
             Some(DockViewportHit::new(secondary, point(px(5.0), px(5.0))))
         );
@@ -317,7 +315,7 @@ mod tests {
     fn invalid_placement_rejects_window_options_before_runtime_mutation() {
         let main = space("main");
         let mut adapter = DockViewportAdapter::new();
-        adapter.register_viewport(main.clone(), handle(1));
+        register_viewport(&mut adapter, main.clone(), handle(1));
         let placement = DockViewportPlacementLayout::new(vec![
             DockViewportPlacement {
                 space: main.clone(),
@@ -420,7 +418,7 @@ mod tests {
             }),
         }]);
         let mut adapter = DockViewportAdapter::new();
-        adapter.register_viewport(main.clone(), handle(1));
+        register_viewport(&mut adapter, main.clone(), handle(1));
         adapter.update_snapshot(
             &main,
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
@@ -447,7 +445,7 @@ mod tests {
             Some(WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0)))
         );
         assert_eq!(
-            snapshot.screen_bounds,
+            snapshot.global_screen_bounds(),
             Some(bounds(100.0, 200.0, 800.0, 600.0))
         );
         assert_eq!(snapshot.host_bounds, Some(bounds(10.0, 20.0, 300.0, 200.0)));

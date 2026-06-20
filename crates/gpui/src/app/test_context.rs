@@ -472,6 +472,30 @@ impl TestAppContext {
         self.test_platform.set_hovered_window(test_window);
     }
 
+    /// Overrides the platform-reported window stack for tests.
+    pub fn set_platform_window_stack(&self, windows: Option<Vec<AnyWindowHandle>>) {
+        let test_windows = windows.map(|windows| {
+            windows
+                .into_iter()
+                .filter_map(|window| {
+                    self.app
+                        .borrow_mut()
+                        .update_window(window, |_, window, _| {
+                            window.platform_window.as_test().cloned()
+                        })
+                        .ok()
+                        .flatten()
+                })
+                .collect()
+        });
+        self.test_platform.set_window_stack(test_windows);
+    }
+
+    /// Overrides whether the test platform can report the focused window.
+    pub fn set_platform_focused_window_available(&self, available: bool) {
+        self.test_platform.set_focused_window_available(available);
+    }
+
     /// Simulate dispatching an action to the currently focused node in the window.
     pub fn dispatch_action<A>(&mut self, window: AnyWindowHandle, action: A)
     where
@@ -1137,7 +1161,7 @@ impl AnyWindowHandle {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Empty, PathPromptOptions, TestAppContext, px, size};
+    use crate::{Empty, PathPromptOptions, PlatformHoveredWindow, TestAppContext, px, size};
     use std::path::PathBuf;
 
     #[open_gpui::test]
@@ -1195,16 +1219,22 @@ mod tests {
             .into();
 
         cx.set_platform_hovered_window(Some(second));
-        let (hovered, capabilities) =
-            cx.update(|app| (app.hovered_window(), app.viewport_capabilities()));
+        let hovered = cx.update(|app| app.hovered_window());
 
-        assert_eq!(hovered, Some(second));
-        assert!(capabilities.mouse_hovered_window);
+        assert_eq!(hovered, PlatformHoveredWindow::Window(second));
+        assert_eq!(hovered.window(), Some(second));
+        assert!(hovered.is_available());
 
         cx.set_platform_hovered_window(Some(first));
-        assert_eq!(cx.update(|app| app.hovered_window()), Some(first));
+        assert_eq!(
+            cx.update(|app| app.hovered_window()),
+            PlatformHoveredWindow::Window(first)
+        );
 
         cx.set_platform_hovered_window(None);
-        assert_eq!(cx.update(|app| app.hovered_window()), None);
+        assert_eq!(
+            cx.update(|app| app.hovered_window()),
+            PlatformHoveredWindow::NoWindow
+        );
     }
 }

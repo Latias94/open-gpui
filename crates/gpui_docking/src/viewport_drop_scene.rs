@@ -3,9 +3,11 @@ use crate::drop_target::DockResolvedDropTarget;
 use crate::{
     DockPolicy, DockSpaceId, DockViewportIdentity,
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
-    drop_target::{DockDropResolution, DockDropTargetValidator},
+    drop_target::{DockDropResolution, DockDropTargetValidator, DockEdgePlanResolver},
+    geometry::DockDropGuideStyle,
+    viewport_registry::DockViewportWindowBoundsFrame,
 };
-use open_gpui::{Bounds, Pixels, Point, WindowId, point};
+use open_gpui::{Bounds, Pixels, Point, Size, WindowId, point};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +48,7 @@ pub(crate) struct DockViewportHostSceneRegistration {
 pub(crate) struct DockViewportHostSceneSnapshot {
     pub(crate) space: DockSpaceId,
     pub(crate) window_id: WindowId,
-    pub(crate) screen_bounds: Bounds<Pixels>,
+    pub(crate) current_bounds: DockViewportWindowBoundsFrame,
     pub(crate) host_bounds: Bounds<Pixels>,
     generation: u64,
     scene: DockHostDropScene,
@@ -56,9 +58,10 @@ impl DockViewportHostSceneSnapshot {
     pub(crate) fn new(
         space: DockSpaceId,
         window_id: WindowId,
-        screen_bounds: Bounds<Pixels>,
+        current_bounds: DockViewportWindowBoundsFrame,
         host_bounds: Bounds<Pixels>,
         host_position: Point<Pixels>,
+        drop_guide_style: DockDropGuideStyle,
     ) -> Self {
         let window_position = point(
             host_bounds.origin.x + host_position.x,
@@ -67,17 +70,17 @@ impl DockViewportHostSceneSnapshot {
         Self {
             space,
             window_id,
-            screen_bounds,
+            current_bounds,
             host_bounds,
             generation: 0,
-            scene: DockHostDropScene::new(window_position),
+            scene: DockHostDropScene::new(window_position).with_drop_guide_style(drop_guide_style),
         }
     }
 
     fn same_content_as(&self, other: &Self) -> bool {
         self.space == other.space
             && self.window_id == other.window_id
-            && self.screen_bounds == other.screen_bounds
+            && self.current_bounds == other.current_bounds
             && self.host_bounds == other.host_bounds
             && self.scene == other.scene
     }
@@ -98,11 +101,12 @@ impl DockViewportHostSceneSnapshot {
     }
 
     #[cfg(test)]
-    pub(crate) fn screen_position(&self) -> Point<Pixels> {
-        point(
-            self.screen_bounds.origin.x + self.scene.position.x,
-            self.screen_bounds.origin.y + self.scene.position.y,
-        )
+    pub(crate) fn global_screen_position(&self) -> Option<Point<Pixels>> {
+        let screen_bounds = self.current_bounds.global_screen_bounds()?;
+        Some(point(
+            screen_bounds.origin.x + self.scene.position.x,
+            screen_bounds.origin.y + self.scene.position.y,
+        ))
     }
 }
 
@@ -190,8 +194,16 @@ impl DockViewportHostSceneRegistry {
         policy: &DockPolicy,
         target_validator: Option<&DockDropTargetValidator<'_>>,
     ) -> Option<DockResolvedDropTarget> {
-        self.resolve_frame_for_window(space, window_id, host_position, policy, target_validator)
-            .and_then(|(_, resolution)| resolution.target())
+        self.resolve_frame_for_window(
+            space,
+            window_id,
+            host_position,
+            None,
+            policy,
+            target_validator,
+            None,
+        )
+        .and_then(|(_, resolution)| resolution.target())
     }
 
     pub(crate) fn resolve_frame_for_window(
@@ -199,8 +211,10 @@ impl DockViewportHostSceneRegistry {
         space: &DockSpaceId,
         window_id: Option<WindowId>,
         host_position: Point<Pixels>,
+        payload_size: Option<Size<Pixels>>,
         policy: &DockPolicy,
         target_validator: Option<&DockDropTargetValidator<'_>>,
+        edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
     ) -> Option<(DockViewportHostSceneFrame, DockDropResolution)> {
         let snapshot = self.scenes.get(space)?;
         if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
@@ -212,7 +226,9 @@ impl DockViewportHostSceneRegistry {
             snapshot.host_bounds.origin.x + host_position.x,
             snapshot.host_bounds.origin.y + host_position.y,
         );
-        let resolution = scene.resolve_drop_with_validator(policy, target_validator)?;
+        scene = scene.with_payload_size(payload_size);
+        let resolution =
+            scene.resolve_drop_with_validator(policy, target_validator, edge_plan_resolver)?;
         Some((frame, resolution))
     }
 
@@ -220,7 +236,7 @@ impl DockViewportHostSceneRegistry {
     pub(crate) fn screen_position(&self, space: &DockSpaceId) -> Option<Point<Pixels>> {
         self.scenes
             .get(space)
-            .map(DockViewportHostSceneSnapshot::screen_position)
+            .and_then(DockViewportHostSceneSnapshot::global_screen_position)
     }
 
     pub(crate) fn unregister_space(&mut self, space: &DockSpaceId) {
@@ -369,9 +385,10 @@ mod tests {
             .register(DockViewportHostSceneSnapshot::new(
                 space.clone(),
                 window_id,
-                screen_bounds,
+                DockViewportWindowBoundsFrame::GlobalScreen(screen_bounds),
                 host_bounds,
                 host_position,
+                crate::DockDropGuideStyle::default(),
             ))
             .frame;
         assert!(
@@ -409,13 +426,60 @@ mod tests {
         assert_eq!(target.preview_bounds, Some(host_bounds));
     }
 
+    #[test]
+    fn host_scene_resolves_window_local_bounds_without_global_screen_position() {
+        let space = space("main");
+        let window_id = WindowId::from(1);
+        let mut registry = DockViewportHostSceneRegistry::default();
+        let host_bounds = bounds(40.0, 30.0, 200.0, 120.0);
+        let host_position = point(px(5.0), px(6.0));
+
+        let frame = registry
+            .register(DockViewportHostSceneSnapshot::new(
+                space.clone(),
+                window_id,
+                DockViewportWindowBoundsFrame::WindowLocal(bounds(0.0, 0.0, 320.0, 240.0)),
+                host_bounds,
+                host_position,
+                crate::DockDropGuideStyle::default(),
+            ))
+            .frame;
+        assert!(
+            registry
+                .push_frame_fact(
+                    &frame,
+                    DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
+                        space: space.clone(),
+                        bounds: host_bounds,
+                        is_central: false,
+                    })
+                )
+                .is_some()
+        );
+
+        assert_eq!(registry.screen_position(&space), None);
+        assert!(
+            registry
+                .resolve_for_window(
+                    &space,
+                    Some(window_id),
+                    host_position,
+                    &DockPolicy::default(),
+                    None,
+                )
+                .is_some(),
+            "window-local scene facts should still resolve for the receiving viewport"
+        );
+    }
+
     fn snapshot(space: DockSpaceId, window_id: WindowId) -> DockViewportHostSceneSnapshot {
         DockViewportHostSceneSnapshot::new(
             space,
             window_id,
-            bounds(0.0, 0.0, 200.0, 120.0),
+            DockViewportWindowBoundsFrame::GlobalScreen(bounds(0.0, 0.0, 200.0, 120.0)),
             bounds(0.0, 0.0, 200.0, 120.0),
             point(px(10.0), px(10.0)),
+            crate::DockDropGuideStyle::default(),
         )
     }
 

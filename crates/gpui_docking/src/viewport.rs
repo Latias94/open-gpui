@@ -1,6 +1,13 @@
 #[cfg(test)]
 use crate::viewport_registry::DockViewportRouteUnavailableReason;
-use crate::{DockSpaceId, viewport_registry::DockViewportRegistry};
+#[cfg(test)]
+use crate::viewport_target_resolver::choose_diagnostic_viewport_target;
+use crate::{
+    DockSpaceId,
+    viewport_registry::{
+        DockViewportPlatformRequests, DockViewportPointerRouting, DockViewportRegistry,
+    },
+};
 use open_gpui::{AnyWindowHandle, WindowId};
 
 /// Runtime adapter state that maps logical dock spaces to GPUI windows.
@@ -63,12 +70,37 @@ impl DockViewportAdapter {
             .map(|snapshot| snapshot.is_route_ready())
     }
 
+    pub(crate) fn space_is_no_input_pass_through(&self, space: &DockSpaceId) -> bool {
+        self.snapshot(space).is_some_and(|snapshot| {
+            snapshot.pointer_routing == DockViewportPointerRouting::NoInputPassThrough
+        })
+    }
+
     pub(crate) fn window_close_requested(&self, window_id: WindowId) -> bool {
         let Some(space) = self.space_for_window_id(window_id) else {
             return false;
         };
         self.snapshot(space)
             .is_some_and(|snapshot| snapshot.is_platform_close_requested())
+    }
+
+    pub(crate) fn platform_requests_for_space(
+        &self,
+        space: &DockSpaceId,
+    ) -> DockViewportPlatformRequests {
+        self.snapshot(space)
+            .map(|snapshot| snapshot.platform_requests())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn is_live_window_for_space(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> bool {
+        self.window_for_space(space)
+            .is_some_and(|window| window.window_id() == window_id)
+            && !self.window_close_requested(window_id)
     }
 
     pub(crate) fn unregister_window_id_snapshot(
@@ -83,12 +115,8 @@ impl DockViewportAdapter {
         self.registry.window_for_space(space)
     }
 
-    pub(crate) fn record_window_focus(&mut self, window_id: WindowId) {
-        self.registry.record_window_focus(window_id);
-    }
-
-    pub(crate) fn record_space_focus(&mut self, space: &DockSpaceId) {
-        self.registry.record_space_focus(space);
+    pub(crate) fn record_recent_focus_window(&mut self, window_id: WindowId) -> bool {
+        self.registry.record_recent_focus_window(window_id)
     }
 
     /// Returns the logical dock space rendered by a window id.
@@ -110,10 +138,6 @@ impl DockViewportAdapter {
             .collect()
     }
 
-    pub(crate) fn spaces_by_diagnostic_hit_order(&self) -> Vec<DockSpaceId> {
-        self.registry.spaces_by_diagnostic_hit_order()
-    }
-
     #[cfg(test)]
     pub(crate) fn insert_stale_window_index_for_test(
         &mut self,
@@ -123,6 +147,10 @@ impl DockViewportAdapter {
         self.registry
             .insert_stale_window_index_for_test(window_id, space);
     }
+
+    pub(crate) fn spaces_by_recent_focus_order(&self) -> Vec<DockSpaceId> {
+        self.registry.spaces_by_recent_focus_order()
+    }
 }
 
 #[cfg(test)]
@@ -131,7 +159,7 @@ mod tests {
     use crate::{
         DockGraph, DockItemId, DockNode, DockViewportTargetContext, DockViewportUnregisterOutcome,
         DockViewportUnregisterReason, DockViewportWindowFacts,
-        viewport_test_support::{bounds, handle, space},
+        viewport_test_support::{bounds, handle, register_viewport, space},
     };
     use open_gpui::{DisplayId, WindowBounds, point, px};
 
@@ -143,18 +171,28 @@ mod tests {
         let first = handle(1);
         let second = handle(2);
 
-        assert!(adapter.register_viewport(main.clone(), first).is_none());
+        assert!(
+            adapter
+                .register_viewport_with_outcome(main.clone(), first)
+                .replaced()
+                .is_empty()
+        );
         assert_eq!(adapter.window_for_space(&main), Some(first));
         assert_eq!(adapter.space_for_window_id(first.window_id()), Some(&main));
 
-        let previous = adapter
-            .register_viewport(main.clone(), second)
-            .expect("replacing a space should return the previous snapshot");
-        assert_eq!(previous.window, first);
+        let previous = adapter.register_viewport_with_outcome(main.clone(), second);
+        assert_eq!(
+            previous.replaced(),
+            &[DockViewportUnregisterOutcome {
+                space: main.clone(),
+                window: first,
+                reason: DockViewportUnregisterReason::Replaced,
+            }]
+        );
         assert_eq!(adapter.window_for_space(&main), Some(second));
         assert_eq!(adapter.space_for_window_id(first.window_id()), None);
 
-        adapter.register_viewport(secondary.clone(), second);
+        register_viewport(&mut adapter, secondary.clone(), second);
         assert_eq!(adapter.window_for_space(&main), None);
         assert_eq!(adapter.window_for_space(&secondary), Some(second));
         assert_eq!(adapter.spaces(), vec![secondary]);
@@ -168,8 +206,8 @@ mod tests {
         let first = handle(1);
         let second = handle(2);
 
-        adapter.register_viewport(main.clone(), first);
-        adapter.register_viewport(secondary.clone(), second);
+        register_viewport(&mut adapter, main.clone(), first);
+        register_viewport(&mut adapter, secondary.clone(), second);
 
         let removed = adapter
             .unregister_space(&main)
@@ -193,7 +231,7 @@ mod tests {
         let secondary = space("secondary");
         let first = handle(1);
 
-        adapter.register_viewport(main.clone(), first);
+        register_viewport(&mut adapter, main.clone(), first);
         let outcome = adapter.register_viewport_with_outcome(secondary.clone(), first);
 
         assert_eq!(outcome.space(), &secondary);
@@ -222,8 +260,8 @@ mod tests {
         let first = handle(1);
         let second = handle(2);
 
-        adapter.register_viewport(main.clone(), first);
-        adapter.register_viewport(secondary.clone(), second);
+        register_viewport(&mut adapter, main.clone(), first);
+        register_viewport(&mut adapter, secondary.clone(), second);
         let outcome = adapter.register_viewport_with_outcome(main.clone(), second);
 
         assert_eq!(
@@ -256,17 +294,13 @@ mod tests {
         let window_bounds = WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0));
         let host_bounds = bounds(10.0, 20.0, 300.0, 200.0);
 
-        adapter.register_viewport(main.clone(), window);
+        register_viewport(&mut adapter, main.clone(), window);
         adapter.update_snapshot(
             &main,
             DockViewportWindowFacts::from_window_bounds(window_bounds).with_display_id(display_id),
             host_bounds,
         );
 
-        assert!(
-            adapter.register_viewport(main.clone(), window).is_none(),
-            "re-registering the same space/window pair should be a no-op"
-        );
         let outcome = adapter.register_viewport_with_outcome(main.clone(), window);
         assert!(outcome.replaced().is_empty());
         assert_eq!(outcome.space(), &main);
@@ -283,15 +317,15 @@ mod tests {
     }
 
     #[test]
-    fn viewport_target_diagnostic_hit_order_prefers_recent_focus_over_lexical_order() {
+    fn viewport_target_empty_context_uses_stable_space_order_despite_recent_focus() {
         let mut adapter = DockViewportAdapter::new();
         let alpha = space("alpha");
         let zeta = space("zeta");
         let alpha_window = handle(1);
         let zeta_window = handle(2);
 
-        adapter.register_viewport(alpha.clone(), alpha_window);
-        adapter.register_viewport(zeta.clone(), zeta_window);
+        register_viewport(&mut adapter, alpha.clone(), alpha_window);
+        register_viewport(&mut adapter, zeta.clone(), zeta_window);
         for space in [&alpha, &zeta] {
             adapter.update_snapshot(
                 space,
@@ -301,18 +335,40 @@ mod tests {
                 bounds(0.0, 0.0, 320.0, 240.0),
             );
         }
-        adapter.record_window_focus(alpha_window.window_id());
-        adapter.record_window_focus(zeta_window.window_id());
+        adapter.record_recent_focus_window(alpha_window.window_id());
+        adapter.record_recent_focus_window(zeta_window.window_id());
+        let hits = adapter.global_screen_viewport_hits(point(px(120.0), px(140.0)));
 
         assert_eq!(
-            adapter
-                .resolve_diagnostic_viewport_target(
-                    point(px(120.0), px(140.0)),
-                    &DockViewportTargetContext::new()
-                )
+            choose_diagnostic_viewport_target(hits, &DockViewportTargetContext::new())
                 .map(|target| target.space().clone()),
-            Some(zeta)
+            Some(alpha.clone()),
+            "default viewport hit testing must not infer target priority from recent focus"
         );
+        assert_eq!(
+            adapter.spaces_by_recent_focus_order(),
+            vec![zeta, alpha],
+            "recent focus remains available only through the explicit diagnostic ordering interface"
+        );
+    }
+
+    #[test]
+    fn live_window_binding_rejects_replaced_and_closing_windows() {
+        let mut adapter = DockViewportAdapter::new();
+        let main = space("main");
+        let first = handle(1);
+        let second = handle(2);
+
+        register_viewport(&mut adapter, main.clone(), first);
+        assert!(adapter.is_live_window_for_space(&main, first.window_id()));
+        assert!(!adapter.is_live_window_for_space(&main, second.window_id()));
+
+        register_viewport(&mut adapter, main.clone(), second);
+        assert!(!adapter.is_live_window_for_space(&main, first.window_id()));
+        assert!(adapter.is_live_window_for_space(&main, second.window_id()));
+
+        adapter.mark_window_close_requested(second.window_id());
+        assert!(!adapter.is_live_window_for_space(&main, second.window_id()));
     }
 
     #[test]
@@ -326,7 +382,7 @@ mod tests {
         graph.set_root(main.clone(), tabs);
 
         let mut adapter = DockViewportAdapter::new();
-        adapter.register_viewport(main.clone(), handle(1));
+        register_viewport(&mut adapter, main.clone(), handle(1));
         adapter.update_snapshot(
             &main,
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
@@ -360,7 +416,7 @@ mod tests {
 
         let mut adapter = DockViewportAdapter::new();
         let main = space("main");
-        adapter.register_viewport(main.clone(), handle(42));
+        register_viewport(&mut adapter, main.clone(), handle(42));
         adapter.update_snapshot(
             &main,
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(

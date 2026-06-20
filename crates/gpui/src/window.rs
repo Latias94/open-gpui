@@ -1263,6 +1263,7 @@ impl Window {
             is_movable,
             is_resizable,
             is_minimizable,
+            accepts_pointer_input,
             display_id,
             window_background,
             app_id,
@@ -1287,6 +1288,7 @@ impl Window {
                 is_movable,
                 is_resizable,
                 is_minimizable,
+                accepts_pointer_input,
                 focus,
                 show,
                 display_id,
@@ -2221,6 +2223,22 @@ impl Window {
     /// Returns whether or not the window is currently fullscreen
     pub fn is_fullscreen(&self) -> bool {
         self.platform_window.is_fullscreen()
+    }
+
+    /// Returns whether or not the window is currently minimized.
+    pub fn is_minimized(&self) -> bool {
+        self.platform_window.is_minimized()
+    }
+
+    /// Returns whether this platform window currently receives pointer input.
+    pub fn accepts_pointer_input(&self) -> bool {
+        self.platform_window.accepts_pointer_input()
+    }
+
+    /// Updates whether this platform window receives pointer input when the backend supports it.
+    pub fn set_accepts_pointer_input(&mut self, accepts_pointer_input: bool) -> bool {
+        self.platform_window
+            .set_accepts_pointer_input(accepts_pointer_input)
     }
 
     pub(crate) fn appearance_changed(&mut self, cx: &mut App) {

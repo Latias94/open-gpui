@@ -7,19 +7,23 @@ use super::{DockGraph, DockNode};
 impl DockGraph {
     /// Selects a tab by item identity.
     pub fn select_tab(&mut self, tabs: DockNodeId, item: DockItemId) -> bool {
+        let Some(DockNode::Tabs { items, selected }) = self.nodes.get(tabs) else {
+            return false;
+        };
+        if !items.contains(&item) {
+            return false;
+        }
+        let changed = selected.as_ref() != Some(&item);
+        self.record_tab_selection(tabs, &item);
+
         let Some(DockNode::Tabs {
-            items,
-            selected: current,
+            selected: current, ..
         }) = self.nodes.get_mut(tabs)
         else {
             return false;
         };
-        let next = items.contains(&item).then_some(item);
-        if current == &next {
-            return false;
-        }
-        *current = next;
-        true
+        *current = Some(item);
+        changed
     }
 
     /// Updates a two-child split by setting the first child's fraction.
@@ -77,17 +81,24 @@ impl DockGraph {
         true
     }
 
-    pub(in crate::graph) fn close_item(
-        &mut self,
-        space: &DockSpaceId,
-        item: DockItemId,
-        preferred_after_close: Option<&DockItemId>,
-    ) -> bool {
+    pub(in crate::graph) fn close_item(&mut self, space: &DockSpaceId, item: DockItemId) -> bool {
         let Some((tabs, index)) = self.find_item_in_space(space, &item) else {
             return false;
         };
-        if !self.remove_item_from_tabs(tabs, index, preferred_after_close) {
+        let preferred = match self.nodes.get(tabs) {
+            Some(DockNode::Tabs { items, selected }) if selected.as_ref() == Some(&item) => {
+                self.preferred_tab_after_close(tabs, &item, items)
+            }
+            _ => None,
+        };
+        if !self.remove_item_from_tabs(tabs, index) {
             return false;
+        }
+        if let Some(preferred) = preferred
+            && let Some(DockNode::Tabs { items, selected }) = self.nodes.get_mut(tabs)
+            && items.contains(&preferred)
+        {
+            *selected = Some(preferred);
         }
         self.simplify_space(space);
         true
@@ -108,7 +119,7 @@ impl DockGraph {
             if self.root_for_node_in_space(space, target_tabs).is_none() {
                 return false;
             }
-            return self.insert_item_into_tabs_at(target_tabs, item, insert_index);
+            return self.insert_item_into_tabs_at(target_tabs, item, insert_index, None);
         }
 
         if self.root(space).is_some() || !self.floating_containers(space).is_empty() {
@@ -145,11 +156,11 @@ impl DockGraph {
                 if !matches!(self.nodes.get(tabs), Some(DockNode::Tabs { .. })) {
                     return false;
                 }
-                if !self.remove_item_from_tabs(source_tabs, source_index, None) {
+                if !self.remove_item_from_tabs(source_tabs, source_index) {
                     return false;
                 }
 
-                let ok = self.insert_item_into_tabs_at(tabs, item, None);
+                let ok = self.insert_item_into_tabs_at(tabs, item, None, None);
                 self.simplify_space(source_space);
                 if source_space != target_space {
                     self.simplify_space(target_space);
@@ -170,7 +181,7 @@ impl DockGraph {
                         return false;
                     }
                 }
-                if !self.remove_item_from_tabs(source_tabs, source_index, None) {
+                if !self.remove_item_from_tabs(source_tabs, source_index) {
                     return false;
                 }
 
@@ -182,7 +193,7 @@ impl DockGraph {
                     index = Some(insert_index.saturating_sub(1));
                 }
 
-                let ok = self.insert_item_into_tabs_at(tabs, item, index);
+                let ok = self.insert_item_into_tabs_at(tabs, item, index, None);
                 self.simplify_space(source_space);
                 if source_space != target_space {
                     self.simplify_space(target_space);
@@ -190,7 +201,7 @@ impl DockGraph {
                 ok
             }
             DockGraphDropTarget::Edge { plan } => {
-                if !self.remove_item_from_tabs(source_tabs, source_index, None) {
+                if !self.remove_item_from_tabs(source_tabs, source_index) {
                     return false;
                 }
                 let new_tabs = self.insert_node(DockNode::Tabs {
@@ -225,7 +236,7 @@ impl DockGraph {
         let Some((source_tabs, source_index)) = self.find_item_in_space(source_space, &item) else {
             return false;
         };
-        if !self.remove_item_from_tabs(source_tabs, source_index, None) {
+        if !self.remove_item_from_tabs(source_tabs, source_index) {
             return false;
         }
         let tabs = self.insert_node(DockNode::Tabs {

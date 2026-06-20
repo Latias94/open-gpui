@@ -1,7 +1,7 @@
 use crate::{
     DockCentralRegion, DockFloatingContainer, DockGraph, DockNode, DockNodeId,
-    DockViewportFocusRequest, DockWorkspace, SplitAxis, debug::DockDebugRegion,
-    host_test_support::*,
+    DockViewportFocusCommand, DockViewportFocusRequest, DockWorkspace, SplitAxis,
+    debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, px, size,
@@ -101,6 +101,50 @@ fn drop_guides_render_while_tab_drag_is_active(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn tab_drag_start_selects_dragged_tab_and_requests_panel_focus(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph_with_selected(&["a", "b"], "a");
+    let panel_a = test_view(cx, "A");
+    let panel_b = test_view(cx, "B");
+    let focus_b = cx.read_entity(&panel_b, |panel, cx| panel.focus_handle(cx));
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_focusable_panel_view(item("a"), "Panel A", panel_a);
+    workspace.register_focusable_panel_view(item("b"), "Panel B", panel_b);
+    let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("b"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        open_gpui::point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+
+    host.update(cx, |host, cx| {
+        let selected = host.with_workspace(cx, |workspace| {
+            workspace.graph().selected_item_in_tabs(root)
+        });
+        assert_eq!(selected, Some(item("b")));
+    });
+    visual.update(|window, cx| {
+        assert_eq!(
+            window.focused(cx),
+            Some(focus_b),
+            "tab drag start should use the same selection/focus path as tab activation"
+        );
+    });
+}
+
+#[open_gpui::test]
 fn drop_guides_are_scoped_to_each_target_tabs_node(cx: &mut TestAppContext) {
     let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let (window, host, mut visual) = open_host(
@@ -148,6 +192,50 @@ fn drop_guides_are_scoped_to_each_target_tabs_node(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn render_session_uses_default_title_for_split_floating_children(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("left")],
+        selected: Some(item("left")),
+    });
+    let right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("right")],
+        selected: Some(item("right")),
+    });
+    let split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left, right],
+        fractions: vec![0.5, 0.5],
+    });
+    let floating = graph.insert_node(DockNode::Floating { child: split });
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: open_gpui::Bounds::new(
+                open_gpui::point(open_gpui::px(0.0), open_gpui::px(0.0)),
+                open_gpui::size(open_gpui::px(320.0), open_gpui::px(200.0)),
+            ),
+        });
+    let workspace = DockWorkspace::new(space(), graph);
+    let (_window, host, _visual) = open_workspace(cx, workspace, size(px(320.0), px(200.0)));
+
+    let (title, chrome_target) = host.update(cx, |host, cx| {
+        let session = host.render_session(cx);
+        (
+            session.floating_title(floating),
+            session.floating_chrome_target(floating),
+        )
+    });
+
+    assert_eq!(title, "Floating");
+    assert_eq!(
+        chrome_target,
+        Some(crate::host_render_session::DockFloatingChromeTarget::AmbiguousSplit)
+    );
+}
+
+#[open_gpui::test]
 fn pending_panel_focus_targets_active_focusable_panel(cx: &mut TestAppContext) {
     let (graph, _root) = tabs_graph(&["a"]);
     let panel = test_view(cx, "A");
@@ -157,10 +245,10 @@ fn pending_panel_focus_targets_active_focusable_panel(cx: &mut TestAppContext) {
     let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
 
     host.update(cx, |host, cx| {
-        assert!(host.request_panel_focus(item("a")));
+        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("a")))));
         cx.notify();
     });
-    visual.run_until_parked();
+    cx.run_until_parked();
 
     visual.update(|window, cx| {
         assert_eq!(window.focused(cx), Some(expected_focus));
@@ -174,7 +262,6 @@ fn viewport_activation_restores_recorded_last_focused_panel(cx: &mut TestAppCont
     let panel_b = test_view(cx, "B");
     let focus_a = cx.read_entity(&panel_a, |panel, cx| panel.focus_handle(cx));
     let focus_b = cx.read_entity(&panel_b, |panel, cx| panel.focus_handle(cx));
-
     let mut workspace = DockWorkspace::new(space(), graph);
     workspace.register_focusable_panel_view(item("a"), "Panel A", panel_a);
     workspace.register_focusable_panel_view(item("b"), "Panel B", panel_b);
@@ -208,16 +295,104 @@ fn viewport_activation_restores_recorded_last_focused_panel(cx: &mut TestAppCont
 
     host.update(cx, |host, cx| {
         assert!(
-            host.pending_focus_request().is_none(),
+            host.pending_focus_command().is_none(),
             "test setup should not have a pending focus request"
         );
-        assert!(host.request_viewport_focus(DockViewportFocusRequest::restore_last_focused()));
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel("b"))
+        ));
         cx.notify();
     });
     cx.run_until_parked();
 
     visual.update(|window, cx| {
         assert_eq!(window.focused(cx), Some(focus_b.clone()));
+    });
+
+    assert_ne!(focus_a, focus_b);
+}
+
+#[open_gpui::test]
+fn viewport_panel_request_selects_hidden_tab_before_restoring_focus(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph_with_selected(&["a", "b"], "a");
+    let panel_a = test_view(cx, "A");
+    let panel_b = test_view(cx, "B");
+    let focus_a = cx.read_entity(&panel_a, |panel, cx| panel.focus_handle(cx));
+    let focus_b = cx.read_entity(&panel_b, |panel, cx| panel.focus_handle(cx));
+
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_focusable_panel_view(item("a"), "Panel A", panel_a);
+    workspace.register_focusable_panel_view(item("b"), "Panel B", panel_b);
+    let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    let tab_b = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("b"),
+        },
+    )
+    .expect("tab B selector should be emitted");
+    let tab_b_bounds = debug_bounds(&mut visual, &tab_b);
+    visual.simulate_click(tab_b_bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+    visual.update(|window, cx| {
+        assert_eq!(window.focused(cx), Some(focus_b.clone()));
+    });
+
+    let controller = host.update(cx, |host, _| host.controller().clone());
+    controller.update(cx, |controller, cx| {
+        let outcome = controller
+            .select_tab(root, item("a"))
+            .expect("selecting tab A should succeed");
+        if outcome.changed() {
+            cx.notify();
+        }
+    });
+    cx.run_until_parked();
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { selected, .. } = controller
+            .graph()
+            .node(root)
+            .expect("root tabs should exist")
+        else {
+            panic!("root should remain tabs");
+        };
+        assert_eq!(selected.as_ref(), Some(&item("a")));
+    });
+
+    let stealer = visual.update(|_, cx| cx.focus_handle());
+    visual.update(|window, cx| {
+        window.focus(&stealer, cx);
+        assert_eq!(window.focused(cx), Some(stealer.clone()));
+    });
+
+    host.update(cx, |host, cx| {
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item(
+                "b"
+            )))
+        ));
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    visual.update(|window, cx| {
+        assert_eq!(window.focused(cx), Some(focus_b.clone()));
+    });
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { selected, .. } = controller
+            .graph()
+            .node(root)
+            .expect("root tabs should exist")
+        else {
+            panic!("root should remain tabs");
+        };
+        assert_eq!(selected.as_ref(), Some(&item("b")));
+    });
+    host.update(cx, |host, _| {
+        assert_eq!(host.pending_focus_command(), None);
     });
 
     assert_ne!(focus_a, focus_b);
@@ -276,7 +451,235 @@ fn platform_activation_does_not_restore_panel_focus_while_mouse_is_pressed(
 }
 
 #[open_gpui::test]
-fn platform_activation_preserves_recorded_no_panel_focus(cx: &mut TestAppContext) {
+fn platform_activation_restores_recorded_panel_after_non_docking_focus_owner(
+    cx: &mut TestAppContext,
+) {
+    let (graph, root) = tabs_graph(&["a", "b"]);
+    let panel_b = test_view(cx, "B");
+    let focus_b = cx.read_entity(&panel_b, |panel, cx| panel.focus_handle(cx));
+
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_focusable_panel_view(item("b"), "Panel B", panel_b);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    let tab_b = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("b"),
+        },
+    )
+    .expect("tab B selector should be emitted");
+    let tab_b_bounds = debug_bounds(&mut visual, &tab_b);
+    visual.simulate_click(tab_b_bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+    visual.update(|window, cx| {
+        assert_eq!(window.focused(cx), Some(focus_b.clone()));
+    });
+
+    let stealer = visual.update(|_, cx| cx.focus_handle());
+    visual.update(|window, cx| {
+        window.focus(&stealer, cx);
+        assert_eq!(window.focused(cx), Some(stealer.clone()));
+    });
+    host.update(cx, |host, _| {
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            Some(true),
+            "platform activation only tracks whether this viewport had dock-panel focus"
+        );
+    });
+
+    visual.deactivate_window();
+    window
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("window should activate");
+    cx.run_until_parked();
+    host.update(cx, |host, _| {
+        assert_eq!(host.pending_focus_command(), None);
+    });
+
+    visual.update(|window, cx| {
+        assert_eq!(
+            window.focused(cx),
+            Some(focus_b),
+            "backend-confirmed platform activation should restore recorded dock focus"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn platform_activation_does_not_reveal_hidden_recorded_panel(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph_with_selected(&["a", "b"], "a");
+    let panel_a = test_view(cx, "A");
+    let panel_b = test_view(cx, "B");
+    let focus_a = cx.read_entity(&panel_a, |panel, cx| panel.focus_handle(cx));
+    let focus_b = cx.read_entity(&panel_b, |panel, cx| panel.focus_handle(cx));
+
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_focusable_panel_view(item("a"), "Panel A", panel_a);
+    workspace.register_focusable_panel_view(item("b"), "Panel B", panel_b);
+    let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    let tab_b = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("b"),
+        },
+    )
+    .expect("tab B selector should be emitted");
+    let tab_b_bounds = debug_bounds(&mut visual, &tab_b);
+    visual.simulate_click(tab_b_bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+    visual.update(|window, cx| {
+        assert_eq!(window.focused(cx), Some(focus_b.clone()));
+    });
+
+    let controller = host.update(cx, |host, _| host.controller().clone());
+    controller.update(cx, |controller, cx| {
+        let outcome = controller
+            .select_tab(root, item("a"))
+            .expect("selecting tab A should succeed");
+        if outcome.changed() {
+            cx.notify();
+        }
+    });
+    cx.run_until_parked();
+
+    let stealer = visual.update(|_, cx| cx.focus_handle());
+    visual.update(|window, cx| {
+        window.focus(&stealer, cx);
+        assert_eq!(window.focused(cx), Some(stealer.clone()));
+    });
+
+    host.update(cx, |host, cx| {
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::platform_activation(DockViewportFocusRequest::panel("b"),),
+        ));
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    visual.update(|window, cx| {
+        assert_eq!(
+            window.focused(cx),
+            Some(stealer.clone()),
+            "platform activation restore must not guess focus from the current visible panel"
+        );
+    });
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { selected, .. } = controller
+            .graph()
+            .node(root)
+            .expect("root tabs should exist")
+        else {
+            panic!("root should remain tabs");
+        };
+        assert_eq!(
+            selected.as_ref(),
+            Some(&item("a")),
+            "platform activation restore must preserve the currently visible tab"
+        );
+    });
+    host.update(cx, |host, _| {
+        assert_eq!(host.pending_focus_command(), None);
+    });
+
+    assert_ne!(focus_a, focus_b);
+}
+
+#[open_gpui::test]
+fn close_recovery_does_not_reveal_hidden_recorded_panel(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph_with_selected(&["a", "b"], "a");
+    let panel_a = test_view(cx, "A");
+    let panel_b = test_view(cx, "B");
+    let focus_a = cx.read_entity(&panel_a, |panel, cx| panel.focus_handle(cx));
+    let focus_b = cx.read_entity(&panel_b, |panel, cx| panel.focus_handle(cx));
+
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_focusable_panel_view(item("a"), "Panel A", panel_a);
+    workspace.register_focusable_panel_view(item("b"), "Panel B", panel_b);
+    let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    let tab_b = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("b"),
+        },
+    )
+    .expect("tab B selector should be emitted");
+    let tab_b_bounds = debug_bounds(&mut visual, &tab_b);
+    visual.simulate_click(tab_b_bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+    visual.update(|window, cx| {
+        assert_eq!(window.focused(cx), Some(focus_b.clone()));
+    });
+
+    let controller = host.update(cx, |host, _| host.controller().clone());
+    controller.update(cx, |controller, cx| {
+        let outcome = controller
+            .select_tab(root, item("a"))
+            .expect("selecting tab A should succeed");
+        if outcome.changed() {
+            cx.notify();
+        }
+    });
+    cx.run_until_parked();
+
+    let stealer = visual.update(|_, cx| cx.focus_handle());
+    visual.update(|window, cx| {
+        window.focus(&stealer, cx);
+        assert_eq!(window.focused(cx), Some(stealer.clone()));
+    });
+
+    host.update(cx, |host, cx| {
+        assert!(
+            host.request_viewport_focus_command(
+                DockViewportFocusCommand::viewport_activation(
+                    DockViewportFocusRequest::panel("b"),
+                ),
+            )
+        );
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    visual.update(|window, cx| {
+        assert_eq!(
+            window.focused(cx),
+            Some(stealer.clone()),
+            "close recovery restore must not guess focus from the current visible panel"
+        );
+    });
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { selected, .. } = controller
+            .graph()
+            .node(root)
+            .expect("root tabs should exist")
+        else {
+            panic!("root should remain tabs");
+        };
+        assert_eq!(
+            selected.as_ref(),
+            Some(&item("a")),
+            "close recovery restore must preserve the currently visible tab"
+        );
+    });
+    host.update(cx, |host, _| {
+        assert_eq!(host.pending_focus_command(), None);
+    });
+
+    assert_ne!(focus_a, focus_b);
+}
+
+#[open_gpui::test]
+fn platform_activation_after_no_panel_focus_does_not_restore_old_panel(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a", "b"]);
     let panel_b = test_view(cx, "B");
     let focus_b = cx.read_entity(&panel_b, |panel, cx| panel.focus_handle(cx));
@@ -303,12 +706,21 @@ fn platform_activation_preserves_recorded_no_panel_focus(cx: &mut TestAppContext
     });
 
     host.update(cx, |host, cx| {
-        assert!(host.request_no_panel_focus());
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::no_panel_focus())
+        ));
         cx.notify();
     });
     visual.run_until_parked();
     visual.update(|window, cx| {
         assert_eq!(window.focused(cx), None);
+    });
+    host.update(cx, |host, _| {
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            Some(false),
+            "explicit no-panel focus records that the viewport last had no dock-panel focus"
+        );
     });
 
     visual.deactivate_window();
@@ -321,16 +733,23 @@ fn platform_activation_preserves_recorded_no_panel_focus(cx: &mut TestAppContext
         assert_eq!(
             window.focused(cx),
             None,
-            "platform activation with recorded no-panel focus must not restore the old panel"
+            "platform activation without dock-panel focus history must not restore the old panel"
         );
     });
     host.update(cx, |host, _| {
-        assert_eq!(host.pending_focus_request(), None);
+        assert_eq!(host.pending_focus_command(), None);
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            Some(false),
+            "explicit no-panel request keeps a no-panel activation fact for platform restore"
+        );
     });
 }
 
 #[open_gpui::test]
-fn viewport_activation_clears_failed_panel_focus_request(cx: &mut TestAppContext) {
+fn viewport_activation_failure_clears_request_without_blurring_current_focus(
+    cx: &mut TestAppContext,
+) {
     let (graph, _root) = tabs_graph(&["a"]);
     let mut workspace = DockWorkspace::new(space(), graph);
     workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
@@ -343,21 +762,30 @@ fn viewport_activation_clears_failed_panel_focus_request(cx: &mut TestAppContext
     });
 
     host.update(cx, |host, cx| {
-        assert!(host.request_panel_focus(item("a")));
+        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("a")))));
         cx.notify();
     });
-    visual.run_until_parked();
+    cx.run_until_parked();
 
     host.update(cx, |host, _| {
-        assert_eq!(host.pending_focus_request(), None);
+        assert_eq!(host.pending_focus_command(), None);
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            None,
+            "a failed explicit focus request must not synthesize panel-focus history"
+        );
     });
     visual.update(|window, cx| {
-        assert_eq!(window.focused(cx), None);
+        assert_eq!(
+            window.focused(cx),
+            Some(stealer),
+            "failed focus restoration must leave the current focus fact untouched"
+        );
     });
 }
 
 #[open_gpui::test]
-fn viewport_failed_panel_focus_prevents_restoring_previous_panel(cx: &mut TestAppContext) {
+fn viewport_failed_panel_focus_preserves_current_focus_and_history(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph_with_selected(&["a", "b"], "a");
     let panel_a = test_view(cx, "A");
     let focus_a = cx.read_entity(&panel_a, |panel, cx| panel.focus_handle(cx));
@@ -368,10 +796,10 @@ fn viewport_failed_panel_focus_prevents_restoring_previous_panel(cx: &mut TestAp
     let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
 
     host.update(cx, |host, cx| {
-        assert!(host.request_panel_focus(item("a")));
+        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("a")))));
         cx.notify();
     });
-    visual.run_until_parked();
+    cx.run_until_parked();
     visual.update(|window, cx| {
         assert_eq!(window.focused(cx), Some(focus_a.clone()));
     });
@@ -390,31 +818,53 @@ fn viewport_failed_panel_focus_prevents_restoring_previous_panel(cx: &mut TestAp
     cx.run_until_parked();
 
     host.update(cx, |host, cx| {
-        assert!(host.request_panel_focus(item("b")));
+        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("b")))));
         cx.notify();
     });
     visual.run_until_parked();
+    host.update(cx, |host, _| {
+        assert_eq!(host.pending_focus_command(), None);
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            Some(true),
+            "failed focus requests must not overwrite the last successful panel-focus fact"
+        );
+    });
     visual.update(|window, cx| {
-        assert_eq!(window.focused(cx), None);
+        assert_eq!(
+            window.focused(cx),
+            Some(focus_a.clone()),
+            "failed explicit panel focus must preserve the already focused dock panel"
+        );
     });
 
     host.update(cx, |host, cx| {
-        assert!(host.request_viewport_focus(DockViewportFocusRequest::restore_last_focused()));
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel("b"))
+        ));
         cx.notify();
     });
     cx.run_until_parked();
 
+    host.update(cx, |host, _| {
+        assert_eq!(host.pending_focus_command(), None);
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            Some(true),
+            "failed viewport activation restores must not record no-panel focus"
+        );
+    });
     visual.update(|window, cx| {
         assert_eq!(
             window.focused(cx),
-            None,
-            "explicit no-panel focus state must not resurrect the old panel"
+            Some(focus_a),
+            "failed viewport activation restores must leave the current dock-panel focus untouched"
         );
     });
 }
 
 #[open_gpui::test]
-fn viewport_restore_request_blurs_without_focus_history(cx: &mut TestAppContext) {
+fn viewport_restore_request_without_focus_history_preserves_current_focus(cx: &mut TestAppContext) {
     let (graph, _root) = tabs_graph(&["a"]);
     let mut workspace = DockWorkspace::new(space(), graph);
     workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
@@ -428,16 +878,90 @@ fn viewport_restore_request_blurs_without_focus_history(cx: &mut TestAppContext)
 
     host.update(cx, |host, cx| {
         assert!(
-            host.pending_focus_request().is_none(),
+            host.pending_focus_command().is_none(),
             "test setup should not have a pending focus request"
         );
-        assert!(host.request_viewport_focus(DockViewportFocusRequest::restore_last_focused()));
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel("b"))
+        ));
         cx.notify();
     });
     cx.run_until_parked();
 
+    host.update(cx, |host, _| {
+        assert_eq!(host.pending_focus_command(), None);
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            None,
+            "restore attempts without focus history must not synthesize focus facts"
+        );
+    });
     visual.update(|window, cx| {
-        assert_eq!(window.focused(cx), None);
+        assert_eq!(
+            window.focused(cx),
+            Some(stealer),
+            "failed restore requests without history must leave the current focus untouched"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn platform_restore_failure_does_not_overwrite_had_panel_focus_fact(cx: &mut TestAppContext) {
+    let (graph, _root) = tabs_graph_with_selected(&["a"], "a");
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    let (_window, host, _visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    host.update(cx, |host, cx| {
+        host.viewport_runtime()
+            .record_panel_focus(host.space().clone(), item("a"));
+        assert!(host.request_viewport_focus_command(
+            crate::DockViewportFocusCommand::platform_activation(DockViewportFocusRequest::panel(
+                "b"
+            ))
+        ));
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    host.update(cx, |host, _| {
+        assert_eq!(host.pending_focus_command(), None);
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            Some(true),
+            "platform activation failures must not overwrite recorded panel focus"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn close_recovery_restore_failure_does_not_overwrite_had_panel_focus_fact(cx: &mut TestAppContext) {
+    let (graph, _root) = tabs_graph_with_selected(&["a"], "a");
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    let (_window, host, _visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    host.update(cx, |host, cx| {
+        host.viewport_runtime()
+            .record_panel_focus(host.space().clone(), item("a"));
+        assert!(
+            host.request_viewport_focus_command(
+                crate::DockViewportFocusCommand::viewport_activation(
+                    DockViewportFocusRequest::panel("b")
+                )
+            )
+        );
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    host.update(cx, |host, _| {
+        assert_eq!(host.pending_focus_command(), None);
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            Some(true),
+            "close recovery failures must not overwrite the target viewport's focus history"
+        );
     });
 }
 
@@ -451,7 +975,7 @@ fn viewport_no_panel_focus_request_blurs_without_restore(cx: &mut TestAppContext
     let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
 
     host.update(cx, |host, cx| {
-        assert!(host.request_panel_focus(item("a")));
+        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("a")))));
         cx.notify();
     });
     visual.run_until_parked();
@@ -460,7 +984,9 @@ fn viewport_no_panel_focus_request_blurs_without_restore(cx: &mut TestAppContext
     });
 
     host.update(cx, |host, cx| {
-        assert!(host.request_no_panel_focus());
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::no_panel_focus())
+        ));
         cx.notify();
     });
     visual.run_until_parked();
@@ -473,7 +999,7 @@ fn viewport_no_panel_focus_request_blurs_without_restore(cx: &mut TestAppContext
         );
     });
     host.update(cx, |host, _| {
-        assert_eq!(host.pending_focus_request(), None);
+        assert_eq!(host.pending_focus_command(), None);
     });
 }
 
@@ -488,7 +1014,7 @@ fn viewport_activation_without_history_does_not_pick_first_panel(cx: &mut TestAp
     let mut workspace = DockWorkspace::new(space(), graph);
     workspace.register_focusable_panel_view(item("a"), "Panel A", panel_a);
     workspace.register_focusable_panel_view(item("b"), "Panel B", panel_b);
-    let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
 
     let stealer = visual.update(|_, cx| cx.focus_handle());
     visual.update(|window, cx| {
@@ -499,30 +1025,25 @@ fn viewport_activation_without_history_does_not_pick_first_panel(cx: &mut TestAp
     visual.deactivate_window();
     cx.run_until_parked();
 
-    host.update(cx, |host, cx| {
-        assert!(host.request_viewport_focus(DockViewportFocusRequest::restore_last_focused()));
-        cx.notify();
-    });
+    window
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("window should activate");
     cx.run_until_parked();
 
     visual.update(|window, cx| {
-        assert_eq!(window.focused(cx), None);
+        assert_eq!(window.focused(cx), Some(stealer));
     });
     host.update(cx, |host, _| {
-        assert_eq!(host.pending_focus_request(), None);
+        assert_eq!(host.pending_focus_command(), None);
     });
     assert_ne!(focus_a, focus_b);
 }
 
 #[open_gpui::test]
-fn viewport_activation_restores_recent_visible_panel_when_recorded_panel_is_hidden(
-    cx: &mut TestAppContext,
-) {
+fn viewport_activation_for_gone_recorded_panel_preserves_current_focus(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph_with_selected(&["a", "b"], "a");
     let panel_a = test_view(cx, "A");
     let panel_b = test_view(cx, "B");
-    let focus_a = cx.read_entity(&panel_a, |panel, cx| panel.focus_handle(cx));
-    let focus_b = cx.read_entity(&panel_b, |panel, cx| panel.focus_handle(cx));
 
     let mut workspace = DockWorkspace::new(space(), graph);
     workspace.register_focusable_panel_view(item("a"), "Panel A", panel_a);
@@ -552,22 +1073,31 @@ fn viewport_activation_restores_recent_visible_panel_when_recorded_panel_is_hidd
             cx.notify();
         }
     });
+    let focused_before_restore = visual.update(|window, cx| window.focused(cx));
 
     host.update(cx, |host, cx| {
-        assert!(host.request_viewport_focus(DockViewportFocusRequest::restore_last_focused()));
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel("b"))
+        ));
         cx.notify();
     });
     cx.run_until_parked();
 
+    host.update(cx, |host, _| {
+        assert_eq!(host.pending_focus_command(), None);
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            Some(true),
+            "a failed restore for a removed panel must preserve the existing had-panel-focus fact"
+        );
+    });
     visual.update(|window, cx| {
         assert_eq!(
             window.focused(cx),
-            None,
-            "restore should not infer a replacement panel after the recorded panel is gone"
+            focused_before_restore,
+            "restore failure for a removed panel must preserve whatever focus the close path already established"
         );
     });
-
-    assert_ne!(focus_a, focus_b);
 }
 
 #[open_gpui::test]

@@ -37,6 +37,10 @@ impl DockDropPreview {
         Self::from_target(target, false)
     }
 
+    pub(crate) fn from_rejected_target(target: &DockResolvedDropTarget) -> Option<Self> {
+        Self::from_target(target, true)
+    }
+
     fn from_target(target: &DockResolvedDropTarget, rejected: bool) -> Option<Self> {
         let bounds = match &target.kind {
             DockResolvedDropTargetKind::TabBar { .. }
@@ -101,7 +105,7 @@ fn route_bounds(anchor: Point<Pixels>) -> Bounds<Pixels> {
 mod tests {
     use super::*;
     use crate::{
-        DockPolicyError, DockViewportRouteAuthority, DockViewportTargetHit,
+        DockPolicyError, DockViewportAuthorizedRouteAuthority, DockViewportTargetHit,
         viewport_test_support::{handle, space},
     };
     use open_gpui::{point, px};
@@ -115,7 +119,7 @@ mod tests {
                     handle(7),
                     point(px(300.0), px(20.0)),
                 ),
-                authority: DockViewportRouteAuthority::TrustedHoveredWindow,
+                authority: DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
             },
             point(px(40.0), px(50.0)),
         )

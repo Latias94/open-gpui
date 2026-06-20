@@ -9,7 +9,7 @@ use crate::ScreenCaptureSource;
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor, Keymap,
     Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformViewportCapabilities, PlatformWindow, Task, TestDispatcher, WindowAppearance,
     WindowParams,
 };
@@ -106,7 +106,11 @@ impl Platform for VisualTestPlatform {
         self.platform.active_window()
     }
 
-    fn hovered_window(&self) -> Option<AnyWindowHandle> {
+    fn focused_window(&self) -> crate::platform::PlatformFocusedWindow {
+        self.platform.focused_window()
+    }
+
+    fn hovered_window(&self) -> PlatformHoveredWindow {
         self.platform.hovered_window()
     }
 

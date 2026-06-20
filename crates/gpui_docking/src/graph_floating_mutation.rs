@@ -14,7 +14,7 @@ impl DockGraph {
         let Some((source_tabs, source_index)) = self.find_item_in_space(source_space, &item) else {
             return false;
         };
-        if !self.remove_item_from_tabs(source_tabs, source_index, None) {
+        if !self.remove_item_from_tabs(source_tabs, source_index) {
             return false;
         }
 
@@ -127,9 +127,13 @@ impl DockGraph {
                 if self.is_visible_split_payload(child) {
                     return false;
                 }
-                self.merge_floating_subtree_into_tabs(
+                if !matches!(self.nodes.get(child), Some(DockNode::Tabs { .. })) {
+                    return false;
+                }
+                self.merge_floating_tabs_into_tabs(
                     source_space,
                     floating,
+                    child,
                     target_space,
                     tabs,
                     None,
@@ -145,9 +149,10 @@ impl DockGraph {
                 if !matches!(self.nodes.get(child), Some(DockNode::Tabs { .. })) {
                     return false;
                 }
-                self.merge_floating_subtree_into_tabs(
+                self.merge_floating_tabs_into_tabs(
                     source_space,
                     floating,
+                    child,
                     target_space,
                     tabs,
                     Some(insert_index),
@@ -218,10 +223,11 @@ impl DockGraph {
         true
     }
 
-    fn merge_floating_subtree_into_tabs(
+    fn merge_floating_tabs_into_tabs(
         &mut self,
         source_space: &DockSpaceId,
         floating: DockNodeId,
+        floating_tabs: DockNodeId,
         target_space: &DockSpaceId,
         target_tabs: DockNodeId,
         insert_index: Option<usize>,
@@ -229,18 +235,15 @@ impl DockGraph {
         if !matches!(self.nodes.get(target_tabs), Some(DockNode::Tabs { .. })) {
             return false;
         }
-        let Some(child) = self.nodes.get(floating).and_then(|node| match node {
-            DockNode::Floating { child } => Some(*child),
-            _ => None,
-        }) else {
+        let Some(DockNode::Tabs { items, .. }) = self.nodes.get(floating_tabs) else {
             return false;
         };
 
-        let source_items = self.collect_items_in_subtree(child);
+        let source_items = items.clone();
         if source_items.is_empty() {
             return false;
         }
-        let source_selected = self.selected_item_in_subtree(child);
+        let source_selected = self.selected_item_in_tabs(floating_tabs);
         if self
             .take_floating_child_from_space(source_space, floating)
             .is_none()

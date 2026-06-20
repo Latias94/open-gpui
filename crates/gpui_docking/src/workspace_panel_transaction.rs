@@ -10,15 +10,9 @@ impl DockWorkspace {
         item: &DockItemId,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.panel_lifecycle().validate_close(item)?;
-        let preferred_after_close = self
-            .graph()
-            .find_item_in_space(space, item)
-            .and_then(|(tabs, _)| self.preferred_tab_after_close(tabs, item));
-
         self.commit_graph_op(DockOp::CloseItem {
             space: space.clone(),
             item: item.clone(),
-            preferred_after_close,
         })
     }
 

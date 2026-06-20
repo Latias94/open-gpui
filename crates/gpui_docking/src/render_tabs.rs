@@ -115,8 +115,8 @@ impl DockHost {
                 },
             ))
             .on_drag(stack_payload, move |payload, _, _, cx| {
-                stack_drag_entity.update(cx, |host, _| {
-                    host.begin_payload_drag_from_render(payload);
+                stack_drag_entity.update(cx, |host, cx| {
+                    host.begin_payload_drag_from_render(payload, cx);
                 });
                 cx.new(|_| DockDragPreview::new(payload.title()))
             });
@@ -150,6 +150,7 @@ impl DockHost {
             let drag_entity = entity.clone();
             let target_index = index;
             let tab_item = item.clone();
+            let drag_item = item.clone();
             let mut tab = div()
                 .id(selector.clone())
                 .debug_selector(move || selector)
@@ -214,8 +215,8 @@ impl DockHost {
                     },
                 ))
                 .on_drag(payload, move |payload, _, _, cx| {
-                    drag_entity.update(cx, |host, _| {
-                        host.begin_payload_drag_from_render(payload);
+                    drag_entity.update(cx, |host, cx| {
+                        host.begin_tab_item_drag_from_render(node, drag_item.clone(), payload, cx);
                     });
                     cx.new(|_| DockDragPreview::new(payload.title()))
                 });

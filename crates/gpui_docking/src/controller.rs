@@ -1,10 +1,10 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockGraph,
-    DockGraphValidationError, DockItemId, DockLayout, DockLayoutValidationError, DockNodeId,
-    DockPanel, DockPanelAttachError, DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry,
-    DockPolicy, DockSpaceId, DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
+    host::DockHostOptions, DockAction, DockActionApplyError, DockActionOutcome, DockClassId,
+    DockGraph, DockGraphValidationError, DockItemId, DockLayout, DockLayoutValidationError,
+    DockNodeId, DockPanel, DockPanelAttachError, DockPanelDescriptor, DockPanelRegistration,
+    DockPanelRegistry, DockPolicy, DockSpaceId, DockWorkspace, EditorDockLayoutSpec,
 };
-use open_gpui::{AnyView, Bounds, Entity, Focusable, Pixels, Render};
+use open_gpui::{AnyView, Bounds, Pixels};
 
 /// Shared owner for one logical docking workspace.
 ///
@@ -51,112 +51,16 @@ impl DockController {
         self.workspace.panels()
     }
 
-    /// Registers a panel for a dock item, returning any previous registration.
-    pub fn register_panel(
-        &mut self,
-        item: impl Into<crate::DockItemId>,
-        panel: DockPanel,
-    ) -> Option<DockPanel> {
-        self.workspace.register_panel(item, panel)
-    }
-
-    /// Registers panel metadata without binding GPUI view lifecycle state.
-    pub fn register_panel_descriptor(
-        &mut self,
-        item: impl Into<crate::DockItemId>,
-        descriptor: DockPanelDescriptor,
-    ) -> Option<DockPanelDescriptor> {
-        self.workspace.register_panel_descriptor(item, descriptor)
-    }
-
-    /// Registers a GPUI view as panel content for a dock item.
-    pub fn register_panel_view(
-        &mut self,
-        item: impl Into<crate::DockItemId>,
-        title: impl Into<String>,
-        view: impl Into<AnyView>,
-    ) -> Option<DockPanel> {
-        self.workspace.register_panel_view(item, title, view)
-    }
-
-    /// Registers a focusable GPUI view as panel content for a dock item.
-    pub fn register_focusable_panel_view<V>(
-        &mut self,
-        item: impl Into<crate::DockItemId>,
-        title: impl Into<String>,
-        view: Entity<V>,
-    ) -> Option<DockPanel>
-    where
-        V: Focusable + Render,
-    {
-        self.workspace
-            .register_focusable_panel_view(item, title, view)
-    }
-
-    /// Registers a GPUI view factory as lazy panel content for a dock item.
-    pub fn register_panel_factory(
-        &mut self,
-        item: impl Into<crate::DockItemId>,
-        title: impl Into<String>,
-        factory: impl Fn(&mut open_gpui::App) -> AnyView + 'static,
-    ) -> Option<DockPanel> {
-        self.workspace.register_panel_factory(item, title, factory)
-    }
-
-    /// Registers a focusable GPUI view factory as lazy panel content for a dock item.
-    pub fn register_focusable_panel_factory<V>(
-        &mut self,
-        item: impl Into<crate::DockItemId>,
-        title: impl Into<String>,
-        factory: impl Fn(&mut open_gpui::App) -> Entity<V> + 'static,
-    ) -> Option<DockPanel>
-    where
-        V: Focusable + Render,
-    {
-        self.workspace
-            .register_focusable_panel_factory(item, title, factory)
-    }
-
     /// Attaches GPUI view content to existing panel metadata.
     pub fn attach_panel_view(
         &mut self,
-        item: impl Into<crate::DockItemId>,
+        item: impl Into<DockItemId>,
         view: impl Into<AnyView>,
     ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError> {
-        self.workspace.attach_panel_view(item, view)
-    }
-
-    /// Attaches focusable GPUI view content to existing panel metadata.
-    pub fn attach_focusable_panel_view<V>(
-        &mut self,
-        item: impl Into<crate::DockItemId>,
-        view: Entity<V>,
-    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError>
-    where
-        V: Focusable + Render,
-    {
-        self.workspace.attach_focusable_panel_view(item, view)
-    }
-
-    /// Attaches a GPUI view factory to existing panel metadata.
-    pub fn attach_panel_factory(
-        &mut self,
-        item: impl Into<crate::DockItemId>,
-        factory: impl Fn(&mut open_gpui::App) -> AnyView + 'static,
-    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError> {
-        self.workspace.attach_panel_factory(item, factory)
-    }
-
-    /// Attaches a lazy focusable GPUI view factory to existing panel metadata.
-    pub fn attach_focusable_panel_factory<V>(
-        &mut self,
-        item: impl Into<crate::DockItemId>,
-        factory: impl Fn(&mut open_gpui::App) -> Entity<V> + 'static,
-    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError>
-    where
-        V: Focusable + Render,
-    {
-        self.workspace.attach_focusable_panel_factory(item, factory)
+        self.workspace.panels_mut().attach_view_handle(
+            item.into(),
+            crate::panel_view::DockPanelViewHandle::from_view(view),
+        )
     }
 
     /// Returns the workspace rendering options.
@@ -332,12 +236,6 @@ impl DockControllerBuilder {
         self
     }
 
-    /// Registers a prepared panel.
-    pub fn panel(mut self, item: impl Into<DockItemId>, panel: DockPanel) -> Self {
-        self.panels.push((item.into(), panel));
-        self
-    }
-
     /// Registers descriptor-only panel metadata.
     pub fn panel_descriptor(
         mut self,
@@ -348,27 +246,10 @@ impl DockControllerBuilder {
         self
     }
 
-    /// Registers an eager GPUI view as panel content.
-    pub fn panel_view(
-        self,
-        item: impl Into<DockItemId>,
-        title: impl Into<String>,
-        view: impl Into<AnyView>,
-    ) -> Self {
-        self.panel(item, DockPanel::new(title, view))
-    }
-
-    /// Registers an eager focusable GPUI view as panel content.
-    pub fn focusable_panel_view<V>(
-        self,
-        item: impl Into<DockItemId>,
-        title: impl Into<String>,
-        view: Entity<V>,
-    ) -> Self
-    where
-        V: Focusable + Render,
-    {
-        self.panel(item, DockPanel::focusable(title, view))
+    /// Registers a prepared panel.
+    pub fn panel(mut self, item: impl Into<DockItemId>, panel: DockPanel) -> Self {
+        self.panels.push((item.into(), panel));
+        self
     }
 
     /// Registers a lazy GPUI view factory as panel content.
@@ -379,19 +260,6 @@ impl DockControllerBuilder {
         factory: impl Fn(&mut open_gpui::App) -> AnyView + 'static,
     ) -> Self {
         self.panel(item, DockPanel::lazy(title, factory))
-    }
-
-    /// Registers a lazy focusable GPUI view factory as panel content.
-    pub fn focusable_panel_factory<V>(
-        self,
-        item: impl Into<DockItemId>,
-        title: impl Into<String>,
-        factory: impl Fn(&mut open_gpui::App) -> Entity<V> + 'static,
-    ) -> Self
-    where
-        V: Focusable + Render,
-    {
-        self.panel(item, DockPanel::lazy_focusable(title, factory))
     }
 
     /// Replaces static host rendering options.

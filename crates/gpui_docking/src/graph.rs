@@ -83,7 +83,7 @@ pub enum DockNode {
 }
 
 /// Pure n-ary topology plan for an edge dock mutation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DockEdgeDockPlan {
     /// Insert a new child into an existing same-axis split.
     InsertIntoSplit {
@@ -97,6 +97,10 @@ pub enum DockEdgeDockPlan {
         anchor_index: usize,
         /// Position where the new child will be inserted.
         insert_index: usize,
+        /// Share of the selected anchor child assigned to the inserted child.
+        sizing: DockEdgeDockSizing,
+        /// Scope the sizing applies to when inserting into an existing split.
+        sizing_scope: DockEdgeDockSizingScope,
     },
     /// Wrap the target in a new split.
     WrapTarget {
@@ -106,6 +110,8 @@ pub enum DockEdgeDockPlan {
         axis: SplitAxis,
         /// Position of the new child relative to the target.
         zone: DropZone,
+        /// Share of the new split assigned to the inserted child.
+        sizing: DockEdgeDockSizing,
     },
 }
 
@@ -119,6 +125,8 @@ impl DockEdgeDockPlan {
                 anchor_child: _,
                 anchor_index: _,
                 insert_index: _,
+                sizing: _,
+                sizing_scope: _,
             } => split,
             Self::WrapTarget { target, .. } => target,
         }
@@ -130,6 +138,72 @@ impl DockEdgeDockPlan {
             Self::InsertIntoSplit { zone, .. } => zone,
             Self::WrapTarget { zone, .. } => zone,
         }
+    }
+
+    pub(crate) fn set_sizing(&mut self, next: DockEdgeDockSizing) {
+        match self {
+            Self::InsertIntoSplit { sizing, .. } | Self::WrapTarget { sizing, .. } => {
+                *sizing = next;
+            }
+        }
+    }
+}
+
+/// Initial sizing for an edge dock mutation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DockEdgeDockSizing {
+    /// Fraction of the target extent assigned to the inserted child.
+    new_child_share: f32,
+}
+
+/// Scope for applying an edge sizing plan to an existing same-axis split.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockEdgeDockSizingScope {
+    /// The new child takes a share of the whole split, preserving existing child ratios.
+    WholeSplit,
+    /// The new child takes a share of only the selected anchor child.
+    AnchorChild,
+}
+
+impl DockEdgeDockSizing {
+    const FALLBACK_SHARE: f32 = 0.5;
+
+    /// Builds sizing from a desired inserted-child extent and its target extent.
+    pub(crate) fn from_extents(new_child_extent: Pixels, target_extent: Pixels) -> Self {
+        let target = f32::from(target_extent);
+        if !target.is_finite() || target <= f32::EPSILON {
+            return Self::fallback();
+        }
+
+        let desired = f32::from(new_child_extent);
+        if !desired.is_finite() || desired <= f32::EPSILON {
+            return Self::fallback();
+        }
+
+        Self::from_new_child_share((desired / target).clamp(0.0, 1.0))
+    }
+
+    pub(crate) fn fallback() -> Self {
+        Self::from_new_child_share(Self::FALLBACK_SHARE)
+    }
+
+    fn from_new_child_share(new_child_share: f32) -> Self {
+        let share = if new_child_share.is_finite() && new_child_share > 0.0 {
+            new_child_share.clamp(f32::EPSILON, 1.0 - f32::EPSILON)
+        } else {
+            Self::FALLBACK_SHARE
+        };
+        Self {
+            new_child_share: share,
+        }
+    }
+
+    pub(crate) fn new_child_share(self) -> f32 {
+        self.new_child_share
+    }
+
+    pub(crate) fn is_valid(self) -> bool {
+        self.new_child_share.is_finite() && self.new_child_share > 0.0 && self.new_child_share < 1.0
     }
 }
 
@@ -195,6 +269,13 @@ pub struct DockGraph {
     roots: HashMap<DockSpaceId, DockNodeId>,
     floatings: HashMap<DockSpaceId, Vec<DockFloatingContainer>>,
     central_regions: HashMap<DockSpaceId, DockCentralRegion>,
+    tab_selection_history: HashMap<DockNodeId, DockTabSelectionState>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(in crate::graph) struct DockTabSelectionState {
+    next_stamp: u64,
+    selected_stamps_by_item: HashMap<DockItemId, u64>,
 }
 
 impl DockGraph {
@@ -208,6 +289,120 @@ impl DockGraph {
         self.nodes.insert(node)
     }
 
+    pub(crate) fn activation_focus_item_for_workspace_payload(
+        &self,
+        payload: &crate::workspace_transaction::DockWorkspaceDropPayload<'_>,
+        target_space: Option<&DockSpaceId>,
+        frozen_focus_item: Option<&DockItemId>,
+    ) -> Option<DockItemId> {
+        self.resolve_payload_focus_item(payload, target_space, frozen_focus_item)
+    }
+
+    pub(crate) fn activation_focus_item_for_viewport_payload(
+        &self,
+        payload: &crate::viewport_tear_off::DockViewportDropPayload,
+        source_node: DockNodeId,
+        frozen_focus_item: Option<&DockItemId>,
+    ) -> Option<DockItemId> {
+        let workspace_payload = payload.as_workspace_payload(source_node);
+        self.resolve_payload_focus_item(&workspace_payload, None, frozen_focus_item)
+    }
+
+    pub(crate) fn drag_focus_item_for_payload(
+        &self,
+        payload: &crate::drag::DockDragPayload,
+        recorded_focus_item: Option<&DockItemId>,
+    ) -> Option<DockItemId> {
+        let workspace_payload = payload.as_workspace_payload();
+        self.resolve_payload_focus_item(&workspace_payload, None, recorded_focus_item)
+    }
+
+    fn resolve_payload_focus_item(
+        &self,
+        payload: &crate::workspace_transaction::DockWorkspaceDropPayload<'_>,
+        target_space: Option<&DockSpaceId>,
+        frozen_focus_item: Option<&DockItemId>,
+    ) -> Option<DockItemId> {
+        let item = match payload {
+            crate::workspace_transaction::DockWorkspaceDropPayload::Item { item, .. } => {
+                (*item).clone()
+            }
+            crate::workspace_transaction::DockWorkspaceDropPayload::Tabs { .. }
+            | crate::workspace_transaction::DockWorkspaceDropPayload::Floating { .. } => {
+                let item = frozen_focus_item?;
+                self.payload_contains_workspace_focus_item(payload, item)
+                    .then_some(item.clone())?
+            }
+        };
+
+        match target_space {
+            Some(space) if self.find_item_in_space(space, &item).is_some() => Some(item),
+            Some(_) => None,
+            None => Some(item),
+        }
+    }
+
+    fn payload_contains_workspace_focus_item(
+        &self,
+        payload: &crate::workspace_transaction::DockWorkspaceDropPayload<'_>,
+        item: &DockItemId,
+    ) -> bool {
+        match payload {
+            crate::workspace_transaction::DockWorkspaceDropPayload::Item {
+                source_tabs: _,
+                item: payload_item,
+            } => *payload_item == item,
+            crate::workspace_transaction::DockWorkspaceDropPayload::Tabs { source_tabs } => self
+                .collect_items_in_subtree(*source_tabs)
+                .iter()
+                .any(|candidate| candidate == item),
+            crate::workspace_transaction::DockWorkspaceDropPayload::Floating { floating } => self
+                .collect_items_in_subtree(*floating)
+                .iter()
+                .any(|candidate| candidate == item),
+        }
+    }
+
+    pub(in crate::graph) fn record_tab_selection(&mut self, tabs: DockNodeId, item: &DockItemId) {
+        let state = self.tab_selection_history.entry(tabs).or_default();
+        let stamp = state.next_stamp;
+        state.next_stamp = state.next_stamp.saturating_add(1);
+        state.selected_stamps_by_item.insert(item.clone(), stamp);
+    }
+
+    pub(in crate::graph) fn preferred_tab_after_close(
+        &self,
+        tabs: DockNodeId,
+        closing_item: &DockItemId,
+        items: &[DockItemId],
+    ) -> Option<DockItemId> {
+        let state = self.tab_selection_history.get(&tabs)?;
+        state
+            .selected_stamps_by_item
+            .iter()
+            .filter(|(candidate, _)| *candidate != closing_item && items.contains(candidate))
+            .max_by_key(|(_, stamp)| *stamp)
+            .map(|(item, _)| item.clone())
+    }
+
+    pub(in crate::graph) fn take_tab_selection_state(
+        &mut self,
+        tabs: DockNodeId,
+    ) -> DockTabSelectionState {
+        self.tab_selection_history.remove(&tabs).unwrap_or_default()
+    }
+
+    pub(in crate::graph) fn restore_tab_selection_state(
+        &mut self,
+        tabs: DockNodeId,
+        state: DockTabSelectionState,
+    ) {
+        if state.selected_stamps_by_item.is_empty() {
+            return;
+        }
+        self.tab_selection_history.insert(tabs, state);
+    }
+
     /// Returns a node by id.
     pub fn node(&self, id: DockNodeId) -> Option<&DockNode> {
         self.nodes.get(id)
@@ -218,7 +413,9 @@ impl DockGraph {
             return;
         };
         match node {
-            DockNode::Tabs { .. } => {}
+            DockNode::Tabs { .. } => {
+                self.tab_selection_history.remove(&root);
+            }
             DockNode::Floating { child } => self.remove_subtree(child),
             DockNode::Split { children, .. } => {
                 for child in children {

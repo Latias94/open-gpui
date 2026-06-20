@@ -6,7 +6,9 @@ use calloop::{
 };
 use core::str;
 use log::Level;
-use open_gpui::{Capslock, PlatformViewportCapabilities, profiler};
+use open_gpui::{
+    Capslock, PlatformFocusedWindow, PlatformHoveredWindow, PlatformViewportCapabilities, profiler,
+};
 use open_gpui_collections::HashMap;
 use open_gpui_http_client::Url;
 use open_gpui_util::ResultExt as _;
@@ -29,7 +31,7 @@ use x11rb::{
     protocol::xkb::ConnectionExt as _,
     protocol::xproto::{
         AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
-        ConnectionExt as _, EventMask, Visibility,
+        ConnectionExt as _, EventMask, KeyButMask, Visibility,
     },
     protocol::{Event, dri3, randr, render, xinput, xkb, xproto},
     resource_manager::Database,
@@ -77,6 +79,9 @@ pub(crate) const XINPUT_ALL_DEVICES: xinput::DeviceId = 0;
 pub(crate) const XINPUT_ALL_DEVICE_GROUPS: xinput::DeviceId = 1;
 
 const GPUI_X11_SCALE_FACTOR_ENV: &str = "GPUI_X11_SCALE_FACTOR";
+const MAX_HOVERED_WINDOW_POINTER_DESCENT: usize = 32;
+const MAX_HOVERED_WINDOW_TREE_DEPTH: usize = 8;
+const MAX_HOVERED_WINDOW_TREE_NODES: usize = 256;
 
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
@@ -1804,14 +1809,18 @@ impl LinuxClient for X11Client {
         })
     }
 
-    fn hovered_window(&self) -> Option<AnyWindowHandle> {
-        let state = self.0.borrow();
-        state.mouse_focused_window.and_then(|focused_window| {
-            state
-                .windows
-                .get(&focused_window)
-                .map(|window| window.handle())
-        })
+    fn focused_window(&self) -> PlatformFocusedWindow {
+        PlatformFocusedWindow::from_window(self.active_window())
+    }
+
+    fn hovered_window(&self) -> PlatformHoveredWindow {
+        match self.hovered_window_from_pointer_query() {
+            Ok(window) => PlatformHoveredWindow::from_window(window),
+            Err(error) => {
+                log::debug!("X11 hovered window query failed: {error}");
+                PlatformHoveredWindow::Unavailable
+            }
+        }
     }
 
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
@@ -1859,13 +1868,31 @@ impl LinuxClient for X11Client {
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities {
             global_window_bounds: true,
-            mouse_hovered_window: true,
-            active_window: true,
+            // XInput enter/leave tracks cached pointer focus, not a current global hit-test.
             window_stack: true,
             dpi_scale: true,
             live_window_move: true,
             ..Default::default()
         }
+    }
+
+    fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
+        let state = self.0.borrow();
+        let root = state.xcb_connection.setup().roots[state.x_root_index].root;
+        let mask = state
+            .xcb_connection
+            .query_pointer(root)
+            .ok()?
+            .reply()
+            .ok()?
+            .mask;
+
+        Some(match button {
+            MouseButton::Left => mask.contains(KeyButMask::BUTTON1),
+            MouseButton::Middle => mask.contains(KeyButMask::BUTTON2),
+            MouseButton::Right => mask.contains(KeyButMask::BUTTON3),
+            MouseButton::Navigate(_) => false,
+        })
     }
 
     fn window_identifier(&self) -> impl Future<Output = Option<WindowIdentifier>> + Send + 'static {
@@ -1880,6 +1907,85 @@ impl LinuxClient for X11Client {
 }
 
 impl X11ClientState {
+    fn hovered_window_from_pointer_query(&self) -> anyhow::Result<Option<AnyWindowHandle>> {
+        let root = self.xcb_connection.setup().roots[self.x_root_index].root;
+        let pointer = get_reply(
+            || "X11 QueryPointer for hovered window failed.",
+            self.xcb_connection.query_pointer(root),
+        )?;
+
+        if !pointer.same_screen || pointer.child == x11rb::NONE {
+            return Ok(None);
+        }
+
+        self.window_for_pointer_child(pointer.child)
+    }
+
+    fn window_for_pointer_child(
+        &self,
+        mut window: xproto::Window,
+    ) -> anyhow::Result<Option<AnyWindowHandle>> {
+        for _ in 0..MAX_HOVERED_WINDOW_POINTER_DESCENT {
+            if let Some(handle) = self.live_window_handle(window) {
+                return Ok(Some(handle));
+            }
+
+            let pointer = get_reply(
+                || "X11 QueryPointer while descending hovered window failed.",
+                self.xcb_connection.query_pointer(window),
+            )?;
+            if !pointer.same_screen || pointer.child == x11rb::NONE {
+                return self.window_descendant_handle(window);
+            }
+            window = pointer.child;
+        }
+
+        self.window_descendant_handle(window)
+    }
+
+    fn live_window_handle(&self, window: xproto::Window) -> Option<AnyWindowHandle> {
+        let window_ref = self.windows.get(&window)?;
+        if window_ref.window.state.borrow().destroyed {
+            return None;
+        }
+        Some(window_ref.handle())
+    }
+
+    fn window_descendant_handle(
+        &self,
+        root: xproto::Window,
+    ) -> anyhow::Result<Option<AnyWindowHandle>> {
+        let mut stack = vec![(root, 0usize)];
+        let mut visited = HashSet::new();
+        let mut visited_count = 0usize;
+
+        while let Some((window, depth)) = stack.pop() {
+            if !visited.insert(window) {
+                continue;
+            }
+            visited_count += 1;
+            if visited_count > MAX_HOVERED_WINDOW_TREE_NODES {
+                return Ok(None);
+            }
+
+            if let Some(handle) = self.live_window_handle(window) {
+                return Ok(Some(handle));
+            }
+
+            if depth >= MAX_HOVERED_WINDOW_TREE_DEPTH {
+                continue;
+            }
+
+            let tree = get_reply(
+                || "X11 QueryTree while resolving hovered window failed.",
+                self.xcb_connection.query_tree(window),
+            )?;
+            stack.extend(tree.children.into_iter().map(|child| (child, depth + 1)));
+        }
+
+        Ok(None)
+    }
+
     fn has_xim(&self) -> bool {
         self.ximc.is_some() && self.xim_handler.is_some()
     }
