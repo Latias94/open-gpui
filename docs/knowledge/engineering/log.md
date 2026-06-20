@@ -1,5 +1,11 @@
 # Engineering Memory Update Log
 
+## 2026-06-20
+* **Update**: Resumed the UI component contract alignment pass from a codex session recovery. Re-checked the current plan, confirmed the worktree still contains unrelated `crates/gpui_docking/*` dirt, and kept that scope untouched.
+* **Update**: Fixed a `menu.rs` compile regression introduced by a bad enumerate binding in `MenuState::resolve` (`_index` vs `index`). The change unblocked `open-gpui-ui-components` compilation without altering the broader menu/runtime focus work.
+* **Verification**: `cargo check -p open-gpui-ui-components` passed, and `cargo nextest run -p open-gpui-ui-components --test components menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender context_menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender` passed.
+* **Decision**: Keep the UI component contract plan as the active next step. Continue only with evidence-backed behavioral drift, and do not touch unrelated `gpui_docking` files in this thread.
+
 ## 2026-06-19
 * **Update**: Removed the selection-time `query` payload from `ComboboxSelection`, and simplified the two Combobox runtime selection tests to assert only the real selection contract (`value` / `label`). The component no longer mirrors query text into selection events.
 * **Verification**: `cargo fmt -p open-gpui-ui-components --all`, `cargo check -p open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-components --test components combobox_runtime_filters_input_and_selects_filtered_option combobox_runtime_keyboard_selects_filtered_option` passed after the payload cleanup.

@@ -458,7 +458,7 @@ impl MenuState {
         let items = descriptors
             .into_iter()
             .enumerate()
-            .map(|(_index, item)| {
+            .map(|(index, item)| {
                 let focused = focused_index == Some(index);
                 MenuItemState {
                     index,
