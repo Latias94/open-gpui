@@ -1,7 +1,7 @@
 use crate::{
     DockCentralRegion, DockFloatingContainer, DockGraph, DockNode, DockNodeId,
-    DockViewportFocusCommand, DockViewportFocusRequest, DockWorkspace, SplitAxis,
-    debug::DockDebugRegion, host_test_support::*,
+    DockViewportFocusCommand, DockViewportFocusCommandSource, DockViewportFocusRequest,
+    DockWorkspace, SplitAxis, debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, px, size,
@@ -245,7 +245,11 @@ fn pending_panel_focus_targets_active_focusable_panel(cx: &mut TestAppContext) {
     let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
 
     host.update(cx, |host, cx| {
-        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("a")))));
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item(
+                "a"
+            )))
+        ));
         cx.notify();
     });
     cx.run_until_parked();
@@ -640,11 +644,10 @@ fn close_recovery_does_not_reveal_hidden_recorded_panel(cx: &mut TestAppContext)
 
     host.update(cx, |host, cx| {
         assert!(
-            host.request_viewport_focus_command(
-                DockViewportFocusCommand::viewport_activation(
-                    DockViewportFocusRequest::panel("b"),
-                ),
-            )
+            host.request_viewport_focus_command(DockViewportFocusCommand::new(
+                DockViewportFocusCommandSource::CloseRecovery,
+                DockViewportFocusRequest::panel("b"),
+            ),)
         );
         cx.notify();
     });
@@ -707,7 +710,9 @@ fn platform_activation_after_no_panel_focus_does_not_restore_old_panel(cx: &mut 
 
     host.update(cx, |host, cx| {
         assert!(host.request_viewport_focus_command(
-            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::no_panel_focus())
+            DockViewportFocusCommand::viewport_activation(
+                DockViewportFocusRequest::no_panel_focus()
+            )
         ));
         cx.notify();
     });
