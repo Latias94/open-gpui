@@ -1550,6 +1550,8 @@ fn components_page_choice_samples_expose_listbox_and_select_contracts() {
     assert_eq!(priority.open_mode(), SelectOpenMode::Controlled);
     assert!(priority.open());
     assert_eq!(priority.selected_value(), Some("critical"));
+    assert_eq!(priority.active_value(), Some("normal"));
+    assert_ne!(priority.selected_value(), priority.active_value());
     assert_eq!(priority.trigger_label(), "Critical");
     assert_eq!(
         priority.overlay().policy().kind(),
@@ -1619,6 +1621,8 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     assert_eq!(workspace.input_role(), Role::TextInput);
     assert_eq!(workspace.list_role(), Role::ListBox);
     assert_eq!(workspace.selected_value(), Some("new-file"));
+    assert_eq!(workspace.active_value(), Some("open-file"));
+    assert_ne!(workspace.selected_value(), workspace.active_value());
     assert_eq!(workspace.filtered_item_count(), 2);
     assert_eq!(workspace.groups().len(), 2);
     assert!(workspace.groups()[0].standalone());

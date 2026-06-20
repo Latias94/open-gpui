@@ -9,11 +9,11 @@ timestamp: 2026-06-20
 
 - Goal: Continue UI component contract alignment and remove evidence-backed behavioral drift without preserving old compatibility layers.
 - Branch: `main`
-- Last verified: `cargo check -p open-gpui-ui-foundation-gallery --tests` after moving focus/a11y and overlay shell-local state into page modules, formatting with `cargo fmt --all -- examples/ui-foundation-gallery/src/shell.rs examples/ui-foundation-gallery/src/pages/focus_a11y.rs examples/ui-foundation-gallery/src/pages/overlay.rs examples/ui-foundation-gallery/tests/foundation_gallery.rs`, and confirming the old Components-page crash still is not reproducible in this checkout.
-- Done: Re-checked the Components-page crash line and `repo-ref/fret`'s scroll/list-box helper layering. Also moved Focus & A11y and Overlay page-local shell state out of `shell.rs` into page modules so the shell only retains cross-page/navigation state.
-- In progress: The gallery shell refactor is mid-cleanup but compile-healthy; the remaining work is to finish review and decide whether to commit the page-state extraction.
+- Last verified: `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` after tightening the Components-page choice/search contract so `Select` and `Command` now keep `selected_value` and `active_value` distinct in gallery samples and tests.
+- Done: Re-checked the Components-page crash line and `repo-ref/fret`'s scroll/list-box helper layering. Also moved Focus & A11y and Overlay page-local shell state out of `shell.rs` into page modules so the shell only retains cross-page/navigation state. The latest choice/search scan did not find a safe deletion seam, so the work shifted to contract hardening instead of more field removal.
+- In progress: The gallery contract pass is still compile-healthy; the remaining work is to record the new choice/search evidence and decide whether to commit the contract hardening.
 - Blocked: None.
-- Next action: Run targeted gallery tests, then either commit the shell/page-state extraction or stop if no further evidence-backed drift appears.
+- Next action: Commit the choice/search contract hardening if the diff remains scoped to the gallery sample/test files.
 
 # Citations
 

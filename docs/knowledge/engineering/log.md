@@ -1,6 +1,9 @@
 # Engineering Memory Update Log
 
 ## 2026-06-20
+* **Update**: Re-scanned the Components page choice/search family and found no safe deletion seam in `ListboxSample`, `SelectSample`, `ComboboxSample`, or `CommandSample`. The useful seam was contract hardening instead: `Select` / `Command` samples now keep `selected_value` and `active_value` distinct, and the gallery tests assert that distinction directly.
+* **Verification**: `cargo fmt --all --check` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` (51/51) passed after the choice/search contract hardening.
+* **Decision**: Stop deleting state in the Components choice/search family for now. Keep the page-local sample shells and deepen tests around resolved-state distinctions instead.
 * **Update**: Re-ran the Components-page crash line after the recent UI contract scan. Focused `open-gpui-ui-foundation-gallery` parser tests passed, and a direct `cargo run -p open-gpui-ui-foundation-gallery -- --page components` stayed alive until timeout instead of reproducing the earlier `accesskit_consumer` exit.
 * **Update**: Rechecked `repo-ref/fret`'s scroll/list-box helper layering. The useful pattern is still thin entry points with deeper helper modules, which supports the current-crate productization roadmap rather than a new headless boundary.
 * **Subagent Finding**: `components_a11y_audit` and `fret_scroll_audit` both returned no new actionable issues. The Components-page crash is not reproducible in this checkout, and the fret reference still reads as helper-depth guidance rather than a new seam to extract.
