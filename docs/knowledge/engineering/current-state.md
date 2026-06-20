@@ -11,6 +11,10 @@ status: "active"
 
 ## 2026-06-20
 
+- Done: Rechecked the vertical `Tabs` rail and the gallery scroll surface with subagent review. The current evidence says `Tabs` does not need a forced `ScrollArea` wrapper: `overflow_y_scroll()` plus `h_full()` is the intended shape, and both the component test and the gallery smoke already cover the constrained-scroll behavior.
+- Last verified: `cargo nextest run -p open-gpui-ui-components --test components tabs_vertical_tablist_scrolls_when_constrained scroll_area_default_handle_survives_reconstructed_component_values scroll_area_reset_key_resets_default_runtime_handle` and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery components_gallery_smoke_scroll_area_samples_scroll_inside_page components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_composition` passed.
+- Next: keep looking for a real gallery-constraint mismatch or another evidence-backed seam; do not refactor `Tabs` into a `ScrollArea` wrapper just for symmetry.
+
 - Done: Removed the mirrored `selected_label` cache from `ComboboxState`, removed the mirrored `selected_value` / `trigger_label` / `active_value` caches from `SelectState`, and removed the mirrored `active_value` cache from `CommandState`. The choice states now keep the stable selected value contracts and derive display labels / active values from option data and listbox state in the render path.
 - Last verified: `cargo fmt -p open-gpui-ui-components --all`, `cargo check -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the cleanup. Next: keep scanning adjacent choice components for the next evidence-backed redundant state.
 
