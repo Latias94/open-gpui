@@ -364,6 +364,7 @@ these gates visible:
 - every official catalog entry keeps matching component/state signals and a rendered sample
   selector;
 - gallery samples continue to show real resolved state for each shipped component;
+- the gallery navigation rail and page viewport stay independently scrollable on compact windows;
 - ScrollArea redraws preserve the default keyed runtime handle;
 - Splitter runtime fractions continue to share one constraint solver;
 - Tabs keep overflow and roving-focus behavior visible in the page;
