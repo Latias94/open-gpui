@@ -7,18 +7,45 @@ use crate::{
     workspace_move_validation::{DockPayloadDockClasses, dock_target_validator},
     workspace_transaction::DockWorkspaceResolvedDropTarget,
 };
-use open_gpui::{Pixels, Size, WindowId};
+use open_gpui::{Pixels, Point, Size, WindowId};
 
 /// Current workspace target facts for a viewport route.
 pub(crate) enum DockViewportWorkspaceRouteTarget {
     Resolved(DockViewportResolvedDropTargetSnapshot),
-    Missing,
-    Unavailable,
+    /// The viewport route still points at current window facts, but the current host scene has no
+    /// workspace drop target at the routed position.
+    NoCurrentHostTarget,
+    /// The viewport route no longer matches current window or host-scene facts.
+    RouteUnavailable,
     Rejected {
         target: DockViewportResolvedDropTargetSnapshot,
         reason: DockPolicyError,
     },
     NotWorkspaceRoute,
+}
+
+#[derive(Clone, Copy)]
+enum DockMissingHostTargetBehavior {
+    PreserveRoute,
+    MarkRouteUnavailable,
+}
+
+impl DockMissingHostTargetBehavior {
+    fn into_route_target(self) -> DockViewportWorkspaceRouteTarget {
+        match self {
+            Self::PreserveRoute => DockViewportWorkspaceRouteTarget::NoCurrentHostTarget,
+            Self::MarkRouteUnavailable => DockViewportWorkspaceRouteTarget::RouteUnavailable,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct DockExistingViewportRouteTarget<'a> {
+    space: &'a DockSpaceId,
+    window_id: WindowId,
+    host_position: Point<Pixels>,
+    facts_generation: u64,
+    missing_host_target: DockMissingHostTargetBehavior,
 }
 
 /// Resolves the workspace target authority for a viewport route.
@@ -30,124 +57,105 @@ pub(crate) fn resolve_workspace_target_for_route(
     workspace: &DockWorkspace,
     payload_classes: &DockPayloadDockClasses,
 ) -> DockViewportWorkspaceRouteTarget {
-    let policy = workspace.policy();
     match route {
         DockViewportDropRoute::Local {
             host_position,
             window_id,
             facts_generation,
             ..
-        } => {
-            if !current_route_window_facts_match(
-                adapter,
-                request.source_space(),
-                *window_id,
-                *facts_generation,
-            ) {
-                return DockViewportWorkspaceRouteTarget::Unavailable;
-            }
-            let target_validator =
-                dock_target_validator(request.source_space(), payload_classes, policy);
-            let graph = workspace.graph().clone();
-            let target_space = request.source_space().clone();
-            let edge_plan_resolver =
-                move |target_node: crate::DockNodeId,
-                      zone: DropZone,
-                      sizing: DockEdgeDockSizing| {
-                    graph.edge_dock_plan_with_sizing(&target_space, target_node, zone, sizing)
-                };
-            let payload_size = request_payload_size(request);
-            let excluded_nodes = request
-                .payload()
-                .excluded_nodes_for_drop_scene(workspace.graph(), request.source_node());
-            let resolved = host_scenes
-                .resolve_frame_for_window(
-                    request.source_space(),
-                    Some(*window_id),
-                    *host_position,
-                    payload_size,
-                    excluded_nodes,
-                    policy,
-                    Some(&target_validator),
-                    Some(&edge_plan_resolver),
-                )
-                .map(|(frame, resolution)| {
-                    resolved_target_snapshot(
-                        request.source_space().clone(),
-                        Some(*window_id),
-                        frame,
-                        Some(*facts_generation),
-                        *host_position,
-                        payload_size,
-                        resolution,
-                    )
-                });
-            match resolved {
-                Some(DockResolvedViewportTarget::Valid(target)) => {
-                    DockViewportWorkspaceRouteTarget::Resolved(target)
-                }
-                Some(DockResolvedViewportTarget::Rejected { target, reason }) => {
-                    DockViewportWorkspaceRouteTarget::Rejected { target, reason }
-                }
-                None => DockViewportWorkspaceRouteTarget::Missing,
-            }
-        }
+        } => resolve_existing_viewport_workspace_target(
+            adapter,
+            host_scenes,
+            request,
+            workspace,
+            payload_classes,
+            DockExistingViewportRouteTarget {
+                space: request.source_space(),
+                window_id: *window_id,
+                host_position: *host_position,
+                facts_generation: *facts_generation,
+                missing_host_target: DockMissingHostTargetBehavior::PreserveRoute,
+            },
+        ),
         DockViewportDropRoute::KnownViewport { target, .. } => {
-            let facts_match = current_route_window_facts_match(
+            resolve_existing_viewport_workspace_target(
                 adapter,
-                target.space(),
-                target.window_id(),
-                target.facts_generation(),
-            );
-            if !facts_match {
-                return DockViewportWorkspaceRouteTarget::Unavailable;
-            }
-            let target_validator = dock_target_validator(target.space(), payload_classes, policy);
-            let graph = workspace.graph().clone();
-            let target_space = target.space().clone();
-            let edge_plan_resolver =
-                move |target_node: crate::DockNodeId,
-                      zone: DropZone,
-                      sizing: DockEdgeDockSizing| {
-                    graph.edge_dock_plan_with_sizing(&target_space, target_node, zone, sizing)
-                };
-            let payload_size = request_payload_size(request);
-            let excluded_nodes = request
-                .payload()
-                .excluded_nodes_for_drop_scene(workspace.graph(), request.source_node());
-            let resolved_frame = host_scenes.resolve_frame_for_window(
-                target.space(),
-                Some(target.window_id()),
-                target.host_position(),
-                payload_size,
-                excluded_nodes,
-                policy,
-                Some(&target_validator),
-                Some(&edge_plan_resolver),
-            );
-            let Some((frame, resolution)) = resolved_frame else {
-                return DockViewportWorkspaceRouteTarget::Unavailable;
-            };
-            match resolved_target_snapshot(
-                target.space().clone(),
-                Some(target.window_id()),
-                frame,
-                Some(target.facts_generation()),
-                target.host_position(),
-                payload_size,
-                resolution,
-            ) {
-                DockResolvedViewportTarget::Valid(target) => {
-                    DockViewportWorkspaceRouteTarget::Resolved(target)
-                }
-                DockResolvedViewportTarget::Rejected { target, reason } => {
-                    DockViewportWorkspaceRouteTarget::Rejected { target, reason }
-                }
-            }
+                host_scenes,
+                request,
+                workspace,
+                payload_classes,
+                DockExistingViewportRouteTarget {
+                    space: target.space(),
+                    window_id: target.window_id(),
+                    host_position: target.host_position(),
+                    facts_generation: target.facts_generation(),
+                    missing_host_target: DockMissingHostTargetBehavior::MarkRouteUnavailable,
+                },
+            )
         }
         DockViewportDropRoute::TearOff
         | DockViewportDropRoute::Unavailable
         | DockViewportDropRoute::Rejected(_) => DockViewportWorkspaceRouteTarget::NotWorkspaceRoute,
+    }
+}
+
+fn resolve_existing_viewport_workspace_target(
+    adapter: &DockViewportAdapter,
+    host_scenes: &DockViewportHostSceneRegistry,
+    request: &DockViewportDropRouteRequest,
+    workspace: &DockWorkspace,
+    payload_classes: &DockPayloadDockClasses,
+    target: DockExistingViewportRouteTarget<'_>,
+) -> DockViewportWorkspaceRouteTarget {
+    if !current_route_window_facts_match(
+        adapter,
+        target.space,
+        target.window_id,
+        target.facts_generation,
+    ) {
+        return DockViewportWorkspaceRouteTarget::RouteUnavailable;
+    }
+
+    let policy = workspace.policy();
+    let target_validator = dock_target_validator(target.space, payload_classes, policy);
+    let graph = workspace.graph().clone();
+    let target_space = target.space.clone();
+    let edge_plan_resolver =
+        move |target_node: crate::DockNodeId, zone: DropZone, sizing: DockEdgeDockSizing| {
+            graph.edge_dock_plan_with_sizing(&target_space, target_node, zone, sizing)
+        };
+    let payload_size = request_payload_size(request);
+    let excluded_nodes = request
+        .payload()
+        .excluded_nodes_for_drop_scene(workspace.graph(), request.source_node());
+    let Some((frame, resolution)) = host_scenes.resolve_frame_for_window(
+        target.space,
+        Some(target.window_id),
+        target.host_position,
+        payload_size,
+        excluded_nodes,
+        policy,
+        Some(&target_validator),
+        Some(&edge_plan_resolver),
+    ) else {
+        return target.missing_host_target.into_route_target();
+    };
+
+    match resolved_target_snapshot(
+        target.space.clone(),
+        Some(target.window_id),
+        frame,
+        Some(target.facts_generation),
+        target.host_position,
+        payload_size,
+        resolution,
+    ) {
+        DockResolvedViewportTarget::Valid(target) => {
+            DockViewportWorkspaceRouteTarget::Resolved(target)
+        }
+        DockResolvedViewportTarget::Rejected { target, reason } => {
+            DockViewportWorkspaceRouteTarget::Rejected { target, reason }
+        }
     }
 }
 
@@ -449,8 +457,62 @@ mod tests {
         );
 
         assert!(
-            matches!(target, DockViewportWorkspaceRouteTarget::Unavailable),
+            matches!(target, DockViewportWorkspaceRouteTarget::RouteUnavailable),
             "local route must not replace its frozen source window with the current source mapping"
+        );
+    }
+
+    #[test]
+    fn local_route_without_current_host_target_preserves_route_state() {
+        let source_space = space("source");
+        let window = handle(1);
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, source_space.clone(), window);
+        adapter.update_snapshot(
+            &source_space,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 100.0, 320.0, 240.0,
+            ))),
+            bounds(0.0, 0.0, 320.0, 240.0),
+        );
+        let facts_generation = adapter
+            .snapshot_facts_generation(&source_space, window.window_id())
+            .expect("source snapshot should have facts");
+
+        let host_scenes = DockViewportHostSceneRegistry::default();
+        let workspace = DockWorkspace::new(source_space.clone(), DockGraph::new());
+        let payload = DockViewportDropPayload::Item(item("a"));
+        let payload_classes =
+            workspace.payload_dock_classes_for_viewport_payload(&payload, DockNodeId::null());
+        let request = DockViewportDropRouteRequest::from_target_context(
+            source_space.clone(),
+            DockNodeId::null(),
+            payload,
+            point(px(124.0), px(124.0)),
+            None,
+            DockViewportTargetContext::new().with_trusted_hovered_window(window),
+        );
+
+        let target = resolve_workspace_target_for_route(
+            &adapter,
+            &host_scenes,
+            &DockViewportDropRoute::Local {
+                host_position: point(px(24.0), px(24.0)),
+                window_id: window.window_id(),
+                facts_generation,
+                authority: crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
+            },
+            &request,
+            &workspace,
+            &payload_classes,
+        );
+
+        assert!(
+            matches!(
+                target,
+                DockViewportWorkspaceRouteTarget::NoCurrentHostTarget
+            ),
+            "local route should keep its route state even when the host scene has no target"
         );
     }
 
@@ -680,11 +742,11 @@ mod tests {
             DockViewportWorkspaceRouteTarget::Resolved(_) => {
                 panic!("local route should not resolve when policy rejects the payload")
             }
-            DockViewportWorkspaceRouteTarget::Missing => {
-                panic!("local route should preserve rejected target instead of missing it")
+            DockViewportWorkspaceRouteTarget::NoCurrentHostTarget => {
+                panic!("local route should preserve rejected target instead of losing host target")
             }
-            DockViewportWorkspaceRouteTarget::Unavailable => {
-                panic!("local route should not be unavailable when the current facts match")
+            DockViewportWorkspaceRouteTarget::RouteUnavailable => {
+                panic!("local route should not be route-unavailable when the current facts match")
             }
             DockViewportWorkspaceRouteTarget::NotWorkspaceRoute => {
                 panic!("local route should not be classified as non-workspace")
@@ -778,8 +840,70 @@ mod tests {
         );
 
         assert!(
-            matches!(target, DockViewportWorkspaceRouteTarget::Unavailable),
+            matches!(target, DockViewportWorkspaceRouteTarget::RouteUnavailable),
             "known viewport route must not resolve preview targets from stale window facts"
+        );
+    }
+
+    #[test]
+    fn known_viewport_route_without_current_host_target_is_unavailable() {
+        let source_space = space("source");
+        let target_space = space("target");
+        let target_window = handle(7);
+        let mut graph = DockGraph::new();
+        let target_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("target")],
+            selected: Some(DockItemId::from("target")),
+        });
+        graph.set_root(target_space.clone(), target_tabs);
+
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, target_space.clone(), target_window);
+        adapter.update_snapshot(
+            &target_space,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 100.0, 320.0, 240.0,
+            ))),
+            bounds(0.0, 0.0, 320.0, 240.0),
+        );
+        let facts_generation = adapter
+            .snapshot_facts_generation(&target_space, target_window.window_id())
+            .expect("target snapshot should have route facts");
+
+        let host_scenes = DockViewportHostSceneRegistry::default();
+        let workspace = DockWorkspace::new(source_space.clone(), graph);
+        let payload = DockViewportDropPayload::Item(item("a"));
+        let payload_classes =
+            workspace.payload_dock_classes_for_viewport_payload(&payload, DockNodeId::null());
+        let request = DockViewportDropRouteRequest::from_target_context(
+            source_space,
+            DockNodeId::null(),
+            payload,
+            point(px(124.0), px(124.0)),
+            None,
+            DockViewportTargetContext::new().with_trusted_hovered_window(target_window),
+        );
+
+        let target = resolve_workspace_target_for_route(
+            &adapter,
+            &host_scenes,
+            &DockViewportDropRoute::KnownViewport {
+                target: crate::DockViewportTargetHit::with_facts_generation(
+                    target_space,
+                    target_window,
+                    point(px(24.0), px(24.0)),
+                    facts_generation,
+                ),
+                authority: crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
+            },
+            &request,
+            &workspace,
+            &payload_classes,
+        );
+
+        assert!(
+            matches!(target, DockViewportWorkspaceRouteTarget::RouteUnavailable),
+            "known viewport route should become unavailable when its current host scene disappears"
         );
     }
 

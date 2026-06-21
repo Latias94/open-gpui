@@ -9,8 +9,7 @@ use crate::{
     DockViewportDropRouteRequest, DockViewportDropRouteResolution, DockViewportFocusCoordinator,
     DockViewportFocusRequest, DockViewportIdentity, DockViewportPlacementLayout,
     DockViewportPlacementValidationError, DockViewportPlatformSyncRecord,
-    DockViewportRegisterOutcome, DockViewportResolvedDropRoute,
-    DockViewportResolvedDropTargetSnapshot, DockViewportRestoreReadiness,
+    DockViewportRegisterOutcome, DockViewportResolvedDropRoute, DockViewportRestoreReadiness,
     DockViewportRoutedDropPreview, DockViewportRuntimeHandle, DockViewportRuntimeStatus,
     DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus, DockViewportTargetHit,
     DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
@@ -20,9 +19,8 @@ use crate::{
     DockViewportWorkspaceRouteTarget,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
-    drop_target::DockDropResolution,
     interaction::DockRuntimeDragSession,
-    request_payload_size,
+    resolve_workspace_target_for_route,
     viewport_drop_scene::{
         DockViewportHostSceneFrame, DockViewportHostSceneRegistration,
         DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot,
@@ -1558,8 +1556,8 @@ impl DockViewportRuntime {
             payload_classes,
         ) {
             DockViewportWorkspaceRouteTarget::Resolved(target) => Some(target),
-            DockViewportWorkspaceRouteTarget::Missing => None,
-            DockViewportWorkspaceRouteTarget::Unavailable => {
+            DockViewportWorkspaceRouteTarget::NoCurrentHostTarget => None,
+            DockViewportWorkspaceRouteTarget::RouteUnavailable => {
                 route = DockViewportDropRoute::Unavailable;
                 None
             }
@@ -1678,86 +1676,56 @@ impl DockViewportRuntime {
         if target_window.window_id() != target_window_id {
             return None;
         }
-        let payload_size = request_payload_size(request);
-        let resolved_frame = cx.read_entity(&self.controller, |controller, _| {
+        let route = if target_space == *request.source_space() {
+            DockViewportDropRoute::Local {
+                host_position,
+                window_id: target_window_id,
+                facts_generation,
+                authority: DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview,
+            }
+        } else {
+            DockViewportDropRoute::KnownViewport {
+                target: DockViewportTargetHit::with_facts_generation(
+                    target_space.clone(),
+                    target_window,
+                    host_position,
+                    facts_generation,
+                ),
+                authority: DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview,
+            }
+        };
+        let resolution = cx.read_entity(&self.controller, |controller, _| {
             let workspace = controller.workspace();
-            let policy = workspace.policy();
             let payload_classes = workspace.payload_dock_classes_for_viewport_payload(
                 request.payload(),
                 request.source_node(),
             );
-            let target_validator = crate::workspace_move_validation::dock_target_validator(
-                &target_space,
+            resolve_workspace_target_for_route(
+                &self.adapter,
+                &self.host_scenes,
+                &route,
+                request,
+                workspace,
                 &payload_classes,
-                policy,
-            );
-            let graph = workspace.graph().clone();
-            let edge_target_space = target_space.clone();
-            let edge_plan_resolver =
-                move |target_node: crate::DockNodeId,
-                      zone: crate::DropZone,
-                      sizing: crate::DockEdgeDockSizing| {
-                    graph.edge_dock_plan_with_sizing(&edge_target_space, target_node, zone, sizing)
-                };
-            let excluded_nodes = request
-                .payload()
-                .excluded_nodes_for_drop_scene(workspace.graph(), request.source_node());
-            self.host_scenes.resolve_frame_for_window(
-                &target_space,
-                Some(target_window_id),
-                host_position,
-                payload_size,
-                excluded_nodes,
-                policy,
-                Some(&target_validator),
-                Some(&edge_plan_resolver),
             )
-        })?;
-        let (frame, resolution) = resolved_frame;
+        });
         let (route, target) = match resolution {
-            DockDropResolution::Valid(target) => {
-                if target.target_key() != accepted_target_key {
+            DockViewportWorkspaceRouteTarget::Resolved(target) => {
+                if target.target_key() != &accepted_target_key {
                     return None;
                 }
-                let route = if target_space == *request.source_space() {
-                    DockViewportDropRoute::Local {
-                        host_position,
-                        window_id: target_window_id,
-                        facts_generation,
-                        authority: DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview,
-                    }
-                } else {
-                    DockViewportDropRoute::KnownViewport {
-                        target: DockViewportTargetHit::with_facts_generation(
-                            target_space.clone(),
-                            target_window,
-                            host_position,
-                            facts_generation,
-                        ),
-                        authority: DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview,
-                    }
-                };
                 (route, target)
             }
-            DockDropResolution::Rejected(rejection) => {
-                if rejection.target.target_key() != accepted_target_key {
+            DockViewportWorkspaceRouteTarget::Rejected { target, reason } => {
+                if target.target_key() != &accepted_target_key {
                     return None;
                 }
-                (
-                    DockViewportDropRoute::Rejected(rejection.reason),
-                    rejection.target,
-                )
+                (DockViewportDropRoute::Rejected(reason), target)
             }
+            DockViewportWorkspaceRouteTarget::NoCurrentHostTarget
+            | DockViewportWorkspaceRouteTarget::RouteUnavailable
+            | DockViewportWorkspaceRouteTarget::NotWorkspaceRoute => return None,
         };
-        let target = DockViewportResolvedDropTargetSnapshot::new(
-            target_space,
-            Some(target_window_id),
-            frame,
-            Some(facts_generation),
-            host_position,
-            payload_size,
-            target,
-        );
         let delivery = DockDropDelivery::from_route_request_with_resolved_target(
             request,
             route.clone(),
