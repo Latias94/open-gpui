@@ -17,11 +17,13 @@ use open_gpui_ui_components::{
     SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
     SidebarItem, SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide,
     SidebarState, SidebarVariant, Skeleton, Splitter, SplitterPanel, SplitterPanelDescriptor,
-    SplitterState, Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
-    TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
-    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection,
-    ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent,
-    active_index_from_str_keys, first_enabled,
+    SplitterState, Switch, Table, TableColumn, TableFilter, TableHeaderAction, TablePagination,
+    TableRow, TableSort, TableSortDirection, TableState, Tabs, TabsActivationMode, TabsItem,
+    TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver,
+    ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
+    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
+    TooltipDelayPolicy, TooltipOpenIntent, VirtualizerItemKey, VirtualizerRange,
+    VirtualizerSnapshot, VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -63,6 +65,28 @@ fn custom_tokens() -> ThemeTokens {
         destructive: TEST_DESTRUCTIVE,
         ..ThemeTokens::default()
     }
+}
+
+fn sample_table_state(row_count: usize) -> TableState {
+    let rows = (0..row_count).map(|index| {
+        TableRow::new(format!("row-{index:04}"))
+            .with_cell("name", format!("Package {index:04}"))
+            .with_cell(
+                "team",
+                if index.is_multiple_of(2) {
+                    "Core"
+                } else {
+                    "UI"
+                },
+            )
+            .with_cell("score", index)
+    });
+
+    TableState::new(rows).with_columns([
+        TableColumn::new("name", "Name"),
+        TableColumn::new("team", "Team"),
+        TableColumn::new("score", "Score"),
+    ])
 }
 
 #[test]
@@ -1219,6 +1243,250 @@ fn scroll_area_builder_state_keeps_gpui_handle_out_of_resolved_state() {
     assert!(!preserved.should_reset_for_key_change(Some("overview")));
 }
 
+#[test]
+fn table_render_plan_uses_core_state_and_virtualizer_contracts() {
+    let state = sample_table_state(100)
+        .with_sorting([TableSort::new("score", TableSortDirection::Descending)])
+        .with_selected_rows(["row-0091"])
+        .with_filters([TableFilter::contains("team", "UI")])
+        .with_pagination(TablePagination::disabled());
+    let table = Table::new("contracts-table", "Contracts", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .overscan(4);
+    let plan = table.render_plan(ui_px(120.0), ui_px(96.0));
+
+    assert_eq!(plan.role(), Role::Table);
+    assert_eq!(plan.row_role(), Role::Row);
+    assert_eq!(plan.column_header_role(), Role::ColumnHeader);
+    assert_eq!(plan.cell_role(), Role::Cell);
+    assert_eq!(plan.columns().len(), 3);
+    assert_eq!(plan.aria_column_count(), 3);
+    assert_eq!(plan.aria_row_count(), 51);
+    assert_eq!(
+        *plan.virtualizer().visible_range(),
+        VirtualizerRange::new(5, 9)
+    );
+    assert_eq!(
+        *plan.virtualizer().overscan_range(),
+        VirtualizerRange::new(3, 11)
+    );
+    assert!(plan.rendered_row_count() <= plan.visible_row_count() + plan.metrics().overscan());
+    assert_eq!(plan.rows()[0].model_index(), 3);
+    assert_eq!(plan.rows()[0].id().as_str(), "row-0093");
+    assert!(
+        plan.rows()
+            .iter()
+            .any(|row| row.id().as_str() == "row-0091" && row.selected()),
+        "expected selection to follow row id after filtering and sorting"
+    );
+
+    let score_column = plan
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "score")
+        .expect("score column should be present");
+    assert_eq!(
+        score_column.sort_direction(),
+        Some(TableSortDirection::Descending)
+    );
+    assert_eq!(score_column.accessible_label(), "Score, sorted descending");
+}
+
+#[test]
+fn table_virtualizer_snapshot_restores_measurements_without_overriding_live_scroll() {
+    let snapshot = VirtualizerSnapshot::new(
+        ui_px(0.0),
+        [VirtualizerSnapshotItem::new(
+            VirtualizerItemKey::new("row-0005"),
+            ui_px(48.0),
+        )],
+    );
+    let table = Table::new("snapshot-table", "Snapshot table", sample_table_state(30))
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .virtualizer_snapshot(snapshot);
+    let plan = table.render_plan(ui_px(120.0), ui_px(96.0));
+
+    assert_eq!(plan.virtualizer().scroll_offset(), ui_px(120.0));
+    let measured_row = plan
+        .virtualizer()
+        .measurements()
+        .iter()
+        .find(|measurement| measurement.key().as_str() == "row-0005")
+        .expect("snapshot measurement should be restored by stable row key");
+    assert_eq!(measured_row.size(), ui_px(48.0));
+    assert!(measured_row.measured());
+}
+
+#[test]
+fn table_render_plan_disambiguates_duplicate_row_ids_for_rendering() {
+    let state = TableState::new([
+        TableRow::new("duplicate").with_cell("name", "First"),
+        TableRow::new("duplicate").with_cell("name", "Second"),
+        TableRow::new("unique").with_cell("name", "Third"),
+    ])
+    .with_columns([TableColumn::new("name", "Name")])
+    .with_pagination(TablePagination::disabled());
+    let table = Table::new("duplicate-table", "Duplicate rows", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(120.0));
+    let plan = table.render_plan(UiPx::ZERO, ui_px(120.0));
+
+    assert_eq!(plan.table().duplicate_row_ids()[0].as_str(), "duplicate");
+    assert_eq!(plan.rows()[0].id().as_str(), "duplicate");
+    assert_eq!(plan.rows()[0].render_key(), "0:duplicate");
+    assert_eq!(plan.rows()[1].id().as_str(), "duplicate");
+    assert_eq!(plan.rows()[1].render_key(), "1:duplicate");
+    assert_eq!(plan.rows()[2].id().as_str(), "unique");
+    assert_eq!(plan.rows()[2].render_key(), "unique");
+
+    let keys = plan
+        .virtualizer()
+        .measurements()
+        .iter()
+        .map(|measurement| measurement.key().as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(keys, ["0:duplicate", "1:duplicate", "unique"]);
+}
+
+#[test]
+fn table_header_action_cycles_sorting_without_render_coupling() {
+    let unsorted = Table::new("sort-cycle", "Sort cycle", sample_table_state(8))
+        .render_plan(UiPx::ZERO, ui_px(120.0));
+    let name_action = unsorted
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "name")
+        .and_then(|column| column.sort_action())
+        .expect("sortable column should expose a header action");
+    assert_eq!(name_action.current_direction(), None);
+    assert_eq!(
+        name_action.next_direction(),
+        Some(TableSortDirection::Ascending)
+    );
+
+    let ascending_state = name_action.apply_to(sample_table_state(8));
+    assert_eq!(ascending_state.sorting()[0].column().as_str(), "name");
+    assert_eq!(
+        ascending_state.sorting()[0].direction(),
+        TableSortDirection::Ascending
+    );
+
+    let ascending = Table::new("sort-cycle", "Sort cycle", ascending_state)
+        .render_plan(UiPx::ZERO, ui_px(120.0));
+    let descending_action = ascending
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "name")
+        .and_then(|column| column.sort_action())
+        .expect("ascending column should expose a descending action");
+    assert_eq!(
+        descending_action.current_direction(),
+        Some(TableSortDirection::Ascending)
+    );
+    assert_eq!(
+        descending_action.next_direction(),
+        Some(TableSortDirection::Descending)
+    );
+
+    let descending_state = descending_action.apply_to(sample_table_state(8));
+    let descending = Table::new("sort-cycle", "Sort cycle", descending_state)
+        .render_plan(UiPx::ZERO, ui_px(120.0));
+    let clear_action = descending
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "name")
+        .and_then(|column| column.sort_action())
+        .expect("descending column should expose a clear action");
+    assert_eq!(
+        clear_action.current_direction(),
+        Some(TableSortDirection::Descending)
+    );
+    assert_eq!(clear_action.next_direction(), None);
+    assert!(
+        clear_action
+            .apply_to(sample_table_state(8))
+            .sorting()
+            .is_empty()
+    );
+}
+
+#[test]
+fn table_public_exports_include_core_table_and_virtualizer_contracts() {
+    use open_gpui_ui_components::{self as root, prelude};
+
+    let state: root::TableState =
+        root::TableState::new([root::TableRow::new("row-a").with_cell("name", "Alpha")])
+            .with_columns([root::TableColumn::new("name", "Name")]);
+    let table: root::Table = root::Table::new("root-table", "Root table", state.clone());
+    let _prelude_state: prelude::TableState = state;
+    let _prelude_table: prelude::Table = prelude::Table::new(
+        "prelude-table",
+        "Prelude table",
+        root::TableState::new([root::TableRow::new("row-b").with_cell("name", "Beta")])
+            .with_columns([root::TableColumn::new("name", "Name")]),
+    );
+    let virtualizer: root::VirtualizerState =
+        root::VirtualizerState::new(4, ui_px(24.0)).with_overscan(2);
+    let header_action: root::TableHeaderAction = table.state().columns()[0]
+        .sort_action()
+        .expect("sortable exported table column should expose a header action")
+        .clone();
+    let _prelude_header_action: prelude::TableHeaderAction = header_action;
+
+    assert_eq!(table.state().role(), Role::Table);
+    assert_eq!(virtualizer.resolve().overscan(), 2);
+}
+
+#[open_gpui::test]
+fn table_runtime_header_click_emits_sort_action(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        actions: Rc<RefCell<Vec<TableHeaderAction>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let actions = self.actions.clone();
+            let table = Table::new("sort-runtime-table", "Sort runtime", sample_table_state(12))
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .on_sort_requested(move |action, _, _| {
+                    actions.borrow_mut().push(action);
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let actions = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        actions: actions.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let score_header = cx
+        .debug_bounds("table:sort-runtime-table:header:score")
+        .expect("score header should render as an interactive sort target");
+    cx.simulate_click(score_header.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let actions = actions.borrow();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].column_id().as_str(), "score");
+    assert_eq!(actions[0].label(), "Score");
+    assert_eq!(actions[0].current_direction(), None);
+    assert_eq!(
+        actions[0].next_direction(),
+        Some(TableSortDirection::Ascending)
+    );
+    assert_eq!(actions[0].next_sorting()[0].column().as_str(), "score");
+}
+
 #[open_gpui::test]
 fn scroll_area_default_handle_survives_reconstructed_component_values(
     cx: &mut open_gpui::TestAppContext,
@@ -1460,6 +1728,106 @@ fn scroll_area_runtime_scrolls_horizontal_and_two_axis_content(cx: &mut open_gpu
     assert!(
         grid_after_y.top() < grid_after_x.top(),
         "expected two-axis content to move up after vertical wheel scrolling; before={grid_after_x:?} after={grid_after_y:?}"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_virtualized_body_scrolls_without_moving_parent(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let table = Table::new("runtime-table", "Runtime table", sample_table_state(80))
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(120.0))
+                .overscan(2);
+
+            div().size_full().child(
+                div().w(px(360.0)).h(px(220.0)).child(
+                    ScrollArea::new(
+                        "table-parent-scroll",
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .debug_selector(|| "table-parent-top".into())
+                                    .h(px(72.0))
+                                    .w_full()
+                                    .child("Parent top"),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "table-wrapper".into())
+                                    .h(px(132.0))
+                                    .min_h(px(0.0))
+                                    .overflow_hidden()
+                                    .child(table),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "table-parent-bottom".into())
+                                    .h(px(240.0))
+                                    .w_full()
+                                    .child("Parent bottom"),
+                            ),
+                    )
+                    .vertical(),
+                ),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("table:runtime-table:row:row-0000")
+            .is_some(),
+        "expected first table row to render before scrolling"
+    );
+    assert!(
+        cx.debug_bounds("table:runtime-table:row:row-0010")
+            .is_none(),
+        "expected row 10 to stay outside the initial overscan window"
+    );
+    let parent_bottom_before = cx
+        .debug_bounds("table-parent-bottom")
+        .expect("parent bottom should be rendered before table scrolling");
+    let viewport = cx
+        .debug_bounds("scroll-area:table:runtime-table:body-scroll")
+        .expect("table body viewport should expose a stable scroll selector");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let parent_bottom_after = cx
+        .debug_bounds("table-parent-bottom")
+        .expect("parent bottom should still be rendered after table scrolling");
+    assert_eq!(
+        parent_bottom_after.top(),
+        parent_bottom_before.top(),
+        "expected wheel input inside Table to stay inside the table body; before={parent_bottom_before:?} after={parent_bottom_after:?}"
+    );
+    assert!(
+        cx.debug_bounds("table:runtime-table:row:row-0000")
+            .is_none(),
+        "expected row 0 to unmount after the virtual window advances"
+    );
+    assert!(
+        cx.debug_bounds("table:runtime-table:row:row-0010")
+            .is_some(),
+        "expected row 10 to render after scrolling the table body"
     );
 }
 
@@ -2484,6 +2852,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
 fn gpui_role_mapping_covers_neutral_image_and_separator_fallback() {
     assert_eq!(gpui_role_from_ui(Role::Image), open_gpui::Role::Image);
     assert_eq!(gpui_role_from_ui(Role::Separator), open_gpui::Role::Group);
+    assert_eq!(gpui_role_from_ui(Role::Table), open_gpui::Role::Table);
+    assert_eq!(gpui_role_from_ui(Role::Row), open_gpui::Role::Row);
+    assert_eq!(
+        gpui_role_from_ui(Role::ColumnHeader),
+        open_gpui::Role::ColumnHeader
+    );
+    assert_eq!(gpui_role_from_ui(Role::Cell), open_gpui::Role::Cell);
 }
 
 #[test]

@@ -73,6 +73,10 @@ pub use crate::splitter::{
     SplitterPanelState, SplitterState,
 };
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
+pub use crate::table::{
+    Table, TableCellRenderPlan, TableColumnRenderPlan, TableHeaderAction, TableMetrics,
+    TableRenderPlan, TableRowRenderPlan,
+};
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
     TabsSelection, TabsState,
@@ -88,4 +92,10 @@ pub use crate::tooltip::{
     Tooltip, TooltipColors, TooltipContentKind, TooltipDelayPolicy, TooltipMetrics,
     TooltipOpenIntent, TooltipState,
 };
-pub use open_gpui_ui_core::{Sizable, Size, ThemeTokens};
+pub use open_gpui_ui_core::{
+    Sizable, Size, TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableCellValue,
+    TableColumn, TableColumnId, TableFilter, TablePagination, TableResolvedRow, TableResolvedState,
+    TableRow, TableRowId, TableRowModel, TableRowModelStage, TableSort, TableSortDirection,
+    TableState, ThemeTokens, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
+    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
+};

@@ -25,6 +25,14 @@ pub enum Role {
     Section,
     /// A generic grouped collection.
     Group,
+    /// A table container.
+    Table,
+    /// A table row.
+    Row,
+    /// A table header cell.
+    ColumnHeader,
+    /// A table cell.
+    Cell,
     /// A listbox popup or collection.
     ListBox,
     /// A listbox option item.

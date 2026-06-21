@@ -53,10 +53,14 @@ horizontal plus vertical Splitter pointer dragging, and long Sidebar internal na
 Run the gallery package tests before relying on manual dogfood for those paths.
 The Components-page ScrollArea regressions also cover release-queue wheel isolation so scroll
 gestures on the sample card chrome do not leak to the page shell.
-Future Table gallery gates should follow the same split: `open-gpui-ui-core` tests prove row-model
-and virtualizer contracts without rendering, `open-gpui-ui-components` tests prove adapter exports,
+Table gallery gates now follow the same split: `open-gpui-ui-core` tests prove row-model and
+virtualizer contracts without rendering, `open-gpui-ui-components` tests prove adapter exports,
 state metadata, and scroll ownership, and gallery smokes prove long table scroll input stays inside
-the table viewport when the surrounding Components page also overflows.
+the table viewport when the surrounding Components page also overflows. The focused gallery proof is:
+
+```powershell
+cargo nextest run -p open-gpui-ui-foundation-gallery table
+```
 
 The components package includes runtime smoke coverage for TextInput, RadioGroup, Listbox, Select,
 Combobox, Command, Tabs, and Toolbar keyboard navigation. The focused TextInput test renders a
@@ -92,10 +96,11 @@ render visible samples with stable debug selectors.
 gate for catalog drift: every official `COMPONENT_CATALOG` entry must have matching component and
 resolved-state `SIGNALS` entries plus one rendered `gallery:component-*-sample:{id}` selector in
 the Components page.
-When Table becomes official, that gate should require `Table`, `TableState`, and at least one
-`gallery:component-table-sample:{id}` selector. Additional table smokes should assert that rendered
-row selectors do not exceed the virtualizer's visible rows plus overscan, and that sort/filter
-state follows stable row ids rather than numeric positions.
+The official Table gate requires `Table`, `TableState`, `VirtualizerState`, role signals for table
+rows and cells, and at least one `gallery:component-table-sample:{id}` selector. Table smokes and
+state tests assert that rendered row selectors stay bounded by the virtualizer's visible rows plus
+overscan, scroll input stays inside the table viewport, sortable header actions emit state-update
+payloads, and sort/filter state follows stable row ids rather than numeric positions.
 
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left
@@ -204,11 +209,12 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    `cargo run -p open-gpui-ui-foundation-gallery -- --page components`, and confirm Button, Badge,
    IconButton, Separator, Kbd, Progress, Skeleton, Avatar, ScrollArea, Splitter, Switch, Checkbox,
    RadioGroup, Toggle, Label, TextInput, Field, Tabs, Toolbar, Sidebar, Listbox, Select, Combobox,
-   and Command samples render with enabled, disabled, selected, checked, unchecked, indeterminate,
-   pressed, invalid, required, read-only, placeholder, value, help, error, control-association,
-   decorative, semantic, indeterminate-progress, fallback-initial, source-metadata, roving-focus,
-   popup, overflow-axis, scroll-reset, and resize-constraint states. The Badge, Kbd, and Skeleton
-   samples should remain display-only. The Separator samples should distinguish semantic and
+   Command, and Table samples render with enabled, disabled, selected, checked, unchecked,
+   indeterminate, pressed, invalid, required, read-only, placeholder, value, help, error,
+   control-association, decorative, semantic, indeterminate-progress, fallback-initial,
+   source-metadata, roving-focus, popup, overflow-axis, scroll-reset, resize-constraint, row-model,
+   and virtualized-viewport states. The Badge, Kbd, and Skeleton samples should remain display-only.
+   The Separator samples should distinguish semantic and
    decorative roles. The Progress samples should cover determinate and indeterminate values, with
    indeterminate progress rendering as a short non-percentage segment rather than a fixed 33% fill.
    The Avatar samples should show derived fallback initials, explicit fallback text, explicit
@@ -230,11 +236,11 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    samples should expose button-like pressed state without behaving like a checkbox. The Tabs
    samples should cover horizontal automatic activation and vertical manual activation; use arrow
    keys, Home/End, Enter, and Space to confirm focus movement and activation behavior. The vertical
-   sample should keep its tab rail scrollable inside the constrained gallery card. The Toolbar
-   samples should expose horizontal and vertical command groups; use arrow keys plus Home/End to
-   confirm roving focus skips disabled items and separators, and use Enter/Space to activate
-   action/toggle items. The component runtime smoke now verifies the rendered Toolbar keyboard path
-   for disabled-item/separator skipping and activation payloads. The Sidebar samples should expose
+    sample should keep its tab rail scrollable inside the constrained gallery card. The Toolbar
+    samples should expose horizontal and vertical command groups; use arrow keys plus Home/End to
+    confirm roving focus skips disabled items and separators, and use Enter/Space to activate
+    action/toggle items. The component runtime smoke now verifies the rendered Toolbar keyboard path
+    for disabled-item/separator skipping and activation payloads. The Sidebar samples should expose
    expanded, icon-collapsed, and long scrollable navigation; icon collapse should hide visible labels
    while keeping item labels
    explicit, disabled items should be skipped, and the long sidebar should scroll inside its sample
@@ -259,16 +265,21 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    dialog outside/Escape dismissal while preserving the Components page scrollability. The component
    runtime smoke now verifies real Command text-input editing, inline filtering, keyboard
    activation, shortcut payloads, and non-dialog content persistence. The default TextInput
-   sample should accept real text editing through the
-   controller-backed path, while the gallery remains scrollable and keeps focus visible when the
-   page overflows. The app should stay open after opening `Components`; an `accesskit_consumer`
+    sample should accept real text editing through the
+    controller-backed path, while the gallery remains scrollable and keeps focus visible when the
+    page overflows. The Table samples should expose the `release-queue` 10k-row virtualized window,
+    the filtered/sorted/paginated `filter-board` model, stable selected row ids, table/row/cell
+    accessibility metadata, sortable header metadata, and an internal body viewport that scrolls
+    without moving the outer Components page. The app should stay open after opening `Components`;
+    an `accesskit_consumer`
    panic during that navigation is a
    regression in the accessibility repair gate. The Components page also serves as a conformance
    surface: confirm the visible component catalog distinguishes official components from
-   adapter-only helpers and internal anatomy, and confirms Separator, Kbd, Progress, Skeleton, and
-   Avatar are official entries with state types, then confirm the visible gate cards for explicit
-   crate exports, gallery metadata, ScrollArea redraw persistence, Splitter runtime constraints,
-   Tabs overflow, and explicit accessible metadata on icon-only and label-association samples.
+    adapter-only helpers and internal anatomy, and confirms Separator, Kbd, Progress, Skeleton, and
+    Avatar are official entries with state types, then confirm the visible gate cards for explicit
+    crate exports, gallery metadata, ScrollArea redraw persistence, Splitter runtime constraints,
+    Tabs overflow, `table-virtualization`, and explicit accessible metadata on icon-only and
+    label-association samples.
 7. Re-run `cargo nextest run -p open-gpui-ui-components` and `cargo nextest run -p
    open-gpui-ui-foundation-gallery` if a manual check exposes a component or gallery regression.
 

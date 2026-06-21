@@ -962,6 +962,7 @@ fn components_page_samples_expose_component_metadata() {
     let fields = pages::components::field_samples(tokens);
     let scroll_areas = pages::components::scroll_area_samples(tokens);
     let splitters = pages::components::splitter_samples(tokens);
+    let tables = pages::components::table_samples(tokens);
 
     let official_names: Vec<_> = catalog
         .iter()
@@ -990,6 +991,7 @@ fn components_page_samples_expose_component_metadata() {
             "Tabs",
             "ScrollArea",
             "Splitter",
+            "Table",
             "Separator",
             "Kbd",
             "Progress",
@@ -1021,7 +1023,7 @@ fn components_page_samples_expose_component_metadata() {
                 && entry.coverage == "exports / gallery / state tests"))
     );
 
-    assert_eq!(gates.len(), 6);
+    assert_eq!(gates.len(), 7);
     assert_eq!(gates[0].id, "public-api-exports");
     assert!(
         gates[0]
@@ -1037,7 +1039,8 @@ fn components_page_samples_expose_component_metadata() {
     );
     assert_eq!(gates[3].id, "splitter-runtime");
     assert_eq!(gates[4].id, "tabs-overflow");
-    assert_eq!(gates[5].id, "a11y-labels");
+    assert_eq!(gates[5].id, "table-virtualization");
+    assert_eq!(gates[6].id, "a11y-labels");
 
     assert_eq!(buttons.len(), 6);
     assert_eq!(buttons[0].id, "default");
@@ -1316,6 +1319,27 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(splitters[1].state.size(), Size::Small);
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
+
+    assert_eq!(tables.len(), 2);
+    assert_eq!(tables[0].id, "release-queue");
+    assert_eq!(tables[0].state.rows().len(), 10_000);
+    assert_eq!(
+        tables[0].state.sorting()[0].direction().as_str(),
+        "descending"
+    );
+    let release_plan = tables[0].render_plan();
+    assert_eq!(release_plan.role(), Role::Table);
+    assert_eq!(release_plan.column_header_role(), Role::ColumnHeader);
+    assert_eq!(release_plan.cell_role(), Role::Cell);
+    assert_eq!(release_plan.aria_row_count(), 10_001);
+    assert_eq!(release_plan.aria_column_count(), 4);
+    assert!(release_plan.rendered_row_count() <= release_plan.visible_row_count() + 5);
+
+    let filter_plan = tables[1].render_plan();
+    assert_eq!(tables[1].id, "filter-board");
+    assert_eq!(filter_plan.table().filtered_model().rows().len(), 60);
+    assert_eq!(filter_plan.table().final_model().rows().len(), 24);
+    assert_eq!(filter_plan.table().final_model().selected_count(), 1);
 }
 
 #[test]
@@ -1456,6 +1480,41 @@ fn components_page_tabs_samples_expose_roving_focus_contract() {
     assert_eq!(tabs[1].state.selected_value(), Some("profile"));
     assert_eq!(tabs[1].state.focused_value(), Some("profile"));
     assert!(tabs[1].items[3].disabled);
+}
+
+#[test]
+fn components_page_table_samples_expose_virtualized_row_model_contract() {
+    let samples = pages::components::table_samples(ThemeTokens::default());
+    let release_queue = &samples[0];
+    let release_plan = release_queue.render_plan();
+
+    assert_eq!(release_queue.id, "release-queue");
+    assert_eq!(release_queue.state.rows().len(), 10_000);
+    assert_eq!(release_plan.table().final_model().rows().len(), 10_000);
+    assert_eq!(
+        release_plan.table().final_model().rows()[0].id().as_str(),
+        "release-queue-row-0000"
+    );
+    assert_eq!(release_plan.virtualizer().count(), 10_000);
+    assert!(!release_plan.virtualizer().visible_range().is_empty());
+    assert!(release_plan.rendered_row_count() <= release_plan.visible_row_count() + 5);
+    assert_eq!(release_plan.row_role(), Role::Row);
+    assert_eq!(release_plan.column_header_role(), Role::ColumnHeader);
+    assert_eq!(release_plan.cell_role(), Role::Cell);
+
+    let filter_board = &samples[1];
+    let filter_plan = filter_board.render_plan();
+
+    assert_eq!(filter_board.id, "filter-board");
+    assert_eq!(filter_board.state.rows().len(), 180);
+    assert_eq!(filter_plan.table().filtered_model().rows().len(), 60);
+    assert_eq!(filter_plan.table().final_model().rows().len(), 24);
+    assert_eq!(
+        filter_plan.table().final_model().rows()[0].id().as_str(),
+        "filter-board-row-177"
+    );
+    assert_eq!(filter_plan.table().final_model().selected_count(), 1);
+    assert_eq!(filter_plan.aria_column_count(), 4);
 }
 
 #[test]
@@ -1721,6 +1780,7 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     );
     assert!(gates.iter().any(|gate| gate.id == "scroll-redraw"));
     assert!(gates.iter().any(|gate| gate.id == "tabs-overflow"));
+    assert!(gates.iter().any(|gate| gate.id == "table-virtualization"));
     assert!(signals.contains(&"open_gpui_ui_components::Listbox"));
     assert!(signals.contains(&"open_gpui_ui_components::ListboxState"));
     assert!(signals.contains(&"open_gpui_ui_components::Select"));
@@ -1729,11 +1789,18 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"open_gpui_ui_components::ComboboxState"));
     assert!(signals.contains(&"open_gpui_ui_components::Command"));
     assert!(signals.contains(&"open_gpui_ui_components::CommandState"));
+    assert!(signals.contains(&"open_gpui_ui_components::Table"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableState"));
+    assert!(signals.contains(&"open_gpui_ui_components::VirtualizerState"));
     assert!(signals.contains(&"Role::ListBox"));
     assert!(signals.contains(&"Role::ListBoxOption"));
     assert!(signals.contains(&"Role::EditableComboBox"));
     assert!(signals.contains(&"Role::ProgressIndicator"));
     assert!(signals.contains(&"Role::Image"));
+    assert!(signals.contains(&"Role::Table"));
+    assert!(signals.contains(&"Role::Row"));
+    assert!(signals.contains(&"Role::ColumnHeader"));
+    assert!(signals.contains(&"Role::Cell"));
 }
 
 #[open_gpui::test]
@@ -2368,6 +2435,49 @@ fn components_gallery_smoke_release_queue_card_wheel_does_not_leak_to_page(
     assert_eq!(
         queue_after, queue_before,
         "expected wheel input on the release queue card chrome to leave the inner viewport unchanged; before={queue_before:?} after={queue_after:?}"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_table_scroll_stays_inside_sample(cx: &mut open_gpui::TestAppContext) {
+    let cx = open_components_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:component-table-sample:release-queue");
+    let sample_before = bounds(cx, "gallery:component-table-sample:release-queue");
+    let table_viewport = bounds(
+        cx,
+        "scroll-area:table:component-table:release-queue:body-scroll",
+    );
+
+    assert!(
+        cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0000")
+            .is_some(),
+        "expected the initial release queue table window to render the first row"
+    );
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: table_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after = bounds(cx, "gallery:component-table-sample:release-queue");
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected Table viewport wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert!(
+        cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0000")
+            .is_none(),
+        "expected virtualized Table row 0000 to leave the rendered window after internal scroll"
+    );
+    assert!(
+        cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0010")
+            .is_some(),
+        "expected virtualized Table row 0010 to enter the rendered window after internal scroll"
     );
 }
 

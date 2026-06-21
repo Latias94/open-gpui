@@ -10,13 +10,14 @@ use open_gpui_ui_components::{
     RadioGroupState, RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy,
     SelectState, Separator, SeparatorState, SidebarCollapseMode, SidebarItemDescriptor,
     SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton, SkeletonState,
-    SplitterPanelDescriptor, SplitterState, Switch, SwitchState, Tabs, TabsActivationMode,
+    SplitterPanelDescriptor, SplitterState, Switch, SwitchState, Table, TableColumn, TableFilter,
+    TablePagination, TableRenderPlan, TableRow, TableSort, TableState, Tabs, TabsActivationMode,
     TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState,
     ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
-    OverlayPlacementAlignment, OverlayPlacementSide, Sizable, Size, ThemeTokens,
+    OverlayPlacementAlignment, OverlayPlacementSide, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
 
 #[path = "components/render.rs"]
@@ -107,6 +108,10 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::SplitterState",
     "open_gpui_ui_components::SplitterPanel",
     "open_gpui_ui_components::SplitterPanelDescriptor",
+    "open_gpui_ui_components::Table",
+    "open_gpui_ui_components::TableState",
+    "open_gpui_ui_components::TableHeaderAction",
+    "open_gpui_ui_components::VirtualizerState",
     "ThemeTokens",
     "Size",
     "Role::Button",
@@ -127,6 +132,10 @@ pub const SIGNALS: &[&str] = &[
     "Role::TabList",
     "Role::Tab",
     "Role::TabPanel",
+    "Role::Table",
+    "Role::Row",
+    "Role::ColumnHeader",
+    "Role::Cell",
 ];
 
 /// Stable jump targets for the Components page navigator.
@@ -227,6 +236,10 @@ pub const COMPONENT_PAGE_JUMPS: &[ComponentPageJump] = &[
     ComponentPageJump {
         id: "tabs",
         label: "Tabs",
+    },
+    ComponentPageJump {
+        id: "table",
+        label: "Table",
     },
     ComponentPageJump {
         id: "signals",
@@ -491,6 +504,13 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "exports / gallery / drag smoke",
         "gallery:component-splitter-sample:workspace-split",
     ),
+    ComponentCatalogEntry::official(
+        "Table",
+        "data",
+        "TableState",
+        "exports / gallery / virtualized scroll smoke",
+        "gallery:component-table-sample:release-queue",
+    ),
     ComponentCatalogEntry::adapter_only(
         "TextInputController",
         "form-adapter",
@@ -605,6 +625,17 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "workspace-tabs",
             "components_page_tabs_samples_expose_roving_focus_contract",
             "docs/verification.md",
+        ],
+    },
+    ComponentConformanceGate {
+        id: "table-virtualization",
+        title: "Table virtualization and row identity",
+        summary: "Table keeps stable row ids, header action metadata, row-model metadata, and nested scroll ownership.",
+        evidence: &[
+            "TableState::resolve",
+            "Table::render_plan",
+            "TableHeaderAction",
+            "components_gallery_smoke_table_scroll_stays_inside_sample",
         ],
     },
     ComponentConformanceGate {
@@ -820,6 +851,50 @@ impl TabsSample {
         } else {
             tabs
         }
+    }
+}
+
+/// One table sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample title.
+    pub title: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Stable badge label.
+    pub badge: &'static str,
+    /// Resolved renderer-neutral table state.
+    pub state: TableState,
+    /// Visual size applied to the concrete table.
+    pub size: Size,
+    /// Fixed table body viewport used by the sample.
+    pub viewport_extent: UiPx,
+    /// Fixed row height used by the virtualizer.
+    pub row_height: UiPx,
+    /// Overscan row budget.
+    pub overscan: usize,
+}
+
+impl TableSample {
+    /// Builds the concrete GPUI table for this sample.
+    pub fn build_table(&self) -> Table {
+        Table::new(
+            format!("component-table:{}", self.id),
+            self.title,
+            self.state.clone(),
+        )
+        .with_size(self.size)
+        .viewport_extent(self.viewport_extent)
+        .row_height(self.row_height)
+        .overscan(self.overscan)
+    }
+
+    /// Resolves the table plan used by gallery tests and state rows.
+    pub fn render_plan(&self) -> TableRenderPlan {
+        self.build_table()
+            .render_plan(UiPx::ZERO, self.viewport_extent)
     }
 }
 
@@ -1100,6 +1175,7 @@ impl_component_sample_selectors!(LabelSample, "component-label-sample");
 impl_component_sample_selectors!(TextInputSample, "component-text-input-sample");
 impl_component_sample_selectors!(FieldSample, "component-field-sample");
 impl_component_sample_selectors!(TabsSample, "component-tabs-sample");
+impl_component_sample_selectors!(TableSample, "component-table-sample");
 impl_component_sample_selectors!(ScrollAreaSample, "component-scroll-area-sample");
 impl_component_sample_selectors!(SplitterSample, "component-splitter-sample");
 impl_component_sample_selectors!(SeparatorSample, "component-separator-sample");
@@ -1830,6 +1906,86 @@ pub fn tabs_samples(tokens: ThemeTokens) -> [TabsSample; 2] {
             items: workspace_items,
         },
     ]
+}
+
+/// Returns table samples backed by real table and virtualizer contracts.
+pub fn table_samples(_tokens: ThemeTokens) -> [TableSample; 2] {
+    let release_queue_rows = (0..10_000).map(release_queue_row).collect::<Vec<_>>();
+    let filter_board_rows = (0..180).map(filter_board_row).collect::<Vec<_>>();
+
+    [
+        TableSample {
+            id: "release-queue",
+            title: "Release queue",
+            summary: "Ten thousand stable rows sorted by score with a local virtualized viewport.",
+            badge: "10k rows",
+            state: TableState::new(release_queue_rows)
+                .with_columns(table_columns())
+                .with_column_order(["name", "team", "status", "score"])
+                .with_sorting([TableSort::descending("score")])
+                .with_selected_rows(["release-queue-row-0005"])
+                .with_pagination(TablePagination::disabled()),
+            size: Size::Small,
+            viewport_extent: ui_px(196.0),
+            row_height: ui_px(30.0),
+            overscan: 5,
+        },
+        TableSample {
+            id: "filter-board",
+            title: "Filtered board",
+            summary: "Filtered, sorted, and paginated rows keep selection tied to row ids.",
+            badge: "filtered",
+            state: TableState::new(filter_board_rows)
+                .with_columns(table_columns())
+                .with_column_order(["name", "team", "status", "score"])
+                .with_filters([TableFilter::contains("team", "UI")])
+                .with_sorting([TableSort::descending("score")])
+                .with_selected_rows(["filter-board-row-177"])
+                .with_pagination(TablePagination::new(0, 24)),
+            size: Size::Small,
+            viewport_extent: ui_px(196.0),
+            row_height: ui_px(30.0),
+            overscan: 4,
+        },
+    ]
+}
+
+fn table_columns() -> [TableColumn; 4] {
+    [
+        TableColumn::new("name", "Name"),
+        TableColumn::new("team", "Team"),
+        TableColumn::new("status", "Status"),
+        TableColumn::new("score", "Score"),
+    ]
+}
+
+fn release_queue_row(index: usize) -> TableRow {
+    let teams = ["UI", "Runtime", "Platform", "Docs", "QA"];
+    let statuses = ["Ready", "Review", "Build", "Verify", "Blocked"];
+    let score = 10_000_usize.saturating_sub(index);
+
+    TableRow::new(format!("release-queue-row-{index:04}"))
+        .with_cell("name", format!("Release #{index:04}"))
+        .with_cell("team", teams[index % teams.len()])
+        .with_cell("status", statuses[(index / 7) % statuses.len()])
+        .with_cell("score", score)
+}
+
+fn filter_board_row(index: usize) -> TableRow {
+    let team = if index.is_multiple_of(3) {
+        "UI"
+    } else if index.is_multiple_of(2) {
+        "Platform"
+    } else {
+        "Runtime"
+    };
+    let statuses = ["Todo", "Doing", "Review", "Done"];
+
+    TableRow::new(format!("filter-board-row-{index:03}"))
+        .with_cell("name", format!("Board item {index:03}"))
+        .with_cell("team", team)
+        .with_cell("status", statuses[index % statuses.len()])
+        .with_cell("score", index)
 }
 
 /// Returns scroll area samples backed by real component state.

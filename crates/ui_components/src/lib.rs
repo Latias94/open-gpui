@@ -39,6 +39,7 @@ pub mod sidebar;
 pub mod skeleton;
 pub mod splitter;
 pub mod switch;
+pub mod table;
 pub mod tabs;
 pub mod text_input;
 pub mod theme;
@@ -103,6 +104,13 @@ pub use menu::{
     Menu, MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuItemState, MenuMetrics,
     MenuOpenMode, MenuSelection, MenuState, menu_navigation_target,
 };
+pub use open_gpui_ui_core::{
+    TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableCellValue, TableColumn,
+    TableColumnId, TableFilter, TablePagination, TableResolvedRow, TableResolvedState, TableRow,
+    TableRowId, TableRowModel, TableRowModelStage, TableSort, TableSortDirection, TableState,
+    VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState,
+    VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
+};
 pub use overlay::OverlayResolvedState;
 pub use popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
 pub use progress::{Progress, ProgressColors, ProgressMetrics, ProgressState, ProgressVisualMode};
@@ -134,6 +142,10 @@ pub use splitter::{
     SplitterPanelState, SplitterState,
 };
 pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
+pub use table::{
+    Table, TableCellRenderPlan, TableColumnRenderPlan, TableHeaderAction, TableMetrics,
+    TableRenderPlan, TableRowRenderPlan,
+};
 pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
     TabsSelection, TabsState,

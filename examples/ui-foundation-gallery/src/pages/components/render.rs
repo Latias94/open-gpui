@@ -30,6 +30,7 @@ pub(crate) struct ComponentPageAnchors {
     text_input: ScrollAnchor,
     field: ScrollAnchor,
     tabs: ScrollAnchor,
+    table: ScrollAnchor,
     signals: ScrollAnchor,
 }
 
@@ -60,6 +61,7 @@ impl ComponentPageAnchors {
             text_input: anchor(),
             field: anchor(),
             tabs: anchor(),
+            table: anchor(),
             signals: anchor(),
         }
     }
@@ -88,6 +90,7 @@ impl ComponentPageAnchors {
             "text-input" => self.text_input.clone(),
             "field" => self.field.clone(),
             "tabs" => self.tabs.clone(),
+            "table" => self.table.clone(),
             "signals" => self.signals.clone(),
             other => panic!("unknown Components page section id `{other}`"),
         }
@@ -226,6 +229,7 @@ pub(crate) fn render_components_page(
     let avatar_samples = pages::components::avatar_samples(snapshot.tokens);
     let scroll_area_samples = pages::components::scroll_area_samples(snapshot.tokens);
     let splitter_samples = pages::components::splitter_samples(snapshot.tokens);
+    let table_samples = pages::components::table_samples(snapshot.tokens);
 
     div()
         .id("gallery-components-page")
@@ -1253,6 +1257,81 @@ pub(crate) fn render_components_page(
                     ),
                 )
                 .child(
+                    component_page_section("table", anchors.table.clone()).child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child("Table"),
+                            )
+                            .child(div().flex().gap_3().flex_wrap().children(
+                                table_samples.into_iter().map(|sample| {
+                                    let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
+                                    let title = sample.title;
+                                    let summary = sample.summary;
+                                    let badge = sample.badge;
+                                    let plan = sample.render_plan();
+                                    let table = sample.build_table();
+
+                                    div()
+                                        .id(format!("component-table-sample:{sample_id}"))
+                                        .debug_selector(move || debug_selector)
+                                        .w(px(560.0))
+                                        .flex_none()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .on_scroll_wheel(|_, window, cx| {
+                                            window.prevent_default();
+                                            cx.stop_propagation();
+                                        })
+                                        .p_3()
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap_2()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                                        .child(title),
+                                                )
+                                                .child(label_pill(badge)),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0x5a6472))
+                                                .child(summary),
+                                        )
+                                        .child(
+                                            div()
+                                                .h(px(228.0))
+                                                .min_h(px(0.0))
+                                                .overflow_hidden()
+                                                .rounded_sm()
+                                                .border_1()
+                                                .border_color(rgb(0xe2e4dc))
+                                                .bg(rgb(0xfcfcf8))
+                                                .child(table),
+                                        )
+                                        .child(component_table_state_row(&plan))
+                                }),
+                            )),
+                    ),
+                )
+                .child(
                     component_page_section("signals", anchors.signals.clone())
                         .child(shell.render_signal_list(snapshot.selected_page)),
                 ),
@@ -1284,6 +1363,37 @@ pub(crate) fn component_tabs_state_row(state: &TabsState) -> impl IntoElement {
             "{} items / {} disabled",
             state.items().len(),
             disabled_count
+        ))
+}
+
+pub(crate) fn component_table_state_row(plan: &TableRenderPlan) -> impl IntoElement {
+    let visible = plan.virtualizer().visible_range();
+    let overscan = plan.virtualizer().overscan_range();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} core / {} final / {} rendered",
+            plan.table().core_model().rows().len(),
+            plan.table().final_model().rows().len(),
+            plan.rendered_row_count()
+        ))
+        .child(format!(
+            "visible {}..{} / overscan {}..{}",
+            visible.start(),
+            visible.end(),
+            overscan.start(),
+            overscan.end()
+        ))
+        .child(format!(
+            "{} columns / {} aria rows / {} selected",
+            plan.aria_column_count(),
+            plan.aria_row_count(),
+            plan.table().final_model().selected_count()
         ))
 }
 

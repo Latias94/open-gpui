@@ -1,11 +1,16 @@
 ---
 type: Current State
-title: open-gpui table and virtualizer planning state
+title: open-gpui table and virtualizer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: a7f0b96
+git_commit: 22f2012
 verified_by:
+  - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-foundation-gallery table
+  - cargo check -p open-gpui-ui-foundation-gallery --tests
+  - cargo check -p open-gpui-ui-components --tests
+  - cargo check -p open-gpui-ui-core --tests
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_navigation_rail_scrolls_inside_shell components_gallery_smoke_vertical_tabs_scroll_inside_sample components_gallery_smoke_scroll_area_samples_scroll_inside_page components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
   - cargo nextest run -p open-gpui-ui-components scroll_area_default_handle_survives_reconstructed_component_values scroll_area_reset_key_resets_default_runtime_handle scroll_area_runtime_scrolls_horizontal_and_two_axis_content tabs_vertical_tablist_scrolls_when_constrained
   - cargo nextest run -p open-gpui-ui-components alert_dialog_state_records_required_actions_and_destructive_intent alert_dialog_state_blocks_underlay_and_restores_focus_to_trigger
@@ -20,9 +25,9 @@ verified_by:
 
 # Current State
 
-- Goal: 设计 open-gpui 下一阶段的 table / virtualizer 系列，并把方向写进工程记忆和计划文档。
+- Goal: Complete the Table / Virtualizer implementation, gallery conformance, documentation, and verification for `docs/plans/2026-06-21-001-feat-ui-table-virtualizer-roadmap-plan.md`.
 - Branch: `main`
-- Last verified: 2026-06-21, gallery hardening remains the last runtime verification state; this session has only advanced planning and memory.
+- Last verified: 2026-06-22, full `open-gpui-ui-core` + `open-gpui-ui-components` + `open-gpui-ui-foundation-gallery` nextest passed 257/257, including `components_gallery_smoke_table_scroll_stays_inside_sample`.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -34,8 +39,14 @@ verified_by:
 - Done: Wrote the table / virtualizer roadmap plan and tightened it around table-core v0, virtualizer v0, gallery conformance, and official component gates.
 - Done: Added ADR 0009 and extended the component contract / verification docs with the table and virtualizer product boundary.
 - Done: Implemented `open-gpui-ui-core::table` and `open-gpui-ui-core::virtualizer` with passing core contract tests.
+- Done: Added `open_gpui_ui_components::Table` as a thin GPUI recipe over `TableState` and `VirtualizerState`; concrete `ScrollHandle` ownership stays in the adapter layer.
+- Done: Promoted Table into the Components gallery catalog, signals, page directory, conformance gates, and rendered samples (`release-queue` with 10k rows plus `filter-board` with filter/sort/pagination).
+- Done: Added Table gallery contract and runtime smoke coverage proving row-model metadata, a11y roles, virtualized render windows, and nested scroll containment.
+- Done: Added `TableHeaderAction` and `Table::on_sort_requested` so sortable headers emit state-update payloads without moving table state ownership into render code.
+- Done: Hardened the Table adapter after review: live scroll offsets win after virtualizer measurement snapshots, duplicate row ids get unique render/virtualizer keys, and header/body column minimum widths match.
+- Follow-up: Table virtualization currently limits rendered nodes, but row-model resolution and virtualizer measurement resolution still do O(n) work for the 10k gallery sample; next performance slice should cache resolved row models or add a fixed-height fast path.
 - Blocked: None.
-- Next action: implement the GPUI `Table` adapter and its export surface in `open-gpui-ui-components`.
+- Next action: commit the Table adapter + gallery/docs slice, then plan the next Table performance slice around row-model caching or fixed-height virtualizer fast paths.
 
 # Citations
 
@@ -49,3 +60,5 @@ verified_by:
 [8] Plan `docs/plans/2026-06-21-001-feat-ui-table-virtualizer-roadmap-plan.md`
 [9] ADR `docs/adr/0009-open-gpui-table-and-virtualizer-product-shape.md`
 [10] Verification command `cargo nextest run -p open-gpui-ui-core`
+[11] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery table`
+[12] Verification command `cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`

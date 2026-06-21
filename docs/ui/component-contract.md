@@ -333,29 +333,34 @@ default path must preserve offset across reconstructed component values.
 
 ## Table and Virtualizer Contracts
 
-`TableState` should describe renderer-neutral table behavior: stable row ids, row lookup, row-model
-stage vocabulary, selection keyed by row id, column visibility and ordering, sorting, filtering, and
+`TableState` describes renderer-neutral table behavior: stable row ids, row lookup, row-model stage
+vocabulary, selection keyed by row id, column visibility and ordering, sorting, filtering, and
 pagination. The first official table slice implements the v0 row-model pipeline core -> filtered ->
 sorted -> paginated. Grouped and expanded row models remain named stages for future compatibility,
 but they must not be implied by the v0 resolver until those transforms are implemented and tested.
 
-`VirtualizerState` should describe renderer-neutral viewport calculation inputs and outputs rather
-than a concrete scroll element. The neutral contract accepts item count, viewport extent, scroll
-offset, estimated item size, measurements keyed by stable item key, overscan, gap, and scroll
-margin. It returns visible and overscan ranges, item measurements, total size, and snapshot/restore
-metadata. GPUI adapters own `ScrollHandle`, wheel events, pointer hitboxes, and any concrete scroll
-offset mutation.
+`VirtualizerState` describes renderer-neutral viewport calculation inputs and outputs rather than a
+concrete scroll element. The neutral contract accepts item count, viewport extent, scroll offset,
+estimated item size, measurements keyed by stable item key, overscan, gap, and scroll margin. It
+returns visible and overscan ranges, item measurements, total size, and snapshot/restore metadata.
+GPUI adapters own `ScrollHandle`, wheel events, pointer hitboxes, and any concrete scroll offset
+mutation. The first `Table` adapter consumes virtualizer snapshots as measurement-cache seeds; live
+scroll offset from the adapter runtime wins during render, and one-shot scroll-position restoration
+remains a future adapter-runtime policy.
 
-The GPUI `Table` adapter should resolve table state and virtualizer ranges before rendering. The
-adapter owns the element tree, concrete scroll viewport, keyboard and pointer events, header
-actions, focus handles, and AccessKit mapping. Table accessibility metadata should include table,
-row, and cell roles where available, row and column position metadata where the adapter can expose
-it, sort metadata for sortable headers, and selection metadata keyed by stable row id.
+The GPUI `Table` adapter resolves table state and virtualizer ranges before rendering. The adapter
+owns the element tree, concrete scroll viewport, wheel containment, header/body drawing, sortable
+header activation callbacks, focus handles, and AccessKit mapping. Table accessibility metadata
+includes table, row, column-header, and cell roles, row and column position metadata, sort metadata
+for sortable headers, and selection metadata keyed by stable row id.
 
 An official Table entry must satisfy the normal component completion gate: `Table` and `TableState`
 exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
 entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests for row
 identity and virtualizer behavior, and gallery runtime tests for nested scroll containment.
+Pinned columns, grouped rows, expanded/tree rows, aggregation, custom column sizing, sticky headers,
+resolved row-model caching, fixed-height virtualizer fast paths, and two-dimensional grid
+virtualization remain follow-up capabilities.
 
 ## Splitter Constraints
 
@@ -481,9 +486,13 @@ arrows, text-selection leases, and richer focus-scope traversal remain deferred.
 `ScrollArea` covers viewport overflow, axis metadata, scrollbar width metrics, and explicit
 reset-on-key-change semantics. It intentionally does not yet expose custom scrollbar anatomy,
 nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.
-`Table` and `Virtualizer` are the next planned contracts. They should keep row identity, row-model
-ordering, range math, measurement idempotence, and scroll ownership split between `ui_core` and the
-GPUI adapter before being treated as finished official components.
+`Table` covers stable row ids, row-model ordering, sortable header action payloads,
+crate-root/prelude exports, table/cell roles, and a vertically virtualized GPUI recipe whose body
+scroll stays inside the table viewport.
+`VirtualizerState` covers one-dimensional range math, stable item keys, measurement idempotence,
+overscan, total size, and snapshot/restore data in `ui_core`; the first Table adapter restores
+snapshot measurements but not captured scroll offsets. Grouped rows, expanded tree rows, pinned
+columns, sticky headers, aggregation, and two-dimensional grid virtualization remain follow-up work.
 `Splitter` covers panel fraction normalization, min/max constraints, collapsed-panel metadata,
 stable handle anatomy, and local pointer dragging through keyed runtime state. Keyboard resizing,
 controlled resize callbacks, persisted layouts, RTL behavior, and nested splitter arbitration
