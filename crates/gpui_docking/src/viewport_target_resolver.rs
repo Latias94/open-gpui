@@ -255,6 +255,19 @@ impl DockAuthorizedViewportRouteTarget {
     }
 }
 
+impl DockViewportAuthorizedRouteAuthority {
+    pub(crate) fn records_routed_viewport_identity(self) -> bool {
+        matches!(
+            self,
+            Self::TrustedHoveredWindow
+                | Self::EventReceiverLocalScene
+                | Self::PlatformWindowStackFallback
+                | Self::ZOrderFallback
+                | Self::UniqueGeometryFallback
+        )
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn choose_diagnostic_viewport_target(
     hits: Vec<DockViewportTargetHit>,

@@ -109,14 +109,7 @@ pub(crate) fn last_routed_viewport_identity_from_resolution(
 
     let (target_space, target_window_id) = match resolution.route() {
         crate::DockViewportDropRoute::KnownViewport { target, authority } => {
-            if !matches!(
-                authority,
-                crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow
-                    | crate::DockViewportAuthorizedRouteAuthority::EventReceiverLocalScene
-                    | crate::DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback
-                    | crate::DockViewportAuthorizedRouteAuthority::ZOrderFallback
-                    | crate::DockViewportAuthorizedRouteAuthority::UniqueGeometryFallback
-            ) {
+            if !authority.records_routed_viewport_identity() {
                 return None;
             }
             (target.space().clone(), target.window_id())
@@ -126,14 +119,7 @@ pub(crate) fn last_routed_viewport_identity_from_resolution(
             authority,
             ..
         } => {
-            if !matches!(
-                authority,
-                crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow
-                    | crate::DockViewportAuthorizedRouteAuthority::EventReceiverLocalScene
-                    | crate::DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback
-                    | crate::DockViewportAuthorizedRouteAuthority::ZOrderFallback
-                    | crate::DockViewportAuthorizedRouteAuthority::UniqueGeometryFallback
-            ) {
+            if !authority.records_routed_viewport_identity() {
                 return None;
             }
             let preview_target = resolution.delivery()?.routed_preview_target()?;
