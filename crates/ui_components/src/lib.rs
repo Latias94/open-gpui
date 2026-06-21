@@ -16,6 +16,7 @@ pub mod combobox;
 pub mod command;
 pub mod context_menu;
 pub mod dialog;
+pub mod feedback;
 pub mod field;
 mod focus;
 mod geometry;
@@ -88,6 +89,10 @@ pub use command::{
 };
 pub use context_menu::{ContextMenu, ContextMenuState};
 pub use dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
+pub use feedback::{
+    EmptyState, EmptyStateMetrics, EmptyStateState, FeedbackColors, FeedbackIntent, StatusCue,
+    StatusCueMetrics, StatusCueState,
+};
 pub use field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing};
 pub use hover_card::{
