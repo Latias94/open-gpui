@@ -101,6 +101,9 @@ impl DockViewportAdapter {
                     DockViewportPointerRouting::Routable
                 }
             }) else {
+                if self.mark_window_snapshot_stale(window.window_id()) {
+                    changed_windows.push(window);
+                }
                 continue;
             };
             let Some(snapshot) = self.snapshot_mut(&space) else {
@@ -232,13 +235,16 @@ impl DockViewportAdapter {
 mod tests {
     use crate::{
         DockViewportAdapter, DockViewportHit, DockViewportTargetContext, DockViewportWindowFacts,
+        host_test_support::test_view,
         viewport_registry::{
             DockViewportLifecycleState, DockViewportRouteUnavailableReason, DockViewportStaleReason,
         },
         viewport_target_resolver::choose_diagnostic_viewport_target,
         viewport_test_support::{bounds, handle, register_viewport, space},
     };
-    use open_gpui::{DisplayId, WindowBounds, point, px};
+    use open_gpui::{
+        AnyWindowHandle, DisplayId, TestAppContext, WindowBounds, WindowOptions, point, px,
+    };
 
     #[test]
     fn coordinate_conversion_requires_current_bounds_snapshots() {
@@ -315,6 +321,64 @@ mod tests {
             choose_diagnostic_viewport_target(hits, &DockViewportTargetContext::new())
                 .map(|target| target.into_hit()),
             Some(DockViewportHit::new(main, point(px(5.0), px(5.0))))
+        );
+    }
+
+    #[open_gpui::test]
+    fn refresh_registered_window_facts_marks_unreachable_window_stale(cx: &mut TestAppContext) {
+        let root = test_view(cx, "A");
+        let window_bounds = WindowBounds::Windowed(bounds(100.0, 200.0, 320.0, 240.0));
+        let window: AnyWindowHandle = cx
+            .update(|app| {
+                app.open_window(
+                    WindowOptions {
+                        window_bounds: Some(window_bounds),
+                        focus: false,
+                        ..Default::default()
+                    },
+                    |_, _| root.clone(),
+                )
+            })
+            .expect("test window should open")
+            .into();
+        let mut adapter = DockViewportAdapter::new();
+        let main = space("main");
+        register_viewport(&mut adapter, main.clone(), window);
+        assert!(adapter.update_snapshot(
+            &main,
+            DockViewportWindowFacts::new(
+                Some(DisplayId::new(7)),
+                window_bounds,
+                window_bounds.get_bounds(),
+            ),
+            bounds(0.0, 0.0, 320.0, 240.0),
+        ));
+        assert_eq!(adapter.route_unavailable_reason(&main), None);
+
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .expect("test window should still be live");
+        cx.run_until_parked();
+
+        let changed_windows = adapter.refresh_registered_window_facts(cx);
+        assert_eq!(
+            changed_windows
+                .into_iter()
+                .map(|window| window.window_id())
+                .collect::<Vec<_>>(),
+            vec![window.window_id()],
+        );
+        assert_eq!(
+            adapter.route_unavailable_reason(&main),
+            Some(DockViewportRouteUnavailableReason::Stale(
+                DockViewportStaleReason::WindowFactsChanged
+            ))
+        );
+        let hits = adapter.global_screen_viewport_window_hits(point(px(110.0), px(210.0)));
+        assert_eq!(hits.len(), 1);
+        assert!(
+            hits[0].blocks_host_target(),
+            "stale live-window facts must block fallback instead of authorizing a stale host target"
         );
     }
 
