@@ -285,6 +285,29 @@ impl DockViewportTearOffPlacementPolicy {
     }
 }
 
+pub(crate) fn suggested_tear_off_window_bounds(
+    source_window_bounds: WindowBounds,
+    host_position: Point<Pixels>,
+    geometry: DockDragTearOffGeometry,
+) -> WindowBounds {
+    let mut size = geometry
+        .preferred_size()
+        .unwrap_or_else(|| geometry.source_bounds().size);
+    if let Some(work_area) = geometry.display_work_area() {
+        size = size.min(&work_area.size);
+    }
+
+    let cursor_offset = geometry
+        .cursor_offset()
+        .clamp(&point(px(0.0), px(0.0)), &point(size.width, size.height));
+    let source_window_origin = source_window_bounds.get_bounds().origin;
+    let mut bounds = Bounds::new(source_window_origin + host_position - cursor_offset, size);
+    if let Some(work_area) = geometry.display_work_area() {
+        bounds = clamp_bounds_to_work_area(bounds, work_area);
+    }
+    WindowBounds::Windowed(bounds)
+}
+
 #[derive(Debug)]
 pub(crate) struct DockViewportPreparedTearOffDrop {
     pub(crate) request: DockViewportTearOffRequest,

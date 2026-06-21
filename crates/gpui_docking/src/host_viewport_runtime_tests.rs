@@ -8091,6 +8091,52 @@ fn viewport_runtime_tear_off_without_global_release_point_does_not_use_drag_posi
 }
 
 #[open_gpui::test]
+fn viewport_runtime_tear_off_suggested_bounds_authorize_missing_global_release_point(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let workspace = DockWorkspace::new(source_space.clone(), graph);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntime::new(controller);
+    let suggested = WindowBounds::Windowed(floating_bounds(700.0, 710.0, 420.0, 260.0));
+    let geometry = DockDragTearOffGeometry::from_source_bounds(
+        floating_bounds(200.0, 120.0, 480.0, 300.0),
+        point(px(260.0), px(150.0)),
+    );
+    let request = DockViewportTearOffRequest::new(
+        source_space,
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        None,
+        Some(suggested),
+    )
+    .with_tear_off_geometry(Some(geometry));
+
+    let placement = runtime
+        .tear_off_window_placement(&request)
+        .expect("host-suggested bounds should authorize tear-off placement without global release");
+    assert_eq!(
+        placement.source(),
+        DockViewportTearOffPlacementSource::Suggested
+    );
+    assert_eq!(placement.window_bounds(), suggested);
+    assert_eq!(
+        runtime
+            .tear_off_window_options(&request)
+            .expect("suggested bounds should produce window options")
+            .window_bounds,
+        Some(suggested)
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_tear_off_suggested_bounds_override_drag_geometry(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let mut graph = DockGraph::new();
