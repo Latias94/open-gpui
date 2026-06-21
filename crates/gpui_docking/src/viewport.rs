@@ -115,8 +115,8 @@ impl DockViewportAdapter {
         self.registry.window_for_space(space)
     }
 
-    pub(crate) fn record_recent_focus_window(&mut self, window_id: WindowId) -> bool {
-        self.registry.record_recent_focus_window(window_id)
+    pub(crate) fn record_z_order_fallback_window(&mut self, window_id: WindowId) -> bool {
+        self.registry.record_z_order_fallback_window(window_id)
     }
 
     /// Returns the logical dock space rendered by a window id.
@@ -148,8 +148,8 @@ impl DockViewportAdapter {
             .insert_stale_window_index_for_test(window_id, space);
     }
 
-    pub(crate) fn spaces_by_recent_focus_order(&self) -> Vec<DockSpaceId> {
-        self.registry.spaces_by_recent_focus_order()
+    pub(crate) fn spaces_by_fallback_z_order(&self) -> Vec<DockSpaceId> {
+        self.registry.spaces_by_fallback_z_order()
     }
 }
 
@@ -317,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn viewport_target_empty_context_uses_stable_space_order_despite_recent_focus() {
+    fn viewport_target_empty_context_uses_stable_space_order_despite_z_order_fallback() {
         let mut adapter = DockViewportAdapter::new();
         let alpha = space("alpha");
         let zeta = space("zeta");
@@ -335,20 +335,20 @@ mod tests {
                 bounds(0.0, 0.0, 320.0, 240.0),
             );
         }
-        adapter.record_recent_focus_window(alpha_window.window_id());
-        adapter.record_recent_focus_window(zeta_window.window_id());
+        adapter.record_z_order_fallback_window(alpha_window.window_id());
+        adapter.record_z_order_fallback_window(zeta_window.window_id());
         let hits = adapter.global_screen_viewport_hits(point(px(120.0), px(140.0)));
 
         assert_eq!(
             choose_diagnostic_viewport_target(hits, &DockViewportTargetContext::new())
                 .map(|target| target.space().clone()),
             Some(alpha.clone()),
-            "default viewport hit testing must not infer target priority from recent focus"
+            "default viewport hit testing must not infer target priority from fallback z-order"
         );
         assert_eq!(
-            adapter.spaces_by_recent_focus_order(),
+            adapter.spaces_by_fallback_z_order(),
             vec![zeta, alpha],
-            "recent focus remains available only through the explicit diagnostic ordering interface"
+            "fallback z-order remains available only through the explicit diagnostic ordering interface"
         );
     }
 

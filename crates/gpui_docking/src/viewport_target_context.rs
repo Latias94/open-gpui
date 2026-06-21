@@ -1,6 +1,37 @@
-#[cfg(test)]
-use open_gpui::AnyWindowHandle;
-use open_gpui::WindowId;
+use open_gpui::{AnyWindowHandle, WindowId};
+
+/// Front-to-back platform window stack captured for fallback ordering.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct DockViewportFrontToBackWindowStack {
+    windows: Vec<WindowId>,
+}
+
+impl DockViewportFrontToBackWindowStack {
+    pub(crate) fn from_window_ids(windows: impl IntoIterator<Item = WindowId>) -> Self {
+        let mut normalized = Vec::new();
+        for window_id in windows {
+            if normalized.iter().any(|existing| *existing == window_id) {
+                continue;
+            }
+            normalized.push(window_id);
+        }
+        Self {
+            windows: normalized,
+        }
+    }
+
+    pub(crate) fn from_windows<I, W>(windows: I) -> Self
+    where
+        I: IntoIterator<Item = W>,
+        W: Into<AnyWindowHandle>,
+    {
+        Self::from_window_ids(windows.into_iter().map(|window| window.into().window_id()))
+    }
+
+    pub(crate) fn as_slice(&self) -> &[WindowId] {
+        &self.windows
+    }
+}
 
 /// Trusted backend hovered-window signal captured for this routing snapshot.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -12,8 +43,6 @@ pub(crate) enum DockViewportTrustedHoveredSignal {
     TrustedNone,
     /// The backend reported the application window under the pointer.
     Trusted(WindowId),
-    /// The backend reported a hovered window, but docking intentionally discarded that authority.
-    Discarded,
 }
 
 /// Pure resolver context derived from platform window signals.
@@ -22,7 +51,7 @@ pub(crate) struct DockViewportTargetContext {
     /// Trusted backend hovered-window signal.
     trusted_hovered_signal: DockViewportTrustedHoveredSignal,
     /// Front-to-back window stack, when the platform provides it.
-    window_stack: Vec<WindowId>,
+    window_stack: DockViewportFrontToBackWindowStack,
 }
 
 impl DockViewportTrustedHoveredSignal {
@@ -38,7 +67,7 @@ impl DockViewportTrustedHoveredSignal {
     pub(crate) fn trusted_window(self) -> Option<WindowId> {
         match self {
             Self::Trusted(window) => Some(window),
-            Self::TrustedNone | Self::Unavailable | Self::Discarded => None,
+            Self::TrustedNone | Self::Unavailable => None,
         }
     }
 }
@@ -46,7 +75,7 @@ impl DockViewportTrustedHoveredSignal {
 impl DockViewportTargetContext {
     pub(crate) fn from_window_signals(
         trusted_hovered_signal: DockViewportTrustedHoveredSignal,
-        window_stack: Vec<WindowId>,
+        window_stack: DockViewportFrontToBackWindowStack,
     ) -> Self {
         Self {
             trusted_hovered_signal,
@@ -65,7 +94,7 @@ impl DockViewportTargetContext {
                 platform_hovered_window,
                 platform_hovered_window_known,
             ),
-            window_stack,
+            DockViewportFrontToBackWindowStack::from_window_ids(window_stack),
         )
     }
 
@@ -84,40 +113,21 @@ impl DockViewportTargetContext {
         )
     }
 
-    pub(crate) fn trusted_hovered_window_unavailable(&self) -> bool {
-        matches!(
-            self.trusted_hovered_signal,
-            DockViewportTrustedHoveredSignal::Unavailable
-        )
-    }
-
-    pub(crate) fn trusted_hovered_window_known_empty(&self) -> bool {
-        matches!(
-            self.trusted_hovered_signal,
-            DockViewportTrustedHoveredSignal::TrustedNone
-        )
-    }
-
-    pub(crate) fn trusted_hovered_window_authority_discarded(&self) -> bool {
-        matches!(
-            self.trusted_hovered_signal,
-            DockViewportTrustedHoveredSignal::Discarded
-        )
-    }
-
-    pub(crate) fn without_trusted_hovered_window_authority(&self) -> Self {
-        Self {
-            trusted_hovered_signal: DockViewportTrustedHoveredSignal::Discarded,
-            window_stack: self.window_stack.clone(),
-        }
+    pub(crate) fn trusted_hovered_signal(&self) -> DockViewportTrustedHoveredSignal {
+        self.trusted_hovered_signal
     }
 
     pub(crate) fn backend_hover_fallback_window_stack(&self) -> &[WindowId] {
-        &self.window_stack
+        self.window_stack.as_slice()
     }
 
     #[cfg(test)]
-    pub(crate) fn into_window_signals(self) -> (DockViewportTrustedHoveredSignal, Vec<WindowId>) {
+    pub(crate) fn into_window_signals(
+        self,
+    ) -> (
+        DockViewportTrustedHoveredSignal,
+        DockViewportFrontToBackWindowStack,
+    ) {
         (self.trusted_hovered_signal, self.window_stack)
     }
 
@@ -151,10 +161,7 @@ impl DockViewportTargetContext {
         mut self,
         windows: impl IntoIterator<Item = impl Into<AnyWindowHandle>>,
     ) -> Self {
-        self.window_stack = windows
-            .into_iter()
-            .map(|window| window.into().window_id())
-            .collect();
+        self.window_stack = DockViewportFrontToBackWindowStack::from_windows(windows);
         self
     }
 }
@@ -175,7 +182,21 @@ mod tests {
 
         assert_eq!(context.trusted_hovered_window(), Some(third));
         assert_eq!(context.backend_hover_fallback_window_stack(), &[first]);
-        assert!(!context.trusted_hovered_window_unavailable());
+    }
+
+    #[test]
+    fn front_to_back_window_stack_preserves_first_occurrence() {
+        let front = WindowId::from(1);
+        let back = WindowId::from(2);
+        let context = DockViewportTargetContext::from_window_signals(
+            DockViewportTrustedHoveredSignal::Unavailable,
+            DockViewportFrontToBackWindowStack::from_window_ids([front, back, front]),
+        );
+
+        assert_eq!(
+            context.backend_hover_fallback_window_stack(),
+            &[front, back]
+        );
     }
 
     #[test]
@@ -183,7 +204,7 @@ mod tests {
         let hovered = WindowId::from(7);
         let context = DockViewportTargetContext::from_window_signals(
             DockViewportTrustedHoveredSignal::Trusted(hovered),
-            vec![],
+            DockViewportFrontToBackWindowStack::default(),
         );
 
         assert!(!context.trusted_hovered_window_matches_event_receiver(None));

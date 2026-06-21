@@ -576,7 +576,8 @@ impl Interactivity {
     pub fn on_drag<T, W>(
         &mut self,
         value: T,
-        constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
+        constructor: impl Fn(&T, Point<Pixels>, Bounds<Pixels>, &mut Window, &mut App) -> Entity<W>
+        + 'static,
     ) where
         Self: Sized,
         T: 'static,
@@ -588,8 +589,8 @@ impl Interactivity {
         );
         self.drag_listener = Some((
             Arc::new(value),
-            Box::new(move |value, offset, window, cx| {
-                constructor(value.downcast_ref().unwrap(), offset, window, cx).into()
+            Box::new(move |value, offset, bounds, window, cx| {
+                constructor(value.downcast_ref().unwrap(), offset, bounds, window, cx).into()
             }),
         ));
     }
@@ -1393,14 +1394,16 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
     /// drag and drop operation. This API should also be used as the equivalent of 'on drag start' with
     /// the [`InteractiveElement::on_drag_move`] API.
-    /// The callback also has access to the offset of triggering click from the origin of parent element.
+    /// The callback also has access to the offset of triggering click from the origin of parent element
+    /// and the source element bounds.
     /// The fluent API equivalent to [`Interactivity::on_drag`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_drag<T, W>(
         mut self,
         value: T,
-        constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
+        constructor: impl Fn(&T, Point<Pixels>, Bounds<Pixels>, &mut Window, &mut App) -> Entity<W>
+        + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -1476,8 +1479,9 @@ pub(crate) type PinchListener =
 
 pub(crate) type ClickListener = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
-pub(crate) type DragListener =
-    Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut App) -> AnyView + 'static>;
+pub(crate) type DragListener = Box<
+    dyn Fn(&dyn Any, Point<Pixels>, Bounds<Pixels>, &mut Window, &mut App) -> AnyView + 'static,
+>;
 
 type DropListener = Box<dyn Fn(&dyn Any, &mut Window, &mut App) + 'static>;
 
@@ -2602,8 +2606,13 @@ impl Interactivity {
                         {
                             *clicked_state.borrow_mut() = ElementClickedState::default();
                             let cursor_offset = event.position - hitbox.origin;
-                            let drag =
-                                (drag_listener)(drag_value.as_ref(), cursor_offset, window, cx);
+                            let drag = (drag_listener)(
+                                drag_value.as_ref(),
+                                cursor_offset,
+                                hitbox.bounds,
+                                window,
+                                cx,
+                            );
                             cx.active_drag = Some(AnyDrag {
                                 view: drag,
                                 value: drag_value,

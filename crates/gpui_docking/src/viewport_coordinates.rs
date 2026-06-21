@@ -5,25 +5,61 @@ use crate::{
 use open_gpui::{AnyWindowHandle, AppContext, Bounds, Pixels, Point, WindowId, point};
 
 impl DockViewportAdapter {
-    /// Collects all registered global-screen hits for a screen point.
-    pub(crate) fn global_screen_viewport_hits(
+    /// Collects all registered platform viewport windows containing a screen point.
+    ///
+    /// Route-ready hits may authorize a host target. Stale/not-ready hits are retained as
+    /// blockers so fallback authority cannot pass through an opaque viewport window. Native
+    /// no-input and minimized windows are skipped like ImGui's viewport fallback.
+    pub(crate) fn global_screen_viewport_window_hits(
         &self,
         position: Point<Pixels>,
-    ) -> Vec<crate::DockViewportTargetHit> {
+    ) -> Vec<crate::DockViewportWindowHit> {
         self.spaces()
             .into_iter()
             .filter_map(|space| {
                 let snapshot = self.snapshot(&space)?;
+                let screen_bounds = snapshot.global_screen_bounds()?;
+                if !screen_bounds.contains(&position) {
+                    return None;
+                }
                 let window = snapshot.window;
+                if matches!(
+                    snapshot.pointer_routing,
+                    DockViewportPointerRouting::Minimized
+                        | DockViewportPointerRouting::NoInputPassThrough
+                ) {
+                    return None;
+                }
+                if let Some(reason) = snapshot.route_unavailable_reason() {
+                    return Some(crate::DockViewportWindowHit::blocking(
+                        space, window, reason,
+                    ));
+                }
                 let facts_generation = snapshot.facts_generation();
-                let host_position = self.global_screen_to_host(&space, position)?;
-                Some(crate::DockViewportTargetHit::with_facts_generation(
+                let window_position = point(
+                    position.x - screen_bounds.origin.x,
+                    position.y - screen_bounds.origin.y,
+                );
+                let host_position = self.window_to_host(&space, window_position);
+                Some(crate::DockViewportWindowHit::with_facts_generation(
                     space,
                     window,
                     host_position,
                     facts_generation,
                 ))
             })
+            .collect()
+    }
+
+    /// Collects all registered dock-host hits for a screen point.
+    #[cfg(test)]
+    pub(crate) fn global_screen_viewport_hits(
+        &self,
+        position: Point<Pixels>,
+    ) -> Vec<crate::DockViewportTargetHit> {
+        self.global_screen_viewport_window_hits(position)
+            .into_iter()
+            .filter_map(crate::DockViewportWindowHit::into_target_hit)
             .collect()
     }
 }

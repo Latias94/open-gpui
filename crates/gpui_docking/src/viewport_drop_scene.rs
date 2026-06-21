@@ -1,7 +1,7 @@
 #[cfg(test)]
 use crate::drop_target::DockResolvedDropTarget;
 use crate::{
-    DockPolicy, DockSpaceId, DockViewportIdentity,
+    DockNodeId, DockPolicy, DockSpaceId, DockViewportIdentity,
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     drop_target::{DockDropResolution, DockDropTargetValidator, DockEdgePlanResolver},
     geometry::DockDropGuideStyle,
@@ -28,13 +28,6 @@ impl DockViewportHostSceneFrame {
 
     fn matches_snapshot(&self, snapshot: &DockViewportHostSceneSnapshot) -> bool {
         self.identity == snapshot.identity() && self.generation == snapshot.generation
-    }
-
-    pub(crate) fn is_current_in(&self, registry: &DockViewportHostSceneRegistry) -> bool {
-        registry
-            .scenes
-            .get(self.space())
-            .is_some_and(|snapshot| self.matches_snapshot(snapshot))
     }
 }
 
@@ -125,8 +118,12 @@ impl DockViewportHostSceneRegistry {
             .scenes
             .get(&snapshot.space)
             .is_none_or(|existing| !existing.same_content_as(&snapshot));
-        self.next_generation = self.next_generation.wrapping_add(1);
-        snapshot.generation = self.next_generation;
+        if changed {
+            self.next_generation = self.next_generation.wrapping_add(1);
+            snapshot.generation = self.next_generation;
+        } else if let Some(existing) = self.scenes.get(&snapshot.space) {
+            snapshot.generation = existing.generation;
+        }
         let frame = snapshot.frame();
         self.scenes.insert(snapshot.space.clone(), snapshot);
         DockViewportHostSceneRegistration { changed, frame }
@@ -199,6 +196,7 @@ impl DockViewportHostSceneRegistry {
             window_id,
             host_position,
             None,
+            Vec::new(),
             policy,
             target_validator,
             None,
@@ -212,6 +210,7 @@ impl DockViewportHostSceneRegistry {
         window_id: Option<WindowId>,
         host_position: Point<Pixels>,
         payload_size: Option<Size<Pixels>>,
+        excluded_nodes: Vec<DockNodeId>,
         policy: &DockPolicy,
         target_validator: Option<&DockDropTargetValidator<'_>>,
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
@@ -221,7 +220,7 @@ impl DockViewportHostSceneRegistry {
             return None;
         }
         let frame = snapshot.frame();
-        let mut scene = snapshot.scene.clone();
+        let mut scene = snapshot.scene.clone().excluding_nodes(excluded_nodes);
         scene.position = point(
             snapshot.host_bounds.origin.x + host_position.x,
             snapshot.host_bounds.origin.y + host_position.y,
@@ -369,6 +368,27 @@ mod tests {
                 )
                 .is_some(),
             "the reopened window should resolve its own scene"
+        );
+    }
+
+    #[test]
+    fn host_scene_register_preserves_generation_for_identical_content() {
+        let space = space("main");
+        let window_id = WindowId::from(1);
+        let mut registry = DockViewportHostSceneRegistry::default();
+
+        let first = registry.register(snapshot(space.clone(), window_id)).frame;
+        let second = registry.register(snapshot(space.clone(), window_id)).frame;
+
+        assert_eq!(
+            first, second,
+            "identical scene content should keep the same frame"
+        );
+        assert!(
+            registry
+                .push_frame_fact(&first, empty_space_fact(space.clone()))
+                .is_some(),
+            "the preserved frame should remain current after identical re-render registration"
         );
     }
 

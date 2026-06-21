@@ -1,6 +1,6 @@
 use crate::{
-    host_test_support::*, DockAction, DockActionApplyError, DockActionOutcome, DockNode, DockPanel,
-    DockPanelAttachError, DockPanelDescriptor, DockPanelRegistry, DockWorkspace,
+    DockAction, DockActionApplyError, DockActionOutcome, DockNode, DockPanel, DockPanelAttachError,
+    DockPanelDescriptor, DockPanelRegistry, DockWorkspace, host_test_support::*,
 };
 use open_gpui::{AppContext as _, TestAppContext};
 use std::{cell::Cell, rc::Rc};

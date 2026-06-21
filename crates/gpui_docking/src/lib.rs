@@ -213,9 +213,9 @@ pub use panel_catalog::*;
 pub use panel_registry::*;
 pub use policy::*;
 pub(crate) use viewport::*;
-pub(crate) use viewport_activation::{
-    DockViewportActivationTransaction, DockViewportWindowActivation,
-};
+pub(crate) use viewport_activation::DockViewportActivationTransaction;
+#[cfg(test)]
+pub(crate) use viewport_activation::DockViewportWindowActivation;
 pub use viewport_close::*;
 pub(crate) use viewport_close_plan::*;
 pub(crate) use viewport_drop_authority::*;

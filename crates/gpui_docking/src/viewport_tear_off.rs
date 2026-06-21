@@ -1,5 +1,5 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockSpaceId,
+    DockActionApplyError, DockActionOutcome, DockGraph, DockItemId, DockNodeId, DockSpaceId,
     DockViewportActivationTransaction, DockViewportFocusRequest,
     drag::{DockDragPayload, DockDragPayloadKind, DockDragTearOffGeometry},
     interaction::DockRuntimeDragSession,
@@ -43,6 +43,24 @@ impl DockViewportDropPayload {
             DockViewportDropPayload::Floating(floating) => DockWorkspaceDropPayload::Floating {
                 floating: *floating,
             },
+        }
+    }
+
+    pub(crate) fn excluded_nodes_for_drop_scene(
+        &self,
+        graph: &DockGraph,
+        source_node: DockNodeId,
+    ) -> Vec<DockNodeId> {
+        let source_node = match self {
+            DockViewportDropPayload::Item(_) => return Vec::new(),
+            DockViewportDropPayload::Tabs => source_node,
+            DockViewportDropPayload::Floating(floating) => *floating,
+        };
+        let nodes = graph.nodes_in_subtree(source_node);
+        if nodes.is_empty() {
+            vec![source_node]
+        } else {
+            nodes
         }
     }
 

@@ -197,7 +197,14 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
     let start = debug_bounds(&mut visual, &source_tab).center();
     let end = debug_bounds(&mut visual, &target_tabs).center();
 
-    simulate_left_drag(&mut visual, start, end);
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let visual = VisualTestContext::from_window(window.into(), cx);
 

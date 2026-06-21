@@ -1,10 +1,10 @@
 use crate::viewport_registry::DockViewportWindowBoundsFrame;
 use crate::{
+    DockHost, DockViewportDropPayload, DockViewportDropReleasePoint, DockViewportDropRouteRequest,
+    DockViewportPlatformSignals, DockViewportWindowFacts,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
-    DockHost, DockViewportDropPayload, DockViewportDropReleasePoint, DockViewportDropRouteRequest,
-    DockViewportPlatformSignals, DockViewportWindowFacts,
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
 
@@ -86,7 +86,7 @@ impl DockHost {
         cx: &Context<Self>,
     ) -> DockViewportDropRouteRequest {
         let drag_session = release.drag_session().cloned();
-        let tear_off_geometry = self.active_payload_drag_tear_off_geometry(drag_session.as_ref());
+        let tear_off_geometry = release.tear_off_geometry();
         viewport_drop_route_request_from_host(
             release.payload(),
             release.release_position(),
@@ -96,6 +96,7 @@ impl DockHost {
             drag_session,
             tear_off_geometry,
         )
+        .with_accepted_local_scene_route_authority(release.accepted_local_scene_route_authority())
     }
 }
 

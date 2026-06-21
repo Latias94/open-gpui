@@ -1,3 +1,4 @@
+use crate::viewport_registry::DockViewportRouteUnavailableReason;
 use crate::{DockSpaceId, DockViewportTargetContext};
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowId};
 
@@ -80,39 +81,168 @@ impl DockViewportTargetHit {
     }
 }
 
+/// A registered platform viewport window that contains the pointer.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockViewportWindowHit {
+    /// Logical dock space bound to the platform window.
+    space: DockSpaceId,
+    /// GPUI window currently rendering the logical dock space.
+    window: AnyWindowHandle,
+    /// Point relative to the dock host bounds, when the pointer is inside the dock host.
+    host_position: Option<Point<Pixels>>,
+    /// Live window-facts generation used to derive this hit.
+    facts_generation: Option<u64>,
+    /// Why this window contains the pointer but cannot currently authorize a host route.
+    route_unavailable_reason: Option<DockViewportRouteUnavailableReason>,
+}
+
+impl DockViewportWindowHit {
+    pub(crate) fn with_facts_generation(
+        space: impl Into<DockSpaceId>,
+        window: AnyWindowHandle,
+        host_position: Option<Point<Pixels>>,
+        facts_generation: u64,
+    ) -> Self {
+        Self {
+            space: space.into(),
+            window,
+            host_position,
+            facts_generation: Some(facts_generation),
+            route_unavailable_reason: None,
+        }
+    }
+
+    pub(crate) fn blocking(
+        space: impl Into<DockSpaceId>,
+        window: AnyWindowHandle,
+        route_unavailable_reason: DockViewportRouteUnavailableReason,
+    ) -> Self {
+        Self {
+            space: space.into(),
+            window,
+            host_position: None,
+            facts_generation: None,
+            route_unavailable_reason: Some(route_unavailable_reason),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn space(&self) -> &DockSpaceId {
+        &self.space
+    }
+
+    pub(crate) fn window_id(&self) -> WindowId {
+        self.window.window_id()
+    }
+
+    pub(crate) fn blocks_host_target(&self) -> bool {
+        self.route_unavailable_reason.is_some()
+            || self.host_position.is_none()
+            || self.facts_generation.is_none()
+    }
+
+    pub(crate) fn target_hit(&self) -> Option<DockViewportTargetHit> {
+        if self.route_unavailable_reason.is_some() {
+            return None;
+        }
+        Some(DockViewportTargetHit::with_facts_generation(
+            self.space.clone(),
+            self.window,
+            self.host_position?,
+            self.facts_generation?,
+        ))
+    }
+
+    pub(crate) fn into_target_hit(self) -> Option<DockViewportTargetHit> {
+        if self.route_unavailable_reason.is_some() {
+            return None;
+        }
+        Some(DockViewportTargetHit::with_facts_generation(
+            self.space,
+            self.window,
+            self.host_position?,
+            self.facts_generation?,
+        ))
+    }
+}
+
+impl From<DockViewportTargetHit> for DockViewportWindowHit {
+    fn from(target: DockViewportTargetHit) -> Self {
+        Self::with_facts_generation(
+            target.space,
+            target.window,
+            Some(target.host_position),
+            target.facts_generation,
+        )
+    }
+}
+
 /// Route authority that is allowed to construct a commit-capable viewport route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockViewportAuthorizedRouteAuthority {
     /// Current backend hovered-window signal authorizes this viewport.
     TrustedHoveredWindow,
-    /// Active drag fallback reuses the last viewport identity that was genuinely hovered.
-    DragLastHoveredViewport,
-    /// Backend hovered-window signal is unavailable or was discarded for a no-input viewport, so
-    /// fallback z-order authority authorizes the route the same way ImGui derives
-    /// `MouseViewport`: prefer platform window-stack order when available, otherwise rely on
-    /// recent platform focus order and only allow a lone remaining hit when no overlap remains.
-    BackendHoverFallback,
+    /// The GPUI drag/drop event was delivered by this same registered viewport window and the host
+    /// supplied explicit local drop-scene authority. This is reserved for in-window overlays whose
+    /// target was accepted by the rendered host scene; it is not a generic event-receiver fallback.
+    EventReceiverLocalScene,
+    /// Backend hovered-window signal is unavailable or was discarded for a no-input viewport, and
+    /// the platform front-to-back window stack selected this viewport.
+    PlatformWindowStackFallback,
+    /// Backend hovered-window signal is unavailable or was discarded for a no-input viewport, and
+    /// the runtime's ImGui-style platform z-order fallback selected this viewport.
+    ZOrderFallback,
+    /// Backend hovered-window signal is unavailable or was discarded for a no-input viewport, and
+    /// exactly one route-ready viewport geometry hit remained. This is the degenerate case of the
+    /// ImGui fallback search: it is never used when trusted hovered=None says no app viewport is
+    /// hovered, and multiple geometry hits remain diagnostic-only until backend authority resolves
+    /// their ordering.
+    UniqueGeometryFallback,
+    /// A previously rendered routed preview accepted this target, so release may replay that
+    /// accepted target without asking backend-hover fallback to pick a new viewport.
+    AcceptedRoutedPreview,
 }
 
 /// A viewport target that is allowed to authorize a commit route.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockAuthorizedViewportRouteTarget {
-    target: DockViewportTargetHit,
+    target: DockViewportWindowHit,
     authority: DockViewportAuthorizedRouteAuthority,
 }
 
 impl DockAuthorizedViewportRouteTarget {
-    fn trusted_hovered(target: DockViewportTargetHit) -> Self {
+    fn trusted_hovered(target: DockViewportWindowHit) -> Self {
         Self {
             target,
             authority: DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
         }
     }
 
-    fn backend_hover_fallback(target: DockViewportTargetHit) -> Self {
+    fn platform_window_stack_fallback(target: DockViewportWindowHit) -> Self {
         Self {
             target,
-            authority: DockViewportAuthorizedRouteAuthority::BackendHoverFallback,
+            authority: DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+        }
+    }
+
+    fn z_order_fallback(target: DockViewportWindowHit) -> Self {
+        Self {
+            target,
+            authority: DockViewportAuthorizedRouteAuthority::ZOrderFallback,
+        }
+    }
+
+    fn unique_geometry_fallback(target: DockViewportWindowHit) -> Self {
+        Self {
+            target,
+            authority: DockViewportAuthorizedRouteAuthority::UniqueGeometryFallback,
+        }
+    }
+
+    pub(crate) fn event_receiver_local_scene(target: DockViewportTargetHit) -> Self {
+        Self {
+            target: target.into(),
+            authority: DockViewportAuthorizedRouteAuthority::EventReceiverLocalScene,
         }
     }
 
@@ -120,7 +250,7 @@ impl DockAuthorizedViewportRouteTarget {
         self.authority
     }
 
-    pub(crate) fn into_target(self) -> DockViewportTargetHit {
+    pub(crate) fn into_target(self) -> DockViewportWindowHit {
         self.target
     }
 }
@@ -130,15 +260,27 @@ pub(crate) fn choose_diagnostic_viewport_target(
     hits: Vec<DockViewportTargetHit>,
     context: &DockViewportTargetContext,
 ) -> Option<DockViewportTargetHit> {
-    choose_trusted_hovered_viewport_target(&hits, context)
-        .or_else(|| choose_backend_hover_fallback_viewport_target(&hits, context, &[]))
-        .or_else(|| hits.into_iter().next())
+    let window_hits = hits
+        .into_iter()
+        .map(DockViewportWindowHit::from)
+        .collect::<Vec<_>>();
+    choose_trusted_hovered_viewport_target(&window_hits, context)
+        .or_else(|| {
+            choose_backend_hover_fallback_viewport_target(&window_hits, context, &[])
+                .map(DockAuthorizedViewportRouteTarget::into_target)
+        })
+        .and_then(DockViewportWindowHit::into_target_hit)
+        .or_else(|| {
+            window_hits
+                .into_iter()
+                .find_map(DockViewportWindowHit::into_target_hit)
+        })
 }
 
 fn choose_trusted_hovered_viewport_target(
-    hits: &[DockViewportTargetHit],
+    hits: &[DockViewportWindowHit],
     context: &DockViewportTargetContext,
-) -> Option<DockViewportTargetHit> {
+) -> Option<DockViewportWindowHit> {
     let hovered_window = context.trusted_hovered_window()?;
     hits.iter()
         .find(|hit| hit.window_id() == hovered_window)
@@ -146,10 +288,10 @@ fn choose_trusted_hovered_viewport_target(
 }
 
 fn choose_backend_hover_fallback_viewport_target(
-    hits: &[DockViewportTargetHit],
+    hits: &[DockViewportWindowHit],
     context: &DockViewportTargetContext,
-    recent_focus_order: &[WindowId],
-) -> Option<DockViewportTargetHit> {
+    fallback_z_order: &[WindowId],
+) -> Option<DockAuthorizedViewportRouteTarget> {
     let stacked = context
         .backend_hover_fallback_window_stack()
         .iter()
@@ -158,38 +300,46 @@ fn choose_backend_hover_fallback_viewport_target(
                 .find(|hit| hit.window_id() == *window_id)
                 .cloned()
         });
-    if stacked.is_some() {
-        return stacked;
+    if let Some(target) = stacked {
+        return Some(DockAuthorizedViewportRouteTarget::platform_window_stack_fallback(target));
     }
 
-    for window_id in recent_focus_order {
+    for window_id in fallback_z_order {
         if let Some(hit) = hits.iter().find(|hit| hit.window_id() == *window_id) {
-            return Some(hit.clone());
+            return Some(DockAuthorizedViewportRouteTarget::z_order_fallback(
+                hit.clone(),
+            ));
         }
     }
 
-    (hits.len() == 1).then(|| hits[0].clone())
+    (hits.len() == 1)
+        .then(|| DockAuthorizedViewportRouteTarget::unique_geometry_fallback(hits[0].clone()))
 }
 
-pub(crate) fn resolve_authorized_viewport_route_target(
-    hits: Vec<DockViewportTargetHit>,
+pub(crate) fn resolve_authorized_viewport_route_target<I, H>(
+    hits: I,
     context: &DockViewportTargetContext,
-    recent_focus_order: &[WindowId],
-) -> Option<DockAuthorizedViewportRouteTarget> {
+    fallback_z_order: &[WindowId],
+) -> Option<DockAuthorizedViewportRouteTarget>
+where
+    I: IntoIterator<Item = H>,
+    H: Into<DockViewportWindowHit>,
+{
+    let hits = hits.into_iter().map(Into::into).collect::<Vec<_>>();
     if let Some(target) = choose_trusted_hovered_viewport_target(&hits, context) {
         return Some(DockAuthorizedViewportRouteTarget::trusted_hovered(target));
     }
 
-    if context.trusted_hovered_window_unavailable()
-        || context.trusted_hovered_window_authority_discarded()
-    {
-        if let Some(target) =
-            choose_backend_hover_fallback_viewport_target(&hits, context, recent_focus_order)
-        {
-            return Some(DockAuthorizedViewportRouteTarget::backend_hover_fallback(
-                target,
-            ));
+    match context.trusted_hovered_signal() {
+        crate::DockViewportTrustedHoveredSignal::Unavailable => {
+            if let Some(target) =
+                choose_backend_hover_fallback_viewport_target(&hits, context, fallback_z_order)
+            {
+                return Some(target);
+            }
         }
+        crate::DockViewportTrustedHoveredSignal::TrustedNone
+        | crate::DockViewportTrustedHoveredSignal::Trusted(_) => {}
     }
 
     None
@@ -289,7 +439,7 @@ mod tests {
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             Some((
-                DockViewportAuthorizedRouteAuthority::BackendHoverFallback,
+                DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
                 space("zeta"),
             )),
             "backend hover fallback authorizes commits only when hovered-window authority is unavailable"
@@ -309,7 +459,7 @@ mod tests {
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             Some((
-                DockViewportAuthorizedRouteAuthority::BackendHoverFallback,
+                DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
                 space("zeta"),
             ))
         );
@@ -360,7 +510,7 @@ mod tests {
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             Some((
-                DockViewportAuthorizedRouteAuthority::BackendHoverFallback,
+                DockViewportAuthorizedRouteAuthority::UniqueGeometryFallback,
                 space("alpha"),
             )),
             "a single remaining hit may still use backend fallback authority when hovered-window data is unavailable"
@@ -386,12 +536,12 @@ mod tests {
             None
         );
 
-        let single_recent_focus_fallback = choose_diagnostic_viewport_target(
+        let single_z_order_fallback = choose_diagnostic_viewport_target(
             vec![candidate("alpha", first)],
             &DockViewportTargetContext::new().with_window_stack([second]),
         )
         .expect("single hit should still be reported for diagnostics");
-        assert_eq!(single_recent_focus_fallback.space(), &space("alpha"));
+        assert_eq!(single_z_order_fallback.space(), &space("alpha"));
         assert_eq!(
             resolve_authorized_viewport_route_target(
                 vec![candidate("alpha", first)],
@@ -400,10 +550,10 @@ mod tests {
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             Some((
-                DockViewportAuthorizedRouteAuthority::BackendHoverFallback,
+                DockViewportAuthorizedRouteAuthority::ZOrderFallback,
                 space("alpha"),
             )),
-            "recent platform focus order backs the same fallback path imgui uses when no stack signal identifies the hovered viewport"
+            "platform z-order fallback backs the same path imgui uses when no stack signal identifies the hovered viewport"
         );
     }
 
@@ -429,7 +579,7 @@ mod tests {
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             Some((
-                DockViewportAuthorizedRouteAuthority::BackendHoverFallback,
+                DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
                 space("zeta"),
             )),
             "window stack fallback is commit authority when trusted hovered-window data is unavailable"
@@ -442,7 +592,7 @@ mod tests {
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             Some((
-                DockViewportAuthorizedRouteAuthority::BackendHoverFallback,
+                DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
                 space("zeta"),
             )),
             "window stack fallback is commit authority in the backend-hover-unavailable path"

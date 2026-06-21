@@ -1,4 +1,6 @@
-use crate::{DockItemId, DockNodeId, DockSpaceId, workspace_transaction::DockWorkspaceDropPayload};
+use crate::{
+    DockGraph, DockItemId, DockNodeId, DockSpaceId, workspace_transaction::DockWorkspaceDropPayload,
+};
 use open_gpui::{
     Bounds, Context, IntoElement, ParentElement, Pixels, Point, Render, Size, Styled, Window, div,
     rgb, white,
@@ -123,12 +125,17 @@ impl DockDragPayload {
         }
     }
 
-    pub(crate) fn excluded_node_for_drop_scene(&self) -> Option<DockNodeId> {
-        match self.kind {
-            DockDragPayloadKind::Item { .. } => None,
-            DockDragPayloadKind::Tabs | DockDragPayloadKind::Floating { .. } => {
-                Some(self.source_node)
-            }
+    pub(crate) fn excluded_nodes_for_drop_scene(&self, graph: &DockGraph) -> Vec<DockNodeId> {
+        let source_node = match self.kind {
+            DockDragPayloadKind::Item { .. } => return Vec::new(),
+            DockDragPayloadKind::Tabs => self.source_node,
+            DockDragPayloadKind::Floating { floating } => floating,
+        };
+        let nodes = graph.nodes_in_subtree(source_node);
+        if nodes.is_empty() {
+            vec![source_node]
+        } else {
+            nodes
         }
     }
 }
@@ -236,10 +243,6 @@ mod tests {
         assert!(tabs_payload.is_tabs_stack());
         assert_eq!(floating_payload.floating(), Some(floating));
         assert_eq!(floating_payload.source_node, floating);
-        assert_eq!(
-            floating_payload.excluded_node_for_drop_scene(),
-            Some(floating)
-        );
     }
 
     #[test]

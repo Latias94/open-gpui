@@ -1,7 +1,7 @@
-use crate::{DockViewportTargetContext, DockViewportTrustedHoveredSignal};
-use open_gpui::{
-    AnyWindowHandle, App, PlatformHoveredWindow, PlatformViewportCapabilities, Window, WindowId,
+use crate::{
+    DockViewportFrontToBackWindowStack, DockViewportTargetContext, DockViewportTrustedHoveredSignal,
 };
+use open_gpui::{AnyWindowHandle, App, PlatformHoveredWindow, Window, WindowId};
 
 /// Snapshot of platform window signals used to arbitrate overlapping viewport hits.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -11,9 +11,9 @@ pub(crate) struct DockViewportPlatformSignals {
     /// Window that delivered the GPUI drag/drop event.
     event_receiver_window: Option<WindowId>,
     /// Front-to-back window stack, when the platform provides it.
-    window_stack: Vec<WindowId>,
-    /// Platform capabilities used to decide which signals are reliable.
-    capabilities: PlatformViewportCapabilities,
+    window_stack: DockViewportFrontToBackWindowStack,
+    /// Window bounds are reported in a shared desktop coordinate space.
+    global_window_bounds: bool,
 }
 
 impl DockViewportPlatformSignals {
@@ -21,19 +21,16 @@ impl DockViewportPlatformSignals {
     pub(crate) fn from_app(cx: &App) -> Self {
         let capabilities = cx.viewport_capabilities();
         let trusted_hovered_signal = trusted_hovered_signal_from_platform(cx.hovered_window());
+        let window_stack = if capabilities.window_stack {
+            DockViewportFrontToBackWindowStack::from_windows(cx.window_stack().unwrap_or_default())
+        } else {
+            DockViewportFrontToBackWindowStack::default()
+        };
         Self {
             trusted_hovered_signal,
             event_receiver_window: None,
-            window_stack: if capabilities.window_stack {
-                cx.window_stack()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|window| window.window_id())
-                    .collect()
-            } else {
-                Vec::new()
-            },
-            capabilities,
+            window_stack,
+            global_window_bounds: capabilities.global_window_bounds,
         }
     }
 
@@ -45,14 +42,9 @@ impl DockViewportPlatformSignals {
     /// Captures app-level signals for release paths that did not sample the hovered window.
     #[cfg(test)]
     pub(crate) fn from_app_without_hovered_window_authority(cx: &App) -> Self {
-        Self::from_app(cx).without_hovered_window_authority()
-    }
-
-    /// Removes hovered-window authority while preserving other platform signals.
-    #[cfg(test)]
-    pub(crate) fn without_hovered_window_authority(mut self) -> Self {
-        self.trusted_hovered_signal = DockViewportTrustedHoveredSignal::Unavailable;
-        self
+        let mut signals = Self::from_app(cx);
+        signals.trusted_hovered_signal = DockViewportTrustedHoveredSignal::Unavailable;
+        signals
     }
 
     /// Adds the trusted backend hovered-window signal.
@@ -73,11 +65,7 @@ impl DockViewportPlatformSignals {
     }
 
     pub(crate) fn has_global_window_bounds(&self) -> bool {
-        self.capabilities.global_window_bounds
-    }
-
-    pub(crate) fn hovered_window_ignores_no_input(&self) -> bool {
-        self.capabilities.hovered_window_ignores_no_input
+        self.global_window_bounds
     }
 
     pub(crate) fn event_receiver_window(&self) -> Option<WindowId> {
@@ -99,25 +87,13 @@ impl DockViewportPlatformSignals {
             trusted_hovered_signal,
             event_receiver_window: None,
             window_stack,
-            capabilities: PlatformViewportCapabilities {
-                global_window_bounds: true,
-                window_stack: true,
-                // Synthetic test contexts stay conservative unless a case opts in explicitly.
-                hovered_window_ignores_no_input: false,
-                ..Default::default()
-            },
+            global_window_bounds: true,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn with_global_window_bounds(mut self, supported: bool) -> Self {
-        self.capabilities.global_window_bounds = supported;
-        self
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_hovered_window_ignores_no_input(mut self, supported: bool) -> Self {
-        self.capabilities.hovered_window_ignores_no_input = supported;
+        self.global_window_bounds = supported;
         self
     }
 }

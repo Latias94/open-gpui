@@ -1,10 +1,11 @@
 use crate::{
-    DockCentralRegion, DockFloatingContainer, DockGraph, DockNode, DockNodeId,
-    DockViewportFocusCommand, DockViewportFocusRequest, DockWorkspace, SplitAxis,
-    debug::DockDebugRegion, host_test_support::*,
+    DockCentralRegion, DockFloatingContainer, DockGraph, DockHost, DockNode, DockNodeId,
+    DockPanelDescriptor, DockViewportFocusCommand, DockViewportFocusRequest, DockWorkspace,
+    SplitAxis, debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{
-    AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, px, size,
+    AppContext as _, Entity, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext,
+    px, size,
 };
 use slotmap::Key;
 
@@ -192,6 +193,99 @@ fn drop_guides_are_scoped_to_each_target_tabs_node(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn drop_guides_hide_edge_zones_when_edge_split_policy_rejects(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a", "b"]);
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_edge_split(false);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    start_tab_drag(&mut visual, &host, root, "a");
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert_drop_guide_emitted(&visual, &host, Some(root), crate::DropZone::Center);
+    for zone in [
+        crate::DropZone::Left,
+        crate::DropZone::Right,
+        crate::DropZone::Top,
+        crate::DropZone::Bottom,
+    ] {
+        assert_drop_guide_not_emitted(&visual, &host, Some(root), zone);
+    }
+}
+
+#[open_gpui::test]
+fn central_region_drop_guides_hide_center_when_policy_rejects_dock_over(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let central_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![source_tabs, central_tabs],
+        fractions: vec![0.35, 0.65],
+    });
+    graph.set_root(space(), root);
+    graph.set_central_region(space(), DockCentralRegion::with_node(central_tabs));
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace
+        .policy_mut()
+        .set_allow_central_region_dock_over(false);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(500.0), px(240.0)));
+
+    start_tab_drag(&mut visual, &host, source_tabs, "a");
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert_drop_guide_not_emitted(&visual, &host, Some(central_tabs), crate::DropZone::Center);
+    for zone in [
+        crate::DropZone::Left,
+        crate::DropZone::Right,
+        crate::DropZone::Top,
+        crate::DropZone::Bottom,
+    ] {
+        assert_drop_guide_not_emitted(&visual, &host, Some(central_tabs), zone);
+    }
+    assert_drop_guide_emitted(&visual, &host, Some(source_tabs), crate::DropZone::Center);
+}
+
+#[open_gpui::test]
+fn drop_guides_hide_zones_rejected_by_dock_class_policy(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.register_panel_descriptor(
+        item("a"),
+        DockPanelDescriptor::new("Panel A").with_dock_class("editor"),
+    );
+    workspace
+        .policy_mut()
+        .allow_dock_class_in_space(space(), "inspector");
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(500.0), px(240.0)));
+
+    start_tab_drag(&mut visual, &host, left_tabs, "a");
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    for zone in [
+        crate::DropZone::Center,
+        crate::DropZone::Left,
+        crate::DropZone::Right,
+        crate::DropZone::Top,
+        crate::DropZone::Bottom,
+    ] {
+        assert_drop_guide_not_emitted(&visual, &host, Some(right_tabs), zone);
+    }
+}
+
+#[open_gpui::test]
 fn render_session_uses_default_title_for_split_floating_children(cx: &mut TestAppContext) {
     let mut graph = DockGraph::new();
     let left = graph.insert_node(DockNode::Tabs {
@@ -235,6 +329,54 @@ fn render_session_uses_default_title_for_split_floating_children(cx: &mut TestAp
     );
 }
 
+fn start_tab_drag(
+    visual: &mut VisualTestContext,
+    host: &Entity<DockHost>,
+    tabs: DockNodeId,
+    item_id: &str,
+) {
+    let source_tab = selector_for(
+        visual,
+        host,
+        DockDebugRegion::Tab {
+            tabs,
+            item: item(item_id),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let start = debug_bounds(visual, &source_tab).center();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        open_gpui::point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+}
+
+fn assert_drop_guide_emitted(
+    visual: &VisualTestContext,
+    host: &Entity<DockHost>,
+    node: Option<DockNodeId>,
+    zone: crate::DropZone,
+) {
+    assert!(
+        selector_for(visual, host, DockDebugRegion::DropGuide { node, zone }).is_some(),
+        "{zone:?} drop guide selector should be emitted"
+    );
+}
+
+fn assert_drop_guide_not_emitted(
+    visual: &VisualTestContext,
+    host: &Entity<DockHost>,
+    node: Option<DockNodeId>,
+    zone: crate::DropZone,
+) {
+    assert!(
+        selector_for(visual, host, DockDebugRegion::DropGuide { node, zone }).is_none(),
+        "{zone:?} drop guide selector should not be emitted"
+    );
+}
+
 #[open_gpui::test]
 fn pending_panel_focus_targets_active_focusable_panel(cx: &mut TestAppContext) {
     let (graph, _root) = tabs_graph(&["a"]);
@@ -245,7 +387,11 @@ fn pending_panel_focus_targets_active_focusable_panel(cx: &mut TestAppContext) {
     let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
 
     host.update(cx, |host, cx| {
-        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("a")))));
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item(
+                "a"
+            )))
+        ));
         cx.notify();
     });
     cx.run_until_parked();
@@ -640,11 +786,10 @@ fn close_recovery_does_not_reveal_hidden_recorded_panel(cx: &mut TestAppContext)
 
     host.update(cx, |host, cx| {
         assert!(
-            host.request_viewport_focus_command(
-                DockViewportFocusCommand::viewport_activation(
-                    DockViewportFocusRequest::panel("b"),
-                ),
-            )
+            host.request_viewport_focus_command(DockViewportFocusCommand::new(
+                crate::DockViewportFocusCommandSource::CloseRecovery,
+                DockViewportFocusRequest::panel("b"),
+            ),)
         );
         cx.notify();
     });
@@ -707,7 +852,9 @@ fn platform_activation_after_no_panel_focus_does_not_restore_old_panel(cx: &mut 
 
     host.update(cx, |host, cx| {
         assert!(host.request_viewport_focus_command(
-            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::no_panel_focus())
+            DockViewportFocusCommand::viewport_activation(
+                DockViewportFocusRequest::no_panel_focus()
+            )
         ));
         cx.notify();
     });
@@ -762,7 +909,11 @@ fn viewport_activation_failure_clears_request_without_blurring_current_focus(
     });
 
     host.update(cx, |host, cx| {
-        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("a")))));
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item(
+                "a"
+            )))
+        ));
         cx.notify();
     });
     cx.run_until_parked();
@@ -796,7 +947,11 @@ fn viewport_failed_panel_focus_preserves_current_focus_and_history(cx: &mut Test
     let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
 
     host.update(cx, |host, cx| {
-        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("a")))));
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item(
+                "a"
+            )))
+        ));
         cx.notify();
     });
     cx.run_until_parked();
@@ -818,7 +973,11 @@ fn viewport_failed_panel_focus_preserves_current_focus_and_history(cx: &mut Test
     cx.run_until_parked();
 
     host.update(cx, |host, cx| {
-        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("b")))));
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item(
+                "b"
+            )))
+        ));
         cx.notify();
     });
     visual.run_until_parked();
@@ -944,13 +1103,11 @@ fn close_recovery_restore_failure_does_not_overwrite_had_panel_focus_fact(cx: &m
     host.update(cx, |host, cx| {
         host.viewport_runtime()
             .record_panel_focus(host.space().clone(), item("a"));
-        assert!(
-            host.request_viewport_focus_command(
-                crate::DockViewportFocusCommand::viewport_activation(
-                    DockViewportFocusRequest::panel("b")
-                )
-            )
-        );
+        assert!(host.request_viewport_focus_command(
+            crate::DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(
+                "b"
+            ))
+        ));
         cx.notify();
     });
     cx.run_until_parked();
@@ -975,7 +1132,11 @@ fn viewport_no_panel_focus_request_blurs_without_restore(cx: &mut TestAppContext
     let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
 
     host.update(cx, |host, cx| {
-        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("a")))));
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item(
+                "a"
+            )))
+        ));
         cx.notify();
     });
     visual.run_until_parked();
@@ -985,7 +1146,9 @@ fn viewport_no_panel_focus_request_blurs_without_restore(cx: &mut TestAppContext
 
     host.update(cx, |host, cx| {
         assert!(host.request_viewport_focus_command(
-            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::no_panel_focus())
+            DockViewportFocusCommand::viewport_activation(
+                DockViewportFocusRequest::no_panel_focus()
+            )
         ));
         cx.notify();
     });

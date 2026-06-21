@@ -15,6 +15,24 @@ impl DockWorkspace {
         self.commit_select_tab(tabs, &item)
     }
 
+    /// Selects the tab containing one item within a dock space.
+    pub fn select_item_in_space(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        item: impl Into<DockItemId>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        let space = space.into();
+        let item = item.into();
+        let Some((tabs, _)) = self.graph().find_item_in_space(&space, &item) else {
+            return Err(DockGraphMutationError::ItemNotFound {
+                space,
+                item: item.clone(),
+            }
+            .into());
+        };
+        self.commit_select_tab(tabs, &item)
+    }
+
     /// Closes one registered dock item through panel lifecycle policy.
     pub fn close_item(
         &mut self,

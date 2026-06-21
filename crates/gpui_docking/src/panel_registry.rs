@@ -265,9 +265,10 @@ mod tests {
         );
 
         assert!(matches!(
-            registry.attach_view_handle(item.clone(), crate::panel_view::DockPanelViewHandle::lazy(
-                |_| unreachable!()
-            )),
+            registry.attach_view_handle(
+                item.clone(),
+                crate::panel_view::DockPanelViewHandle::lazy(|_| unreachable!())
+            ),
             Ok(None)
         ));
 

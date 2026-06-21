@@ -1,8 +1,8 @@
 use crate::{
-    host::DockHostOptions, DockAction, DockActionApplyError, DockActionOutcome, DockClassId,
-    DockGraph, DockGraphValidationError, DockItemId, DockLayout, DockLayoutValidationError,
-    DockNodeId, DockPanel, DockPanelAttachError, DockPanelDescriptor, DockPanelRegistration,
-    DockPanelRegistry, DockPolicy, DockSpaceId, DockWorkspace, EditorDockLayoutSpec,
+    DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockGraph,
+    DockGraphValidationError, DockItemId, DockLayout, DockLayoutValidationError, DockNodeId,
+    DockPanel, DockPanelAttachError, DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry,
+    DockPolicy, DockSpaceId, DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
 };
 use open_gpui::{AnyView, Bounds, Pixels};
 
@@ -90,6 +90,15 @@ impl DockController {
         item: impl Into<DockItemId>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.workspace.select_tab(tabs, item)
+    }
+
+    /// Selects the tab containing one item within the controller's logical dock space.
+    pub fn select_item_in_space(
+        &mut self,
+        item: impl Into<DockItemId>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.workspace
+            .select_item_in_space(self.space().clone(), item)
     }
 
     /// Closes one registered dock item through panel lifecycle policy.

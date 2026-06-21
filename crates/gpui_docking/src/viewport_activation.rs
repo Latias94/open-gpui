@@ -129,8 +129,10 @@ pub(crate) fn apply_viewport_activation_transaction(
         return DockViewportActivationApplyOutcome::NoTarget;
     };
 
-    let focus_command =
-        DockViewportFocusCommand::new(transaction.focus_source(), transaction.focus_request().clone());
+    let focus_command = DockViewportFocusCommand::new(
+        transaction.focus_source(),
+        transaction.focus_request().clone(),
+    );
     let window_activation = transaction.window_activation();
     let outcome = Rc::new(Cell::new(
         DockViewportActivationApplyOutcome::WindowUnavailable,
@@ -250,10 +252,8 @@ mod tests {
         assert_eq!(
             cx.read_entity(&host, |host, _| {
                 host.viewport_runtime()
-                    .runtime_status()
-                    .pending_activation
-                    .as_ref()
-                    .map(|activation| activation.focus_request.clone())
+                    .pending_activation()
+                    .map(|activation| activation.focus_request().clone())
             }),
             Some(DockViewportFocusRequest::panel("a")),
             "low-level apply records intent; host render subscription consumes it after backend focus"
@@ -282,7 +282,7 @@ mod tests {
                 (
                     host.pending_focus_command()
                         .map(|command| command.request().clone()),
-                    host.viewport_runtime().runtime_status().pending_activation,
+                    host.viewport_runtime().pending_activation(),
                 )
             });
             (outcome, pending_request, pending_activation)
@@ -301,9 +301,9 @@ mod tests {
         assert_eq!(pending_request, None);
         let pending_activation = pending_activation.expect("pending activation should remain");
         assert_eq!(pending_activation.space, space());
-        assert_eq!(pending_activation.window_id, window.window_id());
+        assert_eq!(pending_activation.window_id(), window.window_id());
         assert_eq!(
-            pending_activation.focus_request,
+            pending_activation.focus_request().clone(),
             DockViewportFocusRequest::panel("a"),
             "backend focus Unavailable should not erase the explicit activation intent"
         );
@@ -434,10 +434,8 @@ mod tests {
         assert_eq!(
             cx.read_entity(&host, |host, _| {
                 host.viewport_runtime()
-                    .runtime_status()
-                    .pending_activation
-                    .as_ref()
-                    .map(|activation| activation.focus_request.clone())
+                    .pending_activation()
+                    .map(|activation| activation.focus_request().clone())
             }),
             Some(DockViewportFocusRequest::panel("a")),
             "viewport activation waits for backend focus before overriding platform activation"
@@ -628,12 +626,10 @@ mod tests {
 
         let changed = host.update(cx, |host, _| {
             assert!(
-                host.request_viewport_focus_command(
-                    DockViewportFocusCommand::new(
-                        DockViewportFocusCommandSource::CloseRecovery,
-                        DockViewportFocusRequest::panel("a"),
-                    )
-                )
+                host.request_viewport_focus_command(DockViewportFocusCommand::new(
+                    DockViewportFocusCommandSource::CloseRecovery,
+                    DockViewportFocusRequest::panel("a"),
+                ))
             );
             host.request_viewport_focus_command(DockViewportFocusCommand::platform_activation(
                 DockViewportFocusRequest::panel("a"),

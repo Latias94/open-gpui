@@ -43,7 +43,7 @@ pub(crate) enum DockViewportRouteUnavailableReason {
 pub(crate) struct DockViewportLifecycleMachine {
     state: DockViewportLifecycleState,
     facts_generation: u64,
-    recent_focus_stamp: Option<u64>,
+    z_order_fallback_stamp: Option<u64>,
 }
 
 impl Default for DockViewportLifecycleMachine {
@@ -51,7 +51,7 @@ impl Default for DockViewportLifecycleMachine {
         Self {
             state: DockViewportLifecycleState::RegisteredNotReady,
             facts_generation: 0,
-            recent_focus_stamp: None,
+            z_order_fallback_stamp: None,
         }
     }
 }
@@ -66,8 +66,8 @@ impl DockViewportLifecycleMachine {
         self.facts_generation
     }
 
-    fn recent_focus_stamp(&self) -> u64 {
-        self.recent_focus_stamp.unwrap_or(0)
+    fn z_order_fallback_stamp(&self) -> u64 {
+        self.z_order_fallback_stamp.unwrap_or(0)
     }
 
     fn route_unavailable_reason(&self) -> Option<DockViewportRouteUnavailableReason> {
@@ -116,8 +116,8 @@ impl DockViewportLifecycleMachine {
         true
     }
 
-    fn record_recent_focus(&mut self, recent_focus_stamp: u64) {
-        self.recent_focus_stamp = Some(recent_focus_stamp);
+    fn record_z_order_fallback(&mut self, z_order_fallback_stamp: u64) {
+        self.z_order_fallback_stamp = Some(z_order_fallback_stamp);
     }
 
     fn advance_generation(&mut self) {
@@ -335,8 +335,8 @@ impl DockViewportSnapshot {
         self.lifecycle.facts_generation()
     }
 
-    pub(crate) fn recent_focus_stamp(&self) -> u64 {
-        self.lifecycle.recent_focus_stamp()
+    pub(crate) fn z_order_fallback_stamp(&self) -> u64 {
+        self.lifecycle.z_order_fallback_stamp()
     }
 
     pub(crate) fn platform_requests(&self) -> DockViewportPlatformRequests {
@@ -494,8 +494,9 @@ impl DockViewportSnapshot {
         self.lifecycle.cancel_platform_close_request()
     }
 
-    pub(crate) fn record_recent_focus(&mut self, recent_focus_stamp: u64) {
-        self.lifecycle.record_recent_focus(recent_focus_stamp);
+    pub(crate) fn record_z_order_fallback(&mut self, z_order_fallback_stamp: u64) {
+        self.lifecycle
+            .record_z_order_fallback(z_order_fallback_stamp);
     }
 
     fn has_current_route_facts(&self) -> bool {
@@ -514,7 +515,7 @@ impl DockViewportSnapshot {
 pub(crate) struct DockViewportRegistry {
     viewports: BTreeMap<DockSpaceId, DockViewportSnapshot>,
     windows: HashMap<WindowId, DockSpaceId>,
-    next_recent_focus_stamp: u64,
+    next_z_order_fallback_stamp: u64,
 }
 
 impl DockViewportRegistry {
@@ -566,25 +567,25 @@ impl DockViewportRegistry {
         replaced
     }
 
-    pub(crate) fn record_recent_focus_window(&mut self, window_id: WindowId) -> bool {
+    pub(crate) fn record_z_order_fallback_window(&mut self, window_id: WindowId) -> bool {
         let Some(space) = self.space_for_window_id(window_id).cloned() else {
             return false;
         };
-        self.record_recent_focus_space(&space)
+        self.record_z_order_fallback_space(&space)
     }
 
-    fn record_recent_focus_space(&mut self, space: &DockSpaceId) -> bool {
+    fn record_z_order_fallback_space(&mut self, space: &DockSpaceId) -> bool {
         let Some(snapshot) = self.viewports.get(space) else {
             return false;
         };
-        if self.next_recent_focus_stamp != 0
-            && snapshot.recent_focus_stamp() == self.next_recent_focus_stamp
+        if self.next_z_order_fallback_stamp != 0
+            && snapshot.z_order_fallback_stamp() == self.next_z_order_fallback_stamp
         {
             return false;
         }
-        self.next_recent_focus_stamp = self.next_recent_focus_stamp.wrapping_add(1);
+        self.next_z_order_fallback_stamp = self.next_z_order_fallback_stamp.wrapping_add(1);
         if let Some(snapshot) = self.viewports.get_mut(space) {
-            snapshot.record_recent_focus(self.next_recent_focus_stamp);
+            snapshot.record_z_order_fallback(self.next_z_order_fallback_stamp);
         }
         true
     }
@@ -643,22 +644,22 @@ impl DockViewportRegistry {
         self.viewports.iter()
     }
 
-    pub(crate) fn snapshots_by_recent_focus_order(
+    pub(crate) fn snapshots_by_fallback_z_order(
         &self,
     ) -> Vec<(&DockSpaceId, &DockViewportSnapshot)> {
         let mut snapshots = self.viewports.iter().collect::<Vec<_>>();
-        snapshots.retain(|(_, snapshot)| snapshot.recent_focus_stamp() != 0);
+        snapshots.retain(|(_, snapshot)| snapshot.z_order_fallback_stamp() != 0);
         snapshots.sort_by(|(left_space, left), (right_space, right)| {
             right
-                .recent_focus_stamp()
-                .cmp(&left.recent_focus_stamp())
+                .z_order_fallback_stamp()
+                .cmp(&left.z_order_fallback_stamp())
                 .then_with(|| left_space.cmp(right_space))
         });
         snapshots
     }
 
-    pub(crate) fn spaces_by_recent_focus_order(&self) -> Vec<DockSpaceId> {
-        self.snapshots_by_recent_focus_order()
+    pub(crate) fn spaces_by_fallback_z_order(&self) -> Vec<DockSpaceId> {
+        self.snapshots_by_fallback_z_order()
             .into_iter()
             .map(|(space, _)| space.clone())
             .collect()
@@ -756,7 +757,7 @@ mod tests {
     }
 
     #[test]
-    fn replacing_a_viewport_clears_the_previous_recent_focus_stamp() {
+    fn replacing_a_viewport_clears_the_previous_z_order_fallback_stamp() {
         let mut registry = DockViewportRegistry::default();
         let alpha = space("alpha");
         let zeta = space("zeta");
@@ -766,10 +767,10 @@ mod tests {
 
         registry.register(alpha.clone(), alpha_window);
         registry.register(zeta.clone(), zeta_window);
-        registry.record_recent_focus_window(alpha_window.window_id());
-        registry.record_recent_focus_window(zeta_window.window_id());
+        registry.record_z_order_fallback_window(alpha_window.window_id());
+        registry.record_z_order_fallback_window(zeta_window.window_id());
         assert_eq!(
-            registry.spaces_by_recent_focus_order(),
+            registry.spaces_by_fallback_z_order(),
             vec![zeta.clone(), alpha.clone()]
         );
 
@@ -777,9 +778,9 @@ mod tests {
 
         assert_eq!(registry.space_for_window_id(zeta_window.window_id()), None);
         assert_eq!(
-            registry.spaces_by_recent_focus_order(),
+            registry.spaces_by_fallback_z_order(),
             vec![alpha],
-            "a rebound window must not inherit the previous window's recent-focus ordering stamp"
+            "a rebound window must not inherit the previous window's z-order fallback stamp"
         );
     }
 

@@ -22,8 +22,6 @@ pub struct DockViewportRuntimeStatus {
     pub last_drop_outcome: Option<DockViewportDropOutcomeRecord>,
     /// Most recent viewport activation requested by a routed drop.
     pub last_activation: Option<DockViewportActivationRecord>,
-    /// Explicit viewport activation waiting for backend focused-window confirmation.
-    pub pending_activation: Option<DockViewportActivationRecord>,
     /// Most recent platform close cleanup outcome.
     pub last_close: Option<DockViewportCloseOutcome>,
     /// Most recent platform should-close query outcome.
@@ -439,13 +437,6 @@ impl DockViewportRuntimeStatus {
         self.last_platform_sync = Some(record);
     }
 
-    pub(crate) fn set_pending_activation(
-        &mut self,
-        activation: Option<&DockViewportActivationTransaction>,
-    ) {
-        self.pending_activation = activation.map(DockViewportActivationRecord::from);
-    }
-
     pub(crate) fn clear_window_references(&mut self, space: &DockSpaceId, window_id: WindowId) {
         if self
             .last_route
@@ -460,13 +451,6 @@ impl DockViewportRuntimeStatus {
             .is_some_and(|activation| activation.references_window(space, window_id))
         {
             self.last_activation = None;
-        }
-        if self
-            .pending_activation
-            .as_ref()
-            .is_some_and(|activation| activation.references_window(space, window_id))
-        {
-            self.pending_activation = None;
         }
         if self
             .last_platform_sync

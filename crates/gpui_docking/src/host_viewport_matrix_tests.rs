@@ -82,7 +82,7 @@ impl MatrixPayload {
 }
 
 #[open_gpui::test]
-fn source_only_known_viewport_release_matrix_commits_backend_hover_fallback(
+fn source_only_known_viewport_release_matrix_rejects_unaccepted_backend_fallback(
     cx: &mut TestAppContext,
 ) {
     for case in matrix_cases() {
@@ -91,7 +91,7 @@ fn source_only_known_viewport_release_matrix_commits_backend_hover_fallback(
 }
 
 #[open_gpui::test]
-fn source_only_known_viewport_root_edge_matrix_commits_backend_hover_fallback(
+fn source_only_known_viewport_root_edge_matrix_rejects_unaccepted_backend_fallback(
     cx: &mut TestAppContext,
 ) {
     for case in root_only_matrix_cases() {
@@ -384,7 +384,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         runtime.commit_payload_drop_from_screen(&request, app)
     });
 
-    assert_source_only_backend_hover_fallback_committed(
+    assert_source_only_unaccepted_backend_fallback_rejected(
         cx,
         &controller,
         &runtime,
@@ -392,7 +392,6 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         &target_space,
         result,
         case,
-        &nodes,
     );
 }
 
@@ -488,7 +487,7 @@ fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixC
         runtime.commit_payload_drop_from_screen(&request, app)
     });
 
-    assert_source_only_backend_hover_fallback_committed(
+    assert_source_only_unaccepted_backend_fallback_rejected(
         cx,
         &controller,
         &runtime,
@@ -496,7 +495,6 @@ fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixC
         &target_space,
         result,
         case,
-        &nodes,
     );
 }
 
@@ -610,7 +608,7 @@ fn run_overlapping_source_only_release_case(cx: &mut TestAppContext, case: Matri
     assert_case_graph_unmoved(cx, &controller, &source_space, &target_space, case);
 }
 
-fn assert_source_only_backend_hover_fallback_committed(
+fn assert_source_only_unaccepted_backend_fallback_rejected(
     cx: &TestAppContext,
     controller: &open_gpui::Entity<DockController>,
     runtime: &DockViewportRuntimeHandle,
@@ -618,23 +616,11 @@ fn assert_source_only_backend_hover_fallback_committed(
     target_space: &DockSpaceId,
     result: Result<DockViewportDropRouteOutcome, DockActionApplyError>,
     case: MatrixCase,
-    nodes: &MatrixNodes,
 ) {
-    let DockViewportDropRouteOutcome::Action(action) = result.unwrap_or_else(|error| {
-        panic!(
-            "{}: source-only backend-hover fallback should commit: {error:?}",
-            case.name
-        )
-    }) else {
-        panic!(
-            "{}: source-only backend-hover fallback should resolve to a workspace action",
-            case.name
-        );
-    };
     assert_eq!(
-        action.action(),
-        crate::DockActionOutcome::Changed,
-        "{}: source-only backend-hover fallback should mutate the workspace",
+        result,
+        Err(DockActionApplyError::DropTargetUnavailable),
+        "{}: source-only backend-hover fallback must not commit without an accepted routed preview",
         case.name
     );
     let status = runtime.runtime_status();
@@ -645,9 +631,9 @@ fn assert_source_only_backend_hover_fallback_committed(
                 .as_ref()
                 .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
                 .target,
-            DockViewportRouteTarget::KnownViewport { .. }
+            DockViewportRouteTarget::Unavailable
         ),
-        "{}: source-only backend-hover fallback should route to the target viewport, got {:?}",
+        "{}: source-only backend-hover fallback should be recorded as unavailable without accepted preview, got {:?}",
         case.name,
         status.last_route
     );
@@ -656,35 +642,11 @@ fn assert_source_only_backend_hover_fallback_committed(
             .last_activation
             .as_ref()
             .map(|activation| activation.space.clone()),
-        Some(target_space.clone()),
-        "{}: source-only backend-hover fallback should activate the target viewport",
+        None,
+        "{}: rejected source-only fallback must not activate the target viewport",
         case.name
     );
-    assert_eq!(
-        status
-            .last_activation
-            .as_ref()
-            .map(|activation| activation.focus_request.clone()),
-        Some(expected_focus_request(case.payload)),
-        "{}: source-only backend-hover fallback should focus the moved payload",
-        case.name
-    );
-    assert_case_graph(cx, controller, target_space, case, nodes);
-    cx.read_entity(controller, |controller, _| {
-        assert_eq!(
-            controller.graph().collect_items_in_space(source_space),
-            Vec::<DockItemId>::new(),
-            "{}: source payload should leave the source space after backend-hover fallback commit",
-            case.name
-        );
-    });
-}
-
-fn expected_focus_request(payload: MatrixPayload) -> crate::DockViewportFocusRequest {
-    match payload {
-        MatrixPayload::Item => crate::DockViewportFocusRequest::panel("a"),
-        MatrixPayload::Tabs => crate::DockViewportFocusRequest::no_panel_focus(),
-    }
+    assert_case_graph_unmoved(cx, controller, source_space, target_space, case);
 }
 
 fn assert_case_graph_unmoved(
