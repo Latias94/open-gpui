@@ -39,12 +39,15 @@ pub mod sidebar;
 pub mod skeleton;
 pub mod splitter;
 pub mod switch;
+pub mod table;
 pub mod tabs;
 pub mod text_input;
 pub mod theme;
 pub mod toggle;
 pub mod toolbar;
 pub mod tooltip;
+pub mod tree;
+pub mod virtualized_list;
 
 /// GPUI-specific adapter APIs that are intentionally outside renderer-neutral component state.
 ///
@@ -134,6 +137,10 @@ pub use splitter::{
     SplitterPanelState, SplitterState,
 };
 pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
+pub use table::{
+    TableCellState, TableColumnAlign, TableColumnDescriptor, TableColumnState, TableMetrics,
+    TableRowDescriptor, TableRowState, TableSelection, TableState, table_navigation_target,
+};
 pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
     TabsSelection, TabsState,
@@ -148,4 +155,12 @@ pub use toolbar::{
 pub use tooltip::{
     Tooltip, TooltipColors, TooltipContentKind, TooltipDelayPolicy, TooltipMetrics,
     TooltipOpenIntent, TooltipState,
+};
+pub use tree::{
+    TreeFocusTarget, TreeItemDescriptor, TreeItemState, TreeKeyboardAction, TreeMetrics,
+    TreeSelection, TreeState, TreeToggle, tree_navigation_target,
+};
+pub use virtualized_list::{
+    VirtualizedListActivation, VirtualizedListMetrics, VirtualizedListScrollStrategy,
+    VirtualizedListState, virtualized_list_navigation_target,
 };
