@@ -127,6 +127,111 @@ pub const SIGNALS: &[&str] = &[
     "Role::TabPanel",
 ];
 
+/// Stable jump targets for the Components page navigator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComponentPageJump {
+    /// Stable jump id used by the page directory and section anchors.
+    pub id: &'static str,
+    /// Visible label.
+    pub label: &'static str,
+}
+
+/// Page jump targets matching the Components page section order.
+pub const COMPONENT_PAGE_JUMPS: &[ComponentPageJump] = &[
+    ComponentPageJump {
+        id: "catalog",
+        label: "Component catalog",
+    },
+    ComponentPageJump {
+        id: "primitives",
+        label: "Primitives",
+    },
+    ComponentPageJump {
+        id: "gates",
+        label: "Conformance gates",
+    },
+    ComponentPageJump {
+        id: "sidebar",
+        label: "Sidebar",
+    },
+    ComponentPageJump {
+        id: "toolbar",
+        label: "Toolbar",
+    },
+    ComponentPageJump {
+        id: "listbox",
+        label: "Listbox",
+    },
+    ComponentPageJump {
+        id: "select",
+        label: "Select",
+    },
+    ComponentPageJump {
+        id: "combobox",
+        label: "Combobox",
+    },
+    ComponentPageJump {
+        id: "command",
+        label: "Command",
+    },
+    ComponentPageJump {
+        id: "button",
+        label: "Button",
+    },
+    ComponentPageJump {
+        id: "splitter",
+        label: "Splitter",
+    },
+    ComponentPageJump {
+        id: "scroll-area",
+        label: "ScrollArea",
+    },
+    ComponentPageJump {
+        id: "badge",
+        label: "Badge",
+    },
+    ComponentPageJump {
+        id: "switch",
+        label: "Switch",
+    },
+    ComponentPageJump {
+        id: "checkbox",
+        label: "Checkbox",
+    },
+    ComponentPageJump {
+        id: "radio-group",
+        label: "RadioGroup",
+    },
+    ComponentPageJump {
+        id: "toggle",
+        label: "Toggle",
+    },
+    ComponentPageJump {
+        id: "icon-button",
+        label: "IconButton",
+    },
+    ComponentPageJump {
+        id: "label",
+        label: "Label",
+    },
+    ComponentPageJump {
+        id: "text-input",
+        label: "TextInput",
+    },
+    ComponentPageJump {
+        id: "field",
+        label: "Field",
+    },
+    ComponentPageJump {
+        id: "tabs",
+        label: "Tabs",
+    },
+    ComponentPageJump {
+        id: "signals",
+        label: "Signals",
+    },
+];
+
 /// Component catalog status shown by the Components page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComponentCatalogStatus {

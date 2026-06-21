@@ -2943,8 +2943,15 @@ impl Interactivity {
                     }
                     scroll_offset.y += delta_y;
                     scroll_offset.x += delta_x;
-                    if *scroll_offset != old_scroll_offset {
-                        cx.notify(current_view);
+                    if !delta_x.is_zero() || !delta_y.is_zero() {
+                        // Consume the wheel whenever this scroll container handled it, even if
+                        // it was already pinned at an edge. That keeps nested scrollables from
+                        // leaking wheel input to their ancestors.
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        if *scroll_offset != old_scroll_offset {
+                            cx.notify(current_view);
+                        }
                     }
                 }
             });
@@ -3676,7 +3683,7 @@ where
 
 /// Represents an element that can be scrolled *to* in its parent element.
 /// Contrary to [ScrollHandle::scroll_to_active_item], an anchored element does not have to be an immediate child of the parent.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ScrollAnchor {
     handle: ScrollHandle,
     last_origin: Rc<RefCell<Point<Pixels>>>,
@@ -3695,10 +3702,15 @@ impl ScrollAnchor {
         let this = self.clone();
 
         window.on_next_frame(move |_, _| {
-            let viewport_bounds = this.handle.bounds();
-            let self_bounds = *this.last_origin.borrow();
-            this.handle.set_offset(viewport_bounds.origin - self_bounds);
+            this.scroll_now();
         });
+    }
+
+    /// Scroll to this item immediately using the current layout state.
+    pub fn scroll_now(&self) {
+        let viewport_bounds = self.handle.bounds();
+        let self_bounds = *self.last_origin.borrow();
+        self.handle.set_offset(viewport_bounds.origin - self_bounds);
     }
 }
 

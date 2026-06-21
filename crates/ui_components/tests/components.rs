@@ -1464,6 +1464,115 @@ fn scroll_area_runtime_scrolls_horizontal_and_two_axis_content(cx: &mut open_gpu
 }
 
 #[open_gpui::test]
+fn scroll_area_nested_scroll_keeps_parent_static(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let queue_lanes = (0..8).map(|index| {
+                div()
+                    .debug_selector(move || format!("nested-lane-{index}"))
+                    .w(px(128.0))
+                    .h(px(32.0))
+                    .flex_none()
+                    .child(format!("Lane {index}"))
+            });
+            let outer_rows = (0..10).map(|index| {
+                div()
+                    .debug_selector(move || format!("nested-outer-row-{index}"))
+                    .h(px(24.0))
+                    .w_full()
+                    .child(format!("Outer row {index}"))
+            });
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(120.0)).child(
+                    ScrollArea::new(
+                        "nested-outer-scroll",
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .debug_selector(|| "nested-outer-header".into())
+                                    .h(px(24.0))
+                                    .w_full()
+                                    .child("Outer header"),
+                            )
+                            .child(
+                                div().h(px(52.0)).min_h(px(0.0)).overflow_hidden().child(
+                                    ScrollArea::new(
+                                        "nested-inner-scroll",
+                                        div()
+                                            .flex()
+                                            .gap_2()
+                                            .min_w(px(1024.0))
+                                            .children(queue_lanes),
+                                    )
+                                    .horizontal()
+                                    .with_size(Size::Small),
+                                ),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "nested-outer-bottom".into())
+                                    .h(px(24.0))
+                                    .w_full()
+                                    .child("Outer bottom marker"),
+                            )
+                            .child(div().flex().flex_col().gap_1().children(outer_rows)),
+                    )
+                    .vertical()
+                    .with_size(Size::Small),
+                ),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let lane_before = cx
+        .debug_bounds("nested-lane-2")
+        .expect("inner lane should be rendered before scrolling");
+    let outer_before = cx
+        .debug_bounds("nested-outer-bottom")
+        .expect("outer marker should be rendered before scrolling");
+    let inner_viewport = cx
+        .debug_bounds("scroll-area:nested-inner-scroll")
+        .expect("inner scroll viewport should be rendered before scrolling");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: inner_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-48.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let lane_after = cx
+        .debug_bounds("nested-lane-2")
+        .expect("inner lane should remain rendered after scrolling");
+    let outer_after = cx
+        .debug_bounds("nested-outer-bottom")
+        .expect("outer marker should remain rendered after scrolling");
+
+    assert!(
+        lane_after.left() < lane_before.left(),
+        "expected nested horizontal ScrollArea to move after wheel scrolling; before={lane_before:?} after={lane_after:?}"
+    );
+    assert_eq!(
+        outer_after.top(),
+        outer_before.top(),
+        "expected wheel scrolling inside the nested ScrollArea to leave the parent viewport in place; before={outer_before:?} after={outer_after:?}"
+    );
+}
+
+#[open_gpui::test]
 fn tabs_vertical_tablist_scrolls_when_constrained(cx: &mut open_gpui::TestAppContext) {
     struct TestView;
 

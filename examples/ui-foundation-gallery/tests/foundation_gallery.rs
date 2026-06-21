@@ -76,11 +76,11 @@ fn scroll_until_visible(
     selector: &'static str,
     attempts: usize,
     delta: open_gpui::Point<Pixels>,
+    scroll_position: open_gpui::Point<Pixels>,
     is_visible: impl Fn(Bounds<Pixels>, Bounds<Pixels>) -> bool,
     failure_message: String,
 ) -> Bounds<Pixels> {
     let scroll_bounds = bounds(cx, viewport_selector);
-    let scroll_position = scroll_bounds.center();
 
     for _ in 0..attempts {
         if let Some(target) = cx.debug_bounds(selector) {
@@ -101,12 +101,17 @@ fn scroll_until_visible(
 }
 
 fn scroll_page_until_visible(cx: &mut VisualTestContext, selector: &'static str) -> Bounds<Pixels> {
+    let scroll_bounds = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
     scroll_until_visible(
         cx,
-        "gallery:page-scroll",
+        "scroll-area:gallery-page-scroll-viewport",
         selector,
         96,
         point(px(0.0), px(-220.0)),
+        point(
+            scroll_bounds.right() - px(6.0),
+            scroll_bounds.top() + px(18.0),
+        ),
         |container, target| container.contains(&target.center()),
         format!("expected `{selector}` to become visible after scrolling the gallery page"),
     )
@@ -120,12 +125,17 @@ fn scroll_navigation_until_visible(
     cx: &mut VisualTestContext,
     selector: &'static str,
 ) -> Bounds<Pixels> {
+    let scroll_bounds = bounds(cx, "gallery:navigation-scroll");
     scroll_until_visible(
         cx,
         "gallery:navigation-scroll",
         selector,
         12,
         point(px(0.0), px(-120.0)),
+        point(
+            scroll_bounds.right() - px(4.0),
+            scroll_bounds.bottom() - px(8.0),
+        ),
         |container, target| container.contains(&target.center()),
         format!("expected `{selector}` to become visible after scrolling gallery navigation"),
     )
@@ -2190,15 +2200,8 @@ fn gallery_smoke_compact_shell_scrolls_navigation_and_resets_page_on_navigation(
         GalleryPage::Components
     );
 
-    let scroll_area_sample = scroll_until_visible(
-        cx,
-        "gallery:page-scroll",
-        "gallery:component-scroll-area-sample:data-grid",
-        96,
-        point(px(0.0), px(-220.0)),
-        bounds_overlap_y,
-        "expected `gallery:component-scroll-area-sample:data-grid` to become vertically visible after scrolling the gallery page".to_string(),
-    );
+    let scroll_area_sample =
+        scroll_page_until_visible(cx, "gallery:component-scroll-area-sample:data-grid");
     let page_scroll = bounds(cx, "gallery:page-scroll");
     assert!(
         bounds_overlap_y(page_scroll, scroll_area_sample),
@@ -2294,6 +2297,63 @@ fn components_gallery_smoke_scroll_area_samples_scroll_inside_page(
     assert!(
         grid_after_y.top() < grid_after_x.top(),
         "expected the gallery data-grid ScrollArea to scroll vertically inside its viewport; before={grid_after_x:?} after={grid_after_y:?}"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_release_queue_scroll_stays_inside_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_components_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:component-scroll-area-sample:release-queue");
+    let sample_before = bounds(cx, "gallery:component-scroll-area-sample:release-queue");
+    let queue_before = bounds(cx, "gallery:component-scroll-area-item:release-queue:2");
+    let queue_viewport = bounds(cx, "scroll-area:component-scroll-area:release-queue");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: queue_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-56.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after = bounds(cx, "gallery:component-scroll-area-sample:release-queue");
+    let queue_after = bounds(cx, "gallery:component-scroll-area-item:release-queue:2");
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected the release queue sample card to stay fixed while the inner viewport scrolls; before={sample_before:?} after={sample_after:?}"
+    );
+    assert!(
+        queue_after.left() < queue_before.left(),
+        "expected the release queue viewport to move horizontally inside the sample; before={queue_before:?} after={queue_after:?}"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_directory_jump_scrolls_to_tabs_section(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_components_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:component-page-jump:tabs");
+    let before = bounds(cx, "gallery:components-section:tabs");
+    click(cx, "gallery:component-page-jump:tabs");
+    settle(cx);
+    settle(cx);
+
+    let after = bounds(cx, "gallery:components-section:tabs");
+    let viewport = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
+
+    assert!(
+        after.top() < before.top(),
+        "expected the Components page directory jump to scroll to the Tabs section; before={before:?} after={after:?}"
+    );
+    assert!(
+        after.top() < viewport.bottom() && after.bottom() > viewport.top(),
+        "expected the Tabs section to overlap the page viewport after clicking the directory jump; viewport={viewport:?} after={after:?}"
     );
 }
 

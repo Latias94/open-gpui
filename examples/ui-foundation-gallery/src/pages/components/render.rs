@@ -3,9 +3,96 @@
 use crate::pages;
 use crate::shell::*;
 use open_gpui::prelude::*;
-use open_gpui::{IntoElement, div, px, rgb};
+use open_gpui::{IntoElement, ScrollAnchor, ScrollHandle, div, px, rgb};
 use open_gpui_ui_components::*;
 use open_gpui_ui_core::{Orientation, Sizable};
+
+struct ComponentPageAnchors {
+    catalog: ScrollAnchor,
+    primitives: ScrollAnchor,
+    gates: ScrollAnchor,
+    sidebar: ScrollAnchor,
+    toolbar: ScrollAnchor,
+    listbox: ScrollAnchor,
+    select: ScrollAnchor,
+    combobox: ScrollAnchor,
+    command: ScrollAnchor,
+    button: ScrollAnchor,
+    splitter: ScrollAnchor,
+    scroll_area: ScrollAnchor,
+    badge: ScrollAnchor,
+    switch: ScrollAnchor,
+    checkbox: ScrollAnchor,
+    radio_group: ScrollAnchor,
+    toggle: ScrollAnchor,
+    icon_button: ScrollAnchor,
+    label: ScrollAnchor,
+    text_input: ScrollAnchor,
+    field: ScrollAnchor,
+    tabs: ScrollAnchor,
+    signals: ScrollAnchor,
+}
+
+impl ComponentPageAnchors {
+    fn new(handle: &ScrollHandle) -> Self {
+        let anchor = || ScrollAnchor::for_handle(handle.clone());
+
+        Self {
+            catalog: anchor(),
+            primitives: anchor(),
+            gates: anchor(),
+            sidebar: anchor(),
+            toolbar: anchor(),
+            listbox: anchor(),
+            select: anchor(),
+            combobox: anchor(),
+            command: anchor(),
+            button: anchor(),
+            splitter: anchor(),
+            scroll_area: anchor(),
+            badge: anchor(),
+            switch: anchor(),
+            checkbox: anchor(),
+            radio_group: anchor(),
+            toggle: anchor(),
+            icon_button: anchor(),
+            label: anchor(),
+            text_input: anchor(),
+            field: anchor(),
+            tabs: anchor(),
+            signals: anchor(),
+        }
+    }
+
+    fn for_id(&self, id: &str) -> ScrollAnchor {
+        match id {
+            "catalog" => self.catalog.clone(),
+            "primitives" => self.primitives.clone(),
+            "gates" => self.gates.clone(),
+            "sidebar" => self.sidebar.clone(),
+            "toolbar" => self.toolbar.clone(),
+            "listbox" => self.listbox.clone(),
+            "select" => self.select.clone(),
+            "combobox" => self.combobox.clone(),
+            "command" => self.command.clone(),
+            "button" => self.button.clone(),
+            "splitter" => self.splitter.clone(),
+            "scroll-area" => self.scroll_area.clone(),
+            "badge" => self.badge.clone(),
+            "switch" => self.switch.clone(),
+            "checkbox" => self.checkbox.clone(),
+            "radio-group" => self.radio_group.clone(),
+            "toggle" => self.toggle.clone(),
+            "icon-button" => self.icon_button.clone(),
+            "label" => self.label.clone(),
+            "text-input" => self.text_input.clone(),
+            "field" => self.field.clone(),
+            "tabs" => self.tabs.clone(),
+            "signals" => self.signals.clone(),
+            other => panic!("unknown Components page section id `{other}`"),
+        }
+    }
+}
 
 pub(crate) fn render_components_page(
     shell: &GalleryShell,
@@ -100,6 +187,7 @@ pub(crate) fn render_components_page(
     let avatar_samples = pages::components::avatar_samples(snapshot.tokens);
     let scroll_area_samples = pages::components::scroll_area_samples(snapshot.tokens);
     let splitter_samples = pages::components::splitter_samples(snapshot.tokens);
+    let anchors = ComponentPageAnchors::new(shell.page_scroll_handle());
 
     div()
         .id("gallery-components-page")
@@ -116,60 +204,87 @@ pub(crate) fn render_components_page(
                     div()
                         .text_sm()
                         .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("Component catalog"),
+                        .child("Section directory"),
                 )
-                .child(
-                    div()
-                        .flex()
-                        .gap_3()
-                        .flex_wrap()
-                        .children(component_catalog_cards),
-                ),
-        )
-        .child(component_primitive_samples_section(
-            separator_samples,
-            kbd_samples,
-            progress_samples,
-            skeleton_samples,
-            avatar_samples,
-            snapshot.tokens,
-        ))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("Conformance gates"),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap_3()
-                        .flex_wrap()
-                        .children(conformance_gate_cards),
-                ),
+                .child(div().flex().gap_2().flex_wrap().children(
+                    pages::components::COMPONENT_PAGE_JUMPS.iter().map(|jump| {
+                        component_page_jump(
+                            jump.id,
+                            jump.label,
+                            anchors.for_id(jump.id),
+                            snapshot.tokens,
+                        )
+                    }),
+                )),
         )
         .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("Sidebar"),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap_3()
-                        .flex_wrap()
-                        .children(sidebar_samples.into_iter().map(|sample| {
+            component_page_section("catalog", anchors.catalog.clone()).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Component catalog"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_3()
+                            .flex_wrap()
+                            .children(component_catalog_cards),
+                    ),
+            ),
+        )
+        .child(
+            component_page_section("primitives", anchors.primitives.clone()).child(
+                component_primitive_samples_section(
+                    separator_samples,
+                    kbd_samples,
+                    progress_samples,
+                    skeleton_samples,
+                    avatar_samples,
+                    snapshot.tokens,
+                ),
+            ),
+        )
+        .child(
+            component_page_section("gates", anchors.gates.clone()).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Conformance gates"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_3()
+                            .flex_wrap()
+                            .children(conformance_gate_cards),
+                    ),
+            ),
+        )
+        .child(
+            component_page_section("sidebar", anchors.sidebar.clone()).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Sidebar"),
+                    )
+                    .child(div().flex().gap_3().flex_wrap().children(
+                        sidebar_samples.into_iter().map(|sample| {
                             let state = sample.state.clone();
                             let title = state.label().to_owned();
                             let mut sidebar = Sidebar::new(
@@ -264,26 +379,24 @@ pub(crate) fn render_components_page(
                                         .child(sidebar),
                                 )
                                 .child(component_sidebar_state_row(&state))
-                        })),
-                ),
+                        }),
+                    )),
+            ),
         )
         .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("Toolbar"),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap_3()
-                        .flex_wrap()
-                        .children(toolbar_samples.into_iter().map(|sample| {
+            component_page_section("toolbar", anchors.toolbar.clone()).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Toolbar"),
+                    )
+                    .child(div().flex().gap_3().flex_wrap().children(
+                        toolbar_samples.into_iter().map(|sample| {
                             let state = sample.state.clone();
                             let toolbar = sample.build_toolbar(snapshot.tokens);
 
@@ -327,199 +440,210 @@ pub(crate) fn render_components_page(
                                 )
                                 .child(toolbar)
                                 .child(component_toolbar_state_row(&state))
-                        })),
-                ),
-        )
-        .child(component_listbox_samples_section(
-            listbox_samples,
-            snapshot.tokens,
-        ))
-        .child(component_select_samples_section(
-            select_samples,
-            snapshot.tokens,
-        ))
-        .child(component_combobox_samples_section(
-            combobox_samples,
-            snapshot.tokens,
-        ))
-        .child(component_command_samples_section(
-            command_samples,
-            snapshot.tokens,
-        ))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("Button"),
-                )
-                .child(
-                    div().flex().gap_3().flex_wrap().children(
-                        pages::components::button_samples(snapshot.tokens)
-                            .into_iter()
-                            .map(|sample| {
-                                let sample_id = sample.id;
-                                let debug_selector = sample.debug_selector();
-                                let state = sample.state;
-                                div()
-                                    .id(format!("component-button-sample:{sample_id}"))
-                                    .debug_selector(move || debug_selector)
-                                    .min_w(px(180.0))
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(rgb(0xd6d8ce))
-                                    .bg(rgb(0xffffff))
-                                    .p_3()
-                                    .child(
-                                        Button::new(
-                                            format!("component-button:{}", sample.id),
-                                            sample.label,
-                                        )
-                                        .variant(state.variant())
-                                        .with_size(state.size())
-                                        .disabled(state.disabled())
-                                        .selected(state.selected())
-                                        .tokens(snapshot.tokens),
-                                    )
-                                    .child(component_button_state_row(state))
-                            }),
-                    ),
-                ),
+                        }),
+                    )),
+            ),
         )
         .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("Splitter"),
-                )
-                .child(div().flex().gap_3().flex_wrap().children(
-                    splitter_samples.into_iter().map(|sample| {
-                        let debug_selector = sample.debug_selector();
-                        let state = sample.state.clone();
-                        let splitter = sample.panels.into_iter().fold(
-                            Splitter::new(format!("component-splitter:{}", sample.id))
-                                .orientation(state.orientation())
-                                .with_size(state.size()),
-                            |splitter, panel| {
-                                splitter.panel(SplitterPanel::new(
-                                    panel.descriptor,
+            component_page_section("listbox", anchors.listbox.clone()).child(
+                component_listbox_samples_section(listbox_samples, snapshot.tokens),
+            ),
+        )
+        .child(
+            component_page_section("select", anchors.select.clone()).child(
+                component_select_samples_section(select_samples, snapshot.tokens),
+            ),
+        )
+        .child(
+            component_page_section("combobox", anchors.combobox.clone()).child(
+                component_combobox_samples_section(combobox_samples, snapshot.tokens),
+            ),
+        )
+        .child(
+            component_page_section("command", anchors.command.clone()).child(
+                component_command_samples_section(command_samples, snapshot.tokens),
+            ),
+        )
+        .child(
+            component_page_section("button", anchors.button.clone()).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Button"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::button_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
+                                    let state = sample.state;
                                     div()
-                                        .size_full()
+                                        .id(format!("component-button-sample:{sample_id}"))
+                                        .debug_selector(move || debug_selector)
+                                        .min_w(px(180.0))
                                         .flex()
                                         .flex_col()
-                                        .gap_1()
-                                        .bg(rgb(0xf8f9f3))
-                                        .px_3()
-                                        .py_2()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
                                         .child(
-                                            div()
-                                                .text_xs()
-                                                .font_weight(open_gpui::FontWeight::BOLD)
-                                                .text_color(rgb(0x3f4a57))
-                                                .child(panel.title),
+                                            Button::new(
+                                                format!("component-button:{}", sample.id),
+                                                sample.label,
+                                            )
+                                            .variant(state.variant())
+                                            .with_size(state.size())
+                                            .disabled(state.disabled())
+                                            .selected(state.selected())
+                                            .tokens(snapshot.tokens),
                                         )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(rgb(0x5a6472))
-                                                .child(panel.body),
-                                        ),
-                                ))
-                            },
-                        );
-
-                        div()
-                            .id(format!("component-splitter-sample:{}", sample.id))
-                            .debug_selector(move || debug_selector)
-                            .w(px(520.0))
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(0xd6d8ce))
-                            .bg(rgb(0xffffff))
-                            .p_3()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .font_weight(open_gpui::FontWeight::BOLD)
-                                            .child(sample.title),
-                                    )
-                                    .child(label_pill(match state.orientation() {
-                                        Orientation::Horizontal => "horizontal",
-                                        Orientation::Vertical => "vertical",
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(0x5a6472))
-                                    .child(sample.summary),
-                            )
-                            .child(
-                                div()
-                                    .h(px(164.0))
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(rgb(0xe2e4dc))
-                                    .bg(rgb(0xfcfcf8))
-                                    .child(splitter),
-                            )
-                            .child(component_splitter_state_row(&state))
-                    }),
-                )),
+                                        .child(component_button_state_row(state))
+                                }),
+                        ),
+                    ),
+            ),
         )
         .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("ScrollArea"),
-                )
-                .child(div().flex().gap_3().flex_wrap().children(
-                    scroll_area_samples.into_iter().map(|sample| {
-                        let sample_id = sample.id;
-                        let debug_selector = sample.debug_selector();
-                        let title = sample.title;
-                        let summary = sample.summary;
-                        let items = sample.items;
-                        let state = sample.state.clone();
-                        let horizontal = state.axis() == ScrollAreaAxis::Horizontal;
-                        let two_axis = state.axis() == ScrollAreaAxis::Both;
-                        let content = div()
-                            .when(horizontal, |this| this.flex().gap_2().min_w(px(860.0)))
-                            .when(two_axis, |this| {
-                                this.flex().flex_col().gap_1().min_w(px(620.0))
-                            })
-                            .when(!horizontal && !two_axis, |this| {
-                                this.flex().flex_col().gap_1()
-                            })
-                            .children(items.into_iter().enumerate().map(move |(index, item)| {
-                                let vertical_only = !horizontal && !two_axis;
-                                div()
+            component_page_section("splitter", anchors.splitter.clone()).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Splitter"),
+                    )
+                    .child(div().flex().gap_3().flex_wrap().children(
+                        splitter_samples.into_iter().map(|sample| {
+                            let debug_selector = sample.debug_selector();
+                            let state = sample.state.clone();
+                            let splitter = sample.panels.into_iter().fold(
+                                Splitter::new(format!("component-splitter:{}", sample.id))
+                                    .orientation(state.orientation())
+                                    .with_size(state.size()),
+                                |splitter, panel| {
+                                    splitter.panel(SplitterPanel::new(
+                                        panel.descriptor,
+                                        div()
+                                            .size_full()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .bg(rgb(0xf8f9f3))
+                                            .px_3()
+                                            .py_2()
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                                    .text_color(rgb(0x3f4a57))
+                                                    .child(panel.title),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(rgb(0x5a6472))
+                                                    .child(panel.body),
+                                            ),
+                                    ))
+                                },
+                            );
+
+                            div()
+                                .id(format!("component-splitter-sample:{}", sample.id))
+                                .debug_selector(move || debug_selector)
+                                .w(px(520.0))
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xd6d8ce))
+                                .bg(rgb(0xffffff))
+                                .p_3()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(open_gpui::FontWeight::BOLD)
+                                                .child(sample.title),
+                                        )
+                                        .child(label_pill(match state.orientation() {
+                                            Orientation::Horizontal => "horizontal",
+                                            Orientation::Vertical => "vertical",
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(0x5a6472))
+                                        .child(sample.summary),
+                                )
+                                .child(
+                                    div()
+                                        .h(px(164.0))
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xe2e4dc))
+                                        .bg(rgb(0xfcfcf8))
+                                        .child(splitter),
+                                )
+                                .child(component_splitter_state_row(&state))
+                        }),
+                    )),
+            ),
+        )
+        .child(
+            component_page_section("scroll-area", anchors.scroll_area.clone()).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("ScrollArea"),
+                    )
+                    .child(div().flex().gap_3().flex_wrap().children(
+                        scroll_area_samples.into_iter().map(|sample| {
+                            let sample_id = sample.id;
+                            let debug_selector = sample.debug_selector();
+                            let title = sample.title;
+                            let summary = sample.summary;
+                            let items = sample.items;
+                            let state = sample.state.clone();
+                            let horizontal = state.axis() == ScrollAreaAxis::Horizontal;
+                            let two_axis = state.axis() == ScrollAreaAxis::Both;
+                            let content = div()
+                                .when(horizontal, |this| this.flex().gap_2().min_w(px(860.0)))
+                                .when(two_axis, |this| {
+                                    this.flex().flex_col().gap_1().min_w(px(620.0))
+                                })
+                                .when(!horizontal && !two_axis, |this| {
+                                    this.flex().flex_col().gap_1()
+                                })
+                                .children(items.into_iter().enumerate().map(
+                                    move |(index, item)| {
+                                        let vertical_only = !horizontal && !two_axis;
+                                        div()
                                     .id(format!(
                                         "component-scroll-area-item:{}:{}",
                                         sample_id, index
@@ -541,78 +665,77 @@ pub(crate) fn render_components_page(
                                     .text_xs()
                                     .text_color(rgb(0x3f4a57))
                                     .child(item)
-                            }));
-                        let scroll_area = ScrollArea::new(
-                            format!("component-scroll-area:{}", sample_id),
-                            content,
-                        )
-                        .axis(state.axis())
-                        .with_size(state.size());
-                        let scroll_area = if let Some(reset_key) = state.reset_key() {
-                            scroll_area.reset_on_key(reset_key)
-                        } else {
-                            scroll_area
-                        };
+                                    },
+                                ));
+                            let scroll_area = ScrollArea::new(
+                                format!("component-scroll-area:{}", sample_id),
+                                content,
+                            )
+                            .axis(state.axis())
+                            .with_size(state.size());
+                            let scroll_area = if let Some(reset_key) = state.reset_key() {
+                                scroll_area.reset_on_key(reset_key)
+                            } else {
+                                scroll_area
+                            };
 
-                        div()
-                            .id(format!("component-scroll-area-sample:{}", sample_id))
-                            .debug_selector(move || debug_selector)
-                            .w(px(360.0))
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(0xd6d8ce))
-                            .bg(rgb(0xffffff))
-                            .p_3()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .font_weight(open_gpui::FontWeight::BOLD)
-                                            .child(title),
-                                    )
-                                    .child(label_pill(state.axis().as_str())),
-                            )
-                            .child(div().text_xs().text_color(rgb(0x5a6472)).child(summary))
-                            .child(
-                                div()
-                                    .h(px(154.0))
-                                    .min_h(px(0.0))
-                                    .overflow_hidden()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(rgb(0xe2e4dc))
-                                    .bg(rgb(0xfcfcf8))
-                                    .child(scroll_area),
-                            )
-                            .child(component_scroll_area_state_row(&state))
-                    }),
-                )),
+                            div()
+                                .id(format!("component-scroll-area-sample:{}", sample_id))
+                                .debug_selector(move || debug_selector)
+                                .w(px(360.0))
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xd6d8ce))
+                                .bg(rgb(0xffffff))
+                                .p_3()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(open_gpui::FontWeight::BOLD)
+                                                .child(title),
+                                        )
+                                        .child(label_pill(state.axis().as_str())),
+                                )
+                                .child(div().text_xs().text_color(rgb(0x5a6472)).child(summary))
+                                .child(
+                                    div()
+                                        .h(px(154.0))
+                                        .min_h(px(0.0))
+                                        .overflow_hidden()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xe2e4dc))
+                                        .bg(rgb(0xfcfcf8))
+                                        .child(scroll_area),
+                                )
+                                .child(component_scroll_area_state_row(&state))
+                        }),
+                    )),
+            ),
         )
         .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("Badge"),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap_3()
-                        .flex_wrap()
-                        .children(badge_samples.into_iter().map(|sample| {
+            component_page_section("badge", anchors.badge.clone()).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Badge"),
+                    )
+                    .child(div().flex().gap_3().flex_wrap().children(
+                        badge_samples.into_iter().map(|sample| {
                             let sample_id = sample.id;
                             let debug_selector = sample.debug_selector();
                             let state = sample.state;
@@ -639,450 +762,478 @@ pub(crate) fn render_components_page(
                                     .tokens(snapshot.tokens),
                                 )
                                 .child(component_badge_state_row(state))
-                        })),
-                ),
+                        }),
+                    )),
+            ),
         )
         .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("Switch"),
-                )
-                .child(
-                    div().flex().gap_3().flex_wrap().children(
-                        pages::components::switch_samples(snapshot.tokens)
-                            .into_iter()
-                            .map(|sample| {
-                                let sample_id = sample.id;
-                                let debug_selector = sample.debug_selector();
-                                let state = sample.state;
-                                div()
-                                    .id(format!("component-switch-sample:{sample_id}"))
-                                    .debug_selector(move || debug_selector)
-                                    .min_w(px(200.0))
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(rgb(0xd6d8ce))
-                                    .bg(rgb(0xffffff))
-                                    .p_3()
-                                    .child(
-                                        Switch::new(format!("component-switch:{}", sample.id))
-                                            .label(sample.label)
-                                            .checked(state.checked())
-                                            .disabled(state.disabled())
-                                            .with_size(state.size())
-                                            .tokens(snapshot.tokens),
-                                    )
-                                    .child(component_switch_state_row(state))
-                            }),
-                    ),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("Checkbox"),
-                )
-                .child(
-                    div().flex().gap_3().flex_wrap().children(
-                        pages::components::checkbox_samples(snapshot.tokens)
-                            .into_iter()
-                            .map(|sample| {
-                                let sample_id = sample.id;
-                                let debug_selector = sample.debug_selector();
-                                let state = sample.state;
-                                div()
-                                    .id(format!("component-checkbox-sample:{sample_id}"))
-                                    .debug_selector(move || debug_selector)
-                                    .min_w(px(220.0))
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(rgb(0xd6d8ce))
-                                    .bg(rgb(0xffffff))
-                                    .p_3()
-                                    .child(component_checkbox(
-                                        format!("component-checkbox:{}", sample.id),
-                                        sample.label,
-                                        state,
-                                        snapshot.tokens,
-                                    ))
-                                    .child(component_checkbox_state_row(state))
-                            }),
-                    ),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("RadioGroup"),
-                )
+            component_page_section("switch", anchors.switch.clone())
                 .child(
                     div()
                         .flex()
-                        .gap_3()
-                        .flex_wrap()
-                        .children(radio_samples.into_iter().map(|sample| {
-                            let sample_id = sample.id;
-                            let debug_selector = sample.debug_selector();
-                            let state = sample.state.clone();
-                            let mut radio =
-                                RadioGroup::new(format!("component-radio:{}", sample.id))
-                                    .label(sample.title)
-                                    .orientation(state.orientation())
-                                    .selected(state.selected_value().unwrap_or("none"))
-                                    .required(state.required())
-                                    .disabled(state.disabled())
-                                    .with_size(state.size())
-                                    .tokens(snapshot.tokens);
-                            for item in state.items().iter() {
-                                radio = radio.item(
-                                    RadioItem::new(item.value(), item.label())
-                                        .disabled(item.disabled()),
-                                );
-                            }
-
+                        .flex_col()
+                        .gap_2()
+                        .child(
                             div()
-                                .id(format!("component-radio-sample:{sample_id}"))
-                                .debug_selector(move || debug_selector)
-                                .min_w(px(240.0))
-                                .flex()
-                                .flex_col()
-                                .gap_2()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(rgb(0xd6d8ce))
-                                .bg(rgb(0xffffff))
-                                .p_3()
-                                .child(radio)
-                                .child(component_radio_state_row(&state))
-                        })),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("Toggle"),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap_3()
-                        .flex_wrap()
-                        .children(toggle_samples.into_iter().map(|sample| {
-                            let sample_id = sample.id;
-                            let debug_selector = sample.debug_selector();
-                            let state = sample.state;
-                            div()
-                                .id(format!("component-toggle-sample:{sample_id}"))
-                                .debug_selector(move || debug_selector)
-                                .min_w(px(180.0))
-                                .flex()
-                                .flex_col()
-                                .gap_2()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(rgb(0xd6d8ce))
-                                .bg(rgb(0xffffff))
-                                .p_3()
-                                .child(
-                                    Toggle::new(
-                                        format!("component-toggle:{}", sample.id),
-                                        sample.label,
-                                    )
-                                    .variant(state.variant())
-                                    .pressed(state.pressed())
-                                    .disabled(state.disabled())
-                                    .with_size(state.size())
-                                    .tokens(snapshot.tokens),
-                                )
-                                .child(component_toggle_state_row(&state))
-                        })),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("IconButton"),
-                )
-                .child(div().flex().gap_3().flex_wrap().children(
-                    icon_button_samples.into_iter().map(|sample| {
-                        let sample_id = sample.id;
-                        let debug_selector = sample.debug_selector();
-                        let state = sample.state;
-                        let accessible_label = state.accessible_label().to_owned();
-                        div()
-                            .id(format!("component-icon-button-sample:{sample_id}"))
-                            .debug_selector(move || debug_selector)
-                            .min_w(px(170.0))
-                            .flex()
-                            .flex_col()
-                            .items_start()
-                            .gap_2()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(0xd6d8ce))
-                            .bg(rgb(0xffffff))
-                            .p_3()
-                            .child(
-                                IconButton::new(
-                                    format!("component-icon-button:{}", sample.id),
-                                    sample.icon,
-                                    accessible_label.clone(),
-                                )
-                                .variant(state.variant())
-                                .disabled(state.disabled())
-                                .with_size(state.size())
-                                .tokens(snapshot.tokens),
-                            )
-                            .child(component_icon_button_state_row(&accessible_label, state))
-                    }),
-                )),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("Label"),
-                )
-                .child(
-                    div().flex().gap_3().flex_wrap().children(
-                        pages::components::label_samples(snapshot.tokens)
-                            .into_iter()
-                            .map(|sample| {
-                                let sample_id = sample.id;
-                                let debug_selector = sample.debug_selector();
-                                let state = sample.state.clone();
-                                div()
-                                    .id(format!("component-label-sample:{sample_id}"))
-                                    .debug_selector(move || debug_selector)
-                                    .min_w(px(220.0))
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(rgb(0xd6d8ce))
-                                    .bg(rgb(0xffffff))
-                                    .p_3()
-                                    .child(component_label(
-                                        format!("component-label:{}", sample.id),
-                                        &state,
-                                        snapshot.tokens,
-                                    ))
-                                    .child(component_label_state_row(&state))
-                            }),
-                    ),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("TextInput"),
-                )
-                .child(
-                    div().flex().gap_3().flex_wrap().children(
-                        pages::components::text_input_samples(snapshot.tokens)
-                            .into_iter()
-                            .map(|sample| {
-                                let sample_id = sample.id;
-                                let debug_selector = sample.debug_selector();
-                                let state = sample.state.clone();
-                                let controller = state
-                                    .controller_driven()
-                                    .then(|| shell.editable_text_input().clone());
-                                div()
-                                    .id(format!("component-text-input-sample:{sample_id}"))
-                                    .debug_selector(move || debug_selector)
-                                    .min_w(px(240.0))
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(rgb(0xd6d8ce))
-                                    .bg(rgb(0xffffff))
-                                    .p_3()
-                                    .child(
+                                .text_sm()
+                                .font_weight(open_gpui::FontWeight::BOLD)
+                                .child("Switch"),
+                        )
+                        .child(
+                            div().flex().gap_3().flex_wrap().children(
+                                pages::components::switch_samples(snapshot.tokens)
+                                    .into_iter()
+                                    .map(|sample| {
+                                        let sample_id = sample.id;
+                                        let debug_selector = sample.debug_selector();
+                                        let state = sample.state;
                                         div()
-                                            .text_xs()
-                                            .font_weight(open_gpui::FontWeight::BOLD)
-                                            .text_color(rgb(0x3f4a57))
-                                            .child(sample.label),
-                                    )
-                                    .child(component_text_input(
-                                        format!("component-text-input:{}", sample.id),
-                                        sample.label,
-                                        &state,
-                                        snapshot.tokens,
-                                        controller,
-                                    ))
-                                    .child(component_text_input_state_row(&state))
-                            }),
-                    ),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("Field"),
+                                            .id(format!("component-switch-sample:{sample_id}"))
+                                            .debug_selector(move || debug_selector)
+                                            .min_w(px(200.0))
+                                            .flex()
+                                            .flex_col()
+                                            .gap_2()
+                                            .rounded_sm()
+                                            .border_1()
+                                            .border_color(rgb(0xd6d8ce))
+                                            .bg(rgb(0xffffff))
+                                            .p_3()
+                                            .child(
+                                                Switch::new(format!(
+                                                    "component-switch:{}",
+                                                    sample.id
+                                                ))
+                                                .label(sample.label)
+                                                .checked(state.checked())
+                                                .disabled(state.disabled())
+                                                .with_size(state.size())
+                                                .tokens(snapshot.tokens),
+                                            )
+                                            .child(component_switch_state_row(state))
+                                    }),
+                            ),
+                        ),
                 )
                 .child(
-                    div().flex().gap_3().flex_wrap().children(
-                        pages::components::field_samples(snapshot.tokens)
-                            .into_iter()
-                            .map(|sample| {
-                                let sample_id = sample.id;
-                                let debug_selector = sample.debug_selector();
-                                let field_state = sample.state.clone();
-                                let input_state = sample.input_state.clone();
-                                div()
-                                    .id(format!("component-field-sample:{sample_id}"))
-                                    .debug_selector(move || debug_selector)
-                                    .min_w(px(280.0))
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(rgb(0xd6d8ce))
-                                    .bg(rgb(0xffffff))
-                                    .p_3()
-                                    .child(component_field(
-                                        format!("component-field:{}", sample.id),
-                                        &field_state,
-                                        component_text_input(
-                                            format!("component-field-input:{}", sample.id),
-                                            field_state.label(),
-                                            &input_state,
-                                            snapshot.tokens,
-                                            None,
-                                        ),
-                                        snapshot.tokens,
-                                    ))
-                                    .child(component_field_state_row(&field_state, &input_state))
-                            }),
-                    ),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("Tabs"),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap_3()
-                        .flex_wrap()
-                        .children(tabs_samples.into_iter().map(|sample| {
-                            let debug_selector = sample.debug_selector();
-                            let state = sample.state.clone();
-                            let tabs = sample.build_tabs(snapshot.tokens);
-
+                    component_page_section("checkbox", anchors.checkbox.clone())
+                        .child(
                             div()
-                                .id(format!("component-tabs-sample:{}", sample.id))
-                                .debug_selector(move || debug_selector)
-                                .min_w(px(360.0))
                                 .flex()
                                 .flex_col()
                                 .gap_2()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(rgb(0xd6d8ce))
-                                .bg(rgb(0xffffff))
-                                .p_3()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                        .child("Checkbox"),
+                                )
+                                .child(
+                                    div().flex().gap_3().flex_wrap().children(
+                                        pages::components::checkbox_samples(snapshot.tokens)
+                                            .into_iter()
+                                            .map(|sample| {
+                                                let sample_id = sample.id;
+                                                let debug_selector = sample.debug_selector();
+                                                let state = sample.state;
+                                                div()
+                                                    .id(format!(
+                                                        "component-checkbox-sample:{sample_id}"
+                                                    ))
+                                                    .debug_selector(move || debug_selector)
+                                                    .min_w(px(220.0))
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_2()
+                                                    .rounded_sm()
+                                                    .border_1()
+                                                    .border_color(rgb(0xd6d8ce))
+                                                    .bg(rgb(0xffffff))
+                                                    .p_3()
+                                                    .child(component_checkbox(
+                                                        format!("component-checkbox:{}", sample.id),
+                                                        sample.label,
+                                                        state,
+                                                        snapshot.tokens,
+                                                    ))
+                                                    .child(component_checkbox_state_row(state))
+                                            }),
+                                    ),
+                                ),
+                        )
+                        .child(
+                            component_page_section("radio-group", anchors.radio_group.clone())
                                 .child(
                                     div()
                                         .flex()
-                                        .items_center()
-                                        .justify_between()
+                                        .flex_col()
                                         .gap_2()
                                         .child(
                                             div()
                                                 .text_sm()
                                                 .font_weight(open_gpui::FontWeight::BOLD)
-                                                .child(sample.title),
+                                                .child("RadioGroup"),
                                         )
-                                        .child(label_pill(state.activation_mode().as_str())),
-                                )
-                                .child(
+                                        .child(div().flex().gap_3().flex_wrap().children(
+                                            radio_samples.into_iter().map(|sample| {
+                                                let sample_id = sample.id;
+                                                let debug_selector = sample.debug_selector();
+                                                let state = sample.state.clone();
+                                                let mut radio = RadioGroup::new(format!(
+                                                    "component-radio:{}",
+                                                    sample.id
+                                                ))
+                                                .label(sample.title)
+                                                .orientation(state.orientation())
+                                                .selected(state.selected_value().unwrap_or("none"))
+                                                .required(state.required())
+                                                .disabled(state.disabled())
+                                                .with_size(state.size())
+                                                .tokens(snapshot.tokens);
+                                                for item in state.items().iter() {
+                                                    radio = radio.item(
+                                                        RadioItem::new(item.value(), item.label())
+                                                            .disabled(item.disabled()),
+                                                    );
+                                                }
+
+                                                div()
+                                                    .id(format!(
+                                                        "component-radio-sample:{sample_id}"
+                                                    ))
+                                                    .debug_selector(move || debug_selector)
+                                                    .min_w(px(240.0))
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_2()
+                                                    .rounded_sm()
+                                                    .border_1()
+                                                    .border_color(rgb(0xd6d8ce))
+                                                    .bg(rgb(0xffffff))
+                                                    .p_3()
+                                                    .child(radio)
+                                                    .child(component_radio_state_row(&state))
+                                            }),
+                                        )),
+                                ),
+                        ),
+                )
+                .child(
+                    component_page_section("toggle", anchors.toggle.clone()).child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child("Toggle"),
+                            )
+                            .child(div().flex().gap_3().flex_wrap().children(
+                                toggle_samples.into_iter().map(|sample| {
+                                    let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
+                                    let state = sample.state;
                                     div()
-                                        .text_xs()
-                                        .text_color(rgb(0x5a6472))
-                                        .child(sample.summary),
-                                )
-                                .child(
-                                    div()
-                                        .when(
-                                            state.orientation() == Orientation::Vertical,
-                                            |this| this.h(px(240.0)).min_h(px(0.0)),
+                                        .id(format!("component-toggle-sample:{sample_id}"))
+                                        .debug_selector(move || debug_selector)
+                                        .min_w(px(180.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(
+                                            Toggle::new(
+                                                format!("component-toggle:{}", sample.id),
+                                                sample.label,
+                                            )
+                                            .variant(state.variant())
+                                            .pressed(state.pressed())
+                                            .disabled(state.disabled())
+                                            .with_size(state.size())
+                                            .tokens(snapshot.tokens),
                                         )
-                                        .overflow_hidden()
-                                        .child(tabs),
-                                )
-                                .child(component_tabs_state_row(&state))
-                        })),
+                                        .child(component_toggle_state_row(&state))
+                                }),
+                            )),
+                    ),
                 ),
         )
-        .child(shell.render_signal_list(snapshot.selected_page))
+        .child(
+            component_page_section("icon-button", anchors.icon_button.clone()).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("IconButton"),
+                    )
+                    .child(div().flex().gap_3().flex_wrap().children(
+                        icon_button_samples.into_iter().map(|sample| {
+                            let sample_id = sample.id;
+                            let debug_selector = sample.debug_selector();
+                            let state = sample.state;
+                            let accessible_label = state.accessible_label().to_owned();
+                            div()
+                                .id(format!("component-icon-button-sample:{sample_id}"))
+                                .debug_selector(move || debug_selector)
+                                .min_w(px(170.0))
+                                .flex()
+                                .flex_col()
+                                .items_start()
+                                .gap_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xd6d8ce))
+                                .bg(rgb(0xffffff))
+                                .p_3()
+                                .child(
+                                    IconButton::new(
+                                        format!("component-icon-button:{}", sample.id),
+                                        sample.icon,
+                                        accessible_label.clone(),
+                                    )
+                                    .variant(state.variant())
+                                    .disabled(state.disabled())
+                                    .with_size(state.size())
+                                    .tokens(snapshot.tokens),
+                                )
+                                .child(component_icon_button_state_row(&accessible_label, state))
+                        }),
+                    )),
+            ),
+        )
+        .child(
+            component_page_section("label", anchors.label.clone()).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Label"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::label_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
+                                    let state = sample.state.clone();
+                                    div()
+                                        .id(format!("component-label-sample:{sample_id}"))
+                                        .debug_selector(move || debug_selector)
+                                        .min_w(px(220.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(component_label(
+                                            format!("component-label:{}", sample.id),
+                                            &state,
+                                            snapshot.tokens,
+                                        ))
+                                        .child(component_label_state_row(&state))
+                                }),
+                        ),
+                    ),
+            ),
+        )
+        .child(
+            component_page_section("text-input", anchors.text_input.clone()).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("TextInput"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::text_input_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
+                                    let state = sample.state.clone();
+                                    let controller = state
+                                        .controller_driven()
+                                        .then(|| shell.editable_text_input().clone());
+                                    div()
+                                        .id(format!("component-text-input-sample:{sample_id}"))
+                                        .debug_selector(move || debug_selector)
+                                        .min_w(px(240.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(open_gpui::FontWeight::BOLD)
+                                                .text_color(rgb(0x3f4a57))
+                                                .child(sample.label),
+                                        )
+                                        .child(component_text_input(
+                                            format!("component-text-input:{}", sample.id),
+                                            sample.label,
+                                            &state,
+                                            snapshot.tokens,
+                                            controller,
+                                        ))
+                                        .child(component_text_input_state_row(&state))
+                                }),
+                        ),
+                    ),
+            ),
+        )
+        .child(
+            component_page_section("field", anchors.field.clone())
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(open_gpui::FontWeight::BOLD)
+                                .child("Field"),
+                        )
+                        .child(
+                            div().flex().gap_3().flex_wrap().children(
+                                pages::components::field_samples(snapshot.tokens)
+                                    .into_iter()
+                                    .map(|sample| {
+                                        let sample_id = sample.id;
+                                        let debug_selector = sample.debug_selector();
+                                        let field_state = sample.state.clone();
+                                        let input_state = sample.input_state.clone();
+                                        div()
+                                            .id(format!("component-field-sample:{sample_id}"))
+                                            .debug_selector(move || debug_selector)
+                                            .min_w(px(280.0))
+                                            .flex()
+                                            .flex_col()
+                                            .gap_2()
+                                            .rounded_sm()
+                                            .border_1()
+                                            .border_color(rgb(0xd6d8ce))
+                                            .bg(rgb(0xffffff))
+                                            .p_3()
+                                            .child(component_field(
+                                                format!("component-field:{}", sample.id),
+                                                &field_state,
+                                                component_text_input(
+                                                    format!("component-field-input:{}", sample.id),
+                                                    field_state.label(),
+                                                    &input_state,
+                                                    snapshot.tokens,
+                                                    None,
+                                                ),
+                                                snapshot.tokens,
+                                            ))
+                                            .child(component_field_state_row(
+                                                &field_state,
+                                                &input_state,
+                                            ))
+                                    }),
+                            ),
+                        ),
+                )
+                .child(
+                    component_page_section("tabs", anchors.tabs.clone()).child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child("Tabs"),
+                            )
+                            .child(div().flex().gap_3().flex_wrap().children(
+                                tabs_samples.into_iter().map(|sample| {
+                                    let debug_selector = sample.debug_selector();
+                                    let state = sample.state.clone();
+                                    let tabs = sample.build_tabs(snapshot.tokens);
+
+                                    div()
+                                        .id(format!("component-tabs-sample:{}", sample.id))
+                                        .debug_selector(move || debug_selector)
+                                        .min_w(px(360.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap_2()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                                        .child(sample.title),
+                                                )
+                                                .child(label_pill(
+                                                    state.activation_mode().as_str(),
+                                                )),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0x5a6472))
+                                                .child(sample.summary),
+                                        )
+                                        .child(
+                                            div()
+                                                .when(
+                                                    state.orientation() == Orientation::Vertical,
+                                                    |this| this.h(px(240.0)).min_h(px(0.0)),
+                                                )
+                                                .overflow_hidden()
+                                                .child(tabs),
+                                        )
+                                        .child(component_tabs_state_row(&state))
+                                }),
+                            )),
+                    ),
+                )
+                .child(
+                    component_page_section("signals", anchors.signals.clone())
+                        .child(shell.render_signal_list(snapshot.selected_page)),
+                ),
+        )
 }
 
 pub(crate) fn component_tabs_state_row(state: &TabsState) -> impl IntoElement {

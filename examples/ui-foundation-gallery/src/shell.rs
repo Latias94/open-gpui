@@ -4,19 +4,20 @@ use open_gpui::prelude::*;
 
 use open_gpui::{
     Anchor, App, AppContext, Bounds, Context, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Pixels, Render, StatefulInteractiveElement, Styled, Window,
-    WindowBounds, WindowOptions, anchored, deferred, div, px, rgb, size,
+    KeyDownEvent, ParentElement, Pixels, Render, ScrollAnchor, ScrollHandle,
+    StatefulInteractiveElement, Styled, Window, WindowBounds, WindowOptions, anchored, deferred,
+    div, px, rgb, size,
 };
 
 use open_gpui_ui_components::{
-    AlertDialog, Avatar, AvatarState, BadgeState, ButtonState, Checkbox, CheckboxState,
-    ColorIntent, Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxState, Command,
-    CommandGroup, CommandItem, CommandOpenMode, CommandState, ContextMenu, Dialog, Field,
-    FieldState, FocusRing, HoverCard, IconButtonState, Kbd, KbdState, Label, LabelState, Listbox,
-    ListboxGroup, ListboxOption, ListboxState, Menu, MenuItem, OverlayResolvedState, Popover,
-    Progress, ProgressState, ScrollArea, Select, SelectOpenMode, SelectState, Separator,
-    SeparatorState, Sheet, Skeleton, SkeletonState, SwitchState, TextInput, TextInputState,
-    ToggleState, Tooltip,
+    AlertDialog, Avatar, AvatarState, BadgeState, Button, ButtonState, ButtonVariant, Checkbox,
+    CheckboxState, ColorIntent, Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption,
+    ComboboxState, Command, CommandGroup, CommandItem, CommandOpenMode, CommandState, ContextMenu,
+    Dialog, Field, FieldState, FocusRing, HoverCard, IconButtonState, Kbd, KbdState, Label,
+    LabelState, Listbox, ListboxGroup, ListboxOption, ListboxState, Menu, MenuItem,
+    OverlayResolvedState, Popover, Progress, ProgressState, ScrollArea, Select, SelectOpenMode,
+    SelectState, Separator, SeparatorState, Sheet, Skeleton, SkeletonState, SwitchState, TextInput,
+    TextInputState, ToggleState, Tooltip,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, focus_ring_shadow,
         gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui, init_text_input,
@@ -108,6 +109,7 @@ pub struct GalleryShell {
     selected_page: GalleryPage,
     width: Pixels,
     root_focus: FocusHandle,
+    page_scroll_handle: ScrollHandle,
     editable_text_input: open_gpui::Entity<TextInputController>,
     focus_controls: [FocusHandle; 3],
     tooltip_focus_controls: [FocusHandle; 4],
@@ -123,6 +125,7 @@ impl GalleryShell {
             width: DEFAULT_GALLERY_WIDTH,
 
             root_focus: cx.focus_handle(),
+            page_scroll_handle: ScrollHandle::new(),
 
             editable_text_input: cx.new(|cx| {
                 let mut controller = TextInputController::with_value("", cx);
@@ -171,6 +174,10 @@ impl GalleryShell {
 
     pub(crate) fn editable_text_input(&self) -> &open_gpui::Entity<TextInputController> {
         &self.editable_text_input
+    }
+
+    pub(crate) fn page_scroll_handle(&self) -> &ScrollHandle {
+        &self.page_scroll_handle
     }
 
     /// Returns the current foundation snapshot.
@@ -417,6 +424,7 @@ impl GalleryShell {
                             "gallery-page-scroll-viewport",
                             self.render_page_body(snapshot, window, cx),
                         )
+                        .scroll_handle(&self.page_scroll_handle)
                         .with_size(snapshot.control_size)
                         .reset_on_key(snapshot.selected_page.id()),
                     ),
@@ -3644,6 +3652,34 @@ pub(crate) fn component_primitive_samples_section(
                     )
                     .child(component_avatar_state_row(&state))
                 })),
+        )
+}
+
+pub(crate) fn component_page_section(
+    id: &'static str,
+    anchor: ScrollAnchor,
+) -> open_gpui::Stateful<open_gpui::Div> {
+    div()
+        .id(format!("gallery-components-section:{id}"))
+        .debug_selector(move || format!("gallery:components-section:{id}"))
+        .anchor_scroll(Some(anchor))
+}
+
+pub(crate) fn component_page_jump(
+    id: &'static str,
+    label: &'static str,
+    anchor: ScrollAnchor,
+    tokens: ThemeTokens,
+) -> impl IntoElement {
+    div()
+        .id(format!("gallery-components-jump:{id}"))
+        .debug_selector(move || format!("gallery:component-page-jump:{id}"))
+        .child(
+            Button::new(format!("gallery-components-jump-button:{id}"), label)
+                .variant(ButtonVariant::Ghost)
+                .with_size(Size::Small)
+                .tokens(tokens)
+                .on_click(move |_, _, _| anchor.scroll_now()),
         )
 }
 
