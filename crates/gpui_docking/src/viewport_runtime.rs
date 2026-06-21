@@ -57,8 +57,13 @@ pub(crate) struct DockViewportRuntime {
     retired_windows: HashSet<WindowId>,
     focus: DockViewportFocusCoordinator,
     pending_activation: Option<DockViewportActivationTransaction>,
+    /// Last live docking window observed as backend-focused. Mirrors ImGui's
+    /// `PlatformLastFocusedViewportId` and feeds platform focus-order fallback.
     last_platform_focused_window: Option<WindowId>,
-    pending_platform_focus_restore_suppression: Option<DockViewportPlatformFocusRestoreSuppression>,
+    /// One-shot gate for ImGui's `prev_focused_has_been_destroyed` behavior: when backend focus
+    /// moves to another viewport only because the previously focused viewport was destroyed, the
+    /// next platform-focus restoration for the newly focused window must be skipped once.
+    destroyed_previous_focus_suppression: Option<DockViewportDestroyedPreviousFocusSuppression>,
     close_coordinator: DockViewportCloseCoordinator,
     routed_drop_preview: Option<DockViewportRoutedDropPreview>,
     routed_drop_preview_resolution: Option<DockViewportResolvedDropRoute>,
@@ -75,7 +80,8 @@ struct DockRuntimeDragTearOffGeometry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DockViewportPlatformFocusRestoreSuppression {
+struct DockViewportDestroyedPreviousFocusSuppression {
+    /// Backend-focused window that should consume the destroyed-previous-focus gate.
     focused_window: WindowId,
 }
 
@@ -313,7 +319,7 @@ impl DockViewportRuntime {
             focus: DockViewportFocusCoordinator::default(),
             pending_activation: None,
             last_platform_focused_window: None,
-            pending_platform_focus_restore_suppression: None,
+            destroyed_previous_focus_suppression: None,
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: None,
             routed_drop_preview_resolution: None,
@@ -345,7 +351,7 @@ impl DockViewportRuntime {
             focus: DockViewportFocusCoordinator::default(),
             pending_activation: None,
             last_platform_focused_window: None,
-            pending_platform_focus_restore_suppression: None,
+            destroyed_previous_focus_suppression: None,
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: None,
             routed_drop_preview_resolution: None,
@@ -552,10 +558,10 @@ impl DockViewportRuntime {
         let previous_focused_window = self.last_platform_focused_window;
         let focused_changed = previous_focused_window != Some(window_id);
         if focused_changed {
-            self.pending_platform_focus_restore_suppression = if previous_focused_window
+            self.destroyed_previous_focus_suppression = if previous_focused_window
                 .is_some_and(|previous| !self.is_live_docking_window(previous))
             {
-                Some(DockViewportPlatformFocusRestoreSuppression {
+                Some(DockViewportDestroyedPreviousFocusSuppression {
                     focused_window: window_id,
                 })
             } else {
@@ -567,14 +573,14 @@ impl DockViewportRuntime {
         Some(changed)
     }
 
-    fn take_platform_focus_restore_suppression(&mut self, window_id: WindowId) -> bool {
+    fn take_destroyed_previous_focus_suppression(&mut self, window_id: WindowId) -> bool {
         if !self
-            .pending_platform_focus_restore_suppression
+            .destroyed_previous_focus_suppression
             .is_some_and(|suppression| suppression.focused_window == window_id)
         {
             return false;
         }
-        self.pending_platform_focus_restore_suppression = None;
+        self.destroyed_previous_focus_suppression = None;
         true
     }
 
@@ -650,7 +656,8 @@ impl DockViewportRuntime {
 
         self.record_platform_focused_window(window_id)
             .expect("backend focus was already validated as a live docking window");
-        let suppress_platform_restore = self.take_platform_focus_restore_suppression(window_id);
+        let suppress_destroyed_previous_focus_restore =
+            self.take_destroyed_previous_focus_suppression(window_id);
         if mouse_down {
             let _ = self.take_pending_activation_for(space, window_id);
             return None;
@@ -662,7 +669,7 @@ impl DockViewportRuntime {
                 activation.focus_request().clone(),
             ));
         }
-        if suppress_platform_restore {
+        if suppress_destroyed_previous_focus_restore {
             return None;
         }
         self.focus
