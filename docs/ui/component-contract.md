@@ -331,6 +331,32 @@ handle allocated by the builder would reset the scroll offset on every notify/re
 viewport appear non-scrollable. An explicitly supplied external handle remains caller-owned, but the
 default path must preserve offset across reconstructed component values.
 
+## Table and Virtualizer Contracts
+
+`TableState` should describe renderer-neutral table behavior: stable row ids, row lookup, row-model
+stage vocabulary, selection keyed by row id, column visibility and ordering, sorting, filtering, and
+pagination. The first official table slice implements the v0 row-model pipeline core -> filtered ->
+sorted -> paginated. Grouped and expanded row models remain named stages for future compatibility,
+but they must not be implied by the v0 resolver until those transforms are implemented and tested.
+
+`VirtualizerState` should describe renderer-neutral viewport calculation inputs and outputs rather
+than a concrete scroll element. The neutral contract accepts item count, viewport extent, scroll
+offset, estimated item size, measurements keyed by stable item key, overscan, gap, and scroll
+margin. It returns visible and overscan ranges, item measurements, total size, and snapshot/restore
+metadata. GPUI adapters own `ScrollHandle`, wheel events, pointer hitboxes, and any concrete scroll
+offset mutation.
+
+The GPUI `Table` adapter should resolve table state and virtualizer ranges before rendering. The
+adapter owns the element tree, concrete scroll viewport, keyboard and pointer events, header
+actions, focus handles, and AccessKit mapping. Table accessibility metadata should include table,
+row, and cell roles where available, row and column position metadata where the adapter can expose
+it, sort metadata for sortable headers, and selection metadata keyed by stable row id.
+
+An official Table entry must satisfy the normal component completion gate: `Table` and `TableState`
+exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
+entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests for row
+identity and virtualizer behavior, and gallery runtime tests for nested scroll containment.
+
 ## Splitter Constraints
 
 `SplitterState` describes renderer-neutral resize constraints: stable group id, orientation, panel
@@ -366,6 +392,7 @@ these gates visible:
 - gallery samples continue to show real resolved state for each shipped component;
 - the gallery navigation rail and page viewport stay independently scrollable on compact windows;
 - ScrollArea redraws preserve the default keyed runtime handle;
+- Table and virtualizer samples keep long table scrolling inside the table viewport;
 - Splitter runtime fractions continue to share one constraint solver;
 - Tabs keep overflow and roving-focus behavior visible in the page;
 - icon-only affordances and labels keep their accessible metadata explicit.
@@ -454,6 +481,9 @@ arrows, text-selection leases, and richer focus-scope traversal remain deferred.
 `ScrollArea` covers viewport overflow, axis metadata, scrollbar width metrics, and explicit
 reset-on-key-change semantics. It intentionally does not yet expose custom scrollbar anatomy,
 nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.
+`Table` and `Virtualizer` are the next planned contracts. They should keep row identity, row-model
+ordering, range math, measurement idempotence, and scroll ownership split between `ui_core` and the
+GPUI adapter before being treated as finished official components.
 `Splitter` covers panel fraction normalization, min/max constraints, collapsed-panel metadata,
 stable handle anatomy, and local pointer dragging through keyed runtime state. Keyboard resizing,
 controlled resize callbacks, persisted layouts, RTL behavior, and nested splitter arbitration

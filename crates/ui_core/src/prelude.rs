@@ -22,5 +22,15 @@ pub use crate::{
         resolve_outside_press,
     },
     sizing::{Density, Sizable, Size},
+    table::{
+        TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableCellValue, TableColumn,
+        TableColumnId, TableFilter, TablePagination, TableResolvedRow, TableResolvedState,
+        TableRow, TableRowId, TableRowModel, TableRowModelStage, TableSort, TableSortDirection,
+        TableState,
+    },
     tokens::{ThemeTokens, TokenKey, semantic},
+    virtualizer::{
+        VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState,
+        VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
+    },
 };

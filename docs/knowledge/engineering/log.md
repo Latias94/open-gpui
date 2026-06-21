@@ -6,6 +6,10 @@ status: active
 
 # Log
 
+- 2026-06-22: Implemented `open-gpui-ui-core::table` and `open-gpui-ui-core::virtualizer`, then verified the core contract with `cargo nextest run -p open-gpui-ui-core` passing 39/39.
+- 2026-06-22: Added ADR 0009 and extended `docs/ui/component-contract.md` plus `docs/verification.md` with the table / virtualizer product boundary, official Table gate, and split between pure `ui_core` contracts and GPUI adapter scroll ownership.
+- 2026-06-21: Wrote `docs/plans/2026-06-21-001-feat-ui-table-virtualizer-roadmap-plan.md` and tightened the scope around table-core v0, virtualizer metrics/range v0, GPUI adapter recipe, gallery conformance, and official component gates. The execution order is U1 -> U2 -> U6 -> U3 -> U4 -> U5.
+- 2026-06-21: Framed the next series around table / virtualizer design instead of a new headless crate. The planning context now uses `repo-ref/fret`, `repo-ref/tanstack-table`, and `repo-ref/tanstack-virtual` as the primary references.
 - 2026-06-21: Stabilized the Components page by moving the directory into its own fixed strip above the page scroll area; replaced the flaky data-grid wheel-motion regression with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
 - 2026-06-21: Added gallery-level wheel isolation on the ScrollArea sample card so wheel gestures on the release-queue chrome stay local and do not leak to the page shell; kept the release queue runtime scroll proof intact.
 - 2026-06-21: Rechecked the splitter and overlay contract surface at `a7f0b96`; focused splitter, overlay, and gallery composition nextest runs remained green, and no new behavior gaps were found.

@@ -1,6 +1,6 @@
 ---
 type: Current State
-title: open-gpui gallery interaction hardening state
+title: open-gpui table and virtualizer planning state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
@@ -20,9 +20,9 @@ verified_by:
 
 # Current State
 
-- Goal: 继续审查 open-gpui 的 gallery / component 行为契约一致性，允许无畏重构，但只收真实问题。
+- Goal: 设计 open-gpui 下一阶段的 table / virtualizer 系列，并把方向写进工程记忆和计划文档。
 - Branch: `main`
-- Last verified: 2026-06-21, focused gallery nextest coverage passed after splitting the Components directory out of the page scroll area, stabilizing the Components-page scroll regressions, and isolating wheel gestures on the release-queue sample card so they do not leak to the page shell.
+- Last verified: 2026-06-21, gallery hardening remains the last runtime verification state; this session has only advanced planning and memory.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -30,8 +30,12 @@ verified_by:
 - Done: Added gallery smoke coverage for AlertDialog trigger -> action -> Escape dismissal and focus restoration.
 - Done: Confirmed existing overlay and splitter runtime regression gates remain green.
 - Done: Rechecked the splitter and overlay contract surface at `d64f5d6`; no new behavior gaps were found in the current codebase.
-- Blocked: 暂无。
-- Next action: commit the stabilized gallery layout, card-level wheel isolation, and regression updates, then reopen review only if a future code change or failing gate surfaces a new mismatch.
+- Done: Pulled the local `repo-ref/fret`, `repo-ref/tanstack-table`, and `repo-ref/tanstack-virtual` references into the planning context.
+- Done: Wrote the table / virtualizer roadmap plan and tightened it around table-core v0, virtualizer v0, gallery conformance, and official component gates.
+- Done: Added ADR 0009 and extended the component contract / verification docs with the table and virtualizer product boundary.
+- Done: Implemented `open-gpui-ui-core::table` and `open-gpui-ui-core::virtualizer` with passing core contract tests.
+- Blocked: None.
+- Next action: implement the GPUI `Table` adapter and its export surface in `open-gpui-ui-components`.
 
 # Citations
 
@@ -42,3 +46,6 @@ verified_by:
 [5] AlertDialog gallery gate added on 2026-06-21
 [6] Session `019ec6c8-5566-7062-8458-21ebe1360573`
 [7] Progress note `docs/knowledge/engineering/progress/2026-06-21-gallery-components-directory-fixed-and-scroll-regressions-stabilized.md`
+[8] Plan `docs/plans/2026-06-21-001-feat-ui-table-virtualizer-roadmap-plan.md`
+[9] ADR `docs/adr/0009-open-gpui-table-and-virtualizer-product-shape.md`
+[10] Verification command `cargo nextest run -p open-gpui-ui-core`

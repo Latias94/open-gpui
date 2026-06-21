@@ -6,6 +6,7 @@
 * [Update Log](log.md) - Chronological history of meaningful memory updates.
 * [Open GPUI UI foundation first](decisions/open-gpui-ui-foundation-first.md) - Decision to prioritize accessibility, focus, overlay, tokens, sizing, density, and adaptive layout before broad component rollout.
 * [Open GPUI UI component productization roadmap](decisions/open-gpui-ui-productization-roadmap.md) - Decision to treat current UI crates as the active product boundary and defer standalone headless extraction.
+* [Table and virtualizer roadmap framing](progress/2026-06-21-table-virtualizer-roadmap-framing.md) - Planning note for the next table / virtualizer series using fret and TanStack references.
 * [Gallery selector unification handoff](sessions/2026-06-17-gallery-selector-unification-and-verification-handoff.md) - Session handoff for the gallery selector contract unification and verification pass.
 * [Open GPUI component library planning handoff](sessions/open-gpui-component-library-handoff.md) - Session handoff for the ADR and UI foundation sequencing.
 * [Gallery scroll and viewport hardening session handoff](sessions/2026-06-21-gallery-scroll-viewport-hardening.md) - Session handoff for the Components-page scroll regression slice.

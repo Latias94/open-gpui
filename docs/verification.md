@@ -53,6 +53,10 @@ horizontal plus vertical Splitter pointer dragging, and long Sidebar internal na
 Run the gallery package tests before relying on manual dogfood for those paths.
 The Components-page ScrollArea regressions also cover release-queue wheel isolation so scroll
 gestures on the sample card chrome do not leak to the page shell.
+Future Table gallery gates should follow the same split: `open-gpui-ui-core` tests prove row-model
+and virtualizer contracts without rendering, `open-gpui-ui-components` tests prove adapter exports,
+state metadata, and scroll ownership, and gallery smokes prove long table scroll input stays inside
+the table viewport when the surrounding Components page also overflows.
 
 The components package includes runtime smoke coverage for TextInput, RadioGroup, Listbox, Select,
 Combobox, Command, Tabs, and Toolbar keyboard navigation. The focused TextInput test renders a
@@ -88,6 +92,10 @@ render visible samples with stable debug selectors.
 gate for catalog drift: every official `COMPONENT_CATALOG` entry must have matching component and
 resolved-state `SIGNALS` entries plus one rendered `gallery:component-*-sample:{id}` selector in
 the Components page.
+When Table becomes official, that gate should require `Table`, `TableState`, and at least one
+`gallery:component-table-sample:{id}` selector. Additional table smokes should assert that rendered
+row selectors do not exceed the virtualizer's visible rows plus overscan, and that sort/filter
+state follows stable row ids rather than numeric positions.
 
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left

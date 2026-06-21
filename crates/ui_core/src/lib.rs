@@ -13,7 +13,9 @@ pub mod geometry;
 pub mod overlay;
 pub mod prelude;
 pub mod sizing;
+pub mod table;
 pub mod tokens;
+pub mod virtualizer;
 
 pub use a11y::*;
 pub use adaptive::*;
@@ -21,4 +23,6 @@ pub use focus::*;
 pub use geometry::*;
 pub use overlay::*;
 pub use sizing::*;
+pub use table::*;
 pub use tokens::*;
+pub use virtualizer::*;
