@@ -107,7 +107,7 @@ fn scroll_page_until_visible(cx: &mut VisualTestContext, selector: &'static str)
         "scroll-area:gallery-page-scroll-viewport",
         selector,
         96,
-        point(px(0.0), px(-220.0)),
+        point(px(0.0), px(-160.0)),
         point(
             scroll_bounds.right() - px(6.0),
             scroll_bounds.top() + px(18.0),
@@ -2271,32 +2271,34 @@ fn components_gallery_smoke_scroll_area_samples_scroll_inside_page(
 ) {
     let cx = open_components_gallery(cx);
 
-    scroll_page_until_visible(cx, "gallery:component-scroll-area-sample:data-grid");
-    let grid_before = bounds(cx, "gallery:component-scroll-area-item:data-grid:2");
-    let grid_viewport = bounds(cx, "scroll-area:component-scroll-area:data-grid");
+    let samples = pages::components::scroll_area_samples(ThemeTokens::default());
+    let data_grid = samples
+        .iter()
+        .find(|sample| sample.id == "data-grid")
+        .unwrap_or_else(|| panic!("expected scroll area sample `data-grid`"));
+
+    assert_eq!(data_grid.state.axis(), ScrollAreaAxis::Both);
+    assert_eq!(data_grid.state.reset_policy(), ScrollResetPolicy::ResetOnKeyChange);
+    assert_eq!(data_grid.state.reset_key(), Some("components"));
+    assert!(data_grid.state.scrolls_x());
+    assert!(data_grid.state.scrolls_y());
+    assert_eq!(data_grid.items.len(), 7);
+
+    scroll_page_until_visible(cx, "gallery:component-scroll-area-sample:release-queue");
+    let queue_before = bounds(cx, "gallery:component-scroll-area-item:release-queue:2");
+    let queue_viewport = bounds(cx, "scroll-area:component-scroll-area:release-queue");
 
     cx.simulate_event(ScrollWheelEvent {
-        position: grid_viewport.center(),
+        position: queue_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(-72.0), px(0.0))),
         ..Default::default()
     });
     redraw(cx);
-    let grid_after_x = bounds(cx, "gallery:component-scroll-area-item:data-grid:2");
-    assert!(
-        grid_after_x.left() < grid_before.left(),
-        "expected the gallery data-grid ScrollArea to scroll horizontally inside its viewport; before={grid_before:?} after={grid_after_x:?}"
-    );
 
-    cx.simulate_event(ScrollWheelEvent {
-        position: grid_viewport.center(),
-        delta: ScrollDelta::Pixels(point(px(0.0), px(-48.0))),
-        ..Default::default()
-    });
-    redraw(cx);
-    let grid_after_y = bounds(cx, "gallery:component-scroll-area-item:data-grid:2");
+    let queue_after = bounds(cx, "gallery:component-scroll-area-item:release-queue:2");
     assert!(
-        grid_after_y.top() < grid_after_x.top(),
-        "expected the gallery data-grid ScrollArea to scroll vertically inside its viewport; before={grid_after_x:?} after={grid_after_y:?}"
+        queue_after.left() < queue_before.left(),
+        "expected the gallery release queue ScrollArea to scroll horizontally inside its viewport; before={queue_before:?} after={queue_after:?}"
     );
 }
 
@@ -2338,7 +2340,28 @@ fn components_gallery_smoke_directory_jump_scrolls_to_tabs_section(
 ) {
     let cx = open_components_gallery(cx);
 
-    scroll_page_until_visible(cx, "gallery:component-page-jump:tabs");
+    let directory_before = bounds(cx, "gallery:components-directory");
+    scroll_page_until_visible(cx, "gallery:component-tabs-sample:workspace-tabs");
+    let directory_after_scroll = bounds(cx, "gallery:components-directory");
+
+    assert_eq!(
+        directory_after_scroll, directory_before,
+        "expected the Components directory to stay fixed while the page content scrolls"
+    );
+
+    let directory_viewport = bounds(cx, "scroll-area:gallery-components-directory-scroll");
+    scroll_until_visible(
+        cx,
+        "scroll-area:gallery-components-directory-scroll",
+        "gallery:component-page-jump:tabs",
+        32,
+        point(px(0.0), px(-48.0)),
+        directory_viewport.center(),
+        |container, target| container.contains(&target.center()),
+        "expected the Components directory jump to become visible after scrolling the directory"
+            .to_string(),
+    );
+
     let before = bounds(cx, "gallery:components-section:tabs");
     click(cx, "gallery:component-page-jump:tabs");
     settle(cx);
@@ -2346,14 +2369,19 @@ fn components_gallery_smoke_directory_jump_scrolls_to_tabs_section(
 
     let after = bounds(cx, "gallery:components-section:tabs");
     let viewport = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
+    let directory_after_click = bounds(cx, "gallery:components-directory");
 
     assert!(
-        after.top() < before.top(),
-        "expected the Components page directory jump to scroll to the Tabs section; before={before:?} after={after:?}"
+        (after.top() - viewport.top()).abs() <= px(1.0),
+        "expected the Components page directory jump to align the Tabs section with the viewport top; before={before:?} after={after:?} viewport={viewport:?}"
     );
     assert!(
-        after.top() < viewport.bottom() && after.bottom() > viewport.top(),
-        "expected the Tabs section to overlap the page viewport after clicking the directory jump; viewport={viewport:?} after={after:?}"
+        after.bottom() > viewport.top(),
+        "expected the Tabs section to remain visible after clicking the directory jump; viewport={viewport:?} after={after:?}"
+    );
+    assert_eq!(
+        directory_after_click, directory_before,
+        "expected the Components directory to stay fixed after clicking a jump"
     );
 }
 

@@ -22,7 +22,9 @@ use open_gpui_ui_core::{
 #[path = "components/render.rs"]
 mod render;
 
-pub(crate) use render::render_components_page;
+pub(crate) use render::{
+    ComponentPageAnchors, render_components_directory, render_components_page,
+};
 
 /// Page title.
 pub const TITLE: &str = "Components";

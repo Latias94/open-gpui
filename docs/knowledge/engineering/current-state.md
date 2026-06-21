@@ -22,14 +22,15 @@ verified_by:
 
 - Goal: 继续审查 open-gpui 的 gallery / component 行为契约一致性，允许无畏重构，但只收真实问题。
 - Branch: `main`
-- Last verified: 2026-06-21, focused gallery and component nextest commands passed after hardening the Components-page scroll surfaces and adding the AlertDialog gallery gate.
-- Done: Added gallery layout constraints so the navigation rail, ScrollArea sample wrappers, and vertical Tabs sample keep their own overflow surfaces.
-- Done: Added gallery smoke coverage for navigation rail scrolling, constrained vertical Tabs scrolling, and ScrollArea wheel scrolling in the Components page.
+- Last verified: 2026-06-21, focused gallery nextest coverage passed after splitting the Components directory out of the page scroll area and stabilizing the Components-page scroll regressions.
+- Done: Moved the Components section directory into its own fixed strip above the page scroll area.
+- Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
+- Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
 - Done: Added gallery smoke coverage for AlertDialog trigger -> action -> Escape dismissal and focus restoration.
 - Done: Confirmed existing overlay and splitter runtime regression gates remain green.
 - Done: Rechecked the splitter and overlay contract surface at `d64f5d6`; no new behavior gaps were found in the current codebase.
 - Blocked: 暂无。
-- Next action: keep the current regression gates in place and reopen review only if a future code change or failing gate surfaces a new mismatch.
+- Next action: commit the stabilized gallery layout and regression updates, then reopen review only if a future code change or failing gate surfaces a new mismatch.
 
 # Citations
 
@@ -39,3 +40,4 @@ verified_by:
 [4] Commit `14efadc` - `fix(gallery): harden components page scroll surfaces`
 [5] AlertDialog gallery gate added on 2026-06-21
 [6] Session `019ec6c8-5566-7062-8458-21ebe1360573`
+[7] Progress note `docs/knowledge/engineering/progress/2026-06-21-gallery-components-directory-fixed-and-scroll-regressions-stabilized.md`

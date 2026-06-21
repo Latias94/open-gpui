@@ -371,6 +371,8 @@ impl GalleryShell {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let page = snapshot.selected_page;
+        let component_page_anchors =
+            pages::components::ComponentPageAnchors::new(self.page_scroll_handle());
 
         div()
             .id("gallery-content")
@@ -411,6 +413,12 @@ impl GalleryShell {
                     )
                     .child(self.render_snapshot_summary(snapshot, cx)),
             )
+            .when(page == GalleryPage::Components, |this| {
+                this.child(pages::components::render_components_directory(
+                    &component_page_anchors,
+                    snapshot,
+                ))
+            })
             .child(
                 div()
                     .id("gallery-page-scroll")
@@ -422,7 +430,7 @@ impl GalleryShell {
                     .child(
                         ScrollArea::new(
                             "gallery-page-scroll-viewport",
-                            self.render_page_body(snapshot, window, cx),
+                            self.render_page_body(snapshot, window, cx, &component_page_anchors),
                         )
                         .scroll_handle(&self.page_scroll_handle)
                         .with_size(snapshot.control_size)
@@ -439,6 +447,7 @@ impl GalleryShell {
         window: &mut Window,
 
         cx: &mut Context<Self>,
+        component_page_anchors: &pages::components::ComponentPageAnchors,
     ) -> impl IntoElement {
         match snapshot.selected_page {
             GalleryPage::Tokens => self.render_tokens_page(snapshot).into_any_element(),
@@ -456,7 +465,8 @@ impl GalleryShell {
                 .into_any_element(),
 
             GalleryPage::Components => {
-                pages::components::render_components_page(self, snapshot).into_any_element()
+                pages::components::render_components_page(self, snapshot, component_page_anchors)
+                    .into_any_element()
             }
         }
     }
@@ -3674,6 +3684,7 @@ pub(crate) fn component_page_jump(
     div()
         .id(format!("gallery-components-jump:{id}"))
         .debug_selector(move || format!("gallery:component-page-jump:{id}"))
+        .flex_none()
         .child(
             Button::new(format!("gallery-components-jump-button:{id}"), label)
                 .variant(ButtonVariant::Ghost)

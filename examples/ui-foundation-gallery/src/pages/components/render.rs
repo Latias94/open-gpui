@@ -7,7 +7,7 @@ use open_gpui::{IntoElement, ScrollAnchor, ScrollHandle, div, px, rgb};
 use open_gpui_ui_components::*;
 use open_gpui_ui_core::{Orientation, Sizable};
 
-struct ComponentPageAnchors {
+pub(crate) struct ComponentPageAnchors {
     catalog: ScrollAnchor,
     primitives: ScrollAnchor,
     gates: ScrollAnchor,
@@ -34,7 +34,7 @@ struct ComponentPageAnchors {
 }
 
 impl ComponentPageAnchors {
-    fn new(handle: &ScrollHandle) -> Self {
+    pub(crate) fn new(handle: &ScrollHandle) -> Self {
         let anchor = || ScrollAnchor::for_handle(handle.clone());
 
         Self {
@@ -94,9 +94,48 @@ impl ComponentPageAnchors {
     }
 }
 
+pub(crate) fn render_components_directory(
+    anchors: &ComponentPageAnchors,
+    snapshot: GalleryShellSnapshot,
+) -> impl IntoElement {
+    div()
+        .id("gallery-components-directory")
+        .debug_selector(|| "gallery:components-directory".into())
+        .flex_none()
+        .h(px(96.0))
+        .min_h(px(0.0))
+        .overflow_hidden()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .child("Section directory"),
+        )
+        .child(
+            ScrollArea::new(
+                "gallery-components-directory-scroll",
+                div().flex().flex_wrap().gap_2().children(
+                    pages::components::COMPONENT_PAGE_JUMPS.iter().map(|jump| {
+                        component_page_jump(
+                            jump.id,
+                            jump.label,
+                            anchors.for_id(jump.id),
+                            snapshot.tokens,
+                        )
+                    }),
+                ),
+            )
+            .preserve_scroll(),
+        )
+}
+
 pub(crate) fn render_components_page(
     shell: &GalleryShell,
     snapshot: GalleryShellSnapshot,
+    anchors: &ComponentPageAnchors,
 ) -> impl IntoElement {
     let component_catalog = pages::components::COMPONENT_CATALOG;
     let component_catalog_cards = component_catalog.iter().map(|entry| {
@@ -187,7 +226,6 @@ pub(crate) fn render_components_page(
     let avatar_samples = pages::components::avatar_samples(snapshot.tokens);
     let scroll_area_samples = pages::components::scroll_area_samples(snapshot.tokens);
     let splitter_samples = pages::components::splitter_samples(snapshot.tokens);
-    let anchors = ComponentPageAnchors::new(shell.page_scroll_handle());
 
     div()
         .id("gallery-components-page")
@@ -195,28 +233,6 @@ pub(crate) fn render_components_page(
         .flex()
         .flex_col()
         .gap_5()
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(open_gpui::FontWeight::BOLD)
-                        .child("Section directory"),
-                )
-                .child(div().flex().gap_2().flex_wrap().children(
-                    pages::components::COMPONENT_PAGE_JUMPS.iter().map(|jump| {
-                        component_page_jump(
-                            jump.id,
-                            jump.label,
-                            anchors.for_id(jump.id),
-                            snapshot.tokens,
-                        )
-                    }),
-                )),
-        )
         .child(
             component_page_section("catalog", anchors.catalog.clone()).child(
                 div()
@@ -635,7 +651,7 @@ pub(crate) fn render_components_page(
                             let content = div()
                                 .when(horizontal, |this| this.flex().gap_2().min_w(px(860.0)))
                                 .when(two_axis, |this| {
-                                    this.flex().flex_col().gap_1().min_w(px(620.0))
+                                    this.flex().flex_col().gap_1().min_w(px(860.0))
                                 })
                                 .when(!horizontal && !two_axis, |this| {
                                     this.flex().flex_col().gap_1()
@@ -654,7 +670,7 @@ pub(crate) fn render_components_page(
                                         )
                                     })
                                     .when(horizontal, |this| this.w(px(132.0)).min_h(px(88.0)))
-                                    .when(two_axis, |this| this.w(px(620.0)).min_h(px(34.0)))
+                                    .when(two_axis, |this| this.w(px(1240.0)).min_h(px(88.0)))
                                     .when(vertical_only, |this| this.min_h(px(28.0)))
                                     .rounded_sm()
                                     .border_1()
@@ -683,6 +699,7 @@ pub(crate) fn render_components_page(
                                 .id(format!("component-scroll-area-sample:{}", sample_id))
                                 .debug_selector(move || debug_selector)
                                 .w(px(360.0))
+                                .flex_none()
                                 .flex()
                                 .flex_col()
                                 .gap_2()
@@ -708,6 +725,7 @@ pub(crate) fn render_components_page(
                                 .child(div().text_xs().text_color(rgb(0x5a6472)).child(summary))
                                 .child(
                                     div()
+                                        .w(px(360.0))
                                         .h(px(154.0))
                                         .min_h(px(0.0))
                                         .overflow_hidden()
