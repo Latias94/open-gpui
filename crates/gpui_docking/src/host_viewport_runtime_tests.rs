@@ -1664,6 +1664,61 @@ fn pending_activation_overrides_destroyed_previous_focus_suppression(cx: &mut Te
 }
 
 #[open_gpui::test]
+fn pending_activation_is_not_suppressed_by_mouse_down(cx: &mut TestAppContext) {
+    let main_space = DockSpaceId::from("main");
+    let mut graph = DockGraph::new();
+    let main_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(main_space.clone(), main_tabs);
+
+    let mut workspace = DockWorkspace::new(main_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+    let main = cx
+        .update(|app| {
+            runtime.open_viewport(
+                main_space.clone(),
+                WindowOptions {
+                    focus: false,
+                    ..viewport_window_options(360.0, 220.0)
+                },
+                app,
+            )
+        })
+        .expect("main viewport should open through runtime");
+    assert!(
+        runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
+            main_space.clone(),
+            main.window(),
+            DockViewportFocusRequest::panel("a"),
+        ))
+    );
+
+    focus_backend_window_for_test(main.window(), cx);
+    let command = cx.update(|app| {
+        runtime.focus_command_for_confirmed_backend_window_focus(
+            &main_space,
+            main.window().window_id(),
+            true,
+            app,
+        )
+    });
+
+    assert_eq!(
+        command.as_ref().map(DockViewportFocusCommand::request),
+        Some(&DockViewportFocusRequest::panel("a")),
+        "mouse-down backend focus should not suppress an explicit viewport activation transaction"
+    );
+    assert_eq!(
+        command.as_ref().map(DockViewportFocusCommand::source),
+        Some(crate::DockViewportFocusCommandSource::ViewportActivation)
+    );
+}
+
+#[open_gpui::test]
 fn non_docking_backend_focus_does_not_overwrite_last_platform_focused_viewport(
     cx: &mut TestAppContext,
 ) {

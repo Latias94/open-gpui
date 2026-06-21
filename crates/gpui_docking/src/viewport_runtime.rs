@@ -658,16 +658,17 @@ impl DockViewportRuntime {
             .expect("backend focus was already validated as a live docking window");
         let suppress_destroyed_previous_focus_restore =
             self.take_destroyed_previous_focus_suppression(window_id);
-        if mouse_down {
-            let _ = self.take_pending_activation_for(space, window_id);
-            return None;
-        }
+        // Mouse-down mirrors ImGui's platform-focus restore gate, but explicit viewport
+        // activations from drop, tear-off, or close recovery already carry their target focus.
         let pending_activation = self.take_pending_activation_for(space, window_id);
         if let Some(activation) = pending_activation {
             return Some(crate::DockViewportFocusCommand::new(
                 activation.focus_source(),
                 activation.focus_request().clone(),
             ));
+        }
+        if mouse_down {
+            return None;
         }
         if suppress_destroyed_previous_focus_restore {
             return None;
