@@ -22,15 +22,16 @@ verified_by:
 
 - Goal: 继续审查 open-gpui 的 gallery / component 行为契约一致性，允许无畏重构，但只收真实问题。
 - Branch: `main`
-- Last verified: 2026-06-21, focused gallery nextest coverage passed after splitting the Components directory out of the page scroll area and stabilizing the Components-page scroll regressions.
+- Last verified: 2026-06-21, focused gallery nextest coverage passed after splitting the Components directory out of the page scroll area, stabilizing the Components-page scroll regressions, and isolating wheel gestures on the release-queue sample card so they do not leak to the page shell.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
+- Done: Added gallery-level wheel isolation on the ScrollArea sample card so release-queue chrome does not leak scroll input to the page shell.
 - Done: Added gallery smoke coverage for AlertDialog trigger -> action -> Escape dismissal and focus restoration.
 - Done: Confirmed existing overlay and splitter runtime regression gates remain green.
 - Done: Rechecked the splitter and overlay contract surface at `d64f5d6`; no new behavior gaps were found in the current codebase.
 - Blocked: 暂无。
-- Next action: commit the stabilized gallery layout and regression updates, then reopen review only if a future code change or failing gate surfaces a new mismatch.
+- Next action: commit the stabilized gallery layout, card-level wheel isolation, and regression updates, then reopen review only if a future code change or failing gate surfaces a new mismatch.
 
 # Citations
 

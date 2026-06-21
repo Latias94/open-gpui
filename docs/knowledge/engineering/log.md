@@ -7,6 +7,7 @@ status: active
 # Log
 
 - 2026-06-21: Stabilized the Components page by moving the directory into its own fixed strip above the page scroll area; replaced the flaky data-grid wheel-motion regression with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
+- 2026-06-21: Added gallery-level wheel isolation on the ScrollArea sample card so wheel gestures on the release-queue chrome stay local and do not leak to the page shell; kept the release queue runtime scroll proof intact.
 - 2026-06-21: Rechecked the splitter and overlay contract surface at `a7f0b96`; focused splitter, overlay, and gallery composition nextest runs remained green, and no new behavior gaps were found.
 - 2026-06-21: Added an Overlay gallery smoke for `AlertDialog` on the real trigger, cancel default focus, primary action close, and Escape dismissal; this filled the remaining overlay contract gap without changing the component implementation.
 - 2026-06-21: Refreshed `docs/knowledge/engineering/current-state.md` and `docs/ui/component-contract.md` so the gallery scroll regression gate points at commit `14efadc` and the next action stays focused on the remaining overlay / splitter review; later AlertDialog work advanced `main` to `d64f5d6`, then the memory refresh advanced `main` to `a7f0b96`.

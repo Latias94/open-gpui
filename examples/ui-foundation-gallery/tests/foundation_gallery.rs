@@ -2278,7 +2278,10 @@ fn components_gallery_smoke_scroll_area_samples_scroll_inside_page(
         .unwrap_or_else(|| panic!("expected scroll area sample `data-grid`"));
 
     assert_eq!(data_grid.state.axis(), ScrollAreaAxis::Both);
-    assert_eq!(data_grid.state.reset_policy(), ScrollResetPolicy::ResetOnKeyChange);
+    assert_eq!(
+        data_grid.state.reset_policy(),
+        ScrollResetPolicy::ResetOnKeyChange
+    );
     assert_eq!(data_grid.state.reset_key(), Some("components"));
     assert!(data_grid.state.scrolls_x());
     assert!(data_grid.state.scrolls_y());
@@ -2331,6 +2334,40 @@ fn components_gallery_smoke_release_queue_scroll_stays_inside_sample(
     assert!(
         queue_after.left() < queue_before.left(),
         "expected the release queue viewport to move horizontally inside the sample; before={queue_before:?} after={queue_after:?}"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_release_queue_card_wheel_does_not_leak_to_page(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_components_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:component-scroll-area-sample:release-queue");
+    let sample_before = bounds(cx, "gallery:component-scroll-area-sample:release-queue");
+    let queue_before = bounds(cx, "gallery:component-scroll-area-item:release-queue:2");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: point(
+            sample_before.left() + px(24.0),
+            sample_before.top() + px(24.0),
+        ),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-56.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after = bounds(cx, "gallery:component-scroll-area-sample:release-queue");
+    let queue_after = bounds(cx, "gallery:component-scroll-area-item:release-queue:2");
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected the release queue sample card to keep wheel input local to the card chrome; before={sample_before:?} after={sample_after:?}"
+    );
+    assert_eq!(
+        queue_after, queue_before,
+        "expected wheel input on the release queue card chrome to leave the inner viewport unchanged; before={queue_before:?} after={queue_after:?}"
     );
 }
 

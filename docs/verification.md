@@ -51,6 +51,8 @@ tests can miss: short-viewport page scrolling and navigation reset, navigation r
 Select popup outside dismissal, nested ScrollArea wheel scrolling, vertical Tabs rail scrolling,
 horizontal plus vertical Splitter pointer dragging, and long Sidebar internal navigation scrolling.
 Run the gallery package tests before relying on manual dogfood for those paths.
+The Components-page ScrollArea regressions also cover release-queue wheel isolation so scroll
+gestures on the sample card chrome do not leak to the page shell.
 
 The components package includes runtime smoke coverage for TextInput, RadioGroup, Listbox, Select,
 Combobox, Command, Tabs, and Toolbar keyboard navigation. The focused TextInput test renders a
