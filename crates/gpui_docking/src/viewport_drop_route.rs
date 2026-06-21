@@ -901,8 +901,8 @@ impl DockViewportAdapter {
             .collect::<Vec<_>>();
         let event_receiver_target =
             self.event_receiver_local_scene_target_from_hits(request, target_context, &host_hits);
-        let fallback_z_order = self
-            .spaces_by_fallback_z_order()
+        let platform_focus_order = self
+            .spaces_by_platform_focus_order()
             .into_iter()
             .filter_map(|space| {
                 self.window_for_space(&space)
@@ -912,7 +912,7 @@ impl DockViewportAdapter {
         let resolution = resolve_authorized_viewport_route_target(
             window_hits,
             target_context,
-            &fallback_z_order,
+            &platform_focus_order,
         );
         let Some(resolution) = resolution.or(event_receiver_target) else {
             if has_blocking_window_hit {
@@ -1405,7 +1405,7 @@ mod tests {
                 ),
                 authority: DockViewportAuthorizedRouteAuthority::UniqueGeometryFallback,
             },
-            "event receiver remains diagnostic-only; global fallback authority still comes from backend z-order semantics"
+            "event receiver remains diagnostic-only; global fallback authority still comes from backend focus-order semantics"
         );
     }
 

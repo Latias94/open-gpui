@@ -190,7 +190,7 @@ pub(crate) enum DockViewportAuthorizedRouteAuthority {
     /// the platform front-to-back window stack selected this viewport.
     PlatformWindowStackFallback,
     /// Backend hovered-window signal is unavailable or was discarded for a no-input viewport, and
-    /// the runtime's ImGui-style platform z-order fallback selected this viewport.
+    /// the runtime's ImGui-style platform focus-order selected this viewport.
     ZOrderFallback,
     /// Backend hovered-window signal is unavailable or was discarded for a no-input viewport, and
     /// exactly one route-ready viewport geometry hit remained. This is the degenerate case of the
@@ -225,7 +225,7 @@ impl DockAuthorizedViewportRouteTarget {
         }
     }
 
-    fn z_order_fallback(target: DockViewportWindowHit) -> Self {
+    fn platform_focus_order_fallback(target: DockViewportWindowHit) -> Self {
         Self {
             target,
             authority: DockViewportAuthorizedRouteAuthority::ZOrderFallback,
@@ -303,7 +303,7 @@ fn choose_trusted_hovered_viewport_target(
 fn choose_backend_hover_fallback_viewport_target(
     hits: &[DockViewportWindowHit],
     context: &DockViewportTargetContext,
-    fallback_z_order: &[WindowId],
+    platform_focus_order: &[WindowId],
 ) -> Option<DockAuthorizedViewportRouteTarget> {
     let stacked = context
         .backend_hover_fallback_window_stack()
@@ -317,11 +317,11 @@ fn choose_backend_hover_fallback_viewport_target(
         return Some(DockAuthorizedViewportRouteTarget::platform_window_stack_fallback(target));
     }
 
-    for window_id in fallback_z_order {
+    for window_id in platform_focus_order {
         if let Some(hit) = hits.iter().find(|hit| hit.window_id() == *window_id) {
-            return Some(DockAuthorizedViewportRouteTarget::z_order_fallback(
-                hit.clone(),
-            ));
+            return Some(
+                DockAuthorizedViewportRouteTarget::platform_focus_order_fallback(hit.clone()),
+            );
         }
     }
 
@@ -332,7 +332,7 @@ fn choose_backend_hover_fallback_viewport_target(
 pub(crate) fn resolve_authorized_viewport_route_target<I, H>(
     hits: I,
     context: &DockViewportTargetContext,
-    fallback_z_order: &[WindowId],
+    platform_focus_order: &[WindowId],
 ) -> Option<DockAuthorizedViewportRouteTarget>
 where
     I: IntoIterator<Item = H>,
@@ -346,7 +346,7 @@ where
     match context.trusted_hovered_signal() {
         crate::DockViewportTrustedHoveredSignal::Unavailable => {
             if let Some(target) =
-                choose_backend_hover_fallback_viewport_target(&hits, context, fallback_z_order)
+                choose_backend_hover_fallback_viewport_target(&hits, context, platform_focus_order)
             {
                 return Some(target);
             }
@@ -549,12 +549,12 @@ mod tests {
             None
         );
 
-        let single_z_order_fallback = choose_diagnostic_viewport_target(
+        let single_platform_focus_order = choose_diagnostic_viewport_target(
             vec![candidate("alpha", first)],
             &DockViewportTargetContext::new().with_window_stack([second]),
         )
         .expect("single hit should still be reported for diagnostics");
-        assert_eq!(single_z_order_fallback.space(), &space("alpha"));
+        assert_eq!(single_platform_focus_order.space(), &space("alpha"));
         assert_eq!(
             resolve_authorized_viewport_route_target(
                 vec![candidate("alpha", first)],
@@ -566,7 +566,7 @@ mod tests {
                 DockViewportAuthorizedRouteAuthority::ZOrderFallback,
                 space("alpha"),
             )),
-            "platform z-order fallback backs the same path imgui uses when no stack signal identifies the hovered viewport"
+            "platform focus order backs the same path imgui uses when no stack signal identifies the hovered viewport"
         );
     }
 

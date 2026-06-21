@@ -535,8 +535,8 @@ impl DockViewportRuntime {
         })
     }
 
-    pub(crate) fn record_z_order_fallback_window(&mut self, window_id: WindowId) -> bool {
-        self.adapter.record_z_order_fallback_window(window_id)
+    pub(crate) fn record_platform_focus_order_window(&mut self, window_id: WindowId) -> bool {
+        self.adapter.record_platform_focus_order_window(window_id)
     }
 
     fn is_live_docking_window(&self, window_id: WindowId) -> bool {
@@ -563,7 +563,7 @@ impl DockViewportRuntime {
             };
         }
         self.last_platform_focused_window = Some(window_id);
-        let changed = self.record_z_order_fallback_window(window_id) || focused_changed;
+        let changed = self.record_platform_focus_order_window(window_id) || focused_changed;
         Some(changed)
     }
 
@@ -1215,7 +1215,7 @@ impl DockViewportRuntime {
         self.owned_windows.insert(window.window_id());
         let window_id = window.window_id();
         let outcome = self.adapter.register_viewport_with_outcome(space, window);
-        self.record_z_order_fallback_window(window_id);
+        self.record_platform_focus_order_window(window_id);
         let mut replaced_windows = Vec::new();
         for removed in outcome.replaced() {
             self.clear_runtime_window_state(&removed.space, removed.window.window_id(), true);

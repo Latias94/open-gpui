@@ -667,7 +667,7 @@ fn viewport_runtime_reuse_respects_focus_option(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
-fn viewport_runtime_tracks_backend_focus_for_z_order_fallback(cx: &mut TestAppContext) {
+fn viewport_runtime_tracks_backend_focus_for_platform_focus_order(cx: &mut TestAppContext) {
     let alpha_space = DockSpaceId::from("alpha");
     let zeta_space = DockSpaceId::from("zeta");
     let mut graph = DockGraph::new();
@@ -720,13 +720,13 @@ fn viewport_runtime_tracks_backend_focus_for_z_order_fallback(cx: &mut TestAppCo
     cx.run_until_parked();
 
     assert_eq!(
-        runtime.borrow().adapter().spaces_by_fallback_z_order(),
+        runtime.borrow().adapter().spaces_by_platform_focus_order(),
         vec![zeta_space, alpha_space]
     );
 }
 
 #[open_gpui::test]
-fn viewport_runtime_opened_viewport_assumes_front_most_for_z_order_fallback(
+fn viewport_runtime_opened_viewport_assumes_front_most_for_platform_focus_order(
     cx: &mut TestAppContext,
 ) {
     let alpha_space = DockSpaceId::from("alpha");
@@ -767,14 +767,14 @@ fn viewport_runtime_opened_viewport_assumes_front_most_for_z_order_fallback(
     });
 
     assert_eq!(
-        runtime.borrow().adapter().spaces_by_fallback_z_order(),
+        runtime.borrow().adapter().spaces_by_platform_focus_order(),
         vec![zeta_space, alpha_space],
         "new platform viewports are assumed front-most for hovered-window fallback before backend focus confirms"
     );
 }
 
 #[open_gpui::test]
-fn viewport_runtime_reconciles_backend_focus_for_z_order_fallback(cx: &mut TestAppContext) {
+fn viewport_runtime_reconciles_backend_focus_for_platform_focus_order(cx: &mut TestAppContext) {
     let alpha_space = DockSpaceId::from("alpha");
     let zeta_space = DockSpaceId::from("zeta");
     let mut graph = DockGraph::new();
@@ -817,18 +817,18 @@ fn viewport_runtime_reconciles_backend_focus_for_z_order_fallback(cx: &mut TestA
     cx.run_until_parked();
     assert!(cx.update(|app| runtime.reconcile_backend_window_focus(app)));
     assert_eq!(
-        runtime.adapter().spaces_by_fallback_z_order(),
+        runtime.adapter().spaces_by_platform_focus_order(),
         vec![alpha_space.clone()]
     );
     assert!(
         !cx.update(|app| runtime.reconcile_backend_window_focus(app)),
-        "reconciling the same focused window twice should not churn the z-order fallback stamp"
+        "reconciling the same focused window twice should not churn the platform focus order stamp"
     );
 
     alpha_visual.deactivate_window();
     assert!(!cx.update(|app| runtime.reconcile_backend_window_focus(app)));
     assert_eq!(
-        runtime.adapter().spaces_by_fallback_z_order(),
+        runtime.adapter().spaces_by_platform_focus_order(),
         vec![alpha_space.clone()],
         "backend focus=None must not overwrite the last trusted focus order"
     );
@@ -839,7 +839,7 @@ fn viewport_runtime_reconciles_backend_focus_for_z_order_fallback(cx: &mut TestA
     cx.run_until_parked();
     assert!(cx.update(|app| runtime.reconcile_backend_window_focus(app)));
     assert_eq!(
-        runtime.adapter().spaces_by_fallback_z_order(),
+        runtime.adapter().spaces_by_platform_focus_order(),
         vec![zeta_space.clone(), alpha_space.clone()]
     );
 
@@ -850,7 +850,7 @@ fn viewport_runtime_reconciles_backend_focus_for_z_order_fallback(cx: &mut TestA
     cx.run_until_parked();
     assert!(!cx.update(|app| runtime.reconcile_backend_window_focus(app)));
     assert_eq!(
-        runtime.adapter().spaces_by_fallback_z_order(),
+        runtime.adapter().spaces_by_platform_focus_order(),
         vec![zeta_space, alpha_space],
         "unavailable backend focus must not overwrite the last trusted focus order"
     );
@@ -899,9 +899,9 @@ fn unavailable_backend_focus_reconcile_preserves_pending_viewport_activation(
     );
     assert!(runtime.pending_activation().is_some());
     assert_eq!(
-        runtime.borrow().adapter().spaces_by_fallback_z_order(),
+        runtime.borrow().adapter().spaces_by_platform_focus_order(),
         vec![main_space],
-        "unavailable focus must not stamp a new z-order fallback order"
+        "unavailable focus must not stamp a new platform focus order"
     );
 }
 
@@ -991,7 +991,7 @@ fn platform_activation_focus_request_requires_live_runtime_binding(cx: &mut Test
 }
 
 #[open_gpui::test]
-fn platform_activation_updates_z_order_stamp_and_only_mouse_down_suppresses_focus_restore(
+fn platform_activation_updates_platform_focus_order_and_only_mouse_down_suppresses_focus_restore(
     cx: &mut TestAppContext,
 ) {
     let alpha_space = DockSpaceId::from("alpha");
@@ -1054,7 +1054,7 @@ fn platform_activation_updates_z_order_stamp_and_only_mouse_down_suppresses_focu
         Some(&DockViewportFocusRequest::panel("a"))
     );
     assert_eq!(
-        runtime.borrow().adapter().spaces_by_fallback_z_order(),
+        runtime.borrow().adapter().spaces_by_platform_focus_order(),
         vec![alpha_space.clone(), zeta_space.clone()]
     );
 
@@ -1072,7 +1072,7 @@ fn platform_activation_updates_z_order_stamp_and_only_mouse_down_suppresses_focu
         "mouse-down platform activation should update viewport focus order without restoring panel focus"
     );
     assert_eq!(
-        runtime.borrow().adapter().spaces_by_fallback_z_order(),
+        runtime.borrow().adapter().spaces_by_platform_focus_order(),
         vec![zeta_space.clone(), alpha_space.clone()]
     );
 
@@ -1091,9 +1091,9 @@ fn platform_activation_updates_z_order_stamp_and_only_mouse_down_suppresses_focu
         "backend-confirmed platform activation should restore dock focus when no mouse button is down"
     );
     assert_eq!(
-        runtime.borrow().adapter().spaces_by_fallback_z_order(),
+        runtime.borrow().adapter().spaces_by_platform_focus_order(),
         vec![alpha_space, zeta_space],
-        "backend focus still feeds z-order fallback even when focus restore is suppressed"
+        "backend focus still feeds platform focus order even when focus restore is suppressed"
     );
 }
 
@@ -1165,7 +1165,7 @@ fn platform_activation_after_destroyed_previous_focused_viewport_does_not_restor
         )
     });
     assert_eq!(
-        runtime.borrow().adapter().spaces_by_fallback_z_order(),
+        runtime.borrow().adapter().spaces_by_platform_focus_order(),
         vec![detached_space.clone(), main_space.clone()]
     );
 
@@ -1252,9 +1252,9 @@ fn unfocused_new_viewport_close_does_not_suppress_next_platform_focus_restore(
         .expect("detached viewport should open through runtime");
     runtime.record_panel_focus(main_space.clone(), item("a"));
     assert_eq!(
-        runtime.borrow().adapter().spaces_by_fallback_z_order(),
+        runtime.borrow().adapter().spaces_by_platform_focus_order(),
         vec![detached_space.clone(), main_space.clone()],
-        "opened viewports still update ImGui-style z-order fallback"
+        "opened viewports still update ImGui-style platform focus order"
     );
 
     let closed = runtime
@@ -1280,7 +1280,7 @@ fn unfocused_new_viewport_close_does_not_suppress_next_platform_focus_restore(
 }
 
 #[open_gpui::test]
-fn closing_non_frontmost_z_order_viewport_does_not_suppress_platform_focus_restore(
+fn closing_non_frontmost_platform_focus_order_viewport_does_not_suppress_platform_focus_restore(
     cx: &mut TestAppContext,
 ) {
     let main_space = DockSpaceId::from("main");
@@ -1348,7 +1348,7 @@ fn closing_non_frontmost_z_order_viewport_does_not_suppress_platform_focus_resto
         )
     });
     assert_eq!(
-        runtime.borrow().adapter().spaces_by_fallback_z_order(),
+        runtime.borrow().adapter().spaces_by_platform_focus_order(),
         vec![main_space.clone(), detached_space.clone()]
     );
 
@@ -1374,7 +1374,7 @@ fn closing_non_frontmost_z_order_viewport_does_not_suppress_platform_focus_resto
 }
 
 #[open_gpui::test]
-fn closing_frontmost_z_order_viewport_suppresses_platform_focus_restore_once(
+fn closing_frontmost_platform_focus_order_viewport_suppresses_platform_focus_restore_once(
     cx: &mut TestAppContext,
 ) {
     let main_space = DockSpaceId::from("main");
@@ -1458,7 +1458,7 @@ fn closing_frontmost_z_order_viewport_suppresses_platform_focus_restore_once(
             )
         }),
         None,
-        "closing the front-most z-order viewport should suppress the next platform focus restore"
+        "closing the front-most platform-focus-order viewport should suppress the next platform focus restore"
     );
 
     focus_backend_window_for_test(detached.window(), cx);
@@ -1544,7 +1544,7 @@ fn reconcile_before_focus_command_keeps_destroyed_previous_focus_suppression(
     focus_backend_window_for_test(detached.window(), cx);
     assert!(
         cx.update(|app| runtime.reconcile_backend_window_focus(app)),
-        "reconcile should update platform z-order without consuming the destroyed-previous focus gate"
+        "reconcile should update platform focus order without consuming the destroyed-previous focus gate"
     );
     assert_eq!(
         cx.update(|app| {
@@ -2038,7 +2038,7 @@ fn close_recovery_does_not_steal_activation_from_another_active_docking_window(
     cx.run_until_parked();
     let _ = cx.update(|app| runtime.reconcile_backend_window_focus(app));
     assert_eq!(
-        runtime.borrow().adapter().spaces_by_fallback_z_order(),
+        runtime.borrow().adapter().spaces_by_platform_focus_order(),
         vec![
             inspector_space.clone(),
             detached_space.clone(),
@@ -2096,9 +2096,9 @@ fn close_recovery_does_not_steal_activation_from_another_active_docking_window(
         "close recovery must not bring the merge target forward over another active docking window"
     );
     assert_eq!(
-        runtime.borrow().adapter().spaces_by_fallback_z_order(),
+        runtime.borrow().adapter().spaces_by_platform_focus_order(),
         vec![inspector_space, main_space],
-        "skipped close recovery activation must not mark the merge target as z-order front-most"
+        "skipped close recovery activation must not mark the merge target as platform-focus-order front-most"
     );
     cx.run_until_parked();
     assert_eq!(
@@ -2207,9 +2207,9 @@ fn close_recovery_does_not_steal_activation_from_active_non_docking_window(
         "close recovery must not bring the merge target forward over a non-docking active window"
     );
     assert_eq!(
-        runtime.borrow().adapter().spaces_by_fallback_z_order(),
+        runtime.borrow().adapter().spaces_by_platform_focus_order(),
         vec![main_space.clone()],
-        "skipped close recovery activation must not mark the merge target as z-order front-most"
+        "skipped close recovery activation must not mark the merge target as platform-focus-order front-most"
     );
     cx.run_until_parked();
     assert_eq!(
@@ -2297,7 +2297,7 @@ fn close_recovery_without_source_focus_clears_target_panel_focus(cx: &mut TestAp
 }
 
 #[open_gpui::test]
-fn viewport_runtime_does_not_refresh_z_order_fallback_stamp_for_close_activation_before_render(
+fn viewport_runtime_does_not_refresh_platform_focus_order_stamp_for_close_activation_before_render(
     cx: &mut TestAppContext,
 ) {
     let main_space = DockSpaceId::from("main");
@@ -2368,7 +2368,7 @@ fn viewport_runtime_does_not_refresh_z_order_fallback_stamp_for_close_activation
     let hit_order_before_close_recovery = runtime
         .borrow()
         .adapter()
-        .spaces_by_fallback_z_order()
+        .spaces_by_platform_focus_order()
         .into_iter()
         .filter(|space| space != &detached_space)
         .collect::<Vec<_>>();
@@ -2404,7 +2404,7 @@ fn viewport_runtime_does_not_refresh_z_order_fallback_stamp_for_close_activation
             runtime
                 .borrow()
                 .adapter()
-                .spaces_by_fallback_z_order(),
+                .spaces_by_platform_focus_order(),
             hit_order_before_close_recovery,
             "close recovery activation must not update platform focus hit-order before backend focus is observed"
         );
@@ -2462,7 +2462,7 @@ fn viewport_runtime_tear_off_opens_viewport_then_moves_item(cx: &mut TestAppCont
         Some(completed.registration().window())
     );
     assert_eq!(
-        runtime.borrow().adapter().spaces_by_fallback_z_order(),
+        runtime.borrow().adapter().spaces_by_platform_focus_order(),
         vec![detached_space.clone()],
         "new tear-off viewport should be front-most for hovered-window fallback before backend focus confirms"
     );
@@ -5345,7 +5345,7 @@ fn viewport_runtime_rejects_resolved_target_snapshot_after_window_facts_go_stale
 }
 
 #[open_gpui::test]
-fn viewport_runtime_uses_z_order_fallback_when_trusted_hovered_window_is_unavailable(
+fn viewport_runtime_uses_platform_focus_order_when_trusted_hovered_window_is_unavailable(
     cx: &mut TestAppContext,
 ) {
     let source_space = DockSpaceId::from("source");
@@ -6400,7 +6400,7 @@ fn viewport_runtime_source_only_release_uses_current_backend_fallback_not_last_r
             facts_generation: 1,
             authority: crate::DockViewportAuthorizedRouteAuthority::ZOrderFallback,
         },
-        "empty target context should still use current z-order fallback instead of reusing preview state"
+        "empty target context should still use current platform focus order instead of reusing preview state"
     );
 
     assert_eq!(
