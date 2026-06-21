@@ -73,6 +73,10 @@ pub use crate::splitter::{
     SplitterPanelState, SplitterState,
 };
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
+pub use crate::table::{
+    TableCellState, TableColumnAlign, TableColumnDescriptor, TableColumnState, TableMetrics,
+    TableRowDescriptor, TableRowState, TableSelection, TableState, table_navigation_target,
+};
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
     TabsSelection, TabsState,
@@ -87,5 +91,13 @@ pub use crate::toolbar::{
 pub use crate::tooltip::{
     Tooltip, TooltipColors, TooltipContentKind, TooltipDelayPolicy, TooltipMetrics,
     TooltipOpenIntent, TooltipState,
+};
+pub use crate::tree::{
+    TreeFocusTarget, TreeItemDescriptor, TreeItemState, TreeKeyboardAction, TreeMetrics,
+    TreeSelection, TreeState, TreeToggle, tree_navigation_target,
+};
+pub use crate::virtualized_list::{
+    VirtualizedListActivation, VirtualizedListMetrics, VirtualizedListScrollStrategy,
+    VirtualizedListState, virtualized_list_navigation_target,
 };
 pub use open_gpui_ui_core::{Sizable, Size, ThemeTokens};
