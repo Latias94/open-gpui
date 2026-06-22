@@ -692,6 +692,19 @@ impl DockViewportRuntimeHandle {
         changed
     }
 
+    pub(crate) fn reconcile_viewport_frame_except_window<C: open_gpui::AppContext>(
+        &self,
+        skip_window_id: WindowId,
+        cx: &mut C,
+    ) -> bool {
+        let (changed, windows) = self
+            .runtime
+            .borrow_mut()
+            .reconcile_viewport_frame_except_window(Some(skip_window_id), cx);
+        refresh_windows(windows, cx);
+        changed
+    }
+
     #[cfg(test)]
     pub(crate) fn push_viewport_host_scene_fact(
         &self,

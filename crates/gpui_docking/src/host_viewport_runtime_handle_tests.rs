@@ -80,14 +80,19 @@ fn cache_known_viewport_preview(
         "preview setup should resolve a known viewport route, got {:?}",
         resolution.route()
     );
-    cx.update(|app| {
-        runtime.update_routed_drop_preview(&resolution, payload_title, app);
-    });
+    let preview_changed =
+        cx.update(|app| runtime.update_routed_drop_preview(&resolution, payload_title, app));
     let (target_space, target_window_id, _) = resolution
         .expect_delivery()
         .routed_preview_target()
         .expect("known viewport preview should carry a routed preview target");
-    assert!(runtime.finish_routed_drop_acceptance_pass(target_space, target_window_id));
+    let preview = runtime.routed_drop_preview_for(target_space, target_window_id);
+    assert!(
+        runtime.finish_routed_drop_acceptance_pass(target_space, target_window_id),
+        "routed preview acceptance should pass; changed={preview_changed:?} target_space={target_space:?} target_window_id={target_window_id:?} route={:?} delivery={:?} preview={preview:?}",
+        resolution.route(),
+        resolution.delivery()
+    );
     resolution
 }
 

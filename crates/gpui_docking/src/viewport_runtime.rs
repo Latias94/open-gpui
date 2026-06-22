@@ -580,6 +580,7 @@ impl DockViewportRuntime {
 
         let previous_focused_window = self.last_platform_focused_window;
         let focused_changed = previous_focused_window != Some(window_id);
+        let mut pending_activation_changed = false;
         if focused_changed {
             self.destroyed_previous_focus_suppression = if previous_focused_window
                 .is_some_and(|previous| !self.is_live_docking_window(previous))
@@ -590,9 +591,12 @@ impl DockViewportRuntime {
             } else {
                 None
             };
+            pending_activation_changed = self.clear_pending_activation_except_window(window_id);
         }
         self.last_platform_focused_window = Some(window_id);
-        let changed = self.record_platform_focus_order_window(window_id) || focused_changed;
+        let changed = self.record_platform_focus_order_window(window_id)
+            || focused_changed
+            || pending_activation_changed;
         Some(changed)
     }
 
@@ -637,6 +641,18 @@ impl DockViewportRuntime {
             .pending_activation
             .as_ref()
             .is_some_and(|activation| activation.matches_window(space, window_id))
+        {
+            return false;
+        }
+        self.pending_activation = None;
+        true
+    }
+
+    fn clear_pending_activation_except_window(&mut self, window_id: WindowId) -> bool {
+        if !self
+            .pending_activation
+            .as_ref()
+            .is_some_and(|activation| activation.window_id() != window_id)
         {
             return false;
         }
@@ -826,15 +842,27 @@ impl DockViewportRuntime {
         &mut self,
         cx: &mut C,
     ) -> (bool, Vec<AnyWindowHandle>) {
-        let changed_windows = self.adapter.refresh_registered_window_facts(cx);
+        self.reconcile_viewport_frame_except_window(None, cx)
+    }
+
+    pub(crate) fn reconcile_viewport_frame_except_window<C: open_gpui::AppContext>(
+        &mut self,
+        skip_window_id: Option<WindowId>,
+        cx: &mut C,
+    ) -> (bool, Vec<AnyWindowHandle>) {
+        let changed_windows = self
+            .adapter
+            .refresh_registered_window_facts_except_window(cx, skip_window_id);
         let mut changed = !changed_windows.is_empty();
         let mut windows = Vec::new();
         for window in changed_windows {
-            let (preview_changed, preview_windows) =
-                self.clear_routed_drop_preview_if_window_matches(window.window_id());
-            changed |= preview_changed;
             extend_unique_windows(&mut windows, [window]);
-            extend_unique_windows(&mut windows, preview_windows);
+            if self.adapter.window_route_ready(window.window_id()) == Some(false) {
+                let (preview_changed, preview_windows) =
+                    self.clear_routed_drop_preview_if_window_matches(window.window_id());
+                changed |= preview_changed;
+                extend_unique_windows(&mut windows, preview_windows);
+            }
         }
         (changed, windows)
     }
@@ -1529,11 +1557,10 @@ impl DockViewportRuntime {
         request: &DockViewportDropRouteRequest,
         cx: &mut C,
     ) -> DockViewportResolvedDropRoute {
-        self.reconcile_viewport_frame(cx);
         let policy = cx.read_entity(&self.controller, |controller, _| {
             controller.workspace().policy().to_owned()
         });
-        let route_resolution = self
+        let mut route_resolution = self
             .adapter
             .resolve_payload_drop_route_resolution(request, &policy);
         if let Some(resolution) =
@@ -1542,10 +1569,95 @@ impl DockViewportRuntime {
             self.status.record_route(request, resolution.route());
             return resolution;
         }
+
+        let resolver_only_hover_request = request.release_origin()
+            == crate::interaction::DockPayloadDropReleaseOrigin::HoveredHost
+            && request.event_receiver_window().is_none();
+        if resolver_only_hover_request
+            && self.route_resolution_targets_unrefreshable_window(&route_resolution, cx)
+        {
+            let route = route_resolution.into_route();
+            let resolution = self.resolve_payload_drop_delivery_resolution(request, route, cx);
+            self.status.record_route(request, resolution.route());
+            return resolution;
+        }
+
+        let source_only_preview_waiting_for_render = request.release_origin()
+            == crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly
+            && self.routed_preview_targets_unowned_unrefreshable_window(cx);
+        if source_only_preview_waiting_for_render {
+            let route = route_resolution.into_route();
+            let resolution = self.resolve_payload_drop_delivery_resolution(request, route, cx);
+            self.status.record_route(request, resolution.route());
+            return resolution;
+        }
+
+        self.reconcile_viewport_frame_except_window(request.event_receiver_window(), cx);
+        route_resolution = self
+            .adapter
+            .resolve_payload_drop_route_resolution(request, &policy);
+        if let Some(resolution) =
+            self.resolve_accepted_routed_preview_resolution(request, &route_resolution, cx)
+        {
+            self.status.record_route(request, resolution.route());
+            return resolution;
+        }
+
         let route = route_resolution.into_route();
         let resolution = self.resolve_payload_drop_delivery_resolution(request, route, cx);
         self.status.record_route(request, resolution.route());
         resolution
+    }
+
+    fn route_resolution_targets_unrefreshable_window<C: open_gpui::AppContext>(
+        &self,
+        route_resolution: &DockViewportDropRouteResolution,
+        cx: &mut C,
+    ) -> bool {
+        self.route_resolution_target_window(route_resolution)
+            .is_some_and(|window| window.update(cx, |_, _, _| ()).is_err())
+    }
+
+    fn route_resolution_target_window(
+        &self,
+        route_resolution: &DockViewportDropRouteResolution,
+    ) -> Option<AnyWindowHandle> {
+        match route_resolution.route_ref() {
+            DockViewportDropRoute::Local { window_id, .. } => self
+                .adapter
+                .space_for_window_id(*window_id)
+                .and_then(|space| self.adapter.window_for_space(space)),
+            DockViewportDropRoute::KnownViewport { target, .. } => {
+                let window = self.adapter.window_for_space(target.space())?;
+                (window.window_id() == target.window_id()).then_some(window)
+            }
+            DockViewportDropRoute::TearOff
+            | DockViewportDropRoute::Unavailable
+            | DockViewportDropRoute::Rejected(_) => None,
+        }
+    }
+
+    fn routed_preview_targets_unowned_unrefreshable_window<C: open_gpui::AppContext>(
+        &self,
+        cx: &mut C,
+    ) -> bool {
+        let Some(delivery) = self
+            .routed_drop_preview_resolution
+            .as_ref()
+            .and_then(|resolution| resolution.delivery())
+        else {
+            return false;
+        };
+        let Some((target_space, target_window_id, _)) = delivery.routed_preview_target() else {
+            return false;
+        };
+        if self.owned_windows.contains(&target_window_id) {
+            return false;
+        }
+        self.adapter
+            .window_for_space(target_space)
+            .filter(|window| window.window_id() == target_window_id)
+            .is_some_and(|window| window.update(cx, |_, _, _| ()).is_err())
     }
 
     fn resolve_payload_drop_delivery_resolution<C: open_gpui::AppContext>(

@@ -677,9 +677,9 @@ impl DockHost {
                     mouse_position.x - bounds.origin.x,
                     mouse_position.y - bounds.origin.y,
                 );
-                runtime.reconcile_backend_window_focus(app);
-                runtime.reconcile_viewport_frame(app);
                 let window_handle = window.window_handle();
+                runtime.reconcile_backend_window_focus(app);
+                runtime.reconcile_viewport_frame_except_window(window_handle.window_id(), app);
                 runtime.register_rendered_host_viewport(space.clone(), window_handle);
                 let registration = runtime.begin_viewport_host_scene_frame(
                     space,

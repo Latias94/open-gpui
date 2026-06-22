@@ -46,6 +46,7 @@ struct DockExistingViewportRouteTarget<'a> {
     host_position: Point<Pixels>,
     facts_generation: u64,
     missing_host_target: DockMissingHostTargetBehavior,
+    allow_current_route_facts_mismatch: bool,
 }
 
 /// Resolves the workspace target authority for a viewport route.
@@ -62,6 +63,7 @@ pub(crate) fn resolve_workspace_target_for_route(
             host_position,
             window_id,
             facts_generation,
+            authority,
             ..
         } => resolve_existing_viewport_workspace_target(
             adapter,
@@ -75,6 +77,8 @@ pub(crate) fn resolve_workspace_target_for_route(
                 host_position: *host_position,
                 facts_generation: *facts_generation,
                 missing_host_target: DockMissingHostTargetBehavior::PreserveRoute,
+                allow_current_route_facts_mismatch: *authority
+                    == crate::DockViewportAuthorizedRouteAuthority::EventReceiverLocalScene,
             },
         ),
         DockViewportDropRoute::KnownViewport { target, .. } => {
@@ -90,6 +94,7 @@ pub(crate) fn resolve_workspace_target_for_route(
                     host_position: target.host_position(),
                     facts_generation: target.facts_generation(),
                     missing_host_target: DockMissingHostTargetBehavior::MarkRouteUnavailable,
+                    allow_current_route_facts_mismatch: false,
                 },
             )
         }
@@ -107,12 +112,14 @@ fn resolve_existing_viewport_workspace_target(
     payload_classes: &DockPayloadDockClasses,
     target: DockExistingViewportRouteTarget<'_>,
 ) -> DockViewportWorkspaceRouteTarget {
-    if !current_route_window_facts_match(
-        adapter,
-        target.space,
-        target.window_id,
-        target.facts_generation,
-    ) {
+    if !target.allow_current_route_facts_mismatch
+        && !current_route_window_facts_match(
+            adapter,
+            target.space,
+            target.window_id,
+            target.facts_generation,
+        )
+    {
         return DockViewportWorkspaceRouteTarget::RouteUnavailable;
     }
 
@@ -145,7 +152,7 @@ fn resolve_existing_viewport_workspace_target(
         target.space.clone(),
         Some(target.window_id),
         frame,
-        Some(target.facts_generation),
+        (!target.allow_current_route_facts_mismatch).then_some(target.facts_generation),
         target.host_position,
         payload_size,
         resolution,

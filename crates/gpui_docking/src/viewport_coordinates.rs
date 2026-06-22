@@ -80,10 +80,12 @@ impl DockViewportAdapter {
         snapshot.update_route_facts(window_facts, host_bounds)
     }
 
-    /// Refreshes live pointer-routing facts without replacing rendered geometry snapshots.
-    pub(crate) fn refresh_registered_window_facts<C: AppContext>(
+    /// Refreshes live pointer-routing facts while avoiding a window that is already in the
+    /// current render/update callback.
+    pub(crate) fn refresh_registered_window_facts_except_window<C: AppContext>(
         &mut self,
         cx: &mut C,
+        skip_window_id: Option<WindowId>,
     ) -> Vec<AnyWindowHandle> {
         let viewports = self
             .registry
@@ -92,6 +94,9 @@ impl DockViewportAdapter {
             .collect::<Vec<_>>();
         let mut changed_windows = Vec::new();
         for (space, window) in viewports {
+            if Some(window.window_id()) == skip_window_id {
+                continue;
+            }
             let Ok(pointer_routing) = window.update(cx, |_, window, _| {
                 if window.is_minimized() {
                     DockViewportPointerRouting::Minimized
@@ -360,7 +365,7 @@ mod tests {
             .expect("test window should still be live");
         cx.run_until_parked();
 
-        let changed_windows = adapter.refresh_registered_window_facts(cx);
+        let changed_windows = adapter.refresh_registered_window_facts_except_window(cx, None);
         assert_eq!(
             changed_windows
                 .into_iter()

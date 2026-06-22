@@ -1909,6 +1909,87 @@ fn backend_focus_unavailable_does_not_consume_pending_viewport_activation(cx: &m
 }
 
 #[open_gpui::test]
+fn backend_focus_on_another_docking_window_clears_pending_viewport_activation(
+    cx: &mut TestAppContext,
+) {
+    let main_space = DockSpaceId::from("main");
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let main_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let detached_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    graph.set_root(main_space.clone(), main_tabs);
+    graph.set_root(detached_space.clone(), detached_tabs);
+
+    let mut workspace = DockWorkspace::new(main_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+    let main = cx
+        .update(|app| {
+            runtime.open_viewport(
+                main_space.clone(),
+                WindowOptions {
+                    focus: false,
+                    ..viewport_window_options(360.0, 220.0)
+                },
+                app,
+            )
+        })
+        .expect("main viewport should open through runtime");
+    let detached = cx
+        .update(|app| {
+            runtime.open_viewport(
+                detached_space.clone(),
+                WindowOptions {
+                    focus: false,
+                    ..viewport_window_options(360.0, 220.0)
+                },
+                app,
+            )
+        })
+        .expect("detached viewport should open through runtime");
+    assert!(
+        runtime.record_pending_activation(crate::DockViewportActivationTransaction::new(
+            detached_space.clone(),
+            detached.window(),
+            DockViewportFocusRequest::panel("c"),
+        ))
+    );
+
+    focus_backend_window_for_test(main.window(), cx);
+    assert!(
+        cx.update(|app| runtime.reconcile_backend_window_focus(app)),
+        "backend focus on another docking viewport should update focus order and cancel stale activation intent"
+    );
+    assert_eq!(
+        runtime.pending_activation(),
+        None,
+        "explicit activation intent must not survive confirmed backend focus on another docking viewport"
+    );
+
+    focus_backend_window_for_test(detached.window(), cx);
+    assert_eq!(
+        cx.update(|app| {
+            runtime.focus_command_for_confirmed_backend_window_focus(
+                &detached_space,
+                detached.window().window_id(),
+                false,
+                app,
+            )
+        }),
+        None,
+        "later ordinary focus of the original target must not replay the stale activation"
+    );
+}
+
+#[open_gpui::test]
 fn backend_confirmed_activation_consumes_pending_viewport_activation(cx: &mut TestAppContext) {
     let main_space = DockSpaceId::from("main");
     let mut graph = DockGraph::new();
@@ -2024,11 +2105,18 @@ fn backend_confirmed_activation_while_mouse_is_pressed_preserves_pending_viewpor
         )
     });
 
-    assert_eq!(command, None);
+    assert_eq!(
+        command.as_ref().map(DockViewportFocusCommand::request),
+        Some(&DockViewportFocusRequest::panel("a"))
+    );
+    assert_eq!(
+        command.as_ref().map(DockViewportFocusCommand::source),
+        Some(crate::DockViewportFocusCommandSource::ViewportActivation)
+    );
     assert_eq!(
         runtime.pending_activation(),
         None,
-        "mouse-down backend activation should suppress restore and consume the pending viewport activation"
+        "mouse-down suppresses platform focus restore, not explicit pending viewport activation"
     );
 }
 
@@ -5424,13 +5512,25 @@ fn viewport_runtime_uses_platform_focus_order_when_trusted_hovered_window_is_una
     workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
     let controller = cx.new(|_| DockController::new(workspace));
-    let mut runtime = DockViewportRuntime::new(controller);
-    let source_window = handle(33);
+    let runtime = DockViewportRuntimeHandle::new(controller);
     let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
     let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
     let host_position = center_drop_position(host_bounds);
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(window_bounds),
+                    focus: false,
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("source viewport should open through runtime");
+    let source_window = opened.window();
 
-    runtime.register_opened_viewport(source_space.clone(), source_window);
     assert!(runtime.begin_viewport_host_scene(
         source_space.clone(),
         source_window.window_id(),
@@ -5454,14 +5554,17 @@ fn viewport_runtime_uses_platform_focus_order_when_trusted_hovered_window_is_una
     );
     let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
 
-    assert_eq!(
-        resolution.route(),
-        &DockViewportDropRoute::Local {
-            host_position,
-            window_id: source_window.window_id(),
-            facts_generation: 1,
-            authority: crate::DockViewportAuthorizedRouteAuthority::ZOrderFallback,
-        }
+    assert!(
+        matches!(
+            resolution.route(),
+            DockViewportDropRoute::Local {
+                host_position: route_host_position,
+                window_id,
+                authority: crate::DockViewportAuthorizedRouteAuthority::ZOrderFallback,
+                ..
+            } if *route_host_position == host_position && *window_id == source_window.window_id()
+        ),
+        "fresh live-window facts should route to the backend focus-order fallback target"
     );
     assert!(resolution.delivery().is_some());
 
@@ -5475,14 +5578,17 @@ fn viewport_runtime_uses_platform_focus_order_when_trusted_hovered_window_is_una
     );
     let trusted_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&trusted_request, app));
-    assert_eq!(
-        trusted_resolution.route(),
-        &DockViewportDropRoute::Local {
-            host_position,
-            window_id: source_window.window_id(),
-            facts_generation: 1,
-            authority: crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
-        }
+    assert!(
+        matches!(
+            trusted_resolution.route(),
+            DockViewportDropRoute::Local {
+                host_position: route_host_position,
+                window_id,
+                authority: crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
+                ..
+            } if *route_host_position == host_position && *window_id == source_window.window_id()
+        ),
+        "trusted hovered live-window facts should route with trusted-hovered authority"
     );
     assert!(trusted_resolution.delivery().is_some());
 }
