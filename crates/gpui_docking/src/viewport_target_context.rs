@@ -1,13 +1,29 @@
 use open_gpui::{AnyWindowHandle, WindowId};
 
+/// Source of the front-to-back viewport ordering used by hover fallback.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum DockViewportWindowStackSource {
+    /// The platform did not provide a usable ordering signal.
+    #[default]
+    Unavailable,
+    /// The ordering came from the backend platform window stack.
+    Platform,
+    /// The ordering was derived from ImGui-style focused-viewport stamps.
+    FocusStampFallback,
+}
+
 /// Front-to-back platform window stack captured for fallback ordering.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct DockViewportFrontToBackWindowStack {
     windows: Vec<WindowId>,
+    source: DockViewportWindowStackSource,
 }
 
 impl DockViewportFrontToBackWindowStack {
-    pub(crate) fn from_window_ids(windows: impl IntoIterator<Item = WindowId>) -> Self {
+    pub(crate) fn from_window_ids(
+        windows: impl IntoIterator<Item = WindowId>,
+        source: DockViewportWindowStackSource,
+    ) -> Self {
         let mut normalized = Vec::new();
         for window_id in windows {
             if normalized.iter().any(|existing| *existing == window_id) {
@@ -15,21 +31,39 @@ impl DockViewportFrontToBackWindowStack {
             }
             normalized.push(window_id);
         }
+        let source = if normalized.is_empty() {
+            DockViewportWindowStackSource::Unavailable
+        } else {
+            source
+        };
         Self {
             windows: normalized,
+            source,
         }
     }
 
-    pub(crate) fn from_windows<I, W>(windows: I) -> Self
+    pub(crate) fn from_platform_windows<I, W>(windows: I) -> Self
     where
         I: IntoIterator<Item = W>,
         W: Into<AnyWindowHandle>,
     {
-        Self::from_window_ids(windows.into_iter().map(|window| window.into().window_id()))
+        Self::from_window_ids(
+            windows.into_iter().map(|window| window.into().window_id()),
+            DockViewportWindowStackSource::Platform,
+        )
     }
 
     pub(crate) fn as_slice(&self) -> &[WindowId] {
         &self.windows
+    }
+
+    #[cfg(test)]
+    pub(crate) fn source(&self) -> DockViewportWindowStackSource {
+        self.source
+    }
+
+    pub(crate) fn is_unavailable(&self) -> bool {
+        self.source == DockViewportWindowStackSource::Unavailable
     }
 }
 
@@ -94,7 +128,10 @@ impl DockViewportTargetContext {
                 platform_hovered_window,
                 platform_hovered_window_known,
             ),
-            DockViewportFrontToBackWindowStack::from_window_ids(window_stack),
+            DockViewportFrontToBackWindowStack::from_window_ids(
+                window_stack,
+                DockViewportWindowStackSource::Platform,
+            ),
         )
     }
 
@@ -121,6 +158,15 @@ impl DockViewportTargetContext {
         self.window_stack.as_slice()
     }
 
+    #[cfg(test)]
+    pub(crate) fn window_stack_source(&self) -> DockViewportWindowStackSource {
+        self.window_stack.source()
+    }
+
+    pub(crate) fn has_hover_fallback_window_stack(&self) -> bool {
+        !self.window_stack.is_unavailable()
+    }
+
     pub(crate) fn without_trusted_hovered_window(mut self) -> Self {
         self.trusted_hovered_signal = DockViewportTrustedHoveredSignal::Unavailable;
         self
@@ -133,6 +179,20 @@ impl DockViewportTargetContext {
         ) {
             self.trusted_hovered_signal = DockViewportTrustedHoveredSignal::Trusted(window_id);
         }
+        self
+    }
+
+    pub(crate) fn with_focus_stamp_window_stack(
+        mut self,
+        windows: impl IntoIterator<Item = WindowId>,
+    ) -> Self {
+        if self.has_hover_fallback_window_stack() {
+            return self;
+        }
+        self.window_stack = DockViewportFrontToBackWindowStack::from_window_ids(
+            windows,
+            DockViewportWindowStackSource::FocusStampFallback,
+        );
         self
     }
 
@@ -175,7 +235,7 @@ impl DockViewportTargetContext {
         mut self,
         windows: impl IntoIterator<Item = impl Into<AnyWindowHandle>>,
     ) -> Self {
-        self.window_stack = DockViewportFrontToBackWindowStack::from_windows(windows);
+        self.window_stack = DockViewportFrontToBackWindowStack::from_platform_windows(windows);
         self
     }
 }
@@ -199,6 +259,10 @@ mod tests {
             context.front_to_back_window_stack_for_hover_fallback(),
             &[first]
         );
+        assert_eq!(
+            context.window_stack_source(),
+            DockViewportWindowStackSource::Platform
+        );
     }
 
     #[test]
@@ -220,6 +284,10 @@ mod tests {
         assert_eq!(
             context.front_to_back_window_stack_for_hover_fallback(),
             &[top, underlay]
+        );
+        assert_eq!(
+            context.window_stack_source(),
+            DockViewportWindowStackSource::Platform
         );
     }
 
@@ -261,12 +329,43 @@ mod tests {
         let back = WindowId::from(2);
         let context = DockViewportTargetContext::from_window_signals(
             DockViewportTrustedHoveredSignal::Unavailable,
-            DockViewportFrontToBackWindowStack::from_window_ids([front, back, front]),
+            DockViewportFrontToBackWindowStack::from_window_ids(
+                [front, back, front],
+                DockViewportWindowStackSource::Platform,
+            ),
         );
 
         assert_eq!(
             context.front_to_back_window_stack_for_hover_fallback(),
             &[front, back]
+        );
+    }
+
+    #[test]
+    fn focus_stamp_stack_only_fills_missing_platform_stack() {
+        let focused = WindowId::from(7);
+        let platform_front = crate::viewport_test_support::handle(9);
+
+        let fallback = DockViewportTargetContext::new().with_focus_stamp_window_stack([focused]);
+        assert_eq!(
+            fallback.front_to_back_window_stack_for_hover_fallback(),
+            &[focused]
+        );
+        assert_eq!(
+            fallback.window_stack_source(),
+            DockViewportWindowStackSource::FocusStampFallback
+        );
+
+        let platform = DockViewportTargetContext::new()
+            .with_window_stack([platform_front])
+            .with_focus_stamp_window_stack([focused]);
+        assert_eq!(
+            platform.front_to_back_window_stack_for_hover_fallback(),
+            &[platform_front.window_id()]
+        );
+        assert_eq!(
+            platform.window_stack_source(),
+            DockViewportWindowStackSource::Platform
         );
     }
 

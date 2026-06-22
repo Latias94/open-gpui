@@ -3,6 +3,7 @@ use crate::{
     DockViewportFocusCoordinator,
 };
 use open_gpui::WindowId;
+use std::collections::HashMap;
 
 /// Backend focus state used to mirror ImGui's platform viewport focus semantics.
 #[derive(Debug, Default)]
@@ -11,6 +12,8 @@ pub(crate) struct DockViewportBackendFocusState {
     /// Last live docking window observed as backend-focused. Mirrors ImGui's
     /// `PlatformLastFocusedViewportId` for activation and destroyed-focus suppression.
     last_confirmed_backend_focused_window: Option<WindowId>,
+    focused_stamp_count: u64,
+    focused_window_stamps: HashMap<WindowId, u64>,
     /// One-shot gate for ImGui's `prev_focused_has_been_destroyed` behavior: when backend focus
     /// moves to another viewport only because the previously focused viewport was destroyed, the
     /// next platform-focus restoration for the newly focused window must be skipped once.
@@ -93,10 +96,47 @@ impl DockViewportBackendFocusState {
             pending_activation_changed = self.clear_pending_activation_except_window(window_id);
         }
         self.last_confirmed_backend_focused_window = Some(window_id);
+        if focused_changed || !self.focused_window_stamps.contains_key(&window_id) {
+            self.focused_stamp_count = self.focused_stamp_count.wrapping_add(1);
+            self.focused_window_stamps
+                .insert(window_id, self.focused_stamp_count);
+        }
         Some(DockViewportBackendFocusRecord {
             focused_changed,
             pending_activation_changed,
         })
+    }
+
+    pub(crate) fn front_to_back_focused_windows(
+        &self,
+        is_live_docking_window: impl Fn(WindowId) -> bool,
+    ) -> Vec<WindowId> {
+        let mut stamped_windows = self
+            .focused_window_stamps
+            .iter()
+            .filter_map(|(window_id, stamp)| {
+                is_live_docking_window(*window_id).then_some((*window_id, *stamp))
+            })
+            .collect::<Vec<_>>();
+        stamped_windows.sort_by(|(lhs_window, lhs_stamp), (rhs_window, rhs_stamp)| {
+            rhs_stamp
+                .cmp(lhs_stamp)
+                .then_with(|| lhs_window.as_u64().cmp(&rhs_window.as_u64()))
+        });
+        stamped_windows
+            .into_iter()
+            .map(|(window_id, _)| window_id)
+            .collect()
+    }
+
+    pub(crate) fn discard_window(&mut self, window_id: WindowId) {
+        self.focused_window_stamps.remove(&window_id);
+        if self
+            .destroyed_previous_focus_suppression
+            .is_some_and(|suppression| suppression.focused_window == window_id)
+        {
+            self.destroyed_previous_focus_suppression = None;
+        }
     }
 
     pub(crate) fn focus_command_for_confirmed_backend_window_focus(
@@ -205,6 +245,39 @@ mod tests {
         );
         assert!(!state.clear_pending_activation_for(&beta_space, beta_window.window_id()));
         assert!(!state.clear_pending_activation_for(&alpha_space, alpha_window.window_id()));
+    }
+
+    #[test]
+    fn focused_window_stamps_expose_front_to_back_fallback_order() {
+        let mut state = DockViewportBackendFocusState::default();
+        let alpha_window = handle(1);
+        let beta_window = handle(2);
+
+        state
+            .record_confirmed_backend_focused_window(alpha_window.window_id(), |_| true)
+            .expect("alpha is live");
+        state
+            .record_confirmed_backend_focused_window(beta_window.window_id(), |_| true)
+            .expect("beta is live");
+        state
+            .record_confirmed_backend_focused_window(alpha_window.window_id(), |_| true)
+            .expect("alpha returns to front");
+
+        assert_eq!(
+            state.front_to_back_focused_windows(|_| true),
+            vec![alpha_window.window_id(), beta_window.window_id()]
+        );
+        assert_eq!(
+            state.front_to_back_focused_windows(|window| window == beta_window.window_id()),
+            vec![beta_window.window_id()],
+            "stale focus stamps are filtered by current live docking-window ownership"
+        );
+
+        state.discard_window(alpha_window.window_id());
+        assert_eq!(
+            state.front_to_back_focused_windows(|_| true),
+            vec![beta_window.window_id()]
+        );
     }
 
     #[test]

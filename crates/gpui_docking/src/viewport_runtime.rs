@@ -1141,6 +1141,7 @@ impl DockViewportRuntime {
             self.close_coordinator.discard_window(window_id);
         }
         self.window_ownership.clear_window_state(window_id);
+        self.backend_focus.discard_window(window_id);
         self.host_scene_liveness.forget_window(window_id);
         self.host_scenes.unregister_space(space);
         self.clear_pending_activation_for(space, window_id);
@@ -1598,6 +1599,7 @@ impl DockViewportRuntime {
                 .with_resampled_platform_target_context_from_app(app)
         });
         let request = self.with_last_hovered_viewport_context(request);
+        let request = self.with_focus_stamp_fallback_context(request);
         route_resolution = self
             .adapter
             .resolve_payload_drop_route_resolution(&request, &policy);
@@ -1645,6 +1647,30 @@ impl DockViewportRuntime {
             return request;
         }
         request.with_last_hovered_viewport_window(identity.window_id())
+    }
+
+    fn with_focus_stamp_fallback_context(
+        &self,
+        request: DockViewportDropRouteRequest,
+    ) -> DockViewportDropRouteRequest {
+        if !request.allows_focus_stamp_fallback()
+            || !matches!(
+                request.target_context().trusted_hovered_signal(),
+                crate::DockViewportTrustedHoveredSignal::Unavailable
+            )
+            || request.target_context().has_hover_fallback_window_stack()
+        {
+            return request;
+        }
+        let focused_windows = self
+            .backend_focus
+            .front_to_back_focused_windows(|window_id| {
+                self.adapter.window_can_authorize_hover_hit(window_id) == Some(true)
+            });
+        if focused_windows.is_empty() {
+            return request;
+        }
+        request.with_focus_stamp_window_stack(focused_windows)
     }
 
     fn route_resolution_targets_unrefreshable_window<C: open_gpui::AppContext>(

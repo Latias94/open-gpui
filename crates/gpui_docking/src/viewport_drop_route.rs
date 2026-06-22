@@ -777,6 +777,14 @@ impl DockViewportDropRouteRequest {
         self
     }
 
+    pub(crate) fn with_focus_stamp_window_stack(
+        mut self,
+        windows: impl IntoIterator<Item = WindowId>,
+    ) -> Self {
+        self.platform_signals = self.platform_signals.with_focus_stamp_window_stack(windows);
+        self
+    }
+
     pub(crate) fn source_space(&self) -> &DockSpaceId {
         &self.source_space
     }
@@ -811,6 +819,10 @@ impl DockViewportDropRouteRequest {
 
     pub(crate) fn event_receiver_window(&self) -> Option<WindowId> {
         self.platform_signals.event_receiver_window()
+    }
+
+    pub(crate) fn allows_focus_stamp_fallback(&self) -> bool {
+        self.platform_signals.allows_focus_stamp_fallback()
     }
 
     pub(crate) fn coordinate_space(&self) -> DockViewportPointerCoordinateSpace {

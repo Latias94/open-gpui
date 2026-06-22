@@ -19,6 +19,9 @@ pub(crate) struct DockViewportPlatformSignals {
     /// Target arbitration signals came from the live app backend and may be refreshed before
     /// resolving delivery.
     resample_target_context_from_app: bool,
+    /// ImGui-style focused-window stamps may be used when live backend hover and stack signals are
+    /// both unavailable.
+    allow_focus_stamp_fallback: bool,
 }
 
 impl DockViewportPlatformSignals {
@@ -28,7 +31,9 @@ impl DockViewportPlatformSignals {
         let trusted_hovered_signal =
             trusted_hovered_signal_from_platform(cx.hovered_window(), capabilities);
         let window_stack = if capabilities.window_stack {
-            DockViewportFrontToBackWindowStack::from_windows(cx.window_stack().unwrap_or_default())
+            DockViewportFrontToBackWindowStack::from_platform_windows(
+                cx.window_stack().unwrap_or_default(),
+            )
         } else {
             DockViewportFrontToBackWindowStack::default()
         };
@@ -38,6 +43,7 @@ impl DockViewportPlatformSignals {
             window_stack,
             global_window_bounds: capabilities.global_window_bounds,
             resample_target_context_from_app: true,
+            allow_focus_stamp_fallback: true,
         }
     }
 
@@ -62,6 +68,17 @@ impl DockViewportPlatformSignals {
         let target_context = self
             .target_context()
             .with_last_hovered_viewport_window(window_id);
+        let (trusted_hovered_signal, window_stack) = target_context.into_window_signals();
+        self.trusted_hovered_signal = trusted_hovered_signal;
+        self.window_stack = window_stack;
+        self
+    }
+
+    pub(crate) fn with_focus_stamp_window_stack(
+        mut self,
+        windows: impl IntoIterator<Item = WindowId>,
+    ) -> Self {
+        let target_context = self.target_context().with_focus_stamp_window_stack(windows);
         let (trusted_hovered_signal, window_stack) = target_context.into_window_signals();
         self.trusted_hovered_signal = trusted_hovered_signal;
         self.window_stack = window_stack;
@@ -103,6 +120,10 @@ impl DockViewportPlatformSignals {
         self.event_receiver_window
     }
 
+    pub(crate) fn allows_focus_stamp_fallback(&self) -> bool {
+        self.allow_focus_stamp_fallback
+    }
+
     /// Converts the platform snapshot into the pure resolver context.
     pub(crate) fn target_context(&self) -> DockViewportTargetContext {
         DockViewportTargetContext::from_window_signals(
@@ -120,6 +141,7 @@ impl DockViewportPlatformSignals {
             window_stack,
             global_window_bounds: true,
             resample_target_context_from_app: false,
+            allow_focus_stamp_fallback: false,
         }
     }
 
