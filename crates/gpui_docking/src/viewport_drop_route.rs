@@ -118,8 +118,29 @@ impl DockViewportDropRouteResolution {
         &self.route
     }
 
+    pub(crate) fn target_window(&self, adapter: &DockViewportAdapter) -> Option<AnyWindowHandle> {
+        self.route.target_window(adapter)
+    }
+
     pub(crate) fn unavailable_reason(&self) -> Option<DockViewportDropRouteUnavailableReason> {
         self.unavailable_reason
+    }
+}
+
+impl DockViewportDropRoute {
+    fn target_window(&self, adapter: &DockViewportAdapter) -> Option<AnyWindowHandle> {
+        match self {
+            DockViewportDropRoute::Local { window_id, .. } => adapter
+                .space_for_window_id(*window_id)
+                .and_then(|space| adapter.window_for_space(space)),
+            DockViewportDropRoute::KnownViewport { target, .. } => {
+                let window = adapter.window_for_space(target.space())?;
+                (window.window_id() == target.window_id()).then_some(window)
+            }
+            DockViewportDropRoute::TearOff
+            | DockViewportDropRoute::Unavailable
+            | DockViewportDropRoute::Rejected(_) => None,
+        }
     }
 }
 

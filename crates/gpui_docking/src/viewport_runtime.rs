@@ -1497,27 +1497,9 @@ impl DockViewportRuntime {
         route_resolution: &DockViewportDropRouteResolution,
         cx: &mut C,
     ) -> bool {
-        self.route_resolution_target_window(route_resolution)
+        route_resolution
+            .target_window(&self.adapter)
             .is_some_and(|window| self.window_ownership.is_window_unrefreshable(window, cx))
-    }
-
-    fn route_resolution_target_window(
-        &self,
-        route_resolution: &DockViewportDropRouteResolution,
-    ) -> Option<AnyWindowHandle> {
-        match route_resolution.route_ref() {
-            DockViewportDropRoute::Local { window_id, .. } => self
-                .adapter
-                .space_for_window_id(*window_id)
-                .and_then(|space| self.adapter.window_for_space(space)),
-            DockViewportDropRoute::KnownViewport { target, .. } => {
-                let window = self.adapter.window_for_space(target.space())?;
-                (window.window_id() == target.window_id()).then_some(window)
-            }
-            DockViewportDropRoute::TearOff
-            | DockViewportDropRoute::Unavailable
-            | DockViewportDropRoute::Rejected(_) => None,
-        }
     }
 
     fn routed_preview_targets_unowned_unrefreshable_window<C: open_gpui::AppContext>(
