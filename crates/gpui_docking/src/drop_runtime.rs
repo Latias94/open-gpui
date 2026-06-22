@@ -1197,7 +1197,6 @@ mod tests {
             rejection.target.kind,
             DockResolvedDropTargetKind::EmptyDockSpace {
                 space: ref target_space,
-                is_central: true,
             } if target_space == &space
         ));
     }

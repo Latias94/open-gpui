@@ -3783,7 +3783,6 @@ mod tests {
             DockResolvedDropTarget {
                 kind: DockResolvedDropTargetKind::EmptyDockSpace {
                     space: target_space,
-                    is_central: false,
                 },
                 source: DockDropResolveSource::EmptyDockSpace,
                 drop_box: None,

@@ -142,8 +142,8 @@ impl DockWorkspace {
                     &target_space,
                     self.resolve_edge_graph_drop_target(&target_space, root, zone, &target)?,
                 ),
-            DockResolvedDropTargetKind::EmptyDockSpace { space, is_central } => {
-                if is_central {
+            DockResolvedDropTargetKind::EmptyDockSpace { space } => {
+                if target.is_central_region {
                     self.policy().validate_central_region_dock_over()?;
                 }
                 match payload {
@@ -511,7 +511,6 @@ mod tests {
         assert_eq!(
             resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
                 space: DockSpaceId::from("detached"),
-                is_central: false,
             })
             .center_target_tabs(),
             None
@@ -986,7 +985,6 @@ mod tests {
                     &detached,
                     DockResolvedDropTargetKind::EmptyDockSpace {
                         space: detached.clone(),
-                        is_central: false,
                     },
                 ),
             })
@@ -1016,7 +1014,6 @@ mod tests {
                     &space(),
                     DockResolvedDropTargetKind::EmptyDockSpace {
                         space: detached.clone(),
-                        is_central: false,
                     },
                 ),
             })
@@ -1039,6 +1036,11 @@ mod tests {
             .policy_mut()
             .set_allow_central_region_dock_over(false);
 
+        let mut target = resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
+            space: central.clone(),
+        });
+        target.is_central_region = true;
+
         let err = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
@@ -1046,13 +1048,7 @@ mod tests {
                     source_tabs: left,
                     item: &item("a"),
                 },
-                target: workspace_kind_target(
-                    &central,
-                    DockResolvedDropTargetKind::EmptyDockSpace {
-                        space: central.clone(),
-                        is_central: true,
-                    },
-                ),
+                target: workspace_target(&central, target),
             })
             .expect_err("central empty-space target should obey central dock-over policy");
 
@@ -1129,7 +1125,6 @@ mod tests {
                     &detached,
                     DockResolvedDropTargetKind::EmptyDockSpace {
                         space: detached.clone(),
-                        is_central: false,
                     },
                 ),
             })

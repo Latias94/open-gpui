@@ -827,7 +827,6 @@ fn host_drop_guide_target(
     Some(DockResolvedDropTarget {
         kind: DockResolvedDropTargetKind::EmptyDockSpace {
             space: session.space().clone(),
-            is_central,
         },
         source: DockDropResolveSource::EmptyDockSpace,
         drop_box: None,

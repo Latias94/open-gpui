@@ -101,7 +101,6 @@ pub(crate) enum DockResolvedDropTargetKind {
     },
     EmptyDockSpace {
         space: DockSpaceId,
-        is_central: bool,
     },
 }
 
@@ -257,7 +256,6 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
             DockResolvedDropTarget {
                 kind: DockResolvedDropTargetKind::EmptyDockSpace {
                     space: target.space.clone(),
-                    is_central: target.is_central,
                 },
                 source: DockDropResolveSource::EmptyDockSpace,
                 drop_box: None,
@@ -528,12 +526,7 @@ fn resolve_leaf_drop(
 ) -> Option<DockResolvedDropTarget> {
     let geometry =
         geometry::resolve_inner_drop_geometry_with_style(leaf.bounds, position, drop_guide_style)?;
-    Some(target_from_leaf_geometry(
-        leaf,
-        geometry,
-        payload_size,
-        edge_plan_resolver,
-    ))
+    target_from_leaf_geometry(leaf, geometry, payload_size, edge_plan_resolver)
 }
 
 pub(crate) fn validate_resolved_drop_target(
@@ -576,7 +569,7 @@ fn target_from_leaf_geometry(
     geometry: DockDropGeometry,
     payload_size: Option<Size<Pixels>>,
     edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
-) -> DockResolvedDropTarget {
+) -> Option<DockResolvedDropTarget> {
     let kind = if geometry.drop_box.kind.is_center() {
         DockResolvedDropTargetKind::LeafCenter {
             root: leaf.root,
@@ -596,7 +589,7 @@ fn target_from_leaf_geometry(
     };
 
     if geometry.drop_box.kind.is_center() {
-        return DockResolvedDropTarget {
+        return Some(DockResolvedDropTarget {
             kind,
             source,
             drop_box: Some(geometry.drop_box),
@@ -604,7 +597,11 @@ fn target_from_leaf_geometry(
             edge_sizing: None,
             edge_plan: None,
             is_central_region: leaf.is_central,
-        };
+        });
+    }
+
+    if leaf.is_central {
+        return None;
     }
 
     let (drop_box, preview_bounds, edge_sizing) =
@@ -612,7 +609,7 @@ fn target_from_leaf_geometry(
     let edge_plan = edge_plan_resolver
         .and_then(|resolver| resolver(leaf.target_tabs, geometry.zone(), edge_sizing));
 
-    DockResolvedDropTarget {
+    Some(DockResolvedDropTarget {
         kind,
         source,
         drop_box: Some(drop_box),
@@ -620,7 +617,7 @@ fn target_from_leaf_geometry(
         edge_sizing: Some(edge_sizing),
         edge_plan,
         is_central_region: leaf.is_central,
-    }
+    })
 }
 
 fn edge_drop_metadata(
@@ -1822,10 +1819,7 @@ mod tests {
         assert_eq!(target.source, DockDropResolveSource::EmptyDockSpace);
         assert_eq!(
             target.kind,
-            DockResolvedDropTargetKind::EmptyDockSpace {
-                space,
-                is_central: false,
-            }
+            DockResolvedDropTargetKind::EmptyDockSpace { space }
         );
         assert_eq!(
             target.preview_bounds,
@@ -1866,7 +1860,6 @@ mod tests {
             rejection.target.kind,
             DockResolvedDropTargetKind::EmptyDockSpace {
                 space: space.clone(),
-                is_central: false,
             }
         );
         assert_eq!(
@@ -1903,10 +1896,7 @@ mod tests {
         );
         assert_eq!(
             rejection.target.kind,
-            DockResolvedDropTargetKind::EmptyDockSpace {
-                space,
-                is_central: true,
-            }
+            DockResolvedDropTargetKind::EmptyDockSpace { space }
         );
         assert_eq!(
             rejection.reason,
@@ -2012,42 +2002,66 @@ mod tests {
     }
 
     #[test]
-    fn central_edge_splits_do_not_use_central_dock_over_policy() {
+    fn central_leaf_side_hit_does_not_create_inner_edge_target() {
         let root = tabs();
-        let mut policy = DockPolicy::default();
-        policy.set_allow_central_region_dock_over(false);
         let leaf_bounds = bounds(300.0, 200.0);
         let position = drop_box_center(
             leaf_bounds,
             DockDropBoxSet::Inner,
             DockDropBoxKind::InnerEdge(DropZone::Left),
         );
+
         let target = resolve_layout_drop(DockDropResolverInput {
             leaves: &[DockLeafDropTarget {
                 is_central: true,
                 bounds: leaf_bounds,
                 ..leaf(root, root)
             }],
-            ..DockDropResolverInput::new(position, &policy)
+            ..DockDropResolverInput::new(position, &policy())
+        })
+        .and_then(DockDropResolution::target);
+
+        assert_eq!(
+            target, None,
+            "central side hits should be represented by root outer docking, not hidden inner-edge targets"
+        );
+    }
+
+    #[test]
+    fn central_leaf_side_hit_can_resolve_root_outer_edge() {
+        let (central_tabs, sibling) = two_node_ids();
+        let mut graph = DockGraph::new();
+        let root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![central_tabs, sibling],
+            fractions: vec![0.5, 0.5],
+        });
+        let zone = DropZone::Left;
+        let position = root_edge_position(zone);
+        let target = resolve_layout_drop(DockDropResolverInput {
+            root: Some(DockRootDropTarget {
+                root,
+                bounds: root_bounds(),
+            }),
+            leaves: &[DockLeafDropTarget {
+                root,
+                target_tabs: central_tabs,
+                bounds: leaf_bounds_containing(position),
+                is_central: true,
+            }],
+            ..DockDropResolverInput::new(position, &policy())
         })
         .and_then(DockDropResolution::target)
-        .expect("central inner edge should still be accepted");
+        .expect("central side hit at the root edge should resolve as root outer docking");
 
-        assert_eq!(target.source, DockDropResolveSource::InnerEdge);
-        assert_eq!(target.zone(), Some(DropZone::Left));
-
-        policy.set_allow_edge_split(false);
-        let DockDropResolution::Rejected(rejection) = resolve_layout_drop(DockDropResolverInput {
-            leaves: &[DockLeafDropTarget {
-                is_central: true,
-                bounds: leaf_bounds,
-                ..leaf(root, root)
-            }],
-            ..DockDropResolverInput::new(position, &policy)
-        })
-        .expect("central inner edge should still resolve to edge policy") else {
-            panic!("disabled edge split should reject central inner edge");
-        };
-        assert_eq!(rejection.reason, DockPolicyError::EdgeSplitDisabled);
+        assert_eq!(target.source, DockDropResolveSource::RootEdge);
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::RootEdge {
+                root,
+                leaf_tabs: Some(central_tabs),
+                zone,
+            }
+        );
     }
 }
