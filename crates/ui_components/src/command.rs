@@ -31,7 +31,9 @@ use crate::text_input::{TextInput, TextInputState};
 use crate::theme::ThemeResolver;
 
 type CommandOpenChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
+type CommandQueryChangeHandler = Rc<dyn Fn(String, &mut Window, &mut App)>;
 type CommandSelectionHandler = Rc<dyn Fn(CommandSelection, &mut Window, &mut App)>;
+type CommandSelectedValuesChangeHandler = Rc<dyn Fn(CommandSelectionChange, &mut Window, &mut App)>;
 
 /// Command dialog open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -41,6 +43,32 @@ pub enum CommandOpenMode {
     Uncontrolled,
     /// Open state is provided by the caller.
     Controlled,
+}
+
+/// Command query ownership.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CommandQueryMode {
+    /// Query is owned by the component adapter after initialization.
+    #[default]
+    Uncontrolled,
+    /// Query is provided by the caller.
+    Controlled,
+}
+
+/// Command selection behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CommandSelectionMode {
+    /// Activating a command emits an action selection and may close dialog content.
+    #[default]
+    Single,
+    /// Activating a command toggles persistent selected values.
+    Multiple,
+}
+
+impl CommandSelectionMode {
+    const fn is_multiple(self) -> bool {
+        matches!(self, Self::Multiple)
+    }
 }
 
 /// Command loading state.
@@ -441,6 +469,40 @@ impl CommandSelection {
     }
 }
 
+/// Persistent selected-values change emitted by multi-select command surfaces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandSelectionChange {
+    values: Vec<String>,
+    toggled: CommandSelection,
+    selected: bool,
+}
+
+impl CommandSelectionChange {
+    /// Creates a multi-selection change payload.
+    pub fn new(values: Vec<String>, toggled: CommandSelection, selected: bool) -> Self {
+        Self {
+            values,
+            toggled,
+            selected,
+        }
+    }
+
+    /// Returns the next selected values.
+    pub fn values(&self) -> &[String] {
+        &self.values
+    }
+
+    /// Returns the command selection that was toggled.
+    pub const fn toggled(&self) -> &CommandSelection {
+        &self.toggled
+    }
+
+    /// Returns whether the toggled value is now selected.
+    pub const fn selected(&self) -> bool {
+        self.selected
+    }
+}
+
 /// Resolved command group state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandGroupState {
@@ -486,6 +548,31 @@ impl CommandGroupState {
     /// Returns group accessibility role.
     pub const fn role(&self) -> Role {
         Role::Group
+    }
+}
+
+/// Resolved selected chip state for multi-select command surfaces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandSelectedChipState {
+    index: usize,
+    value: String,
+    label: String,
+}
+
+impl CommandSelectedChipState {
+    /// Returns chip index in the selected-values list.
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Returns selected command value.
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// Returns selected command label.
+    pub fn label(&self) -> &str {
+        &self.label
     }
 }
 
@@ -654,9 +741,11 @@ pub struct CommandState {
     label: String,
     placeholder: String,
     query: String,
+    query_mode: CommandQueryMode,
     open: bool,
     default_open: bool,
     open_mode: CommandOpenMode,
+    selection_mode: CommandSelectionMode,
     overlay: OverlayResolvedState,
     dialog: Option<CommandDialogState>,
     loading_state: Option<CommandLoadingState>,
@@ -667,6 +756,8 @@ pub struct CommandState {
     filtered_item_count: usize,
     groups: Vec<CommandGroupState>,
     items: Vec<CommandItemState>,
+    selected_values: Vec<String>,
+    selected_chips: Vec<CommandSelectedChipState>,
     input: TextInputState,
     listbox: ListboxState,
     scroll_area: ScrollAreaState,
@@ -687,7 +778,10 @@ impl CommandState {
         label: impl Into<String>,
         placeholder: impl Into<String>,
         query: impl Into<String>,
+        query_mode: CommandQueryMode,
+        selection_mode: CommandSelectionMode,
         selected_value: Option<&str>,
+        selected_values: impl IntoIterator<Item = impl Into<String>>,
         active_value: Option<&str>,
         loading_state: Option<CommandLoadingState>,
         empty_label: impl Into<String>,
@@ -724,6 +818,16 @@ impl CommandState {
             .and_then(|value| find_command_item(&raw_groups, &raw_items, value))
             .filter(|item| !item.disabled_state());
         let selected_value = selected_item.map(|item| item.value().to_owned());
+        let selected_values = resolve_command_selected_values(
+            &raw_groups,
+            &raw_items,
+            selection_mode,
+            selected_value.as_deref(),
+            selected_values,
+        );
+        let listbox_selected_value = (!selection_mode.is_multiple())
+            .then_some(selected_value.as_deref())
+            .flatten();
 
         let mut standalone_items = raw_items
             .iter()
@@ -846,7 +950,7 @@ impl CommandState {
             size,
             disabled,
             label.clone(),
-            selected_value.as_deref(),
+            listbox_selected_value,
             active_value,
             (!query_is_empty).then_some(query.as_str()),
             empty_label.clone(),
@@ -859,6 +963,13 @@ impl CommandState {
             .enumerate()
             .filter_map(|(index, item)| {
                 let option = listbox.options().get(index)?;
+                let selected = if selection_mode.is_multiple() {
+                    selected_values
+                        .iter()
+                        .any(|value| value == item.descriptor.value())
+                } else {
+                    option.selected()
+                };
                 Some(CommandItemState {
                     index,
                     group_index: item.group_index,
@@ -866,12 +977,25 @@ impl CommandState {
                     label: item.descriptor.label,
                     shortcut: item.descriptor.shortcut,
                     disabled: item.descriptor.disabled,
-                    selected: option.selected(),
+                    selected,
                     active: option.active(),
                     match_source: item.rank.source,
                     match_score: item.rank.score,
                     position_in_set: option.position_in_set(),
                     size_of_set: option.size_of_set(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let selected_chips = selected_values
+            .iter()
+            .enumerate()
+            .filter_map(|(index, value)| {
+                find_command_item(&raw_groups, &raw_items, value).map(|item| {
+                    CommandSelectedChipState {
+                        index,
+                        value: item.value().to_owned(),
+                        label: item.label().to_owned(),
+                    }
                 })
             })
             .collect::<Vec<_>>();
@@ -926,9 +1050,11 @@ impl CommandState {
             label,
             placeholder,
             query,
+            query_mode,
             open,
             default_open,
             open_mode,
+            selection_mode,
             overlay,
             dialog,
             loading_state,
@@ -939,6 +1065,8 @@ impl CommandState {
             filtered_item_count,
             groups: command_groups,
             items,
+            selected_values,
+            selected_chips,
             input,
             listbox,
             scroll_area,
@@ -973,6 +1101,11 @@ impl CommandState {
         &self.query
     }
 
+    /// Returns query ownership.
+    pub const fn query_mode(&self) -> CommandQueryMode {
+        self.query_mode
+    }
+
     /// Returns selected command value.
     pub fn selected_value(&self) -> Option<&str> {
         self.listbox.selected_value()
@@ -996,6 +1129,11 @@ impl CommandState {
     /// Returns open-state ownership.
     pub const fn open_mode(&self) -> CommandOpenMode {
         self.open_mode
+    }
+
+    /// Returns selection behavior.
+    pub const fn selection_mode(&self) -> CommandSelectionMode {
+        self.selection_mode
     }
 
     /// Returns dialog wrapper state.
@@ -1106,6 +1244,16 @@ impl CommandState {
         &self.items
     }
 
+    /// Returns persistent selected values.
+    pub fn selected_values(&self) -> &[String] {
+        &self.selected_values
+    }
+
+    /// Returns selected chip states.
+    pub fn selected_chips(&self) -> &[CommandSelectedChipState] {
+        &self.selected_chips
+    }
+
     /// Returns resolved input state.
     pub const fn input(&self) -> &TextInputState {
         &self.input
@@ -1153,6 +1301,7 @@ struct CommandRuntime {
     open: bool,
     active_value: Option<String>,
     selected_value: Option<String>,
+    selected_values: Vec<String>,
 }
 
 /// A concrete GPUI command surface.
@@ -1169,8 +1318,11 @@ pub struct Command {
     open: Option<bool>,
     default_open: bool,
     dialog_enabled: bool,
+    query: Option<String>,
     default_query: String,
+    selection_mode: CommandSelectionMode,
     selected_value: Option<String>,
+    selected_values: Option<Vec<String>>,
     active_value: Option<String>,
     loading_state: Option<CommandLoadingState>,
     empty_label: SharedString,
@@ -1182,7 +1334,9 @@ pub struct Command {
     focus_restore_intent: FocusRestoreIntent,
     tokens: ThemeTokens,
     on_open_change: Option<CommandOpenChangeHandler>,
+    on_query_change: Option<CommandQueryChangeHandler>,
     on_select: Option<CommandSelectionHandler>,
+    on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
 }
 
 impl Command {
@@ -1200,8 +1354,11 @@ impl Command {
             open: None,
             default_open: false,
             dialog_enabled: false,
+            query: None,
             default_query: String::new(),
+            selection_mode: CommandSelectionMode::Single,
             selected_value: None,
+            selected_values: None,
             active_value: None,
             loading_state: None,
             empty_label: "No commands".into(),
@@ -1213,7 +1370,9 @@ impl Command {
             focus_restore_intent: FocusRestoreIntent::Trigger,
             tokens: ThemeTokens::default(),
             on_open_change: None,
+            on_query_change: None,
             on_select: None,
+            on_selected_values_change: None,
         }
     }
 
@@ -1294,15 +1453,44 @@ impl Command {
         self
     }
 
+    /// Applies controlled search query text.
+    pub fn query(mut self, query: impl Into<String>) -> Self {
+        self.query = Some(query.into());
+        self
+    }
+
     /// Applies the default search query for adapter-owned input state.
     pub fn default_query(mut self, query: impl Into<String>) -> Self {
         self.default_query = query.into();
         self
     }
 
+    /// Applies command selection behavior.
+    pub fn selection_mode(mut self, mode: CommandSelectionMode) -> Self {
+        self.selection_mode = mode;
+        self
+    }
+
+    /// Enables or disables persistent multi-selection behavior.
+    pub fn multi_select(mut self, enabled: bool) -> Self {
+        self.selection_mode = if enabled {
+            CommandSelectionMode::Multiple
+        } else {
+            CommandSelectionMode::Single
+        };
+        self
+    }
+
     /// Applies selected item value.
     pub fn selected(mut self, value: impl Into<String>) -> Self {
         self.selected_value = Some(value.into());
+        self
+    }
+
+    /// Applies controlled selected values for multi-selection.
+    pub fn selected_values(mut self, values: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.selection_mode = CommandSelectionMode::Multiple;
+        self.selected_values = Some(values.into_iter().map(Into::into).collect());
         self
     }
 
@@ -1369,6 +1557,15 @@ impl Command {
         self
     }
 
+    /// Registers a query-change handler with the next sanitized query text.
+    pub fn on_query_change(
+        mut self,
+        handler: impl Fn(String, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_query_change = Some(Rc::new(handler));
+        self
+    }
+
     /// Registers a command selection handler.
     pub fn on_select(
         mut self,
@@ -1378,8 +1575,25 @@ impl Command {
         self
     }
 
+    /// Registers a selected-values change handler for multi-selection.
+    pub fn on_selected_values_change(
+        mut self,
+        handler: impl Fn(CommandSelectionChange, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_selected_values_change = Some(Rc::new(handler));
+        self
+    }
+
     /// Returns resolved command state.
     pub fn state(&self) -> CommandState {
+        let query_mode = if self.query.is_some() {
+            CommandQueryMode::Controlled
+        } else {
+            CommandQueryMode::Uncontrolled
+        };
+        let query = self.query.as_deref().unwrap_or(self.default_query.as_str());
+        let selected_values = self.selected_values.clone().unwrap_or_default().into_iter();
+
         CommandState::resolve(
             self.size,
             self.disabled,
@@ -1388,8 +1602,11 @@ impl Command {
             self.dialog_enabled,
             self.label.to_string(),
             self.placeholder.to_string(),
-            self.default_query.as_str(),
+            query,
+            query_mode,
+            self.selection_mode,
             self.selected_value.as_deref(),
+            selected_values,
             self.active_value.as_deref(),
             self.loading_state.clone(),
             self.empty_label.to_string(),
@@ -1415,14 +1632,23 @@ impl Sizable for Command {
 
 impl RenderOnce for Command {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let initial_query = self
+            .query
+            .clone()
+            .unwrap_or_else(|| self.default_query.clone());
+        let initial_selected_values = self
+            .selected_values
+            .clone()
+            .unwrap_or_else(|| self.selected_value.iter().cloned().collect());
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| CommandRuntime {
             open: self.default_open,
             active_value: self.active_value.clone(),
             selected_value: self.selected_value.clone(),
+            selected_values: initial_selected_values.clone(),
         });
         let input_state_key: ElementId = (self.id.clone(), "input-state").into();
         let input_controller = window.use_keyed_state(input_state_key, cx, |_, cx| {
-            let mut input = TextInputController::with_value(self.default_query.clone(), cx);
+            let mut input = TextInputController::with_value(initial_query.clone(), cx);
             input.set_placeholder(self.placeholder.clone(), cx);
             input
         });
@@ -1434,11 +1660,25 @@ impl RenderOnce for Command {
             });
         }
 
-        let query = input_controller.read(cx).value().to_owned();
+        let query_mode = if self.query.is_some() {
+            CommandQueryMode::Controlled
+        } else {
+            CommandQueryMode::Uncontrolled
+        };
+        let controller_query = input_controller.read(cx).value().to_owned();
+        let query = self
+            .query
+            .as_deref()
+            .unwrap_or(controller_query.as_str())
+            .to_owned();
         let selected_value = self
             .selected_value
             .as_deref()
             .or(runtime_state.selected_value.as_deref());
+        let selected_values = self
+            .selected_values
+            .clone()
+            .unwrap_or_else(|| runtime_state.selected_values.clone());
         let active_value = self
             .active_value
             .as_deref()
@@ -1453,7 +1693,10 @@ impl RenderOnce for Command {
             self.label.to_string(),
             self.placeholder.to_string(),
             query.as_str(),
+            query_mode,
+            self.selection_mode,
             selected_value,
+            selected_values.iter().cloned(),
             active_value,
             self.loading_state,
             self.empty_label.to_string(),
@@ -1467,10 +1710,17 @@ impl RenderOnce for Command {
             self.focus_restore_intent.clone(),
             self.tokens,
         );
-        input_controller.update(cx, |controller, cx| {
-            if controller.placeholder() != self.placeholder.as_ref() {
-                controller.set_placeholder(self.placeholder.clone(), cx);
-            }
+        let query_change_handler = self.on_query_change.clone();
+        input_controller.update(cx, |controller, _cx| {
+            let controlled_query =
+                (query_mode == CommandQueryMode::Controlled).then(|| query.as_str());
+            controller.sync_adapter_state(
+                controlled_query,
+                Some(self.placeholder.clone()),
+                state.disabled(),
+                false,
+                query_change_handler.clone(),
+            );
         });
         let id = self.id;
         let debug_id = id.to_string();
@@ -1492,7 +1742,9 @@ impl RenderOnce for Command {
         let dialog_enabled = self.dialog_enabled;
         let trigger_label = self.trigger_label;
         let on_open_change = self.on_open_change;
+        let on_query_change = query_change_handler;
         let on_select = self.on_select;
+        let on_selected_values_change = self.on_selected_values_change;
         let tokens = self.tokens;
 
         div()
@@ -1559,7 +1811,9 @@ impl RenderOnce for Command {
                     input_controller.clone(),
                     runtime.clone(),
                     on_open_change.clone(),
+                    on_query_change.clone(),
                     on_select.clone(),
+                    on_selected_values_change.clone(),
                     tokens,
                 ))
             })
@@ -1580,7 +1834,9 @@ impl RenderOnce for Command {
                                 input_controller,
                                 runtime,
                                 on_open_change,
+                                on_query_change,
                                 on_select,
+                                on_selected_values_change,
                                 tokens,
                             )),
                     )
@@ -1602,7 +1858,9 @@ fn command_dialog_layer_element(
     input_controller: Entity<TextInputController>,
     runtime: Entity<CommandRuntime>,
     on_open_change: Option<CommandOpenChangeHandler>,
+    on_query_change: Option<CommandQueryChangeHandler>,
     on_select: Option<CommandSelectionHandler>,
+    on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     tokens: ThemeTokens,
 ) -> impl IntoElement {
     let metrics = state.metrics();
@@ -1650,7 +1908,9 @@ fn command_dialog_layer_element(
                     input_controller,
                     runtime,
                     on_open_change,
+                    on_query_change,
                     on_select,
+                    on_selected_values_change,
                     tokens,
                 )),
         )
@@ -1666,7 +1926,9 @@ fn command_content_element(
     input_controller: Entity<TextInputController>,
     runtime: Entity<CommandRuntime>,
     on_open_change: Option<CommandOpenChangeHandler>,
+    on_query_change: Option<CommandQueryChangeHandler>,
     on_select: Option<CommandSelectionHandler>,
+    on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     tokens: ThemeTokens,
 ) -> impl IntoElement {
     let metrics = state.metrics();
@@ -1675,6 +1937,8 @@ fn command_content_element(
     let label = state.label().to_owned();
     let selected_value = state.selected_value().map(str::to_owned);
     let active_value = state.active_value().map(str::to_owned);
+    let selected_values = state.selected_values().to_vec();
+    let selection_mode = state.selection_mode();
     let dialog_state = state.dialog().cloned();
     let shortcut_lookup = command_shortcut_lookup(state.items());
     let outside_change = if let Some(dialog_state) = dialog_state.as_ref() {
@@ -1708,8 +1972,10 @@ fn command_content_element(
             let runtime = runtime.clone();
             let on_select = on_select.clone();
             let on_open_change = on_open_change.clone();
+            let on_selected_values_change = on_selected_values_change.clone();
             let dialog_enabled = state.dialog().is_some();
             let shortcut_lookup = shortcut_lookup.clone();
+            let selected_values = selected_values.clone();
             move |selection, window, cx| {
                 let shortcut = command_shortcut_for(selection.value(), &shortcut_lookup);
                 let payload = CommandSelection::new(
@@ -1718,19 +1984,35 @@ fn command_content_element(
                     selection.label().to_owned(),
                     shortcut,
                 );
-                runtime.update(cx, |runtime, _| {
-                    runtime.selected_value = Some(payload.value().to_owned());
-                    runtime.active_value = Some(payload.value().to_owned());
-                    if dialog_enabled {
-                        runtime.open = false;
+                match selection_mode {
+                    CommandSelectionMode::Single => {
+                        runtime.update(cx, |runtime, _| {
+                            runtime.selected_value = Some(payload.value().to_owned());
+                            runtime.active_value = Some(payload.value().to_owned());
+                            if dialog_enabled {
+                                runtime.open = false;
+                            }
+                        });
+                        if let Some(on_select) = on_select.as_ref() {
+                            on_select(payload, window, cx);
+                        }
+                        if dialog_enabled {
+                            if let Some(on_open_change) = on_open_change.as_ref() {
+                                on_open_change(false, window, cx);
+                            }
+                        }
                     }
-                });
-                if let Some(on_select) = on_select.as_ref() {
-                    on_select(payload, window, cx);
-                }
-                if dialog_enabled {
-                    if let Some(on_open_change) = on_open_change.as_ref() {
-                        on_open_change(false, window, cx);
+                    CommandSelectionMode::Multiple => {
+                        let change =
+                            command_selection_change_after_toggle(&selected_values, payload);
+                        runtime.update(cx, |runtime, _| {
+                            runtime.active_value = Some(change.toggled().value().to_owned());
+                            runtime.selected_values = change.values().to_vec();
+                        });
+                        if let Some(on_selected_values_change) = on_selected_values_change.as_ref()
+                        {
+                            on_selected_values_change(change, window, cx);
+                        }
                     }
                 }
             }
@@ -1743,21 +2025,39 @@ fn command_content_element(
     }
     let scroll_viewport_id = state.scroll_area().viewport_id().to_owned();
     let loading_id: ElementId = (content_id.clone(), "loading").into();
+    let chips_id: ElementId = (content_id.clone(), "selected-chips").into();
+    let selected_chips = state.selected_chips().to_vec();
     let escape_runtime = runtime.clone();
     let on_escape_open_change = on_open_change.clone();
     let key_state = state.clone();
     let key_runtime = runtime.clone();
     let key_on_select = on_select.clone();
     let key_on_open_change = on_open_change.clone();
+    let key_on_selected_values_change = on_selected_values_change.clone();
+    let key_selected_values = selected_values.clone();
     let key_dialog_enabled = state.dialog().is_some();
+    let key_selection_mode = selection_mode;
     let escape_change = state
         .dialog()
         .map(|dialog_state| escape_open_change(dialog_state.overlay().policy()))
         .unwrap_or_else(|| escape_open_change(state.overlay().policy()));
+    let content_debug_id = debug_id.clone();
+    let mut command_input = TextInput::new(input_id, state.label().to_owned())
+        .controller(input_controller)
+        .placeholder(state.placeholder().to_owned())
+        .value(query)
+        .disabled(state.disabled())
+        .tokens(tokens)
+        .with_size(state.size());
+    if let Some(on_query_change) = on_query_change.clone() {
+        command_input = command_input.on_change(move |query, window, cx| {
+            on_query_change(query, window, cx);
+        });
+    }
 
     div()
         .id(content_id)
-        .debug_selector(move || format!("command:{debug_id}:content"))
+        .debug_selector(move || format!("command:{content_debug_id}:content"))
         .min_w(gpui_px_from_ui(metrics.min_width()))
         .max_w(gpui_px_from_ui(metrics.max_width()))
         .p(gpui_px_from_ui(metrics.padding()))
@@ -1802,19 +2102,38 @@ fn command_content_element(
                 CommandKeyboardAction::Select(selection) => {
                     cx.stop_propagation();
                     window.prevent_default();
-                    key_runtime.update(cx, |runtime, _| {
-                        runtime.selected_value = Some(selection.value().to_owned());
-                        runtime.active_value = Some(selection.value().to_owned());
-                        if key_dialog_enabled {
-                            runtime.open = false;
+                    match key_selection_mode {
+                        CommandSelectionMode::Single => {
+                            key_runtime.update(cx, |runtime, _| {
+                                runtime.selected_value = Some(selection.value().to_owned());
+                                runtime.active_value = Some(selection.value().to_owned());
+                                if key_dialog_enabled {
+                                    runtime.open = false;
+                                }
+                            });
+                            if let Some(on_select) = key_on_select.as_ref() {
+                                on_select(selection, window, cx);
+                            }
+                            if key_dialog_enabled {
+                                if let Some(on_open_change) = key_on_open_change.as_ref() {
+                                    on_open_change(false, window, cx);
+                                }
+                            }
                         }
-                    });
-                    if let Some(on_select) = key_on_select.as_ref() {
-                        on_select(selection, window, cx);
-                    }
-                    if key_dialog_enabled {
-                        if let Some(on_open_change) = key_on_open_change.as_ref() {
-                            on_open_change(false, window, cx);
+                        CommandSelectionMode::Multiple => {
+                            let change = command_selection_change_after_toggle(
+                                &key_selected_values,
+                                selection,
+                            );
+                            key_runtime.update(cx, |runtime, _| {
+                                runtime.active_value = Some(change.toggled().value().to_owned());
+                                runtime.selected_values = change.values().to_vec();
+                            });
+                            if let Some(on_selected_values_change) =
+                                key_on_selected_values_change.as_ref()
+                            {
+                                on_selected_values_change(change, window, cx);
+                            }
                         }
                     }
                 }
@@ -1828,15 +2147,31 @@ fn command_content_element(
                 close_command_dialog(runtime.clone(), on_open_change.clone(), window, cx);
             })
         })
-        .child(
-            TextInput::new(input_id, state.label().to_owned())
-                .controller(input_controller)
-                .placeholder(state.placeholder().to_owned())
-                .value(query)
-                .disabled(state.disabled())
-                .tokens(tokens)
-                .with_size(state.size()),
-        )
+        .child(command_input)
+        .when(!selected_chips.is_empty(), |this| {
+            this.child(selected_chips.into_iter().fold(
+                div().id(chips_id).flex().flex_wrap().gap_1(),
+                |row, chip| {
+                    let chip_value = chip.value().to_owned();
+                    let chip_id = format!("command-selected-chip:{chip_value}");
+                    let chip_debug_id = debug_id.clone();
+                    row.child(
+                        div()
+                            .id(chip_id)
+                            .debug_selector(move || {
+                                format!("command:{chip_debug_id}:selected-chip:{chip_value}")
+                            })
+                            .px(gpui_px_from_ui(state.size().button_py()))
+                            .py(px(1.0))
+                            .rounded(gpui_px_from_ui(state.size().control_radius()))
+                            .border_1()
+                            .border_color(ThemeResolver::resolve(colors.border()))
+                            .text_color(ThemeResolver::resolve(colors.foreground()))
+                            .child(chip.label().to_owned()),
+                    )
+                },
+            ))
+        })
         .when_some(state.loading().cloned(), |this, loading| {
             this.child(
                 div()
@@ -1905,6 +2240,22 @@ fn command_shortcut_for(value: &str, lookup: &[(String, Option<String>)]) -> Opt
         .iter()
         .find(|(item_value, _)| item_value == value)
         .and_then(|(_, shortcut)| shortcut.clone())
+}
+
+fn command_selection_change_after_toggle(
+    selected_values: &[String],
+    selection: CommandSelection,
+) -> CommandSelectionChange {
+    let mut values = selected_values.to_vec();
+    let selected = if let Some(index) = values.iter().position(|value| value == selection.value()) {
+        values.remove(index);
+        false
+    } else {
+        values.push(selection.value().to_owned());
+        true
+    };
+
+    CommandSelectionChange::new(values, selection, selected)
 }
 
 /// A concrete GPUI command item.
@@ -2029,6 +2380,31 @@ fn sort_ranked_command_items(items: &mut [FlattenedCommandItem]) {
             .cmp(&a.rank.score)
             .then_with(|| a.source_index.cmp(&b.source_index))
     });
+}
+
+fn resolve_command_selected_values(
+    groups: &[CommandGroupDescriptor],
+    items: &[CommandItemDescriptor],
+    mode: CommandSelectionMode,
+    selected_value: Option<&str>,
+    selected_values: impl IntoIterator<Item = impl Into<String>>,
+) -> Vec<String> {
+    if mode.is_multiple() {
+        selected_values
+            .into_iter()
+            .map(Into::into)
+            .filter(|value| {
+                find_command_item(groups, items, value).is_some_and(|item| !item.disabled_state())
+            })
+            .fold(Vec::new(), |mut values, value| {
+                if !values.iter().any(|existing| existing == &value) {
+                    values.push(value);
+                }
+                values
+            })
+    } else {
+        selected_value.map(str::to_owned).into_iter().collect()
+    }
 }
 
 fn find_command_item<'a>(

@@ -6,27 +6,28 @@ use open_gpui_ui_components::{
     AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Avatar, Badge,
     BadgeVariant, Button, ButtonVariant, Checkbox, ColorIntent, ColorState, Combobox,
     ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command, CommandGroup,
-    CommandItem, CommandMatchSource, CommandOpenMode, CommandSelection, ContextMenu,
-    DEFAULT_FOCUS_RING_WIDTH, Dialog, DialogOpenMode, EmptyState, FeedbackIntent, Field, FocusRing,
-    HoverCard, HoverCardContentKind, HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode,
-    IconButton, Kbd, Label, Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption,
-    ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem,
-    MenuItemKind, MenuOpenMode, MenuSelection, Popover, PopoverOpenMode, Progress,
-    ProgressVisualMode, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor,
-    RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select,
-    SelectOpenMode, SelectSelection, Separator, Sheet, SheetCloseAffordance, SheetModalMode,
-    SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor,
-    SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
-    Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
-    TableColumn, TableFilter, TableHeaderAction, TablePagination, TableRow, TableSort,
-    TableSortDirection, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
-    TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot,
-    Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
-    ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy,
-    TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList, VirtualizedListActivation,
-    VirtualizedListItemDescriptor, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
-    VirtualizedListScrollStrategy, VirtualizedListState, VirtualizerItemKey, VirtualizerRange,
-    VirtualizerSnapshot, VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
+    CommandItem, CommandMatchSource, CommandOpenMode, CommandQueryMode, CommandSelection,
+    CommandSelectionChange, CommandSelectionMode, ContextMenu, DEFAULT_FOCUS_RING_WIDTH, Dialog,
+    DialogOpenMode, EmptyState, FeedbackIntent, Field, FocusRing, HoverCard, HoverCardContentKind,
+    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton, Kbd, Label, Listbox,
+    ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
+    ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode,
+    MenuSelection, Popover, PopoverOpenMode, Progress, ProgressVisualMode, RadioGroup,
+    RadioGroupState, RadioItem, RadioItemDescriptor, RadioSelection, ScrollArea, ScrollAreaAxis,
+    ScrollAreaState, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, Separator, Sheet,
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
+    SidebarItem, SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide,
+    SidebarState, SidebarVariant, Skeleton, Splitter, SplitterPanel, SplitterPanelDescriptor,
+    SplitterState, StatusCue, Switch, Table, TableColumn, TableFilter, TableHeaderAction,
+    TablePagination, TableRow, TableSort, TableSortDirection, TableState, Tabs, TabsActivationMode,
+    TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode,
+    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
+    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
+    VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -314,7 +315,7 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Command",
-        controlled_inputs: &["open", "selected", "active"],
+        controlled_inputs: &["open", "query", "selected", "selected_values", "active"],
         default_seeds: &[
             DefaultSeedApi {
                 builder: "default_open",
@@ -340,8 +341,16 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
                 payload: "bool",
             },
             CallbackApi {
+                name: "on_query_change",
+                payload: "String",
+            },
+            CallbackApi {
                 name: "on_select",
                 payload: "CommandSelection",
+            },
+            CallbackApi {
+                name: "on_selected_values_change",
+                payload: "CommandSelectionChange",
             },
         ],
         renderer_neutral_state: true,
@@ -1049,8 +1058,12 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "dialog",
             "dialog_enabled",
             "dialog_description",
+            "query",
             "default_query",
+            "selection_mode",
+            "multi_select",
             "selected",
+            "selected_values",
             "active",
             "loading",
             "idle",
@@ -1061,7 +1074,9 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "focus_restore_intent",
             "tokens",
             "on_open_change",
+            "on_query_change",
             "on_select",
+            "on_selected_values_change",
             "state",
         ],
         "Label" => &[
@@ -4862,7 +4877,9 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_click",
         "on_close",
         "on_open_change",
+        "on_query_change",
         "on_select",
+        "on_selected_values_change",
         "on_selection_change",
         "on_sort_requested",
         "on_toggle",
@@ -4947,7 +4964,15 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
     assert_inventory_contains_controlled_input("Select", "active");
     assert_inventory_contains_callback("Select", "on_select", "SelectSelection");
     assert_inventory_contains_default_seed("Combobox", "default_query", "query");
+    assert_inventory_contains_controlled_input("Command", "query");
+    assert_inventory_contains_controlled_input("Command", "selected_values");
     assert_inventory_contains_default_seed("Command", "default_query", "query");
+    assert_inventory_contains_callback("Command", "on_query_change", "String");
+    assert_inventory_contains_callback(
+        "Command",
+        "on_selected_values_change",
+        "CommandSelectionChange",
+    );
     assert_inventory_contains_default_seed("Tabs", "default_selected", "selected");
     assert_inventory_contains_default_seed("RadioGroup", "default_selected", "selected");
     assert_inventory_contains_default_seed("Toolbar", "default_focused", "focused");
@@ -6747,6 +6772,78 @@ fn command_state_keeps_disabled_matches_visible_but_non_activatable() {
 }
 
 #[test]
+fn command_state_models_controlled_and_default_query_ownership() {
+    let controlled = Command::new("controlled-query-command", "Commands")
+        .query("open")
+        .default_query("ignored")
+        .item(CommandItem::new("open-file", "Open File"))
+        .state();
+    let seeded = Command::new("seeded-query-command", "Commands")
+        .default_query("file")
+        .item(CommandItem::new("open-file", "Open File"))
+        .state();
+
+    assert_eq!(controlled.query(), "open");
+    assert_eq!(controlled.query_mode(), CommandQueryMode::Controlled);
+    assert_eq!(controlled.filtered_item_count(), 1);
+    assert_eq!(seeded.query(), "file");
+    assert_eq!(seeded.query_mode(), CommandQueryMode::Uncontrolled);
+}
+
+#[test]
+fn command_state_models_multi_selected_values_and_hidden_chips() {
+    let state = Command::new("multi-command", "Commands")
+        .default_query("new")
+        .multi_select(true)
+        .selected_values(["open-file", "new-file", "missing", "delete-file"])
+        .item(CommandItem::new("open-file", "Open File"))
+        .item(CommandItem::new("delete-file", "Delete File").disabled(true))
+        .group(CommandGroup::new("file", "File").item(CommandItem::new("new-file", "New File")))
+        .state();
+
+    assert_eq!(state.selection_mode(), CommandSelectionMode::Multiple);
+    assert_eq!(
+        state.selected_values(),
+        &["open-file".to_string(), "new-file".to_string()]
+    );
+    assert_eq!(state.selected_value(), None);
+    assert_eq!(state.filtered_item_count(), 1);
+    assert_eq!(
+        state
+            .selected_chips()
+            .iter()
+            .map(|chip| chip.value().to_owned())
+            .collect::<Vec<_>>(),
+        vec!["open-file".to_string(), "new-file".to_string()]
+    );
+    assert_eq!(state.selected_chips()[0].label(), "Open File");
+    assert!(state.items()[0].selected());
+}
+
+#[test]
+fn command_multi_selection_change_toggles_values_without_duplicates() {
+    let add = CommandSelectionChange::new(
+        vec!["open-file".to_string(), "new-file".to_string()],
+        CommandSelection::new(1, "new-file", "New File", None),
+        true,
+    );
+    let remove = CommandSelectionChange::new(
+        vec!["open-file".to_string()],
+        CommandSelection::new(1, "new-file", "New File", None),
+        false,
+    );
+
+    assert_eq!(
+        add.values(),
+        &["open-file".to_string(), "new-file".to_string()]
+    );
+    assert!(add.selected());
+    assert_eq!(add.toggled().value(), "new-file");
+    assert_eq!(remove.values(), &["open-file".to_string()]);
+    assert!(!remove.selected());
+}
+
+#[test]
 fn command_state_models_empty_disabled_and_escape_policy() {
     let state = Command::new("empty-command", "Commands")
         .default_open(true)
@@ -6869,6 +6966,67 @@ fn command_runtime_filters_input_and_selects_with_keyboard(cx: &mut open_gpui::T
     assert!(
         cx.debug_bounds("command:runtime-command:content").is_some(),
         "inline command selection should not close non-dialog content"
+    );
+}
+
+#[open_gpui::test]
+fn command_runtime_controlled_query_emits_sanitized_query_changes(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        query: Rc<RefCell<String>>,
+        changes: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let query = self.query.borrow().clone();
+            let next_query = self.query.clone();
+            let changes = self.changes.clone();
+
+            div().size_full().child(
+                Command::new("controlled-query-runtime-command", "Runtime command")
+                    .query(query)
+                    .placeholder("Type a command")
+                    .item(CommandItem::new("open-file", "Open File"))
+                    .item(CommandItem::new("close-window", "Close Window"))
+                    .on_query_change(move |query, _, _| {
+                        *next_query.borrow_mut() = query.clone();
+                        changes.borrow_mut().push(query);
+                    }),
+            )
+        }
+    }
+
+    cx.update(init_text_input);
+    let query = Rc::new(RefCell::new(String::new()));
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        query: query.clone(),
+        changes: changes.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let input = cx
+        .debug_bounds("text-input:controlled-query-runtime-command-input:root")
+        .expect("controlled command input should expose a stable debug selector");
+    cx.simulate_click(input.center(), Default::default());
+    cx.simulate_input("open\nfile");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(query.borrow().as_str(), "open file");
+    assert_eq!(
+        changes.borrow().last().map(String::as_str),
+        Some("open file")
+    );
+    assert!(
+        cx.debug_bounds("listbox:controlled-query-runtime-command-listbox:option:open-file")
+            .is_some(),
+        "controlled query should feed filtered command rows after caller feedback"
     );
 }
 
@@ -7086,6 +7244,121 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
             .is_none(),
         "outside press should remove the dialog content"
     );
+}
+
+#[open_gpui::test]
+fn command_runtime_multi_select_toggles_chips_without_closing_dialog(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        selected_values: Rc<RefCell<Vec<String>>>,
+        changes: Rc<RefCell<Vec<CommandSelectionChange>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selected_values = self.selected_values.borrow().clone();
+            let next_values = self.selected_values.clone();
+            let changes = self.changes.clone();
+
+            div().size_full().child(
+                Command::new("multi-runtime-command", "Runtime command")
+                    .dialog("Command palette")
+                    .trigger_label("Open command")
+                    .multi_select(true)
+                    .selected_values(selected_values)
+                    .item(CommandItem::new("open-file", "Open File"))
+                    .item(CommandItem::new("new-file", "New File"))
+                    .item(CommandItem::new("delete-file", "Delete File").disabled(true))
+                    .on_selected_values_change(move |change, _, _| {
+                        *next_values.borrow_mut() = change.values().to_vec();
+                        changes.borrow_mut().push(change);
+                    }),
+            )
+        }
+    }
+
+    cx.update(init_text_input);
+    let selected_values = Rc::new(RefCell::new(vec!["open-file".to_string()]));
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selected_values: selected_values.clone(),
+        changes: changes.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let trigger = cx
+        .debug_bounds("command:multi-runtime-command:trigger")
+        .expect("multi command trigger should expose a stable debug selector");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("command:multi-runtime-command:selected-chip:open-file")
+            .is_some(),
+        "initial selected value should render as a chip"
+    );
+
+    let new_file = cx
+        .debug_bounds("listbox:multi-runtime-command-listbox:option:new-file")
+        .expect("New File option should render");
+    cx.simulate_click(new_file.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("command:multi-runtime-command:content")
+            .is_some(),
+        "multi-select activation should not close dialog content"
+    );
+    assert_eq!(
+        selected_values.borrow().as_slice(),
+        &["open-file".to_string(), "new-file".to_string()]
+    );
+    assert_eq!(changes.borrow().len(), 1);
+    assert!(changes.borrow()[0].selected());
+    assert_eq!(changes.borrow()[0].toggled().value(), "new-file");
+    assert!(
+        cx.debug_bounds("command:multi-runtime-command:selected-chip:new-file")
+            .is_some(),
+        "newly selected value should render as a chip after controlled feedback"
+    );
+
+    let disabled = cx
+        .debug_bounds("listbox:multi-runtime-command-listbox:option:delete-file")
+        .expect("disabled matching option should still render");
+    cx.simulate_click(disabled.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        selected_values.borrow().as_slice(),
+        &["open-file".to_string(), "new-file".to_string()],
+        "disabled command should not alter the multi-selection set"
+    );
+    assert_eq!(changes.borrow().len(), 1);
+
+    let open_file = cx
+        .debug_bounds("listbox:multi-runtime-command-listbox:option:open-file")
+        .expect("Open File option should render");
+    cx.simulate_click(open_file.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        selected_values.borrow().as_slice(),
+        &["new-file".to_string()]
+    );
+    assert_eq!(changes.borrow().len(), 2);
+    assert!(!changes.borrow()[1].selected());
+    assert_eq!(changes.borrow()[1].toggled().value(), "open-file");
 }
 
 #[test]

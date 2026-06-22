@@ -401,7 +401,7 @@ pub(crate) mod adapter {
             cx.notify();
         }
 
-        pub(super) fn sync_adapter_state(
+        pub(crate) fn sync_adapter_state(
             &mut self,
             controlled_value: Option<&str>,
             placeholder: Option<SharedString>,
