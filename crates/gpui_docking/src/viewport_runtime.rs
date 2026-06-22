@@ -120,6 +120,7 @@ impl DockViewportPointerInputSyncRequest {
 struct DockViewportActivePayloadDrag {
     session: DockRuntimeDragSession,
     source_window: Option<AnyWindowHandle>,
+    source_window_accepts_pointer_input: Option<bool>,
     /// Most recent viewport route target observed during this drag.
     ///
     /// This is preview bookkeeping, not hover authority. Releases still re-resolve current backend
@@ -128,10 +129,15 @@ struct DockViewportActivePayloadDrag {
 }
 
 impl DockViewportActivePayloadDrag {
-    fn new(session: DockRuntimeDragSession, source_window: Option<AnyWindowHandle>) -> Self {
+    fn new(
+        session: DockRuntimeDragSession,
+        source_window: Option<AnyWindowHandle>,
+        source_window_accepts_pointer_input: Option<bool>,
+    ) -> Self {
         Self {
             session,
             source_window,
+            source_window_accepts_pointer_input,
             last_routed_viewport_identity: None,
         }
     }
@@ -146,6 +152,10 @@ impl DockViewportActivePayloadDrag {
 
     fn source_window(&self) -> Option<AnyWindowHandle> {
         self.source_window
+    }
+
+    fn source_window_accepts_pointer_input(&self) -> Option<bool> {
+        self.source_window_accepts_pointer_input
     }
 
     fn matches_session(&self, session: &DockRuntimeDragSession) -> bool {
@@ -450,14 +460,21 @@ impl DockViewportRuntime {
         let source_window = self
             .adapter
             .window_for_space(payload.identity().source_space());
+        let source_window_accepts_pointer_input =
+            source_window.and_then(|_| self.source_window_accepts_pointer_input(payload));
         self.active_drag = Some(DockViewportActivePayloadDrag::new(
             session.clone(),
             source_window,
+            source_window_accepts_pointer_input,
         ));
         self.drag_tear_off_geometry = None;
         self.clear_routed_drop_preview();
-        let pointer_sync =
-            source_window.map(|window| DockViewportPointerInputSyncRequest::new(window, false));
+        let pointer_sync = match (source_window, source_window_accepts_pointer_input) {
+            (Some(window), Some(true)) => {
+                Some(DockViewportPointerInputSyncRequest::new(window, false))
+            }
+            _ => None,
+        };
         (session, pointer_sync)
     }
 
@@ -501,6 +518,17 @@ impl DockViewportRuntime {
             .map(|drag| drag.session().clone())
     }
 
+    fn source_window_accepts_pointer_input(&self, payload: &DockDragPayload) -> Option<bool> {
+        let Some(snapshot) = self.adapter.snapshot(payload.identity().source_space()) else {
+            return Some(true);
+        };
+        match snapshot.pointer_routing {
+            crate::viewport_registry::DockViewportPointerRouting::Routable => Some(true),
+            crate::viewport_registry::DockViewportPointerRouting::NoInputPassThrough => Some(false),
+            crate::viewport_registry::DockViewportPointerRouting::Minimized => Some(true),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn finish_payload_drag(
         &mut self,
@@ -529,9 +557,15 @@ impl DockViewportRuntime {
             .active_drag
             .take()
             .expect("active drag should match the requested session");
-        let pointer_sync = active_drag
-            .source_window()
-            .map(|window| DockViewportPointerInputSyncRequest::new(window, true));
+        let pointer_sync = match (
+            active_drag.source_window(),
+            active_drag.source_window_accepts_pointer_input(),
+        ) {
+            (Some(window), Some(accepts)) => {
+                Some(DockViewportPointerInputSyncRequest::new(window, accepts))
+            }
+            _ => None,
+        };
         let mut changed = true;
         if self
             .drag_tear_off_geometry

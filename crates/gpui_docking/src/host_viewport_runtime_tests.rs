@@ -170,6 +170,47 @@ fn focus_backend_window_for_test(window: AnyWindowHandle, cx: &mut TestAppContex
 }
 
 #[open_gpui::test]
+fn viewport_runtime_drag_restores_original_no_input_source_state(cx: &mut TestAppContext) {
+    let source = DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("drag")],
+        selected: Some(item("drag")),
+    });
+    graph.set_root(source.clone(), source_tabs);
+    let window = handle(1);
+    let mut adapter = DockViewportAdapter::new();
+    register_viewport(&mut adapter, source.clone(), window);
+    adapter.update_snapshot(
+        &source,
+        DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
+            0.0, 0.0, 360.0, 220.0,
+        )))
+        .with_pointer_routing(DockViewportPointerRouting::NoInputPassThrough),
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+    );
+    let controller = cx.new(|_| DockController::new(DockWorkspace::new(source.clone(), graph)));
+    let mut runtime =
+        DockViewportRuntime::from_adapter(controller, adapter, DockViewportClosePolicy::default());
+    let payload = DockDragPayload::new_item(source, source_tabs, item("drag"), "Drag".to_string());
+
+    let (session, begin_sync) =
+        runtime.begin_payload_drag_with_pointer_sync_and_focus(&payload, None);
+    assert_eq!(
+        begin_sync.map(|request| request.requested_accepts_pointer_input()),
+        None,
+        "an already no-input source window should not be re-requested as click-through"
+    );
+
+    let (_, _, finish_sync) = runtime.finish_payload_drag_with_pointer_sync(&session);
+    assert_eq!(
+        finish_sync.map(|request| (request.window(), request.requested_accepts_pointer_input())),
+        Some((window, false)),
+        "drag finish should restore the source window's original no-input state"
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_opens_and_reuses_controller_backed_window(cx: &mut TestAppContext) {
     let primary_space = DockSpaceId::from("primary");
     let secondary_space = DockSpaceId::from("secondary");

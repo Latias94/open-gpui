@@ -260,6 +260,75 @@ fn viewport_pointer_input_sync_request_does_not_change_route_facts_until_observe
 }
 
 #[open_gpui::test]
+fn viewport_drag_preserves_no_input_source_window(cx: &mut TestAppContext) {
+    let source = DockSpaceId::from("source");
+    let source_tabs = DockNodeId::null();
+    let mut workspace = DockWorkspace::new(source.clone(), DockGraph::new());
+    workspace.register_panel_view(item("drag"), "Drag", test_view(cx, "Drag"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+    let payload = DockDragPayload::new_item(
+        source.clone(),
+        source_tabs,
+        item("drag"),
+        "Drag".to_string(),
+    );
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source.clone(),
+                WindowOptions {
+                    accepts_pointer_input: false,
+                    ..viewport_window_options(360.0, 220.0)
+                },
+                app,
+            )
+        })
+        .expect("no-input source viewport should open");
+    assert!(
+        runtime.begin_viewport_host_scene(
+            source.clone(),
+            opened.window().window_id(),
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
+                0.0, 0.0, 360.0, 220.0,
+            )))
+            .with_pointer_routing(
+                crate::viewport_registry::DockViewportPointerRouting::NoInputPassThrough
+            ),
+            floating_bounds(0.0, 0.0, 360.0, 220.0),
+            center_drop_position(floating_bounds(0.0, 0.0, 360.0, 220.0)),
+        )
+    );
+    assert_eq!(
+        runtime.viewport_route_unavailable_reason(&source),
+        Some(DockViewportRouteUnavailableReason::NoInputPassThrough)
+    );
+
+    let session = cx.update(|app| runtime.begin_payload_drag_with_app(&payload, app));
+    assert!(
+        !opened
+            .window()
+            .update(cx, |_, window, _| window.accepts_pointer_input())
+            .expect("source viewport should remain live"),
+        "drag begin must not enable or re-toggle an already no-input source window"
+    );
+
+    assert!(cx.update(|app| runtime.finish_payload_drag_with_app(&session, app)));
+    assert!(
+        !opened
+            .window()
+            .update(cx, |_, window, _| window.accepts_pointer_input())
+            .expect("source viewport should remain live"),
+        "drag finish must restore the source window's original no-input state"
+    );
+    assert_eq!(
+        runtime.viewport_route_unavailable_reason(&source),
+        Some(DockViewportRouteUnavailableReason::NoInputPassThrough)
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_handle_unregister_source_restores_original_drag_window(
     cx: &mut TestAppContext,
 ) {
