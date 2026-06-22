@@ -644,6 +644,7 @@ impl DockViewportRegistry {
         self.viewports.iter()
     }
 
+    #[cfg(test)]
     pub(crate) fn snapshots_by_platform_focus_order(
         &self,
     ) -> Vec<(&DockSpaceId, &DockViewportSnapshot)> {
@@ -658,6 +659,7 @@ impl DockViewportRegistry {
         snapshots
     }
 
+    #[cfg(test)]
     pub(crate) fn spaces_by_platform_focus_order(&self) -> Vec<DockSpaceId> {
         self.snapshots_by_platform_focus_order()
             .into_iter()

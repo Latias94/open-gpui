@@ -297,7 +297,6 @@ fn choose_backend_hover_fallback_viewport_target(
 pub(crate) fn resolve_authorized_viewport_route_target<I, H>(
     hits: I,
     context: &DockViewportTargetContext,
-    _platform_focus_order: &[WindowId],
 ) -> Option<DockAuthorizedViewportRouteTarget>
 where
     I: IntoIterator<Item = H>,
@@ -374,11 +373,7 @@ mod tests {
                 .expect("overlapping candidates should still expose a diagnostic target");
         assert_eq!(ambiguous.space(), &space("alpha"));
         assert_eq!(
-            resolve_authorized_viewport_route_target(
-                hits(),
-                &DockViewportTargetContext::new(),
-                &[],
-            ),
+            resolve_authorized_viewport_route_target(hits(), &DockViewportTargetContext::new()),
             None,
             "ambiguous geometry is diagnostic-only"
         );
@@ -392,7 +387,6 @@ mod tests {
         let authorized = resolve_authorized_viewport_route_target(
             hits(),
             &DockViewportTargetContext::new().with_trusted_hovered_window(second),
-            &[],
         )
         .expect("trusted hovered window should authorize a route target");
         assert_eq!(
@@ -411,7 +405,6 @@ mod tests {
             resolve_authorized_viewport_route_target(
                 hits(),
                 &DockViewportTargetContext::new().with_window_stack([second, first]),
-                &[],
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             Some((
@@ -431,7 +424,6 @@ mod tests {
             resolve_authorized_viewport_route_target(
                 hits(),
                 &DockViewportTargetContext::new().with_window_stack([second, first]),
-                &[],
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             Some((
@@ -446,7 +438,6 @@ mod tests {
                 &DockViewportTargetContext::new()
                     .with_window_stack([first, second])
                     .with_window_stack([second, first]),
-                &[],
             )
             .map(|target| target.into_target().space().clone()),
             Some(space("zeta")),
@@ -467,7 +458,6 @@ mod tests {
                 &DockViewportTargetContext::new()
                     .with_trusted_hovered_window_known_empty()
                     .with_window_stack([second, first]),
-                &[],
             ),
             None
         );
@@ -482,7 +472,6 @@ mod tests {
             resolve_authorized_viewport_route_target(
                 vec![candidate("alpha", first)],
                 &DockViewportTargetContext::new(),
-                &[],
             ),
             None,
             "a single geometry hit remains diagnostic-only without backend hover, stack, or focus-order authority"
@@ -502,27 +491,25 @@ mod tests {
                 &DockViewportTargetContext::new()
                     .with_trusted_hovered_window_known_empty()
                     .with_window_stack([first]),
-                &[],
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             None
         );
 
-        let single_platform_focus_order = choose_diagnostic_viewport_target(
+        let single_mismatched_window_stack = choose_diagnostic_viewport_target(
             vec![candidate("alpha", first)],
             &DockViewportTargetContext::new().with_window_stack([second]),
         )
         .expect("single hit should still be reported for diagnostics");
-        assert_eq!(single_platform_focus_order.space(), &space("alpha"));
+        assert_eq!(single_mismatched_window_stack.space(), &space("alpha"));
         assert_eq!(
             resolve_authorized_viewport_route_target(
                 vec![candidate("alpha", first)],
                 &DockViewportTargetContext::new().with_window_stack([second]),
-                &[first.window_id()],
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             None,
-            "platform focus order remains diagnostic-only and must not authorize a route"
+            "a stack entry that does not match the live hit must not authorize a route"
         );
     }
 
@@ -533,18 +520,13 @@ mod tests {
         let hits = || vec![candidate("alpha", first), candidate("zeta", second)];
 
         assert_eq!(
-            resolve_authorized_viewport_route_target(
-                hits(),
-                &DockViewportTargetContext::new(),
-                &[],
-            ),
+            resolve_authorized_viewport_route_target(hits(), &DockViewportTargetContext::new()),
             None
         );
         assert_eq!(
             resolve_authorized_viewport_route_target(
                 hits(),
                 &DockViewportTargetContext::new().with_window_stack([second, first]),
-                &[],
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             Some((
@@ -557,7 +539,6 @@ mod tests {
             resolve_authorized_viewport_route_target(
                 hits(),
                 &DockViewportTargetContext::new().with_window_stack([second, first]),
-                &[],
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             Some((
@@ -570,7 +551,6 @@ mod tests {
             resolve_authorized_viewport_route_target(
                 hits(),
                 &DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
-                &[],
             ),
             None,
             "trusted hovered=None must not authorize any app viewport"
@@ -578,7 +558,6 @@ mod tests {
         let authorized = resolve_authorized_viewport_route_target(
             hits(),
             &DockViewportTargetContext::new().with_trusted_hovered_window(second),
-            &[],
         )
         .expect("trusted hovered should authorize the matching live hit");
         assert_eq!(authorized.into_target().space(), &space("zeta"));

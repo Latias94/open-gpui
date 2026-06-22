@@ -148,6 +148,7 @@ impl DockViewportAdapter {
             .insert_stale_window_index_for_test(window_id, space);
     }
 
+    #[cfg(test)]
     pub(crate) fn spaces_by_platform_focus_order(&self) -> Vec<DockSpaceId> {
         self.registry.spaces_by_platform_focus_order()
     }

@@ -921,19 +921,7 @@ impl DockViewportAdapter {
             .collect::<Vec<_>>();
         let event_receiver_target =
             self.event_receiver_local_scene_target_from_hits(request, target_context, &host_hits);
-        let platform_focus_order = self
-            .spaces_by_platform_focus_order()
-            .into_iter()
-            .filter_map(|space| {
-                self.window_for_space(&space)
-                    .map(|window| window.window_id())
-            })
-            .collect::<Vec<_>>();
-        let resolution = resolve_authorized_viewport_route_target(
-            window_hits,
-            target_context,
-            &platform_focus_order,
-        );
+        let resolution = resolve_authorized_viewport_route_target(window_hits, target_context);
         let Some(resolution) = resolution.or(event_receiver_target) else {
             if let Some(route) = self
                 .resolve_event_receiver_global_scene_payload_drop_route(request, &target_context)
