@@ -104,10 +104,21 @@ focused Select test opens the real trigger, rejects disabled popup option clicks
 keyboard selection payloads, closes after selection, and confirms popup Listbox arrow navigation
 skips disabled rows. The focused Combobox tests click the controller-backed text input, type a
 query, open the filtered popup by trigger and keyboard paths, verify filtered Listbox options, and
-select filtered options with ordered select/open callbacks. The focused Command tests click the
-controller-backed text input, type a query, verify inline and dialog command filtering, select the
-active command with keyboard navigation, keep non-dialog content open, and verify dialog selection,
-Escape, and outside press remove the modal content. The focused Tabs test renders real tabs,
+select filtered options with ordered select/open callbacks. The focused Command tests cover
+renderer-neutral ranking, controlled and default query ownership, multi-select selected chips,
+virtualized result render plans, app-owned index snapshots, inline and dialog command filtering,
+keyboard activation, shortcut payloads, non-dialog content persistence, and dialog Escape/outside
+press dismissal. The focused gallery Command smoke renders ranked, multi-select, virtualized, and
+indexed/loading samples in focused family mode, verifies selected chips and snapshot metadata are
+inspectable, and confirms wheel input on the virtualized sample does not move the surrounding card.
+Run the focused proof with:
+
+```powershell
+cargo nextest run -p open-gpui-ui-components command
+cargo nextest run -p open-gpui-ui-foundation-gallery command
+```
+
+The focused Tabs test renders real tabs,
 preserves the `default_selected` seed on the first frame, rejects disabled tab clicks, keeps manual
 arrow navigation as focus-only, and activates focused tabs with Enter and Space. The focused
 Toolbar test renders real toolbar items, moves roving focus with arrow/Home keys, skips disabled and
@@ -336,11 +347,13 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    filtering, selected value metadata that does not disappear when the query hides the selected
    option, an empty filtered state, and disabled input/popup suppression. The component runtime
    smoke now verifies real Combobox text-input editing, filtered popup options, filtered option
-   click selection, and close callbacks. The Command samples should expose grouped command items,
-   shortcut labels, loading and empty states, inline and dialog-backed presentation, and modal
+   click selection, and close callbacks. The Command samples should expose ranked search results,
+   selected chips for multi-select, a 10k-item virtualized command result window, app-owned
+   indexed/loading metadata, shortcut labels, inline and dialog-backed presentation, and modal
    dialog outside/Escape dismissal while preserving the Components page scrollability. The component
    runtime smoke now verifies real Command text-input editing, inline filtering, keyboard
-   activation, shortcut payloads, and non-dialog content persistence. The default TextInput
+   activation, shortcut payloads, non-dialog content persistence, multi-select toggling, virtualized
+   scrolling/reveal behavior, and app-owned index snapshot state. The default TextInput
     sample should accept real text editing through the
     controller-backed path, while the gallery remains scrollable and keeps focus visible when the
     page overflows. The Table samples should expose the `release-queue` 10k-row virtualized window,

@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 0d82a9d
+git_commit: d383026
 verified_by:
   - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-core virtualizer table
@@ -29,6 +29,12 @@ verified_by:
   - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo fmt -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-components component_api_inventory
+  - cargo nextest run -p open-gpui-ui-components command
+  - cargo nextest run -p open-gpui-ui-components crate_root_and_prelude_exports_remain_explicit
+  - cargo nextest run -p open-gpui-ui-components public_resolved_state_contracts_avoid_gpui_runtime_types
+  - cargo nextest run -p open-gpui-ui-foundation-gallery command
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata
+  - cargo check -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-components switch_runtime_click_emits_on_change_with_next_checked
   - cargo nextest run -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-foundation-gallery
@@ -43,9 +49,9 @@ verified_by:
 
 # Current State
 
-- Goal: Execute the next UI component-depth slice from the Command plan.
+- Goal: Finish the Command component-depth slice and move to the next component-depth target.
 - Branch: `main`
-- Last verified: 2026-06-22, the focused catalog matrix passed `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focuses_every_focusable_catalog_entry`, and the full `cargo nextest run -p open-gpui-ui-foundation-gallery` passed 72/72 after the RadioGroup nesting fix. The automation hardening slice is committed as `0d82a9d`.
+- Last verified: 2026-06-22, Command-focused component and gallery gates passed after commits `41c719a` and `d383026`: `cargo nextest run -p open-gpui-ui-components command`, `cargo nextest run -p open-gpui-ui-foundation-gallery command`, `cargo check -p open-gpui-ui-foundation-gallery`, export / API inventory guards, and `git diff --check` with only Windows LF/CRLF warnings.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -79,9 +85,11 @@ verified_by:
 - Done: Wrote `docs/plans/2026-06-22-004-test-ui-gallery-automation-regression-plan.md`, added a catalog-driven focused-mode matrix smoke for every focusable Components catalog entry, fixed the RadioGroup nesting bug so its focused selector renders in `radio-group` mode, and updated `docs/verification.md` with the new gate.
 - Done: Recorded the component-depth roadmap in `docs/knowledge/engineering/decisions/open-gpui-ui-component-depth-roadmap.md`: deepen `Command`, then `Menu` / `ContextMenu`, then advanced `Table` and `Tree` behavior before adding more shallow primitives.
 - Done: Wrote `docs/plans/2026-06-22-005-feat-ui-command-depth-plan.md` for the next `Command` depth slice. The plan covers renderer-neutral ranking, controlled query ergonomics, optional multi-selection, virtualized long results, app-owned index snapshots, focused gallery samples, and contract / verification memory updates.
+- Done: Completed U1-U5 of the Command depth plan. `CommandState` now resolves deterministic ranked results, controlled/default query ownership, optional multi-select selected chips, virtualized render plans for long result sets, and caller-owned `CommandIndexSnapshot` sources with `LocalRanked`, `PreRankedFilter`, and `PreFiltered` modes. The component crate still does not own global command registries, dispatch buses, keybinding resolution, enablement engines, or async indexing.
+- Done: Promoted focused Command gallery samples for ranked search, multi-select, a 10k-item virtualized command index, and app-owned indexed/loading metadata. Gallery smokes prove focused Command mode renders all samples, selected chips are inspectable, and virtualized sample wheel input stays inside the sample.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Blocked: None.
-- Next action: Start `ce-work` against `docs/plans/2026-06-22-005-feat-ui-command-depth-plan.md` unless a new user-facing regression needs priority first.
+- Next action: Plan the next component-depth slice around `Menu` / `ContextMenu` submenu and menu-item semantics unless a new user-facing regression needs priority first.
 
 # Citations
 
@@ -115,3 +123,5 @@ verified_by:
 [28] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery`
 [29] Decision `docs/knowledge/engineering/decisions/open-gpui-ui-component-depth-roadmap.md`
 [30] Plan `docs/plans/2026-06-22-005-feat-ui-command-depth-plan.md`
+[31] Commit `41c719a` - `feat(ui-components): add command index snapshots`
+[32] Commit `d383026` - `feat(ui-gallery): deepen command samples`
