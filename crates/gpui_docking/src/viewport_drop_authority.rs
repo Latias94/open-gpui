@@ -312,7 +312,7 @@ fn current_resolved_target_key_matches_snapshot(
             graph.edge_dock_plan_with_sizing(&target_space, target_node, zone, sizing)
         };
     let excluded_nodes = payload.excluded_nodes_for_drop_scene(workspace.graph(), source_node);
-    let Some((_, resolution)) = host_scenes.resolve_frame_for_window(
+    let Some((current_frame, resolution)) = host_scenes.resolve_frame_for_window(
         target.target_space(),
         target.target_window_id(),
         target.host_position(),
@@ -324,6 +324,9 @@ fn current_resolved_target_key_matches_snapshot(
     ) else {
         return false;
     };
+    if &current_frame != target.frame() {
+        return false;
+    }
     match resolution {
         DockDropResolution::Valid(current) => current.target_key() == *target.target_key(),
         DockDropResolution::Rejected(rejection) => {
@@ -1068,6 +1071,91 @@ mod tests {
                 kind: DockResolvedDropTargetKind::LeafCenter {
                     root: stale_tabs,
                     target_tabs: stale_tabs,
+                },
+                source: DockDropResolveSource::LeafBody,
+                drop_box: None,
+                preview_bounds: Some(bounds(0.0, 0.0, 320.0, 240.0)),
+                edge_sizing: None,
+                edge_plan: None,
+                is_central_region: true,
+            },
+        );
+
+        let result = validate_delivery_workspace_target(
+            &adapter,
+            &host_scenes,
+            &workspace,
+            DockNodeId::null(),
+            &payload,
+            &stale_snapshot,
+        );
+
+        assert_eq!(result, Err(DockActionApplyError::DropTargetUnavailable));
+    }
+
+    #[test]
+    fn delivery_validation_requires_current_host_scene_frame() {
+        let source_space = space("source");
+        let target_space = space("target");
+        let target_window = handle(9);
+        let mut graph = DockGraph::new();
+        let target_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("target")],
+            selected: Some(DockItemId::from("target")),
+        });
+        graph.set_root(target_space.clone(), target_tabs);
+
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, target_space.clone(), target_window);
+        adapter.update_snapshot(
+            &target_space,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 100.0, 320.0, 240.0,
+            ))),
+            bounds(0.0, 0.0, 320.0, 240.0),
+        );
+        let facts_generation = adapter
+            .snapshot_facts_generation(&target_space, target_window.window_id())
+            .expect("target snapshot should have facts");
+
+        let mut host_scenes = DockViewportHostSceneRegistry::default();
+        let host_position = center_drop_position(bounds(0.0, 0.0, 320.0, 240.0));
+        let stale_frame = host_scenes
+            .register(DockViewportHostSceneSnapshot::new(
+                target_space.clone(),
+                target_window.window_id(),
+                DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 320.0, 240.0)),
+                bounds(0.0, 0.0, 320.0, 240.0),
+                host_position,
+                crate::DockDropGuideStyle::default(),
+            ))
+            .frame;
+        let current_frame = host_scenes
+            .push_frame_fact(
+                &stale_frame,
+                DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                    root: target_tabs,
+                    target_tabs,
+                    bounds: bounds(0.0, 0.0, 320.0, 240.0),
+                    is_central: true,
+                }),
+            )
+            .expect("current target fact should produce a current frame");
+        assert_ne!(stale_frame, current_frame);
+
+        let workspace = DockWorkspace::new(source_space.clone(), graph);
+        let payload = DockViewportDropPayload::Item(item("target"));
+        let stale_snapshot = DockViewportResolvedDropTargetSnapshot::new(
+            target_space.clone(),
+            Some(target_window.window_id()),
+            stale_frame,
+            Some(facts_generation),
+            host_position,
+            None,
+            DockResolvedDropTarget {
+                kind: DockResolvedDropTargetKind::LeafCenter {
+                    root: target_tabs,
+                    target_tabs,
                 },
                 source: DockDropResolveSource::LeafBody,
                 drop_box: None,

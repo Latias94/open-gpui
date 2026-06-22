@@ -2688,18 +2688,21 @@ fn viewport_runtime_handle_delivers_commit_deliveries_directly(cx: &mut TestAppC
     let second_plan = DockDropDelivery::from_resolution(second_resolution)
         .expect("second accepted preview should mint a commit plan");
 
-    let first_result = cx.update(|app| runtime.deliver_drop_commit_delivery(first_plan, app));
     let second_result = cx.update(|app| runtime.deliver_drop_commit_delivery(second_plan, app));
+    let first_result = cx.update(|app| runtime.deliver_drop_commit_delivery(first_plan, app));
 
-    let DockViewportDropRouteOutcome::Action(first_action) =
-        first_result.expect("first direct delivery should commit")
+    let DockViewportDropRouteOutcome::Action(second_action) =
+        second_result.expect("current direct delivery should commit")
     else {
-        panic!("first direct delivery should produce a normal action outcome");
+        panic!("current direct delivery should produce a normal action outcome");
     };
-    assert_eq!(first_action.action(), crate::DockActionOutcome::Changed);
+    assert_eq!(second_action.action(), crate::DockActionOutcome::Changed);
     assert!(
-        second_result.is_err(),
-        "the second direct delivery should fail once the source item has already moved"
+        matches!(
+            first_result,
+            Err(DockActionApplyError::DropTargetUnavailable)
+        ),
+        "a direct delivery from an older host-scene frame should be rejected"
     );
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
@@ -2710,13 +2713,13 @@ fn viewport_runtime_handle_delivers_commit_deliveries_directly(cx: &mut TestAppC
             controller
                 .graph()
                 .collect_items_in_space(&first_target_space),
-            vec![item("first"), item("a")]
+            vec![item("first")]
         );
         assert_eq!(
             controller
                 .graph()
                 .collect_items_in_space(&second_target_space),
-            vec![item("second")]
+            vec![item("second"), item("a")]
         );
     });
 }

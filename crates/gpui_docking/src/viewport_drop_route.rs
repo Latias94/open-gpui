@@ -452,6 +452,10 @@ impl DockViewportResolvedDropTargetSnapshot {
         self.facts_generation
     }
 
+    pub(crate) fn frame(&self) -> &DockViewportHostSceneFrame {
+        &self.frame
+    }
+
     pub(crate) fn host_position(&self) -> Point<Pixels> {
         self.host_position
     }
