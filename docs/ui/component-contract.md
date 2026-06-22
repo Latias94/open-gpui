@@ -170,15 +170,21 @@ that option. The GPUI adapter owns the `TextInputController`, keyed runtime quer
 state, callbacks, outside-press and Escape wiring, deferred anchored rendering, scroll handles, and
 concrete focus handles.
 
-`CommandState` composes a search text input, grouped command list, optional dialog wrapper, loading
-metadata, and nested `ListboxState`. It records controlled versus uncontrolled open mode,
-default-open state, selected and active command values, query text, filtered and total command
-counts, standalone/grouped command anatomy, shortcut labels, disabled command state, empty-state
-label, Escape policy, focus restoration intent, resolved metrics, token intents, non-modal inline
-overlay state, and modal dialog overlay state when dialog presentation is enabled. The first
-official command slice is a local surface contract, not a global command registry: async loading,
-fuzzy ranking, multi-select command chips, virtualized result sets, and app-wide indexing remain
-follow-up work.
+`CommandState` composes a search text input, ranked grouped command results, optional dialog
+wrapper, loading metadata, selected chips, a virtualized result window, and nested `ListboxState`.
+It records controlled versus uncontrolled open and query modes, default-open/default-query seed
+state, single-select or multi-select behavior, selected and active command values, query text,
+filtered and total command counts, standalone/grouped command anatomy, shortcut labels, disabled
+command state, deterministic match source/score metadata, app-owned index revision/mode metadata,
+empty-state label, Escape policy, focus restoration intent, resolved metrics, token intents,
+non-modal inline overlay state, and modal dialog overlay state when dialog presentation is enabled.
+`CommandIndexSnapshot` lets applications pass indexed, pre-ranked, or pre-filtered descriptor
+snapshots with loading metadata, while keeping command discovery, global registries, keybinding
+resolution, dispatch, enablement policy, and async task ownership outside `ui_components`. The GPUI
+adapter owns the `TextInputController`, keyed runtime query/open/selection state, callbacks,
+outside-press and Escape wiring, deferred dialog rendering, concrete focus handles, and scroll
+handles; the renderer-neutral state owns ranking, selection projection, snapshot metadata, and the
+virtualized result render plan.
 
 `SeparatorState`, `KbdState`, `ProgressState`, and `SkeletonState` are low-state primitives. They
 still expose resolved state, metrics, token intents, and stable rendered debug selectors rather

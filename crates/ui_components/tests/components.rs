@@ -6,28 +6,29 @@ use open_gpui_ui_components::{
     AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Avatar, Badge,
     BadgeVariant, Button, ButtonVariant, Checkbox, ColorIntent, ColorState, Combobox,
     ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command, CommandGroup,
-    CommandItem, CommandMatchSource, CommandOpenMode, CommandQueryMode, CommandSelection,
-    CommandSelectionChange, CommandSelectionMode, ContextMenu, DEFAULT_FOCUS_RING_WIDTH, Dialog,
-    DialogOpenMode, EmptyState, FeedbackIntent, Field, FocusRing, HoverCard, HoverCardContentKind,
-    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton, Kbd, Label, Listbox,
-    ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
-    ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode,
-    MenuSelection, Popover, PopoverOpenMode, Progress, ProgressVisualMode, RadioGroup,
-    RadioGroupState, RadioItem, RadioItemDescriptor, RadioSelection, ScrollArea, ScrollAreaAxis,
-    ScrollAreaState, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, Separator, Sheet,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
-    SidebarItem, SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide,
-    SidebarState, SidebarVariant, Skeleton, Splitter, SplitterPanel, SplitterPanelDescriptor,
-    SplitterState, StatusCue, Switch, Table, TableColumn, TableFilter, TableHeaderAction,
-    TablePagination, TableRow, TableSort, TableSortDirection, TableState, Tabs, TabsActivationMode,
-    TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode,
-    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
-    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
-    VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
+    CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItem,
+    CommandItemDescriptor, CommandLoadingState, CommandMatchSource, CommandOpenMode,
+    CommandQueryMode, CommandSelection, CommandSelectionChange, CommandSelectionMode, ContextMenu,
+    DEFAULT_FOCUS_RING_WIDTH, Dialog, DialogOpenMode, EmptyState, FeedbackIntent, Field, FocusRing,
+    HoverCard, HoverCardContentKind, HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode,
+    IconButton, Kbd, Label, Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption,
+    ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem,
+    MenuItemKind, MenuOpenMode, MenuSelection, Popover, PopoverOpenMode, Progress,
+    ProgressVisualMode, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor,
+    RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select,
+    SelectOpenMode, SelectSelection, Separator, Sheet, SheetCloseAffordance, SheetModalMode,
+    SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor,
+    SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
+    Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
+    TableColumn, TableFilter, TableHeaderAction, TablePagination, TableRow, TableSort,
+    TableSortDirection, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
+    TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot,
+    Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
+    ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy,
+    TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList, VirtualizedListActivation,
+    VirtualizedListItemDescriptor, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
+    VirtualizedListScrollStrategy, VirtualizedListState, VirtualizerItemKey, VirtualizerRange,
+    VirtualizerSnapshot, VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -315,7 +316,14 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Command",
-        controlled_inputs: &["open", "query", "selected", "selected_values", "active"],
+        controlled_inputs: &[
+            "open",
+            "query",
+            "selected",
+            "selected_values",
+            "active",
+            "index_snapshot",
+        ],
         default_seeds: &[
             DefaultSeedApi {
                 builder: "default_open",
@@ -791,6 +799,7 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "items",
             "group",
             "groups",
+            "index_snapshot",
             "disabled",
             "dialog_description",
             "loading",
@@ -1055,6 +1064,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "items",
             "group",
             "groups",
+            "index_snapshot",
             "disabled",
             "open",
             "default_open",
@@ -4671,9 +4681,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_combobox = root::Combobox::new("combobox", "Search");
     let root_command = root::Command::new("command", "Commands");
     let root_command_items = vec![root::CommandItem::new("open", "Open")];
+    let root_command_snapshot = root::CommandIndexSnapshot::new("root-v1")
+        .mode(root::CommandIndexSnapshotMode::PreRankedFilter)
+        .item(root::CommandItemDescriptor::new("open", "Open"));
     let root_command_plan: root::CommandRenderPlan =
         root::Command::new("root-command-plan", "Commands")
             .items(root_command_items)
+            .index_snapshot(root_command_snapshot)
             .render_plan();
     let _root_command_row: Option<&root::CommandRowRenderPlan> = root_command_plan.rows().first();
     let root_scroll = root::ScrollArea::new("scroll", div());
@@ -4703,9 +4717,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_combobox = prelude::Combobox::new("combobox", "Search");
     let prelude_command = prelude::Command::new("command", "Commands");
     let prelude_command_items = vec![prelude::CommandItem::new("open", "Open")];
+    let prelude_command_snapshot = prelude::CommandIndexSnapshot::new("prelude-v1")
+        .mode(prelude::CommandIndexSnapshotMode::PreFiltered)
+        .item(prelude::CommandItemDescriptor::new("open", "Open"));
     let prelude_command_plan: prelude::CommandRenderPlan =
         prelude::Command::new("prelude-command-plan", "Commands")
             .items(prelude_command_items)
+            .index_snapshot(prelude_command_snapshot)
             .render_plan();
     let _prelude_command_row: Option<&prelude::CommandRowRenderPlan> =
         prelude_command_plan.rows().first();
@@ -4989,6 +5007,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
     assert_inventory_contains_default_seed("Combobox", "default_query", "query");
     assert_inventory_contains_controlled_input("Command", "query");
     assert_inventory_contains_controlled_input("Command", "selected_values");
+    assert_inventory_contains_controlled_input("Command", "index_snapshot");
     assert_inventory_contains_default_seed("Command", "default_query", "query");
     assert_inventory_contains_callback("Command", "on_query_change", "String");
     assert_inventory_contains_callback(
@@ -6841,6 +6860,206 @@ fn command_state_models_multi_selected_values_and_hidden_chips() {
     );
     assert_eq!(state.selected_chips()[0].label(), "Open File");
     assert!(state.items()[0].selected());
+}
+
+#[test]
+fn command_index_snapshot_matches_equivalent_local_descriptors() {
+    let snapshot = CommandIndexSnapshot::new("commands-v1")
+        .item(CommandItemDescriptor::new("open-file", "Open File").shortcut("Ctrl+O"))
+        .group(
+            CommandGroupDescriptor::new("file", "File")
+                .item(CommandItemDescriptor::new("new-file", "New File").shortcut("Ctrl+N"))
+                .item(
+                    CommandItemDescriptor::new("close-window", "Close Window").shortcut("Alt+F4"),
+                ),
+        );
+    let local = Command::new("local-command", "Commands")
+        .default_query("file")
+        .selected("new-file")
+        .active("new-file")
+        .item(CommandItem::new("open-file", "Open File").shortcut("Ctrl+O"))
+        .group(
+            CommandGroup::new("file", "File")
+                .item(CommandItem::new("new-file", "New File").shortcut("Ctrl+N"))
+                .item(CommandItem::new("close-window", "Close Window").shortcut("Alt+F4")),
+        )
+        .state();
+    let indexed = Command::new("indexed-command", "Commands")
+        .default_query("file")
+        .selected("new-file")
+        .active("new-file")
+        .index_snapshot(snapshot)
+        .state();
+
+    assert_eq!(indexed.index_revision(), Some("commands-v1"));
+    assert_eq!(indexed.index_mode(), CommandIndexSnapshotMode::LocalRanked);
+    assert_eq!(indexed.total_item_count(), local.total_item_count());
+    assert_eq!(indexed.filtered_item_count(), local.filtered_item_count());
+    assert_eq!(
+        indexed
+            .items()
+            .iter()
+            .map(|item| (
+                item.value().to_owned(),
+                item.label().to_owned(),
+                item.match_source(),
+                item.match_score(),
+                item.selected(),
+                item.active(),
+            ))
+            .collect::<Vec<_>>(),
+        local
+            .items()
+            .iter()
+            .map(|item| (
+                item.value().to_owned(),
+                item.label().to_owned(),
+                item.match_source(),
+                item.match_score(),
+                item.selected(),
+                item.active(),
+            ))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn command_index_snapshot_revision_preserves_selection_by_value_after_reorder() {
+    let first = CommandIndexSnapshot::new("commands-v1")
+        .item(CommandItemDescriptor::new("other", "Other"))
+        .item(CommandItemDescriptor::new("target", "Target"));
+    let second = CommandIndexSnapshot::new("commands-v2")
+        .item(CommandItemDescriptor::new("target", "Target"))
+        .item(CommandItemDescriptor::new("other", "Other"));
+    let first_state = Command::new("snapshot-revision-command", "Commands")
+        .selected("target")
+        .active("target")
+        .index_snapshot(first)
+        .state();
+    let second_state = Command::new("snapshot-revision-command", "Commands")
+        .selected("target")
+        .active("target")
+        .index_snapshot(second)
+        .state();
+
+    assert_eq!(first_state.index_revision(), Some("commands-v1"));
+    assert_eq!(second_state.index_revision(), Some("commands-v2"));
+    assert_eq!(first_state.items()[1].value(), "target");
+    assert!(first_state.items()[1].selected());
+    assert!(first_state.items()[1].active());
+    assert_eq!(second_state.items()[0].value(), "target");
+    assert!(second_state.items()[0].selected());
+    assert!(second_state.items()[0].active());
+}
+
+#[test]
+fn command_index_snapshot_modes_preserve_pre_ranked_and_pre_filtered_order() {
+    let pre_ranked = CommandIndexSnapshot::new("pre-ranked")
+        .mode(CommandIndexSnapshotMode::PreRankedFilter)
+        .item(CommandItemDescriptor::new("archive", "Archive").keyword("file"))
+        .item(CommandItemDescriptor::new("open-file", "Open File"))
+        .item(CommandItemDescriptor::new("file-action", "Launcher"))
+        .item(CommandItemDescriptor::new("bulk-action", "Bulk Action").keyword("file"));
+    let pre_filtered = CommandIndexSnapshot::new("pre-filtered")
+        .mode(CommandIndexSnapshotMode::PreFiltered)
+        .item(CommandItemDescriptor::new("archive", "Archive").keyword("file"))
+        .item(CommandItemDescriptor::new("unmatched", "Unmatched"));
+
+    let pre_ranked_state = Command::new("pre-ranked-command", "Commands")
+        .query("file")
+        .index_snapshot(pre_ranked)
+        .state();
+    let pre_filtered_state = Command::new("pre-filtered-command", "Commands")
+        .query("file")
+        .index_snapshot(pre_filtered)
+        .state();
+
+    assert_eq!(
+        pre_ranked_state
+            .items()
+            .iter()
+            .map(|item| item.value().to_owned())
+            .collect::<Vec<_>>(),
+        vec![
+            "archive".to_string(),
+            "open-file".to_string(),
+            "file-action".to_string(),
+            "bulk-action".to_string(),
+        ]
+    );
+    assert_eq!(
+        pre_ranked_state
+            .items()
+            .iter()
+            .map(|item| item.match_source())
+            .collect::<Vec<_>>(),
+        vec![
+            Some(CommandMatchSource::Keyword),
+            Some(CommandMatchSource::Label),
+            Some(CommandMatchSource::Value),
+            Some(CommandMatchSource::Keyword),
+        ]
+    );
+    assert_eq!(pre_filtered_state.filtered_item_count(), 2);
+    assert_eq!(
+        pre_filtered_state
+            .items()
+            .iter()
+            .map(|item| (
+                item.value().to_owned(),
+                item.match_source(),
+                item.match_score()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("archive".to_string(), None, 0),
+            ("unmatched".to_string(), None, 0),
+        ]
+    );
+}
+
+#[test]
+fn command_index_snapshot_loading_coexists_with_visible_and_empty_results() {
+    let visible = CommandIndexSnapshot::new("loading-visible")
+        .mode(CommandIndexSnapshotMode::PreFiltered)
+        .loading(CommandLoadingState::new(
+            "Refreshing command index",
+            Some(30),
+        ))
+        .item(CommandItemDescriptor::new(
+            "stale-open",
+            "Open from stale index",
+        ));
+    let empty = CommandIndexSnapshot::new("loading-empty")
+        .loading(CommandLoadingState::new("Indexing commands", None));
+
+    let visible_state = Command::new("snapshot-loading-visible", "Commands")
+        .query("anything")
+        .loading("Builder loading is overridden", Some(99))
+        .index_snapshot(visible)
+        .state();
+    let empty_state = Command::new("snapshot-loading-empty", "Commands")
+        .query("anything")
+        .index_snapshot(empty)
+        .state();
+
+    assert_eq!(visible_state.filtered_item_count(), 1);
+    assert_eq!(
+        visible_state.loading().map(CommandLoadingState::message),
+        Some("Refreshing command index")
+    );
+    assert_eq!(
+        visible_state
+            .loading()
+            .and_then(CommandLoadingState::progress_percent),
+        Some(30)
+    );
+    assert!(empty_state.empty());
+    assert_eq!(
+        empty_state.loading().map(CommandLoadingState::message),
+        Some("Indexing commands")
+    );
+    assert_eq!(empty_state.loading().unwrap().progress_percent(), None);
 }
 
 #[test]

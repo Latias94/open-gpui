@@ -14,11 +14,11 @@ pub use crate::combobox::{
     ComboboxOpenMode, ComboboxOption, ComboboxOptionDescriptor, ComboboxSelection, ComboboxState,
 };
 pub use crate::command::{
-    Command, CommandColors, CommandDialogState, CommandGroup, CommandGroupDescriptor, CommandItem,
-    CommandItemDescriptor, CommandItemState, CommandLoadingState, CommandMatchSource,
-    CommandMetrics, CommandOpenMode, CommandQueryMode, CommandRenderPlan, CommandRowRenderPlan,
-    CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandSelectionMode,
-    CommandState,
+    Command, CommandColors, CommandDialogState, CommandGroup, CommandGroupDescriptor,
+    CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItem, CommandItemDescriptor,
+    CommandItemState, CommandLoadingState, CommandMatchSource, CommandMetrics, CommandOpenMode,
+    CommandQueryMode, CommandRenderPlan, CommandRowRenderPlan, CommandSelectedChipState,
+    CommandSelection, CommandSelectionChange, CommandSelectionMode, CommandState,
 };
 pub use crate::context_menu::{ContextMenu, ContextMenuState};
 pub use crate::dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};

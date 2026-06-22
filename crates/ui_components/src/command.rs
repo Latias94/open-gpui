@@ -71,6 +71,28 @@ impl CommandSelectionMode {
     }
 }
 
+/// How a caller-owned command index snapshot should be interpreted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CommandIndexSnapshotMode {
+    /// Apply the local deterministic filter and ranking pipeline.
+    #[default]
+    LocalRanked,
+    /// Apply local filtering, but preserve the caller's snapshot order.
+    PreRankedFilter,
+    /// Treat the snapshot as already filtered and ranked by the caller.
+    PreFiltered,
+}
+
+impl CommandIndexSnapshotMode {
+    const fn should_filter_locally(self, query_is_empty: bool) -> bool {
+        !query_is_empty && !matches!(self, Self::PreFiltered)
+    }
+
+    const fn should_rank_locally(self, query_is_empty: bool) -> bool {
+        !query_is_empty && matches!(self, Self::LocalRanked)
+    }
+}
+
 /// Command loading state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandLoadingState {
@@ -301,6 +323,96 @@ impl CommandGroupDescriptor {
     /// Returns group items.
     pub fn items_ref(&self) -> &[CommandItemDescriptor] {
         &self.items
+    }
+}
+
+/// Caller-owned indexed command snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandIndexSnapshot {
+    revision: String,
+    mode: CommandIndexSnapshotMode,
+    loading_state: Option<CommandLoadingState>,
+    groups: Vec<CommandGroupDescriptor>,
+    items: Vec<CommandItemDescriptor>,
+}
+
+impl CommandIndexSnapshot {
+    /// Creates an empty command index snapshot for the given revision.
+    pub fn new(revision: impl Into<String>) -> Self {
+        Self {
+            revision: revision.into(),
+            mode: CommandIndexSnapshotMode::LocalRanked,
+            loading_state: None,
+            groups: Vec::new(),
+            items: Vec::new(),
+        }
+    }
+
+    /// Applies snapshot ordering/filtering semantics.
+    pub fn mode(mut self, mode: CommandIndexSnapshotMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Applies loading metadata that belongs to this snapshot.
+    pub fn loading(mut self, loading_state: CommandLoadingState) -> Self {
+        self.loading_state = Some(loading_state);
+        self
+    }
+
+    /// Clears snapshot loading metadata.
+    pub fn idle(mut self) -> Self {
+        self.loading_state = None;
+        self
+    }
+
+    /// Adds one standalone command item descriptor.
+    pub fn item(mut self, item: CommandItemDescriptor) -> Self {
+        self.items.push(item);
+        self
+    }
+
+    /// Adds many standalone command item descriptors.
+    pub fn items(mut self, items: impl IntoIterator<Item = CommandItemDescriptor>) -> Self {
+        self.items.extend(items);
+        self
+    }
+
+    /// Adds one command group descriptor.
+    pub fn group(mut self, group: CommandGroupDescriptor) -> Self {
+        self.groups.push(group);
+        self
+    }
+
+    /// Adds many command group descriptors.
+    pub fn groups(mut self, groups: impl IntoIterator<Item = CommandGroupDescriptor>) -> Self {
+        self.groups.extend(groups);
+        self
+    }
+
+    /// Returns snapshot revision metadata.
+    pub fn revision(&self) -> &str {
+        &self.revision
+    }
+
+    /// Returns snapshot ordering/filtering semantics.
+    pub const fn snapshot_mode(&self) -> CommandIndexSnapshotMode {
+        self.mode
+    }
+
+    /// Returns snapshot loading metadata.
+    pub const fn loading_state(&self) -> Option<&CommandLoadingState> {
+        self.loading_state.as_ref()
+    }
+
+    /// Returns standalone command item descriptors.
+    pub fn items_ref(&self) -> &[CommandItemDescriptor] {
+        &self.items
+    }
+
+    /// Returns command group descriptors.
+    pub fn groups_ref(&self) -> &[CommandGroupDescriptor] {
+        &self.groups
     }
 }
 
@@ -1000,6 +1112,40 @@ struct RankedCommandGroup {
     best_score: u16,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CommandDataSource {
+    revision: Option<String>,
+    mode: CommandIndexSnapshotMode,
+    loading_state: Option<CommandLoadingState>,
+    groups: Vec<CommandGroupDescriptor>,
+    items: Vec<CommandItemDescriptor>,
+}
+
+impl CommandDataSource {
+    fn local(
+        groups: impl IntoIterator<Item = CommandGroupDescriptor>,
+        items: impl IntoIterator<Item = CommandItemDescriptor>,
+    ) -> Self {
+        Self {
+            revision: None,
+            mode: CommandIndexSnapshotMode::LocalRanked,
+            loading_state: None,
+            groups: groups.into_iter().collect(),
+            items: items.into_iter().collect(),
+        }
+    }
+
+    fn snapshot(snapshot: CommandIndexSnapshot) -> Self {
+        Self {
+            revision: Some(snapshot.revision),
+            mode: snapshot.mode,
+            loading_state: snapshot.loading_state,
+            groups: snapshot.groups,
+            items: snapshot.items,
+        }
+    }
+}
+
 /// Resolved command state used by tests, demos, and rendering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommandState {
@@ -1016,6 +1162,8 @@ pub struct CommandState {
     overlay: OverlayResolvedState,
     dialog: Option<CommandDialogState>,
     loading_state: Option<CommandLoadingState>,
+    index_revision: Option<String>,
+    index_mode: CommandIndexSnapshotMode,
     empty_label: String,
     escape_key_policy: EscapeKeyPolicy,
     focus_restore_intent: FocusRestoreIntent,
@@ -1062,6 +1210,113 @@ impl CommandState {
         focus_restore_intent: FocusRestoreIntent,
         tokens: ThemeTokens,
     ) -> Self {
+        Self::resolve_from_data_source(
+            size,
+            disabled,
+            open,
+            default_open,
+            dialog_enabled,
+            label,
+            placeholder,
+            query,
+            query_mode,
+            selection_mode,
+            selected_value,
+            selected_values,
+            active_value,
+            loading_state,
+            empty_label,
+            dialog_title,
+            dialog_description,
+            CommandDataSource::local(groups, items),
+            outside_press_policy,
+            escape_key_policy,
+            initial_focus_intent,
+            focus_restore_intent,
+            tokens,
+        )
+    }
+
+    /// Resolves public state from a caller-owned command index snapshot.
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_from_index_snapshot(
+        size: Size,
+        disabled: bool,
+        open: Option<bool>,
+        default_open: bool,
+        dialog_enabled: bool,
+        label: impl Into<String>,
+        placeholder: impl Into<String>,
+        query: impl Into<String>,
+        query_mode: CommandQueryMode,
+        selection_mode: CommandSelectionMode,
+        selected_value: Option<&str>,
+        selected_values: impl IntoIterator<Item = impl Into<String>>,
+        active_value: Option<&str>,
+        loading_state: Option<CommandLoadingState>,
+        empty_label: impl Into<String>,
+        dialog_title: Option<String>,
+        dialog_description: Option<String>,
+        index_snapshot: CommandIndexSnapshot,
+        outside_press_policy: OutsidePressPolicy,
+        escape_key_policy: EscapeKeyPolicy,
+        initial_focus_intent: InitialFocusIntent,
+        focus_restore_intent: FocusRestoreIntent,
+        tokens: ThemeTokens,
+    ) -> Self {
+        Self::resolve_from_data_source(
+            size,
+            disabled,
+            open,
+            default_open,
+            dialog_enabled,
+            label,
+            placeholder,
+            query,
+            query_mode,
+            selection_mode,
+            selected_value,
+            selected_values,
+            active_value,
+            loading_state,
+            empty_label,
+            dialog_title,
+            dialog_description,
+            CommandDataSource::snapshot(index_snapshot),
+            outside_press_policy,
+            escape_key_policy,
+            initial_focus_intent,
+            focus_restore_intent,
+            tokens,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_from_data_source(
+        size: Size,
+        disabled: bool,
+        open: Option<bool>,
+        default_open: bool,
+        dialog_enabled: bool,
+        label: impl Into<String>,
+        placeholder: impl Into<String>,
+        query: impl Into<String>,
+        query_mode: CommandQueryMode,
+        selection_mode: CommandSelectionMode,
+        selected_value: Option<&str>,
+        selected_values: impl IntoIterator<Item = impl Into<String>>,
+        active_value: Option<&str>,
+        loading_state: Option<CommandLoadingState>,
+        empty_label: impl Into<String>,
+        dialog_title: Option<String>,
+        dialog_description: Option<String>,
+        data_source: CommandDataSource,
+        outside_press_policy: OutsidePressPolicy,
+        escape_key_policy: EscapeKeyPolicy,
+        initial_focus_intent: InitialFocusIntent,
+        focus_restore_intent: FocusRestoreIntent,
+        tokens: ThemeTokens,
+    ) -> Self {
         let label = label.into();
         let placeholder = placeholder.into();
         let query = query.into();
@@ -1074,8 +1329,14 @@ impl CommandState {
         let open = open.unwrap_or(default_open) && !disabled;
         let normalized_query = normalize_query(query.as_str());
         let query_is_empty = normalized_query.is_empty();
-        let raw_groups = groups.into_iter().collect::<Vec<_>>();
-        let raw_items = items.into_iter().collect::<Vec<_>>();
+        let CommandDataSource {
+            revision: index_revision,
+            mode: index_mode,
+            loading_state: index_loading_state,
+            groups: raw_groups,
+            items: raw_items,
+        } = data_source;
+        let loading_state = index_loading_state.or(loading_state);
         let total_item_count = raw_items.len()
             + raw_groups
                 .iter()
@@ -1100,7 +1361,8 @@ impl CommandState {
             .iter()
             .enumerate()
             .filter_map(|(source_index, item)| {
-                let rank = item.match_rank(normalized_query.as_str())?;
+                let rank =
+                    command_item_rank_for_source(item, normalized_query.as_str(), index_mode)?;
                 Some(FlattenedCommandItem {
                     group_index: None,
                     descriptor: item.clone(),
@@ -1109,7 +1371,7 @@ impl CommandState {
                 })
             })
             .collect::<Vec<_>>();
-        if !query_is_empty {
+        if index_mode.should_rank_locally(query_is_empty) {
             sort_ranked_command_items(&mut standalone_items);
         }
 
@@ -1122,7 +1384,11 @@ impl CommandState {
                     .iter()
                     .enumerate()
                     .filter_map(|(source_index, item)| {
-                        let rank = item.match_rank(normalized_query.as_str())?;
+                        let rank = command_item_rank_for_source(
+                            item,
+                            normalized_query.as_str(),
+                            index_mode,
+                        )?;
                         Some(FlattenedCommandItem {
                             group_index: None,
                             descriptor: item.clone(),
@@ -1135,7 +1401,7 @@ impl CommandState {
                     return None;
                 }
 
-                if !query_is_empty {
+                if index_mode.should_rank_locally(query_is_empty) {
                     sort_ranked_command_items(&mut items);
                 }
 
@@ -1150,7 +1416,7 @@ impl CommandState {
                 })
             })
             .collect::<Vec<_>>();
-        if !query_is_empty {
+        if index_mode.should_rank_locally(query_is_empty) {
             ranked_groups.sort_by(|a, b| {
                 b.best_score
                     .cmp(&a.best_score)
@@ -1325,6 +1591,8 @@ impl CommandState {
             overlay,
             dialog,
             loading_state,
+            index_revision,
+            index_mode,
             empty_label,
             escape_key_policy,
             focus_restore_intent,
@@ -1421,6 +1689,16 @@ impl CommandState {
     /// Returns optional loading metadata.
     pub const fn loading(&self) -> Option<&CommandLoadingState> {
         self.loading_state.as_ref()
+    }
+
+    /// Returns caller-owned command index revision metadata.
+    pub fn index_revision(&self) -> Option<&str> {
+        self.index_revision.as_deref()
+    }
+
+    /// Returns command index ordering/filtering semantics.
+    pub const fn index_mode(&self) -> CommandIndexSnapshotMode {
+        self.index_mode
     }
 
     /// Returns empty-state label.
@@ -1588,6 +1866,7 @@ pub struct Command {
     trigger_label: SharedString,
     items: Vec<CommandItem>,
     groups: Vec<CommandGroup>,
+    index_snapshot: Option<CommandIndexSnapshot>,
     size: Size,
     disabled: bool,
     open: Option<bool>,
@@ -1627,6 +1906,7 @@ impl Command {
             trigger_label: "Open command menu".into(),
             items: Vec::new(),
             groups: Vec::new(),
+            index_snapshot: None,
             size,
             disabled: false,
             open: None,
@@ -1689,6 +1969,12 @@ impl Command {
     /// Adds many command groups.
     pub fn groups(mut self, groups: impl IntoIterator<Item = CommandGroup>) -> Self {
         self.groups.extend(groups);
+        self
+    }
+
+    /// Applies a caller-owned command index snapshot.
+    pub fn index_snapshot(mut self, snapshot: CommandIndexSnapshot) -> Self {
+        self.index_snapshot = Some(snapshot);
         self
     }
 
@@ -1892,33 +2178,14 @@ impl Command {
         let query = self.query.as_deref().unwrap_or(self.default_query.as_str());
         let selected_values = self.selected_values.clone().unwrap_or_default().into_iter();
 
-        CommandState::resolve(
-            self.size,
-            self.disabled,
+        self.resolve_state_with_inputs(
             self.open,
-            self.default_open,
-            self.dialog_enabled,
-            self.label.to_string(),
-            self.placeholder.to_string(),
             query,
             query_mode,
-            self.selection_mode,
             self.selected_value.as_deref(),
             selected_values,
             self.active_value.as_deref(),
-            self.loading_state.clone(),
-            self.empty_label.to_string(),
-            self.dialog_title.clone(),
-            self.dialog_description.clone(),
-            self.groups.iter().map(CommandGroup::descriptor),
-            self.items.iter().map(CommandItem::descriptor),
-            self.outside_press_policy,
-            self.escape_key_policy,
-            self.initial_focus_intent.clone(),
-            self.focus_restore_intent.clone(),
-            self.tokens,
         )
-        .with_metrics(self.metrics)
     }
 
     /// Returns the default virtualized result render plan at the viewport origin.
@@ -1943,6 +2210,75 @@ impl Command {
             scroll_offset,
             viewport_extent,
         )
+    }
+}
+
+impl Command {
+    fn resolve_state_with_inputs(
+        &self,
+        open: Option<bool>,
+        query: &str,
+        query_mode: CommandQueryMode,
+        selected_value: Option<&str>,
+        selected_values: impl IntoIterator<Item = impl Into<String>>,
+        active_value: Option<&str>,
+    ) -> CommandState {
+        let state = if let Some(index_snapshot) = self.index_snapshot.clone() {
+            CommandState::resolve_from_index_snapshot(
+                self.size,
+                self.disabled,
+                open,
+                self.default_open,
+                self.dialog_enabled,
+                self.label.to_string(),
+                self.placeholder.to_string(),
+                query,
+                query_mode,
+                self.selection_mode,
+                selected_value,
+                selected_values,
+                active_value,
+                self.loading_state.clone(),
+                self.empty_label.to_string(),
+                self.dialog_title.clone(),
+                self.dialog_description.clone(),
+                index_snapshot,
+                self.outside_press_policy,
+                self.escape_key_policy,
+                self.initial_focus_intent.clone(),
+                self.focus_restore_intent.clone(),
+                self.tokens,
+            )
+        } else {
+            CommandState::resolve(
+                self.size,
+                self.disabled,
+                open,
+                self.default_open,
+                self.dialog_enabled,
+                self.label.to_string(),
+                self.placeholder.to_string(),
+                query,
+                query_mode,
+                self.selection_mode,
+                selected_value,
+                selected_values,
+                active_value,
+                self.loading_state.clone(),
+                self.empty_label.to_string(),
+                self.dialog_title.clone(),
+                self.dialog_description.clone(),
+                self.groups.iter().map(CommandGroup::descriptor),
+                self.items.iter().map(CommandItem::descriptor),
+                self.outside_press_policy,
+                self.escape_key_policy,
+                self.initial_focus_intent.clone(),
+                self.focus_restore_intent.clone(),
+                self.tokens,
+            )
+        };
+
+        state.with_metrics(self.metrics)
     }
 }
 
@@ -2011,34 +2347,15 @@ impl RenderOnce for Command {
             .as_deref()
             .or(runtime_state.active_value.as_deref())
             .or(selected_value);
-        let state = CommandState::resolve(
-            self.size,
-            self.disabled,
+        let state = self.resolve_state_with_inputs(
             Some(resolved_open),
-            self.default_open,
-            self.dialog_enabled,
-            self.label.to_string(),
-            self.placeholder.to_string(),
             query.as_str(),
             query_mode,
-            self.selection_mode,
             selected_value,
             selected_values.iter().cloned(),
             active_value,
-            self.loading_state,
-            self.empty_label.to_string(),
-            self.dialog_title.clone(),
-            self.dialog_description.clone(),
-            self.groups.iter().map(CommandGroup::descriptor),
-            self.items.iter().map(CommandItem::descriptor),
-            self.outside_press_policy,
-            self.escape_key_policy,
-            self.initial_focus_intent.clone(),
-            self.focus_restore_intent.clone(),
-            self.tokens,
-        )
-        .with_metrics(self.metrics);
-        let scroll_reset_key = state.query().to_owned();
+        );
+        let scroll_reset_key = command_scroll_reset_key(&state);
         if runtime_state.scroll_reset_key != scroll_reset_key {
             scroll_handle.set_offset(point(px(0.0), px(0.0)));
             runtime.update(cx, |runtime, _| {
@@ -2955,6 +3272,15 @@ fn command_clamped_scroll_offset(
     scroll_offset.min(nonnegative_px(total_size - viewport_extent))
 }
 
+fn command_scroll_reset_key(state: &CommandState) -> String {
+    format!(
+        "{}|{:?}|{}",
+        state.query(),
+        state.index_mode(),
+        state.index_revision().unwrap_or_default()
+    )
+}
+
 const DEFAULT_COMMAND_VIEWPORT_ITEM_COUNT: usize = 8;
 
 const fn nonnegative_px(value: UiPx) -> UiPx {
@@ -3108,6 +3434,19 @@ fn command_text_match_rank(
 fn command_words_start_with(text: &str, normalized_query: &str) -> bool {
     text.split(|ch: char| !ch.is_ascii_alphanumeric())
         .any(|word| word.starts_with(normalized_query))
+}
+
+fn command_item_rank_for_source(
+    item: &CommandItemDescriptor,
+    normalized_query: &str,
+    mode: CommandIndexSnapshotMode,
+) -> Option<CommandMatchRank> {
+    let query_is_empty = normalized_query.is_empty();
+    if !mode.should_filter_locally(query_is_empty) {
+        return Some(CommandMatchRank::unfiltered());
+    }
+
+    item.match_rank(normalized_query)
 }
 
 fn sort_ranked_command_items(items: &mut [FlattenedCommandItem]) {
