@@ -108,6 +108,43 @@ enum DockViewportRouteSnapshotResampleBarrier {
     RoutedPreviewTargetWindow,
 }
 
+#[derive(Debug)]
+struct DockViewportDropAuthoritySnapshot {
+    request: DockViewportDropRouteRequest,
+    route_resolution: DockViewportDropRouteResolution,
+}
+
+impl DockViewportDropAuthoritySnapshot {
+    fn resolve(
+        adapter: &DockViewportAdapter,
+        request: DockViewportDropRouteRequest,
+        policy: &crate::DockPolicy,
+    ) -> Self {
+        let route_resolution = adapter.resolve_payload_drop_route_resolution(&request, policy);
+        Self {
+            request,
+            route_resolution,
+        }
+    }
+
+    fn request(&self) -> &DockViewportDropRouteRequest {
+        &self.request
+    }
+
+    fn route_resolution(&self) -> &DockViewportDropRouteResolution {
+        &self.route_resolution
+    }
+
+    fn into_parts(
+        self,
+    ) -> (
+        DockViewportDropRouteRequest,
+        DockViewportDropRouteResolution,
+    ) {
+        (self.request, self.route_resolution)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DockViewportPointerInputSyncRequest {
     window: AnyWindowHandle,
@@ -1542,26 +1579,56 @@ impl DockViewportRuntime {
         let policy = cx.read_entity(&self.controller, |controller, _| {
             controller.workspace().policy().to_owned()
         });
-        let mut route_resolution = self
-            .adapter
-            .resolve_payload_drop_route_resolution(request, &policy);
-        if let Some(resolution) =
-            self.resolve_accepted_routed_preview_resolution(request, &route_resolution, cx)
-        {
+        let initial_snapshot =
+            DockViewportDropAuthoritySnapshot::resolve(&self.adapter, request.clone(), &policy);
+        if let Some(resolution) = self.resolve_accepted_routed_preview_resolution(
+            initial_snapshot.request(),
+            initial_snapshot.route_resolution(),
+            cx,
+        ) {
             self.status.record_route(request, resolution.route());
             return resolution;
         }
 
         if self
-            .route_snapshot_resample_barrier(request, &route_resolution, cx)
+            .route_snapshot_resample_barrier(
+                initial_snapshot.request(),
+                initial_snapshot.route_resolution(),
+                cx,
+            )
             .is_some()
         {
+            let (_request, route_resolution) = initial_snapshot.into_parts();
             let route = route_resolution.into_route();
             let resolution = self.resolve_payload_drop_delivery_resolution(request, route, cx);
             self.status.record_route(request, resolution.route());
             return resolution;
         }
 
+        let resampled_snapshot = self.resampled_drop_authority_snapshot(request, &policy, cx);
+        if let Some(resolution) = self.resolve_accepted_routed_preview_resolution(
+            resampled_snapshot.request(),
+            resampled_snapshot.route_resolution(),
+            cx,
+        ) {
+            let request = resampled_snapshot.request();
+            self.status.record_route(request, resolution.route());
+            return resolution;
+        }
+
+        let (request, route_resolution) = resampled_snapshot.into_parts();
+        let route = route_resolution.into_route();
+        let resolution = self.resolve_payload_drop_delivery_resolution(&request, route, cx);
+        self.status.record_route(&request, resolution.route());
+        resolution
+    }
+
+    fn resampled_drop_authority_snapshot<C: open_gpui::AppContext>(
+        &mut self,
+        request: &DockViewportDropRouteRequest,
+        policy: &crate::DockPolicy,
+        cx: &mut C,
+    ) -> DockViewportDropAuthoritySnapshot {
         self.reconcile_viewport_frame_except_window(request.event_receiver_window(), cx);
         let request = cx.read_entity(&self.controller, |_, app| {
             request
@@ -1570,20 +1637,7 @@ impl DockViewportRuntime {
         });
         let request = self.with_drag_last_hovered_viewport_context(request);
         let request = self.with_focus_stamp_fallback_context(request);
-        route_resolution = self
-            .adapter
-            .resolve_payload_drop_route_resolution(&request, &policy);
-        if let Some(resolution) =
-            self.resolve_accepted_routed_preview_resolution(&request, &route_resolution, cx)
-        {
-            self.status.record_route(&request, resolution.route());
-            return resolution;
-        }
-
-        let route = route_resolution.into_route();
-        let resolution = self.resolve_payload_drop_delivery_resolution(&request, route, cx);
-        self.status.record_route(&request, resolution.route());
-        resolution
+        DockViewportDropAuthoritySnapshot::resolve(&self.adapter, request, policy)
     }
 
     fn with_drag_last_hovered_viewport_context(
