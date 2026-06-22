@@ -4,7 +4,7 @@ title: open-gpui table and virtualizer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 8b4237b
+git_commit: 474ac18
 verified_by:
   - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-core virtualizer table
@@ -26,13 +26,17 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_composition overlay_gallery_smoke_closes_alert_dialog_from_action_and_escape
   - cargo nextest run -p open-gpui-ui-foundation-gallery overlay_gallery_smoke_dismisses_popover_from_outside_press overlay_gallery_smoke_opens_hover_card_from_real_trigger_and_dismisses overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape overlay_gallery_smoke_closes_non_modal_sheet_from_outside_press overlay_gallery_smoke_closes_menu_from_escape_and_outside_press overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses components_gallery_smoke_closes_select_popup_from_outside_press
   - cargo nextest run -p open-gpui-ui-components overlay_adapter_config_defaults_follow_overlay_kind_policy overlay_open_change_helpers_match_core_policies
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components
+  - cargo nextest run -p open-gpui-ui-foundation-gallery
+  - git diff --check
 ---
 
 # Current State
 
-- Goal: Complete the Table / Virtualizer performance follow-up after `docs/plans/2026-06-21-001-feat-ui-table-virtualizer-roadmap-plan.md`.
+- Goal: Plan the `VirtualizedList` GPUI renderer follow-up after the feedback/tree/virtualized-list productization slice.
 - Branch: `main`
-- Last verified: 2026-06-22, full `open-gpui-ui-core` + `open-gpui-ui-components` + `open-gpui-ui-foundation-gallery` nextest passed 273/273 before commit `8b4237b`, including the new feedback/tree/virtualized_list primitives and the Table runtime/performance regression gates.
+- Last verified: 2026-06-22, focused `open-gpui-ui-components` and `open-gpui-ui-foundation-gallery` nextest passed before commit `474ac18`, including the feedback/tree/virtualized-list productization gates and the Components gallery short-viewport smoke.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -51,9 +55,11 @@ verified_by:
 - Done: Hardened the Table adapter after review: live scroll offsets win after virtualizer measurement snapshots, duplicate row ids get unique render/virtualizer keys, and header/body column minimum widths match.
 - Done: Completed the Table performance follow-up: `TableState` row storage is cheap to clone and exposes a conservative cache key, the GPUI `TableRuntime` caches resolved row models across scroll redraws, `VirtualizerState::resolve_fixed_window` materializes only the visible + overscan window for fixed-height tables, and the Components gallery precomputes table state summaries from lazy static samples instead of rebuilding 10k rows during page render.
 - Done: Productized the pulled `feedback`, `tree`, and `virtualized_list` primitives in the Components gallery. `StatusCue` and `EmptyState` are now official rendered feedback components with catalog entries, signals, gallery samples, root selector smoke coverage, export tests, and theme-intent coverage. `TreeState` and `VirtualizedListState` are now explicit `state-contract` catalog entries with separate readout selectors, signal gates, and gallery readouts.
+- Done: Pushed the productization slice to `origin/main` as commit `474ac18` after rebasing onto remote commit `45d3199`.
+- Done: Wrote the follow-up plan for a real `VirtualizedList` GPUI renderer that composes `VirtualizedListState` with `open_gpui_ui_core::VirtualizerState` instead of treating the state contract as a rendered component.
 - Follow-up: Design real `Tree` and `VirtualizedList` GPUI renderers separately. Keep `VirtualizedListState` as the keyboard/navigation contract unless renderer work proves it should compose more directly with `open_gpui_ui_core::VirtualizerState`, which remains the rendered range engine.
 - Blocked: None.
-- Next action: Run the broader component/gallery nextest suite after final doc review, commit the feedback/tree/virtualized-list productization slice, then plan renderer follow-up work for Tree or VirtualizedList.
+- Next action: Execute `docs/plans/2026-06-22-002-feat-ui-virtualized-list-renderer-plan.md`, starting with the render-plan contract and scroll-to-active helper before promoting `VirtualizedList` to the official component catalog.
 
 # Citations
 
@@ -71,3 +77,5 @@ verified_by:
 [12] Verification command `cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`
 [13] Pull head `f85e91a` - `fix(ui): keep virtualized list test helper import scoped`
 [14] Commit `8b4237b` - `perf(ui-components): cache table virtual windows`
+[15] Commit `474ac18` - `feat(ui-components): productize feedback and state contracts`
+[16] Plan `docs/plans/2026-06-22-002-feat-ui-virtualized-list-renderer-plan.md`
