@@ -762,6 +762,78 @@ fn viewport_runtime_render_registered_viewport_records_window_binding(cx: &mut T
 }
 
 #[open_gpui::test]
+fn viewport_runtime_render_registration_cleans_replaced_space_state(cx: &mut TestAppContext) {
+    let alpha_space = DockSpaceId::from("alpha");
+    let zeta_space = DockSpaceId::from("zeta");
+    let mut graph = DockGraph::new();
+    let alpha_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let zeta_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("z")],
+        selected: Some(item("z")),
+    });
+    graph.set_root(alpha_space.clone(), alpha_tabs);
+    graph.set_root(zeta_space.clone(), zeta_tabs);
+
+    let mut workspace = DockWorkspace::new(alpha_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("z"), "Panel Z", test_view(cx, "Z"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let window = handle(3);
+    let mut runtime = DockViewportRuntime::new(controller);
+
+    assert!(runtime.register_rendered_host_viewport(alpha_space.clone(), window));
+    assert!(runtime.begin_viewport_host_scene(
+        alpha_space.clone(),
+        window.window_id(),
+        DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
+            100.0, 100.0, 360.0, 220.0,
+        ))),
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        point(px(120.0), px(100.0)),
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &alpha_space,
+        window.window_id(),
+        leaf_host_scene_fact(alpha_tabs, alpha_tabs),
+    ));
+    runtime.record_panel_focus(alpha_space.clone(), item("a"));
+
+    assert!(
+        runtime
+            .last_host_scene_screen_position(&alpha_space)
+            .is_some()
+    );
+    assert_eq!(
+        runtime.recorded_had_panel_focus_for_test(&alpha_space),
+        Some(true)
+    );
+
+    assert!(runtime.register_rendered_host_viewport(zeta_space.clone(), window));
+
+    assert_eq!(runtime.adapter().window_for_space(&alpha_space), None);
+    assert_eq!(
+        runtime.adapter().window_for_space(&zeta_space),
+        Some(window)
+    );
+    assert_eq!(runtime.last_host_scene_screen_position(&alpha_space), None);
+    assert_eq!(
+        runtime.recorded_had_panel_focus_for_test(&alpha_space),
+        None
+    );
+    assert!(
+        !runtime.push_viewport_host_scene_fact(
+            &alpha_space,
+            window.window_id(),
+            leaf_host_scene_fact(alpha_tabs, alpha_tabs),
+        ),
+        "replaced rendered-host mapping must reject stale facts for the old space"
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_reconciles_backend_focus_without_route_order_shadow_state(
     cx: &mut TestAppContext,
 ) {

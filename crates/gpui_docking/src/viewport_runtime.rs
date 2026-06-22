@@ -1145,20 +1145,29 @@ impl DockViewportRuntime {
         self.window_ownership
             .register_runtime_window(window.window_id());
         let outcome = self.adapter.register_viewport_with_outcome(space, window);
+        let replaced_windows = self.clear_replaced_viewport_mappings(&outcome, window);
+        DockViewportRuntimeRegistration {
+            outcome,
+            replaced_windows,
+        }
+    }
+
+    fn clear_replaced_viewport_mappings(
+        &mut self,
+        outcome: &DockViewportRegisterOutcome,
+        registered_window: AnyWindowHandle,
+    ) -> Vec<AnyWindowHandle> {
         let mut replaced_windows = Vec::new();
         for removed in outcome.replaced() {
             self.clear_runtime_window_state(&removed.space, removed.window.window_id(), true);
-            if removed.window != window
+            if removed.window != registered_window
                 && self.discard_owned_window(removed.window.window_id())
                 && !replaced_windows.contains(&removed.window)
             {
                 replaced_windows.push(removed.window);
             }
         }
-        DockViewportRuntimeRegistration {
-            outcome,
-            replaced_windows,
-        }
+        replaced_windows
     }
 
     pub(crate) fn register_rendered_host_viewport(
@@ -1173,7 +1182,8 @@ impl DockViewportRuntime {
             Some(existing) if existing == window => false,
             Some(_) => false,
             None => {
-                let _ = self.adapter.register_viewport_with_outcome(space, window);
+                let outcome = self.adapter.register_viewport_with_outcome(space, window);
+                let _ = self.clear_replaced_viewport_mappings(&outcome, window);
                 true
             }
         }
