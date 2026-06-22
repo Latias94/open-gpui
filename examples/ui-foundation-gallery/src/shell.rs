@@ -12,12 +12,12 @@ use open_gpui::{
 use open_gpui_ui_components::{
     AlertDialog, Avatar, AvatarState, BadgeState, Button, ButtonState, ButtonVariant, Checkbox,
     CheckboxState, ColorIntent, Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption,
-    ComboboxState, Command, CommandGroup, CommandItem, CommandOpenMode, CommandState, ContextMenu,
-    Dialog, Field, FieldState, FocusRing, HoverCard, IconButtonState, Kbd, KbdState, Label,
-    LabelState, Listbox, ListboxGroup, ListboxOption, ListboxState, Menu, MenuItem,
-    OverlayResolvedState, Popover, Progress, ProgressState, ScrollArea, Select, SelectOpenMode,
-    SelectState, Separator, SeparatorState, Sheet, Skeleton, SkeletonState, SwitchState, TextInput,
-    TextInputState, ToggleState, Tooltip,
+    ComboboxState, Command, CommandGroup, CommandItem, CommandOpenMode, CommandSelectionMode,
+    CommandState, ContextMenu, Dialog, Field, FieldState, FocusRing, HoverCard, IconButtonState,
+    Kbd, KbdState, Label, LabelState, Listbox, ListboxGroup, ListboxOption, ListboxState, Menu,
+    MenuItem, OverlayResolvedState, Popover, Progress, ProgressState, ScrollArea, Select,
+    SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, Skeleton, SkeletonState,
+    SwitchState, TextInput, TextInputState, ToggleState, Tooltip,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, focus_ring_shadow,
         gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui, init_text_input,
@@ -4095,7 +4095,7 @@ pub(crate) fn component_combobox_samples_section(
 }
 
 pub(crate) fn component_command_samples_section(
-    samples: [pages::components::CommandSample; 3],
+    samples: [pages::components::CommandSample; 4],
 
     tokens: ThemeTokens,
 ) -> impl IntoElement {
@@ -4125,28 +4125,33 @@ pub(crate) fn component_command_samples_section(
 
                     let title = label.clone();
 
-                    let command_items: Vec<_> = state
-                        .standalone_items()
-                        .map(resolved_command_item)
-                        .collect();
-
-                    let command_groups: Vec<CommandGroup> = state
-                        .grouped_groups()
-                        .map(|group_state| resolved_command_group(group_state, &state))
-                        .collect();
-
                     // Keep the gallery sample closed on mount so the page stays scrollable.
 
                     let mut command =
                         Command::new(format!("component-command:{}", sample.id), label.clone())
                             .placeholder(state.placeholder())
                             .default_query(state.query())
+                            .selection_mode(state.selection_mode())
+                            .viewport_item_count(sample.viewport_item_count)
+                            .overscan(sample.overscan)
                             .with_size(state.size())
                             .disabled(state.disabled())
                             .tokens(tokens);
 
+                    if let Some(row_height) = sample.row_height {
+                        command = command.row_height(row_height);
+                    }
+
+                    if let Some(snapshot) = sample.index_snapshot.clone() {
+                        command = command.index_snapshot(snapshot);
+                    }
+
                     if let Some(selected) = state.selected_value() {
                         command = command.selected(selected);
+                    }
+
+                    if state.selection_mode() == CommandSelectionMode::Multiple {
+                        command = command.selected_values(sample.selected_values.iter().cloned());
                     }
 
                     if let Some(active) = state.active_value() {
@@ -4173,12 +4178,12 @@ pub(crate) fn component_command_samples_section(
                         }
                     };
 
-                    for item in command_items.iter() {
-                        command = command.item(item.clone());
+                    for item in sample.items.iter() {
+                        command = command.item(resolved_command_descriptor_item(item));
                     }
 
-                    for group in command_groups.iter() {
-                        command = command.group(group.clone());
+                    for group in sample.groups.iter() {
+                        command = command.group(resolved_command_descriptor_group(group));
                     }
 
                     div()
@@ -4267,25 +4272,29 @@ fn resolved_combobox_group(
     )
 }
 
-fn resolved_command_item(item_state: &open_gpui_ui_components::CommandItemState) -> CommandItem {
-    let mut command_item =
-        CommandItem::new(item_state.value(), item_state.label()).disabled(item_state.disabled());
+fn resolved_command_descriptor_item(
+    descriptor: &open_gpui_ui_components::CommandItemDescriptor,
+) -> CommandItem {
+    let mut command_item = CommandItem::new(descriptor.value(), descriptor.label())
+        .disabled(descriptor.disabled_state());
 
-    if let Some(shortcut) = item_state.shortcut() {
+    if let Some(shortcut) = descriptor.shortcut_ref() {
         command_item = command_item.shortcut(shortcut);
+    }
+
+    for keyword in descriptor.keywords_ref() {
+        command_item = command_item.keyword(keyword);
     }
 
     command_item
 }
 
-fn resolved_command_group(
-    group_state: &open_gpui_ui_components::command::CommandGroupState,
-
-    state: &CommandState,
+fn resolved_command_descriptor_group(
+    descriptor: &open_gpui_ui_components::CommandGroupDescriptor,
 ) -> CommandGroup {
-    state.group_items(group_state.index()).fold(
-        CommandGroup::new(group_state.value(), group_state.label()),
-        |group, item_state| group.item(resolved_command_item(item_state)),
+    descriptor.items_ref().iter().fold(
+        CommandGroup::new(descriptor.value(), descriptor.label()),
+        |group, item| group.item(resolved_command_descriptor_item(item)),
     )
 }
 
@@ -4386,6 +4395,8 @@ fn component_command_state_row(state: &CommandState) -> impl IntoElement {
     let selected = state.selected_value().unwrap_or("none");
 
     let active = state.active_value().unwrap_or("none");
+    let revision = state.index_revision().unwrap_or("local");
+    let selected_count = state.selected_values().len();
 
     div()
         .flex()
@@ -4406,15 +4417,22 @@ fn component_command_state_row(state: &CommandState) -> impl IntoElement {
             active
         ))
         .child(format!(
-            "{} groups / {} of {} commands / {}",
+            "{} groups / {} of {} commands / {:?}",
             state.groups().len(),
             state.filtered_item_count(),
             state.total_item_count(),
+            state.selection_mode()
+        ))
+        .child(format!(
+            "{} / index {} / {:?} / {} chips",
             if state.dialog().is_some() {
                 "dialog"
             } else {
                 "inline"
-            }
+            },
+            revision,
+            state.index_mode(),
+            selected_count
         ))
 }
 

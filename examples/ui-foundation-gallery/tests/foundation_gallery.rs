@@ -4,11 +4,11 @@ use open_gpui::{
 };
 use open_gpui_ui_components::{
     AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant, ComboboxOpenMode,
-    CommandOpenMode, DialogOpenMode, FeedbackIntent, HoverCardOpenIntent, HoverCardOpenMode,
-    MenuItemKind, MenuOpenMode, OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis,
-    ScrollResetPolicy, SelectOpenMode, SheetCloseAffordance, SheetModalMode, SheetOpenMode,
-    SheetSide, ThemeMode, ToggleVariant, TooltipOpenIntent, TreeKeyboardAction,
-    VirtualizedListScrollStrategy,
+    CommandIndexSnapshotMode, CommandOpenMode, CommandSelectionMode, DialogOpenMode,
+    FeedbackIntent, HoverCardOpenIntent, HoverCardOpenMode, MenuItemKind, MenuOpenMode,
+    OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, ThemeMode, ToggleVariant,
+    TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
     gpui_adapter::{DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state},
 };
 use open_gpui_ui_core::{
@@ -1461,15 +1461,15 @@ fn components_page_samples_expose_component_metadata() {
     assert!(comboboxes[2].state.disabled());
     assert!(!comboboxes[2].state.open());
 
-    assert_eq!(commands.len(), 3);
-    assert_eq!(commands[0].id, "workspace-command");
+    assert_eq!(commands.len(), 4);
+    assert_eq!(commands[0].id, "ranked-search");
     assert_eq!(commands[0].state.open_mode(), CommandOpenMode::Controlled);
     assert!(commands[0].state.loading().is_none());
     assert!(commands[0].state.open());
     assert!(commands[0].state.dialog().is_some());
     assert_eq!(commands[0].state.list_role(), Role::ListBox);
-    assert_eq!(commands[0].state.selected_value(), Some("new-file"));
-    assert_eq!(commands[0].state.filtered_item_count(), 2);
+    assert_eq!(commands[0].state.selected_value(), Some("open-file"));
+    assert_eq!(commands[0].state.filtered_item_count(), 3);
     assert!(
         commands[0]
             .state
@@ -1477,16 +1477,28 @@ fn components_page_samples_expose_component_metadata() {
             .iter()
             .any(|item| item.shortcut().is_some())
     );
-    assert!(commands[1].state.loading().is_some());
     assert_eq!(
-        commands[1].state.loading().unwrap().message(),
-        "Indexing commands"
+        commands[1].state.selection_mode(),
+        CommandSelectionMode::Multiple
     );
-    assert!(commands[1].state.loading().is_some());
-    assert!(commands[1].state.empty());
-    assert!(commands[2].state.loading().is_none());
-    assert!(commands[2].state.disabled());
-    assert!(!commands[2].state.open());
+    assert_eq!(commands[1].state.selected_chips().len(), 2);
+    assert_eq!(commands[1].state.filtered_item_count(), 1);
+    assert_eq!(commands[2].state.total_item_count(), 10_000);
+    assert_eq!(commands[2].state.filtered_item_count(), 10_000);
+    assert_eq!(commands[2].viewport_item_count, 7);
+    assert!(commands[3].state.loading().is_some());
+    assert_eq!(
+        commands[3].state.loading().unwrap().message(),
+        "Refreshing command index"
+    );
+    assert_eq!(
+        commands[3].state.index_revision(),
+        Some("workspace-index-v3")
+    );
+    assert_eq!(
+        commands[3].state.index_mode(),
+        CommandIndexSnapshotMode::PreRankedFilter
+    );
 
     assert_eq!(labels.len(), 4);
     assert_eq!(labels[0].state.role(), Role::Label);
@@ -2061,9 +2073,10 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     let framework = &comboboxes[0].state;
     let empty_combo = &comboboxes[1].state;
     let disabled_combo = &comboboxes[2].state;
-    let workspace = &commands[0].state;
-    let empty_command = &commands[1].state;
-    let disabled_command = &commands[2].state;
+    let ranked = &commands[0].state;
+    let multi = &commands[1].state;
+    let virtualized = &commands[2].state;
+    let indexed = &commands[3].state;
 
     assert_eq!(framework.open_mode(), ComboboxOpenMode::Controlled);
     assert!(framework.open());
@@ -2088,40 +2101,47 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     assert!(!disabled_combo.open());
     assert!(!disabled_combo.input().editable());
 
-    assert_eq!(workspace.open_mode(), CommandOpenMode::Controlled);
-    assert!(workspace.open());
-    assert_eq!(workspace.input_role(), Role::TextInput);
-    assert_eq!(workspace.list_role(), Role::ListBox);
-    assert_eq!(workspace.selected_value(), Some("new-file"));
-    assert_eq!(workspace.active_value(), Some("open-file"));
-    assert_ne!(workspace.selected_value(), workspace.active_value());
-    assert_eq!(workspace.filtered_item_count(), 2);
-    assert_eq!(workspace.groups().len(), 2);
-    assert!(workspace.groups()[0].standalone());
-    assert!(!workspace.groups()[1].standalone());
-    assert!(
-        workspace
-            .items()
-            .iter()
-            .any(|item| item.shortcut().is_some())
-    );
-    let dialog = workspace
-        .dialog()
-        .expect("workspace command is dialog-backed");
+    assert_eq!(ranked.open_mode(), CommandOpenMode::Controlled);
+    assert!(ranked.open());
+    assert_eq!(ranked.input_role(), Role::TextInput);
+    assert_eq!(ranked.list_role(), Role::ListBox);
+    assert_eq!(ranked.selected_value(), Some("open-file"));
+    assert_eq!(ranked.active_value(), Some("open-file"));
+    assert_eq!(ranked.filtered_item_count(), 3);
+    assert_eq!(ranked.groups().len(), 1);
+    assert!(ranked.groups()[0].standalone());
+    assert!(ranked.items().iter().any(|item| item.shortcut().is_some()));
+    let dialog = ranked.dialog().expect("ranked command is dialog-backed");
     assert!(dialog.open());
     assert_eq!(dialog.overlay().policy().kind(), OverlayLayerKind::Modal);
     assert_eq!(dialog.description(), Some("Run a workspace command"));
 
-    assert!(empty_command.loading().is_some());
+    assert_eq!(multi.selection_mode(), CommandSelectionMode::Multiple);
+    assert_eq!(multi.selected_values().len(), 2);
+    assert_eq!(multi.selected_chips().len(), 2);
+    assert_eq!(multi.filtered_item_count(), 1);
+    assert_eq!(virtualized.total_item_count(), 10_000);
+    assert_eq!(virtualized.filtered_item_count(), 10_000);
+    assert_eq!(virtualized.active_value(), Some("command-0000"));
+    assert!(indexed.loading().is_some());
+    assert_eq!(indexed.loading().unwrap().role(), Role::ProgressIndicator);
+    assert_eq!(indexed.index_revision(), Some("workspace-index-v3"));
     assert_eq!(
-        empty_command.loading().unwrap().role(),
-        Role::ProgressIndicator
+        indexed.index_mode(),
+        CommandIndexSnapshotMode::PreRankedFilter
     );
-    assert!(empty_command.empty());
-    assert!(empty_command.content_visible());
-    assert!(disabled_command.disabled());
-    assert!(!disabled_command.open());
-    assert!(!disabled_command.input().editable());
+    assert_eq!(
+        indexed
+            .items()
+            .iter()
+            .map(|item| item.value().to_owned())
+            .collect::<Vec<_>>(),
+        vec![
+            "recent-open".to_string(),
+            "open-file".to_string(),
+            "archive".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -2850,6 +2870,74 @@ fn components_gallery_smoke_focused_table_scroll_stays_inside_sample(
         cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0010")
             .is_some(),
         "expected focused virtualized Table row 0010 to enter the rendered window after internal scroll"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_focused_command_samples_cover_depth_behaviors(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_components_gallery(cx);
+
+    scroll_page_until_visible(cx, "component-catalog:Command");
+    click(cx, "component-catalog:Command");
+    settle(cx);
+
+    for selector in [
+        "gallery:component-command-sample:ranked-search",
+        "gallery:component-command-sample:multi-select",
+        "gallery:component-command-sample:virtualized-index",
+        "gallery:component-command-sample:indexed-loading",
+    ] {
+        assert!(
+            cx.debug_bounds(selector).is_some(),
+            "expected focused Command mode to render `{selector}`"
+        );
+    }
+
+    assert!(
+        cx.debug_bounds("command:component-command:multi-select:selected-chip:open-file")
+            .is_some(),
+        "expected multi-select Command sample to render a hidden selected chip"
+    );
+    assert!(
+        cx.debug_bounds("command:component-command:multi-select:selected-chip:new-file")
+            .is_some(),
+        "expected multi-select Command sample to render a visible selected chip"
+    );
+    assert!(
+        cx.debug_bounds("command:component-command:indexed-loading:content")
+            .is_some(),
+        "expected indexed/loading Command sample to render inline content"
+    );
+
+    let virtualized_sample = bounds(cx, "gallery:component-command-sample:virtualized-index");
+    let command_viewport = bounds(cx, "scroll-area:Virtualized commands:command-list-scroll");
+
+    assert!(
+        cx.debug_bounds("command:component-command:virtualized-index:row:command-0000")
+            .is_some(),
+        "expected initial virtualized Command row to render"
+    );
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: command_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-520.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let virtualized_after = bounds(cx, "gallery:component-command-sample:virtualized-index");
+
+    assert_eq!(
+        virtualized_after.top(),
+        virtualized_sample.top(),
+        "expected focused Command viewport wheel input to stay inside the sample"
+    );
+    assert!(
+        cx.debug_bounds("command:component-command:virtualized-index:row:command-0010")
+            .is_some(),
+        "expected virtualized Command overscan rows to stay bounded and inspectable"
     );
 }
 

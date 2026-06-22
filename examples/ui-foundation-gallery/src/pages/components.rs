@@ -4,20 +4,20 @@ use open_gpui::{App, BorrowAppContext, Global, ParentElement, Styled, div, rgb};
 use open_gpui_ui_components::{
     Avatar, AvatarState, Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant,
     Checkbox, CheckboxState, ComboboxGroupDescriptor, ComboboxOptionDescriptor, ComboboxState,
-    CommandGroupDescriptor, CommandItemDescriptor, CommandLoadingState, CommandQueryMode,
-    CommandSelectionMode, CommandState, EmptyState, EmptyStateState, FeedbackIntent, Field,
-    FieldState, IconButton, IconButtonState, Kbd, KbdState, Label, LabelState,
-    ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState, Progress, ProgressState,
-    RadioGroupState, RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy,
-    SelectState, Separator, SeparatorState, SidebarCollapseMode, SidebarItemDescriptor,
-    SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton, SkeletonState,
-    SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState, Switch, SwitchState, Table,
-    TableColumn, TableFilter, TablePagination, TableRenderPlan, TableRow, TableSort, TableState,
-    Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState,
-    Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
-    ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState, VirtualizedList,
-    VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRenderPlan,
-    VirtualizedListScrollStrategy, VirtualizedListState,
+    CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
+    CommandLoadingState, CommandQueryMode, CommandSelectionMode, CommandState, EmptyState,
+    EmptyStateState, FeedbackIntent, Field, FieldState, IconButton, IconButtonState, Kbd, KbdState,
+    Label, LabelState, ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState, Progress,
+    ProgressState, RadioGroupState, RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState,
+    ScrollResetPolicy, SelectState, Separator, SeparatorState, SidebarCollapseMode,
+    SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
+    Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
+    Switch, SwitchState, Table, TableColumn, TableFilter, TablePagination, TableRenderPlan,
+    TableRow, TableSort, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
+    TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
+    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
+    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -1815,6 +1815,20 @@ pub struct CommandSample {
     pub id: &'static str,
     /// Sample summary.
     pub summary: &'static str,
+    /// Standalone descriptors consumed by the concrete command renderer.
+    pub items: Arc<[CommandItemDescriptor]>,
+    /// Group descriptors consumed by the concrete command renderer.
+    pub groups: Arc<[CommandGroupDescriptor]>,
+    /// Optional caller-owned command index snapshot.
+    pub index_snapshot: Option<CommandIndexSnapshot>,
+    /// Persistent selected values for multi-select samples.
+    pub selected_values: Arc<[String]>,
+    /// Estimated visible row count for the result viewport.
+    pub viewport_item_count: usize,
+    /// Optional fixed row height for virtualized command results.
+    pub row_height: Option<UiPx>,
+    /// Overscan row budget for virtualized command results.
+    pub overscan: usize,
     /// Resolved state.
     pub state: CommandState,
 }
@@ -3865,93 +3879,148 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
     ]
 }
 
+static VIRTUALIZED_COMMAND_ITEMS: LazyLock<Arc<[CommandItemDescriptor]>> = LazyLock::new(|| {
+    (0..10_000)
+        .map(|index| {
+            CommandItemDescriptor::new(
+                format!("command-{index:04}"),
+                format!("Command item {index:04}"),
+            )
+            .keyword(format!("release-{index:04}"))
+        })
+        .collect::<Vec<_>>()
+        .into()
+});
+
 /// Returns command palette samples backed by real component state.
-pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
-    let quick_items = vec![
-        CommandItemDescriptor::new("open-file", "Open File")
-            .shortcut("Ctrl+O")
-            .disabled(false),
-    ];
-    let command_groups = vec![
-        CommandGroupDescriptor::new("file", "File").items(vec![
-            CommandItemDescriptor::new("new-file", "New File").shortcut("Ctrl+N"),
-            CommandItemDescriptor::new("close-window", "Close Window")
-                .shortcut("Alt+F4")
-                .disabled(true),
-        ]),
+pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 4] {
+    let ranked_items: Arc<[CommandItemDescriptor]> = vec![
+        CommandItemDescriptor::new("archive", "Archive").keyword("file"),
+        CommandItemDescriptor::new("open-file", "Open File").shortcut("Ctrl+O"),
+        CommandItemDescriptor::new("file-action", "Launcher").shortcut("Ctrl+L"),
+    ]
+    .into();
+    let ranked_groups: Arc<[CommandGroupDescriptor]> = vec![
         CommandGroupDescriptor::new("view", "View").item(
-            CommandItemDescriptor::new("toggle-sidebar", "Toggle Sidebar").shortcut("Ctrl+B"),
+            CommandItemDescriptor::new("toggle-sidebar", "Toggle Sidebar")
+                .keyword("layout")
+                .shortcut("Ctrl+B"),
         ),
-    ];
-    let empty_items = vec![
-        CommandItemDescriptor::new("save", "Save")
-            .shortcut("Ctrl+S")
-            .disabled(false),
-    ];
-    let disabled_items = Vec::new();
-    let loading = CommandLoadingState::new("Indexing commands", None);
+    ]
+    .into();
+    let multi_items: Arc<[CommandItemDescriptor]> = vec![
+        CommandItemDescriptor::new("open-file", "Open File").shortcut("Ctrl+O"),
+        CommandItemDescriptor::new("new-file", "New File").shortcut("Ctrl+N"),
+        CommandItemDescriptor::new("delete-file", "Delete File").disabled(true),
+    ]
+    .into();
+    let virtualized_items = VIRTUALIZED_COMMAND_ITEMS.clone();
+    let indexed_snapshot = CommandIndexSnapshot::new("workspace-index-v3")
+        .mode(CommandIndexSnapshotMode::PreRankedFilter)
+        .loading(CommandLoadingState::new(
+            "Refreshing command index",
+            Some(45),
+        ))
+        .item(CommandItemDescriptor::new("recent-open", "Open Recent").keyword("file"))
+        .item(CommandItemDescriptor::new("open-file", "Open File").shortcut("Ctrl+O"))
+        .item(CommandItemDescriptor::new("archive", "Archive").keyword("file"))
+        .group(
+            CommandGroupDescriptor::new("workspace", "Workspace")
+                .item(CommandItemDescriptor::new("switch-window", "Switch Window"))
+                .item(CommandItemDescriptor::new("close-window", "Close Window").disabled(true)),
+        );
 
     [
-        CommandSample {
-            id: "workspace-command",
-            summary: "Dialog-backed command palette keeps selected and active state distinct.",
-            state: command_state(
-                Size::Medium,
-                false,
-                Some(true),
-                false,
-                "Workspace commands",
-                "Type a command",
-                "file",
-                Some("new-file"),
-                Some("open-file"),
-                None,
-                &quick_items,
-                &command_groups,
-                true,
-                tokens,
-            ),
-        },
-        CommandSample {
-            id: "empty-command",
-            summary: "Filtered command palette keeps empty and loading states explicit.",
-            state: command_state(
-                Size::Small,
-                false,
-                Some(true),
-                false,
-                "Empty commands",
-                "Search commands",
-                "deploy",
-                None,
-                None,
-                Some(loading.clone()),
-                &empty_items,
-                &[],
-                false,
-                tokens,
-            ),
-        },
-        CommandSample {
-            id: "disabled-command",
-            summary: "Disabled command surface blocks editing and hides deferred content.",
-            state: command_state(
-                Size::Small,
-                true,
-                None,
-                true,
-                "Disabled commands",
-                "Unavailable",
-                "",
-                None,
-                None,
-                None,
-                &disabled_items,
-                &[],
-                false,
-                tokens,
-            ),
-        },
+        command_sample_from_local(
+            "ranked-search",
+            "Ranked query puts label and value matches ahead of keyword-only commands.",
+            Size::Medium,
+            false,
+            Some(true),
+            false,
+            "Ranked commands",
+            "Search commands",
+            "file",
+            CommandSelectionMode::Single,
+            Some("open-file"),
+            Vec::<String>::new(),
+            Some("open-file"),
+            None,
+            ranked_items,
+            ranked_groups,
+            true,
+            8,
+            None,
+            6,
+            tokens,
+        ),
+        command_sample_from_local(
+            "multi-select",
+            "Multi-select keeps selected chips even when query filtering hides a command.",
+            Size::Small,
+            false,
+            Some(true),
+            false,
+            "Bulk commands",
+            "Filter commands",
+            "new",
+            CommandSelectionMode::Multiple,
+            None,
+            vec!["open-file".to_string(), "new-file".to_string()],
+            Some("new-file"),
+            None,
+            multi_items,
+            Arc::from([]),
+            false,
+            6,
+            None,
+            4,
+            tokens,
+        ),
+        command_sample_from_local(
+            "virtualized-index",
+            "Ten-thousand command results render through the fixed-row virtualizer.",
+            Size::Small,
+            false,
+            Some(true),
+            false,
+            "Virtualized commands",
+            "Search large index",
+            "",
+            CommandSelectionMode::Single,
+            Some("command-0000"),
+            Vec::<String>::new(),
+            Some("command-0000"),
+            None,
+            virtualized_items,
+            Arc::from([]),
+            false,
+            7,
+            Some(ui_px(28.0)),
+            4,
+            tokens,
+        ),
+        command_sample_from_snapshot(
+            "indexed-loading",
+            "App-owned pre-ranked snapshot carries revision and loading metadata without a registry.",
+            Size::Small,
+            false,
+            Some(true),
+            false,
+            "Indexed commands",
+            "Search indexed commands",
+            "file",
+            CommandSelectionMode::Single,
+            Some("open-file"),
+            Vec::<String>::new(),
+            Some("recent-open"),
+            indexed_snapshot,
+            false,
+            6,
+            None,
+            4,
+            tokens,
+        ),
     ]
 }
 
@@ -4141,7 +4210,10 @@ fn combobox_state(
     )
 }
 
-fn command_state(
+#[allow(clippy::too_many_arguments)]
+fn command_sample_from_local(
+    id: &'static str,
+    summary: &'static str,
     size: Size,
     disabled: bool,
     open: Option<bool>,
@@ -4149,15 +4221,20 @@ fn command_state(
     label: &str,
     placeholder: &str,
     query: &str,
+    selection_mode: CommandSelectionMode,
     selected: Option<&str>,
+    selected_values: Vec<String>,
     active: Option<&str>,
     loading: Option<CommandLoadingState>,
-    items: &[CommandItemDescriptor],
-    groups: &[CommandGroupDescriptor],
+    items: Arc<[CommandItemDescriptor]>,
+    groups: Arc<[CommandGroupDescriptor]>,
     dialog: bool,
+    viewport_item_count: usize,
+    row_height: Option<UiPx>,
+    overscan: usize,
     tokens: ThemeTokens,
-) -> CommandState {
-    CommandState::resolve(
+) -> CommandSample {
+    let state = CommandState::resolve(
         size,
         disabled,
         open,
@@ -4167,9 +4244,9 @@ fn command_state(
         placeholder,
         query,
         CommandQueryMode::Uncontrolled,
-        CommandSelectionMode::Single,
+        selection_mode,
         selected,
-        Vec::<String>::new(),
+        selected_values.iter().cloned(),
         active,
         loading,
         "No results",
@@ -4182,7 +4259,80 @@ fn command_state(
         InitialFocusIntent::FirstFocusable,
         FocusRestoreIntent::Trigger,
         tokens,
-    )
+    );
+    CommandSample {
+        id,
+        summary,
+        items,
+        groups,
+        index_snapshot: None,
+        selected_values: selected_values.into(),
+        viewport_item_count,
+        row_height,
+        overscan,
+        state,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn command_sample_from_snapshot(
+    id: &'static str,
+    summary: &'static str,
+    size: Size,
+    disabled: bool,
+    open: Option<bool>,
+    default_open: bool,
+    label: &str,
+    placeholder: &str,
+    query: &str,
+    selection_mode: CommandSelectionMode,
+    selected: Option<&str>,
+    selected_values: Vec<String>,
+    active: Option<&str>,
+    snapshot: CommandIndexSnapshot,
+    dialog: bool,
+    viewport_item_count: usize,
+    row_height: Option<UiPx>,
+    overscan: usize,
+    tokens: ThemeTokens,
+) -> CommandSample {
+    let state = CommandState::resolve_from_index_snapshot(
+        size,
+        disabled,
+        open,
+        default_open,
+        dialog,
+        label,
+        placeholder,
+        query,
+        CommandQueryMode::Uncontrolled,
+        selection_mode,
+        selected,
+        selected_values.iter().cloned(),
+        active,
+        None,
+        "No results",
+        dialog.then_some("Command palette".to_string()),
+        dialog.then_some("Run a workspace command".to_string()),
+        snapshot.clone(),
+        OutsidePressPolicy::DismissAndConsume,
+        EscapeKeyPolicy::Dismiss,
+        InitialFocusIntent::FirstFocusable,
+        FocusRestoreIntent::Trigger,
+        tokens,
+    );
+    CommandSample {
+        id,
+        summary,
+        items: Arc::from([]),
+        groups: Arc::from([]),
+        index_snapshot: Some(snapshot),
+        selected_values: selected_values.into(),
+        viewport_item_count,
+        row_height,
+        overscan,
+        state,
+    }
 }
 
 fn listbox_group_descriptor(group: &ListboxGroupSample) -> ListboxGroupDescriptor {
