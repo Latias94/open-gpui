@@ -32,7 +32,9 @@ use std::{
     cell::RefCell, ffi::c_void, fmt::Display, num::NonZeroU32, ptr::NonNull, rc::Rc, sync::Arc,
 };
 
-use super::{X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES};
+use super::{
+    X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES, point_from_x11_window_coords,
+};
 
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
@@ -1409,13 +1411,14 @@ impl PlatformWindow for X11Window {
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
+        let scale_factor = self.0.state.borrow().scale_factor;
         get_reply(
             || "X11 QueryPointer failed.",
             self.0.xcb.query_pointer(self.0.x_window),
         )
         .log_err()
         .map_or(Point::new(Pixels::ZERO, Pixels::ZERO), |reply| {
-            Point::new((reply.root_x as u32).into(), (reply.root_y as u32).into())
+            point_from_x11_window_coords(reply.win_x, reply.win_y, scale_factor)
         })
     }
 

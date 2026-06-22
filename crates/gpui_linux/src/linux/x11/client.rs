@@ -47,7 +47,7 @@ use super::{
     XimHandler, button_or_scroll_from_event_detail, check_reply,
     clipboard::{self, Clipboard},
     get_reply, get_valuator_axis_index, handle_connection_error, modifiers_from_state,
-    pressed_button_from_mask, xcb_flush,
+    point_from_x11_window_coords, pressed_button_from_mask, xcb_flush,
 };
 
 use crate::linux::{
@@ -853,7 +853,7 @@ impl X11Client {
                         state.xcb_connection.query_pointer(event.window),
                     ) {
                         state.xdnd_state.position =
-                            Point::new(px(pos.win_x as f32), px(pos.win_y as f32));
+                            point_from_x11_window_coords(pos.win_x, pos.win_y, state.scale_factor);
                     }
                     if !state.xdnd_state.retrieved {
                         check_reply(

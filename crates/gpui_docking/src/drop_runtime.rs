@@ -526,7 +526,9 @@ mod tests {
         Some(insert_index)
     }
 
-    fn root_edge_leaf_bounds_and_position(zone: DropZone) -> (Bounds<Pixels>, Point<Pixels>) {
+    fn root_edge_passive_leaf_bounds_and_position(
+        zone: DropZone,
+    ) -> (Bounds<Pixels>, Point<Pixels>) {
         let root_bounds = bounds(0.0, 0.0, 400.0, 240.0);
         let position = geometry::drop_boxes(root_bounds, DockDropBoxSet::Outer)
             .into_iter()
@@ -534,8 +536,8 @@ mod tests {
             .map(|drop_box| drop_box.hit_bounds.center())
             .unwrap_or_else(|| panic!("{zone:?} outer box should exist"));
         let leaf_bounds = Bounds::new(
-            point(position.x - px(60.0), position.y - px(60.0)),
-            size(px(120.0), px(120.0)),
+            point(position.x - px(2.0), position.y - px(100.0)),
+            size(px(300.0), px(200.0)),
         );
         (leaf_bounds, position)
     }
@@ -858,7 +860,7 @@ mod tests {
             DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
                 target_tabs: tabs,
                 target_index: 2,
-                bounds: bounds(140.0, 188.0, 100.0, 24.0),
+                bounds: bounds(180.0, 188.0, 40.0, 24.0),
                 is_central: false,
             }),
             &DockPolicy::default()
@@ -1075,7 +1077,7 @@ mod tests {
             DropZone::Bottom,
         ] {
             let mut runtime = DockDropRuntime::default();
-            let (leaf_bounds, position) = root_edge_leaf_bounds_and_position(zone);
+            let (leaf_bounds, position) = root_edge_passive_leaf_bounds_and_position(zone);
 
             runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
             assert!(runtime.push_scene_fact(
