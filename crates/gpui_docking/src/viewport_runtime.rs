@@ -143,6 +143,12 @@ struct DockViewportActivePayloadDrag {
     /// This is preview bookkeeping, not hover authority. Releases still re-resolve current backend
     /// facts unless they can replay an accepted routed preview.
     last_routed_viewport_identity: Option<DockViewportIdentity>,
+    /// Most recent route-ready viewport selected by current drag hover authority.
+    ///
+    /// Mirrors ImGui's `MouseLastHoveredViewport`: it is used to keep the mouse reference viewport
+    /// stable when the backend cannot report a hovered viewport for a drag snapshot. It does not
+    /// authorize delivery by itself; targets still need the normal accepted-preview path.
+    last_hovered_viewport_identity: Option<DockViewportIdentity>,
 }
 
 impl DockViewportActivePayloadDrag {
@@ -156,6 +162,7 @@ impl DockViewportActivePayloadDrag {
             source_window,
             source_window_accepts_pointer_input,
             last_routed_viewport_identity: None,
+            last_hovered_viewport_identity: None,
         }
     }
 
@@ -187,9 +194,19 @@ impl DockViewportActivePayloadDrag {
         self.last_routed_viewport_identity = identity;
     }
 
+    fn record_last_hovered_viewport_identity(&mut self, identity: Option<DockViewportIdentity>) {
+        if let Some(identity) = identity {
+            self.last_hovered_viewport_identity = Some(identity);
+        }
+    }
+
     #[cfg(test)]
     fn last_routed_viewport_identity(&self) -> Option<&DockViewportIdentity> {
         self.last_routed_viewport_identity.as_ref()
+    }
+
+    fn last_hovered_viewport_identity(&self) -> Option<&DockViewportIdentity> {
+        self.last_hovered_viewport_identity.as_ref()
     }
 
     fn clear_last_routed_viewport_identity_if_window_matches(&mut self, window_id: WindowId) {
@@ -200,6 +217,17 @@ impl DockViewportActivePayloadDrag {
         {
             self.last_routed_viewport_identity = None;
         }
+        self.clear_last_hovered_viewport_identity_if_window_matches(window_id);
+    }
+
+    fn clear_last_hovered_viewport_identity_if_window_matches(&mut self, window_id: WindowId) {
+        if self
+            .last_hovered_viewport_identity
+            .as_ref()
+            .is_some_and(|identity| identity.window_id() == window_id)
+        {
+            self.last_hovered_viewport_identity = None;
+        }
     }
 
     fn clear_last_routed_viewport_identity_for_session(
@@ -208,6 +236,7 @@ impl DockViewportActivePayloadDrag {
     ) {
         if self.matches_session(session) {
             self.last_routed_viewport_identity = None;
+            self.last_hovered_viewport_identity = None;
         }
     }
 }
@@ -969,6 +998,14 @@ impl DockViewportRuntime {
         {
             active_drag.record_last_routed_viewport_identity(Some(identity));
         }
+        if let Some(active_drag) = self.active_drag.as_mut()
+            && let Some(identity) = crate::route_authority_viewport_identity_from_resolution(
+                resolution,
+                Some(active_drag.session()),
+            )
+        {
+            active_drag.record_last_hovered_viewport_identity(Some(identity));
+        }
         let next = match resolution.route() {
             DockViewportDropRoute::Local { .. } | DockViewportDropRoute::KnownViewport { .. } => {
                 resolution
@@ -1559,6 +1596,7 @@ impl DockViewportRuntime {
                 .clone()
                 .with_resampled_platform_target_context_from_app(app)
         });
+        let request = self.with_last_hovered_viewport_context(request);
         route_resolution = self
             .adapter
             .resolve_payload_drop_route_resolution(&request, &policy);
@@ -1573,6 +1611,39 @@ impl DockViewportRuntime {
         let resolution = self.resolve_payload_drop_delivery_resolution(&request, route, cx);
         self.status.record_route(&request, resolution.route());
         resolution
+    }
+
+    fn with_last_hovered_viewport_context(
+        &self,
+        request: DockViewportDropRouteRequest,
+    ) -> DockViewportDropRouteRequest {
+        if request.release_origin() != crate::interaction::DockPayloadDropReleaseOrigin::HoveredHost
+        {
+            return request;
+        }
+        let Some(drag_session) = request.drag_session() else {
+            return request;
+        };
+        let Some(active_drag) = self
+            .active_drag
+            .as_ref()
+            .filter(|drag| drag.matches_session(drag_session))
+        else {
+            return request;
+        };
+        let Some(identity) = active_drag.last_hovered_viewport_identity() else {
+            return request;
+        };
+        let Some(window) = self.adapter.window_for_space(identity.space()) else {
+            return request;
+        };
+        if window.window_id() != identity.window_id() {
+            return request;
+        }
+        if self.adapter.window_route_ready(identity.window_id()) != Some(true) {
+            return request;
+        }
+        request.with_last_hovered_viewport_window(identity.window_id())
     }
 
     fn route_resolution_targets_unrefreshable_window<C: open_gpui::AppContext>(

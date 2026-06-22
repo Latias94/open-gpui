@@ -126,7 +126,16 @@ impl DockViewportTargetContext {
         self
     }
 
-    #[cfg(test)]
+    pub(crate) fn with_last_hovered_viewport_window(mut self, window_id: WindowId) -> Self {
+        if matches!(
+            self.trusted_hovered_signal,
+            DockViewportTrustedHoveredSignal::Unavailable
+        ) {
+            self.trusted_hovered_signal = DockViewportTrustedHoveredSignal::Trusted(window_id);
+        }
+        self
+    }
+
     pub(crate) fn into_window_signals(
         self,
     ) -> (
@@ -211,6 +220,38 @@ mod tests {
         assert_eq!(
             context.front_to_back_window_stack_for_hover_fallback(),
             &[top, underlay]
+        );
+    }
+
+    #[test]
+    fn last_hovered_viewport_only_fills_unavailable_hovered_signal() {
+        let last_hovered = WindowId::from(7);
+        let current_hovered = WindowId::from(9);
+
+        let unavailable =
+            DockViewportTargetContext::default().with_last_hovered_viewport_window(last_hovered);
+        assert_eq!(unavailable.trusted_hovered_window(), Some(last_hovered));
+
+        let trusted_current = DockViewportTargetContext::from_window_signals(
+            DockViewportTrustedHoveredSignal::Trusted(current_hovered),
+            DockViewportFrontToBackWindowStack::default(),
+        )
+        .with_last_hovered_viewport_window(last_hovered);
+        assert_eq!(
+            trusted_current.trusted_hovered_window(),
+            Some(current_hovered),
+            "fresh backend hovered-window authority wins over the drag's last hovered viewport"
+        );
+
+        let trusted_none = DockViewportTargetContext::from_window_signals(
+            DockViewportTrustedHoveredSignal::TrustedNone,
+            DockViewportFrontToBackWindowStack::default(),
+        )
+        .with_last_hovered_viewport_window(last_hovered);
+        assert_eq!(
+            trusted_none.trusted_hovered_signal(),
+            DockViewportTrustedHoveredSignal::TrustedNone,
+            "explicit hovered=None remains authoritative outside the drag fallback path"
         );
     }
 

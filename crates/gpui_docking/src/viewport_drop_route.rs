@@ -770,6 +770,13 @@ impl DockViewportDropRouteRequest {
         self
     }
 
+    pub(crate) fn with_last_hovered_viewport_window(mut self, window_id: WindowId) -> Self {
+        self.platform_signals = self
+            .platform_signals
+            .with_last_hovered_viewport_window(window_id);
+        self
+    }
+
     pub(crate) fn source_space(&self) -> &DockSpaceId {
         &self.source_space
     }

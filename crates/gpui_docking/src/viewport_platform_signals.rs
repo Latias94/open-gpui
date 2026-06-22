@@ -58,6 +58,16 @@ impl DockViewportPlatformSignals {
         self
     }
 
+    pub(crate) fn with_last_hovered_viewport_window(mut self, window_id: WindowId) -> Self {
+        let target_context = self
+            .target_context()
+            .with_last_hovered_viewport_window(window_id);
+        let (trusted_hovered_signal, window_stack) = target_context.into_window_signals();
+        self.trusted_hovered_signal = trusted_hovered_signal;
+        self.window_stack = window_stack;
+        self
+    }
+
     /// Captures app-level signals for release paths that did not sample the hovered window.
     #[cfg(test)]
     pub(crate) fn from_app_without_hovered_window_authority(cx: &App) -> Self {

@@ -334,6 +334,13 @@ pub(crate) fn last_routed_viewport_identity_from_resolution(
     resolution: &DockViewportResolvedDropRoute,
     drag_session: Option<&DockRuntimeDragSession>,
 ) -> Option<DockViewportIdentity> {
+    route_authority_viewport_identity_from_resolution(resolution, drag_session)
+}
+
+pub(crate) fn route_authority_viewport_identity_from_resolution(
+    resolution: &DockViewportResolvedDropRoute,
+    drag_session: Option<&DockRuntimeDragSession>,
+) -> Option<DockViewportIdentity> {
     let resolution_drag_session_id = resolution
         .delivery()
         .and_then(|delivery| delivery.drag_session_id())
