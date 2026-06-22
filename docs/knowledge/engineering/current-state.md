@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: d383026
+git_commit: 697f762
 verified_by:
   - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-core virtualizer table
@@ -49,9 +49,9 @@ verified_by:
 
 # Current State
 
-- Goal: Finish the Command component-depth slice and move to the next component-depth target.
+- Goal: Execute the Table component-depth slice: grouped rows, expansion state, aggregate metadata, pinned-column semantics, and gallery proof.
 - Branch: `main`
-- Last verified: 2026-06-22, Command-focused component and gallery gates passed after commits `41c719a` and `d383026`: `cargo nextest run -p open-gpui-ui-components command`, `cargo nextest run -p open-gpui-ui-foundation-gallery command`, `cargo check -p open-gpui-ui-foundation-gallery`, export / API inventory guards, and `git diff --check` with only Windows LF/CRLF warnings.
+- Last verified: 2026-06-22, Menu / ContextMenu depth gates passed and shipped as `697f762`: `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, focused `cargo nextest run -p open-gpui-ui-components menu`, focused `cargo nextest run -p open-gpui-ui-components context_menu`, focused Overlay gallery menu/context gates, engineering wiki validation, and `git diff --check`.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -89,9 +89,11 @@ verified_by:
 - Done: Promoted focused Command gallery samples for ranked search, multi-select, a 10k-item virtualized command index, and app-owned indexed/loading metadata. Gallery smokes prove focused Command mode renders all samples, selected chips are inspectable, and virtualized sample wheel input stays inside the sample.
 - Done: Wrote `docs/plans/2026-06-22-006-feat-ui-menu-context-menu-depth-plan.md` and implemented the Menu / ContextMenu depth slice through rich item semantics, stable tree paths, caller-owned checkbox/radio checked state, pure typeahead, keyboard submenu open/close targets, local menu scroll carriers, ContextMenu reuse, and expanded Overlay gallery samples.
 - Done: Verified the new Menu / ContextMenu core gates with `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, focused `cargo nextest run -p open-gpui-ui-components menu`, `cargo nextest run -p open-gpui-ui-components context_menu`, focused submenu/runtime tests, focused Overlay gallery menu/context samples, engineering wiki validation, and `git diff --check`. Review follow-up fixed keyboard item-level selection handler parity and ContextMenu placement sizing for long visible menus. Hover corridor submenu opening, menubar, OS menu bridge, app-menu registry, and global command dispatch remain deferred.
+- Done: Committed and pushed the Menu / ContextMenu depth slice as `697f762`.
+- Done: Wrote `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md` for the next Table depth slice. The plan focuses on making grouped and expanded row-model stages real, adding built-in aggregate metadata, splitting visible columns into pinned left/center/right regions, and proving the behavior in focused Components gallery Table samples.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Blocked: None.
-- Next action: Commit the Menu / ContextMenu depth slice, then plan the next component-depth slice unless a new user-facing regression takes priority.
+- Next action: Start U1 of `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md` by extending the core resolved table row contract for leaf and group rows.
 
 # Citations
 
@@ -127,3 +129,5 @@ verified_by:
 [30] Plan `docs/plans/2026-06-22-005-feat-ui-command-depth-plan.md`
 [31] Commit `41c719a` - `feat(ui-components): add command index snapshots`
 [32] Commit `d383026` - `feat(ui-gallery): deepen command samples`
+[33] Commit `697f762` - `feat(ui-components): deepen menu and context menu semantics`
+[34] Plan `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md`
