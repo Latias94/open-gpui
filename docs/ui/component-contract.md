@@ -231,9 +231,10 @@ Seed-shaped runtime builders must stay explicit in the API inventory. Current ex
 `Tabs::default_selected`, `RadioGroup::default_selected`, `Toolbar::default_focused`,
 `Sidebar::default_focused`, `Tree::default_selected`, `Tree::default_focused`,
 `VirtualizedList::default_active_index`, `VirtualizedList::default_selected_index`,
-`Menu::default_focused_value`, and `ContextMenu::default_focused_value`. Direct names such as
-`Sidebar::selected`, `Listbox::selected`, `Select::selected`, `Combobox::selected`, and
-`Command::selected` remain reserved for caller-owned render-frame inputs. Current bootstrap
+`Combobox::default_query`, `Command::default_query`, `Menu::default_focused_value`, and
+`ContextMenu::default_focused_value`. Direct names such as `Sidebar::selected`,
+`Listbox::selected`, `Select::selected`, `Combobox::selected`, and `Command::selected` remain
+reserved for caller-owned render-frame inputs. Current bootstrap
 callback exceptions such as `Button::on_click`, `Switch::on_click`, `AlertDialog::on_action`,
 `AlertDialog::on_cancel`, `Sheet::on_close`, and `Table::on_sort_requested` must stay explicit in
 the API inventory until a follow-up unit either renames them or records why the exception is

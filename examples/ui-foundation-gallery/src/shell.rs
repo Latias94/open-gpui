@@ -3962,7 +3962,7 @@ pub(crate) fn component_combobox_samples_section(
                     let mut combobox =
                         Combobox::new(format!("component-combobox:{}", sample.id), label.clone())
                             .placeholder(state.placeholder())
-                            .query(state.query())
+                            .default_query(state.query())
                             .with_size(state.size())
                             .disabled(state.disabled())
                             .tokens(tokens);
@@ -4079,7 +4079,7 @@ pub(crate) fn component_command_samples_section(
                     let mut command =
                         Command::new(format!("component-command:{}", sample.id), label.clone())
                             .placeholder(state.placeholder())
-                            .query(state.query())
+                            .default_query(state.query())
                             .with_size(state.size())
                             .disabled(state.disabled())
                             .tokens(tokens);

@@ -627,7 +627,7 @@ pub struct Combobox {
     required: bool,
     open: Option<bool>,
     default_open: bool,
-    query: String,
+    default_query: String,
     selected_value: Option<String>,
     active_value: Option<String>,
     empty_label: SharedString,
@@ -655,7 +655,7 @@ impl Combobox {
             required: false,
             open: None,
             default_open: false,
-            query: String::new(),
+            default_query: String::new(),
             selected_value: None,
             active_value: None,
             empty_label: "No results".into(),
@@ -724,9 +724,9 @@ impl Combobox {
         self
     }
 
-    /// Applies initial query.
-    pub fn query(mut self, query: impl Into<String>) -> Self {
-        self.query = query.into();
+    /// Applies the default query text for adapter-owned input state.
+    pub fn default_query(mut self, query: impl Into<String>) -> Self {
+        self.default_query = query.into();
         self
     }
 
@@ -799,7 +799,7 @@ impl Combobox {
             self.default_open,
             self.label.to_string(),
             self.placeholder.to_string(),
-            self.query.as_str(),
+            self.default_query.as_str(),
             self.selected_value.as_deref(),
             self.active_value.as_deref(),
             self.empty_label.to_string(),
@@ -831,7 +831,7 @@ impl RenderOnce for Combobox {
         });
         let input_state_key: ElementId = (self.id.clone(), "input-state").into();
         let input_controller = window.use_keyed_state(input_state_key, cx, |_, cx| {
-            let mut input = TextInputController::with_value(self.query.clone(), cx);
+            let mut input = TextInputController::with_value(self.default_query.clone(), cx);
             input.set_placeholder(self.placeholder.clone(), cx);
             input
         });
@@ -1376,7 +1376,7 @@ mod tests {
         Combobox::new("frameworks", "Frameworks")
             .open(true)
             .disabled(disabled)
-            .query("re")
+            .default_query("re")
             .selected("solid")
             .option(ComboboxOption::new("react", "React"))
             .option(ComboboxOption::new("solid", "Solid"))

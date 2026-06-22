@@ -1022,7 +1022,7 @@ pub struct Command {
     open: Option<bool>,
     default_open: bool,
     dialog_enabled: bool,
-    query: String,
+    default_query: String,
     selected_value: Option<String>,
     active_value: Option<String>,
     loading_state: Option<CommandLoadingState>,
@@ -1053,7 +1053,7 @@ impl Command {
             open: None,
             default_open: false,
             dialog_enabled: false,
-            query: String::new(),
+            default_query: String::new(),
             selected_value: None,
             active_value: None,
             loading_state: None,
@@ -1147,9 +1147,9 @@ impl Command {
         self
     }
 
-    /// Applies search query text.
-    pub fn query(mut self, query: impl Into<String>) -> Self {
-        self.query = query.into();
+    /// Applies the default search query for adapter-owned input state.
+    pub fn default_query(mut self, query: impl Into<String>) -> Self {
+        self.default_query = query.into();
         self
     }
 
@@ -1241,7 +1241,7 @@ impl Command {
             self.dialog_enabled,
             self.label.to_string(),
             self.placeholder.to_string(),
-            self.query.as_str(),
+            self.default_query.as_str(),
             self.selected_value.as_deref(),
             self.active_value.as_deref(),
             self.loading_state.clone(),
@@ -1275,7 +1275,7 @@ impl RenderOnce for Command {
         });
         let input_state_key: ElementId = (self.id.clone(), "input-state").into();
         let input_controller = window.use_keyed_state(input_state_key, cx, |_, cx| {
-            let mut input = TextInputController::with_value(self.query.clone(), cx);
+            let mut input = TextInputController::with_value(self.default_query.clone(), cx);
             input.set_placeholder(self.placeholder.clone(), cx);
             input
         });
@@ -1923,7 +1923,7 @@ mod tests {
         Command::new("palette", "Command palette")
             .open(true)
             .disabled(disabled)
-            .query("file")
+            .default_query("file")
             .selected("new-file")
             .item(CommandItem::new("open-file", "Open File").shortcut("Ctrl+O"))
             .group(

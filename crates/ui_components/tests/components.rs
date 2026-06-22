@@ -286,11 +286,17 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Combobox",
-        controlled_inputs: &["open", "query", "selected", "active"],
-        default_seeds: &[DefaultSeedApi {
-            builder: "default_open",
-            runtime_value: "open",
-        }],
+        controlled_inputs: &["open", "selected", "active"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_open",
+                runtime_value: "open",
+            },
+            DefaultSeedApi {
+                builder: "default_query",
+                runtime_value: "query",
+            },
+        ],
         legacy_seed_inputs: &[],
         policy_hints: &["placement", "outside_press_policy"],
         callbacks: &[
@@ -308,11 +314,17 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Command",
-        controlled_inputs: &["open", "query", "selected", "active"],
-        default_seeds: &[DefaultSeedApi {
-            builder: "default_open",
-            runtime_value: "open",
-        }],
+        controlled_inputs: &["open", "selected", "active"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_open",
+                runtime_value: "open",
+            },
+            DefaultSeedApi {
+                builder: "default_query",
+                runtime_value: "query",
+            },
+        ],
         legacy_seed_inputs: &[],
         policy_hints: &[
             "dialog",
@@ -1006,7 +1018,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "required",
             "open",
             "default_open",
-            "query",
+            "default_query",
             "selected",
             "active",
             "empty_label",
@@ -1031,7 +1043,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "dialog",
             "dialog_enabled",
             "dialog_description",
-            "query",
+            "default_query",
             "selected",
             "active",
             "loading",
@@ -4899,6 +4911,8 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
     assert_inventory_contains_controlled_input("Select", "selected");
     assert_inventory_contains_controlled_input("Select", "active");
     assert_inventory_contains_callback("Select", "on_select", "SelectSelection");
+    assert_inventory_contains_default_seed("Combobox", "default_query", "query");
+    assert_inventory_contains_default_seed("Command", "default_query", "query");
     assert_inventory_contains_default_seed("Tabs", "default_selected", "selected");
     assert_inventory_contains_default_seed("RadioGroup", "default_selected", "selected");
     assert_inventory_contains_default_seed("Toolbar", "default_focused", "focused");
@@ -6154,7 +6168,7 @@ fn combobox_state_filters_query_without_clearing_selection() {
     let state = Combobox::new("framework-combobox", "Framework")
         .placeholder("Search frameworks")
         .open(true)
-        .query("re")
+        .default_query("re")
         .selected("solid")
         .option(ComboboxOption::new("react", "React").keyword("library"))
         .option(ComboboxOption::new("solid", "Solid"))
@@ -6209,7 +6223,7 @@ fn combobox_state_scrollable_content_tracks_filtered_option_count() {
     let not_scrollable = Combobox::new("filtered-combobox", "Filtered combobox")
         .placeholder("Search frameworks")
         .open(true)
-        .query("re")
+        .default_query("re")
         .option(ComboboxOption::new("react", "React").keyword("library"))
         .option(ComboboxOption::new("solid", "Solid"))
         .option(ComboboxOption::new("ember", "Ember"))
@@ -6235,7 +6249,7 @@ fn combobox_disabled_empty_state_blocks_popup_and_input() {
         .placeholder("Search")
         .default_open(true)
         .disabled(true)
-        .query("zzz")
+        .default_query("zzz")
         .option(ComboboxOption::new("react", "React"))
         .empty_label("No frameworks")
         .outside_press_policy(OutsidePressPolicy::DismissAndPassThrough)
@@ -6482,7 +6496,7 @@ fn command_state_filters_groups_shortcuts_loading_and_dialog_policy() {
     let state = Command::new("command-palette", "Command palette")
         .placeholder("Type a command")
         .open(true)
-        .query("file")
+        .default_query("file")
         .selected("new-file")
         .loading("Indexing commands", Some(45))
         .dialog("Command palette")
@@ -6542,7 +6556,7 @@ fn command_state_models_empty_disabled_and_escape_policy() {
     let state = Command::new("empty-command", "Commands")
         .default_open(true)
         .disabled(true)
-        .query("missing")
+        .default_query("missing")
         .item(CommandItem::new("open", "Open"))
         .escape_key_policy(EscapeKeyPolicy::Ignore)
         .focus_restore_intent(FocusRestoreIntent::None)
@@ -7460,7 +7474,7 @@ fn default_theme_resolves_all_current_component_color_intents() {
     let comboboxes = [
         Combobox::new("combobox", "Search")
             .open(true)
-            .query("one")
+            .default_query("one")
             .option(ComboboxOption::new("one", "One"))
             .state(),
         Combobox::new("closed-combobox", "Search").state(),
@@ -7468,7 +7482,7 @@ fn default_theme_resolves_all_current_component_color_intents() {
     let commands = [
         Command::new("command", "Commands")
             .open(true)
-            .query("open")
+            .default_query("open")
             .item(CommandItem::new("open", "Open"))
             .state(),
         Command::new("closed-command", "Commands").state(),
