@@ -17,9 +17,25 @@ pub(crate) struct DockViewportHostSceneFrame {
 }
 
 impl DockViewportHostSceneFrame {
+    #[cfg(test)]
+    pub(crate) fn new_for_test(
+        space: impl Into<DockSpaceId>,
+        window_id: WindowId,
+        generation: u64,
+    ) -> Self {
+        Self {
+            identity: DockViewportIdentity::new(space, window_id),
+            generation,
+        }
+    }
+
     /// Reports whether this render frame still belongs to the supplied viewport binding.
     pub(crate) fn matches_viewport(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
         self.identity.matches(space, window_id)
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
 
     fn space(&self) -> &DockSpaceId {

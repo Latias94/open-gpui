@@ -125,7 +125,7 @@ pub(crate) struct DockPayloadDropRelease {
     drag_session: Option<DockRuntimeDragSession>,
     tear_off_geometry: Option<DockDragTearOffGeometry>,
     origin: DockPayloadDropReleaseOrigin,
-    event_receiver_local_scene_proof: bool,
+    event_receiver_local_scene_proof: Option<DockViewportHostSceneFrame>,
     /// Host space that observed the release; runtime routing may choose a different target.
     host_space: DockSpaceId,
     release_position: Point<Pixels>,
@@ -169,7 +169,7 @@ impl DockPayloadDropRelease {
             drag_session,
             tear_off_geometry: None,
             origin: DockPayloadDropReleaseOrigin::HoveredHost,
-            event_receiver_local_scene_proof: false,
+            event_receiver_local_scene_proof: None,
             host_space,
             release_position,
         }
@@ -195,7 +195,7 @@ impl DockPayloadDropRelease {
             drag_session,
             tear_off_geometry: None,
             origin: DockPayloadDropReleaseOrigin::SourceOnly,
-            event_receiver_local_scene_proof: false,
+            event_receiver_local_scene_proof: None,
             host_space,
             release_position,
         }
@@ -217,8 +217,8 @@ impl DockPayloadDropRelease {
         self.origin
     }
 
-    pub(crate) fn event_receiver_local_scene_proof(&self) -> bool {
-        self.event_receiver_local_scene_proof
+    pub(crate) fn event_receiver_local_scene_proof(&self) -> Option<&DockViewportHostSceneFrame> {
+        self.event_receiver_local_scene_proof.as_ref()
     }
 
     #[cfg(test)]
@@ -238,9 +238,16 @@ impl DockPayloadDropRelease {
         self
     }
 
-    pub(crate) fn with_event_receiver_local_scene_proof(mut self, available: bool) -> Self {
+    pub(crate) fn with_event_receiver_local_scene_proof(
+        mut self,
+        proof: Option<DockViewportHostSceneFrame>,
+    ) -> Self {
         self.event_receiver_local_scene_proof =
-            available && self.origin == DockPayloadDropReleaseOrigin::HoveredHost;
+            if self.origin == DockPayloadDropReleaseOrigin::HoveredHost {
+                proof
+            } else {
+                None
+            };
         self
     }
 }

@@ -80,7 +80,7 @@ impl Render for DockHost {
                 cx.listener(move |this, payload: &DockDragPayload, window, cx| {
                     let drag_session = this.active_payload_drag_session(payload);
                     let event_receiver_local_scene_proof =
-                        this.interaction().viewport_host_scene_frame().is_some();
+                        this.interaction().viewport_host_scene_frame().cloned();
                     this.drop_payload_release_from_render(
                         DockPayloadDropRelease::hovered_host_with_session(
                             payload.clone(),

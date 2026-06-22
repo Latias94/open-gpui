@@ -49,7 +49,7 @@ impl DockHost {
         let drag_session = self.active_payload_drag_session(payload);
         let tear_off_geometry = self.active_payload_drag_tear_off_geometry(drag_session.as_ref());
         let event_receiver_local_scene_proof =
-            self.interaction().viewport_host_scene_frame().is_some();
+            self.interaction().viewport_host_scene_frame().cloned();
         let request = viewport_drop_route_request_from_host(
             payload,
             position,
@@ -99,7 +99,7 @@ impl DockHost {
             drag_session,
             tear_off_geometry,
         )
-        .with_event_receiver_local_scene_proof(release.event_receiver_local_scene_proof())
+        .with_event_receiver_local_scene_proof(release.event_receiver_local_scene_proof().cloned())
     }
 }
 

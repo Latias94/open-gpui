@@ -163,13 +163,11 @@ impl DockHost {
                 .bg(rgba(0x00000001))
                 .on_drag(
                     payload,
-                    move |payload, position, source_bounds, window, cx| {
+                    move |payload, _position, _source_bounds, window, cx| {
                         let start_position = window.mouse_position();
-                        let mut tear_off_geometry = DockDragTearOffGeometry::from_source_bounds(
-                            source_bounds,
-                            source_bounds.origin + position,
-                        )
-                        .with_preferred_size(source_bounds.size);
+                        let mut tear_off_geometry =
+                            DockDragTearOffGeometry::from_source_bounds(bounds, start_position)
+                                .with_preferred_size(bounds.size);
                         if let Some(display) = window.display(cx) {
                             tear_off_geometry =
                                 tear_off_geometry.with_display_work_area(display.visible_bounds());
