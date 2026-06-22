@@ -834,6 +834,122 @@ fn viewport_runtime_render_registration_cleans_replaced_space_state(cx: &mut Tes
 }
 
 #[open_gpui::test]
+fn viewport_runtime_render_watchdog_expires_unrendered_host_scene(cx: &mut TestAppContext) {
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(target_space.clone(), graph);
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let window = handle(4);
+    let mut runtime = DockViewportRuntime::new(controller);
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+    let host_position = center_drop_position(host_bounds);
+    let window_facts = DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(
+        floating_bounds(100.0, 100.0, 360.0, 220.0),
+    ));
+
+    assert!(runtime.register_rendered_host_viewport(target_space.clone(), window));
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        window.window_id(),
+        window_facts,
+        host_bounds,
+        host_position,
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        window.window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+    let token = runtime.observe_rendered_viewport_host_scene(window.window_id());
+    let identity = crate::DockViewportIdentity::new(target_space.clone(), window.window_id());
+
+    let (changed, windows) = runtime.expire_viewport_host_scene_if_unrendered(identity, token);
+
+    assert!(changed);
+    assert_eq!(windows, Vec::<AnyWindowHandle>::new());
+    assert_eq!(
+        runtime.adapter().route_unavailable_reason(&target_space),
+        Some(DockViewportRouteUnavailableReason::Stale(
+            DockViewportStaleReason::WindowFactsChanged
+        ))
+    );
+    assert_eq!(runtime.last_host_scene_screen_position(&target_space), None);
+}
+
+#[open_gpui::test]
+fn viewport_runtime_render_watchdog_preserves_scene_after_new_render(cx: &mut TestAppContext) {
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(target_space.clone(), graph);
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let window = handle(5);
+    let mut runtime = DockViewportRuntime::new(controller);
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+    let host_position = center_drop_position(host_bounds);
+    let window_facts = DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(
+        floating_bounds(100.0, 100.0, 360.0, 220.0),
+    ));
+
+    assert!(runtime.register_rendered_host_viewport(target_space.clone(), window));
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        window.window_id(),
+        window_facts,
+        host_bounds,
+        host_position,
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        window.window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+    let stale_token = runtime.observe_rendered_viewport_host_scene(window.window_id());
+    let identity = crate::DockViewportIdentity::new(target_space.clone(), window.window_id());
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        window.window_id(),
+        window_facts,
+        host_bounds,
+        host_position,
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        window.window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+    let _current_token = runtime.observe_rendered_viewport_host_scene(window.window_id());
+
+    let (changed, windows) =
+        runtime.expire_viewport_host_scene_if_unrendered(identity, stale_token);
+
+    assert!(!changed);
+    assert_eq!(windows, Vec::<AnyWindowHandle>::new());
+    assert_eq!(
+        runtime.adapter().route_unavailable_reason(&target_space),
+        None
+    );
+    assert!(
+        runtime
+            .last_host_scene_screen_position(&target_space)
+            .is_some()
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_reconciles_backend_focus_without_route_order_shadow_state(
     cx: &mut TestAppContext,
 ) {

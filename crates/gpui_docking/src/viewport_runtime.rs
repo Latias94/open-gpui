@@ -35,6 +35,7 @@ use open_gpui::{
     AnyWindowHandle, App, Bounds, Entity, Pixels, PlatformFocusedWindow, Point, WindowBounds,
     WindowId, WindowOptions, point, px,
 };
+use std::collections::HashMap;
 
 /// Internal owner for controller-backed platform viewport lifecycle.
 ///
@@ -58,6 +59,7 @@ pub(crate) struct DockViewportRuntime {
     backend_focus: DockViewportBackendFocusState,
     close_coordinator: DockViewportCloseCoordinator,
     routed_drop_preview: DockViewportRoutedDropPreviewState,
+    render_watchdog: DockViewportRenderWatchdog,
     status: DockViewportRuntimeStatus,
 }
 
@@ -71,6 +73,17 @@ struct DockRuntimeDragTearOffGeometry {
 struct DockViewportRuntimeRegistration {
     outcome: DockViewportRegisterOutcome,
     replaced_windows: Vec<AnyWindowHandle>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DockViewportRenderWatchToken {
+    window_id: WindowId,
+    generation: u64,
+}
+
+#[derive(Debug, Default)]
+struct DockViewportRenderWatchdog {
+    generations: HashMap<WindowId, u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +108,28 @@ impl DockViewportPointerInputSyncRequest {
 
     pub(crate) fn requested_accepts_pointer_input(&self) -> bool {
         self.accepts_pointer_input
+    }
+}
+
+impl DockViewportRenderWatchdog {
+    fn observe(&mut self, window_id: WindowId) -> DockViewportRenderWatchToken {
+        let generation = self
+            .generations
+            .entry(window_id)
+            .and_modify(|generation| *generation = generation.wrapping_add(1))
+            .or_insert(1);
+        DockViewportRenderWatchToken {
+            window_id,
+            generation: *generation,
+        }
+    }
+
+    fn is_stale(&self, token: DockViewportRenderWatchToken) -> bool {
+        self.generations.get(&token.window_id).copied() == Some(token.generation)
+    }
+
+    fn forget_window(&mut self, window_id: WindowId) {
+        self.generations.remove(&window_id);
     }
 }
 
@@ -334,6 +369,7 @@ impl DockViewportRuntime {
             backend_focus: DockViewportBackendFocusState::default(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewState::default(),
+            render_watchdog: DockViewportRenderWatchdog::default(),
             status: DockViewportRuntimeStatus::default(),
         }
     }
@@ -360,6 +396,7 @@ impl DockViewportRuntime {
             backend_focus: DockViewportBackendFocusState::default(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewState::default(),
+            render_watchdog: DockViewportRenderWatchdog::default(),
             status: DockViewportRuntimeStatus::default(),
         }
     }
@@ -486,6 +523,10 @@ impl DockViewportRuntime {
             .as_ref()
             .filter(|drag| drag.accepts_payload(payload))
             .map(|drag| drag.session().clone())
+    }
+
+    pub(crate) fn has_active_payload_drag(&self) -> bool {
+        self.active_drag.is_some()
     }
 
     fn source_window_accepts_pointer_input(&self, payload: &DockDragPayload) -> Option<bool> {
@@ -703,6 +744,26 @@ impl DockViewportRuntime {
         (changed || preview_changed, windows)
     }
 
+    pub(crate) fn expire_viewport_host_scene_if_unrendered(
+        &mut self,
+        identity: DockViewportIdentity,
+        token: DockViewportRenderWatchToken,
+    ) -> (bool, Vec<AnyWindowHandle>) {
+        if token.window_id != identity.window_id() || !self.render_watchdog.is_stale(token) {
+            return (false, Vec::new());
+        }
+        if self
+            .adapter
+            .window_for_space(identity.space())
+            .is_none_or(|window| window.window_id() != identity.window_id())
+        {
+            self.render_watchdog.forget_window(identity.window_id());
+            return (false, Vec::new());
+        }
+        self.host_scenes.unregister_window(identity.window_id());
+        self.mark_viewport_window_snapshot_stale(identity.window_id())
+    }
+
     pub(crate) fn apply_platform_window_facts(
         &mut self,
         window_id: WindowId,
@@ -842,6 +903,13 @@ impl DockViewportRuntime {
         Some(registration)
     }
 
+    pub(crate) fn observe_rendered_viewport_host_scene(
+        &mut self,
+        window_id: WindowId,
+    ) -> DockViewportRenderWatchToken {
+        self.render_watchdog.observe(window_id)
+    }
+
     #[cfg(test)]
     pub(crate) fn push_viewport_host_scene_fact(
         &mut self,
@@ -866,6 +934,10 @@ impl DockViewportRuntime {
         window_id: WindowId,
     ) -> Option<DockViewportRoutedDropPreview> {
         self.routed_drop_preview.preview_for(space, window_id)
+    }
+
+    pub(crate) fn has_routed_drop_preview(&self) -> bool {
+        self.routed_drop_preview.has_preview()
     }
 
     #[cfg(test)]
@@ -1031,6 +1103,7 @@ impl DockViewportRuntime {
             self.close_coordinator.discard_window(window_id);
         }
         self.window_ownership.clear_window_state(window_id);
+        self.render_watchdog.forget_window(window_id);
         self.host_scenes.unregister_space(space);
         self.clear_pending_activation_for(space, window_id);
         self.status.clear_window_references(space, window_id);

@@ -3,8 +3,8 @@ use crate::DockViewportActivationTransaction;
 use crate::{
     DockActionApplyError, DockController, DockDropDelivery, DockHost, DockItemId, DockSpaceId,
     DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRouteOutcome,
-    DockViewportDropRouteRequest, DockViewportOpenOutcome, DockViewportOpenStatus,
-    DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportDropRouteRequest, DockViewportIdentity, DockViewportOpenOutcome,
+    DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportResolvedDropRoute, DockViewportRestoreReadiness, DockViewportRoutedDropPreview,
     DockViewportRuntime, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
     DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
@@ -20,7 +20,7 @@ use crate::{
     viewport_platform_sync::sync_reused_viewport_window,
     viewport_runtime::{
         DockViewportPointerInputSyncRequest, DockViewportPreparedTearOffDrop,
-        DockViewportReusableWindow,
+        DockViewportRenderWatchToken, DockViewportReusableWindow,
     },
 };
 #[cfg(test)]
@@ -373,6 +373,10 @@ impl DockViewportRuntimeHandle {
         payload: &DockDragPayload,
     ) -> Option<DockRuntimeDragSession> {
         self.runtime.borrow().active_payload_drag_session(payload)
+    }
+
+    pub(crate) fn has_active_payload_drag(&self) -> bool {
+        self.runtime.borrow().has_active_payload_drag()
     }
 
     pub(crate) fn active_payload_drag_tear_off_geometry(
@@ -741,6 +745,29 @@ impl DockViewportRuntimeHandle {
             .register_rendered_host_viewport(space, window)
     }
 
+    pub(crate) fn observe_rendered_viewport_host_scene(
+        &self,
+        window_id: WindowId,
+    ) -> DockViewportRenderWatchToken {
+        self.runtime
+            .borrow_mut()
+            .observe_rendered_viewport_host_scene(window_id)
+    }
+
+    pub(crate) fn expire_viewport_host_scene_if_unrendered<C: open_gpui::AppContext>(
+        &self,
+        identity: DockViewportIdentity,
+        token: DockViewportRenderWatchToken,
+        cx: &mut C,
+    ) -> bool {
+        let (changed, windows) = self
+            .runtime
+            .borrow_mut()
+            .expire_viewport_host_scene_if_unrendered(identity, token);
+        refresh_windows(windows, cx);
+        changed
+    }
+
     pub(crate) fn reconcile_viewport_frame<C: open_gpui::AppContext>(&self, cx: &mut C) -> bool {
         let (changed, windows) = self.runtime.borrow_mut().reconcile_viewport_frame(cx);
         refresh_windows(windows, cx);
@@ -904,6 +931,10 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow()
             .routed_drop_preview_for(space, window_id)
+    }
+
+    pub(crate) fn has_routed_drop_preview(&self) -> bool {
+        self.runtime.borrow().has_routed_drop_preview()
     }
 
     #[cfg(test)]

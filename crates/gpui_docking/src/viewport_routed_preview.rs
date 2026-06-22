@@ -82,6 +82,10 @@ impl DockViewportAcceptedRoutedPreview {
 }
 
 impl DockViewportRoutedDropPreviewState {
+    pub(crate) fn has_preview(&self) -> bool {
+        self.preview.is_some()
+    }
+
     pub(crate) fn preview_for(
         &self,
         space: &DockSpaceId,

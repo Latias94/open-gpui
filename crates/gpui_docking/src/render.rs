@@ -1,6 +1,6 @@
 use crate::{
-    DockEdgeDockSizing, DockGraph, DockHost, DockNode, DockNodeId, DockViewportWindowFacts,
-    DropZone,
+    DockEdgeDockSizing, DockGraph, DockHost, DockNode, DockNodeId, DockViewportIdentity,
+    DockViewportWindowFacts, DropZone,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::{DockDropPreview, DockDropRoutePreview},
@@ -683,8 +683,10 @@ impl DockHost {
                 runtime.reconcile_viewport_frame_except_window(window_handle.window_id(), app);
                 sync_render_passthrough_pointer_input(&runtime, window, passthrough_pointer_input);
                 runtime.register_rendered_host_viewport(space.clone(), window_handle);
+                let should_watch_host_scene =
+                    runtime.has_routed_drop_preview() || runtime.has_active_payload_drag();
                 let registration = runtime.begin_viewport_host_scene_frame(
-                    space,
+                    space.clone(),
                     window_handle.window_id(),
                     DockViewportWindowFacts::from_window(window, app),
                     bounds,
@@ -692,6 +694,27 @@ impl DockHost {
                     drop_guide_style,
                 );
                 *frame_slot.borrow_mut() = registration.map(|registration| registration.frame);
+                if should_watch_host_scene {
+                    let token =
+                        runtime.observe_rendered_viewport_host_scene(window_handle.window_id());
+                    let identity =
+                        DockViewportIdentity::new(space.clone(), window_handle.window_id());
+                    let runtime = runtime.clone();
+                    window.request_animation_frame();
+                    // The next-frame callback runs before that frame renders. Check one frame later
+                    // so a normally repainted host can publish a newer token first.
+                    window.on_next_frame(move |window, _| {
+                        let runtime = runtime.clone();
+                        window.request_animation_frame();
+                        window.on_next_frame(move |window, app| {
+                            if runtime
+                                .expire_viewport_host_scene_if_unrendered(identity, token, app)
+                            {
+                                window.refresh();
+                            }
+                        });
+                    });
+                }
             },
             |_, _, _, _| (),
         )
