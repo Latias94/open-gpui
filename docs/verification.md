@@ -74,8 +74,10 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_vi
 cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_virtualized_list_keyboard_reveals_and_activates
 ```
 
-The components package includes runtime smoke coverage for TextInput, RadioGroup, Listbox, Select,
-Combobox, Command, Tabs, and Toolbar keyboard navigation. The focused TextInput test renders a
+The components package includes runtime smoke coverage for Switch, TextInput, RadioGroup, Listbox,
+Select, Combobox, Command, Tabs, and Toolbar keyboard navigation. The focused Switch test renders
+a controlled switch, clicks its real root selector, verifies `on_change` receives the next checked
+value, and confirms disabled switches do not emit changes. The focused TextInput test renders a
 standalone controller-backed input, clicks its real root, accepts simulated platform text, sanitizes
 single-line input, and verifies the controller caret ends at the inserted text. The focused
 RadioGroup test renders real radio

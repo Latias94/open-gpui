@@ -197,7 +197,7 @@ pub struct Switch {
     disabled: bool,
     size: Size,
     tokens: ThemeTokens,
-    on_click: Option<Rc<dyn Fn(bool, &ClickEvent, &mut Window, &mut App)>>,
+    on_change: Option<Rc<dyn Fn(bool, &ClickEvent, &mut Window, &mut App)>>,
 }
 
 impl Switch {
@@ -210,7 +210,7 @@ impl Switch {
             disabled: false,
             size: Size::Medium,
             tokens: ThemeTokens::default(),
-            on_click: None,
+            on_change: None,
         }
     }
 
@@ -238,12 +238,12 @@ impl Switch {
         self
     }
 
-    /// Registers a click handler with the next checked value.
-    pub fn on_click(
+    /// Registers a change handler with the next checked value.
+    pub fn on_change(
         mut self,
         handler: impl Fn(bool, &ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_click = Some(Rc::new(handler));
+        self.on_change = Some(Rc::new(handler));
         self
     }
 
@@ -269,9 +269,11 @@ impl RenderOnce for Switch {
         let disabled = state.disabled();
         let next_checked = !state.checked();
         let label = self.label.clone();
+        let debug_id = self.id.to_string();
 
         div()
             .id(self.id)
+            .debug_selector(move || format!("switch:{debug_id}:root"))
             .flex()
             .items_center()
             .gap_2()
@@ -288,11 +290,11 @@ impl RenderOnce for Switch {
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| this.cursor_pointer())
             .when_some(
-                self.on_click.filter(|_| !disabled),
-                move |this, on_click| {
+                self.on_change.filter(|_| !disabled),
+                move |this, on_change| {
                     this.on_click(move |event, window, cx| {
                         cx.stop_propagation();
-                        on_click(next_checked, event, window, cx);
+                        on_change(next_checked, event, window, cx);
                     })
                 },
             )

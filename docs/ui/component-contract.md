@@ -234,11 +234,12 @@ Seed-shaped runtime builders must stay explicit in the API inventory. Current ex
 `Combobox::default_query`, `Command::default_query`, `Menu::default_focused_value`, and
 `ContextMenu::default_focused_value`. Direct names such as `Sidebar::selected`,
 `Listbox::selected`, `Select::selected`, `Combobox::selected`, and `Command::selected` remain
-reserved for caller-owned render-frame inputs. Current bootstrap
-callback exceptions such as `Button::on_click`, `Switch::on_click`, `AlertDialog::on_action`,
-`AlertDialog::on_cancel`, `Sheet::on_close`, and `Table::on_sort_requested` must stay explicit in
-the API inventory until a follow-up unit either renames them or records why the exception is
-intentional.
+reserved for caller-owned render-frame inputs. `Switch::on_change`, `Toggle::on_change`, and
+`TextInput::on_change` are scalar value-change callbacks. Bootstrap callback exceptions such as
+`Button::on_click`, `AlertDialog::on_action`, `AlertDialog::on_cancel`, `Sheet::on_close`, and
+`Table::on_sort_requested` must stay explicit in the API inventory because they represent command
+activation, modal action outcomes, close affordances, or table sort requests rather than scalar
+value changes.
 
 Keep crate-root exports explicit. Do not use wildcard public re-exports in component crates.
 GPUI-specific helpers that remain public for concrete applications must be reachable through

@@ -136,7 +136,7 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         legacy_seed_inputs: &[],
         policy_hints: &[],
         callbacks: &[CallbackApi {
-            name: "on_click",
+            name: "on_change",
             payload: "bool",
         }],
         renderer_neutral_state: true,
@@ -896,7 +896,13 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "state",
         ],
         "Switch" => &[
-            "new", "label", "checked", "disabled", "tokens", "on_click", "state",
+            "new",
+            "label",
+            "checked",
+            "disabled",
+            "tokens",
+            "on_change",
+            "state",
         ],
         "Checkbox" => &[
             "new",
@@ -4906,6 +4912,8 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
 
     assert_inventory_contains_controlled_input("TextInput", "value");
     assert_inventory_contains_callback("TextInput", "on_change", "String");
+    assert_inventory_contains_controlled_input("Switch", "checked");
+    assert_inventory_contains_callback("Switch", "on_change", "bool");
     assert_inventory_contains_default_seed("Popover", "default_open", "open");
     assert_inventory_contains_callback("Popover", "on_open_change", "bool");
     assert_inventory_contains_controlled_input("Select", "selected");
@@ -7955,6 +7963,88 @@ fn switch_size_metrics_are_deterministic() {
     assert_eq!(metrics.track_height(), ui_px(18.0));
     assert_eq!(metrics.thumb_size(), ui_px(14.0));
     assert_eq!(metrics.checked_thumb_x(), ui_px(16.0));
+}
+
+#[open_gpui::test]
+fn switch_runtime_click_emits_on_change_with_next_checked(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        checked: Rc<RefCell<bool>>,
+        changes: Rc<RefCell<Vec<bool>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let checked = *self.checked.borrow();
+            let next_checked = self.checked.clone();
+            let changes = self.changes.clone();
+            let disabled_changes = self.changes.clone();
+
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    Switch::new("runtime-switch")
+                        .label("Runtime switch")
+                        .checked(checked)
+                        .on_change(move |checked, _, _, _| {
+                            *next_checked.borrow_mut() = checked;
+                            changes.borrow_mut().push(checked);
+                        }),
+                )
+                .child(
+                    Switch::new("disabled-runtime-switch")
+                        .label("Disabled runtime switch")
+                        .disabled(true)
+                        .on_change(move |checked, _, _, _| {
+                            disabled_changes.borrow_mut().push(checked);
+                        }),
+                )
+        }
+    }
+
+    let checked = Rc::new(RefCell::new(false));
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        checked: checked.clone(),
+        changes: changes.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let disabled_switch = cx
+        .debug_bounds("switch:disabled-runtime-switch:root")
+        .expect("disabled switch should expose a stable debug selector");
+    cx.simulate_click(disabled_switch.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        changes.borrow().is_empty(),
+        "disabled switch click should not emit on_change"
+    );
+
+    let runtime_switch = cx
+        .debug_bounds("switch:runtime-switch:root")
+        .expect("runtime switch should expose a stable debug selector");
+    cx.simulate_click(runtime_switch.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(*checked.borrow(), true);
+    assert_eq!(changes.borrow().as_slice(), &[true]);
+
+    let runtime_switch = cx
+        .debug_bounds("switch:runtime-switch:root")
+        .expect("runtime switch should remain rendered after controlled update");
+    cx.simulate_click(runtime_switch.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(*checked.borrow(), false);
+    assert_eq!(changes.borrow().as_slice(), &[true, false]);
 }
 
 #[test]
