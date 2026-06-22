@@ -129,6 +129,10 @@ impl DockViewportFocusCommand {
         Self::new(DockViewportFocusCommandSource::ViewportActivation, request)
     }
 
+    pub(crate) fn close_recovery(request: DockViewportFocusRequest) -> Self {
+        Self::new(DockViewportFocusCommandSource::CloseRecovery, request)
+    }
+
     pub(crate) fn request(&self) -> &DockViewportFocusRequest {
         &self.request
     }

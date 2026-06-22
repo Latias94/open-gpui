@@ -1,7 +1,7 @@
 use crate::{
     DockCentralRegion, DockFloatingContainer, DockGraph, DockNode, DockNodeId,
-    DockViewportFocusCommand, DockViewportFocusCommandSource, DockViewportFocusRequest,
-    DockWorkspace, SplitAxis, debug::DockDebugRegion, host_test_support::*,
+    DockViewportFocusCommand, DockViewportFocusRequest, DockWorkspace, SplitAxis,
+    debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, px, size,
@@ -644,8 +644,7 @@ fn close_recovery_does_not_reveal_hidden_recorded_panel(cx: &mut TestAppContext)
 
     host.update(cx, |host, cx| {
         assert!(
-            host.request_viewport_focus_command(DockViewportFocusCommand::new(
-                DockViewportFocusCommandSource::CloseRecovery,
+            host.request_viewport_focus_command(DockViewportFocusCommand::close_recovery(
                 DockViewportFocusRequest::panel("b"),
             ),)
         );
@@ -961,12 +960,9 @@ fn close_recovery_restore_failure_does_not_overwrite_had_panel_focus_fact(cx: &m
     host.update(cx, |host, cx| {
         host.viewport_runtime()
             .record_panel_focus(host.space().clone(), item("a"));
-        assert!(
-            host.request_viewport_focus_command(crate::DockViewportFocusCommand::new(
-                DockViewportFocusCommandSource::CloseRecovery,
-                DockViewportFocusRequest::panel("b"),
-            ))
-        );
+        assert!(host.request_viewport_focus_command(
+            crate::DockViewportFocusCommand::close_recovery(DockViewportFocusRequest::panel("b"))
+        ));
         cx.notify();
     });
     cx.run_until_parked();
