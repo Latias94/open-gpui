@@ -2,8 +2,8 @@ use crate::DockViewportTargetContext;
 use crate::{
     DockActionApplyError, DockNodeId, DockPolicy, DockPolicyError, DockSpaceId,
     DockViewportAdapter, DockViewportAuthorizedRouteAuthority, DockViewportDropPayload,
-    DockViewportFrontToBackWindowStack, DockViewportPlatformSignals, DockViewportTargetHit,
-    DockViewportTearOffRequest, DockViewportWindowHit,
+    DockViewportPlatformSignals, DockViewportTargetHit, DockViewportTearOffRequest,
+    DockViewportWindowHit,
     drag::DockDragTearOffGeometry,
     drop_target::{DockDropTargetKey, DockResolvedDropTarget},
     interaction::{DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
@@ -760,30 +760,6 @@ impl DockViewportDropRouteRequest {
         self.platform_signals.event_receiver_window()
     }
 
-    pub(crate) fn normalized_target_context(
-        &self,
-        adapter: &DockViewportAdapter,
-        target_context: DockViewportTargetContext,
-    ) -> DockViewportTargetContext {
-        let hovered_window_no_input_pass_through = target_context
-            .trusted_hovered_window()
-            .and_then(|hovered| adapter.space_for_window_id(hovered))
-            .is_some_and(|space| adapter.space_is_no_input_pass_through(space));
-        if hovered_window_no_input_pass_through {
-            DockViewportTargetContext::from_window_signals(
-                crate::DockViewportTrustedHoveredSignal::Unavailable,
-                DockViewportFrontToBackWindowStack::from_window_ids(
-                    target_context
-                        .backend_hover_fallback_window_stack()
-                        .iter()
-                        .copied(),
-                ),
-            )
-        } else {
-            target_context
-        }
-    }
-
     pub(crate) fn coordinate_space(&self) -> DockViewportPointerCoordinateSpace {
         self.coordinate_space
     }
@@ -880,7 +856,7 @@ impl DockViewportAdapter {
         request: &DockViewportDropRouteRequest,
         policy: &DockPolicy,
     ) -> DockViewportDropRouteResolution {
-        let target_context = request.normalized_target_context(self, request.target_context());
+        let target_context = self.normalize_target_context(request.target_context());
         self.resolve_payload_drop_route_resolution_with_target_context(
             request,
             policy,
@@ -894,9 +870,25 @@ impl DockViewportAdapter {
         policy: &DockPolicy,
         target_context: DockViewportTargetContext,
     ) -> DockViewportDropRouteResolution {
-        let target_context = request.normalized_target_context(self, target_context);
+        let target_context = self.normalize_target_context(target_context);
         self.resolve_payload_drop_route_plan(request, &target_context)
             .into_resolution(policy)
+    }
+
+    fn normalize_target_context(
+        &self,
+        target_context: DockViewportTargetContext,
+    ) -> DockViewportTargetContext {
+        let Some(hovered_window) = target_context.trusted_hovered_window() else {
+            return target_context;
+        };
+        if self
+            .space_for_window_id(hovered_window)
+            .is_some_and(|space| self.space_is_no_input_pass_through(space))
+        {
+            return target_context.without_trusted_hovered_window();
+        }
+        target_context
     }
 
     fn resolve_payload_drop_route_plan(

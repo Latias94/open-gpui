@@ -121,6 +121,11 @@ impl DockViewportTargetContext {
         self.window_stack.as_slice()
     }
 
+    pub(crate) fn without_trusted_hovered_window(mut self) -> Self {
+        self.trusted_hovered_signal = DockViewportTrustedHoveredSignal::Unavailable;
+        self
+    }
+
     #[cfg(test)]
     pub(crate) fn into_window_signals(
         self,
@@ -182,6 +187,28 @@ mod tests {
 
         assert_eq!(context.trusted_hovered_window(), Some(third));
         assert_eq!(context.backend_hover_fallback_window_stack(), &[first]);
+    }
+
+    #[test]
+    fn clearing_trusted_hovered_window_preserves_stack_fallback() {
+        let top = WindowId::from(1);
+        let underlay = WindowId::from(2);
+        let context = DockViewportTargetContext::from_window_signals_with_hovered_known(
+            Some(top),
+            true,
+            vec![top, underlay],
+        )
+        .without_trusted_hovered_window();
+
+        assert_eq!(context.trusted_hovered_window(), None);
+        assert_eq!(
+            context.trusted_hovered_signal(),
+            DockViewportTrustedHoveredSignal::Unavailable
+        );
+        assert_eq!(
+            context.backend_hover_fallback_window_stack(),
+            &[top, underlay]
+        );
     }
 
     #[test]
