@@ -7,23 +7,24 @@ use open_gpui_ui_components::{
     BadgeVariant, Button, ButtonVariant, Checkbox, ColorIntent, ColorState, Combobox,
     ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command, CommandGroup,
     CommandItem, CommandOpenMode, CommandSelection, ContextMenu, DEFAULT_FOCUS_RING_WIDTH, Dialog,
-    DialogOpenMode, Field, FocusRing, HoverCard, HoverCardContentKind, HoverCardDelayPolicy,
-    HoverCardOpenIntent, HoverCardOpenMode, IconButton, Kbd, Label, Listbox, ListboxGroup,
-    ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor, ListboxOptionKind,
-    ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode, MenuSelection,
-    Popover, PopoverOpenMode, Progress, ProgressVisualMode, RadioGroup, RadioGroupState, RadioItem,
-    RadioItemDescriptor, RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState,
-    ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, Separator, Sheet,
+    DialogOpenMode, EmptyState, FeedbackIntent, Field, FocusRing, HoverCard, HoverCardContentKind,
+    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton, Kbd, Label, Listbox,
+    ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
+    ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode,
+    MenuSelection, Popover, PopoverOpenMode, Progress, ProgressVisualMode, RadioGroup,
+    RadioGroupState, RadioItem, RadioItemDescriptor, RadioSelection, ScrollArea, ScrollAreaAxis,
+    ScrollAreaState, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, Separator, Sheet,
     SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
     SidebarItem, SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide,
     SidebarState, SidebarVariant, Skeleton, Splitter, SplitterPanel, SplitterPanelDescriptor,
-    SplitterState, Switch, Table, TableColumn, TableFilter, TableHeaderAction, TablePagination,
-    TableRow, TableSort, TableSortDirection, TableState, Tabs, TabsActivationMode, TabsItem,
-    TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver,
-    ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
-    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
-    TooltipDelayPolicy, TooltipOpenIntent, VirtualizerItemKey, VirtualizerRange,
-    VirtualizerSnapshot, VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
+    SplitterState, StatusCue, Switch, Table, TableColumn, TableFilter, TableHeaderAction,
+    TablePagination, TableRow, TableSort, TableSortDirection, TableState, Tabs, TabsActivationMode,
+    TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode,
+    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, VirtualizerItemKey,
+    VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem, active_index_from_str_keys,
+    first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -1441,6 +1442,84 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     assert_eq!(virtualizer.resolve().overscan(), 2);
 }
 
+#[test]
+fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
+    use open_gpui_ui_components::{self as root, prelude};
+
+    let root_status_cue: root::StatusCue = root::StatusCue::new("status", "Ready");
+    let prelude_status_cue: prelude::StatusCue = prelude::StatusCue::new("status", "Ready");
+    let root_empty_state: root::EmptyState = root::EmptyState::new("empty", "No results");
+    let prelude_empty_state: prelude::EmptyState = prelude::EmptyState::new("empty", "No results");
+    let root_tree_descriptor: root::TreeItemDescriptor =
+        root::TreeItemDescriptor::new("root", "Root")
+            .child(root::TreeItemDescriptor::new("child", "Child"));
+    let prelude_tree_descriptor: prelude::TreeItemDescriptor =
+        prelude::TreeItemDescriptor::new("root", "Root");
+    let root_tree_state: root::TreeState = root::TreeState::resolve(
+        Size::Medium,
+        "Tree",
+        None,
+        None,
+        [root_tree_descriptor.clone()],
+    );
+    let prelude_tree_state: prelude::TreeState =
+        prelude::TreeState::resolve(Size::Medium, "Tree", None, None, [prelude_tree_descriptor]);
+    let root_virtualized_state: root::VirtualizedListState =
+        root::VirtualizedListState::resolve(Size::Small, false, 12, Some(4), Some(4), Some(3));
+    let prelude_virtualized_state: prelude::VirtualizedListState =
+        prelude::VirtualizedListState::resolve(Size::Small, false, 12, Some(4), Some(4), Some(3));
+    let _root_tree_toggle: Option<root::TreeToggle> =
+        root::TreeToggle::from_item(&root_tree_state.items()[0]);
+    let _prelude_tree_toggle: Option<prelude::TreeToggle> =
+        prelude::TreeToggle::from_item(&prelude_tree_state.items()[0]);
+    let _root_tree_selection: Option<root::TreeSelection> =
+        root::TreeSelection::from_item(&root_tree_state.items()[0]);
+    let _prelude_tree_selection: Option<prelude::TreeSelection> =
+        prelude::TreeSelection::from_item(&prelude_tree_state.items()[0]);
+    let _root_tree_focus: root::TreeFocusTarget = root::TreeFocusTarget::new(0, "root");
+    let _prelude_tree_focus: prelude::TreeFocusTarget = prelude::TreeFocusTarget::new(0, "root");
+    let _root_tree_action: Option<root::TreeKeyboardAction> =
+        root_tree_state.keyboard_action_for_key("right");
+    let _prelude_tree_action: Option<prelude::TreeKeyboardAction> =
+        prelude_tree_state.keyboard_action_for_key("right");
+    let _root_virtualized_activation: root::VirtualizedListActivation =
+        root::VirtualizedListActivation::new(4);
+    let _prelude_virtualized_activation: prelude::VirtualizedListActivation =
+        prelude::VirtualizedListActivation::new(4);
+    let _root_scroll_strategy: root::VirtualizedListScrollStrategy =
+        root::VirtualizedListScrollStrategy::Center;
+    let _prelude_scroll_strategy: prelude::VirtualizedListScrollStrategy =
+        prelude::VirtualizedListScrollStrategy::Center;
+
+    assert_eq!(root_status_cue.state().role(), Role::Label);
+    assert_eq!(prelude_status_cue.state().role(), Role::Label);
+    assert_eq!(root_empty_state.state().role(), Role::Section);
+    assert_eq!(prelude_empty_state.state().role(), Role::Section);
+    assert_eq!(root_tree_state.items().len(), 1);
+    assert_eq!(prelude_tree_state.items().len(), 1);
+    assert_eq!(root::tree_navigation_target("home", 0, &[false]), Some(0));
+    assert_eq!(
+        prelude::tree_navigation_target("home", 0, &[false]),
+        Some(0)
+    );
+    assert_eq!(
+        root_virtualized_state.navigation_target("pagedown"),
+        Some(7)
+    );
+    assert_eq!(
+        prelude_virtualized_state.navigation_target("pagedown"),
+        Some(7)
+    );
+    assert_eq!(
+        root::virtualized_list_navigation_target("end", 4, 12, 3),
+        Some(11)
+    );
+    assert_eq!(
+        prelude::virtualized_list_navigation_target("end", 4, 12, 3),
+        Some(11)
+    );
+}
+
 #[open_gpui::test]
 fn table_runtime_header_click_emits_sort_action(cx: &mut open_gpui::TestAppContext) {
     struct TestView {
@@ -2841,6 +2920,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_kbd = root::Kbd::new("kbd", "Ctrl+K");
     let root_progress = root::Progress::new("progress", "Progress");
     let root_skeleton = root::Skeleton::new("skeleton");
+    let root_status_cue = root::StatusCue::new("status", "Ready");
+    let root_empty_state = root::EmptyState::new("empty", "No results");
     let prelude_button = prelude::Button::new("save", "Save");
     let prelude_alert_dialog = prelude::AlertDialog::new(
         "delete",
@@ -2865,6 +2946,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_kbd = prelude::Kbd::new("kbd", "Ctrl+K");
     let prelude_progress = prelude::Progress::new("progress", "Progress");
     let prelude_skeleton = prelude::Skeleton::new("skeleton");
+    let prelude_status_cue = prelude::StatusCue::new("status", "Ready");
+    let prelude_empty_state = prelude::EmptyState::new("empty", "No results");
 
     let _ = (
         root_button.state(),
@@ -2885,6 +2968,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_kbd.state(),
         root_progress.state(),
         root_skeleton.state(),
+        root_status_cue.state(),
+        root_empty_state.state(),
         prelude_button.state(),
         prelude_alert_dialog.state(),
         prelude_sheet.state(),
@@ -2903,6 +2988,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_kbd.state(),
         prelude_progress.state(),
         prelude_skeleton.state(),
+        prelude_status_cue.state(),
+        prelude_empty_state.state(),
         root_overlay.policy().kind(),
         prelude_overlay.policy().kind(),
     );
@@ -5286,6 +5373,28 @@ fn default_theme_resolves_all_current_component_color_intents() {
             .source("asset://avatars/ada.png")
             .state(),
     ];
+    let status_cues = [
+        StatusCue::new("status-neutral", "Neutral").state(),
+        StatusCue::new("status-info", "Info")
+            .intent(FeedbackIntent::Info)
+            .state(),
+        StatusCue::new("status-success", "Success")
+            .intent(FeedbackIntent::Success)
+            .state(),
+        StatusCue::new("status-warning", "Warning")
+            .intent(FeedbackIntent::Warning)
+            .state(),
+        StatusCue::new("status-danger", "Danger")
+            .intent(FeedbackIntent::Danger)
+            .state(),
+    ];
+    let empty_states = [
+        EmptyState::new("empty-neutral", "Neutral").state(),
+        EmptyState::new("empty-danger", "Danger")
+            .description("Needs action")
+            .intent(FeedbackIntent::Danger)
+            .state(),
+    ];
     let icon_buttons = [
         IconButton::new("search", "?", "Search").state(),
         IconButton::new("outline-icon", "+", "Add")
@@ -5471,6 +5580,32 @@ fn default_theme_resolves_all_current_component_color_intents() {
     for state in avatars {
         let colors = state.colors();
         for intent in [colors.background(), colors.foreground(), colors.border()] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in status_cues {
+        let colors = state.colors();
+        for intent in [
+            colors.background(),
+            colors.foreground(),
+            colors.muted_foreground(),
+            colors.border(),
+            colors.marker(),
+        ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in empty_states {
+        let colors = state.colors();
+        for intent in [
+            colors.background(),
+            colors.foreground(),
+            colors.muted_foreground(),
+            colors.border(),
+            colors.marker(),
+        ] {
             assert_theme_has_exact_color(theme, intent);
         }
     }

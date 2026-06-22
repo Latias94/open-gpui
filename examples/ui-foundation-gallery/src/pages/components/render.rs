@@ -5,11 +5,13 @@ use crate::shell::*;
 use open_gpui::prelude::*;
 use open_gpui::{IntoElement, ScrollAnchor, ScrollHandle, div, px, rgb};
 use open_gpui_ui_components::*;
-use open_gpui_ui_core::{Orientation, Sizable};
+use open_gpui_ui_core::{Orientation, Sizable, ThemeTokens};
 
 pub(crate) struct ComponentPageAnchors {
     catalog: ScrollAnchor,
     primitives: ScrollAnchor,
+    feedback: ScrollAnchor,
+    state_contracts: ScrollAnchor,
     gates: ScrollAnchor,
     sidebar: ScrollAnchor,
     toolbar: ScrollAnchor,
@@ -41,6 +43,8 @@ impl ComponentPageAnchors {
         Self {
             catalog: anchor(),
             primitives: anchor(),
+            feedback: anchor(),
+            state_contracts: anchor(),
             gates: anchor(),
             sidebar: anchor(),
             toolbar: anchor(),
@@ -70,6 +74,8 @@ impl ComponentPageAnchors {
         match id {
             "catalog" => self.catalog.clone(),
             "primitives" => self.primitives.clone(),
+            "feedback" => self.feedback.clone(),
+            "state-contracts" => self.state_contracts.clone(),
             "gates" => self.gates.clone(),
             "sidebar" => self.sidebar.clone(),
             "toolbar" => self.toolbar.clone(),
@@ -227,6 +233,11 @@ pub(crate) fn render_components_page(
     let progress_samples = pages::components::progress_samples(snapshot.tokens);
     let skeleton_samples = pages::components::skeleton_samples(snapshot.tokens);
     let avatar_samples = pages::components::avatar_samples(snapshot.tokens);
+    let status_cue_samples = pages::components::status_cue_samples(snapshot.tokens);
+    let empty_state_samples = pages::components::empty_state_samples(snapshot.tokens);
+    let tree_state_contract_samples = pages::components::tree_state_contract_samples();
+    let virtualized_list_state_contract_samples =
+        pages::components::virtualized_list_state_contract_samples();
     let scroll_area_samples = pages::components::scroll_area_samples(snapshot.tokens);
     let splitter_samples = pages::components::splitter_samples(snapshot.tokens);
     let table_samples = pages::components::table_samples(snapshot.tokens);
@@ -267,6 +278,23 @@ pub(crate) fn render_components_page(
                     skeleton_samples,
                     avatar_samples,
                     snapshot.tokens,
+                ),
+            ),
+        )
+        .child(
+            component_page_section("feedback", anchors.feedback.clone()).child(
+                component_feedback_samples_section(
+                    status_cue_samples,
+                    empty_state_samples,
+                    snapshot.tokens,
+                ),
+            ),
+        )
+        .child(
+            component_page_section("state-contracts", anchors.state_contracts.clone()).child(
+                component_state_contract_samples_section(
+                    tree_state_contract_samples,
+                    virtualized_list_state_contract_samples,
                 ),
             ),
         )
@@ -1336,6 +1364,417 @@ pub(crate) fn render_components_page(
                         .child(shell.render_signal_list(snapshot.selected_page)),
                 ),
         )
+}
+
+fn component_feedback_samples_section(
+    status_cue_samples: [pages::components::StatusCueSample; 3],
+    empty_state_samples: [pages::components::EmptyStateSample; 2],
+    tokens: ThemeTokens,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .child("Feedback"),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(status_cue_samples.into_iter().map(|sample| {
+                    let sample_id = sample.id;
+                    let debug_selector = sample.debug_selector();
+                    let title = sample.title;
+                    let state = sample.state.clone();
+                    let label = state.label().to_owned();
+
+                    gallery_card_shell(
+                        format!("component-status-cue-sample:{sample_id}"),
+                        Some(debug_selector),
+                    )
+                    .min_w(px(260.0))
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .w_full()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child(title),
+                            )
+                            .child(label_pill(state.intent().as_str())),
+                    )
+                    .child(
+                        StatusCue::new(format!("component-status-cue:{sample_id}"), label)
+                            .intent(state.intent())
+                            .with_size(state.size())
+                            .tokens(tokens),
+                    )
+                    .child(component_status_cue_state_row(&state))
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(empty_state_samples.into_iter().map(|sample| {
+                    let sample_id = sample.id;
+                    let debug_selector = sample.debug_selector();
+                    let title = sample.title;
+                    let state = sample.state.clone();
+                    let state_title = state.title().to_owned();
+                    let description = state.description().map(str::to_owned);
+                    let empty_state =
+                        EmptyState::new(format!("component-empty-state:{sample_id}"), state_title)
+                            .intent(state.intent())
+                            .with_size(state.size())
+                            .tokens(tokens);
+                    let empty_state = match description {
+                        Some(description) => empty_state.description(description),
+                        None => empty_state,
+                    };
+
+                    gallery_card_shell(
+                        format!("component-empty-state-sample:{sample_id}"),
+                        Some(debug_selector),
+                    )
+                    .w(px(360.0))
+                    .flex()
+                    .flex_col()
+                    .items_stretch()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child(title),
+                            )
+                            .child(label_pill(state.intent().as_str())),
+                    )
+                    .child(empty_state)
+                    .child(component_empty_state_state_row(&state))
+                })),
+        )
+}
+
+fn component_state_contract_samples_section(
+    tree_samples: [pages::components::TreeStateContractSample; 1],
+    virtualized_list_samples: [pages::components::VirtualizedListStateContractSample; 1],
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .child("State contracts"),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(tree_samples.into_iter().map(|sample| {
+                    let debug_selector = sample.debug_selector();
+                    let state = sample.state.clone();
+
+                    gallery_card_shell(
+                        format!("component-tree-state-contract:{}", sample.id),
+                        Some(debug_selector),
+                    )
+                    .w(px(520.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child(sample.title),
+                            )
+                            .child(label_pill("TreeState")),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .line_height(px(18.0))
+                            .text_color(rgb(0x5a6472))
+                            .child(sample.summary),
+                    )
+                    .child(component_tree_state_contract_row(&state))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .children(state.items().iter().map(component_tree_item_readout)),
+                    )
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(virtualized_list_samples.into_iter().map(|sample| {
+                    let debug_selector = sample.debug_selector();
+                    let state = sample.state.clone();
+                    let scroll_strategy = sample.scroll_strategy;
+
+                    gallery_card_shell(
+                        format!("component-virtualized-list-state-contract:{}", sample.id),
+                        Some(debug_selector),
+                    )
+                    .w(px(520.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child(sample.title),
+                            )
+                            .child(label_pill("VirtualizedListState")),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .line_height(px(18.0))
+                            .text_color(rgb(0x5a6472))
+                            .child(sample.summary),
+                    )
+                    .child(component_virtualized_list_state_contract_row(
+                        &state,
+                        scroll_strategy,
+                    ))
+                })),
+        )
+}
+
+pub(crate) fn component_status_cue_state_row(state: &StatusCueState) -> impl IntoElement {
+    let metrics = state.metrics();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {:?} / {}",
+            state.intent().as_str(),
+            state.role(),
+            state.size().as_str()
+        ))
+        .child(format!(
+            "marker {} / gap {} / text {}",
+            format_px(metrics.marker_size()),
+            format_px(metrics.gap()),
+            format_px(metrics.text_size())
+        ))
+        .child(format!("display-only {}", state.display_only()))
+}
+
+pub(crate) fn component_empty_state_state_row(state: &EmptyStateState) -> impl IntoElement {
+    let metrics = state.metrics();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {:?} / {}",
+            state.intent().as_str(),
+            state.role(),
+            state.size().as_str()
+        ))
+        .child(format!(
+            "description {} / max {}",
+            if state.description().is_some() {
+                "present"
+            } else {
+                "none"
+            },
+            format_px(metrics.max_width())
+        ))
+        .child(format!(
+            "padding {} / gap {}",
+            format_px(metrics.padding()),
+            format_px(metrics.gap())
+        ))
+}
+
+pub(crate) fn component_tree_state_contract_row(state: &TreeState) -> impl IntoElement {
+    let selected = state
+        .selected_index()
+        .and_then(|index| state.items().get(index))
+        .map(TreeItemState::value)
+        .unwrap_or("none");
+    let focused = state
+        .focused_index()
+        .and_then(|index| state.items().get(index))
+        .map(TreeItemState::value)
+        .unwrap_or("none");
+    let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} visible / {} disabled / {}",
+            state.items().len(),
+            disabled_count,
+            state.size().as_str()
+        ))
+        .child(format!("selected {} / focus {}", selected, focused))
+        .child(format!(
+            "left {} / right {}",
+            tree_keyboard_action_label(state.keyboard_action_for_key("left")),
+            tree_keyboard_action_label(state.keyboard_action_for_key("right"))
+        ))
+        .child(format!(
+            "enter {} / space {}",
+            tree_keyboard_action_label(state.keyboard_action_for_key("enter")),
+            tree_keyboard_action_label(state.keyboard_action_for_key("space"))
+        ))
+}
+
+fn component_tree_item_readout(item: &TreeItemState) -> impl IntoElement {
+    let position = item
+        .position_in_set()
+        .map(|position| format!("{position}/{}", item.size_of_set()))
+        .unwrap_or_else(|| "disabled".to_owned());
+    let parent = item.parent_value().unwrap_or("root");
+
+    div()
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(0xe2e4dc))
+        .bg(if item.focused() {
+            rgb(0xe8f3ef)
+        } else {
+            rgb(0xfcfcf8)
+        })
+        .px_2()
+        .py_1()
+        .text_xs()
+        .text_color(if item.disabled() {
+            rgb(0x7a8492)
+        } else {
+            rgb(0x3f4a57)
+        })
+        .child(format!(
+            "{}:{} / d{} / parent {} / pos {} / expanded {} / selected {}",
+            item.index(),
+            item.value(),
+            item.depth(),
+            parent,
+            position,
+            item.expanded(),
+            item.selected()
+        ))
+}
+
+pub(crate) fn component_virtualized_list_state_contract_row(
+    state: &VirtualizedListState,
+    scroll_strategy: VirtualizedListScrollStrategy,
+) -> impl IntoElement {
+    let activation = state
+        .activation_for_key("enter")
+        .map(|activation| activation.index().to_string())
+        .unwrap_or_else(|| "none".to_owned());
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} items / active {} / selected {}",
+            state.item_count(),
+            optional_index_label(state.active_index()),
+            optional_index_label(state.selected_index())
+        ))
+        .child(format!(
+            "viewport {} / row {} / overscan {}",
+            state.viewport_item_count(),
+            format_px(state.metrics().row_height()),
+            state.metrics().overscan_count()
+        ))
+        .child(format!(
+            "home {} / end {} / pageup {} / pagedown {}",
+            optional_index_label(state.navigation_target("home")),
+            optional_index_label(state.navigation_target("end")),
+            optional_index_label(state.navigation_target("pageup")),
+            optional_index_label(state.navigation_target("pagedown"))
+        ))
+        .child(format!(
+            "activation {} / scroll {}",
+            activation,
+            scroll_strategy.as_str()
+        ))
+}
+
+fn optional_index_label(index: Option<usize>) -> String {
+    index
+        .map(|index| index.to_string())
+        .unwrap_or_else(|| "none".to_owned())
+}
+
+fn tree_keyboard_action_label(action: Option<TreeKeyboardAction>) -> String {
+    match action {
+        Some(TreeKeyboardAction::Focus(target)) => {
+            format!("focus {}@{}", target.value(), target.index())
+        }
+        Some(TreeKeyboardAction::Toggle(toggle)) => {
+            format!("toggle {} -> {}", toggle.value(), toggle.expanded())
+        }
+        Some(TreeKeyboardAction::Select(selection)) => {
+            format!("select {}@{}", selection.value(), selection.index())
+        }
+        None => "none".to_owned(),
+    }
 }
 
 pub(crate) fn component_tabs_state_row(state: &TabsState) -> impl IntoElement {

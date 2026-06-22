@@ -92,15 +92,34 @@ clamping, indeterminate progress, Avatar fallback initials, explicit accessible 
 metrics, `Role::Image`, and source metadata staying outside image-loading ownership. The gallery metadata and
 short-viewport smoke tests also verify those primitives are listed as official catalog entries and
 render visible samples with stable debug selectors.
+Feedback coverage now promotes `StatusCue` and `EmptyState` as official rendered Components
+catalog entries. The focused component tests verify root/prelude exports, feedback intent labels,
+resolved roles, metrics, and theme color intents. The gallery metadata tests require their
+component/state `SIGNALS` entries and stable `gallery:component-status-cue-sample:{id}` /
+`gallery:component-empty-state-sample:{id}` selectors, while the short-viewport smoke verifies the
+real `status-cue:*:root` and `empty-state:*:root` debug selectors render.
 `official_component_catalog_entries_have_signals_and_sample_selectors` is the gallery contract
 gate for catalog drift: every official `COMPONENT_CATALOG` entry must have matching component and
 resolved-state `SIGNALS` entries plus one rendered `gallery:component-*-sample:{id}` selector in
 the Components page.
+`state_contract_catalog_entries_have_signals_and_readout_selectors` is the companion pre-renderer
+contract gate. Entries marked `state-contract` must declare `state_contract_selector`, must not
+declare official `sample_selector`, and must stay disjoint from `official_sample_selector_pairs`.
+The current state contracts are `TreeState` and `VirtualizedListState`; their signals cover state,
+descriptor, action/result, helper, and payload types without requiring non-existent `Tree` or
+`VirtualizedList` component signals. The Components page smoke also verifies every
+`state_contract_readout_pairs()` selector is visible.
 The official Table gate requires `Table`, `TableState`, `VirtualizerState`, role signals for table
 rows and cells, and at least one `gallery:component-table-sample:{id}` selector. Table smokes and
 state tests assert that rendered row selectors stay bounded by the virtualizer's visible rows plus
 overscan, scroll input stays inside the table viewport, sortable header actions emit state-update
 payloads, and sort/filter state follows stable row ids rather than numeric positions.
+Tree and virtualized-list state-contract samples are verified through
+`components_page_samples_expose_component_metadata`: Tree readouts assert visible flattening,
+disabled-row position skipping, navigation skipping, toggle payloads, and Enter/Space selection
+actions; virtualized-list readouts assert active/selected indices, PageUp/PageDown clamping,
+activation payloads, viewport item count, overscan, and semantic scroll strategy labels. These
+checks intentionally do not claim a finished renderer.
 
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left

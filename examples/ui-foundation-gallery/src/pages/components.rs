@@ -4,16 +4,18 @@ use open_gpui::{ParentElement, Styled, div, rgb};
 use open_gpui_ui_components::{
     Avatar, AvatarState, Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant,
     Checkbox, CheckboxState, ComboboxGroupDescriptor, ComboboxOptionDescriptor, ComboboxState,
-    CommandGroupDescriptor, CommandItemDescriptor, CommandLoadingState, CommandState, Field,
-    FieldState, IconButton, IconButtonState, Kbd, KbdState, Label, LabelState,
-    ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState, Progress, ProgressState,
-    RadioGroupState, RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy,
-    SelectState, Separator, SeparatorState, SidebarCollapseMode, SidebarItemDescriptor,
-    SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton, SkeletonState,
-    SplitterPanelDescriptor, SplitterState, Switch, SwitchState, Table, TableColumn, TableFilter,
-    TablePagination, TableRenderPlan, TableRow, TableSort, TableState, Tabs, TabsActivationMode,
-    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState,
-    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
+    CommandGroupDescriptor, CommandItemDescriptor, CommandLoadingState, CommandState, EmptyState,
+    EmptyStateState, FeedbackIntent, Field, FieldState, IconButton, IconButtonState, Kbd, KbdState,
+    Label, LabelState, ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState, Progress,
+    ProgressState, RadioGroupState, RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState,
+    ScrollResetPolicy, SelectState, Separator, SeparatorState, SidebarCollapseMode,
+    SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
+    Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
+    Switch, SwitchState, Table, TableColumn, TableFilter, TablePagination, TableRenderPlan,
+    TableRow, TableSort, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
+    TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, TreeItemDescriptor, TreeState,
+    VirtualizedListScrollStrategy, VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -39,6 +41,7 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_foundation_gallery::pages::components::COMPONENT_CATALOG",
     "open_gpui_ui_foundation_gallery::pages::components::ComponentCatalogEntry",
     "open_gpui_ui_foundation_gallery::pages::components::ComponentCatalogStatus",
+    "open_gpui_ui_foundation_gallery::pages::components::state_contract_readout_pairs",
     "open_gpui_ui_components::Button",
     "open_gpui_ui_components::ButtonState",
     "open_gpui_ui_components::ButtonVariant",
@@ -56,6 +59,11 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::SkeletonState",
     "open_gpui_ui_components::Avatar",
     "open_gpui_ui_components::AvatarState",
+    "open_gpui_ui_components::StatusCue",
+    "open_gpui_ui_components::StatusCueState",
+    "open_gpui_ui_components::EmptyState",
+    "open_gpui_ui_components::EmptyStateState",
+    "open_gpui_ui_components::FeedbackIntent",
     "open_gpui_ui_components::IconButton",
     "open_gpui_ui_components::IconButtonState",
     "open_gpui_ui_components::Switch",
@@ -113,10 +121,24 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::TableState",
     "open_gpui_ui_components::TableHeaderAction",
     "open_gpui_ui_components::VirtualizerState",
+    "open_gpui_ui_components::TreeState",
+    "open_gpui_ui_components::TreeItemDescriptor",
+    "open_gpui_ui_components::TreeItemState",
+    "open_gpui_ui_components::TreeSelection",
+    "open_gpui_ui_components::TreeToggle",
+    "open_gpui_ui_components::TreeFocusTarget",
+    "open_gpui_ui_components::TreeKeyboardAction",
+    "open_gpui_ui_components::tree_navigation_target",
+    "open_gpui_ui_components::VirtualizedListState",
+    "open_gpui_ui_components::VirtualizedListActivation",
+    "open_gpui_ui_components::VirtualizedListMetrics",
+    "open_gpui_ui_components::VirtualizedListScrollStrategy",
+    "open_gpui_ui_components::virtualized_list_navigation_target",
     "ThemeTokens",
     "Size",
     "Role::Button",
     "Role::Image",
+    "Role::Label",
     "Role::Toolbar",
     "Role::Navigation",
     "Role::Section",
@@ -157,6 +179,14 @@ pub const COMPONENT_PAGE_JUMPS: &[ComponentPageJump] = &[
     ComponentPageJump {
         id: "primitives",
         label: "Primitives",
+    },
+    ComponentPageJump {
+        id: "feedback",
+        label: "Feedback",
+    },
+    ComponentPageJump {
+        id: "state-contracts",
+        label: "State contracts",
     },
     ComponentPageJump {
         id: "gates",
@@ -257,6 +287,8 @@ pub enum ComponentCatalogStatus {
     AdapterOnly,
     /// Public anatomy used by an official component family, not a standalone gallery component.
     InternalAnatomy,
+    /// Public renderer-neutral state contract that does not yet have an official renderer.
+    StateContract,
     /// Planned component not present in the current official catalog.
     Deferred,
 }
@@ -268,6 +300,7 @@ impl ComponentCatalogStatus {
             Self::Official => "official",
             Self::AdapterOnly => "adapter-only",
             Self::InternalAnatomy => "internal-anatomy",
+            Self::StateContract => "state-contract",
             Self::Deferred => "deferred",
         }
     }
@@ -278,6 +311,7 @@ impl ComponentCatalogStatus {
             Self::Official => (0xe8f3ef, 0x9ccdbd, 0x1f5f4d),
             Self::AdapterOnly => (0xf4f1ea, 0xd9c7a8, 0x6a512b),
             Self::InternalAnatomy => (0xf2f4f8, 0xc6cfdd, 0x475569),
+            Self::StateContract => (0xeaf3fb, 0xa8c7df, 0x28516a),
             Self::Deferred => (0xf7f7f2, 0xd6d8ce, 0x5a6472),
         }
     }
@@ -298,6 +332,8 @@ pub struct ComponentCatalogEntry {
     pub coverage: &'static str,
     /// Stable rendered sample selector for official catalog entries.
     pub sample_selector: Option<&'static str>,
+    /// Stable gallery readout selector for renderer-neutral state contracts.
+    pub state_contract_selector: Option<&'static str>,
 }
 
 impl ComponentCatalogEntry {
@@ -316,6 +352,26 @@ impl ComponentCatalogEntry {
             state: Some(state),
             coverage,
             sample_selector: Some(sample_selector),
+            state_contract_selector: None,
+        }
+    }
+
+    /// Creates a renderer-neutral state-contract catalog entry.
+    pub const fn state_contract(
+        name: &'static str,
+        family: &'static str,
+        state: &'static str,
+        coverage: &'static str,
+        state_contract_selector: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            status: ComponentCatalogStatus::StateContract,
+            family,
+            state: Some(state),
+            coverage,
+            sample_selector: None,
+            state_contract_selector: Some(state_contract_selector),
         }
     }
 
@@ -332,6 +388,7 @@ impl ComponentCatalogEntry {
             state: None,
             coverage,
             sample_selector: None,
+            state_contract_selector: None,
         }
     }
 
@@ -348,6 +405,7 @@ impl ComponentCatalogEntry {
             state: None,
             coverage,
             sample_selector: None,
+            state_contract_selector: None,
         }
     }
 
@@ -358,6 +416,7 @@ impl ComponentCatalogEntry {
             None => match self.status {
                 ComponentCatalogStatus::AdapterOnly => "adapter-owned",
                 ComponentCatalogStatus::InternalAnatomy => "internal-anatomy",
+                ComponentCatalogStatus::StateContract => "state-contract",
                 ComponentCatalogStatus::Deferred => "deferred",
                 ComponentCatalogStatus::Official => "unclassified",
             },
@@ -512,6 +571,20 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "exports / gallery / virtualized scroll smoke",
         "gallery:component-table-sample:release-queue",
     ),
+    ComponentCatalogEntry::official(
+        "StatusCue",
+        "feedback",
+        "StatusCueState",
+        "exports / gallery / token intents",
+        "gallery:component-status-cue-sample:sync-warning",
+    ),
+    ComponentCatalogEntry::official(
+        "EmptyState",
+        "feedback",
+        "EmptyStateState",
+        "exports / gallery / token intents",
+        "gallery:component-empty-state-sample:no-results",
+    ),
     ComponentCatalogEntry::adapter_only(
         "TextInputController",
         "form-adapter",
@@ -555,6 +628,20 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "exports / gallery / state tests",
         "gallery:component-avatar-sample:ada",
     ),
+    ComponentCatalogEntry::state_contract(
+        "TreeState",
+        "hierarchy",
+        "TreeState",
+        "state contract / renderer deferred",
+        "gallery:component-tree-state-contract:document-outline",
+    ),
+    ComponentCatalogEntry::state_contract(
+        "VirtualizedListState",
+        "data",
+        "VirtualizedListState",
+        "state contract / virtualizer boundary",
+        "gallery:component-virtualized-list-state-contract:release-navigation",
+    ),
 ];
 
 /// Returns the official catalog entries that own rendered sample selectors.
@@ -562,6 +649,15 @@ pub fn official_sample_selector_pairs() -> impl Iterator<Item = (&'static str, &
     COMPONENT_CATALOG
         .iter()
         .filter_map(|entry| entry.sample_selector.map(|selector| (entry.name, selector)))
+}
+
+/// Returns renderer-neutral state contracts that own visible gallery readouts.
+pub fn state_contract_readout_pairs() -> impl Iterator<Item = (&'static str, &'static str)> {
+    COMPONENT_CATALOG.iter().filter_map(|entry| {
+        entry
+            .state_contract_selector
+            .map(|selector| (entry.name, selector))
+    })
 }
 
 /// One component conformance gate shown by the Components page.
@@ -637,6 +733,17 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "Table::render_plan",
             "TableHeaderAction",
             "components_gallery_smoke_table_scroll_stays_inside_sample",
+        ],
+    },
+    ComponentConformanceGate {
+        id: "state-contract-readouts",
+        title: "State contract readouts",
+        summary: "Renderer-neutral TreeState and VirtualizedListState stay visible without counting as official renderers.",
+        evidence: &[
+            "state_contract_readout_pairs",
+            "TreeState::keyboard_action_for_key",
+            "VirtualizedListState::navigation_target",
+            "components_page_state_contract_samples_expose_tree_and_virtualized_list_contracts",
         ],
     },
     ComponentConformanceGate {
@@ -733,6 +840,73 @@ pub struct AvatarSample {
     pub id: &'static str,
     /// Resolved state.
     pub state: AvatarState,
+}
+
+/// One status cue sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatusCueSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Visible sample title.
+    pub title: &'static str,
+    /// Resolved state.
+    pub state: StatusCueState,
+}
+
+/// One empty state sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmptyStateSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Visible sample title.
+    pub title: &'static str,
+    /// Resolved state.
+    pub state: EmptyStateState,
+}
+
+/// One tree state-contract sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TreeStateContractSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Visible sample title.
+    pub title: &'static str,
+    /// Short explanation of the contract slice.
+    pub summary: &'static str,
+    /// Resolved renderer-neutral tree state.
+    pub state: TreeState,
+}
+
+impl TreeStateContractSample {
+    /// Returns the stable debug selector used by the state-contract gallery section.
+    pub fn debug_selector(&self) -> String {
+        format!("gallery:component-tree-state-contract:{}", self.id)
+    }
+}
+
+/// One virtualized-list state-contract sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VirtualizedListStateContractSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Visible sample title.
+    pub title: &'static str,
+    /// Short explanation of the contract slice.
+    pub summary: &'static str,
+    /// Resolved renderer-neutral virtualized-list state.
+    pub state: VirtualizedListState,
+    /// Semantic scroll alignment a future adapter would apply when revealing the active row.
+    pub scroll_strategy: VirtualizedListScrollStrategy,
+}
+
+impl VirtualizedListStateContractSample {
+    /// Returns the stable debug selector used by the state-contract gallery section.
+    pub fn debug_selector(&self) -> String {
+        format!(
+            "gallery:component-virtualized-list-state-contract:{}",
+            self.id
+        )
+    }
 }
 
 /// One switch sample in the gallery.
@@ -1242,6 +1416,8 @@ impl_component_sample_selectors!(KbdSample, "component-kbd-sample");
 impl_component_sample_selectors!(ProgressSample, "component-progress-sample");
 impl_component_sample_selectors!(SkeletonSample, "component-skeleton-sample");
 impl_component_sample_selectors!(AvatarSample, "component-avatar-sample");
+impl_component_sample_selectors!(StatusCueSample, "component-status-cue-sample");
+impl_component_sample_selectors!(EmptyStateSample, "component-empty-state-sample");
 
 /// Returns button samples backed by real component state.
 pub fn button_samples(tokens: ThemeTokens) -> [ButtonSample; 6] {
@@ -1524,6 +1700,129 @@ pub fn avatar_samples(tokens: ThemeTokens) -> [AvatarSample; 4] {
             state: avatar.state(),
         }
     })
+}
+
+/// Returns status cue samples backed by real component state.
+pub fn status_cue_samples(tokens: ThemeTokens) -> [StatusCueSample; 3] {
+    [
+        (
+            "sync-warning",
+            "Sync warning",
+            "3 anchors need review",
+            FeedbackIntent::Warning,
+            Size::Small,
+        ),
+        (
+            "healthy",
+            "Healthy",
+            "All queues clear",
+            FeedbackIntent::Success,
+            Size::Medium,
+        ),
+        (
+            "indexing",
+            "Indexing",
+            "Indexing workspace",
+            FeedbackIntent::Info,
+            Size::Medium,
+        ),
+    ]
+    .map(|(id, title, label, intent, size)| StatusCueSample {
+        id,
+        title,
+        state: StatusCue::new(id, label)
+            .intent(intent)
+            .with_size(size)
+            .tokens(tokens)
+            .state(),
+    })
+}
+
+/// Returns empty-state samples backed by real component state.
+pub fn empty_state_samples(tokens: ThemeTokens) -> [EmptyStateSample; 2] {
+    [
+        (
+            "no-results",
+            "No results",
+            "No matching releases",
+            Some("Adjust filters or clear the current query."),
+            FeedbackIntent::Neutral,
+            Size::Medium,
+        ),
+        (
+            "blocked",
+            "Blocked",
+            "Queue blocked",
+            Some("Resolve failing checks before merging the next item."),
+            FeedbackIntent::Danger,
+            Size::Small,
+        ),
+    ]
+    .map(
+        |(id, title, state_title, description, intent, size)| EmptyStateSample {
+            id,
+            title,
+            state: {
+                let empty_state = EmptyState::new(id, state_title)
+                    .intent(intent)
+                    .with_size(size)
+                    .tokens(tokens);
+                match description {
+                    Some(description) => empty_state.description(description).state(),
+                    None => empty_state.state(),
+                }
+            },
+        },
+    )
+}
+
+/// Returns tree state-contract samples for renderer follow-up review.
+pub fn tree_state_contract_samples() -> [TreeStateContractSample; 1] {
+    [TreeStateContractSample {
+        id: "document-outline",
+        title: "Document outline",
+        summary: "Visible flattening, disabled-row skipping, and APG-style keyboard actions.",
+        state: TreeState::resolve(
+            Size::Medium,
+            "Document outline",
+            Some("intro"),
+            Some("figures"),
+            document_outline_tree_items(),
+        ),
+    }]
+}
+
+fn document_outline_tree_items() -> Vec<TreeItemDescriptor> {
+    vec![
+        TreeItemDescriptor::new("paper", "Paper")
+            .expanded(true)
+            .child(TreeItemDescriptor::new("intro", "Introduction"))
+            .child(
+                TreeItemDescriptor::new("figures", "Figures")
+                    .expanded(false)
+                    .child(TreeItemDescriptor::new("figure-1", "Figure 1")),
+            ),
+        TreeItemDescriptor::new("disabled", "Disabled").disabled(true),
+        TreeItemDescriptor::new("notes", "Notes"),
+    ]
+}
+
+/// Returns virtualized-list state-contract samples for renderer follow-up review.
+pub fn virtualized_list_state_contract_samples() -> [VirtualizedListStateContractSample; 1] {
+    [VirtualizedListStateContractSample {
+        id: "release-navigation",
+        title: "Release navigation",
+        summary: "Long-list active descendant navigation without duplicating virtualizer range math.",
+        state: VirtualizedListState::resolve(
+            Size::Small,
+            false,
+            10_000,
+            Some(42),
+            Some(40),
+            Some(12),
+        ),
+        scroll_strategy: VirtualizedListScrollStrategy::Center,
+    }]
 }
 
 /// Returns switch samples backed by real component state.

@@ -4,10 +4,11 @@ use open_gpui::{
 };
 use open_gpui_ui_components::{
     AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant, ComboboxOpenMode,
-    CommandOpenMode, DialogOpenMode, HoverCardOpenIntent, HoverCardOpenMode, MenuItemKind,
-    MenuOpenMode, OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy,
-    SelectOpenMode, SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, ThemeMode,
-    ToggleVariant, TooltipOpenIntent,
+    CommandOpenMode, DialogOpenMode, FeedbackIntent, HoverCardOpenIntent, HoverCardOpenMode,
+    MenuItemKind, MenuOpenMode, OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis,
+    ScrollResetPolicy, SelectOpenMode, SheetCloseAffordance, SheetModalMode, SheetOpenMode,
+    SheetSide, ThemeMode, ToggleVariant, TooltipOpenIntent, TreeKeyboardAction,
+    VirtualizedListScrollStrategy,
     gpui_adapter::{DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state},
 };
 use open_gpui_ui_core::{
@@ -106,7 +107,7 @@ fn scroll_page_until_visible(cx: &mut VisualTestContext, selector: &'static str)
         cx,
         "scroll-area:gallery-page-scroll-viewport",
         selector,
-        96,
+        160,
         point(px(0.0), px(-160.0)),
         point(
             scroll_bounds.right() - px(6.0),
@@ -947,6 +948,8 @@ fn components_page_samples_expose_component_metadata() {
     let progress = pages::components::progress_samples(tokens);
     let skeletons = pages::components::skeleton_samples(tokens);
     let avatars = pages::components::avatar_samples(tokens);
+    let status_cues = pages::components::status_cue_samples(tokens);
+    let empty_states = pages::components::empty_state_samples(tokens);
     let switches = pages::components::switch_samples(tokens);
     let checkboxes = pages::components::checkbox_samples(tokens);
     let radio_groups = pages::components::radio_group_samples(tokens);
@@ -992,6 +995,8 @@ fn components_page_samples_expose_component_metadata() {
             "ScrollArea",
             "Splitter",
             "Table",
+            "StatusCue",
+            "EmptyState",
             "Separator",
             "Kbd",
             "Progress",
@@ -1022,8 +1027,23 @@ fn components_page_samples_expose_component_metadata() {
                 && entry.status == pages::components::ComponentCatalogStatus::Official
                 && entry.coverage == "exports / gallery / state tests"))
     );
+    let state_contract_names: Vec<_> = catalog
+        .iter()
+        .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::StateContract)
+        .map(|entry| entry.name)
+        .collect();
+    assert_eq!(
+        state_contract_names,
+        vec!["TreeState", "VirtualizedListState"]
+    );
+    assert!(
+        catalog
+            .iter()
+            .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::StateContract)
+            .all(|entry| entry.sample_selector.is_none() && entry.state_contract_selector.is_some())
+    );
 
-    assert_eq!(gates.len(), 7);
+    assert_eq!(gates.len(), 8);
     assert_eq!(gates[0].id, "public-api-exports");
     assert!(
         gates[0]
@@ -1040,7 +1060,8 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(gates[3].id, "splitter-runtime");
     assert_eq!(gates[4].id, "tabs-overflow");
     assert_eq!(gates[5].id, "table-virtualization");
-    assert_eq!(gates[6].id, "a11y-labels");
+    assert_eq!(gates[6].id, "state-contract-readouts");
+    assert_eq!(gates[7].id, "a11y-labels");
 
     assert_eq!(buttons.len(), 6);
     assert_eq!(buttons[0].id, "default");
@@ -1098,6 +1119,25 @@ fn components_page_samples_expose_component_metadata() {
         Some("asset://avatars/katherine.png")
     );
     assert_eq!(avatars[3].state.fallback(), "?");
+
+    assert_eq!(status_cues.len(), 3);
+    assert_eq!(status_cues[0].id, "sync-warning");
+    assert_eq!(status_cues[0].state.intent(), FeedbackIntent::Warning);
+    assert_eq!(status_cues[0].state.role(), Role::Label);
+    assert!(status_cues[0].state.display_only());
+    assert_eq!(status_cues[0].state.size(), Size::Small);
+    assert_eq!(status_cues[1].state.intent(), FeedbackIntent::Success);
+    assert_eq!(status_cues[2].state.intent(), FeedbackIntent::Info);
+
+    assert_eq!(empty_states.len(), 2);
+    assert_eq!(empty_states[0].id, "no-results");
+    assert_eq!(empty_states[0].state.intent(), FeedbackIntent::Neutral);
+    assert_eq!(empty_states[0].state.role(), Role::Section);
+    assert_eq!(
+        empty_states[0].state.description(),
+        Some("Adjust filters or clear the current query.")
+    );
+    assert_eq!(empty_states[1].state.intent(), FeedbackIntent::Danger);
 
     assert_eq!(icon_buttons.len(), 4);
     assert_eq!(icon_buttons[0].state.accessible_label(), "Search");
@@ -1343,6 +1383,59 @@ fn components_page_samples_expose_component_metadata() {
 }
 
 #[test]
+fn components_page_state_contract_samples_expose_tree_and_virtualized_list_contracts() {
+    let tree_contracts = pages::components::tree_state_contract_samples();
+    let virtualized_list_contracts = pages::components::virtualized_list_state_contract_samples();
+
+    assert_eq!(tree_contracts.len(), 1);
+    let tree = &tree_contracts[0].state;
+    let tree_values = tree
+        .items()
+        .iter()
+        .map(|item| item.value())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tree_values,
+        ["paper", "intro", "figures", "disabled", "notes"]
+    );
+    assert_eq!(tree.selected_index(), Some(1));
+    assert_eq!(tree.focused_index(), Some(2));
+    assert_eq!(tree.items()[3].position_in_set(), None);
+    assert_eq!(
+        tree.navigation_target("down").map(|item| item.value()),
+        Some("notes")
+    );
+    assert!(matches!(
+        tree.keyboard_action_for_key("right"),
+        Some(TreeKeyboardAction::Toggle(_))
+    ));
+    assert!(matches!(
+        tree.keyboard_action_for_key("enter"),
+        Some(TreeKeyboardAction::Select(_))
+    ));
+
+    assert_eq!(virtualized_list_contracts.len(), 1);
+    let virtualized = &virtualized_list_contracts[0];
+    assert_eq!(
+        virtualized.scroll_strategy,
+        VirtualizedListScrollStrategy::Center
+    );
+    assert_eq!(virtualized.state.item_count(), 10_000);
+    assert_eq!(virtualized.state.active_index(), Some(42));
+    assert_eq!(virtualized.state.selected_index(), Some(40));
+    assert_eq!(virtualized.state.viewport_item_count(), 12);
+    assert_eq!(virtualized.state.navigation_target("pageup"), Some(30));
+    assert_eq!(virtualized.state.navigation_target("pagedown"), Some(54));
+    assert_eq!(
+        virtualized
+            .state
+            .activation_for_key("space")
+            .map(|activation| activation.index()),
+        Some(42)
+    );
+}
+
+#[test]
 fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
     let components_source = include_str!("../src/pages/components.rs");
     let render_source = include_str!("../src/pages/components/render.rs");
@@ -1434,6 +1527,16 @@ fn official_component_catalog_entries_have_signals_and_sample_selectors() {
         stray_selectors.is_empty(),
         "non-official catalog entries must not declare sample selectors: {stray_selectors:?}"
     );
+    let official_state_contract_selectors = pages::components::COMPONENT_CATALOG
+        .iter()
+        .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
+        .filter(|entry| entry.state_contract_selector.is_some())
+        .map(|entry| entry.name)
+        .collect::<Vec<_>>();
+    assert!(
+        official_state_contract_selectors.is_empty(),
+        "official catalog entries must not declare state-contract readout selectors: {official_state_contract_selectors:?}"
+    );
 
     let signals = pages::components::SIGNALS;
     let mut missing = Vec::new();
@@ -1461,6 +1564,77 @@ fn official_component_catalog_entries_have_signals_and_sample_selectors() {
     assert!(
         missing.is_empty(),
         "official component catalog entries must have matching signals: {missing:?}"
+    );
+}
+
+#[test]
+fn state_contract_catalog_entries_have_signals_and_readout_selectors() {
+    use std::collections::BTreeSet;
+
+    let state_contract_names = pages::components::COMPONENT_CATALOG
+        .iter()
+        .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::StateContract)
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    let readout_names = pages::components::state_contract_readout_pairs()
+        .map(|(name, _)| name)
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(readout_names, state_contract_names);
+
+    let official_names = pages::components::official_sample_selector_pairs()
+        .map(|(name, _)| name)
+        .collect::<BTreeSet<_>>();
+    assert!(
+        state_contract_names.is_disjoint(&official_names),
+        "state contracts must not satisfy the official rendered component selector gate"
+    );
+
+    let readout_selectors = pages::components::state_contract_readout_pairs()
+        .map(|(_, selector)| selector)
+        .collect::<Vec<_>>();
+    let unique_readout_selectors = readout_selectors.iter().copied().collect::<BTreeSet<_>>();
+    assert_eq!(unique_readout_selectors.len(), readout_selectors.len());
+
+    let stray_readout_selectors = pages::components::COMPONENT_CATALOG
+        .iter()
+        .filter(|entry| entry.status != pages::components::ComponentCatalogStatus::StateContract)
+        .filter(|entry| entry.state_contract_selector.is_some())
+        .map(|entry| entry.name)
+        .collect::<Vec<_>>();
+    assert!(
+        stray_readout_selectors.is_empty(),
+        "non-state-contract catalog entries must not declare state-contract selectors: {stray_readout_selectors:?}"
+    );
+
+    let required_signals = [
+        "open_gpui_ui_components::TreeState",
+        "open_gpui_ui_components::TreeItemDescriptor",
+        "open_gpui_ui_components::TreeItemState",
+        "open_gpui_ui_components::TreeSelection",
+        "open_gpui_ui_components::TreeToggle",
+        "open_gpui_ui_components::TreeFocusTarget",
+        "open_gpui_ui_components::TreeKeyboardAction",
+        "open_gpui_ui_components::tree_navigation_target",
+        "open_gpui_ui_components::VirtualizedListState",
+        "open_gpui_ui_components::VirtualizedListActivation",
+        "open_gpui_ui_components::VirtualizedListMetrics",
+        "open_gpui_ui_components::VirtualizedListScrollStrategy",
+        "open_gpui_ui_components::virtualized_list_navigation_target",
+    ];
+    for signal in required_signals {
+        assert!(
+            pages::components::SIGNALS.contains(&signal),
+            "expected state-contract signal `{signal}`"
+        );
+    }
+    assert!(
+        !pages::components::SIGNALS.contains(&"open_gpui_ui_components::Tree"),
+        "TreeState contract must not imply a completed Tree renderer signal"
+    );
+    assert!(
+        !pages::components::SIGNALS.contains(&"open_gpui_ui_components::VirtualizedList"),
+        "VirtualizedListState contract must not imply a completed VirtualizedList renderer signal"
     );
 }
 
@@ -1796,6 +1970,15 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(gates.iter().any(|gate| gate.id == "scroll-redraw"));
     assert!(gates.iter().any(|gate| gate.id == "tabs-overflow"));
     assert!(gates.iter().any(|gate| gate.id == "table-virtualization"));
+    assert!(
+        gates
+            .iter()
+            .any(|gate| gate.id == "state-contract-readouts")
+    );
+    assert!(signals.contains(&"open_gpui_ui_components::StatusCue"));
+    assert!(signals.contains(&"open_gpui_ui_components::StatusCueState"));
+    assert!(signals.contains(&"open_gpui_ui_components::EmptyState"));
+    assert!(signals.contains(&"open_gpui_ui_components::EmptyStateState"));
     assert!(signals.contains(&"open_gpui_ui_components::Listbox"));
     assert!(signals.contains(&"open_gpui_ui_components::ListboxState"));
     assert!(signals.contains(&"open_gpui_ui_components::Select"));
@@ -1807,11 +1990,14 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"open_gpui_ui_components::Table"));
     assert!(signals.contains(&"open_gpui_ui_components::TableState"));
     assert!(signals.contains(&"open_gpui_ui_components::VirtualizerState"));
+    assert!(signals.contains(&"open_gpui_ui_components::TreeState"));
+    assert!(signals.contains(&"open_gpui_ui_components::VirtualizedListState"));
     assert!(signals.contains(&"Role::ListBox"));
     assert!(signals.contains(&"Role::ListBoxOption"));
     assert!(signals.contains(&"Role::EditableComboBox"));
     assert!(signals.contains(&"Role::ProgressIndicator"));
     assert!(signals.contains(&"Role::Image"));
+    assert!(signals.contains(&"Role::Label"));
     assert!(signals.contains(&"Role::Table"));
     assert!(signals.contains(&"Role::Row"));
     assert!(signals.contains(&"Role::ColumnHeader"));
@@ -2221,16 +2407,24 @@ fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
             "expected Components page to render official {name} sample `{selector}`"
         );
     }
+    for (name, selector) in pages::components::state_contract_readout_pairs() {
+        assert!(
+            cx.debug_bounds(selector).is_some(),
+            "expected Components page to render state-contract {name} readout `{selector}`"
+        );
+    }
     for selector in [
         "separator:component-separator:section-rule:root",
         "kbd:component-kbd:command-palette:root",
         "progress:component-progress:sync:root",
         "skeleton:component-skeleton:body-line:root",
         "avatar:component-avatar:ada:root",
+        "status-cue:component-status-cue:sync-warning:root",
+        "empty-state:component-empty-state:no-results:root",
     ] {
         assert!(
             cx.debug_bounds(selector).is_some(),
-            "expected Components page to render real primitive root `{selector}`"
+            "expected Components page to render real component root `{selector}`"
         );
     }
 

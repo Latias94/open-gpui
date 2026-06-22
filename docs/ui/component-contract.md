@@ -239,8 +239,11 @@ catalog for this contract. Entries marked `official` satisfy the checklist above
 `adapter-only` are public GPUI helper surfaces such as `TextInputController`, not standalone
 components. Entries marked `internal-anatomy` are public parts of a component family, such as
 toolbar or listbox item descriptors, and should not be promoted to standalone components without a
-new resolved-state contract. Entries marked `deferred` are planned components that must not be
-treated as shipped API until they satisfy the checklist.
+new resolved-state contract. Entries marked `state-contract` are public renderer-neutral contracts
+with gallery readouts and signal coverage, but no completed GPUI renderer yet. They must use
+`state_contract_selector`, not the official `sample_selector`, and they must not satisfy the
+official rendered-component gate by accident. Entries marked `deferred` are planned components that
+must not be treated as shipped API until they satisfy the checklist.
 
 ## Theme Resolution
 
@@ -493,6 +496,15 @@ scroll stays inside the table viewport.
 overscan, total size, and snapshot/restore data in `ui_core`; the first Table adapter restores
 snapshot measurements but not captured scroll offsets. Grouped rows, expanded tree rows, pinned
 columns, sticky headers, aggregation, and two-dimensional grid virtualization remain follow-up work.
+`StatusCue` and `EmptyState` are official feedback components. They expose resolved feedback
+intent, size, role, metrics, and token intents, while the GPUI adapters own concrete styling and
+rendered debug selectors. `TreeState` and `VirtualizedListState` are intentionally classified as
+state contracts rather than official rendered components. `TreeState` covers visible flattening,
+selected/focused metadata, disabled-item skipping, expansion toggle payloads, and keyboard
+selection/focus/toggle actions. `VirtualizedListState` covers active/selected indices, page
+navigation, activation payloads, viewport item count, fixed row metrics, overscan, and semantic
+scroll strategy labels for a future adapter. It is a keyboard/navigation contract; rendered range
+calculation remains owned by `open_gpui_ui_core::VirtualizerState`.
 `Splitter` covers panel fraction normalization, min/max constraints, collapsed-panel metadata,
 stable handle anatomy, and local pointer dragging through keyed runtime state. Keyboard resizing,
 controlled resize callbacks, persisted layouts, RTL behavior, and nested splitter arbitration

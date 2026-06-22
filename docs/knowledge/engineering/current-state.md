@@ -9,6 +9,8 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-core virtualizer table
   - cargo nextest run -p open-gpui-ui-components table feedback tree virtualized_list
+  - cargo nextest run -p open-gpui-ui-components feedback_tree_and_virtualized_list_public_exports_remain_explicit crate_root_and_prelude_exports_remain_explicit default_theme_resolves_all_current_component_color_intents public_resolved_state_contracts_avoid_gpui_runtime_types feedback tree virtualized_list
+  - cargo nextest run -p open-gpui-ui-foundation-gallery official_component_catalog_entries_have_signals_and_sample_selectors state_contract_catalog_entries_have_signals_and_readout_selectors components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_table_samples_expose_virtualized_row_model_contract
   - cargo nextest run -p open-gpui-ui-foundation-gallery table
   - cargo check -p open-gpui-ui-foundation-gallery --tests
@@ -48,10 +50,10 @@ verified_by:
 - Done: Added `TableHeaderAction` and `Table::on_sort_requested` so sortable headers emit state-update payloads without moving table state ownership into render code.
 - Done: Hardened the Table adapter after review: live scroll offsets win after virtualizer measurement snapshots, duplicate row ids get unique render/virtualizer keys, and header/body column minimum widths match.
 - Done: Completed the Table performance follow-up: `TableState` row storage is cheap to clone and exposes a conservative cache key, the GPUI `TableRuntime` caches resolved row models across scroll redraws, `VirtualizerState::resolve_fixed_window` materializes only the visible + overscan window for fixed-height tables, and the Components gallery precomputes table state summaries from lazy static samples instead of rebuilding 10k rows during page render.
-- Done: Reviewed the pulled `feedback`, `tree`, and `virtualized_list` primitives. They fit the current component architecture: `feedback` adds concrete GPUI surfaces, while `tree` and `virtualized_list` are renderer-neutral state contracts that still need gallery/productization follow-up before being treated as finished visible components.
-- Follow-up: Add gallery/catalog/docs slices for the pulled feedback/tree/virtualized_list primitives, and decide whether `VirtualizedListState` should eventually reuse `open_gpui_ui_core::VirtualizerState` or remain a lightweight keyboard/navigation contract.
+- Done: Productized the pulled `feedback`, `tree`, and `virtualized_list` primitives in the Components gallery. `StatusCue` and `EmptyState` are now official rendered feedback components with catalog entries, signals, gallery samples, root selector smoke coverage, export tests, and theme-intent coverage. `TreeState` and `VirtualizedListState` are now explicit `state-contract` catalog entries with separate readout selectors, signal gates, and gallery readouts.
+- Follow-up: Design real `Tree` and `VirtualizedList` GPUI renderers separately. Keep `VirtualizedListState` as the keyboard/navigation contract unless renderer work proves it should compose more directly with `open_gpui_ui_core::VirtualizerState`, which remains the rendered range engine.
 - Blocked: None.
-- Next action: Commit the Table performance slice after final diff review, then plan the next UI component productization slice around feedback/tree/virtualized_list gallery coverage.
+- Next action: Run the broader component/gallery nextest suite after final doc review, commit the feedback/tree/virtualized-list productization slice, then plan renderer follow-up work for Tree or VirtualizedList.
 
 # Citations
 
