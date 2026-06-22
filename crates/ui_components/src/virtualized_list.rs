@@ -536,7 +536,7 @@ struct VirtualizedListRuntime {
 pub struct VirtualizedList {
     id: String,
     label: SharedString,
-    items: Arc<Vec<VirtualizedListItemDescriptor>>,
+    items: Arc<[VirtualizedListItemDescriptor]>,
     size: Size,
     disabled: bool,
     active_index: Option<usize>,
@@ -553,14 +553,18 @@ impl VirtualizedList {
         label: impl Into<SharedString>,
         items: impl IntoIterator<Item = VirtualizedListItemDescriptor>,
     ) -> Self {
-        Self::from_shared_items(id, label, Arc::new(items.into_iter().collect()))
+        Self::from_shared_items(
+            id,
+            label,
+            Arc::from(items.into_iter().collect::<Vec<_>>().into_boxed_slice()),
+        )
     }
 
     /// Creates a new virtualized list renderer from shared item storage.
     pub fn from_shared_items(
         id: impl Into<String>,
         label: impl Into<SharedString>,
-        items: Arc<Vec<VirtualizedListItemDescriptor>>,
+        items: Arc<[VirtualizedListItemDescriptor]>,
     ) -> Self {
         let size = Size::Medium;
 
@@ -646,7 +650,7 @@ impl VirtualizedList {
             self.id.clone(),
             self.label.to_string(),
             state,
-            self.items.as_slice(),
+            self.items.as_ref(),
             scroll_offset,
             viewport_extent,
         )
@@ -713,7 +717,7 @@ impl RenderOnce for VirtualizedList {
             self.id.clone(),
             self.label.to_string(),
             state.clone(),
-            self.items.as_slice(),
+            self.items.as_ref(),
             scroll_offset,
             viewport_extent,
         );
@@ -773,7 +777,7 @@ impl RenderOnce for VirtualizedList {
                 move |event: &KeyDownEvent, window, cx| {
                     handle_virtualized_list_key_down(
                         &plan_state,
-                        items.as_slice(),
+                        items.as_ref(),
                         runtime.clone(),
                         scroll_handle.clone(),
                         on_activate.clone(),

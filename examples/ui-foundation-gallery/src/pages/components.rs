@@ -949,7 +949,7 @@ pub struct VirtualizedListSample {
     /// Stable badge label.
     pub badge: &'static str,
     /// Shared item descriptors consumed by the concrete list renderer.
-    pub items: Arc<Vec<VirtualizedListItemDescriptor>>,
+    pub items: Arc<[VirtualizedListItemDescriptor]>,
     /// Resolved renderer-neutral list state.
     pub state: VirtualizedListState,
     /// Visual size applied to the concrete list.
@@ -2456,10 +2456,11 @@ fn build_virtualized_list_samples() -> [VirtualizedListSample; 1] {
     let row_height = ui_px(28.0);
     let overscan = 4;
     let item_count = 10_000;
-    let items = Arc::new(
+    let items = Arc::from(
         (0..item_count)
             .map(release_navigation_item)
-            .collect::<Vec<_>>(),
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
     );
     let state = VirtualizedListState::resolve(size, false, item_count, Some(0), Some(0), Some(8))
         .with_metrics(
