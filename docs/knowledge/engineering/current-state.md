@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 0e3772d
+git_commit: 293ec0d
 verified_by:
   - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-core virtualizer table
@@ -27,6 +27,8 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-foundation-gallery overlay_gallery_smoke_dismisses_popover_from_outside_press overlay_gallery_smoke_opens_hover_card_from_real_trigger_and_dismisses overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape overlay_gallery_smoke_closes_non_modal_sheet_from_outside_press overlay_gallery_smoke_closes_menu_from_escape_and_outside_press overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses components_gallery_smoke_closes_select_popup_from_outside_press
   - cargo nextest run -p open-gpui-ui-components overlay_adapter_config_defaults_follow_overlay_kind_policy overlay_open_change_helpers_match_core_policies
   - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo fmt -p open-gpui-ui-components
+  - cargo nextest run -p open-gpui-ui-components component_api_inventory
   - cargo nextest run -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-foundation-gallery
   - git diff --check
@@ -35,9 +37,9 @@ verified_by:
 
 # Current State
 
-- Goal: Plan the next UI component-library slice around public API stability, Overlay productization, and gallery focused inspection.
+- Goal: Execute the UI component-library slice around public API stability, Overlay productization, and gallery focused inspection.
 - Branch: `main`
-- Last verified: 2026-06-22, `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-core` passed 43/43, `cargo nextest run -p open-gpui-ui-components` passed 180/180, `cargo nextest run -p open-gpui-ui-foundation-gallery` passed 66/66, `git diff --check` passed, and the engineering wiki memory bundle validated after the Tree renderer productization slice. The API and Overlay productization plan update passed `git diff --check` and engineering wiki validation.
+- Last verified: 2026-06-22, U1 API inventory passed `cargo fmt -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-components component_api_inventory`, full `cargo nextest run -p open-gpui-ui-components` passed 182/182, `git diff --check` passed, and the engineering wiki memory bundle validated. Earlier Tree renderer and API/Overlay plan verification remains recorded below.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -63,9 +65,10 @@ verified_by:
 - Done: Added standard controlled TextInput ergonomics with `TextInput::value(...).on_change(...)`. The adapter now creates a keyed `TextInputController` when `on_change` is supplied, emits sanitized single-line values, and keeps callbacks out of `TextInputState`.
 - Done: Promoted `Tree` into the official Components surface. The adapter composes `TreeState` with keyed GPUI runtime state, focus handles, expansion overrides, selection/toggle callbacks, and an inner `ScrollArea`. The gallery now has a `document-outline` Tree sample, `tree-renderer` conformance gate, runtime selection/toggle log, keyboard expand/select smoke, and nested scroll containment smoke. `TreeState` remains visible as the renderer-neutral hierarchy readout beside the official component.
 - Done: Wrote `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` for the next slice. It starts with a public API inventory, then normalizes controlled/default/policy builders, callback names, Overlay catalog metadata, and focused Components gallery inspection.
-- Follow-up: Execute U1 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` before broad renames. `TreeState` and `VirtualizedListState` should remain renderer-neutral contracts while official adapters own GPUI runtime, focus, and scroll handles.
+- Done: Completed U1 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` as commit `293ec0d`. `COMPONENT_API_INVENTORY` now covers every official Components catalog entry plus the Overlay family, splits render inputs from controlled runtime inputs, records `default_*` seeds, callbacks, policy hints, and the `Tabs::selected` legacy seed exception, and compares each component's top-level public method list against a source-derived baseline so builder additions/removals fail until the inventory is updated.
+- Follow-up: Execute U2 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md`: normalize controlled/default/policy builder semantics using the new inventory as the source of truth. Keep `TreeState` and `VirtualizedListState` renderer-neutral while official adapters own GPUI runtime, focus, and scroll handles.
 - Blocked: None.
-- Next action: Begin U1 API inventory and guard tests from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md`.
+- Next action: Begin U2 API semantics cleanup from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md`.
 
 # Citations
 
@@ -87,3 +90,4 @@ verified_by:
 [16] Plan `docs/plans/2026-06-22-002-feat-ui-virtualized-list-renderer-plan.md`
 [17] Verification evidence `docs/knowledge/engineering/verification/tree-renderer-productization-20260622.md`
 [18] Plan `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md`
+[19] Commit `293ec0d` - `test(ui-components): add API inventory guard`
