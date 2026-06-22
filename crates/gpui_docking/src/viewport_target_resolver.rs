@@ -192,12 +192,6 @@ pub(crate) enum DockViewportAuthorizedRouteAuthority {
     /// Backend hovered-window signal is unavailable or was discarded for a no-input viewport, and
     /// the runtime's ImGui-style platform focus-order selected this viewport.
     ZOrderFallback,
-    /// Backend hovered-window signal is unavailable or was discarded for a no-input viewport, and
-    /// exactly one route-ready viewport geometry hit remained. This is the degenerate case of the
-    /// ImGui fallback search: it is never used when trusted hovered=None says no app viewport is
-    /// hovered, and multiple geometry hits remain diagnostic-only until backend authority resolves
-    /// their ordering.
-    UniqueGeometryFallback,
     /// A previously rendered routed preview accepted this target, so release may replay that
     /// accepted target without asking backend-hover fallback to pick a new viewport.
     AcceptedRoutedPreview,
@@ -232,13 +226,6 @@ impl DockAuthorizedViewportRouteTarget {
         }
     }
 
-    fn unique_geometry_fallback(target: DockViewportWindowHit) -> Self {
-        Self {
-            target,
-            authority: DockViewportAuthorizedRouteAuthority::UniqueGeometryFallback,
-        }
-    }
-
     pub(crate) fn event_receiver_local_scene(target: DockViewportTargetHit) -> Self {
         Self {
             target: target.into(),
@@ -263,7 +250,6 @@ impl DockViewportAuthorizedRouteAuthority {
                 | Self::EventReceiverLocalScene
                 | Self::PlatformWindowStackFallback
                 | Self::ZOrderFallback
-                | Self::UniqueGeometryFallback
         )
     }
 }
@@ -325,8 +311,7 @@ fn choose_backend_hover_fallback_viewport_target(
         }
     }
 
-    (hits.len() == 1)
-        .then(|| DockAuthorizedViewportRouteTarget::unique_geometry_fallback(hits[0].clone()))
+    None
 }
 
 pub(crate) fn resolve_authorized_viewport_route_target<I, H>(
@@ -520,13 +505,9 @@ mod tests {
                 vec![candidate("alpha", first)],
                 &DockViewportTargetContext::new(),
                 &[],
-            )
-            .map(|target| (target.authority(), target.into_target().space().clone())),
-            Some((
-                DockViewportAuthorizedRouteAuthority::UniqueGeometryFallback,
-                space("alpha"),
-            )),
-            "a single remaining hit may still use backend fallback authority when hovered-window data is unavailable"
+            ),
+            None,
+            "a single geometry hit remains diagnostic-only without backend hover, stack, or focus-order authority"
         );
 
         let single_hovered_known_empty = choose_diagnostic_viewport_target(

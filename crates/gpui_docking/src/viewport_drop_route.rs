@@ -1242,7 +1242,7 @@ mod tests {
     }
 
     #[test]
-    fn hovered_host_global_drop_uses_backend_hover_fallback_without_trusted_hover_authority() {
+    fn hovered_host_global_drop_requires_backend_or_focus_authority() {
         let main = space("main");
         let window = handle(1);
         let mut adapter = DockViewportAdapter::new();
@@ -1266,13 +1266,28 @@ mod tests {
                 &DockPolicy::default(),
                 DockViewportTargetContext::new(),
             ),
+            DockViewportDropRoute::Unavailable,
+            "a lone geometry hit is diagnostic-only without backend hovered-window, stack, or focus-order authority"
+        );
+
+        assert!(adapter.record_platform_focus_order_window(window.window_id()));
+        assert_eq!(
+            adapter.resolve_payload_drop_route_with_context(
+                main.clone(),
+                DockNodeId::null(),
+                DockViewportDropPayload::Item(item("a")),
+                point(px(115.0), px(225.0)),
+                None,
+                &DockPolicy::default(),
+                DockViewportTargetContext::new(),
+            ),
             DockViewportDropRoute::Local {
                 host_position: point(px(5.0), px(5.0)),
                 window_id: window.window_id(),
                 facts_generation: 1,
-                authority: DockViewportAuthorizedRouteAuthority::UniqueGeometryFallback,
+                authority: DockViewportAuthorizedRouteAuthority::ZOrderFallback,
             },
-            "when trusted hovered-window authority is unavailable, a lone hit uses the backend-hover fallback path"
+            "platform focus-order is the explicit ImGui-style fallback authority"
         );
         assert_eq!(
             adapter.resolve_payload_drop_route_with_context(
@@ -1410,7 +1425,7 @@ mod tests {
     }
 
     #[test]
-    fn source_only_global_drop_allows_source_viewport_backend_hover_fallback() {
+    fn source_only_global_drop_requires_focus_authority_for_source_fallback() {
         let main = space("main");
         let window = handle(1);
         let mut adapter = DockViewportAdapter::new();
@@ -1434,11 +1449,18 @@ mod tests {
 
         assert_eq!(
             adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
+            DockViewportDropRoute::Unavailable,
+            "source-only release should not infer authority from a lone geometry hit"
+        );
+
+        assert!(adapter.record_platform_focus_order_window(window.window_id()));
+        assert_eq!(
+            adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
             DockViewportDropRoute::Local {
                 host_position: point(px(5.0), px(5.0)),
                 window_id: window.window_id(),
                 facts_generation: 1,
-                authority: DockViewportAuthorizedRouteAuthority::UniqueGeometryFallback,
+                authority: DockViewportAuthorizedRouteAuthority::ZOrderFallback,
             }
         );
     }
@@ -1516,6 +1538,14 @@ mod tests {
 
         assert_eq!(
             route,
+            DockViewportDropRoute::Unavailable,
+            "event receiver remains diagnostic-only; a lone geometry hit cannot authorize a viewport route"
+        );
+
+        assert!(adapter.record_platform_focus_order_window(target_window.window_id()));
+        let focused_route = adapter.resolve_payload_drop_route(&request, &DockPolicy::default());
+        assert_eq!(
+            focused_route,
             DockViewportDropRoute::KnownViewport {
                 target: DockViewportTargetHit::with_facts_generation(
                     target,
@@ -1523,9 +1553,9 @@ mod tests {
                     point(px(20.0), px(30.0)),
                     1,
                 ),
-                authority: DockViewportAuthorizedRouteAuthority::UniqueGeometryFallback,
+                authority: DockViewportAuthorizedRouteAuthority::ZOrderFallback,
             },
-            "event receiver remains diagnostic-only; global fallback authority still comes from backend focus-order semantics"
+            "global fallback authority must come from platform focus-order semantics"
         );
     }
 
