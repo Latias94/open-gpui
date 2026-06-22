@@ -4282,7 +4282,7 @@ fn source_only_release_does_not_consume_cached_route_delivery(cx: &mut TestAppCo
 }
 
 #[open_gpui::test]
-fn source_only_release_with_known_empty_hover_can_commit_to_accepted_routed_preview(
+fn source_only_release_with_known_empty_hover_does_not_commit_to_accepted_routed_preview(
     cx: &mut TestAppContext,
 ) {
     let source_space = DockSpaceId::from("source");
@@ -4319,7 +4319,7 @@ fn source_only_release_with_known_empty_hover_can_commit_to_accepted_routed_prev
             )
         })
         .expect("target viewport should open");
-    let source_opened = cx
+    let _source_opened = cx
         .update(|app| {
             runtime.open_viewport(
                 source_space.clone(),
@@ -4333,13 +4333,6 @@ fn source_only_release_with_known_empty_hover_can_commit_to_accepted_routed_prev
             )
         })
         .expect("source viewport should open");
-    let source_window = source_opened
-        .window()
-        .downcast::<crate::DockHost>()
-        .expect("source viewport should render DockHost");
-    let source_window_bounds = source_window
-        .update(cx, |_, window, _| window.window_bounds().get_bounds())
-        .expect("source window should be live");
 
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
@@ -4356,10 +4349,6 @@ fn source_only_release_with_known_empty_hover_can_commit_to_accepted_routed_prev
     let release_screen_position = point(
         target_bounds.get_bounds().origin.x + target_center_host_position().x,
         target_bounds.get_bounds().origin.y + target_center_host_position().y,
-    );
-    let release_in_source_window = point(
-        release_screen_position.x - source_window_bounds.origin.x,
-        release_screen_position.y - source_window_bounds.origin.y,
     );
 
     let payload = DockDragPayload::new_item(
@@ -4438,20 +4427,15 @@ fn source_only_release_with_known_empty_hover_can_commit_to_accepted_routed_prev
     .with_drag_session(Some(session.clone()));
     let hovered_none_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&hovered_none_release_request, app));
-    assert!(
-        matches!(
-            hovered_none_resolution.route(),
-            DockViewportDropRoute::KnownViewport { target, authority }
-                if target.window_id() == target_opened.window().window_id()
-                    && *authority == crate::DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview
-        ),
-        "accepted routed preview should outrank transient hovered=None on hovered-host release"
+    assert_eq!(
+        hovered_none_resolution.route(),
+        &DockViewportDropRoute::Unavailable,
+        "trusted hovered=None is authoritative and must not replay the accepted preview"
     );
     assert!(
-        hovered_none_resolution.delivery().is_some(),
-        "accepted routed preview should mint delivery after target render acceptance"
+        hovered_none_resolution.delivery().is_none(),
+        "trusted hovered=None must not mint delivery from an accepted preview"
     );
-    cx.set_platform_hovered_window(None);
     let release_request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
         source_space.clone(),
         source_tabs,
@@ -4466,57 +4450,34 @@ fn source_only_release_with_known_empty_hover_can_commit_to_accepted_routed_prev
     .with_drag_session(Some(session.clone()));
     let raw_release_route =
         cx.update(|app| runtime.resolve_payload_drop_route_for_test(&release_request, app));
-    assert!(
-        matches!(
-            raw_release_route,
-            DockViewportDropRoute::KnownViewport { ref target, authority }
-                if target.window_id() == target_opened.window().window_id()
-                    && authority
-                        == crate::DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview
-        ),
-        "raw route should replay the accepted routed preview target, got {:?}",
-        raw_release_route
+    assert_eq!(
+        raw_release_route,
+        DockViewportDropRoute::Unavailable,
+        "raw route should trust hovered=None instead of replaying the accepted routed preview"
     );
     let release_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&release_request, app));
-    assert!(
-        matches!(
-            release_resolution.route(),
-            DockViewportDropRoute::KnownViewport { target, authority }
-                if target.window_id() == target_opened.window().window_id()
-                    && *authority
-                        == crate::DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview
-        ),
-        "runtime route should reuse the accepted routed preview target during active drag when hovered=None"
+    assert_eq!(
+        release_resolution.route(),
+        &DockViewportDropRoute::Unavailable,
+        "runtime route should trust hovered=None instead of replaying the accepted routed preview"
     );
 
-    let changed = source_window
-        .update(cx, |host, window, cx| {
-            host.drop_payload_release_from_render(
-                DockPayloadDropRelease::source_only_with_session(
-                    payload.clone(),
-                    source_space.clone(),
-                    release_in_source_window,
-                    Some(session.clone()),
-                ),
-                window,
-                cx,
-            )
-        })
-        .expect("source host should handle the source-only release");
-    assert!(
-        changed,
-        "if the runtime route resolves to a known viewport action, the host interaction should report a change"
+    let commit_result =
+        cx.update(|app| runtime.commit_payload_drop_from_screen(&release_request, app));
+    assert_eq!(
+        commit_result,
+        Err(DockActionApplyError::DropTargetUnavailable),
+        "trusted hovered=None should prevent cross-viewport commit from the accepted preview"
     );
     cx.run_until_parked();
     let status = runtime.runtime_status();
     assert!(
         matches!(
             status.last_route.as_ref().map(|record| &record.target),
-            Some(crate::DockViewportRouteTarget::KnownViewport { window_id, .. })
-                if *window_id == target_opened.window().window_id()
+            Some(crate::DockViewportRouteTarget::Unavailable)
         ),
-        "host release should record a known target viewport route, got {:?}",
+        "host release should record an unavailable route, got {:?}",
         status.last_route
     );
 
@@ -4528,7 +4489,7 @@ fn source_only_release_with_known_empty_hover_can_commit_to_accepted_routed_prev
         else {
             panic!("source should remain tabs");
         };
-        assert_eq!(items, &vec![item("b")]);
+        assert_eq!(items, &vec![item("a"), item("b")]);
         assert_eq!(selected.as_ref(), items.get(0));
 
         let DockNode::Tabs { items, selected } = controller
@@ -4538,8 +4499,8 @@ fn source_only_release_with_known_empty_hover_can_commit_to_accepted_routed_prev
         else {
             panic!("target should remain tabs");
         };
-        assert_eq!(items, &vec![item("c"), item("a")]);
-        assert_eq!(selected.as_ref(), items.get(1));
+        assert_eq!(items, &vec![item("c")]);
+        assert_eq!(selected.as_ref(), items.get(0));
     });
 }
 

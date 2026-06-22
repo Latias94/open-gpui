@@ -7001,9 +7001,7 @@ fn viewport_runtime_source_only_release_does_not_replay_unaccepted_routed_previe
         DockViewportDropPayload::Item(item("a")),
         point(px(220.0), px(200.0)),
         None,
-        crate::DockViewportPlatformSignals::from_target_context(
-            DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
-        ),
+        crate::DockViewportPlatformSignals::from_target_context(DockViewportTargetContext::new()),
         DockPayloadDropReleaseOrigin::SourceOnly,
     )
     .with_drag_session(Some(session));
@@ -7104,9 +7102,7 @@ fn viewport_runtime_source_only_release_requires_current_routed_preview_acceptan
         DockViewportDropPayload::Item(item("a")),
         point(px(220.0), px(200.0)),
         None,
-        crate::DockViewportPlatformSignals::from_target_context(
-            DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
-        ),
+        crate::DockViewportPlatformSignals::from_target_context(DockViewportTargetContext::new()),
         DockPayloadDropReleaseOrigin::SourceOnly,
     )
     .with_drag_session(Some(session));
@@ -7137,7 +7133,7 @@ fn viewport_runtime_source_only_release_requires_current_routed_preview_acceptan
 }
 
 #[open_gpui::test]
-fn viewport_runtime_source_only_known_empty_hover_replays_accepted_routed_preview(
+fn viewport_runtime_source_only_known_empty_hover_does_not_replay_accepted_routed_preview(
     cx: &mut TestAppContext,
 ) {
     let source_space = DockSpaceId::from("source");
@@ -7243,21 +7239,19 @@ fn viewport_runtime_source_only_known_empty_hover_replays_accepted_routed_previe
     let release_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&release_request, app));
 
-    assert!(
-        matches!(
-            release_resolution.route(),
-            DockViewportDropRoute::KnownViewport { target, authority }
-                if target.window_id() == target_opened.window().window_id()
-                    && *authority
-                        == crate::DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview
-        ),
-        "active drag with trusted hovered=None should replay the accepted routed preview target"
+    assert_eq!(
+        release_resolution.route(),
+        &DockViewportDropRoute::Unavailable,
+        "trusted hovered=None is authoritative and must not replay an old routed preview target"
     );
-    assert!(release_resolution.delivery().is_some());
+    assert!(
+        release_resolution.delivery().is_none(),
+        "trusted hovered=None must not mint delivery from an accepted preview"
+    );
 }
 
 #[open_gpui::test]
-fn viewport_runtime_hovered_host_known_empty_hover_replays_accepted_routed_preview(
+fn viewport_runtime_hovered_host_known_empty_hover_does_not_replay_accepted_routed_preview(
     cx: &mut TestAppContext,
 ) {
     let source_space = DockSpaceId::from("source");
@@ -7337,16 +7331,15 @@ fn viewport_runtime_hovered_host_known_empty_hover_replays_accepted_routed_previ
     let release_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&release_request, app));
 
-    assert!(
-        matches!(
-            release_resolution.route(),
-            DockViewportDropRoute::KnownViewport { target, authority }
-                if target.window_id() == target_window.window_id()
-                    && *authority == crate::DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview
-        ),
-        "same-session accepted routed preview should outrank transient hovered=None on hovered-host release"
+    assert_eq!(
+        release_resolution.route(),
+        &DockViewportDropRoute::Unavailable,
+        "trusted hovered=None is authoritative on hovered-host release and must not replay an old accepted target"
     );
-    assert!(release_resolution.delivery().is_some());
+    assert!(
+        release_resolution.delivery().is_none(),
+        "trusted hovered=None must not mint delivery from an accepted preview"
+    );
 }
 
 #[open_gpui::test]

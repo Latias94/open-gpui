@@ -3,20 +3,20 @@ use crate::viewport_registry::DockViewportRouteUnavailableReason;
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockDropDelivery, DockItemId,
     DockSpaceId, DockViewportActivationTransaction, DockViewportAdapter,
-    DockViewportAuthorizedRouteAuthority, DockViewportCloseCoordinator, DockViewportCloseOutcome,
-    DockViewportClosePlanState, DockViewportClosePolicy, DockViewportCloseStatus,
-    DockViewportDropActionOutcome, DockViewportDropRoute, DockViewportDropRouteOutcome,
-    DockViewportDropRouteRequest, DockViewportDropRouteResolution, DockViewportFocusCoordinator,
-    DockViewportFocusRequest, DockViewportIdentity, DockViewportPlacementLayout,
-    DockViewportPlacementValidationError, DockViewportPlatformSyncRecord,
-    DockViewportRegisterOutcome, DockViewportResolvedDropRoute, DockViewportRestoreReadiness,
-    DockViewportRoutedDropPreview, DockViewportRuntimeHandle, DockViewportRuntimeStatus,
-    DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus, DockViewportTargetHit,
-    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
-    DockViewportTearOffCompleted, DockViewportTearOffKey, DockViewportTearOffMachine,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
-    DockViewportTearOffSourceStatus, DockViewportTearOffTick, DockViewportWindowFacts,
-    DockViewportWorkspaceRouteTarget,
+    DockViewportAuthorizedRouteAuthority, DockViewportBackendFocusState,
+    DockViewportCloseCoordinator, DockViewportCloseOutcome, DockViewportClosePlanState,
+    DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropActionOutcome,
+    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
+    DockViewportDropRouteResolution, DockViewportFocusCoordinator, DockViewportFocusRequest,
+    DockViewportIdentity, DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportPlatformSyncRecord, DockViewportRegisterOutcome, DockViewportResolvedDropRoute,
+    DockViewportRestoreReadiness, DockViewportRoutedDropPreview, DockViewportRuntimeHandle,
+    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus,
+    DockViewportTargetHit, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
+    DockViewportTearOffCancelled, DockViewportTearOffCompleted, DockViewportTearOffKey,
+    DockViewportTearOffMachine, DockViewportTearOffOpenOutcome, DockViewportTearOffPending,
+    DockViewportTearOffRequest, DockViewportTearOffSourceStatus, DockViewportTearOffTick,
+    DockViewportWindowFacts, DockViewportWorkspaceRouteTarget,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
@@ -56,14 +56,7 @@ pub(crate) struct DockViewportRuntime {
     retired_windows: HashSet<WindowId>,
     render_passthrough_windows: HashSet<WindowId>,
     focus: DockViewportFocusCoordinator,
-    pending_activation: Option<DockViewportActivationTransaction>,
-    /// Last live docking window observed as backend-focused. Mirrors ImGui's
-    /// `PlatformLastFocusedViewportId` for activation and destroyed-focus suppression.
-    last_platform_focused_window: Option<WindowId>,
-    /// One-shot gate for ImGui's `prev_focused_has_been_destroyed` behavior: when backend focus
-    /// moves to another viewport only because the previously focused viewport was destroyed, the
-    /// next platform-focus restoration for the newly focused window must be skipped once.
-    destroyed_previous_focus_suppression: Option<DockViewportDestroyedPreviousFocusSuppression>,
+    backend_focus: DockViewportBackendFocusState,
     close_coordinator: DockViewportCloseCoordinator,
     routed_drop_preview: Option<DockViewportRoutedDropPreview>,
     routed_drop_preview_resolution: Option<DockViewportResolvedDropRoute>,
@@ -107,12 +100,6 @@ impl DockViewportAcceptedRoutedPreview {
     fn matches_target(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
         self.target.target_space() == space && self.target.target_window_id() == Some(window_id)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DockViewportDestroyedPreviousFocusSuppression {
-    /// Backend-focused window that should consume the destroyed-previous-focus gate.
-    focused_window: WindowId,
 }
 
 #[derive(Debug)]
@@ -381,9 +368,7 @@ impl DockViewportRuntime {
             retired_windows: HashSet::new(),
             render_passthrough_windows: HashSet::new(),
             focus: DockViewportFocusCoordinator::default(),
-            pending_activation: None,
-            last_platform_focused_window: None,
-            destroyed_previous_focus_suppression: None,
+            backend_focus: DockViewportBackendFocusState::default(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: None,
             routed_drop_preview_resolution: None,
@@ -414,9 +399,7 @@ impl DockViewportRuntime {
             retired_windows: HashSet::new(),
             render_passthrough_windows: HashSet::new(),
             focus: DockViewportFocusCoordinator::default(),
-            pending_activation: None,
-            last_platform_focused_window: None,
-            destroyed_previous_focus_suppression: None,
+            backend_focus: DockViewportBackendFocusState::default(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: None,
             routed_drop_preview_resolution: None,
@@ -466,7 +449,7 @@ impl DockViewportRuntime {
 
     #[cfg(test)]
     pub(crate) fn pending_activation(&self) -> Option<&DockViewportActivationTransaction> {
-        self.pending_activation.as_ref()
+        self.backend_focus.pending_activation()
     }
 
     #[cfg(test)]
@@ -634,47 +617,16 @@ impl DockViewportRuntime {
         self.adapter.record_platform_focus_order_window(window_id)
     }
 
-    fn is_live_docking_window(&self, window_id: WindowId) -> bool {
-        self.adapter.space_for_window_id(window_id).is_some()
-            && !self.adapter.window_close_requested(window_id)
-    }
-
     fn record_platform_focused_window(&mut self, window_id: WindowId) -> Option<bool> {
-        if !self.is_live_docking_window(window_id) {
-            return None;
-        }
-
-        let previous_focused_window = self.last_platform_focused_window;
-        let focused_changed = previous_focused_window != Some(window_id);
-        let mut pending_activation_changed = false;
-        if focused_changed {
-            self.destroyed_previous_focus_suppression = if previous_focused_window
-                .is_some_and(|previous| !self.is_live_docking_window(previous))
-            {
-                Some(DockViewportDestroyedPreviousFocusSuppression {
-                    focused_window: window_id,
-                })
-            } else {
-                None
-            };
-            pending_activation_changed = self.clear_pending_activation_except_window(window_id);
-        }
-        self.last_platform_focused_window = Some(window_id);
-        let changed = self.record_platform_focus_order_window(window_id)
-            || focused_changed
-            || pending_activation_changed;
-        Some(changed)
-    }
-
-    fn take_destroyed_previous_focus_suppression(&mut self, window_id: WindowId) -> bool {
-        if !self
-            .destroyed_previous_focus_suppression
-            .is_some_and(|suppression| suppression.focused_window == window_id)
-        {
-            return false;
-        }
-        self.destroyed_previous_focus_suppression = None;
-        true
+        let adapter = &self.adapter;
+        let focus_record =
+            self.backend_focus
+                .record_platform_focused_window(window_id, |candidate| {
+                    adapter.space_for_window_id(candidate).is_some()
+                        && !adapter.window_close_requested(candidate)
+                })?;
+        let focus_order_changed = self.record_platform_focus_order_window(window_id);
+        Some(focus_order_changed || focus_record.changed())
     }
 
     pub(crate) fn reconcile_backend_window_focus(&mut self, cx: &mut App) -> bool {
@@ -691,11 +643,7 @@ impl DockViewportRuntime {
         &mut self,
         activation: DockViewportActivationTransaction,
     ) -> bool {
-        if self.pending_activation.as_ref() == Some(&activation) {
-            return false;
-        }
-        self.pending_activation = Some(activation);
-        true
+        self.backend_focus.record_pending_activation(activation)
     }
 
     pub(crate) fn clear_pending_activation_for(
@@ -703,44 +651,8 @@ impl DockViewportRuntime {
         space: &DockSpaceId,
         window_id: WindowId,
     ) -> bool {
-        if !self
-            .pending_activation
-            .as_ref()
-            .is_some_and(|activation| activation.matches_window(space, window_id))
-        {
-            return false;
-        }
-        self.pending_activation = None;
-        true
-    }
-
-    fn clear_pending_activation_except_window(&mut self, window_id: WindowId) -> bool {
-        if !self
-            .pending_activation
-            .as_ref()
-            .is_some_and(|activation| activation.window_id() != window_id)
-        {
-            return false;
-        }
-        self.pending_activation = None;
-        true
-    }
-
-    fn take_pending_activation_for(
-        &mut self,
-        space: &DockSpaceId,
-        window_id: WindowId,
-    ) -> Option<DockViewportActivationTransaction> {
-        if self
-            .pending_activation
-            .as_ref()
-            .is_some_and(|activation| activation.matches_window(space, window_id))
-        {
-            let activation = self.pending_activation.take();
-            activation
-        } else {
-            None
-        }
+        self.backend_focus
+            .clear_pending_activation_for(space, window_id)
     }
 
     pub(crate) fn focus_command_for_confirmed_backend_window_focus(
@@ -761,26 +673,13 @@ impl DockViewportRuntime {
 
         self.record_platform_focused_window(window_id)
             .expect("backend focus was already validated as a live docking window");
-        let suppress_destroyed_previous_focus_restore =
-            self.take_destroyed_previous_focus_suppression(window_id);
-        // Mouse-down mirrors ImGui's platform-focus restore gate, but explicit viewport
-        // activations from drop, tear-off, or close recovery already carry their target focus.
-        let pending_activation = self.take_pending_activation_for(space, window_id);
-        if let Some(activation) = pending_activation {
-            return Some(crate::DockViewportFocusCommand::new(
-                activation.focus_source(),
-                activation.focus_request().clone(),
-            ));
-        }
-        if mouse_down {
-            return None;
-        }
-        if suppress_destroyed_previous_focus_restore {
-            return None;
-        }
-        self.focus
-            .request_for_platform_activation(space, mouse_down)
-            .map(crate::DockViewportFocusCommand::platform_activation)
+        self.backend_focus
+            .focus_command_for_confirmed_backend_window_focus(
+                &self.focus,
+                space,
+                window_id,
+                mouse_down,
+            )
     }
 
     pub(crate) fn record_panel_focus(&mut self, space: DockSpaceId, item: DockItemId) {
@@ -2000,7 +1899,7 @@ impl DockViewportRuntime {
         match route_resolution.route_ref() {
             DockViewportDropRoute::Unavailable => {
                 route_resolution.unavailable_reason()
-                    != Some(crate::DockViewportDropRouteUnavailableReason::BlockedByViewportWindow)
+                    == Some(crate::DockViewportDropRouteUnavailableReason::NoViewportAuthority)
             }
             DockViewportDropRoute::TearOff => {
                 request.release_origin()

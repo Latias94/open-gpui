@@ -129,6 +129,7 @@ mod render_tabs;
 mod split_fraction;
 mod viewport;
 mod viewport_activation;
+mod viewport_backend_focus;
 mod viewport_close;
 mod viewport_close_plan;
 mod viewport_coordinates;
@@ -216,6 +217,7 @@ pub(crate) use viewport::*;
 pub(crate) use viewport_activation::DockViewportActivationTransaction;
 #[cfg(test)]
 pub(crate) use viewport_activation::DockViewportWindowActivation;
+pub(crate) use viewport_backend_focus::*;
 pub use viewport_close::*;
 pub(crate) use viewport_close_plan::*;
 pub(crate) use viewport_drop_authority::*;
