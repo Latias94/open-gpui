@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: b349f4b
+git_commit: 0e3772d
 verified_by:
   - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-core virtualizer table
@@ -35,9 +35,9 @@ verified_by:
 
 # Current State
 
-- Goal: Complete the `Tree` official renderer promotion, gallery runtime proof, docs refresh, and verified local `main` push.
+- Goal: Plan the next UI component-library slice around public API stability, Overlay productization, and gallery focused inspection.
 - Branch: `main`
-- Last verified: 2026-06-22, `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-core` passed 43/43, `cargo nextest run -p open-gpui-ui-components` passed 180/180, `cargo nextest run -p open-gpui-ui-foundation-gallery` passed 66/66, `git diff --check` passed, and the engineering wiki memory bundle validated after the Tree renderer productization slice.
+- Last verified: 2026-06-22, `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-core` passed 43/43, `cargo nextest run -p open-gpui-ui-components` passed 180/180, `cargo nextest run -p open-gpui-ui-foundation-gallery` passed 66/66, `git diff --check` passed, and the engineering wiki memory bundle validated after the Tree renderer productization slice. The API and Overlay productization plan update passed `git diff --check` and engineering wiki validation.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -62,9 +62,10 @@ verified_by:
 - Done: Tightened `VirtualizedList::from_shared_items` to accept `Arc<[VirtualizedListItemDescriptor]>`, so shared large-list storage exposes a slice contract instead of leaking `Vec` storage details.
 - Done: Added standard controlled TextInput ergonomics with `TextInput::value(...).on_change(...)`. The adapter now creates a keyed `TextInputController` when `on_change` is supplied, emits sanitized single-line values, and keeps callbacks out of `TextInputState`.
 - Done: Promoted `Tree` into the official Components surface. The adapter composes `TreeState` with keyed GPUI runtime state, focus handles, expansion overrides, selection/toggle callbacks, and an inner `ScrollArea`. The gallery now has a `document-outline` Tree sample, `tree-renderer` conformance gate, runtime selection/toggle log, keyboard expand/select smoke, and nested scroll containment smoke. `TreeState` remains visible as the renderer-neutral hierarchy readout beside the official component.
-- Follow-up: Continue list-family refinements from the concrete component surface. `TreeState` and `VirtualizedListState` should remain renderer-neutral contracts while official adapters own GPUI runtime, focus, and scroll handles.
+- Done: Wrote `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` for the next slice. It starts with a public API inventory, then normalizes controlled/default/policy builders, callback names, Overlay catalog metadata, and focused Components gallery inspection.
+- Follow-up: Execute U1 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` before broad renames. `TreeState` and `VirtualizedListState` should remain renderer-neutral contracts while official adapters own GPUI runtime, focus, and scroll handles.
 - Blocked: None.
-- Next action: Finish remaining verification, commit, push local `main`, then plan the next component-library slice.
+- Next action: Begin U1 API inventory and guard tests from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md`.
 
 # Citations
 
@@ -85,3 +86,4 @@ verified_by:
 [15] Commit `474ac18` - `feat(ui-components): productize feedback and state contracts`
 [16] Plan `docs/plans/2026-06-22-002-feat-ui-virtualized-list-renderer-plan.md`
 [17] Verification evidence `docs/knowledge/engineering/verification/tree-renderer-productization-20260622.md`
+[18] Plan `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md`
