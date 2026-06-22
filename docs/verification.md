@@ -62,6 +62,18 @@ the table viewport when the surrounding Components page also overflows. The focu
 cargo nextest run -p open-gpui-ui-foundation-gallery table
 ```
 
+`VirtualizedList` follows the same split at component scale: `open-gpui-ui-components` tests prove
+render-plan rows, scroll-target math, PageDown reveal, and Enter/Space activation payloads, while
+the gallery metadata and smoke tests prove the official catalog entry, 10k-item rendered sample,
+and inner scroll containment inside the overflowing Components page. The focused proof is:
+
+```powershell
+cargo nextest run -p open-gpui-ui-components virtualized_list
+cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_virtualized_list_scroll_stays_inside_sample
+cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_virtualized_list_card_wheel_does_not_leak_to_page
+cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_virtualized_list_keyboard_reveals_and_activates
+```
+
 The components package includes runtime smoke coverage for TextInput, RadioGroup, Listbox, Select,
 Combobox, Command, Tabs, and Toolbar keyboard navigation. The focused TextInput test renders a
 standalone controller-backed input, clicks its real root, accepts simulated platform text, sanitizes
@@ -106,9 +118,10 @@ the Components page.
 contract gate. Entries marked `state-contract` must declare `state_contract_selector`, must not
 declare official `sample_selector`, and must stay disjoint from `official_sample_selector_pairs`.
 The current state contracts are `TreeState` and `VirtualizedListState`; their signals cover state,
-descriptor, action/result, helper, and payload types without requiring non-existent `Tree` or
-`VirtualizedList` component signals. The Components page smoke also verifies every
-`state_contract_readout_pairs()` selector is visible.
+descriptor, action/result, helper, and payload types. `TreeState` must not imply a non-existent
+`Tree` component signal. `VirtualizedListState` remains a reusable keyboard/navigation state
+contract even though `VirtualizedList` is now an official rendered component. The Components page
+smoke also verifies every `state_contract_readout_pairs()` selector is visible.
 The official Table gate requires `Table`, `TableState`, `VirtualizerState`, role signals for table
 rows and cells, and at least one `gallery:component-table-sample:{id}` selector. Table smokes and
 state tests assert that rendered row selectors stay bounded by the virtualizer's visible rows plus
@@ -117,9 +130,10 @@ payloads, and sort/filter state follows stable row ids rather than numeric posit
 Tree and virtualized-list state-contract samples are verified through
 `components_page_samples_expose_component_metadata`: Tree readouts assert visible flattening,
 disabled-row position skipping, navigation skipping, toggle payloads, and Enter/Space selection
-actions; virtualized-list readouts assert active/selected indices, PageUp/PageDown clamping,
-activation payloads, viewport item count, overscan, and semantic scroll strategy labels. These
-checks intentionally do not claim a finished renderer.
+actions; virtualized-list state-contract readouts assert active/selected indices, PageUp/PageDown
+clamping, activation payloads, viewport item count, overscan, and semantic scroll strategy labels.
+The same metadata test now also checks the official `VirtualizedList` sample's 10k item count,
+listbox roles, active/selected state, visible range, and overscan summary.
 
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left
@@ -228,7 +242,7 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    `cargo run -p open-gpui-ui-foundation-gallery -- --page components`, and confirm Button, Badge,
    IconButton, Separator, Kbd, Progress, Skeleton, Avatar, ScrollArea, Splitter, Switch, Checkbox,
    RadioGroup, Toggle, Label, TextInput, Field, Tabs, Toolbar, Sidebar, Listbox, Select, Combobox,
-   Command, and Table samples render with enabled, disabled, selected, checked, unchecked,
+   Command, Table, and VirtualizedList samples render with enabled, disabled, selected, checked, unchecked,
    indeterminate, pressed, invalid, required, read-only, placeholder, value, help, error,
    control-association, decorative, semantic, indeterminate-progress, fallback-initial,
    source-metadata, roving-focus, popup, overflow-axis, scroll-reset, resize-constraint, row-model,
@@ -289,7 +303,11 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     page overflows. The Table samples should expose the `release-queue` 10k-row virtualized window,
     the filtered/sorted/paginated `filter-board` model, stable selected row ids, table/row/cell
     accessibility metadata, sortable header metadata, and an internal body viewport that scrolls
-    without moving the outer Components page. The app should stay open after opening `Components`;
+    without moving the outer Components page. The VirtualizedList sample should expose the
+    `release-navigation` 10k-item window, listbox/listbox-option roles, active/selected
+    metadata, visible/overscan readouts, an internal viewport that scrolls without moving the
+    outer Components page, card-chrome wheel containment, and PageDown plus Enter/Space activation
+    through the gallery sample runtime log. The app should stay open after opening `Components`;
     an `accesskit_consumer`
    panic during that navigation is a
    regression in the accessibility repair gate. The Components page also serves as a conformance
@@ -297,8 +315,8 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     adapter-only helpers and internal anatomy, and confirms Separator, Kbd, Progress, Skeleton, and
     Avatar are official entries with state types, then confirm the visible gate cards for explicit
     crate exports, gallery metadata, ScrollArea redraw persistence, Splitter runtime constraints,
-    Tabs overflow, `table-virtualization`, and explicit accessible metadata on icon-only and
-    label-association samples.
+    Tabs overflow, `table-virtualization`, `virtualized-list-renderer`, and explicit accessible
+    metadata on icon-only and label-association samples.
 7. Re-run `cargo nextest run -p open-gpui-ui-components` and `cargo nextest run -p
    open-gpui-ui-foundation-gallery` if a manual check exposes a component or gallery regression.
 

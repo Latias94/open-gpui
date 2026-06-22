@@ -33,6 +33,7 @@ pub(crate) struct ComponentPageAnchors {
     field: ScrollAnchor,
     tabs: ScrollAnchor,
     table: ScrollAnchor,
+    virtualized_list: ScrollAnchor,
     signals: ScrollAnchor,
 }
 
@@ -66,6 +67,7 @@ impl ComponentPageAnchors {
             field: anchor(),
             tabs: anchor(),
             table: anchor(),
+            virtualized_list: anchor(),
             signals: anchor(),
         }
     }
@@ -97,6 +99,7 @@ impl ComponentPageAnchors {
             "field" => self.field.clone(),
             "tabs" => self.tabs.clone(),
             "table" => self.table.clone(),
+            "virtualized-list" => self.virtualized_list.clone(),
             "signals" => self.signals.clone(),
             other => panic!("unknown Components page section id `{other}`"),
         }
@@ -241,6 +244,7 @@ pub(crate) fn render_components_page(
     let scroll_area_samples = pages::components::scroll_area_samples(snapshot.tokens);
     let splitter_samples = pages::components::splitter_samples(snapshot.tokens);
     let table_samples = pages::components::table_samples(snapshot.tokens);
+    let virtualized_list_samples = pages::components::virtualized_list_samples(snapshot.tokens);
 
     div()
         .id("gallery-components-page")
@@ -1143,6 +1147,10 @@ pub(crate) fn render_components_page(
                                         .border_1()
                                         .border_color(rgb(0xd6d8ce))
                                         .bg(rgb(0xffffff))
+                                        .on_scroll_wheel(|_, window, cx| {
+                                            window.prevent_default();
+                                            cx.stop_propagation();
+                                        })
                                         .p_3()
                                         .child(
                                             div()
@@ -1358,6 +1366,99 @@ pub(crate) fn render_components_page(
                                 }),
                             )),
                     ),
+                )
+                .child(
+                    component_page_section("virtualized-list", anchors.virtualized_list.clone())
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                        .child("VirtualizedList"),
+                                )
+                                .child(div().flex().gap_3().flex_wrap().children(
+                                    virtualized_list_samples.into_iter().map(|sample| {
+                                        let sample_id = sample.id;
+                                        let debug_selector = sample.debug_selector();
+                                        let title = sample.title;
+                                        let summary = sample.summary;
+                                        let badge = sample.badge;
+                                        let state = sample.state.clone();
+                                        let state_summary = sample.state_summary();
+                                        let sample_id_for_activation = sample_id.to_owned();
+                                        let list = sample.build_list().on_activate(
+                                        move |activation, _, cx| {
+                                            pages::components::record_virtualized_list_activation(
+                                                sample_id_for_activation.clone(),
+                                                activation.index(),
+                                                cx,
+                                            );
+                                        },
+                                    );
+
+                                        div()
+                                            .id(format!(
+                                                "component-virtualized-list-sample:{sample_id}"
+                                            ))
+                                            .debug_selector(move || debug_selector)
+                                            .w(px(420.0))
+                                            .flex_none()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_2()
+                                            .rounded_sm()
+                                            .border_1()
+                                            .border_color(rgb(0xd6d8ce))
+                                            .bg(rgb(0xffffff))
+                                            .on_scroll_wheel(|_, window, cx| {
+                                                window.prevent_default();
+                                                cx.stop_propagation();
+                                            })
+                                            .p_3()
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .gap_2()
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .font_weight(
+                                                                open_gpui::FontWeight::BOLD,
+                                                            )
+                                                            .child(title),
+                                                    )
+                                                    .child(label_pill(badge)),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(rgb(0x5a6472))
+                                                    .child(summary),
+                                            )
+                                            .child(
+                                                div()
+                                                    .h(px(224.0))
+                                                    .min_h(px(0.0))
+                                                    .overflow_hidden()
+                                                    .rounded_sm()
+                                                    .border_1()
+                                                    .border_color(rgb(0xe2e4dc))
+                                                    .bg(rgb(0xfcfcf8))
+                                                    .child(list),
+                                            )
+                                            .child(component_virtualized_list_state_row(
+                                                &state_summary,
+                                                &state,
+                                            ))
+                                    }),
+                                )),
+                        ),
                 )
                 .child(
                     component_page_section("signals", anchors.signals.clone())
@@ -1828,6 +1929,46 @@ pub(crate) fn component_table_state_row(
         .child(format!(
             "{} columns / {} aria rows / {} selected",
             summary.aria_columns, summary.aria_rows, summary.selected_rows
+        ))
+}
+
+pub(crate) fn component_virtualized_list_state_row(
+    summary: &super::VirtualizedListSampleStateSummary,
+    state: &VirtualizedListState,
+) -> impl IntoElement {
+    let activation = state
+        .activation_for_key("enter")
+        .map(|activation| activation.index().to_string())
+        .unwrap_or_else(|| "none".to_owned());
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} items / active {} / selected {}",
+            summary.item_count,
+            optional_index_label(summary.active_index),
+            optional_index_label(summary.selected_index)
+        ))
+        .child(format!(
+            "viewport {} / row {} / overscan {}",
+            state.viewport_item_count(),
+            format_px(state.metrics().row_height()),
+            state.metrics().overscan_count()
+        ))
+        .child(format!(
+            "visible {}..{} / overscan {}..{}",
+            summary.visible_start,
+            summary.visible_end,
+            summary.overscan_start,
+            summary.overscan_end
+        ))
+        .child(format!(
+            "{} visible / {} rendered / activation {}",
+            summary.visible_rows, summary.rendered_rows, activation
         ))
 }
 

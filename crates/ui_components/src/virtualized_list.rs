@@ -5,9 +5,9 @@ use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use crate::scroll_area::ScrollArea;
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, Entity, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
-    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div, point,
-    px, rgb,
+    App, ClickEvent, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
+    ParentElement, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
+    Window, div, point, px, rgb,
 };
 #[cfg(test)]
 use open_gpui_ui_core::ui_px;
@@ -17,6 +17,7 @@ use open_gpui_ui_core::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
+use std::sync::Arc;
 
 type VirtualizedListActivationHandler =
     Rc<dyn Fn(VirtualizedListActivation, &mut Window, &mut App)>;
@@ -521,9 +522,10 @@ impl VirtualizedListRenderPlan {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct VirtualizedListRuntime {
     scroll_handle: ScrollHandle,
+    focus_handle: FocusHandle,
     active_index: Option<usize>,
     selected_index: Option<usize>,
     pending_scroll_to_active: Option<usize>,
@@ -534,7 +536,7 @@ struct VirtualizedListRuntime {
 pub struct VirtualizedList {
     id: String,
     label: SharedString,
-    items: Rc<Vec<VirtualizedListItemDescriptor>>,
+    items: Arc<Vec<VirtualizedListItemDescriptor>>,
     size: Size,
     disabled: bool,
     active_index: Option<usize>,
@@ -551,12 +553,21 @@ impl VirtualizedList {
         label: impl Into<SharedString>,
         items: impl IntoIterator<Item = VirtualizedListItemDescriptor>,
     ) -> Self {
+        Self::from_shared_items(id, label, Arc::new(items.into_iter().collect()))
+    }
+
+    /// Creates a new virtualized list renderer from shared item storage.
+    pub fn from_shared_items(
+        id: impl Into<String>,
+        label: impl Into<SharedString>,
+        items: Arc<Vec<VirtualizedListItemDescriptor>>,
+    ) -> Self {
         let size = Size::Medium;
 
         Self {
             id: id.into(),
             label: label.into(),
-            items: Rc::new(items.into_iter().collect()),
+            items,
             size,
             disabled: false,
             active_index: None,
@@ -671,22 +682,24 @@ impl RenderOnce for VirtualizedList {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let runtime_id = format!("virtualized-list:{}:runtime", self.id);
         let debug_id = self.id.to_string();
-        let runtime = window.use_keyed_state(runtime_id, cx, |_, _| VirtualizedListRuntime {
+        let runtime = window.use_keyed_state(runtime_id, cx, |_, cx| VirtualizedListRuntime {
             scroll_handle: ScrollHandle::new(),
+            focus_handle: cx.focus_handle(),
             active_index: self.active_index,
             selected_index: self.selected_index,
             pending_scroll_to_active: None,
         });
         let runtime_state = runtime.read(cx).clone();
         let scroll_handle = runtime_state.scroll_handle.clone();
+        let focus_handle = runtime_state.focus_handle.clone();
         let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
         let viewport_item_count = resolve_viewport_item_count(
             self.metrics.row_height(),
             viewport_extent,
             self.viewport_item_count,
         );
-        let active_index = self.active_index.or(runtime_state.active_index);
-        let selected_index = self.selected_index.or(runtime_state.selected_index);
+        let active_index = runtime_state.active_index.or(self.active_index);
+        let selected_index = runtime_state.selected_index.or(self.selected_index);
         let state = self.resolved_state(active_index, selected_index, viewport_item_count);
         if let Some(pending_scroll_to_active) = runtime_state.pending_scroll_to_active {
             scroll_active_index(&scroll_handle, &state, pending_scroll_to_active);
@@ -742,6 +755,7 @@ impl RenderOnce for VirtualizedList {
             .focusable()
             .tab_group()
             .tab_stop(!list_state.disabled() && !list_state.visible_empty())
+            .track_focus(&focus_handle)
             .focus_visible(|style| style.border_color(rgb(0x2f80ed)))
             .ui_role(plan.role())
             .aria_label(plan.label().to_owned())
@@ -779,6 +793,7 @@ impl RenderOnce for VirtualizedList {
                             plan.virtualizer().total_size(),
                             row_role,
                             runtime.clone(),
+                            focus_handle,
                             on_activate,
                         ),
                     )
@@ -796,6 +811,7 @@ fn render_virtualized_list_body(
     total_size: UiPx,
     row_role: Role,
     runtime: Entity<VirtualizedListRuntime>,
+    focus_handle: FocusHandle,
     on_activate: Option<VirtualizedListActivationHandler>,
 ) -> impl IntoElement {
     let rows = rows.to_vec();
@@ -817,6 +833,7 @@ fn render_virtualized_list_body(
                 row,
                 row_role,
                 runtime.clone(),
+                focus_handle.clone(),
                 on_activate.clone(),
             )
         }))
@@ -827,6 +844,7 @@ fn render_virtualized_list_row(
     row: VirtualizedListRowRenderPlan,
     row_role: Role,
     runtime: Entity<VirtualizedListRuntime>,
+    focus_handle: FocusHandle,
     on_activate: Option<VirtualizedListActivationHandler>,
 ) -> impl IntoElement {
     let render_key = row.render_key().to_owned();
@@ -867,8 +885,6 @@ fn render_virtualized_list_row(
         .border_color(rgb(0xe2e4dc))
         .bg(row_background)
         .text_color(text_color)
-        .focusable()
-        .tab_stop(row.active())
         .ui_role(row_role)
         .aria_selected(row.selected())
         .aria_disabled(row.disabled())
@@ -878,6 +894,7 @@ fn render_virtualized_list_row(
         })
         .when(!row.disabled(), |this| {
             let runtime = runtime.clone();
+            let focus_handle = focus_handle.clone();
             let on_activate = on_activate.clone();
             this.on_click(move |_event: &ClickEvent, window, cx| {
                 cx.stop_propagation();
@@ -887,6 +904,7 @@ fn render_virtualized_list_row(
                     runtime.selected_index = Some(row_index);
                     runtime.pending_scroll_to_active = None;
                 });
+                focus_handle.focus(window, cx);
                 if let Some(on_activate) = on_activate.as_ref() {
                     on_activate(activation, window, cx);
                 }

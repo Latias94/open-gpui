@@ -1,6 +1,6 @@
 //! Component consumer samples for the foundation gallery.
 
-use open_gpui::{ParentElement, Styled, div, rgb};
+use open_gpui::{App, BorrowAppContext, Global, ParentElement, Styled, div, rgb};
 use open_gpui_ui_components::{
     Avatar, AvatarState, Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant,
     Checkbox, CheckboxState, ComboboxGroupDescriptor, ComboboxOptionDescriptor, ComboboxState,
@@ -15,13 +15,14 @@ use open_gpui_ui_components::{
     TableRow, TableSort, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
     TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
     ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, TreeItemDescriptor, TreeState,
-    VirtualizedListScrollStrategy, VirtualizedListState,
+    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
+    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
     OverlayPlacementAlignment, OverlayPlacementSide, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 #[path = "components/render.rs"]
 mod render;
@@ -120,6 +121,9 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Table",
     "open_gpui_ui_components::TableState",
     "open_gpui_ui_components::TableHeaderAction",
+    "open_gpui_ui_components::VirtualizedList",
+    "open_gpui_ui_components::VirtualizedListItemDescriptor",
+    "open_gpui_ui_components::VirtualizedListRenderPlan",
     "open_gpui_ui_components::VirtualizerState",
     "open_gpui_ui_components::TreeState",
     "open_gpui_ui_components::TreeItemDescriptor",
@@ -271,6 +275,10 @@ pub const COMPONENT_PAGE_JUMPS: &[ComponentPageJump] = &[
     ComponentPageJump {
         id: "table",
         label: "Table",
+    },
+    ComponentPageJump {
+        id: "virtualized-list",
+        label: "VirtualizedList",
     },
     ComponentPageJump {
         id: "signals",
@@ -572,6 +580,13 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "gallery:component-table-sample:release-queue",
     ),
     ComponentCatalogEntry::official(
+        "VirtualizedList",
+        "data",
+        "VirtualizedListState",
+        "exports / gallery / virtualized scroll smoke",
+        "gallery:component-virtualized-list-sample:release-navigation",
+    ),
+    ComponentCatalogEntry::official(
         "StatusCue",
         "feedback",
         "StatusCueState",
@@ -736,6 +751,19 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
         ],
     },
     ComponentConformanceGate {
+        id: "virtualized-list-renderer",
+        title: "VirtualizedList renderer contract",
+        summary: "VirtualizedList keeps its state contract, row reveal logic, and inner scroll ownership aligned with the rendered adapter.",
+        evidence: &[
+            "VirtualizedList::render_plan",
+            "VirtualizedListState::navigation_target",
+            "virtualized_list_runtime_reveals_active_row_and_emits_activation",
+            "components_gallery_smoke_virtualized_list_scroll_stays_inside_sample",
+            "components_gallery_smoke_virtualized_list_card_wheel_does_not_leak_to_page",
+            "components_gallery_smoke_virtualized_list_keyboard_reveals_and_activates",
+        ],
+    },
+    ComponentConformanceGate {
         id: "state-contract-readouts",
         title: "State contract readouts",
         summary: "Renderer-neutral TreeState and VirtualizedListState stay visible without counting as official renderers.",
@@ -895,7 +923,7 @@ pub struct VirtualizedListStateContractSample {
     pub summary: &'static str,
     /// Resolved renderer-neutral virtualized-list state.
     pub state: VirtualizedListState,
-    /// Semantic scroll alignment a future adapter would apply when revealing the active row.
+    /// Semantic scroll alignment the rendered adapter can apply when revealing the active row.
     pub scroll_strategy: VirtualizedListScrollStrategy,
 }
 
@@ -906,6 +934,154 @@ impl VirtualizedListStateContractSample {
             "gallery:component-virtualized-list-state-contract:{}",
             self.id
         )
+    }
+}
+
+/// One virtualized list sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VirtualizedListSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample title.
+    pub title: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Stable badge label.
+    pub badge: &'static str,
+    /// Shared item descriptors consumed by the concrete list renderer.
+    pub items: Arc<Vec<VirtualizedListItemDescriptor>>,
+    /// Resolved renderer-neutral list state.
+    pub state: VirtualizedListState,
+    /// Visual size applied to the concrete list.
+    pub size: Size,
+    /// Fixed list viewport used by the sample summary.
+    pub viewport_extent: UiPx,
+    /// Fixed row height used by the virtualizer.
+    pub row_height: UiPx,
+    /// Overscan row budget.
+    pub overscan: usize,
+    /// Precomputed state summary used by the gallery page.
+    state_summary: VirtualizedListSampleStateSummary,
+}
+
+/// Precomputed state summary for a virtualized list sample.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VirtualizedListSampleStateSummary {
+    /// Total source item count.
+    pub item_count: usize,
+    /// Rendered row count after overscan.
+    pub rendered_rows: usize,
+    /// Visible row count before overscan.
+    pub visible_rows: usize,
+    /// Visible row range start.
+    pub visible_start: usize,
+    /// Visible row range end.
+    pub visible_end: usize,
+    /// Overscan row range start.
+    pub overscan_start: usize,
+    /// Overscan row range end.
+    pub overscan_end: usize,
+    /// Active row index.
+    pub active_index: Option<usize>,
+    /// Selected row index.
+    pub selected_index: Option<usize>,
+}
+
+/// One activation captured from the rendered gallery `VirtualizedList` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VirtualizedListSampleActivation {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Activated item index.
+    pub index: usize,
+}
+
+/// Runtime activation log used by gallery smoke tests.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct VirtualizedListSampleRuntimeLog {
+    activations: Vec<VirtualizedListSampleActivation>,
+}
+
+impl Global for VirtualizedListSampleRuntimeLog {}
+
+impl VirtualizedListSampleRuntimeLog {
+    /// Returns captured activations in event order.
+    pub fn activations(&self) -> &[VirtualizedListSampleActivation] {
+        &self.activations
+    }
+
+    /// Clears captured activations.
+    pub fn clear(&mut self) {
+        self.activations.clear();
+    }
+}
+
+/// Records a gallery `VirtualizedList` activation in app-global sample state.
+pub fn record_virtualized_list_activation(
+    sample_id: impl Into<String>,
+    index: usize,
+    cx: &mut App,
+) {
+    cx.update_default_global::<VirtualizedListSampleRuntimeLog, _>(|log, _| {
+        log.activations.push(VirtualizedListSampleActivation {
+            sample_id: sample_id.into(),
+            index,
+        });
+    });
+}
+
+impl VirtualizedListSampleStateSummary {
+    fn from_plan(plan: &VirtualizedListRenderPlan) -> Self {
+        let visible = plan.virtualizer().visible_range();
+        let overscan = plan.virtualizer().overscan_range();
+
+        Self {
+            item_count: plan.state().item_count(),
+            rendered_rows: plan.rendered_row_count(),
+            visible_rows: plan.visible_row_count(),
+            visible_start: visible.start(),
+            visible_end: visible.end(),
+            overscan_start: overscan.start(),
+            overscan_end: overscan.end(),
+            active_index: plan.state().active_index(),
+            selected_index: plan.state().selected_index(),
+        }
+    }
+}
+
+impl VirtualizedListSample {
+    /// Builds the concrete GPUI virtualized list for this sample.
+    pub fn build_list(&self) -> VirtualizedList {
+        let mut list = VirtualizedList::from_shared_items(
+            format!("component-virtualized-list:{}", self.id),
+            self.title,
+            self.items.clone(),
+        )
+        .with_size(self.size)
+        .row_height(self.row_height)
+        .overscan(self.overscan)
+        .viewport_item_count(self.state.viewport_item_count())
+        .disabled(self.state.disabled());
+
+        if let Some(active_index) = self.state.active_index() {
+            list = list.active_index(active_index);
+        }
+        if let Some(selected_index) = self.state.selected_index() {
+            list = list.selected_index(selected_index);
+        }
+
+        list
+    }
+
+    /// Resolves the sample's render plan at the viewport origin.
+    pub fn render_plan(&self) -> VirtualizedListRenderPlan {
+        self.build_list()
+            .render_plan(UiPx::ZERO, self.viewport_extent)
+    }
+
+    /// Returns the precomputed state summary.
+    pub const fn state_summary(&self) -> VirtualizedListSampleStateSummary {
+        self.state_summary
     }
 }
 
@@ -1409,6 +1585,7 @@ impl_component_sample_selectors!(TextInputSample, "component-text-input-sample")
 impl_component_sample_selectors!(FieldSample, "component-field-sample");
 impl_component_sample_selectors!(TabsSample, "component-tabs-sample");
 impl_component_sample_selectors!(TableSample, "component-table-sample");
+impl_component_sample_selectors!(VirtualizedListSample, "component-virtualized-list-sample");
 impl_component_sample_selectors!(ScrollAreaSample, "component-scroll-area-sample");
 impl_component_sample_selectors!(SplitterSample, "component-splitter-sample");
 impl_component_sample_selectors!(SeparatorSample, "component-separator-sample");
@@ -2264,6 +2441,71 @@ pub fn tabs_samples(tokens: ThemeTokens) -> [TabsSample; 2] {
             items: workspace_items,
         },
     ]
+}
+
+static VIRTUALIZED_LIST_SAMPLES: LazyLock<[VirtualizedListSample; 1]> =
+    LazyLock::new(build_virtualized_list_samples);
+
+/// Returns virtualized-list samples backed by the concrete renderer and virtualizer contract.
+pub fn virtualized_list_samples(_tokens: ThemeTokens) -> &'static [VirtualizedListSample] {
+    VIRTUALIZED_LIST_SAMPLES.as_slice()
+}
+
+fn build_virtualized_list_samples() -> [VirtualizedListSample; 1] {
+    let size = Size::Small;
+    let row_height = ui_px(28.0);
+    let overscan = 4;
+    let item_count = 10_000;
+    let items = Arc::new(
+        (0..item_count)
+            .map(release_navigation_item)
+            .collect::<Vec<_>>(),
+    );
+    let state = VirtualizedListState::resolve(size, false, item_count, Some(0), Some(0), Some(8))
+        .with_metrics(
+            VirtualizedListMetrics::from_size(size)
+                .with_row_height(row_height)
+                .with_overscan_count(overscan),
+        );
+
+    [VirtualizedListSample {
+        id: "release-navigation",
+        title: "Release navigation",
+        summary: "Ten thousand stable options with a local virtualized viewport and keyboard reveal.",
+        badge: "10k items",
+        items,
+        state,
+        size,
+        viewport_extent: ui_px(224.0),
+        row_height,
+        overscan,
+        state_summary: VirtualizedListSampleStateSummary::default(),
+    }
+    .with_state_summary()]
+}
+
+impl VirtualizedListSample {
+    fn with_state_summary(self) -> Self {
+        let plan = self.render_plan();
+        Self {
+            state_summary: VirtualizedListSampleStateSummary::from_plan(&plan),
+            ..self
+        }
+    }
+}
+
+fn release_navigation_item(index: usize) -> VirtualizedListItemDescriptor {
+    let teams = ["UI", "Runtime", "Platform", "Docs", "QA"];
+    let statuses = ["Ready", "Review", "Build", "Verify", "Blocked"];
+
+    VirtualizedListItemDescriptor::new(
+        format!("release-nav-{index:04}"),
+        format!(
+            "Release #{index:04} / {} / {}",
+            teams[index % teams.len()],
+            statuses[(index / 11) % statuses.len()]
+        ),
+    )
 }
 
 static TABLE_SAMPLES: LazyLock<[TableSample; 2]> = LazyLock::new(build_table_samples);

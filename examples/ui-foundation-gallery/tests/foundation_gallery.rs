@@ -966,6 +966,7 @@ fn components_page_samples_expose_component_metadata() {
     let scroll_areas = pages::components::scroll_area_samples(tokens);
     let splitters = pages::components::splitter_samples(tokens);
     let tables = pages::components::table_samples(tokens);
+    let virtualized_lists = pages::components::virtualized_list_samples(tokens);
 
     let official_names: Vec<_> = catalog
         .iter()
@@ -995,6 +996,7 @@ fn components_page_samples_expose_component_metadata() {
             "ScrollArea",
             "Splitter",
             "Table",
+            "VirtualizedList",
             "StatusCue",
             "EmptyState",
             "Separator",
@@ -1043,7 +1045,7 @@ fn components_page_samples_expose_component_metadata() {
             .all(|entry| entry.sample_selector.is_none() && entry.state_contract_selector.is_some())
     );
 
-    assert_eq!(gates.len(), 8);
+    assert_eq!(gates.len(), 9);
     assert_eq!(gates[0].id, "public-api-exports");
     assert!(
         gates[0]
@@ -1060,8 +1062,9 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(gates[3].id, "splitter-runtime");
     assert_eq!(gates[4].id, "tabs-overflow");
     assert_eq!(gates[5].id, "table-virtualization");
-    assert_eq!(gates[6].id, "state-contract-readouts");
-    assert_eq!(gates[7].id, "a11y-labels");
+    assert_eq!(gates[6].id, "virtualized-list-renderer");
+    assert_eq!(gates[7].id, "state-contract-readouts");
+    assert_eq!(gates[8].id, "a11y-labels");
 
     assert_eq!(buttons.len(), 6);
     assert_eq!(buttons[0].id, "default");
@@ -1380,6 +1383,26 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(filter_plan.table().filtered_model().rows().len(), 60);
     assert_eq!(filter_plan.table().final_model().rows().len(), 24);
     assert_eq!(filter_plan.table().final_model().selected_count(), 1);
+
+    assert_eq!(virtualized_lists.len(), 1);
+    let release_navigation = &virtualized_lists[0];
+    assert_eq!(release_navigation.id, "release-navigation");
+    assert_eq!(release_navigation.items.len(), 10_000);
+    assert_eq!(release_navigation.state.item_count(), 10_000);
+    assert_eq!(release_navigation.state.active_index(), Some(0));
+    assert_eq!(release_navigation.state.selected_index(), Some(0));
+    let release_navigation_plan = release_navigation.render_plan();
+    let release_navigation_summary = release_navigation.state_summary();
+    assert_eq!(release_navigation_plan.role(), Role::ListBox);
+    assert_eq!(release_navigation_plan.row_role(), Role::ListBoxOption);
+    assert_eq!(release_navigation_summary.item_count, 10_000);
+    assert_eq!(release_navigation_summary.visible_start, 0);
+    assert_eq!(release_navigation_summary.active_index, Some(0));
+    assert_eq!(release_navigation_summary.selected_index, Some(0));
+    assert!(
+        release_navigation_plan.rendered_row_count()
+            <= release_navigation_plan.visible_row_count() + release_navigation.overscan
+    );
 }
 
 #[test]
@@ -1631,10 +1654,6 @@ fn state_contract_catalog_entries_have_signals_and_readout_selectors() {
     assert!(
         !pages::components::SIGNALS.contains(&"open_gpui_ui_components::Tree"),
         "TreeState contract must not imply a completed Tree renderer signal"
-    );
-    assert!(
-        !pages::components::SIGNALS.contains(&"open_gpui_ui_components::VirtualizedList"),
-        "VirtualizedListState contract must not imply a completed VirtualizedList renderer signal"
     );
 }
 
@@ -1973,6 +1992,11 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(
         gates
             .iter()
+            .any(|gate| gate.id == "virtualized-list-renderer")
+    );
+    assert!(
+        gates
+            .iter()
             .any(|gate| gate.id == "state-contract-readouts")
     );
     assert!(signals.contains(&"open_gpui_ui_components::StatusCue"));
@@ -1989,6 +2013,9 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"open_gpui_ui_components::CommandState"));
     assert!(signals.contains(&"open_gpui_ui_components::Table"));
     assert!(signals.contains(&"open_gpui_ui_components::TableState"));
+    assert!(signals.contains(&"open_gpui_ui_components::VirtualizedList"));
+    assert!(signals.contains(&"open_gpui_ui_components::VirtualizedListItemDescriptor"));
+    assert!(signals.contains(&"open_gpui_ui_components::VirtualizedListRenderPlan"));
     assert!(signals.contains(&"open_gpui_ui_components::VirtualizerState"));
     assert!(signals.contains(&"open_gpui_ui_components::TreeState"));
     assert!(signals.contains(&"open_gpui_ui_components::VirtualizedListState"));
@@ -2687,6 +2714,236 @@ fn components_gallery_smoke_table_scroll_stays_inside_sample(cx: &mut open_gpui:
         cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0010")
             .is_some(),
         "expected virtualized Table row 0010 to enter the rendered window after internal scroll"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_virtualized_list_scroll_stays_inside_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_components_gallery(cx);
+
+    scroll_page_until_visible(
+        cx,
+        "gallery:component-virtualized-list-sample:release-navigation",
+    );
+    let sample_before = bounds(
+        cx,
+        "gallery:component-virtualized-list-sample:release-navigation",
+    );
+    assert!(
+        cx.debug_bounds(
+            "virtualized-list:component-virtualized-list:release-navigation:row:release-nav-0000"
+        )
+        .is_some(),
+        "expected the initial VirtualizedList window to render the first row"
+    );
+    let row_0 = bounds(
+        cx,
+        "virtualized-list:component-virtualized-list:release-navigation:row:release-nav-0000",
+    );
+    assert!(
+        cx.debug_bounds(
+            "virtualized-list:component-virtualized-list:release-navigation:row:release-nav-0016"
+        )
+        .is_none(),
+        "expected row 0016 to start outside the initial rendered window"
+    );
+    let row_0_before = row_0;
+    cx.simulate_event(ScrollWheelEvent {
+        position: point(
+            sample_before.left() + px(24.0),
+            sample_before.top() + px(24.0),
+        ),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-56.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_chrome_after = bounds(
+        cx,
+        "gallery:component-virtualized-list-sample:release-navigation",
+    );
+    let row_0_after = bounds(
+        cx,
+        "virtualized-list:component-virtualized-list:release-navigation:row:release-nav-0000",
+    );
+    assert_eq!(
+        sample_chrome_after.top(),
+        sample_before.top(),
+        "expected VirtualizedList card chrome wheel input to stay inside the sample card; before={sample_before:?} after={sample_chrome_after:?}"
+    );
+    assert_eq!(
+        row_0_after.top(),
+        row_0_before.top(),
+        "expected VirtualizedList card chrome wheel input to leave the rendered window unchanged; before={row_0_before:?} after={row_0_after:?}"
+    );
+
+    cx.simulate_click(row_0_after.center(), Default::default());
+    redraw(cx);
+    assert!(
+        cx.debug_selector_is_focused(
+            "virtualized-list:component-virtualized-list:release-navigation:root"
+        ),
+        "expected the VirtualizedList root to own focus after clicking a row"
+    );
+    cx.simulate_keystrokes("pagedown");
+    redraw(cx);
+    cx.simulate_keystrokes("pagedown");
+    redraw(cx);
+
+    assert!(
+        cx.debug_bounds(
+            "virtualized-list:component-virtualized-list:release-navigation:row:release-nav-0016"
+        )
+        .is_some(),
+        "expected repeated PageDown to reveal row 0016 inside the sample"
+    );
+
+    let viewport = bounds(
+        cx,
+        "scroll-area:virtualized-list:component-virtualized-list:release-navigation:viewport",
+    );
+    cx.simulate_event(ScrollWheelEvent {
+        position: viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after = bounds(
+        cx,
+        "gallery:component-virtualized-list-sample:release-navigation",
+    );
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected VirtualizedList viewport wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert!(
+        cx.debug_bounds(
+            "virtualized-list:component-virtualized-list:release-navigation:row:release-nav-0025"
+        )
+        .is_some(),
+        "expected virtualized list row 0025 to enter the rendered window after keyboard and wheel scroll"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_virtualized_list_card_wheel_does_not_leak_to_page(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_components_gallery(cx);
+
+    scroll_page_until_visible(
+        cx,
+        "gallery:component-virtualized-list-sample:release-navigation",
+    );
+    let sample_before = bounds(
+        cx,
+        "gallery:component-virtualized-list-sample:release-navigation",
+    );
+    let row_before = bounds(
+        cx,
+        "virtualized-list:component-virtualized-list:release-navigation:row:release-nav-0000",
+    );
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: point(
+            sample_before.left() + px(24.0),
+            sample_before.top() + px(24.0),
+        ),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after = bounds(
+        cx,
+        "gallery:component-virtualized-list-sample:release-navigation",
+    );
+    let row_after = bounds(
+        cx,
+        "virtualized-list:component-virtualized-list:release-navigation:row:release-nav-0000",
+    );
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected VirtualizedList card chrome wheel input to stay local to the sample; before={sample_before:?} after={sample_after:?}"
+    );
+    assert_eq!(
+        row_after, row_before,
+        "expected VirtualizedList card chrome wheel input to leave the inner viewport unchanged; before={row_before:?} after={row_after:?}"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_virtualized_list_keyboard_reveals_and_activates(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE: &str = "gallery:component-virtualized-list-sample:release-navigation";
+    const ROOT: &str = "virtualized-list:component-virtualized-list:release-navigation:root";
+    const ROW_0: &str =
+        "virtualized-list:component-virtualized-list:release-navigation:row:release-nav-0000";
+    const ROW_8: &str =
+        "virtualized-list:component-virtualized-list:release-navigation:row:release-nav-0008";
+
+    let cx = open_components_gallery(cx);
+    cx.set_global(pages::components::VirtualizedListSampleRuntimeLog::default());
+
+    scroll_page_until_visible(cx, SAMPLE);
+    click(cx, ROW_0);
+    assert!(
+        cx.debug_selector_is_focused(ROOT),
+        "expected clicking a VirtualizedList row to focus the list root for keyboard handling"
+    );
+    cx.update_global::<pages::components::VirtualizedListSampleRuntimeLog, _>(|log, _| {
+        log.clear();
+    });
+
+    let row_8_before = bounds(cx, ROW_8);
+    cx.simulate_keystrokes("pagedown");
+    redraw(cx);
+
+    let row_8_after = bounds(cx, ROW_8);
+    assert!(
+        row_8_after.top() < row_8_before.top(),
+        "expected PageDown to reveal the next active VirtualizedList row; before={row_8_before:?} after={row_8_after:?}"
+    );
+
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    let enter_activations = cx
+        .read_global::<pages::components::VirtualizedListSampleRuntimeLog, _>(|log, _| {
+            log.activations()
+                .iter()
+                .map(|activation| (activation.sample_id.clone(), activation.index))
+                .collect::<Vec<_>>()
+        });
+    assert_eq!(
+        enter_activations,
+        vec![("release-navigation".to_owned(), 8)],
+        "expected Enter to activate the row revealed by PageDown"
+    );
+
+    cx.simulate_keystrokes("space");
+    redraw(cx);
+    let activations =
+        cx.read_global::<pages::components::VirtualizedListSampleRuntimeLog, _>(|log, _| {
+            log.activations()
+                .iter()
+                .map(|activation| (activation.sample_id.clone(), activation.index))
+                .collect::<Vec<_>>()
+        });
+    assert_eq!(
+        activations,
+        vec![
+            ("release-navigation".to_owned(), 8),
+            ("release-navigation".to_owned(), 8),
+        ],
+        "expected Space to activate the same active row after Enter"
     );
 }
 

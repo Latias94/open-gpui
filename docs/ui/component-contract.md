@@ -502,13 +502,16 @@ snapshot measurements but not captured scroll offsets. Grouped rows, expanded tr
 columns, sticky headers, aggregation, and two-dimensional grid virtualization remain follow-up work.
 `StatusCue` and `EmptyState` are official feedback components. They expose resolved feedback
 intent, size, role, metrics, and token intents, while the GPUI adapters own concrete styling and
-rendered debug selectors. `TreeState` and `VirtualizedListState` are intentionally classified as
-state contracts rather than official rendered components. `TreeState` covers visible flattening,
-selected/focused metadata, disabled-item skipping, expansion toggle payloads, and keyboard
-selection/focus/toggle actions. `VirtualizedListState` covers active/selected indices, page
-navigation, activation payloads, viewport item count, fixed row metrics, overscan, and semantic
-scroll strategy labels for a future adapter. It is a keyboard/navigation contract; rendered range
-calculation remains owned by `open_gpui_ui_core::VirtualizerState`.
+rendered debug selectors. `TreeState` is intentionally classified as a state contract rather than
+an official rendered component. It covers visible flattening, selected/focused metadata,
+disabled-item skipping, expansion toggle payloads, and keyboard selection/focus/toggle actions.
+`VirtualizedList` is now an official rendered component. Its adapter resolves a
+`VirtualizedListRenderPlan` from stable descriptors, owns a keyed GPUI runtime plus persistent
+`ScrollHandle`, and keeps row rendering inside its viewport. `VirtualizedListState` remains the
+renderer-neutral keyboard/navigation contract: active/selected indices, page navigation,
+activation payloads, viewport item count, fixed row metrics, overscan, and semantic scroll
+strategy labels. Rendered range calculation remains owned by
+`open_gpui_ui_core::VirtualizerState`.
 `Splitter` covers panel fraction normalization, min/max constraints, collapsed-panel metadata,
 stable handle anatomy, and local pointer dragging through keyed runtime state. Keyboard resizing,
 controlled resize callbacks, persisted layouts, RTL behavior, and nested splitter arbitration
