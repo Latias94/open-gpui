@@ -4425,6 +4425,32 @@ fn source_only_release_with_known_empty_hover_can_commit_to_accepted_routed_prev
         Some(target_opened.window().window_id()),
         "accepted preview should remember the last routed viewport identity for this drag session"
     );
+    let hovered_none_release_request = DockViewportDropRouteRequest::from_platform_signals(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        release_screen_position,
+        None,
+        crate::DockViewportPlatformSignals::from_target_context(
+            DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
+        ),
+    )
+    .with_drag_session(Some(session.clone()));
+    let hovered_none_resolution =
+        cx.update(|app| runtime.resolve_payload_drop_delivery(&hovered_none_release_request, app));
+    assert!(
+        matches!(
+            hovered_none_resolution.route(),
+            DockViewportDropRoute::KnownViewport { target, authority }
+                if target.window_id() == target_opened.window().window_id()
+                    && *authority == crate::DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview
+        ),
+        "accepted routed preview should outrank transient hovered=None on hovered-host release"
+    );
+    assert!(
+        hovered_none_resolution.delivery().is_some(),
+        "accepted routed preview should mint delivery after target render acceptance"
+    );
     cx.set_platform_hovered_window(None);
     let release_request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
         source_space.clone(),

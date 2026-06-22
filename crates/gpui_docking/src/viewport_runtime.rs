@@ -20,7 +20,6 @@ use crate::{
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
-    resolve_workspace_target_for_route,
     viewport_drop_scene::{
         DockViewportHostSceneFrame, DockViewportHostSceneRegistration,
         DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot,
@@ -83,9 +82,7 @@ struct DockRuntimeDragTearOffGeometry {
 #[derive(Debug, Clone, PartialEq)]
 struct DockViewportAcceptedRoutedPreview {
     epoch: u64,
-    target_space: DockSpaceId,
-    target_window_id: WindowId,
-    target_key: crate::drop_target::DockDropTargetKey,
+    target: crate::DockViewportResolvedDropTargetSnapshot,
     drag_session_id: Option<u64>,
 }
 
@@ -95,11 +92,10 @@ impl DockViewportAcceptedRoutedPreview {
         target: &crate::DockViewportResolvedDropTargetSnapshot,
         drag_session_id: Option<u64>,
     ) -> Option<Self> {
+        target.target_window_id()?;
         Some(Self {
             epoch,
-            target_space: target.target_space().clone(),
-            target_window_id: target.target_window_id()?,
-            target_key: target.target_key().clone(),
+            target: target.clone(),
             drag_session_id,
         })
     }
@@ -109,7 +105,7 @@ impl DockViewportAcceptedRoutedPreview {
     }
 
     fn matches_target(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
-        self.target_space == *space && self.target_window_id == window_id
+        self.target.target_space() == space && self.target.target_window_id() == Some(window_id)
     }
 }
 
@@ -1884,13 +1880,6 @@ impl DockViewportRuntime {
         if !self.can_replay_accepted_routed_preview(request, route_resolution) {
             return None;
         }
-        let release_can_replay_accepted_preview = request.coordinate_space()
-            == crate::DockViewportPointerCoordinateSpace::GlobalScreen
-            || request.release_origin()
-                == crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly;
-        if !release_can_replay_accepted_preview {
-            return None;
-        }
         let drag_session = request.drag_session()?;
         if !self
             .active_drag
@@ -1906,9 +1895,10 @@ impl DockViewportRuntime {
         if accepted.drag_session_id != Some(drag_session.id()) {
             return None;
         }
-        let target_space = accepted.target_space.clone();
-        let target_window_id = accepted.target_window_id;
-        let accepted_target_key = accepted.target_key.clone();
+        let target = accepted.target.clone();
+        let target_space = target.target_space().clone();
+        let target_window_id = target.target_window_id()?;
+        let accepted_target_key = target.target_key().clone();
         let host_position = self.accepted_routed_preview_host_position(request, &target_space)?;
         let facts_generation = self
             .adapter
@@ -1941,7 +1931,7 @@ impl DockViewportRuntime {
                 request.payload(),
                 request.source_node(),
             );
-            resolve_workspace_target_for_route(
+            crate::resolve_workspace_target_for_route(
                 &self.adapter,
                 &self.host_scenes,
                 &route,
@@ -1984,32 +1974,42 @@ impl DockViewportRuntime {
         request: &DockViewportDropRouteRequest,
         route_resolution: &DockViewportDropRouteResolution,
     ) -> bool {
+        let replayable_coordinate_space = request.coordinate_space()
+            == crate::DockViewportPointerCoordinateSpace::GlobalScreen
+            || request.release_origin()
+                == crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly;
+        if !replayable_coordinate_space {
+            return false;
+        }
+        let Some(accepted) = self.accepted_routed_preview.as_ref() else {
+            return false;
+        };
+        let Some(drag_session) = request.drag_session() else {
+            return false;
+        };
+        if !accepted.matches_epoch(self.routed_drop_preview_epoch)
+            || accepted.drag_session_id != Some(drag_session.id())
+        {
+            return false;
+        }
         match route_resolution.route_ref() {
-            DockViewportDropRoute::Unavailable => match route_resolution.unavailable_reason() {
-                Some(crate::DockViewportDropRouteUnavailableReason::BlockedByViewportWindow) => {
-                    false
-                }
-                Some(crate::DockViewportDropRouteUnavailableReason::TrustedHoveredNone) => {
-                    request.release_origin()
-                        == crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly
-                }
-                Some(crate::DockViewportDropRouteUnavailableReason::NoViewportAuthority) | None => {
-                    true
-                }
-            },
+            DockViewportDropRoute::Unavailable => {
+                route_resolution.unavailable_reason()
+                    != Some(crate::DockViewportDropRouteUnavailableReason::BlockedByViewportWindow)
+            }
             DockViewportDropRoute::TearOff => {
                 request.release_origin()
                     == crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly
             }
+            DockViewportDropRoute::Rejected(_) => false,
             DockViewportDropRoute::Local { window_id, .. } => self
                 .accepted_routed_preview
                 .as_ref()
-                .is_some_and(|token| token.target_window_id == *window_id),
+                .is_some_and(|token| token.target.target_window_id() == Some(*window_id)),
             DockViewportDropRoute::KnownViewport { target, .. } => self
                 .accepted_routed_preview
                 .as_ref()
                 .is_some_and(|token| token.matches_target(target.space(), target.window_id())),
-            DockViewportDropRoute::Rejected(_) => false,
         }
     }
 

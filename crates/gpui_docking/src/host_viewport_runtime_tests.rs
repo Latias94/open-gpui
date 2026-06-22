@@ -7257,7 +7257,7 @@ fn viewport_runtime_source_only_known_empty_hover_replays_accepted_routed_previe
 }
 
 #[open_gpui::test]
-fn viewport_runtime_hovered_host_known_empty_hover_blocks_accepted_routed_preview_replay(
+fn viewport_runtime_hovered_host_known_empty_hover_replays_accepted_routed_preview(
     cx: &mut TestAppContext,
 ) {
     let source_space = DockSpaceId::from("source");
@@ -7337,12 +7337,16 @@ fn viewport_runtime_hovered_host_known_empty_hover_blocks_accepted_routed_previe
     let release_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&release_request, app));
 
-    assert_eq!(
-        release_resolution.route(),
-        &DockViewportDropRoute::Unavailable,
-        "trusted hovered=None is explicit backend authority and must block hovered-host replay"
+    assert!(
+        matches!(
+            release_resolution.route(),
+            DockViewportDropRoute::KnownViewport { target, authority }
+                if target.window_id() == target_window.window_id()
+                    && *authority == crate::DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview
+        ),
+        "same-session accepted routed preview should outrank transient hovered=None on hovered-host release"
     );
-    assert!(release_resolution.delivery().is_none());
+    assert!(release_resolution.delivery().is_some());
 }
 
 #[open_gpui::test]
