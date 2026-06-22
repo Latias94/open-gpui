@@ -9229,3 +9229,94 @@ fn viewport_runtime_tear_off_drag_bounds_clamp_to_work_area(cx: &mut TestAppCont
         WindowBounds::Windowed(floating_bounds(520.0, 500.0, 480.0, 300.0))
     );
 }
+
+#[open_gpui::test]
+fn viewport_runtime_tear_off_large_drag_bounds_limit_to_undock_work_area(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let workspace = DockWorkspace::new(source_space.clone(), graph);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntime::new(controller);
+    let geometry = DockDragTearOffGeometry::from_source_bounds(
+        floating_bounds(0.0, 0.0, 1200.0, 900.0),
+        point(px(600.0), px(450.0)),
+    )
+    .with_preferred_size(size(px(1200.0), px(900.0)))
+    .with_display_work_area(floating_bounds(0.0, 0.0, 1000.0, 800.0));
+    let request = DockViewportTearOffRequest::new(
+        source_space,
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        point(px(980.0), px(790.0)),
+        None,
+    )
+    .with_tear_off_geometry(Some(geometry));
+
+    let placement = runtime
+        .tear_off_window_placement(&request)
+        .expect("global release point and drag geometry should produce tear-off placement");
+    assert_eq!(
+        placement.source(),
+        DockViewportTearOffPlacementSource::DragGeometry
+    );
+    assert_eq!(
+        placement.window_bounds(),
+        WindowBounds::Windowed(floating_bounds(100.0, 80.0, 900.0, 720.0))
+    );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_tear_off_suggested_bounds_use_undock_limited_drag_size(
+    cx: &mut TestAppContext,
+) {
+    let source_window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 200.0, 1200.0, 900.0));
+    let geometry = DockDragTearOffGeometry::from_source_bounds(
+        floating_bounds(0.0, 0.0, 1200.0, 900.0),
+        point(px(600.0), px(450.0)),
+    )
+    .with_preferred_size(size(px(1200.0), px(900.0)))
+    .with_display_work_area(floating_bounds(0.0, 0.0, 1000.0, 800.0));
+    let suggested = crate::viewport_runtime::suggested_tear_off_window_bounds(
+        source_window_bounds,
+        point(px(1100.0), px(780.0)),
+        geometry,
+    );
+
+    let source_space = DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let workspace = DockWorkspace::new(source_space.clone(), graph);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntime::new(controller);
+    let request = DockViewportTearOffRequest::new(
+        source_space,
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        None,
+        Some(suggested),
+    )
+    .with_tear_off_geometry(Some(geometry));
+
+    let placement = runtime
+        .tear_off_window_placement(&request)
+        .expect("host-suggested bounds should authorize tear-off placement");
+    assert_eq!(
+        placement.source(),
+        DockViewportTearOffPlacementSource::Suggested
+    );
+    assert_eq!(
+        placement.window_bounds(),
+        WindowBounds::Windowed(floating_bounds(100.0, 80.0, 900.0, 720.0))
+    );
+}

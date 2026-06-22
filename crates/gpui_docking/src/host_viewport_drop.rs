@@ -214,4 +214,26 @@ mod tests {
             "global screen coordinates should continue to use exact drag geometry placement"
         );
     }
+
+    #[test]
+    fn host_release_suggests_undock_limited_bounds_for_large_geometry() {
+        let geometry = DockDragTearOffGeometry::from_source_bounds(
+            floating_bounds(0.0, 0.0, 1200.0, 900.0),
+            point(px(600.0), px(450.0)),
+        )
+        .with_preferred_size(size(px(1200.0), px(900.0)))
+        .with_display_work_area(floating_bounds(0.0, 0.0, 1000.0, 800.0));
+
+        assert_eq!(
+            suggested_window_bounds_for_host_release(
+                WindowBounds::Windowed(floating_bounds(100.0, 200.0, 1200.0, 900.0)),
+                point(px(1100.0), px(780.0)),
+                false,
+                Some(geometry),
+            ),
+            Some(WindowBounds::Windowed(floating_bounds(
+                100.0, 80.0, 900.0, 720.0
+            )))
+        );
+    }
 }

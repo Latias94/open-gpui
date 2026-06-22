@@ -293,6 +293,16 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow_mut().record_no_panel_focus(space);
     }
 
+    pub(crate) fn recorded_panel_focus_matches(
+        &self,
+        space: &DockSpaceId,
+        item: &DockItemId,
+    ) -> bool {
+        self.runtime
+            .borrow()
+            .recorded_panel_focus_matches(space, item)
+    }
+
     pub(crate) fn apply_close_recovery_activation(
         &self,
         outcome: &DockViewportCloseOutcome,

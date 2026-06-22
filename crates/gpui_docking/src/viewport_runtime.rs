@@ -230,6 +230,8 @@ pub(crate) struct DockViewportTearOffPlacement {
 #[derive(Debug, Clone, Copy)]
 struct DockViewportTearOffPlacementPolicy {}
 
+const DOCK_TEAR_OFF_MAX_WORK_AREA_FRACTION: f32 = 0.90;
+
 impl DockRuntimeDragTearOffGeometry {
     fn new(drag_session_id: u64, geometry: DockDragTearOffGeometry) -> Self {
         Self {
@@ -297,21 +299,7 @@ impl DockViewportTearOffPlacementPolicy {
         release_position: Point<Pixels>,
         geometry: DockDragTearOffGeometry,
     ) -> Bounds<Pixels> {
-        let mut size = geometry
-            .preferred_size()
-            .unwrap_or_else(|| geometry.source_bounds().size);
-        if let Some(work_area) = geometry.display_work_area() {
-            size = size.min(&work_area.size);
-        }
-
-        let cursor_offset = geometry
-            .cursor_offset()
-            .clamp(&point(px(0.0), px(0.0)), &point(size.width, size.height));
-        let mut bounds = Bounds::new(release_position - cursor_offset, size);
-        if let Some(work_area) = geometry.display_work_area() {
-            bounds = clamp_bounds_to_work_area(bounds, work_area);
-        }
-        bounds
+        tear_off_bounds_from_cursor_anchor(release_position, geometry)
     }
 }
 
@@ -320,22 +308,11 @@ pub(crate) fn suggested_tear_off_window_bounds(
     host_position: Point<Pixels>,
     geometry: DockDragTearOffGeometry,
 ) -> WindowBounds {
-    let mut size = geometry
-        .preferred_size()
-        .unwrap_or_else(|| geometry.source_bounds().size);
-    if let Some(work_area) = geometry.display_work_area() {
-        size = size.min(&work_area.size);
-    }
-
-    let cursor_offset = geometry
-        .cursor_offset()
-        .clamp(&point(px(0.0), px(0.0)), &point(size.width, size.height));
     let source_window_origin = source_window_bounds.get_bounds().origin;
-    let mut bounds = Bounds::new(source_window_origin + host_position - cursor_offset, size);
-    if let Some(work_area) = geometry.display_work_area() {
-        bounds = clamp_bounds_to_work_area(bounds, work_area);
-    }
-    WindowBounds::Windowed(bounds)
+    WindowBounds::Windowed(tear_off_bounds_from_cursor_anchor(
+        source_window_origin + host_position,
+        geometry,
+    ))
 }
 
 #[derive(Debug)]
@@ -675,6 +652,14 @@ impl DockViewportRuntime {
 
     pub(crate) fn record_no_panel_focus(&mut self, space: &DockSpaceId) {
         self.focus.record_no_panel_focus(space);
+    }
+
+    pub(crate) fn recorded_panel_focus_matches(
+        &self,
+        space: &DockSpaceId,
+        item: &DockItemId,
+    ) -> bool {
+        self.focus.focused_panel(space) == Some(item)
     }
 
     #[cfg(test)]
@@ -2281,6 +2266,37 @@ fn clamp_bounds_to_work_area(bounds: Bounds<Pixels>, work_area: Bounds<Pixels>) 
     );
     let origin = bounds.origin.clamp(&work_area.origin, &max_origin);
     Bounds::new(origin, bounds.size)
+}
+
+fn tear_off_bounds_from_cursor_anchor(
+    cursor_anchor: Point<Pixels>,
+    geometry: DockDragTearOffGeometry,
+) -> Bounds<Pixels> {
+    let size = tear_off_window_size(geometry);
+    let cursor_offset = geometry
+        .cursor_offset()
+        .clamp(&point(px(0.0), px(0.0)), &point(size.width, size.height));
+    let bounds = Bounds::new(cursor_anchor - cursor_offset, size);
+    geometry
+        .display_work_area()
+        .map(|work_area| clamp_bounds_to_work_area(bounds, work_area))
+        .unwrap_or(bounds)
+}
+
+fn tear_off_window_size(geometry: DockDragTearOffGeometry) -> open_gpui::Size<Pixels> {
+    let size = geometry
+        .preferred_size()
+        .unwrap_or_else(|| geometry.source_bounds().size);
+    geometry
+        .display_work_area()
+        .map(|work_area| size.min(&undock_limited_work_area_size(work_area)))
+        .unwrap_or(size)
+}
+
+fn undock_limited_work_area_size(work_area: Bounds<Pixels>) -> open_gpui::Size<Pixels> {
+    work_area
+        .size
+        .map(|dimension| (dimension * DOCK_TEAR_OFF_MAX_WORK_AREA_FRACTION).floor())
 }
 
 fn extend_unique_windows(

@@ -1265,6 +1265,67 @@ fn viewport_activation_for_gone_recorded_panel_preserves_current_focus(cx: &mut 
 }
 
 #[open_gpui::test]
+fn platform_activation_for_gone_recorded_panel_records_no_panel_focus(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph_with_selected(&["a", "b"], "a");
+    let panel_a = test_view(cx, "A");
+    let panel_b = test_view(cx, "B");
+
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_focusable_panel_view(item("a"), "Panel A", panel_a);
+    workspace.register_focusable_panel_view(item("b"), "Panel B", panel_b);
+    let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    let tab_b = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("b"),
+        },
+    )
+    .expect("tab B selector should be emitted");
+    let tab_b_bounds = debug_bounds(&mut visual, &tab_b);
+    visual.simulate_click(tab_b_bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+
+    let controller = host.update(cx, |host, _| host.controller().clone());
+    controller.update(cx, |controller, cx| {
+        let outcome = controller
+            .workspace_mut()
+            .close_item(space(), item("b"))
+            .expect("closing recorded panel should succeed");
+        if outcome.changed() {
+            cx.notify();
+        }
+    });
+    let focused_before_restore = visual.update(|window, cx| window.focused(cx));
+
+    host.update(cx, |host, cx| {
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::platform_activation(DockViewportFocusRequest::panel("b"))
+        ));
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    host.update(cx, |host, _| {
+        assert_eq!(host.pending_focus_command(), None);
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            Some(false),
+            "platform activation restore for a removed panel must clear stale panel-focus history"
+        );
+    });
+    visual.update(|window, cx| {
+        assert_eq!(
+            window.focused(cx),
+            focused_before_restore,
+            "platform activation restore failure must preserve the current GPUI focus fact"
+        );
+    });
+}
+
+#[open_gpui::test]
 fn missing_selected_panel_renders_placeholder(cx: &mut TestAppContext) {
     let (graph, _root) = tabs_graph_with_selected(&["a", "missing"], "missing");
     let (_window, host, mut visual) = open_host(

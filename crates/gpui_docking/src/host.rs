@@ -246,7 +246,10 @@ impl DockHost {
                         self.clear_pending_focus_command();
                         self.remember_panel_focus(item, cx);
                     }
-                    Some(false) => self.clear_pending_focus_command(),
+                    Some(false) => {
+                        self.record_no_panel_focus_for_gone_platform_panel(&command, &item, cx);
+                        self.clear_pending_focus_command();
+                    }
                     None if should_preselect => {
                         let focus_item = item;
                         let changed = self
@@ -269,10 +272,18 @@ impl DockHost {
                             self.clear_pending_focus_command();
                             self.remember_panel_focus(focus_item, cx);
                         } else {
+                            self.record_no_panel_focus_for_gone_platform_panel(
+                                &command,
+                                &focus_item,
+                                cx,
+                            );
                             self.clear_pending_focus_command();
                         }
                     }
-                    None => self.clear_pending_focus_command(),
+                    None => {
+                        self.record_no_panel_focus_for_gone_platform_panel(&command, &item, cx);
+                        self.clear_pending_focus_command();
+                    }
                 }
             }
             DockViewportFocusRequest::NoPanelFocus => {
@@ -290,6 +301,38 @@ impl DockHost {
         let _ = self.mutate_controller_from_host(cx, |controller| {
             controller.select_item_in_space(item.clone())
         });
+    }
+
+    fn record_no_panel_focus_for_gone_platform_panel(
+        &self,
+        command: &DockViewportFocusCommand,
+        item: &DockItemId,
+        cx: &mut Context<Self>,
+    ) {
+        if command.source() != crate::DockViewportFocusCommandSource::PlatformActivation {
+            return;
+        }
+        if !self
+            .viewport_runtime()
+            .recorded_panel_focus_matches(self.space(), item)
+        {
+            return;
+        }
+        if self.panel_is_reachable_in_space(item, cx) {
+            return;
+        }
+        self.viewport_runtime().record_no_panel_focus(self.space());
+    }
+
+    fn panel_is_reachable_in_space(&self, item: &DockItemId, cx: &mut Context<Self>) -> bool {
+        let space = self.space().clone();
+        let controller = self.controller.clone();
+        cx.read_entity(&controller, |controller, _| {
+            controller
+                .graph()
+                .find_item_in_space(&space, item)
+                .is_some()
+        })
     }
 
     #[cfg(test)]
