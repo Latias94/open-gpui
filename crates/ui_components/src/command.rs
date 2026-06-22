@@ -75,6 +75,45 @@ impl CommandLoadingState {
     }
 }
 
+/// Command descriptor field that produced the strongest search match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandMatchSource {
+    /// The visible label matched the query.
+    Label,
+    /// The stable command value matched the query.
+    Value,
+    /// The displayed shortcut matched the query.
+    Shortcut,
+    /// One of the command keywords matched the query.
+    Keyword,
+}
+
+impl CommandMatchSource {
+    const fn base_score(self) -> u16 {
+        match self {
+            Self::Label => 3200,
+            Self::Value => 3100,
+            Self::Shortcut => 2000,
+            Self::Keyword => 1000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CommandMatchRank {
+    source: Option<CommandMatchSource>,
+    score: u16,
+}
+
+impl CommandMatchRank {
+    const fn unfiltered() -> Self {
+        Self {
+            source: None,
+            score: 0,
+        }
+    }
+}
+
 /// Pure descriptor for one command item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandItemDescriptor {
@@ -146,22 +185,43 @@ impl CommandItemDescriptor {
         self.disabled
     }
 
-    fn matches_query(&self, query: &str) -> bool {
-        let query = normalize_query(query);
-        if query.is_empty() {
-            return true;
+    fn match_rank(&self, normalized_query: &str) -> Option<CommandMatchRank> {
+        if normalized_query.is_empty() {
+            return Some(CommandMatchRank::unfiltered());
         }
 
-        self.value.to_lowercase().contains(query.as_str())
-            || self.label.to_lowercase().contains(query.as_str())
-            || self
-                .shortcut
-                .as_ref()
-                .is_some_and(|shortcut| shortcut.to_lowercase().contains(query.as_str()))
-            || self
-                .keywords
-                .iter()
-                .any(|keyword| keyword.to_lowercase().contains(query.as_str()))
+        let best = command_text_match_rank(
+            self.label.as_str(),
+            normalized_query,
+            CommandMatchSource::Label,
+        )
+        .into_iter()
+        .chain(command_text_match_rank(
+            self.value.as_str(),
+            normalized_query,
+            CommandMatchSource::Value,
+        ))
+        .chain(self.shortcut.as_ref().and_then(|shortcut| {
+            command_text_match_rank(
+                shortcut.as_str(),
+                normalized_query,
+                CommandMatchSource::Shortcut,
+            )
+        }));
+
+        let keyword_best = self
+            .keywords
+            .iter()
+            .filter_map(|keyword| {
+                command_text_match_rank(
+                    keyword.as_str(),
+                    normalized_query,
+                    CommandMatchSource::Keyword,
+                )
+            })
+            .max_by_key(|rank| rank.score);
+
+        best.chain(keyword_best).max_by_key(|rank| rank.score)
     }
 
     fn to_listbox_descriptor(&self) -> ListboxOptionDescriptor {
@@ -389,6 +449,7 @@ pub struct CommandGroupState {
     label: String,
     item_count: usize,
     standalone: bool,
+    match_score: u16,
 }
 
 impl CommandGroupState {
@@ -410,6 +471,11 @@ impl CommandGroupState {
     /// Returns visible item count.
     pub const fn item_count(&self) -> usize {
         self.item_count
+    }
+
+    /// Returns the deterministic search score for this group.
+    pub const fn match_score(&self) -> u16 {
+        self.match_score
     }
 
     /// Returns whether this is the synthetic standalone command group.
@@ -434,6 +500,8 @@ pub struct CommandItemState {
     disabled: bool,
     selected: bool,
     active: bool,
+    match_source: Option<CommandMatchSource>,
+    match_score: u16,
     position_in_set: Option<usize>,
     size_of_set: usize,
 }
@@ -474,6 +542,10 @@ impl CommandItemState {
         !self.disabled
     }
 
+    fn to_listbox_option(&self) -> ListboxOption {
+        ListboxOption::new(self.value.clone(), self.label.clone()).disabled(self.disabled)
+    }
+
     /// Returns whether the item is selected.
     pub const fn selected(&self) -> bool {
         self.selected
@@ -482,6 +554,16 @@ impl CommandItemState {
     /// Returns whether the item is active.
     pub const fn active(&self) -> bool {
         self.active
+    }
+
+    /// Returns the descriptor field that produced the strongest query match.
+    pub const fn match_source(&self) -> Option<CommandMatchSource> {
+        self.match_source
+    }
+
+    /// Returns the deterministic search score for this item.
+    pub const fn match_score(&self) -> u16 {
+        self.match_score
     }
 
     /// Returns the item's accessibility role.
@@ -551,6 +633,17 @@ impl CommandDialogState {
 struct FlattenedCommandItem {
     group_index: Option<usize>,
     descriptor: CommandItemDescriptor,
+    rank: CommandMatchRank,
+    source_index: usize,
+}
+
+#[derive(Debug, Clone)]
+struct RankedCommandGroup {
+    source_index: usize,
+    value: String,
+    label: String,
+    items: Vec<FlattenedCommandItem>,
+    best_score: u16,
 }
 
 /// Resolved command state used by tests, demos, and rendering.
@@ -618,6 +711,8 @@ impl CommandState {
             CommandOpenMode::Uncontrolled
         };
         let open = open.unwrap_or(default_open) && !disabled;
+        let normalized_query = normalize_query(query.as_str());
+        let query_is_empty = normalized_query.is_empty();
         let raw_groups = groups.into_iter().collect::<Vec<_>>();
         let raw_items = items.into_iter().collect::<Vec<_>>();
         let total_item_count = raw_items.len()
@@ -630,70 +725,120 @@ impl CommandState {
             .filter(|item| !item.disabled_state());
         let selected_value = selected_item.map(|item| item.value().to_owned());
 
-        let mut filtered_group_descriptors = Vec::new();
-        let mut command_groups = Vec::new();
-        let mut flattened = raw_items
+        let mut standalone_items = raw_items
             .iter()
-            .filter(|item| item.matches_query(query.as_str()))
-            .cloned()
-            .map(|descriptor| FlattenedCommandItem {
-                group_index: None,
-                descriptor,
+            .enumerate()
+            .filter_map(|(source_index, item)| {
+                let rank = item.match_rank(normalized_query.as_str())?;
+                Some(FlattenedCommandItem {
+                    group_index: None,
+                    descriptor: item.clone(),
+                    rank,
+                    source_index,
+                })
             })
             .collect::<Vec<_>>();
-        if !flattened.is_empty() {
+        if !query_is_empty {
+            sort_ranked_command_items(&mut standalone_items);
+        }
+
+        let mut ranked_groups = raw_groups
+            .iter()
+            .enumerate()
+            .filter_map(|(group_source_index, group)| {
+                let mut items = group
+                    .items_ref()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(source_index, item)| {
+                        let rank = item.match_rank(normalized_query.as_str())?;
+                        Some(FlattenedCommandItem {
+                            group_index: None,
+                            descriptor: item.clone(),
+                            rank,
+                            source_index,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if items.is_empty() {
+                    return None;
+                }
+
+                if !query_is_empty {
+                    sort_ranked_command_items(&mut items);
+                }
+
+                let best_score = items.iter().map(|item| item.rank.score).max().unwrap_or(0);
+
+                Some(RankedCommandGroup {
+                    source_index: group_source_index,
+                    value: group.value().to_owned(),
+                    label: group.label().to_owned(),
+                    items,
+                    best_score,
+                })
+            })
+            .collect::<Vec<_>>();
+        if !query_is_empty {
+            ranked_groups.sort_by(|a, b| {
+                b.best_score
+                    .cmp(&a.best_score)
+                    .then_with(|| a.source_index.cmp(&b.source_index))
+            });
+        }
+
+        let mut filtered_group_descriptors = Vec::new();
+        let mut filtered_item_descriptors = Vec::new();
+        let mut command_groups = Vec::new();
+        let mut flattened = Vec::new();
+        let standalone_best_score = standalone_items
+            .iter()
+            .map(|item| item.rank.score)
+            .max()
+            .unwrap_or(0);
+
+        if !standalone_items.is_empty() {
             let group_index = command_groups.len();
             command_groups.push(CommandGroupState {
                 index: group_index,
                 value: "commands".to_string(),
                 label: "Commands".to_string(),
-                item_count: flattened.len(),
+                item_count: standalone_items.len(),
                 standalone: true,
+                match_score: standalone_best_score,
             });
-            for item in &mut flattened {
+            filtered_item_descriptors = standalone_items
+                .iter()
+                .map(|item| item.descriptor.to_listbox_descriptor())
+                .collect::<Vec<_>>();
+            for item in &mut standalone_items {
                 item.group_index = Some(group_index);
             }
+            flattened.extend(standalone_items);
         }
-        let filtered_item_descriptors = flattened
-            .iter()
-            .map(|item| item.descriptor.to_listbox_descriptor())
-            .collect::<Vec<_>>();
 
-        for group in &raw_groups {
-            let filtered_items = group
-                .items_ref()
-                .iter()
-                .filter(|item| item.matches_query(query.as_str()))
-                .cloned()
-                .collect::<Vec<_>>();
-            if filtered_items.is_empty() {
-                continue;
-            }
-
+        for group in ranked_groups {
             let group_index = command_groups.len();
             command_groups.push(CommandGroupState {
                 index: group_index,
-                value: group.value().to_owned(),
-                label: group.label().to_owned(),
-                item_count: filtered_items.len(),
+                value: group.value.clone(),
+                label: group.label.clone(),
+                item_count: group.items.len(),
                 standalone: false,
+                match_score: group.best_score,
             });
             filtered_group_descriptors.push(
-                ListboxGroupDescriptor::new(group.value().to_owned(), group.label().to_owned())
-                    .options(
-                        filtered_items
-                            .iter()
-                            .map(CommandItemDescriptor::to_listbox_descriptor),
-                    ),
+                ListboxGroupDescriptor::new(group.value.clone(), group.label.clone()).options(
+                    group
+                        .items
+                        .iter()
+                        .map(|item| item.descriptor.to_listbox_descriptor()),
+                ),
             );
-            flattened.extend(
-                filtered_items
-                    .into_iter()
-                    .map(|descriptor| FlattenedCommandItem {
-                        group_index: Some(group_index),
-                        descriptor,
-                    }),
-            );
+            flattened.extend(group.items.into_iter().map(|mut item| {
+                item.group_index = Some(group_index);
+                item
+            }));
         }
 
         let filtered_item_count = flattened.len();
@@ -703,7 +848,7 @@ impl CommandState {
             label.clone(),
             selected_value.as_deref(),
             active_value,
-            (!query.is_empty()).then_some(query.as_str()),
+            (!query_is_empty).then_some(query.as_str()),
             empty_label.clone(),
             filtered_group_descriptors,
             filtered_item_descriptors,
@@ -723,6 +868,8 @@ impl CommandState {
                     disabled: item.descriptor.disabled,
                     selected: option.selected(),
                     active: option.active(),
+                    match_source: item.rank.source,
+                    match_score: item.rank.score,
                     position_in_set: option.position_in_set(),
                     size_of_set: option.size_of_set(),
                 })
@@ -1344,8 +1491,6 @@ impl RenderOnce for Command {
         let viewport = window.viewport_size();
         let dialog_enabled = self.dialog_enabled;
         let trigger_label = self.trigger_label;
-        let items = self.items;
-        let groups = self.groups;
         let on_open_change = self.on_open_change;
         let on_select = self.on_select;
         let tokens = self.tokens;
@@ -1411,8 +1556,6 @@ impl RenderOnce for Command {
                     listbox_id.clone(),
                     debug_id.clone(),
                     state.clone(),
-                    items.clone(),
-                    groups.clone(),
                     input_controller.clone(),
                     runtime.clone(),
                     on_open_change.clone(),
@@ -1434,8 +1577,6 @@ impl RenderOnce for Command {
                                 state,
                                 dialog_state,
                                 viewport,
-                                items,
-                                groups,
                                 input_controller,
                                 runtime,
                                 on_open_change,
@@ -1458,8 +1599,6 @@ fn command_dialog_layer_element(
     state: CommandState,
     dialog_state: CommandDialogState,
     viewport: open_gpui::Size<Pixels>,
-    items: Vec<CommandItem>,
-    groups: Vec<CommandGroup>,
     input_controller: Entity<TextInputController>,
     runtime: Entity<CommandRuntime>,
     on_open_change: Option<CommandOpenChangeHandler>,
@@ -1508,8 +1647,6 @@ fn command_dialog_layer_element(
                     listbox_id,
                     debug_id,
                     state,
-                    items,
-                    groups,
                     input_controller,
                     runtime,
                     on_open_change,
@@ -1526,8 +1663,6 @@ fn command_content_element(
     listbox_id: ElementId,
     debug_id: String,
     state: CommandState,
-    items: Vec<CommandItem>,
-    groups: Vec<CommandGroup>,
     input_controller: Entity<TextInputController>,
     runtime: Entity<CommandRuntime>,
     on_open_change: Option<CommandOpenChangeHandler>,
@@ -1541,23 +1676,29 @@ fn command_content_element(
     let selected_value = state.selected_value().map(str::to_owned);
     let active_value = state.active_value().map(str::to_owned);
     let dialog_state = state.dialog().cloned();
-    let shortcut_lookup = command_shortcut_lookup(&items, &groups, query.as_str());
+    let shortcut_lookup = command_shortcut_lookup(state.items());
     let outside_change = if let Some(dialog_state) = dialog_state.as_ref() {
         outside_press_open_change(dialog_state.overlay().policy())
     } else {
         None
     };
-    let mut listbox = items
-        .into_iter()
-        .filter(|item| item.descriptor.matches_query(query.as_str()))
-        .fold(Listbox::new(listbox_id, label.clone()), |listbox, item| {
-            listbox.option(item.listbox_option())
+    let standalone_options = state
+        .standalone_items()
+        .map(CommandItemState::to_listbox_option)
+        .collect::<Vec<_>>();
+    let grouped_options = state
+        .grouped_groups()
+        .map(|group| {
+            let options = state
+                .group_items(group.index())
+                .map(CommandItemState::to_listbox_option)
+                .collect::<Vec<_>>();
+            ListboxGroup::new(group.value().to_owned(), group.label().to_owned()).options(options)
         })
-        .groups(
-            groups
-                .into_iter()
-                .filter_map(|group| group.filtered_listbox_group(query.as_str())),
-        )
+        .collect::<Vec<_>>();
+    let mut listbox = Listbox::new(listbox_id, label.clone())
+        .options(standalone_options)
+        .groups(grouped_options)
         .tokens(tokens)
         .with_size(state.size())
         .empty_label(state.empty_label().to_owned())
@@ -1752,26 +1893,10 @@ fn close_command_dialog(
     }
 }
 
-fn command_shortcut_lookup(
-    items: &[CommandItem],
-    groups: &[CommandGroup],
-    query: &str,
-) -> Vec<(String, Option<String>)> {
+fn command_shortcut_lookup(items: &[CommandItemState]) -> Vec<(String, Option<String>)> {
     items
         .iter()
-        .filter(|item| item.descriptor.matches_query(query))
-        .chain(
-            groups
-                .iter()
-                .flat_map(|group| group.items.iter())
-                .filter(|item| item.descriptor.matches_query(query)),
-        )
-        .map(|item| {
-            (
-                item.descriptor.value().to_owned(),
-                item.descriptor.shortcut_ref().map(str::to_owned),
-            )
-        })
+        .map(|item| (item.value().to_owned(), item.shortcut().map(str::to_owned)))
         .collect()
 }
 
@@ -1819,11 +1944,6 @@ impl CommandItem {
     pub fn descriptor(&self) -> CommandItemDescriptor {
         self.descriptor.clone()
     }
-
-    fn listbox_option(self) -> ListboxOption {
-        ListboxOption::new(self.descriptor.value, self.descriptor.label)
-            .disabled(self.descriptor.disabled)
-    }
 }
 
 /// A concrete GPUI command group.
@@ -1863,22 +1983,52 @@ impl CommandGroup {
                 descriptor.item(item.descriptor())
             })
     }
-
-    fn filtered_listbox_group(self, query: &str) -> Option<ListboxGroup> {
-        let mut group = ListboxGroup::new(self.descriptor.value, self.descriptor.label);
-        let mut has_items = false;
-        for item in self.items {
-            if item.descriptor.matches_query(query) {
-                has_items = true;
-                group = group.option(item.listbox_option());
-            }
-        }
-        has_items.then_some(group)
-    }
 }
 
 fn normalize_query(query: &str) -> String {
     query.trim().to_lowercase()
+}
+
+fn command_text_match_rank(
+    text: &str,
+    normalized_query: &str,
+    source: CommandMatchSource,
+) -> Option<CommandMatchRank> {
+    let text = normalize_query(text);
+    if text.is_empty() || normalized_query.is_empty() {
+        return None;
+    }
+
+    let quality = if text == normalized_query {
+        300
+    } else if text.starts_with(normalized_query) {
+        220
+    } else if command_words_start_with(text.as_str(), normalized_query) {
+        180
+    } else if text.contains(normalized_query) {
+        120
+    } else {
+        return None;
+    };
+
+    Some(CommandMatchRank {
+        source: Some(source),
+        score: source.base_score() + quality,
+    })
+}
+
+fn command_words_start_with(text: &str, normalized_query: &str) -> bool {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|word| word.starts_with(normalized_query))
+}
+
+fn sort_ranked_command_items(items: &mut [FlattenedCommandItem]) {
+    items.sort_by(|a, b| {
+        b.rank
+            .score
+            .cmp(&a.rank.score)
+            .then_with(|| a.source_index.cmp(&b.source_index))
+    });
 }
 
 fn find_command_item<'a>(

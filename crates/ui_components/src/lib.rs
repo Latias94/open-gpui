@@ -84,8 +84,8 @@ pub use combobox::{
 };
 pub use command::{
     Command, CommandColors, CommandDialogState, CommandGroup, CommandGroupDescriptor, CommandItem,
-    CommandItemDescriptor, CommandItemState, CommandLoadingState, CommandMetrics, CommandOpenMode,
-    CommandSelection, CommandState,
+    CommandItemDescriptor, CommandItemState, CommandLoadingState, CommandMatchSource,
+    CommandMetrics, CommandOpenMode, CommandSelection, CommandState,
 };
 pub use context_menu::{ContextMenu, ContextMenuState};
 pub use dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};

@@ -6,27 +6,27 @@ use open_gpui_ui_components::{
     AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Avatar, Badge,
     BadgeVariant, Button, ButtonVariant, Checkbox, ColorIntent, ColorState, Combobox,
     ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command, CommandGroup,
-    CommandItem, CommandOpenMode, CommandSelection, ContextMenu, DEFAULT_FOCUS_RING_WIDTH, Dialog,
-    DialogOpenMode, EmptyState, FeedbackIntent, Field, FocusRing, HoverCard, HoverCardContentKind,
-    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton, Kbd, Label, Listbox,
-    ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
-    ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode,
-    MenuSelection, Popover, PopoverOpenMode, Progress, ProgressVisualMode, RadioGroup,
-    RadioGroupState, RadioItem, RadioItemDescriptor, RadioSelection, ScrollArea, ScrollAreaAxis,
-    ScrollAreaState, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, Separator, Sheet,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
-    SidebarItem, SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide,
-    SidebarState, SidebarVariant, Skeleton, Splitter, SplitterPanel, SplitterPanelDescriptor,
-    SplitterState, StatusCue, Switch, Table, TableColumn, TableFilter, TableHeaderAction,
-    TablePagination, TableRow, TableSort, TableSortDirection, TableState, Tabs, TabsActivationMode,
-    TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode,
-    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
-    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
-    VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
+    CommandItem, CommandMatchSource, CommandOpenMode, CommandSelection, ContextMenu,
+    DEFAULT_FOCUS_RING_WIDTH, Dialog, DialogOpenMode, EmptyState, FeedbackIntent, Field, FocusRing,
+    HoverCard, HoverCardContentKind, HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode,
+    IconButton, Kbd, Label, Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption,
+    ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem,
+    MenuItemKind, MenuOpenMode, MenuSelection, Popover, PopoverOpenMode, Progress,
+    ProgressVisualMode, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor,
+    RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select,
+    SelectOpenMode, SelectSelection, Separator, Sheet, SheetCloseAffordance, SheetModalMode,
+    SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor,
+    SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
+    Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
+    TableColumn, TableFilter, TableHeaderAction, TablePagination, TableRow, TableSort,
+    TableSortDirection, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
+    TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot,
+    Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
+    ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy,
+    TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList, VirtualizedListActivation,
+    VirtualizedListItemDescriptor, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
+    VirtualizedListScrollStrategy, VirtualizedListState, VirtualizerItemKey, VirtualizerRange,
+    VirtualizerSnapshot, VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -6561,6 +6561,8 @@ fn command_state_filters_groups_shortcuts_loading_and_dialog_policy() {
     assert_eq!(state.groups().len(), 2);
     assert_eq!(state.groups()[0].label(), "Commands");
     assert_eq!(state.groups()[1].label(), "File");
+    assert!(state.groups()[0].match_score() > 0);
+    assert!(state.groups()[1].match_score() > 0);
     assert_eq!(state.items().len(), 2);
     assert_eq!(state.items()[1].shortcut(), Some("Ctrl+N"));
     assert!(state.items()[1].selected());
@@ -6584,6 +6586,164 @@ fn command_state_filters_groups_shortcuts_loading_and_dialog_policy() {
     assert_eq!(dialog.content_role(), Role::Window);
     assert_eq!(dialog.overlay().policy().kind(), OverlayLayerKind::Modal);
     assert_eq!(dialog.description(), Some("Run a workspace command"));
+}
+
+#[test]
+fn command_state_reports_match_sources_for_label_value_keyword_and_shortcut() {
+    let label_state = Command::new("label-command", "Commands")
+        .default_query("open")
+        .item(CommandItem::new("open-file", "Open File"))
+        .state();
+    assert_eq!(label_state.items()[0].value(), "open-file");
+    assert_eq!(
+        label_state.items()[0].match_source(),
+        Some(CommandMatchSource::Label)
+    );
+
+    let value_state = Command::new("value-command", "Commands")
+        .default_query("open-file")
+        .item(CommandItem::new("open-file", "Open File"))
+        .state();
+    assert_eq!(
+        value_state.items()[0].match_source(),
+        Some(CommandMatchSource::Value)
+    );
+
+    let keyword_state = Command::new("keyword-command", "Commands")
+        .default_query("prefs")
+        .item(CommandItem::new("settings", "Settings").keyword("prefs"))
+        .state();
+    assert_eq!(keyword_state.items()[0].value(), "settings");
+    assert_eq!(
+        keyword_state.items()[0].match_source(),
+        Some(CommandMatchSource::Keyword)
+    );
+
+    let shortcut_state = Command::new("shortcut-command", "Commands")
+        .default_query("ctrl+p")
+        .item(CommandItem::new("palette", "Command Palette").shortcut("Ctrl+P"))
+        .state();
+    assert_eq!(shortcut_state.items()[0].value(), "palette");
+    assert_eq!(
+        shortcut_state.items()[0].match_source(),
+        Some(CommandMatchSource::Shortcut)
+    );
+}
+
+#[test]
+fn command_state_empty_query_preserves_caller_order() {
+    let state = Command::new("ordered-command", "Commands")
+        .item(CommandItem::new("root-two", "Root Two"))
+        .item(CommandItem::new("root-one", "Root One"))
+        .group(
+            CommandGroup::new("group", "Group")
+                .item(CommandItem::new("group-two", "Group Two"))
+                .item(CommandItem::new("group-one", "Group One")),
+        )
+        .state();
+    let values = state
+        .items()
+        .iter()
+        .map(|item| item.value().to_owned())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        values,
+        vec![
+            "root-two".to_string(),
+            "root-one".to_string(),
+            "group-two".to_string(),
+            "group-one".to_string(),
+        ]
+    );
+    assert!(
+        state
+            .items()
+            .iter()
+            .all(|item| item.match_source().is_none() && item.match_score() == 0)
+    );
+    assert!(state.groups().iter().all(|group| group.match_score() == 0));
+}
+
+#[test]
+fn command_state_ranks_label_and_value_matches_before_keyword_only_matches() {
+    let state = Command::new("ranked-command", "Commands")
+        .default_query("file")
+        .item(CommandItem::new("archive", "Archive").keyword("file"))
+        .item(CommandItem::new("open-file", "Open File"))
+        .item(CommandItem::new("file-action", "Launcher"))
+        .item(CommandItem::new("bulk-action", "Bulk Action").keyword("file"))
+        .state();
+    let values = state
+        .items()
+        .iter()
+        .map(|item| item.value().to_owned())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        values,
+        vec![
+            "open-file".to_string(),
+            "file-action".to_string(),
+            "archive".to_string(),
+            "bulk-action".to_string(),
+        ]
+    );
+    assert_eq!(
+        state.items()[0].match_source(),
+        Some(CommandMatchSource::Label)
+    );
+    assert_eq!(
+        state.items()[1].match_source(),
+        Some(CommandMatchSource::Value)
+    );
+    assert_eq!(
+        state.items()[2].match_source(),
+        Some(CommandMatchSource::Keyword)
+    );
+    assert!(state.items()[1].match_score() > state.items()[2].match_score());
+}
+
+#[test]
+fn command_state_tracks_active_and_selected_by_value_after_reorder() {
+    let first = Command::new("first-command", "Commands")
+        .selected("target")
+        .active("target")
+        .item(CommandItem::new("other", "Other"))
+        .item(CommandItem::new("target", "Target"))
+        .state();
+    let reordered = Command::new("reordered-command", "Commands")
+        .selected("target")
+        .active("target")
+        .item(CommandItem::new("target", "Target"))
+        .item(CommandItem::new("other", "Other"))
+        .state();
+
+    assert_eq!(first.selected_value(), Some("target"));
+    assert_eq!(first.active_value(), Some("target"));
+    assert!(first.items()[1].selected());
+    assert!(first.items()[1].active());
+    assert_eq!(reordered.selected_value(), Some("target"));
+    assert_eq!(reordered.active_value(), Some("target"));
+    assert!(reordered.items()[0].selected());
+    assert!(reordered.items()[0].active());
+}
+
+#[test]
+fn command_state_keeps_disabled_matches_visible_but_non_activatable() {
+    let state = Command::new("disabled-command", "Commands")
+        .default_query("delete")
+        .selected("delete-project")
+        .active("delete-project")
+        .item(CommandItem::new("delete-project", "Delete Project").disabled(true))
+        .state();
+
+    assert_eq!(state.filtered_item_count(), 1);
+    assert_eq!(state.items()[0].value(), "delete-project");
+    assert!(state.items()[0].disabled());
+    assert_eq!(state.selected_value(), None);
+    assert_eq!(state.active_value(), None);
+    assert_eq!(state.activation_for_key("enter"), None);
 }
 
 #[test]
