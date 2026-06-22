@@ -70,7 +70,7 @@ pub(crate) struct DockViewportRuntime {
     routed_drop_preview_resolution: Option<DockViewportResolvedDropRoute>,
     routed_drop_preview_epoch: u64,
     // The target viewport must render the current routed preview epoch before release can replay it.
-    routed_drop_preview_accepted_epoch: Option<u64>,
+    accepted_routed_preview: Option<DockViewportAcceptedRoutedPreview>,
     status: DockViewportRuntimeStatus,
 }
 
@@ -78,6 +78,39 @@ pub(crate) struct DockViewportRuntime {
 struct DockRuntimeDragTearOffGeometry {
     drag_session_id: u64,
     geometry: DockDragTearOffGeometry,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct DockViewportAcceptedRoutedPreview {
+    epoch: u64,
+    target_space: DockSpaceId,
+    target_window_id: WindowId,
+    target_key: crate::drop_target::DockDropTargetKey,
+    drag_session_id: Option<u64>,
+}
+
+impl DockViewportAcceptedRoutedPreview {
+    fn new(
+        epoch: u64,
+        target: &crate::DockViewportResolvedDropTargetSnapshot,
+        drag_session_id: Option<u64>,
+    ) -> Option<Self> {
+        Some(Self {
+            epoch,
+            target_space: target.target_space().clone(),
+            target_window_id: target.target_window_id()?,
+            target_key: target.target_key().clone(),
+            drag_session_id,
+        })
+    }
+
+    fn matches_epoch(&self, epoch: u64) -> bool {
+        self.epoch == epoch
+    }
+
+    fn matches_target(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
+        self.target_space == *space && self.target_window_id == window_id
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -359,7 +392,7 @@ impl DockViewportRuntime {
             routed_drop_preview: None,
             routed_drop_preview_resolution: None,
             routed_drop_preview_epoch: 0,
-            routed_drop_preview_accepted_epoch: None,
+            accepted_routed_preview: None,
             status: DockViewportRuntimeStatus::default(),
         }
     }
@@ -392,7 +425,7 @@ impl DockViewportRuntime {
             routed_drop_preview: None,
             routed_drop_preview_resolution: None,
             routed_drop_preview_epoch: 0,
-            routed_drop_preview_accepted_epoch: None,
+            accepted_routed_preview: None,
             status: DockViewportRuntimeStatus::default(),
         }
     }
@@ -1013,7 +1046,9 @@ impl DockViewportRuntime {
 
     #[cfg(test)]
     pub(crate) fn routed_drop_preview_is_accepted(&self) -> bool {
-        self.routed_drop_preview_accepted_epoch == Some(self.routed_drop_preview_epoch)
+        self.accepted_routed_preview
+            .as_ref()
+            .is_some_and(|token| token.matches_epoch(self.routed_drop_preview_epoch))
     }
 
     pub(crate) fn update_routed_drop_preview(
@@ -1065,7 +1100,7 @@ impl DockViewportRuntime {
         ) && next.is_some();
         if starts_acceptance_pass {
             self.routed_drop_preview_epoch = self.routed_drop_preview_epoch.wrapping_add(1);
-            self.routed_drop_preview_accepted_epoch = None;
+            self.accepted_routed_preview = None;
         }
         let mut target_window = None;
         if starts_acceptance_pass && let Some(preview) = next.as_ref() {
@@ -1106,7 +1141,14 @@ impl DockViewportRuntime {
         if target.target_space() != space || target.target_window_id() != Some(window_id) {
             return false;
         }
-        self.routed_drop_preview_accepted_epoch = Some(self.routed_drop_preview_epoch);
+        let Some(token) = DockViewportAcceptedRoutedPreview::new(
+            self.routed_drop_preview_epoch,
+            target,
+            preview.drag_session_id(),
+        ) else {
+            return false;
+        };
+        self.accepted_routed_preview = Some(token);
         true
     }
 
@@ -1151,7 +1193,7 @@ impl DockViewportRuntime {
 
         self.routed_drop_preview = next;
         self.routed_drop_preview_resolution = next_resolution;
-        self.routed_drop_preview_accepted_epoch = None;
+        self.accepted_routed_preview = None;
         (true, windows)
     }
 
@@ -1857,18 +1899,16 @@ impl DockViewportRuntime {
         {
             return None;
         }
-        if self.routed_drop_preview_accepted_epoch != Some(self.routed_drop_preview_epoch) {
+        let accepted = self.accepted_routed_preview.as_ref()?;
+        if !accepted.matches_epoch(self.routed_drop_preview_epoch) {
             return None;
         }
-        let preview = self.routed_drop_preview.as_ref()?;
-        if preview.drag_session_id() != Some(drag_session.id()) {
+        if accepted.drag_session_id != Some(drag_session.id()) {
             return None;
         }
-        let preview_resolution = self.routed_drop_preview_resolution.as_ref()?;
-        let accepted_target = preview_resolution.routed_preview_target_snapshot()?;
-        let target_space = accepted_target.target_space().clone();
-        let target_window_id = accepted_target.target_window_id()?;
-        let accepted_target_key = accepted_target.target_key().clone();
+        let target_space = accepted.target_space.clone();
+        let target_window_id = accepted.target_window_id;
+        let accepted_target_key = accepted.target_key.clone();
         let host_position = self.accepted_routed_preview_host_position(request, &target_space)?;
         let facts_generation = self
             .adapter
@@ -1962,31 +2002,15 @@ impl DockViewportRuntime {
                     == crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly
             }
             DockViewportDropRoute::Local { window_id, .. } => self
-                .accepted_routed_preview_target()
-                .is_some_and(|(_, target_window_id, _)| target_window_id == *window_id),
+                .accepted_routed_preview
+                .as_ref()
+                .is_some_and(|token| token.target_window_id == *window_id),
             DockViewportDropRoute::KnownViewport { target, .. } => self
-                .accepted_routed_preview_target()
-                .is_some_and(|(target_space, target_window_id, _)| {
-                    target_space == target.space() && target_window_id == target.window_id()
-                }),
+                .accepted_routed_preview
+                .as_ref()
+                .is_some_and(|token| token.matches_target(target.space(), target.window_id())),
             DockViewportDropRoute::Rejected(_) => false,
         }
-    }
-
-    fn accepted_routed_preview_target(
-        &self,
-    ) -> Option<(
-        &DockSpaceId,
-        WindowId,
-        &crate::drop_target::DockResolvedDropTarget,
-    )> {
-        let preview_resolution = self.routed_drop_preview_resolution.as_ref()?;
-        let target = preview_resolution.routed_preview_target_snapshot()?;
-        Some((
-            target.target_space(),
-            target.target_window_id()?,
-            target.target(),
-        ))
     }
 
     fn accepted_routed_preview_host_position(
