@@ -1,6 +1,8 @@
 //! Renderer-neutral state for virtualized list surfaces.
 
-use open_gpui_ui_core::{Size, UiPx, ui_px};
+#[cfg(test)]
+use open_gpui_ui_core::ui_px;
+use open_gpui_ui_core::{Size, UiPx};
 
 /// Scroll alignment requested when a virtualized row should be revealed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
