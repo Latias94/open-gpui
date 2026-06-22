@@ -48,7 +48,7 @@ impl DockHost {
         let runtime = self.viewport_runtime().clone();
         let drag_session = self.active_payload_drag_session(payload);
         let tear_off_geometry = self.active_payload_drag_tear_off_geometry(drag_session.as_ref());
-        let accepted_local_scene_route_authority =
+        let event_receiver_local_scene_proof =
             self.interaction().viewport_host_scene_frame().is_some();
         let request = viewport_drop_route_request_from_host(
             payload,
@@ -59,7 +59,7 @@ impl DockHost {
             drag_session,
             tear_off_geometry,
         )
-        .with_accepted_local_scene_route_authority(accepted_local_scene_route_authority);
+        .with_event_receiver_local_scene_proof(event_receiver_local_scene_proof);
         let resolution = runtime.resolve_payload_drop_delivery(&request, cx);
         let routed_preview_changed =
             runtime.update_routed_drop_preview(&resolution, payload.title(), cx);
@@ -99,7 +99,7 @@ impl DockHost {
             drag_session,
             tear_off_geometry,
         )
-        .with_accepted_local_scene_route_authority(release.accepted_local_scene_route_authority())
+        .with_event_receiver_local_scene_proof(release.event_receiver_local_scene_proof())
     }
 }
 

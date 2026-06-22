@@ -149,7 +149,7 @@ pub(crate) struct DockViewportDropRouteRequest {
     release_position: Point<Pixels>,
     coordinate_space: DockViewportPointerCoordinateSpace,
     release_origin: DockPayloadDropReleaseOrigin,
-    accepted_local_scene_route_authority: bool,
+    event_receiver_local_scene_proof: bool,
     platform_signals: DockViewportPlatformSignals,
 }
 
@@ -171,7 +171,7 @@ struct DockTrustedHoveredWindowLocalDropTarget {
 
 enum DockEventReceiverLocalSceneAuthorityMode {
     HitTestedScene,
-    AcceptedScene,
+    ReceiverSceneProof,
 }
 
 struct DockEventReceiverLocalSceneAuthority {
@@ -607,7 +607,7 @@ impl DockViewportDropRouteRequest {
             release_position,
             coordinate_space,
             release_origin,
-            accepted_local_scene_route_authority: false,
+            event_receiver_local_scene_proof: false,
             platform_signals,
         }
     }
@@ -742,8 +742,8 @@ impl DockViewportDropRouteRequest {
         self
     }
 
-    pub(crate) fn with_accepted_local_scene_route_authority(mut self, allowed: bool) -> Self {
-        self.accepted_local_scene_route_authority =
+    pub(crate) fn with_event_receiver_local_scene_proof(mut self, allowed: bool) -> Self {
+        self.event_receiver_local_scene_proof =
             allowed && self.release_origin == DockPayloadDropReleaseOrigin::HoveredHost;
         self
     }
@@ -802,8 +802,8 @@ impl DockViewportDropRouteRequest {
         self.release_origin
     }
 
-    pub(crate) fn accepted_local_scene_route_authority(&self) -> bool {
-        self.accepted_local_scene_route_authority
+    pub(crate) fn event_receiver_local_scene_proof(&self) -> bool {
+        self.event_receiver_local_scene_proof
     }
 
     #[cfg(test)]
@@ -1070,7 +1070,7 @@ impl DockViewportAdapter {
         let authority = self.event_receiver_local_scene_authority(
             request,
             target_context,
-            DockEventReceiverLocalSceneAuthorityMode::AcceptedScene,
+            DockEventReceiverLocalSceneAuthorityMode::ReceiverSceneProof,
         )?;
         let host_position =
             authority.host_position_from_window_position(request.release_position())?;
@@ -1085,7 +1085,7 @@ impl DockViewportAdapter {
         let authority = self.event_receiver_local_scene_authority(
             request,
             target_context,
-            DockEventReceiverLocalSceneAuthorityMode::AcceptedScene,
+            DockEventReceiverLocalSceneAuthorityMode::ReceiverSceneProof,
         )?;
         let screen_bounds = authority.global_screen_bounds?;
         if !screen_bounds.contains(&request.release_position()) {
@@ -1115,10 +1115,10 @@ impl DockViewportAdapter {
                 crate::DockViewportTrustedHoveredSignal::TrustedNone,
             )
             | (
-                DockEventReceiverLocalSceneAuthorityMode::AcceptedScene,
+                DockEventReceiverLocalSceneAuthorityMode::ReceiverSceneProof,
                 crate::DockViewportTrustedHoveredSignal::Unavailable
                 | crate::DockViewportTrustedHoveredSignal::TrustedNone,
-            ) if request.accepted_local_scene_route_authority() => {}
+            ) if request.event_receiver_local_scene_proof() => {}
             _ => return None,
         }
         let receiver_window = request.event_receiver_window()?;
@@ -1735,7 +1735,7 @@ mod tests {
     }
 
     #[test]
-    fn trusted_hovered_none_allows_event_receiver_with_accepted_local_scene_authority() {
+    fn trusted_hovered_none_allows_event_receiver_with_local_scene_proof() {
         let source = space("source");
         let source_window = handle(1);
         let mut adapter = DockViewportAdapter::new();
@@ -1758,7 +1758,7 @@ mod tests {
                 source_window,
             ),
         )
-        .with_accepted_local_scene_route_authority(true);
+        .with_event_receiver_local_scene_proof(true);
 
         let route = adapter.resolve_payload_drop_route(&request, &DockPolicy::default());
 
@@ -1770,12 +1770,12 @@ mod tests {
                 facts_generation: 1,
                 authority: DockViewportAuthorizedRouteAuthority::EventReceiverLocalScene,
             },
-            "explicit local drop-scene authority may produce a same-window candidate; workspace delivery still requires the accepted local target snapshot"
+            "explicit event-receiver scene proof may produce a same-window candidate; workspace delivery still requires the accepted local target snapshot"
         );
     }
 
     #[test]
-    fn event_receiver_local_allows_same_window_route_with_accepted_local_scene_authority() {
+    fn event_receiver_local_allows_same_window_route_with_local_scene_proof() {
         let source = space("source");
         let source_window = handle(1);
         let mut adapter = DockViewportAdapter::new();
@@ -1800,7 +1800,7 @@ mod tests {
             None,
             signals.clone(),
         )
-        .with_accepted_local_scene_route_authority(true);
+        .with_event_receiver_local_scene_proof(true);
 
         let route = adapter.resolve_payload_drop_route(&request, &DockPolicy::default());
 
@@ -1812,7 +1812,7 @@ mod tests {
                 facts_generation: 1,
                 authority: DockViewportAuthorizedRouteAuthority::EventReceiverLocalScene,
             },
-            "local-coordinate backends may use explicit scene authority for same-window drops"
+            "local-coordinate backends may use explicit event-receiver scene proof for same-window drops"
         );
 
         let request_without_authority = DockViewportDropRouteRequest::from_platform_signals(
@@ -1826,12 +1826,48 @@ mod tests {
         assert_eq!(
             adapter.resolve_payload_drop_route(&request_without_authority, &DockPolicy::default()),
             DockViewportDropRoute::Unavailable,
-            "event-receiver local coordinates without scene authority must not become a route"
+            "event-receiver local coordinates without scene proof must not become a route"
         );
     }
 
     #[test]
-    fn event_receiver_local_scene_authority_requires_route_ready_window() {
+    fn event_receiver_local_scene_proof_is_ignored_for_source_only_releases() {
+        let source = space("source");
+        let source_window = handle(1);
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, source.clone(), source_window);
+        adapter.update_snapshot(
+            &source,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 200.0, 800.0, 600.0,
+            ))),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+        let request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
+            source,
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(30.0), px(50.0)),
+            None,
+            signals_with_receiver(
+                DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
+                source_window,
+            )
+            .with_global_window_bounds(false),
+            DockPayloadDropReleaseOrigin::SourceOnly,
+        )
+        .with_event_receiver_local_scene_proof(true);
+
+        assert!(!request.event_receiver_local_scene_proof());
+        assert_eq!(
+            adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
+            DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled),
+            "event-receiver scene proof belongs to hovered-host render paths; source-only capture replay should continue through tear-off policy"
+        );
+    }
+
+    #[test]
+    fn event_receiver_local_scene_proof_requires_route_ready_window() {
         for pointer_routing in [
             DockViewportPointerRouting::NoInputPassThrough,
             DockViewportPointerRouting::Minimized,
@@ -1860,12 +1896,12 @@ mod tests {
                 )
                 .with_global_window_bounds(false),
             )
-            .with_accepted_local_scene_route_authority(true);
+            .with_event_receiver_local_scene_proof(true);
 
             assert_eq!(
                 adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
                 DockViewportDropRoute::Unavailable,
-                "event-receiver scene authority must not bypass {pointer_routing:?} route readiness"
+                "event-receiver scene proof must not bypass {pointer_routing:?} route readiness"
             );
         }
     }

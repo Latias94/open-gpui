@@ -79,7 +79,7 @@ impl Render for DockHost {
             .on_drop(
                 cx.listener(move |this, payload: &DockDragPayload, window, cx| {
                     let drag_session = this.active_payload_drag_session(payload);
-                    let accepted_local_scene_route_authority =
+                    let event_receiver_local_scene_proof =
                         this.interaction().viewport_host_scene_frame().is_some();
                     this.drop_payload_release_from_render(
                         DockPayloadDropRelease::hovered_host_with_session(
@@ -88,9 +88,7 @@ impl Render for DockHost {
                             window.mouse_position(),
                             drag_session,
                         )
-                        .with_accepted_local_scene_route_authority(
-                            accepted_local_scene_route_authority,
-                        ),
+                        .with_event_receiver_local_scene_proof(event_receiver_local_scene_proof),
                         window,
                         cx,
                     );

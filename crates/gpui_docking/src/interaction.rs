@@ -125,7 +125,7 @@ pub(crate) struct DockPayloadDropRelease {
     drag_session: Option<DockRuntimeDragSession>,
     tear_off_geometry: Option<DockDragTearOffGeometry>,
     origin: DockPayloadDropReleaseOrigin,
-    accepted_local_scene_route_authority: bool,
+    event_receiver_local_scene_proof: bool,
     /// Host space that observed the release; runtime routing may choose a different target.
     host_space: DockSpaceId,
     release_position: Point<Pixels>,
@@ -168,7 +168,7 @@ impl DockPayloadDropRelease {
             drag_session,
             tear_off_geometry: None,
             origin: DockPayloadDropReleaseOrigin::HoveredHost,
-            accepted_local_scene_route_authority: false,
+            event_receiver_local_scene_proof: false,
             host_space,
             release_position,
         }
@@ -194,7 +194,7 @@ impl DockPayloadDropRelease {
             drag_session,
             tear_off_geometry: None,
             origin: DockPayloadDropReleaseOrigin::SourceOnly,
-            accepted_local_scene_route_authority: false,
+            event_receiver_local_scene_proof: false,
             host_space,
             release_position,
         }
@@ -216,8 +216,8 @@ impl DockPayloadDropRelease {
         self.origin
     }
 
-    pub(crate) fn accepted_local_scene_route_authority(&self) -> bool {
-        self.accepted_local_scene_route_authority
+    pub(crate) fn event_receiver_local_scene_proof(&self) -> bool {
+        self.event_receiver_local_scene_proof
     }
 
     #[cfg(test)]
@@ -237,9 +237,9 @@ impl DockPayloadDropRelease {
         self
     }
 
-    pub(crate) fn with_accepted_local_scene_route_authority(mut self, allowed: bool) -> Self {
-        self.accepted_local_scene_route_authority =
-            allowed && self.origin == DockPayloadDropReleaseOrigin::HoveredHost;
+    pub(crate) fn with_event_receiver_local_scene_proof(mut self, available: bool) -> Self {
+        self.event_receiver_local_scene_proof =
+            available && self.origin == DockPayloadDropReleaseOrigin::HoveredHost;
         self
     }
 }
