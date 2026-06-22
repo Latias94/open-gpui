@@ -131,17 +131,32 @@ impl DockViewportDropAuthoritySnapshot {
         &self.request
     }
 
-    fn route_resolution(&self) -> &DockViewportDropRouteResolution {
-        &self.route_resolution
+    fn resolve_accepted_routed_preview<C: open_gpui::AppContext>(
+        &self,
+        runtime: &DockViewportRuntime,
+        cx: &mut C,
+    ) -> Option<DockViewportResolvedDropRoute> {
+        runtime.resolve_accepted_routed_preview_resolution(
+            &self.request,
+            &self.route_resolution,
+            cx,
+        )
     }
 
-    fn into_parts(
-        self,
-    ) -> (
-        DockViewportDropRouteRequest,
-        DockViewportDropRouteResolution,
-    ) {
-        (self.request, self.route_resolution)
+    fn resample_barrier<C: open_gpui::AppContext>(
+        &self,
+        runtime: &DockViewportRuntime,
+        cx: &mut C,
+    ) -> Option<DockViewportRouteSnapshotResampleBarrier> {
+        runtime.route_snapshot_resample_barrier(&self.request, &self.route_resolution, cx)
+    }
+
+    fn into_route(self) -> DockViewportDropRoute {
+        self.route_resolution.into_route()
+    }
+
+    fn into_request_and_route(self) -> (DockViewportDropRouteRequest, DockViewportDropRoute) {
+        (self.request, self.route_resolution.into_route())
     }
 }
 
@@ -1581,43 +1596,26 @@ impl DockViewportRuntime {
         });
         let initial_snapshot =
             DockViewportDropAuthoritySnapshot::resolve(&self.adapter, request.clone(), &policy);
-        if let Some(resolution) = self.resolve_accepted_routed_preview_resolution(
-            initial_snapshot.request(),
-            initial_snapshot.route_resolution(),
-            cx,
-        ) {
+        if let Some(resolution) = initial_snapshot.resolve_accepted_routed_preview(self, cx) {
             self.status.record_route(request, resolution.route());
             return resolution;
         }
 
-        if self
-            .route_snapshot_resample_barrier(
-                initial_snapshot.request(),
-                initial_snapshot.route_resolution(),
-                cx,
-            )
-            .is_some()
-        {
-            let (_request, route_resolution) = initial_snapshot.into_parts();
-            let route = route_resolution.into_route();
+        if initial_snapshot.resample_barrier(self, cx).is_some() {
+            let route = initial_snapshot.into_route();
             let resolution = self.resolve_payload_drop_delivery_resolution(request, route, cx);
             self.status.record_route(request, resolution.route());
             return resolution;
         }
 
         let resampled_snapshot = self.resampled_drop_authority_snapshot(request, &policy, cx);
-        if let Some(resolution) = self.resolve_accepted_routed_preview_resolution(
-            resampled_snapshot.request(),
-            resampled_snapshot.route_resolution(),
-            cx,
-        ) {
+        if let Some(resolution) = resampled_snapshot.resolve_accepted_routed_preview(self, cx) {
             let request = resampled_snapshot.request();
             self.status.record_route(request, resolution.route());
             return resolution;
         }
 
-        let (request, route_resolution) = resampled_snapshot.into_parts();
-        let route = route_resolution.into_route();
+        let (request, route) = resampled_snapshot.into_request_and_route();
         let resolution = self.resolve_payload_drop_delivery_resolution(&request, route, cx);
         self.status.record_route(&request, resolution.route());
         resolution
