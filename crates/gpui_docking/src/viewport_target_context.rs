@@ -57,7 +57,6 @@ impl DockViewportFrontToBackWindowStack {
         &self.windows
     }
 
-    #[cfg(test)]
     pub(crate) fn source(&self) -> DockViewportWindowStackSource {
         self.source
     }
@@ -165,7 +164,6 @@ impl DockViewportTargetContext {
         self.window_stack.as_slice()
     }
 
-    #[cfg(test)]
     pub(crate) fn window_stack_source(&self) -> DockViewportWindowStackSource {
         self.window_stack.source()
     }

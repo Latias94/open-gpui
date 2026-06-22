@@ -6748,7 +6748,7 @@ fn viewport_runtime_hovered_host_release_uses_backend_focus_stamp_when_stack_una
     assert_eq!(target.host_position(), point(px(120.0), px(100.0)));
     assert_eq!(
         *authority,
-        crate::DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback
+        crate::DockViewportAuthorizedRouteAuthority::FocusStampWindowStackFallback
     );
     assert!(
         resolution.routed_preview_target_snapshot().is_some(),
@@ -6848,7 +6848,7 @@ fn viewport_runtime_new_viewport_creation_stamps_focus_fallback_order(cx: &mut T
     assert_eq!(target.window_id(), target_opened.window().window_id());
     assert_eq!(
         *authority,
-        crate::DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback
+        crate::DockViewportAuthorizedRouteAuthority::FocusStampWindowStackFallback
     );
     assert!(resolution.routed_preview_target_snapshot().is_some());
     assert!(resolution.delivery().is_none());

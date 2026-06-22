@@ -1,5 +1,5 @@
 use crate::viewport_registry::DockViewportRouteUnavailableReason;
-use crate::{DockSpaceId, DockViewportTargetContext};
+use crate::{DockSpaceId, DockViewportTargetContext, DockViewportWindowStackSource};
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowId};
 
 /// Result of resolving a screen point into a registered dock viewport.
@@ -189,6 +189,9 @@ pub(crate) enum DockViewportAuthorizedRouteAuthority {
     /// Backend hovered-window signal is unavailable or was discarded for a no-input viewport, and
     /// the platform front-to-back window stack selected this viewport.
     FrontToBackWindowStackFallback,
+    /// Backend hovered-window and platform stack signals are unavailable, and the ImGui-style
+    /// focused-viewport stamp stack selected this viewport.
+    FocusStampWindowStackFallback,
     /// Drag/drop is active, hovered-window authority is unavailable, and the runtime reused the last
     /// hovered viewport as ImGui's mouse reference viewport.
     DragLastHoveredViewportFallback,
@@ -216,6 +219,13 @@ impl DockAuthorizedViewportRouteTarget {
         Self {
             target,
             authority: DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
+        }
+    }
+
+    fn focus_stamp_window_stack_fallback(target: DockViewportWindowHit) -> Self {
+        Self {
+            target,
+            authority: DockViewportAuthorizedRouteAuthority::FocusStampWindowStackFallback,
         }
     }
 
@@ -249,6 +259,7 @@ impl DockViewportAuthorizedRouteAuthority {
             Self::TrustedHoveredWindow
                 | Self::EventReceiverLocalScene
                 | Self::FrontToBackWindowStackFallback
+                | Self::FocusStampWindowStackFallback
                 | Self::DragLastHoveredViewportFallback
         )
     }
@@ -299,9 +310,16 @@ fn choose_front_to_back_window_stack_fallback_target(
                 .cloned()
         });
     if let Some(target) = stacked {
-        return Some(
-            DockAuthorizedViewportRouteTarget::front_to_back_window_stack_fallback(target),
-        );
+        let target = match context.window_stack_source() {
+            DockViewportWindowStackSource::Platform => {
+                DockAuthorizedViewportRouteTarget::front_to_back_window_stack_fallback(target)
+            }
+            DockViewportWindowStackSource::FocusStampFallback => {
+                DockAuthorizedViewportRouteTarget::focus_stamp_window_stack_fallback(target)
+            }
+            DockViewportWindowStackSource::Unavailable => return None,
+        };
+        return Some(target);
     }
 
     None
@@ -441,6 +459,19 @@ mod tests {
                 space("zeta"),
             )),
             "front-to-back window stack fallback authorizes commits only when hovered-window authority is unavailable"
+        );
+        assert_eq!(
+            resolve_authorized_viewport_route_target(
+                hits(),
+                &DockViewportTargetContext::new()
+                    .with_focus_stamp_window_stack([second.window_id(), first.window_id(),]),
+            )
+            .map(|target| (target.authority(), target.into_target().space().clone())),
+            Some((
+                DockViewportAuthorizedRouteAuthority::FocusStampWindowStackFallback,
+                space("zeta"),
+            )),
+            "ImGui-style focus stamps remain fallback authority but do not masquerade as a platform window stack"
         );
 
         assert_eq!(
