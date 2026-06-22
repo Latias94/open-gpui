@@ -20,6 +20,10 @@ pub use crate::command::{
 };
 pub use crate::context_menu::{ContextMenu, ContextMenuState};
 pub use crate::dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
+pub use crate::feedback::{
+    EmptyState, EmptyStateMetrics, EmptyStateState, FeedbackColors, FeedbackIntent, StatusCue,
+    StatusCueMetrics, StatusCueState,
+};
 pub use crate::field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use crate::focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing};
 pub use crate::hover_card::{
@@ -91,6 +95,14 @@ pub use crate::toolbar::{
 pub use crate::tooltip::{
     Tooltip, TooltipColors, TooltipContentKind, TooltipDelayPolicy, TooltipMetrics,
     TooltipOpenIntent, TooltipState,
+};
+pub use crate::tree::{
+    TreeFocusTarget, TreeItemDescriptor, TreeItemState, TreeKeyboardAction, TreeMetrics,
+    TreeSelection, TreeState, TreeToggle, tree_navigation_target,
+};
+pub use crate::virtualized_list::{
+    VirtualizedListActivation, VirtualizedListMetrics, VirtualizedListScrollStrategy,
+    VirtualizedListState, virtualized_list_navigation_target,
 };
 pub use open_gpui_ui_core::{
     Sizable, Size, TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableCellValue,

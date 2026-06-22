@@ -16,6 +16,7 @@ pub mod combobox;
 pub mod command;
 pub mod context_menu;
 pub mod dialog;
+pub mod feedback;
 pub mod field;
 mod focus;
 mod geometry;
@@ -46,6 +47,8 @@ pub mod theme;
 pub mod toggle;
 pub mod toolbar;
 pub mod tooltip;
+pub mod tree;
+pub mod virtualized_list;
 
 /// GPUI-specific adapter APIs that are intentionally outside renderer-neutral component state.
 ///
@@ -86,6 +89,10 @@ pub use command::{
 };
 pub use context_menu::{ContextMenu, ContextMenuState};
 pub use dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
+pub use feedback::{
+    EmptyState, EmptyStateMetrics, EmptyStateState, FeedbackColors, FeedbackIntent, StatusCue,
+    StatusCueMetrics, StatusCueState,
+};
 pub use field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing};
 pub use hover_card::{
@@ -160,4 +167,12 @@ pub use toolbar::{
 pub use tooltip::{
     Tooltip, TooltipColors, TooltipContentKind, TooltipDelayPolicy, TooltipMetrics,
     TooltipOpenIntent, TooltipState,
+};
+pub use tree::{
+    TreeFocusTarget, TreeItemDescriptor, TreeItemState, TreeKeyboardAction, TreeMetrics,
+    TreeSelection, TreeState, TreeToggle, tree_navigation_target,
+};
+pub use virtualized_list::{
+    VirtualizedListActivation, VirtualizedListMetrics, VirtualizedListScrollStrategy,
+    VirtualizedListState, virtualized_list_navigation_target,
 };
