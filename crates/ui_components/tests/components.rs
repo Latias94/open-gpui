@@ -334,6 +334,9 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             "escape_key_policy",
             "initial_focus_intent",
             "focus_restore_intent",
+            "viewport_item_count",
+            "row_height",
+            "overscan",
         ],
         callbacks: &[
             CallbackApi {
@@ -1065,6 +1068,9 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "selected",
             "selected_values",
             "active",
+            "viewport_item_count",
+            "row_height",
+            "overscan",
             "loading",
             "idle",
             "empty_label",
@@ -1078,6 +1084,8 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "on_select",
             "on_selected_values_change",
             "state",
+            "render_plan",
+            "render_plan_with_viewport",
         ],
         "Label" => &[
             "new",
@@ -4662,6 +4670,12 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_select = root::Select::new("select", "Choice");
     let root_combobox = root::Combobox::new("combobox", "Search");
     let root_command = root::Command::new("command", "Commands");
+    let root_command_items = vec![root::CommandItem::new("open", "Open")];
+    let root_command_plan: root::CommandRenderPlan =
+        root::Command::new("root-command-plan", "Commands")
+            .items(root_command_items)
+            .render_plan();
+    let _root_command_row: Option<&root::CommandRowRenderPlan> = root_command_plan.rows().first();
     let root_scroll = root::ScrollArea::new("scroll", div());
     let root_splitter = root::Splitter::new("split");
     let root_tabs = root::Tabs::new("tabs");
@@ -4688,6 +4702,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_select = prelude::Select::new("select", "Choice");
     let prelude_combobox = prelude::Combobox::new("combobox", "Search");
     let prelude_command = prelude::Command::new("command", "Commands");
+    let prelude_command_items = vec![prelude::CommandItem::new("open", "Open")];
+    let prelude_command_plan: prelude::CommandRenderPlan =
+        prelude::Command::new("prelude-command-plan", "Commands")
+            .items(prelude_command_items)
+            .render_plan();
+    let _prelude_command_row: Option<&prelude::CommandRowRenderPlan> =
+        prelude_command_plan.rows().first();
     let prelude_scroll = prelude::ScrollArea::new("scroll", div());
     let prelude_splitter = prelude::Splitter::new("split");
     let prelude_tabs = prelude::Tabs::new("tabs");
@@ -4710,6 +4731,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_select.state(),
         root_combobox.state(),
         root_command.state(),
+        root_command_plan.role(),
         root_scroll.state(),
         root_splitter.state(),
         root_tabs.state(),
@@ -4730,6 +4752,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_select.state(),
         prelude_combobox.state(),
         prelude_command.state(),
+        prelude_command_plan.row_role(),
         prelude_scroll.state(),
         prelude_splitter.state(),
         prelude_tabs.state(),
@@ -6821,6 +6844,104 @@ fn command_state_models_multi_selected_values_and_hidden_chips() {
 }
 
 #[test]
+fn command_render_plan_virtualizes_large_result_sets_with_stable_rows() {
+    let command =
+        Command::new("large-command", "Commands")
+            .with_size(Size::Small)
+            .row_height(ui_px(28.0))
+            .overscan(4)
+            .active("item-0104")
+            .selected("item-0101")
+            .items((0..10_000).map(|index| {
+                CommandItem::new(format!("item-{index:04}"), format!("Item {index:04}"))
+            }));
+    let plan = command.render_plan_with_viewport(ui_px(2_800.0), ui_px(196.0));
+
+    assert_eq!(plan.role(), Role::ListBox);
+    assert_eq!(plan.row_role(), Role::ListBoxOption);
+    assert_eq!(plan.virtualizer().count(), 10_000);
+    assert_eq!(plan.state().total_item_count(), 10_000);
+    assert_eq!(plan.state().filtered_item_count(), 10_000);
+    assert_eq!(
+        *plan.virtualizer().visible_range(),
+        VirtualizerRange::new(100, 107)
+    );
+    assert_eq!(
+        *plan.virtualizer().overscan_range(),
+        VirtualizerRange::new(98, 109)
+    );
+    assert_eq!(plan.visible_row_count(), 7);
+    assert_eq!(plan.rendered_row_count(), 11);
+    assert_eq!(plan.rows()[0].index(), 98);
+    assert_eq!(plan.rows()[0].render_key(), "item-0098");
+
+    let active = plan.active_row().expect("active command row should render");
+    assert_eq!(active.index(), 104);
+    assert_eq!(active.value(), "item-0104");
+    assert!(active.active());
+    assert_eq!(active.virtual_start(), ui_px(2_912.0));
+    assert_eq!(active.virtual_size(), ui_px(28.0));
+    assert_eq!(
+        plan.selected_rows()
+            .map(|row| row.value().to_owned())
+            .collect::<Vec<_>>(),
+        vec!["item-0101".to_string()]
+    );
+
+    let scrolled = command.render_plan_with_viewport(ui_px(5_600.0), ui_px(196.0));
+    assert_eq!(
+        *scrolled.virtualizer().visible_range(),
+        VirtualizerRange::new(200, 207)
+    );
+    assert_eq!(scrolled.rows()[0].value(), "item-0198");
+}
+
+#[test]
+fn command_render_plan_clamps_filtered_scroll_and_disambiguates_duplicate_values() {
+    let duplicate_plan = Command::new("duplicate-command", "Commands")
+        .row_height(ui_px(28.0))
+        .item(CommandItem::new("duplicate", "Open File"))
+        .item(CommandItem::new("duplicate", "Open Recent"))
+        .item(CommandItem::new("unique", "Close File"))
+        .render_plan_with_viewport(ui_px(0.0), ui_px(112.0));
+
+    assert_eq!(
+        duplicate_plan
+            .rows()
+            .iter()
+            .map(|row| (row.value().to_owned(), row.render_key().to_owned()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("duplicate".to_string(), "0:duplicate".to_string()),
+            ("duplicate".to_string(), "1:duplicate".to_string()),
+            ("unique".to_string(), "unique".to_string()),
+        ]
+    );
+    assert_eq!(
+        duplicate_plan
+            .virtualizer()
+            .items()
+            .iter()
+            .map(|measurement| measurement.key().as_str())
+            .collect::<Vec<_>>(),
+        ["0:duplicate", "1:duplicate", "unique"]
+    );
+
+    let filtered =
+        Command::new("filtered-command", "Commands")
+            .default_query("item 0001")
+            .row_height(ui_px(28.0))
+            .items((0..10_000).map(|index| {
+                CommandItem::new(format!("item-{index:04}"), format!("Item {index:04}"))
+            }))
+            .render_plan_with_viewport(ui_px(80_000.0), ui_px(112.0));
+
+    assert_eq!(filtered.state().filtered_item_count(), 1);
+    assert_eq!(filtered.virtualizer().scroll_offset(), ui_px(0.0));
+    assert_eq!(filtered.rows()[0].value(), "item-0001");
+}
+
+#[test]
 fn command_multi_selection_change_toggles_values_without_duplicates() {
     let add = CommandSelectionChange::new(
         vec!["open-file".to_string(), "new-file".to_string()],
@@ -7359,6 +7480,144 @@ fn command_runtime_multi_select_toggles_chips_without_closing_dialog(
     assert_eq!(changes.borrow().len(), 2);
     assert!(!changes.borrow()[1].selected());
     assert_eq!(changes.borrow()[1].toggled().value(), "open-file");
+}
+
+#[open_gpui::test]
+fn command_runtime_virtualized_results_scroll_inside_viewport_and_reveal_keyboard_targets(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<CommandSelection>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+            let items = (0..120).map(|index| {
+                CommandItem::new(format!("item-{index:04}"), format!("Item {index:04}"))
+            });
+
+            div().size_full().child(
+                div().w(px(340.0)).h(px(420.0)).child(
+                    ScrollArea::new(
+                        "command-parent-scroll",
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .debug_selector(|| "command-parent-top".into())
+                                    .h(px(48.0))
+                                    .child("Parent top"),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "command-wrapper".into())
+                                    .h(px(300.0))
+                                    .min_h(px(0.0))
+                                    .overflow_hidden()
+                                    .child(
+                                        Command::new("virtualized-runtime-command", "Commands")
+                                            .with_size(Size::Small)
+                                            .row_height(ui_px(28.0))
+                                            .overscan(2)
+                                            .viewport_item_count(4)
+                                            .items(items)
+                                            .on_select(move |selection, _, _| {
+                                                selections.borrow_mut().push(selection);
+                                            }),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "command-parent-bottom".into())
+                                    .h(px(240.0))
+                                    .child("Parent bottom"),
+                            ),
+                    )
+                    .vertical(),
+                ),
+            )
+        }
+    }
+
+    cx.update(init_text_input);
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("command:virtualized-runtime-command:row:item-0000")
+            .is_some(),
+        "initial command row should render"
+    );
+    assert!(
+        cx.debug_bounds("command:virtualized-runtime-command:row:item-0010")
+            .is_none(),
+        "row 10 should stay outside the initial virtual window"
+    );
+    let parent_bottom_before = cx
+        .debug_bounds("command-parent-bottom")
+        .expect("parent bottom should render before command scrolling");
+    let viewport = cx
+        .debug_bounds("scroll-area:Commands:command-list-scroll")
+        .expect("command result viewport should expose a stable scroll selector");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let parent_bottom_after = cx
+        .debug_bounds("command-parent-bottom")
+        .expect("parent bottom should remain rendered after command scrolling");
+    assert_eq!(
+        parent_bottom_after.top(),
+        parent_bottom_before.top(),
+        "expected wheel input inside Command to stay inside the command viewport"
+    );
+    assert!(
+        cx.debug_bounds("command:virtualized-runtime-command:row:item-0000")
+            .is_none(),
+        "row 0 should unmount after internal command scroll"
+    );
+    assert!(
+        cx.debug_bounds("command:virtualized-runtime-command:row:item-0010")
+            .is_some(),
+        "row 10 should render after internal command scroll"
+    );
+
+    let input = cx
+        .debug_bounds("text-input:virtualized-runtime-command-input:root")
+        .expect("virtualized command input should render");
+    cx.simulate_click(input.center(), Default::default());
+    cx.simulate_keystrokes("pagedown");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("command:virtualized-runtime-command:row:item-0007")
+            .is_some(),
+        "PageDown should reveal the newly active command row"
+    );
+
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        selections.borrow().as_slice(),
+        &[CommandSelection::new(7, "item-0007", "Item 0007", None)]
+    );
 }
 
 #[test]

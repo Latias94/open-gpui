@@ -1,26 +1,25 @@
 //! Command palette component built from search input, grouped command items, and listbox state.
 
-use crate::geometry::gpui_px_from_ui;
+use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, Entity, IntoElement, KeyDownEvent, ParentElement, Pixels,
-    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
-    point, px, rgba,
+    AnyElement, App, ClickEvent, ElementId, Entity, FontWeight, IntoElement, KeyDownEvent,
+    ParentElement, Pixels, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement,
+    Styled, Window, anchored, deferred, div, point, px, rgba,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
-    OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
+    OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, VirtualizerItemKey,
+    VirtualizerItemMeasurement, VirtualizerResolvedState, VirtualizerState, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::listbox::{
-    Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
-    ListboxState,
-};
+use crate::listbox::{ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState};
 use crate::overlay::{
     GpuiOverlayAdapterConfig, OverlayResolvedState, escape_open_change, gpui_overlay_state,
     outside_press_open_change,
@@ -29,6 +28,7 @@ use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::text_input::adapter::TextInputController;
 use crate::text_input::{TextInput, TextInputState};
 use crate::theme::ThemeResolver;
+use crate::virtualized_list::{VirtualizedListScrollStrategy, virtualized_list_scroll_target};
 
 type CommandOpenChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
 type CommandQueryChangeHandler = Rc<dyn Fn(String, &mut Window, &mut App)>;
@@ -355,6 +355,8 @@ pub struct CommandMetrics {
     min_width: UiPx,
     max_width: UiPx,
     max_height: UiPx,
+    row_height: UiPx,
+    overscan_count: usize,
     shortcut_min_width: UiPx,
 }
 
@@ -371,6 +373,12 @@ impl CommandMetrics {
                 Size::Small => ui_px(260.0),
                 Size::Medium => ui_px(340.0),
                 Size::Large => ui_px(420.0),
+            },
+            row_height: size.list_row_h(),
+            overscan_count: match size {
+                Size::XSmall | Size::Small => 4,
+                Size::Medium => 6,
+                Size::Large => 8,
             },
             shortcut_min_width: match size {
                 Size::XSmall | Size::Small => ui_px(48.0),
@@ -405,9 +413,31 @@ impl CommandMetrics {
         self.max_height
     }
 
+    /// Returns the fixed command result row height used by the virtualizer.
+    pub const fn row_height(self) -> UiPx {
+        self.row_height
+    }
+
+    /// Returns the number of rows kept beyond the visible command result viewport.
+    pub const fn overscan_count(self) -> usize {
+        self.overscan_count
+    }
+
     /// Returns minimum shortcut label width.
     pub const fn shortcut_min_width(self) -> UiPx {
         self.shortcut_min_width
+    }
+
+    /// Returns the same metrics with a different fixed result row height.
+    pub fn with_row_height(mut self, row_height: UiPx) -> Self {
+        self.row_height = nonnegative_px(row_height);
+        self
+    }
+
+    /// Returns the same metrics with a different overscan row budget.
+    pub const fn with_overscan_count(mut self, overscan_count: usize) -> Self {
+        self.overscan_count = overscan_count;
+        self
     }
 }
 
@@ -629,10 +659,6 @@ impl CommandItemState {
         !self.disabled
     }
 
-    fn to_listbox_option(&self) -> ListboxOption {
-        ListboxOption::new(self.value.clone(), self.label.clone()).disabled(self.disabled)
-    }
-
     /// Returns whether the item is selected.
     pub const fn selected(&self) -> bool {
         self.selected
@@ -666,6 +692,247 @@ impl CommandItemState {
     /// Returns total command item count in the visible set.
     pub const fn size_of_set(&self) -> usize {
         self.size_of_set
+    }
+}
+
+/// One virtualized command item row in render order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommandRowRenderPlan {
+    item: CommandItemState,
+    render_key: String,
+    group_label: Option<String>,
+    measurement: VirtualizerItemMeasurement,
+}
+
+impl CommandRowRenderPlan {
+    fn new(
+        item: CommandItemState,
+        render_key: String,
+        group_label: Option<String>,
+        measurement: VirtualizerItemMeasurement,
+    ) -> Self {
+        Self {
+            item,
+            render_key,
+            group_label,
+            measurement,
+        }
+    }
+
+    /// Returns the resolved command item state.
+    pub const fn item(&self) -> &CommandItemState {
+        &self.item
+    }
+
+    /// Returns the stable item value.
+    pub fn value(&self) -> &str {
+        self.item.value()
+    }
+
+    /// Returns the visible item label.
+    pub fn label(&self) -> &str {
+        self.item.label()
+    }
+
+    /// Returns optional shortcut label.
+    pub fn shortcut(&self) -> Option<&str> {
+        self.item.shortcut()
+    }
+
+    /// Returns the render key used by element ids and virtualizer measurements.
+    pub fn render_key(&self) -> &str {
+        &self.render_key
+    }
+
+    /// Returns flattened command item index.
+    pub const fn index(&self) -> usize {
+        self.item.index()
+    }
+
+    /// Returns the group label when this row starts or belongs to a visible group.
+    pub fn group_label(&self) -> Option<&str> {
+        self.group_label.as_deref()
+    }
+
+    /// Returns whether this row is selected.
+    pub const fn selected(&self) -> bool {
+        self.item.selected()
+    }
+
+    /// Returns whether this row is active.
+    pub const fn active(&self) -> bool {
+        self.item.active()
+    }
+
+    /// Returns whether this row is disabled.
+    pub const fn disabled(&self) -> bool {
+        self.item.disabled()
+    }
+
+    /// Returns the virtual row start offset.
+    pub const fn virtual_start(&self) -> UiPx {
+        self.measurement.start()
+    }
+
+    /// Returns the virtual row size.
+    pub const fn virtual_size(&self) -> UiPx {
+        self.measurement.size()
+    }
+
+    /// Returns the row accessibility role.
+    pub const fn role(&self) -> Role {
+        self.item.role()
+    }
+}
+
+/// Renderer-neutral virtualized render contract for command results.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommandRenderPlan {
+    command_id: String,
+    listbox_id: String,
+    label: String,
+    state: CommandState,
+    metrics: CommandMetrics,
+    virtualizer: VirtualizerResolvedState,
+    rows: Vec<CommandRowRenderPlan>,
+    role: Role,
+    row_role: Role,
+}
+
+impl CommandRenderPlan {
+    /// Resolves a render plan from complete command state and a viewport snapshot.
+    pub fn resolve(
+        command_id: impl Into<String>,
+        listbox_id: impl Into<String>,
+        state: CommandState,
+        scroll_offset: UiPx,
+        viewport_extent: UiPx,
+    ) -> Self {
+        let metrics = state.metrics();
+        let viewport_extent = resolve_command_viewport_extent(metrics, viewport_extent);
+        let duplicate_values = duplicate_command_values(state.items());
+        let virtualizer = VirtualizerState::new(state.items().len(), metrics.row_height())
+            .with_viewport_extent(viewport_extent)
+            .with_overscan(metrics.overscan_count())
+            .with_scroll_offset(command_clamped_scroll_offset(
+                scroll_offset,
+                state.items().len(),
+                metrics.row_height(),
+                viewport_extent,
+            ))
+            .resolve_fixed_window(|index| {
+                let item = &state.items()[index];
+                VirtualizerItemKey::new(command_row_render_key(item, &duplicate_values))
+            });
+        let rows = virtualizer
+            .items()
+            .iter()
+            .filter_map(|measurement| {
+                state.items().get(measurement.index()).cloned().map(|item| {
+                    let render_key = command_row_render_key(&item, &duplicate_values);
+                    let group_label = item
+                        .group_index()
+                        .filter(|group_index| {
+                            state
+                                .items()
+                                .iter()
+                                .filter(|candidate| candidate.group_index() == Some(*group_index))
+                                .map(CommandItemState::index)
+                                .min()
+                                == Some(item.index())
+                        })
+                        .and_then(|group_index| {
+                            state
+                                .groups()
+                                .get(group_index)
+                                .map(|group| group.label().to_owned())
+                        });
+                    CommandRowRenderPlan::new(item, render_key, group_label, measurement.clone())
+                })
+            })
+            .collect();
+
+        Self {
+            command_id: command_id.into(),
+            listbox_id: listbox_id.into(),
+            label: state.label().to_owned(),
+            state,
+            metrics,
+            virtualizer,
+            rows,
+            role: Role::ListBox,
+            row_role: Role::ListBoxOption,
+        }
+    }
+
+    /// Returns stable command id.
+    pub fn command_id(&self) -> &str {
+        &self.command_id
+    }
+
+    /// Returns stable nested listbox id.
+    pub fn listbox_id(&self) -> &str {
+        &self.listbox_id
+    }
+
+    /// Returns accessible label.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Returns complete command state.
+    pub const fn state(&self) -> &CommandState {
+        &self.state
+    }
+
+    /// Returns resolved metrics.
+    pub const fn metrics(&self) -> CommandMetrics {
+        self.metrics
+    }
+
+    /// Returns resolved virtualizer state.
+    pub const fn virtualizer(&self) -> &VirtualizerResolvedState {
+        &self.virtualizer
+    }
+
+    /// Returns virtualized rows in render order.
+    pub fn rows(&self) -> &[CommandRowRenderPlan] {
+        &self.rows
+    }
+
+    /// Returns row lookup keyed by flattened command item index.
+    pub fn row_by_index(&self, index: usize) -> Option<&CommandRowRenderPlan> {
+        self.rows.iter().find(|row| row.index() == index)
+    }
+
+    /// Returns list accessibility role.
+    pub const fn role(&self) -> Role {
+        self.role
+    }
+
+    /// Returns row accessibility role.
+    pub const fn row_role(&self) -> Role {
+        self.row_role
+    }
+
+    /// Returns number of rows visible before overscan.
+    pub fn visible_row_count(&self) -> usize {
+        self.virtualizer.visible_items().len()
+    }
+
+    /// Returns number of rendered rows after overscan.
+    pub fn rendered_row_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Returns the active row if it is inside the render window.
+    pub fn active_row(&self) -> Option<&CommandRowRenderPlan> {
+        self.rows.iter().find(|row| row.active())
+    }
+
+    /// Returns selected rows inside the render window.
+    pub fn selected_rows(&self) -> impl Iterator<Item = &CommandRowRenderPlan> + '_ {
+        self.rows.iter().filter(|row| row.selected())
     }
 }
 
@@ -1284,6 +1551,12 @@ impl CommandState {
         self.focus_ring
     }
 
+    /// Returns the same state with an adjusted metric bundle.
+    pub const fn with_metrics(mut self, metrics: CommandMetrics) -> Self {
+        self.metrics = metrics;
+        self
+    }
+
     /// Resolves an activation payload for an APG-style activation key.
     pub fn activation_for_key(&self, key: &str) -> Option<CommandSelection> {
         if !matches!(key, "enter" | "space") {
@@ -1302,6 +1575,8 @@ struct CommandRuntime {
     active_value: Option<String>,
     selected_value: Option<String>,
     selected_values: Vec<String>,
+    scroll_handle: ScrollHandle,
+    scroll_reset_key: String,
 }
 
 /// A concrete GPUI command surface.
@@ -1324,6 +1599,8 @@ pub struct Command {
     selected_value: Option<String>,
     selected_values: Option<Vec<String>>,
     active_value: Option<String>,
+    viewport_item_count: usize,
+    metrics: CommandMetrics,
     loading_state: Option<CommandLoadingState>,
     empty_label: SharedString,
     dialog_title: Option<String>,
@@ -1342,6 +1619,7 @@ pub struct Command {
 impl Command {
     /// Creates an inline command surface.
     pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
+        let size = Size::Medium;
         Self {
             id: id.into(),
             label: label.into(),
@@ -1349,7 +1627,7 @@ impl Command {
             trigger_label: "Open command menu".into(),
             items: Vec::new(),
             groups: Vec::new(),
-            size: Size::Medium,
+            size,
             disabled: false,
             open: None,
             default_open: false,
@@ -1360,6 +1638,8 @@ impl Command {
             selected_value: None,
             selected_values: None,
             active_value: None,
+            viewport_item_count: DEFAULT_COMMAND_VIEWPORT_ITEM_COUNT,
+            metrics: CommandMetrics::from_size(size),
             loading_state: None,
             empty_label: "No commands".into(),
             dialog_title: None,
@@ -1500,6 +1780,24 @@ impl Command {
         self
     }
 
+    /// Applies the estimated number of command rows visible in the result viewport.
+    pub fn viewport_item_count(mut self, count: usize) -> Self {
+        self.viewport_item_count = count.max(1);
+        self
+    }
+
+    /// Applies the fixed command result row height.
+    pub fn row_height(mut self, row_height: UiPx) -> Self {
+        self.metrics = self.metrics.with_row_height(row_height);
+        self
+    }
+
+    /// Applies the command result overscan row budget.
+    pub fn overscan(mut self, overscan: usize) -> Self {
+        self.metrics = self.metrics.with_overscan_count(overscan);
+        self
+    }
+
     /// Applies loading metadata.
     pub fn loading(mut self, message: impl Into<String>, progress_percent: Option<u8>) -> Self {
         self.loading_state = Some(CommandLoadingState::new(message, progress_percent));
@@ -1620,12 +1918,38 @@ impl Command {
             self.focus_restore_intent.clone(),
             self.tokens,
         )
+        .with_metrics(self.metrics)
+    }
+
+    /// Returns the default virtualized result render plan at the viewport origin.
+    pub fn render_plan(&self) -> CommandRenderPlan {
+        self.render_plan_with_viewport(
+            UiPx::ZERO,
+            self.metrics.row_height() * self.viewport_item_count as f32,
+        )
+    }
+
+    /// Resolves the renderer-neutral command result render plan for a viewport snapshot.
+    pub fn render_plan_with_viewport(
+        &self,
+        scroll_offset: UiPx,
+        viewport_extent: UiPx,
+    ) -> CommandRenderPlan {
+        let state = self.state();
+        CommandRenderPlan::resolve(
+            self.id.to_string(),
+            format!("{}-listbox", self.id),
+            state,
+            scroll_offset,
+            viewport_extent,
+        )
     }
 }
 
 impl Sizable for Command {
     fn with_size(mut self, size: Size) -> Self {
         self.size = size;
+        self.metrics = CommandMetrics::from_size(size);
         self
     }
 }
@@ -1645,6 +1969,8 @@ impl RenderOnce for Command {
             active_value: self.active_value.clone(),
             selected_value: self.selected_value.clone(),
             selected_values: initial_selected_values.clone(),
+            scroll_handle: ScrollHandle::new(),
+            scroll_reset_key: initial_query.clone(),
         });
         let input_state_key: ElementId = (self.id.clone(), "input-state").into();
         let input_controller = window.use_keyed_state(input_state_key, cx, |_, cx| {
@@ -1653,6 +1979,7 @@ impl RenderOnce for Command {
             input
         });
         let runtime_state = runtime.read(cx).clone();
+        let scroll_handle = runtime_state.scroll_handle.clone();
         let resolved_open = self.open.unwrap_or(runtime_state.open);
         if self.open.is_some() && runtime_state.open != resolved_open {
             runtime.update(cx, |runtime, _| {
@@ -1709,7 +2036,15 @@ impl RenderOnce for Command {
             self.initial_focus_intent.clone(),
             self.focus_restore_intent.clone(),
             self.tokens,
-        );
+        )
+        .with_metrics(self.metrics);
+        let scroll_reset_key = state.query().to_owned();
+        if runtime_state.scroll_reset_key != scroll_reset_key {
+            scroll_handle.set_offset(point(px(0.0), px(0.0)));
+            runtime.update(cx, |runtime, _| {
+                runtime.scroll_reset_key = scroll_reset_key.clone();
+            });
+        }
         let query_change_handler = self.on_query_change.clone();
         input_controller.update(cx, |controller, _cx| {
             let controlled_query =
@@ -1728,6 +2063,9 @@ impl RenderOnce for Command {
         let input_id: ElementId = (id.clone(), "input").into();
         let content_id: ElementId = (id.clone(), "content").into();
         let listbox_id: ElementId = (id.clone(), "listbox").into();
+        let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
+        let scroll_offset =
+            UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
         let metrics = state.metrics();
         let colors = state.colors();
         let disabled = state.disabled();
@@ -1808,6 +2146,9 @@ impl RenderOnce for Command {
                     listbox_id.clone(),
                     debug_id.clone(),
                     state.clone(),
+                    scroll_handle.clone(),
+                    viewport_extent,
+                    scroll_offset,
                     input_controller.clone(),
                     runtime.clone(),
                     on_open_change.clone(),
@@ -1829,6 +2170,9 @@ impl RenderOnce for Command {
                                 listbox_id,
                                 debug_id,
                                 state,
+                                scroll_handle,
+                                viewport_extent,
+                                scroll_offset,
                                 dialog_state,
                                 viewport,
                                 input_controller,
@@ -1853,6 +2197,9 @@ fn command_dialog_layer_element(
     listbox_id: ElementId,
     debug_id: String,
     state: CommandState,
+    scroll_handle: ScrollHandle,
+    viewport_extent: UiPx,
+    scroll_offset: UiPx,
     dialog_state: CommandDialogState,
     viewport: open_gpui::Size<Pixels>,
     input_controller: Entity<TextInputController>,
@@ -1905,6 +2252,9 @@ fn command_dialog_layer_element(
                     listbox_id,
                     debug_id,
                     state,
+                    scroll_handle,
+                    viewport_extent,
+                    scroll_offset,
                     input_controller,
                     runtime,
                     on_open_change,
@@ -1923,6 +2273,9 @@ fn command_content_element(
     listbox_id: ElementId,
     debug_id: String,
     state: CommandState,
+    scroll_handle: ScrollHandle,
+    viewport_extent: UiPx,
+    scroll_offset: UiPx,
     input_controller: Entity<TextInputController>,
     runtime: Entity<CommandRuntime>,
     on_open_change: Option<CommandOpenChangeHandler>,
@@ -1935,95 +2288,24 @@ fn command_content_element(
     let colors = state.colors();
     let query = state.query().to_owned();
     let label = state.label().to_owned();
-    let selected_value = state.selected_value().map(str::to_owned);
-    let active_value = state.active_value().map(str::to_owned);
     let selected_values = state.selected_values().to_vec();
     let selection_mode = state.selection_mode();
     let dialog_state = state.dialog().cloned();
-    let shortcut_lookup = command_shortcut_lookup(state.items());
     let outside_change = if let Some(dialog_state) = dialog_state.as_ref() {
         outside_press_open_change(dialog_state.overlay().policy())
     } else {
         None
     };
-    let standalone_options = state
-        .standalone_items()
-        .map(CommandItemState::to_listbox_option)
-        .collect::<Vec<_>>();
-    let grouped_options = state
-        .grouped_groups()
-        .map(|group| {
-            let options = state
-                .group_items(group.index())
-                .map(CommandItemState::to_listbox_option)
-                .collect::<Vec<_>>();
-            ListboxGroup::new(group.value().to_owned(), group.label().to_owned()).options(options)
-        })
-        .collect::<Vec<_>>();
-    let mut listbox = Listbox::new(listbox_id, label.clone())
-        .options(standalone_options)
-        .groups(grouped_options)
-        .tokens(tokens)
-        .with_size(state.size())
-        .empty_label(state.empty_label().to_owned())
-        .disabled(state.disabled())
-        .embedded(true)
-        .on_select({
-            let runtime = runtime.clone();
-            let on_select = on_select.clone();
-            let on_open_change = on_open_change.clone();
-            let on_selected_values_change = on_selected_values_change.clone();
-            let dialog_enabled = state.dialog().is_some();
-            let shortcut_lookup = shortcut_lookup.clone();
-            let selected_values = selected_values.clone();
-            move |selection, window, cx| {
-                let shortcut = command_shortcut_for(selection.value(), &shortcut_lookup);
-                let payload = CommandSelection::new(
-                    selection.index(),
-                    selection.value().to_owned(),
-                    selection.label().to_owned(),
-                    shortcut,
-                );
-                match selection_mode {
-                    CommandSelectionMode::Single => {
-                        runtime.update(cx, |runtime, _| {
-                            runtime.selected_value = Some(payload.value().to_owned());
-                            runtime.active_value = Some(payload.value().to_owned());
-                            if dialog_enabled {
-                                runtime.open = false;
-                            }
-                        });
-                        if let Some(on_select) = on_select.as_ref() {
-                            on_select(payload, window, cx);
-                        }
-                        if dialog_enabled {
-                            if let Some(on_open_change) = on_open_change.as_ref() {
-                                on_open_change(false, window, cx);
-                            }
-                        }
-                    }
-                    CommandSelectionMode::Multiple => {
-                        let change =
-                            command_selection_change_after_toggle(&selected_values, payload);
-                        runtime.update(cx, |runtime, _| {
-                            runtime.active_value = Some(change.toggled().value().to_owned());
-                            runtime.selected_values = change.values().to_vec();
-                        });
-                        if let Some(on_selected_values_change) = on_selected_values_change.as_ref()
-                        {
-                            on_selected_values_change(change, window, cx);
-                        }
-                    }
-                }
-            }
-        });
-    if let Some(selected_value) = selected_value {
-        listbox = listbox.selected(selected_value);
-    }
-    if let Some(active_value) = active_value {
-        listbox = listbox.active(active_value);
-    }
     let scroll_viewport_id = state.scroll_area().viewport_id().to_owned();
+    let plan = CommandRenderPlan::resolve(
+        debug_id.clone(),
+        listbox_id.to_string(),
+        state.clone(),
+        scroll_offset,
+        viewport_extent,
+    );
+    let plan_rows = plan.rows().to_vec();
+    let total_size = plan.virtualizer().total_size();
     let loading_id: ElementId = (content_id.clone(), "loading").into();
     let chips_id: ElementId = (content_id.clone(), "selected-chips").into();
     let selected_chips = state.selected_chips().to_vec();
@@ -2037,6 +2319,7 @@ fn command_content_element(
     let key_selected_values = selected_values.clone();
     let key_dialog_enabled = state.dialog().is_some();
     let key_selection_mode = selection_mode;
+    let key_scroll_handle = scroll_handle.clone();
     let escape_change = state
         .dialog()
         .map(|dialog_state| escape_open_change(dialog_state.overlay().policy()))
@@ -2076,6 +2359,10 @@ fn command_content_element(
         .when(dialog_state.is_none(), |this| {
             this.ui_role(state.content_role())
         })
+        .on_scroll_wheel(|_, window, cx| {
+            window.prevent_default();
+            cx.stop_propagation();
+        })
         .aria_label(label.clone())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             let key = event.keystroke.key.as_str();
@@ -2091,51 +2378,32 @@ fn command_content_element(
                 return;
             }
 
-            match command_keyboard_action(&key_state, key) {
-                CommandKeyboardAction::Navigate(value) => {
+            match command_keyboard_action(&key_state, key, viewport_extent) {
+                CommandKeyboardAction::Navigate(target) => {
                     cx.stop_propagation();
                     window.prevent_default();
                     key_runtime.update(cx, |runtime, _| {
-                        runtime.active_value = Some(value);
+                        runtime.active_value = Some(target.value.clone());
                     });
+                    scroll_command_item_into_view(&key_scroll_handle, &key_state, target.index);
                 }
                 CommandKeyboardAction::Select(selection) => {
                     cx.stop_propagation();
                     window.prevent_default();
-                    match key_selection_mode {
-                        CommandSelectionMode::Single => {
-                            key_runtime.update(cx, |runtime, _| {
-                                runtime.selected_value = Some(selection.value().to_owned());
-                                runtime.active_value = Some(selection.value().to_owned());
-                                if key_dialog_enabled {
-                                    runtime.open = false;
-                                }
-                            });
-                            if let Some(on_select) = key_on_select.as_ref() {
-                                on_select(selection, window, cx);
-                            }
-                            if key_dialog_enabled {
-                                if let Some(on_open_change) = key_on_open_change.as_ref() {
-                                    on_open_change(false, window, cx);
-                                }
-                            }
-                        }
-                        CommandSelectionMode::Multiple => {
-                            let change = command_selection_change_after_toggle(
-                                &key_selected_values,
-                                selection,
-                            );
-                            key_runtime.update(cx, |runtime, _| {
-                                runtime.active_value = Some(change.toggled().value().to_owned());
-                                runtime.selected_values = change.values().to_vec();
-                            });
-                            if let Some(on_selected_values_change) =
-                                key_on_selected_values_change.as_ref()
-                            {
-                                on_selected_values_change(change, window, cx);
-                            }
-                        }
-                    }
+                    let selection_index = selection.index();
+                    handle_command_selection(
+                        key_runtime.clone(),
+                        key_selection_mode,
+                        key_dialog_enabled,
+                        &key_selected_values,
+                        key_on_select.clone(),
+                        key_on_open_change.clone(),
+                        key_on_selected_values_change.clone(),
+                        selection,
+                        window,
+                        cx,
+                    );
+                    scroll_command_item_into_view(&key_scroll_handle, &key_state, selection_index);
                 }
                 CommandKeyboardAction::Ignore => {}
             }
@@ -2184,27 +2452,66 @@ fn command_content_element(
         })
         .h(gpui_px_from_ui(metrics.max_height()))
         .child(
-            ScrollArea::new(scroll_viewport_id, listbox)
-                .vertical()
-                .preserve_scroll()
-                .with_size(state.size()),
+            div()
+                .flex_1()
+                .min_h(px(0.0))
+                .overflow_hidden()
+                .on_scroll_wheel(|_, window, cx| {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                })
+                .child(
+                    ScrollArea::new(
+                        scroll_viewport_id,
+                        render_command_results_body(
+                            &debug_id,
+                            &plan,
+                            &plan_rows,
+                            total_size,
+                            runtime.clone(),
+                            selection_mode,
+                            selected_values.clone(),
+                            on_select,
+                            on_open_change,
+                            on_selected_values_change,
+                            state.dialog().is_some(),
+                        ),
+                    )
+                    .vertical()
+                    .scroll_handle(&scroll_handle)
+                    .preserve_scroll()
+                    .with_size(state.size()),
+                ),
         )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CommandKeyboardAction {
-    Navigate(String),
+    Navigate(CommandNavigationTarget),
     Select(CommandSelection),
     Ignore,
 }
 
-fn command_keyboard_action(state: &CommandState, key: &str) -> CommandKeyboardAction {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CommandNavigationTarget {
+    index: usize,
+    value: String,
+}
+
+fn command_keyboard_action(
+    state: &CommandState,
+    key: &str,
+    viewport_extent: UiPx,
+) -> CommandKeyboardAction {
     if state.disabled() {
         return CommandKeyboardAction::Ignore;
     }
 
-    if let Some(target) = state.listbox().navigation_target(key) {
-        return CommandKeyboardAction::Navigate(target.value().to_owned());
+    if let Some(target) = command_navigation_target(state, key, viewport_extent) {
+        return CommandKeyboardAction::Navigate(CommandNavigationTarget {
+            index: target.index(),
+            value: target.value().to_owned(),
+        });
     }
 
     if let Some(selection) = state.activation_for_key(key) {
@@ -2212,6 +2519,450 @@ fn command_keyboard_action(state: &CommandState, key: &str) -> CommandKeyboardAc
     }
 
     CommandKeyboardAction::Ignore
+}
+
+fn command_navigation_target<'a>(
+    state: &'a CommandState,
+    key: &str,
+    viewport_extent: UiPx,
+) -> Option<&'a crate::listbox::ListboxOptionState> {
+    if let Some(target) = state.listbox().navigation_target(key) {
+        return Some(target);
+    }
+
+    let current = state.listbox().active_index()?;
+    let item_count = state.listbox().options().len();
+    if item_count == 0 {
+        return None;
+    }
+
+    let page_step = command_page_step(state, viewport_extent).max(1);
+    let target = match key {
+        "pageup" => current.saturating_sub(page_step),
+        "pagedown" => (current + page_step).min(item_count - 1),
+        _ => return None,
+    };
+
+    state
+        .listbox()
+        .options()
+        .get(target)
+        .filter(|option| option.focusable())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_command_results_body(
+    command_id: &str,
+    plan: &CommandRenderPlan,
+    rows: &[CommandRowRenderPlan],
+    total_size: UiPx,
+    runtime: Entity<CommandRuntime>,
+    selection_mode: CommandSelectionMode,
+    selected_values: Vec<String>,
+    on_select: Option<CommandSelectionHandler>,
+    on_open_change: Option<CommandOpenChangeHandler>,
+    on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
+    dialog_enabled: bool,
+) -> impl IntoElement {
+    let command_id = command_id.to_owned();
+    let listbox_id = plan.listbox_id().to_owned();
+    let state = plan.state().clone();
+    let colors = state.colors();
+    let metrics = state.metrics();
+    let rows = rows.to_vec();
+
+    div()
+        .id(listbox_id.clone())
+        .debug_selector({
+            let listbox_id = listbox_id.clone();
+            move || format!("listbox:{listbox_id}")
+        })
+        .relative()
+        .w_full()
+        .h(gpui_px_from_ui(total_size))
+        .min_h(gpui_px_from_ui(total_size))
+        .p(gpui_px_from_ui(state.listbox().metrics().surface_padding()))
+        .text_size(gpui_px_from_ui(state.listbox().metrics().text_size()))
+        .line_height(gpui_px_from_ui(state.listbox().metrics().text_size()))
+        .text_color(ThemeResolver::resolve(colors.foreground()))
+        .ui_role(plan.role())
+        .aria_label(plan.label().to_owned())
+        .aria_disabled(state.disabled())
+        .children(command_result_children(
+            &command_id,
+            &listbox_id,
+            state,
+            rows,
+            metrics,
+            colors,
+            runtime,
+            selection_mode,
+            selected_values,
+            on_select,
+            on_open_change,
+            on_selected_values_change,
+            dialog_enabled,
+        ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn command_result_children(
+    command_id: &str,
+    listbox_id: &str,
+    state: CommandState,
+    rows: Vec<CommandRowRenderPlan>,
+    metrics: CommandMetrics,
+    colors: CommandColors,
+    runtime: Entity<CommandRuntime>,
+    selection_mode: CommandSelectionMode,
+    selected_values: Vec<String>,
+    on_select: Option<CommandSelectionHandler>,
+    on_open_change: Option<CommandOpenChangeHandler>,
+    on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
+    dialog_enabled: bool,
+) -> Vec<AnyElement> {
+    if state.empty() {
+        return vec![
+            div()
+                .debug_selector({
+                    let listbox_id = listbox_id.to_owned();
+                    move || format!("listbox:{listbox_id}:empty")
+                })
+                .absolute()
+                .top(px(0.0))
+                .left(px(0.0))
+                .right(px(0.0))
+                .px(gpui_px_from_ui(
+                    state.listbox().metrics().option_padding_x(),
+                ))
+                .py(gpui_px_from_ui(
+                    state.listbox().metrics().option_padding_y(),
+                ))
+                .text_color(ThemeResolver::resolve(colors.muted_foreground()))
+                .child(state.empty_label().to_owned())
+                .into_any_element(),
+        ];
+    }
+
+    rows.into_iter()
+        .map(|row| {
+            render_command_result_row(
+                command_id.to_owned(),
+                listbox_id.to_owned(),
+                row,
+                metrics,
+                colors,
+                runtime.clone(),
+                selection_mode,
+                selected_values.clone(),
+                on_select.clone(),
+                on_open_change.clone(),
+                on_selected_values_change.clone(),
+                dialog_enabled,
+            )
+            .into_any_element()
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_command_result_row(
+    command_id: String,
+    listbox_id: String,
+    row: CommandRowRenderPlan,
+    metrics: CommandMetrics,
+    colors: CommandColors,
+    runtime: Entity<CommandRuntime>,
+    selection_mode: CommandSelectionMode,
+    selected_values: Vec<String>,
+    on_select: Option<CommandSelectionHandler>,
+    on_open_change: Option<CommandOpenChangeHandler>,
+    on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
+    dialog_enabled: bool,
+) -> impl IntoElement {
+    let option_value = row.value().to_owned();
+    let render_key = row.render_key().to_owned();
+    let label = row.label().to_owned();
+    let shortcut = row.shortcut().map(str::to_owned);
+    let selection = CommandSelection::from_item(row.item());
+    let disabled = row.disabled();
+    let selected = row.selected();
+    let active = row.active();
+    let position = row.item().position_in_set();
+    let group_label = row.group_label().map(str::to_owned);
+    let group_label_height = if group_label.is_some() {
+        state_group_label_height(metrics)
+    } else {
+        UiPx::ZERO
+    };
+
+    div()
+        .id(format!("command-row:{render_key}"))
+        .debug_selector({
+            let command_id = command_id.clone();
+            let render_key = render_key.clone();
+            move || format!("command:{command_id}:row:{render_key}")
+        })
+        .absolute()
+        .top(gpui_px_from_ui(row.virtual_start()))
+        .left(px(0.0))
+        .right(px(0.0))
+        .h(gpui_px_from_ui(row.virtual_size()))
+        .min_w(px(0.0))
+        .flex()
+        .flex_col()
+        .when_some(group_label, |this, label| {
+            this.child(
+                div()
+                    .id(format!("command-group-label:{render_key}"))
+                    .h(gpui_px_from_ui(group_label_height))
+                    .px(gpui_px_from_ui(state_group_label_padding_x(metrics)))
+                    .flex()
+                    .items_center()
+                    .text_xs()
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(ThemeResolver::resolve(colors.muted_foreground()))
+                    .ui_role(Role::Group)
+                    .aria_label(label.clone())
+                    .child(label),
+            )
+        })
+        .child(
+            div()
+                .id(format!("listbox-option:{option_value}"))
+                .debug_selector({
+                    let listbox_id = listbox_id.clone();
+                    let option_value = option_value.clone();
+                    move || format!("listbox:{listbox_id}:option:{option_value}")
+                })
+                .h(gpui_px_from_ui(row.virtual_size() - group_label_height))
+                .min_h(gpui_px_from_ui(row.virtual_size() - group_label_height))
+                .px(gpui_px_from_ui(state_option_padding_x(metrics)))
+                .py(gpui_px_from_ui(state_option_padding_y(metrics)))
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .rounded(gpui_px_from_ui(metrics.radius()))
+                .bg(ThemeResolver::resolve(command_row_background(
+                    active, selected, colors,
+                )))
+                .text_color(ThemeResolver::resolve(if disabled {
+                    colors.muted_foreground()
+                } else {
+                    colors.foreground()
+                }))
+                .ui_role(row.role())
+                .aria_label(label.clone())
+                .aria_selected(selected)
+                .aria_disabled(disabled)
+                .when_some(position, |this, position| {
+                    this.aria_position_in_set(position)
+                })
+                .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
+                .when(!disabled, |this| {
+                    this.cursor_pointer()
+                        .hover(move |style| {
+                            style.bg(ThemeResolver::resolve(command_row_hover_background(colors)))
+                        })
+                        .on_click(move |_event: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            window.prevent_default();
+                            let Some(selection) = selection.clone() else {
+                                return;
+                            };
+                            handle_command_selection(
+                                runtime.clone(),
+                                selection_mode,
+                                dialog_enabled,
+                                &selected_values,
+                                on_select.clone(),
+                                on_open_change.clone(),
+                                on_selected_values_change.clone(),
+                                selection,
+                                window,
+                                cx,
+                            );
+                        })
+                })
+                .child(div().min_w(px(0.0)).flex_1().truncate().child(label))
+                .when_some(shortcut, |this, shortcut| {
+                    this.child(
+                        div()
+                            .flex_none()
+                            .min_w(gpui_px_from_ui(metrics.shortcut_min_width()))
+                            .text_xs()
+                            .text_color(ThemeResolver::resolve(colors.shortcut_foreground()))
+                            .child(shortcut),
+                    )
+                }),
+        )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_command_selection(
+    runtime: Entity<CommandRuntime>,
+    selection_mode: CommandSelectionMode,
+    dialog_enabled: bool,
+    selected_values: &[String],
+    on_select: Option<CommandSelectionHandler>,
+    on_open_change: Option<CommandOpenChangeHandler>,
+    on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
+    selection: CommandSelection,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    match selection_mode {
+        CommandSelectionMode::Single => {
+            runtime.update(cx, |runtime, _| {
+                runtime.selected_value = Some(selection.value().to_owned());
+                runtime.active_value = Some(selection.value().to_owned());
+                if dialog_enabled {
+                    runtime.open = false;
+                }
+            });
+            if let Some(on_select) = on_select.as_ref() {
+                on_select(selection, window, cx);
+            }
+            if dialog_enabled {
+                if let Some(on_open_change) = on_open_change.as_ref() {
+                    on_open_change(false, window, cx);
+                }
+            }
+        }
+        CommandSelectionMode::Multiple => {
+            let change = command_selection_change_after_toggle(selected_values, selection);
+            runtime.update(cx, |runtime, _| {
+                runtime.active_value = Some(change.toggled().value().to_owned());
+                runtime.selected_values = change.values().to_vec();
+            });
+            if let Some(on_selected_values_change) = on_selected_values_change.as_ref() {
+                on_selected_values_change(change, window, cx);
+            }
+        }
+    }
+}
+
+fn scroll_command_item_into_view(scroll_handle: &ScrollHandle, state: &CommandState, index: usize) {
+    let viewport_extent = resolve_command_viewport_extent(
+        state.metrics(),
+        ui_px_from_gpui(scroll_handle.bounds().size.height),
+    );
+    let current_scroll_offset =
+        UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
+    let target = virtualized_list_scroll_target(
+        VirtualizedListScrollStrategy::Nearest,
+        index,
+        state.items().len(),
+        state.metrics().row_height(),
+        viewport_extent,
+        current_scroll_offset,
+    );
+
+    scroll_handle.set_offset(point(px(0.0), -gpui_px_from_ui(target)));
+}
+
+fn command_row_background(active: bool, selected: bool, colors: CommandColors) -> ColorIntent {
+    if active {
+        ColorIntent::with_state(colors.surface().token(), ColorState::FocusVisible, 0xe8ede6)
+    } else if selected {
+        ColorIntent::with_state(colors.surface().token(), ColorState::Selected, 0xe8ede6)
+    } else {
+        colors.surface()
+    }
+}
+
+fn command_row_hover_background(colors: CommandColors) -> ColorIntent {
+    ColorIntent::with_state(colors.surface().token(), ColorState::Hover, 0xf1f5ee)
+}
+
+const fn state_option_padding_x(metrics: CommandMetrics) -> UiPx {
+    metrics.padding()
+}
+
+const fn state_option_padding_y(_metrics: CommandMetrics) -> UiPx {
+    ui_px(3.0)
+}
+
+const fn state_group_label_padding_x(metrics: CommandMetrics) -> UiPx {
+    metrics.padding()
+}
+
+const fn state_group_label_height(metrics: CommandMetrics) -> UiPx {
+    metrics.row_height().half()
+}
+
+fn duplicate_command_values(items: &[CommandItemState]) -> BTreeSet<String> {
+    let mut counts = BTreeMap::new();
+    for item in items {
+        *counts.entry(item.value().to_owned()).or_insert(0usize) += 1;
+    }
+
+    counts
+        .into_iter()
+        .filter_map(|(value, count)| (count > 1).then_some(value))
+        .collect()
+}
+
+fn command_row_render_key(item: &CommandItemState, duplicate_values: &BTreeSet<String>) -> String {
+    if duplicate_values.contains(item.value()) {
+        format!("{}:{}", item.index(), item.value())
+    } else {
+        item.value().to_owned()
+    }
+}
+
+fn resolve_command_viewport_extent(metrics: CommandMetrics, viewport_extent: UiPx) -> UiPx {
+    let viewport_extent = nonnegative_px(viewport_extent);
+    if viewport_extent.as_f32() > 0.0 {
+        viewport_extent
+    } else {
+        let row_height = nonnegative_px(metrics.row_height());
+        if row_height.as_f32() > 0.0 {
+            row_height * DEFAULT_COMMAND_VIEWPORT_ITEM_COUNT as f32
+        } else {
+            UiPx::ZERO
+        }
+    }
+}
+
+fn command_page_step(state: &CommandState, viewport_extent: UiPx) -> usize {
+    let row_height = nonnegative_px(state.metrics().row_height());
+    if row_height.as_f32() <= 0.0 {
+        return DEFAULT_COMMAND_VIEWPORT_ITEM_COUNT;
+    }
+
+    let viewport_extent = resolve_command_viewport_extent(state.metrics(), viewport_extent);
+    (viewport_extent.as_f32() / row_height.as_f32())
+        .floor()
+        .max(1.0) as usize
+}
+
+fn command_clamped_scroll_offset(
+    scroll_offset: UiPx,
+    item_count: usize,
+    row_height: UiPx,
+    viewport_extent: UiPx,
+) -> UiPx {
+    let scroll_offset = nonnegative_px(scroll_offset);
+    let row_height = nonnegative_px(row_height);
+    let viewport_extent = nonnegative_px(viewport_extent);
+    if item_count == 0 || row_height.as_f32() <= 0.0 {
+        return UiPx::ZERO;
+    }
+
+    let total_size = row_height * item_count as f32;
+    scroll_offset.min(nonnegative_px(total_size - viewport_extent))
+}
+
+const DEFAULT_COMMAND_VIEWPORT_ITEM_COUNT: usize = 8;
+
+const fn nonnegative_px(value: UiPx) -> UiPx {
+    if value.as_f32() < 0.0 {
+        UiPx::ZERO
+    } else {
+        value
+    }
 }
 
 fn close_command_dialog(
@@ -2226,20 +2977,6 @@ fn close_command_dialog(
     if let Some(on_open_change) = on_open_change.as_ref() {
         on_open_change(false, window, cx);
     }
-}
-
-fn command_shortcut_lookup(items: &[CommandItemState]) -> Vec<(String, Option<String>)> {
-    items
-        .iter()
-        .map(|item| (item.value().to_owned(), item.shortcut().map(str::to_owned)))
-        .collect()
-}
-
-fn command_shortcut_for(value: &str, lookup: &[(String, Option<String>)]) -> Option<String> {
-    lookup
-        .iter()
-        .find(|(item_value, _)| item_value == value)
-        .and_then(|(_, shortcut)| shortcut.clone())
 }
 
 fn command_selection_change_after_toggle(
@@ -2465,11 +3202,14 @@ mod tests {
         let state = keyboard_state(false);
 
         assert_eq!(
-            command_keyboard_action(&state, "up"),
-            CommandKeyboardAction::Navigate("open-file".to_string())
+            command_keyboard_action(&state, "up", ui_px(224.0)),
+            CommandKeyboardAction::Navigate(CommandNavigationTarget {
+                index: 0,
+                value: "open-file".to_string()
+            })
         );
         assert_eq!(
-            command_keyboard_action(&state, "enter"),
+            command_keyboard_action(&state, "enter", ui_px(224.0)),
             CommandKeyboardAction::Select(CommandSelection::new(
                 1,
                 "new-file".to_string(),
@@ -2484,11 +3224,11 @@ mod tests {
         let state = keyboard_state(true);
 
         assert_eq!(
-            command_keyboard_action(&state, "down"),
+            command_keyboard_action(&state, "down", ui_px(224.0)),
             CommandKeyboardAction::Ignore
         );
         assert_eq!(
-            command_keyboard_action(&state, "enter"),
+            command_keyboard_action(&state, "enter", ui_px(224.0)),
             CommandKeyboardAction::Ignore
         );
     }

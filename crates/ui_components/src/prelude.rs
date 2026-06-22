@@ -16,8 +16,9 @@ pub use crate::combobox::{
 pub use crate::command::{
     Command, CommandColors, CommandDialogState, CommandGroup, CommandGroupDescriptor, CommandItem,
     CommandItemDescriptor, CommandItemState, CommandLoadingState, CommandMatchSource,
-    CommandMetrics, CommandOpenMode, CommandQueryMode, CommandSelectedChipState, CommandSelection,
-    CommandSelectionChange, CommandSelectionMode, CommandState,
+    CommandMetrics, CommandOpenMode, CommandQueryMode, CommandRenderPlan, CommandRowRenderPlan,
+    CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandSelectionMode,
+    CommandState,
 };
 pub use crate::context_menu::{ContextMenu, ContextMenuState};
 pub use crate::dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
