@@ -71,6 +71,32 @@ struct DockViewportRuntimeRegistration {
     replaced_windows: Vec<AnyWindowHandle>,
 }
 
+#[derive(Debug, Default)]
+struct DockViewportRuntimeUpdate {
+    changed: bool,
+    windows: Vec<AnyWindowHandle>,
+}
+
+impl DockViewportRuntimeUpdate {
+    fn mark_changed(&mut self, changed: bool) {
+        self.changed |= changed;
+    }
+
+    fn extend_windows(&mut self, windows: impl IntoIterator<Item = AnyWindowHandle>) {
+        extend_unique_windows(&mut self.windows, windows);
+    }
+
+    fn merge_parts(&mut self, parts: (bool, Vec<AnyWindowHandle>)) {
+        let (changed, windows) = parts;
+        self.mark_changed(changed);
+        self.extend_windows(windows);
+    }
+
+    fn into_parts(self) -> (bool, Vec<AnyWindowHandle>) {
+        (self.changed, self.windows)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DockViewportRouteSnapshotResampleBarrier {
     /// The hovered-host request was resolved from a target window whose facts cannot be refreshed
@@ -720,10 +746,10 @@ impl DockViewportRuntime {
         &mut self,
         window_id: WindowId,
     ) -> (bool, Vec<AnyWindowHandle>) {
-        let changed = self.adapter.mark_window_snapshot_stale(window_id);
-        let (preview_changed, windows) =
-            self.clear_routed_drop_preview_if_window_matches(window_id);
-        (changed || preview_changed, windows)
+        let mut update = DockViewportRuntimeUpdate::default();
+        update.mark_changed(self.adapter.mark_window_snapshot_stale(window_id));
+        update.merge_parts(self.clear_preview_for_unready_window_route(window_id));
+        update.into_parts()
     }
 
     pub(crate) fn expire_viewport_host_scene_if_not_rendered_after(
@@ -751,16 +777,13 @@ impl DockViewportRuntime {
         window_id: WindowId,
         window_facts: DockViewportWindowFacts,
     ) -> (bool, Vec<AnyWindowHandle>) {
-        let changed = self
-            .adapter
-            .apply_platform_window_facts(window_id, window_facts);
-        let clear_preview = self.adapter.window_route_ready(window_id) == Some(false);
-        let (preview_changed, windows) = if clear_preview {
-            self.clear_routed_drop_preview_if_window_matches(window_id)
-        } else {
-            (false, Vec::new())
-        };
-        (changed || preview_changed, windows)
+        let mut update = DockViewportRuntimeUpdate::default();
+        update.mark_changed(
+            self.adapter
+                .apply_platform_window_facts(window_id, window_facts),
+        );
+        update.merge_parts(self.clear_preview_for_unready_window_route(window_id));
+        update.into_parts()
     }
 
     fn mark_viewport_window_close_requested(
@@ -816,18 +839,24 @@ impl DockViewportRuntime {
         let changed_windows = self
             .adapter
             .refresh_registered_window_facts_except_window(cx, skip_window_id);
-        let mut changed = !changed_windows.is_empty();
-        let mut windows = Vec::new();
+        let mut update = DockViewportRuntimeUpdate::default();
+        update.mark_changed(!changed_windows.is_empty());
         for window in changed_windows {
-            extend_unique_windows(&mut windows, [window]);
-            if self.adapter.window_route_ready(window.window_id()) == Some(false) {
-                let (preview_changed, preview_windows) =
-                    self.clear_routed_drop_preview_if_window_matches(window.window_id());
-                changed |= preview_changed;
-                extend_unique_windows(&mut windows, preview_windows);
-            }
+            update.extend_windows([window]);
+            update.merge_parts(self.clear_preview_for_unready_window_route(window.window_id()));
         }
-        (changed, windows)
+        update.into_parts()
+    }
+
+    fn clear_preview_for_unready_window_route(
+        &mut self,
+        window_id: WindowId,
+    ) -> (bool, Vec<AnyWindowHandle>) {
+        if self.adapter.window_route_ready(window_id) == Some(false) {
+            self.clear_routed_drop_preview_if_window_matches(window_id)
+        } else {
+            (false, Vec::new())
+        }
     }
 
     #[cfg(test)]
