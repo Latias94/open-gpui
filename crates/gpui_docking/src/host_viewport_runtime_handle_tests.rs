@@ -6,9 +6,9 @@ use crate::{
     DockViewportFocusCommand, DockViewportFocusRequest, DockViewportInputStatus,
     DockViewportOpenStatus, DockViewportPlatformSignals, DockViewportRouteStatus,
     DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportStaleStatusReason,
-    DockViewportTargetContext, DockViewportTearOffBeginOutcome, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffRequest, DockViewportTearOffTick, DockViewportWindowFacts, DockWorkspace,
-    DropZone, SplitAxis,
+    DockViewportTargetContext, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockViewportWindowFacts,
+    DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::DockDropRoutePreviewKind,
@@ -1417,7 +1417,7 @@ fn viewport_runtime_handle_closes_unregistered_window_when_tear_off_source_moves
 }
 
 #[open_gpui::test]
-fn viewport_runtime_handle_rejects_expired_tear_off_pending_completion(cx: &mut TestAppContext) {
+fn viewport_runtime_handle_rejects_cancelled_tear_off_pending_completion(cx: &mut TestAppContext) {
     let primary_space = DockSpaceId::from("primary");
     let detached_space = DockSpaceId::from("detached");
     let mut graph = DockGraph::new();
@@ -1444,10 +1444,15 @@ fn viewport_runtime_handle_rejects_expired_tear_off_pending_completion(cx: &mut 
         pending
     });
     assert_eq!(runtime.borrow().pending_tear_off_len(), 1);
-    let expired = runtime
-        .borrow_mut()
-        .expire_tear_off_requests_at(DockViewportTearOffTick::new(602));
-    assert_eq!(expired.len(), 1);
+    assert!(
+        runtime
+            .borrow_mut()
+            .cancel_tear_off_request(
+                &pending.request().key(),
+                DockViewportTearOffCancelReason::Cancelled,
+            )
+            .is_some()
+    );
     assert_eq!(runtime.borrow().pending_tear_off_len(), 0);
 
     let unregistered_window: open_gpui::AnyWindowHandle = cx
@@ -1461,12 +1466,14 @@ fn viewport_runtime_handle_rejects_expired_tear_off_pending_completion(cx: &mut 
         .update(|app| {
             runtime.complete_opened_tear_off_viewport_for_test(pending, unregistered_window, app)
         })
-        .expect_err("expired pending tear-off requests must not commit from a stale pending value");
+        .expect_err(
+            "cancelled pending tear-off requests must not commit from a stale pending value",
+        );
     assert!(
         error
             .to_string()
             .contains("dock drop target is not currently available"),
-        "expired pending tear-off should report unavailable target, got {error}"
+        "cancelled pending tear-off should report unavailable target, got {error}"
     );
     cx.run_until_parked();
     cx.update(|app| app.refresh_windows());

@@ -1994,14 +1994,6 @@ impl DockViewportRuntime {
         self.tear_off.cancel(key, reason)
     }
 
-    #[cfg(test)]
-    pub(crate) fn expire_tear_off_requests_at(
-        &mut self,
-        now: DockViewportTearOffTick,
-    ) -> Vec<DockViewportTearOffCancelled> {
-        self.tear_off.expire(now)
-    }
-
     pub(crate) fn commit_prepared_tear_off_move(
         &mut self,
         pending: &DockViewportTearOffPending,

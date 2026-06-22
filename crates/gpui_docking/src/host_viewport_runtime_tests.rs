@@ -2865,7 +2865,7 @@ fn viewport_runtime_tear_off_duplicate_request_is_idempotent(cx: &mut TestAppCon
 }
 
 #[open_gpui::test]
-fn viewport_runtime_tear_off_expiration_clears_pending_without_graph_mutation(
+fn viewport_runtime_tear_off_cancellation_clears_pending_without_graph_mutation(
     cx: &mut TestAppContext,
 ) {
     let primary_space = DockSpaceId::from("primary");
@@ -2883,18 +2883,21 @@ fn viewport_runtime_tear_off_expiration_clears_pending_without_graph_mutation(
     let controller = cx.new(|_| DockController::new(workspace));
     let mut runtime = DockViewportRuntime::new(controller.clone());
 
+    let request = tear_off_request(primary_space.clone(), source_tabs, item("a"));
+    let key = request.key();
     runtime.begin_tear_off_request_at(
-        tear_off_request(primary_space.clone(), source_tabs, item("a")),
+        request,
         detached_space.clone(),
         None,
         DockViewportTearOffTick::new(1),
     );
-    let expired = runtime.expire_tear_off_requests_at(DockViewportTearOffTick::new(602));
+    let cancelled = runtime
+        .cancel_tear_off_request(&key, DockViewportTearOffCancelReason::Cancelled)
+        .expect("pending tear-off request should cancel");
 
-    assert_eq!(expired.len(), 1);
     assert_eq!(
-        expired[0].reason(),
-        DockViewportTearOffCancelReason::Expired
+        cancelled.reason(),
+        DockViewportTearOffCancelReason::Cancelled
     );
     assert_eq!(runtime.pending_tear_off_len(), 0);
     assert!(runtime.adapter().spaces().is_empty());

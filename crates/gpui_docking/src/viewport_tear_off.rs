@@ -194,10 +194,6 @@ impl DockViewportTearOffTick {
     pub const fn saturating_add(self, ticks: u64) -> Self {
         Self(self.0.saturating_add(ticks))
     }
-
-    fn age_since(self, earlier: Self) -> u64 {
-        self.0.saturating_sub(earlier.0)
-    }
 }
 
 /// Runtime state for a tear-off request that is waiting for a platform viewport.
@@ -209,8 +205,6 @@ pub(crate) struct DockViewportTearOffPending {
     target_space: DockSpaceId,
     /// Panel item that should receive GPUI focus after the tear-off completes.
     focus_item: Option<DockItemId>,
-    requested_at: DockViewportTearOffTick,
-    expires_after_ticks: u64,
 }
 
 impl DockViewportTearOffPending {
@@ -225,10 +219,6 @@ impl DockViewportTearOffPending {
     pub(crate) fn focus_item(&self) -> Option<&DockItemId> {
         self.focus_item.as_ref()
     }
-
-    pub(crate) fn is_expired_at(&self, now: DockViewportTearOffTick) -> bool {
-        now.age_since(self.requested_at) > self.expires_after_ticks
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -242,8 +232,6 @@ pub(crate) enum DockViewportTearOffBeginOutcome {
 pub enum DockViewportTearOffCancelReason {
     /// The caller explicitly cancelled the pending request.
     Cancelled,
-    /// The pending request exceeded its logical time-to-live.
-    Expired,
     /// The recorded source payload can no longer be committed.
     SourceUnavailable,
 }
@@ -395,7 +383,6 @@ impl DockViewportDropRouteOutcome {
 #[derive(Debug, Clone)]
 pub(crate) struct DockViewportTearOffMachine {
     pending_by_key: BTreeMap<DockViewportTearOffKey, DockViewportTearOffPending>,
-    ttl_ticks: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -415,7 +402,6 @@ impl Default for DockViewportTearOffMachine {
     fn default() -> Self {
         Self {
             pending_by_key: BTreeMap::new(),
-            ttl_ticks: 600,
         }
     }
 }
@@ -431,9 +417,8 @@ impl DockViewportTearOffMachine {
         request: DockViewportTearOffRequest,
         target_space: DockSpaceId,
         focus_item: Option<DockItemId>,
-        now: DockViewportTearOffTick,
+        _now: DockViewportTearOffTick,
     ) -> DockViewportTearOffBeginOutcome {
-        self.expire(now);
         let key = request.key();
         if let Some(pending) = self.pending_by_key.get(&key) {
             return DockViewportTearOffBeginOutcome::Duplicate(pending.clone());
@@ -443,8 +428,6 @@ impl DockViewportTearOffMachine {
             request,
             target_space,
             focus_item,
-            requested_at: now,
-            expires_after_ticks: self.ttl_ticks,
         };
         self.pending_by_key.insert(key, pending.clone());
         DockViewportTearOffBeginOutcome::Pending(pending)
@@ -458,22 +441,6 @@ impl DockViewportTearOffMachine {
         self.pending_by_key
             .remove(key)
             .map(|_| DockViewportTearOffCancelled::new(reason))
-    }
-
-    pub(crate) fn expire(
-        &mut self,
-        now: DockViewportTearOffTick,
-    ) -> Vec<DockViewportTearOffCancelled> {
-        let expired = self
-            .pending_by_key
-            .iter()
-            .filter_map(|(key, pending)| pending.is_expired_at(now).then_some(key.clone()))
-            .collect::<Vec<_>>();
-
-        expired
-            .iter()
-            .filter_map(|key| self.cancel(key, DockViewportTearOffCancelReason::Expired))
-            .collect()
     }
 
     pub(crate) fn take_committed(
@@ -562,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn tear_off_machine_expires_stale_pending_requests() {
+    fn tear_off_machine_cancels_pending_requests() {
         let mut machine = DockViewportTearOffMachine::default();
         let request = DockViewportTearOffRequest::new(
             space("main"),
@@ -571,6 +538,7 @@ mod tests {
             point(px(900.0), px(900.0)),
             None,
         );
+        let key = request.key();
 
         machine.begin(
             request,
@@ -578,19 +546,19 @@ mod tests {
             None,
             DockViewportTearOffTick::new(1),
         );
-        assert!(machine.expire(DockViewportTearOffTick::new(601)).is_empty());
-        let expired = machine.expire(DockViewportTearOffTick::new(602));
+        let cancelled = machine
+            .cancel(&key, DockViewportTearOffCancelReason::Cancelled)
+            .expect("pending request should cancel");
 
-        assert_eq!(expired.len(), 1);
         assert_eq!(
-            expired[0].reason(),
-            DockViewportTearOffCancelReason::Expired
+            cancelled.reason(),
+            DockViewportTearOffCancelReason::Cancelled
         );
         assert_eq!(machine.len(), 0);
     }
 
     #[test]
-    fn tear_off_machine_only_commits_matching_pending_request() {
+    fn tear_off_machine_only_commits_matching_uncancelled_pending_request() {
         let mut machine = DockViewportTearOffMachine::default();
         let request = DockViewportTearOffRequest::new(
             space("main"),
@@ -599,7 +567,8 @@ mod tests {
             point(px(900.0), px(900.0)),
             None,
         );
-        let DockViewportTearOffBeginOutcome::Pending(expired_pending) = machine.begin(
+        let key = request.key();
+        let DockViewportTearOffBeginOutcome::Pending(cancelled_pending) = machine.begin(
             request.clone(),
             space("detached"),
             None,
@@ -607,17 +576,21 @@ mod tests {
         ) else {
             panic!("first request should become pending");
         };
-        assert_eq!(machine.expire(DockViewportTearOffTick::new(602)).len(), 1);
+        assert!(
+            machine
+                .cancel(&key, DockViewportTearOffCancelReason::Cancelled)
+                .is_some()
+        );
         let DockViewportTearOffBeginOutcome::Pending(current_pending) = machine.begin(
             request,
             space("other"),
             None,
             DockViewportTearOffTick::new(603),
         ) else {
-            panic!("new request after expiration should become pending");
+            panic!("new request after cancellation should become pending");
         };
 
-        assert_eq!(machine.take_committed(&expired_pending), None);
+        assert_eq!(machine.take_committed(&cancelled_pending), None);
         assert_eq!(machine.len(), 1);
         assert_eq!(
             machine.take_committed(&current_pending).as_ref(),
