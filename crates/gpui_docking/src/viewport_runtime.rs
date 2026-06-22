@@ -8,8 +8,8 @@ use crate::{
     DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropActionOutcome,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
     DockViewportDropRouteResolution, DockViewportFocusCoordinator, DockViewportFocusRequest,
-    DockViewportFrameCoordinator, DockViewportHostSceneExpiration,
-    DockViewportHostSceneLivenessToken, DockViewportIdentity, DockViewportPlacementLayout,
+    DockViewportFrameCoordinator, DockViewportHostSceneRenderExpiration,
+    DockViewportHostSceneRenderToken, DockViewportIdentity, DockViewportPlacementLayout,
     DockViewportPlacementValidationError, DockViewportPlatformSyncRecord,
     DockViewportRegisterOutcome, DockViewportResolvedDropRoute, DockViewportRestoreReadiness,
     DockViewportRoutedDropPreview, DockViewportRoutedDropPreviewReplacement,
@@ -730,9 +730,9 @@ impl DockViewportRuntime {
         (changed || preview_changed, windows)
     }
 
-    pub(crate) fn expire_viewport_host_scene_if_unrendered(
+    pub(crate) fn expire_viewport_host_scene_if_not_rendered_after(
         &mut self,
-        token: DockViewportHostSceneLivenessToken,
+        token: DockViewportHostSceneRenderToken,
     ) -> (bool, Vec<AnyWindowHandle>) {
         let current_window_id = self
             .adapter
@@ -740,11 +740,11 @@ impl DockViewportRuntime {
             .map(|window| window.window_id());
         match self
             .frame_coordinator
-            .expire_unrendered_host_scene(token, current_window_id)
+            .expire_host_scene_if_not_rendered_after(token, current_window_id)
         {
-            DockViewportHostSceneExpiration::StillCurrent
-            | DockViewportHostSceneExpiration::StaleIdentity(_) => (false, Vec::new()),
-            DockViewportHostSceneExpiration::Expired(identity) => {
+            DockViewportHostSceneRenderExpiration::StillCurrent
+            | DockViewportHostSceneRenderExpiration::StaleIdentity(_) => (false, Vec::new()),
+            DockViewportHostSceneRenderExpiration::Expired(identity) => {
                 self.mark_viewport_window_snapshot_stale(identity.window_id())
             }
         }
@@ -887,11 +887,11 @@ impl DockViewportRuntime {
         Some(registration)
     }
 
-    pub(crate) fn lease_rendered_viewport_host_scene(
+    pub(crate) fn mark_rendered_viewport_host_scene(
         &mut self,
         identity: DockViewportIdentity,
-    ) -> DockViewportHostSceneLivenessToken {
-        self.frame_coordinator.lease_rendered_host_scene(identity)
+    ) -> DockViewportHostSceneRenderToken {
+        self.frame_coordinator.mark_host_scene_rendered(identity)
     }
 
     #[cfg(test)]
@@ -1096,7 +1096,8 @@ impl DockViewportRuntime {
         }
         self.window_ownership.clear_window_state(window_id);
         self.backend_focus.discard_window(window_id);
-        self.frame_coordinator.forget_window_liveness(window_id);
+        self.frame_coordinator
+            .forget_window_render_epochs(window_id);
         self.frame_coordinator.unregister_space(space);
         self.clear_pending_activation_for(space, window_id);
         self.status.clear_window_references(space, window_id);

@@ -851,7 +851,7 @@ fn viewport_runtime_render_registration_cleans_replaced_space_state(cx: &mut Tes
 }
 
 #[open_gpui::test]
-fn viewport_runtime_host_scene_liveness_expires_unrendered_host_scene(cx: &mut TestAppContext) {
+fn viewport_runtime_host_scene_render_token_expires_unrendered_host_scene(cx: &mut TestAppContext) {
     let target_space = DockSpaceId::from("target");
     let mut graph = DockGraph::new();
     let target_tabs = graph.insert_node(DockNode::Tabs {
@@ -885,9 +885,9 @@ fn viewport_runtime_host_scene_liveness_expires_unrendered_host_scene(cx: &mut T
         leaf_host_scene_fact(target_tabs, target_tabs),
     ));
     let identity = crate::DockViewportIdentity::new(target_space.clone(), window.window_id());
-    let token = runtime.lease_rendered_viewport_host_scene(identity.clone());
+    let token = runtime.mark_rendered_viewport_host_scene(identity.clone());
 
-    let (changed, windows) = runtime.expire_viewport_host_scene_if_unrendered(token);
+    let (changed, windows) = runtime.expire_viewport_host_scene_if_not_rendered_after(token);
 
     assert!(changed);
     assert_eq!(windows, Vec::<AnyWindowHandle>::new());
@@ -901,7 +901,9 @@ fn viewport_runtime_host_scene_liveness_expires_unrendered_host_scene(cx: &mut T
 }
 
 #[open_gpui::test]
-fn viewport_runtime_host_scene_liveness_preserves_scene_after_new_render(cx: &mut TestAppContext) {
+fn viewport_runtime_host_scene_render_token_preserves_scene_after_new_render(
+    cx: &mut TestAppContext,
+) {
     let target_space = DockSpaceId::from("target");
     let mut graph = DockGraph::new();
     let target_tabs = graph.insert_node(DockNode::Tabs {
@@ -935,7 +937,7 @@ fn viewport_runtime_host_scene_liveness_preserves_scene_after_new_render(cx: &mu
         leaf_host_scene_fact(target_tabs, target_tabs),
     ));
     let identity = crate::DockViewportIdentity::new(target_space.clone(), window.window_id());
-    let stale_token = runtime.lease_rendered_viewport_host_scene(identity.clone());
+    let stale_token = runtime.mark_rendered_viewport_host_scene(identity.clone());
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         window.window_id(),
@@ -948,9 +950,9 @@ fn viewport_runtime_host_scene_liveness_preserves_scene_after_new_render(cx: &mu
         window.window_id(),
         leaf_host_scene_fact(target_tabs, target_tabs),
     ));
-    let _current_token = runtime.lease_rendered_viewport_host_scene(identity.clone());
+    let _current_token = runtime.mark_rendered_viewport_host_scene(identity.clone());
 
-    let (changed, windows) = runtime.expire_viewport_host_scene_if_unrendered(stale_token);
+    let (changed, windows) = runtime.expire_viewport_host_scene_if_not_rendered_after(stale_token);
 
     assert!(!changed);
     assert_eq!(windows, Vec::<AnyWindowHandle>::new());
@@ -966,9 +968,7 @@ fn viewport_runtime_host_scene_liveness_preserves_scene_after_new_render(cx: &mu
 }
 
 #[open_gpui::test]
-fn viewport_runtime_host_scene_liveness_token_is_bound_to_viewport_identity(
-    cx: &mut TestAppContext,
-) {
+fn viewport_runtime_host_scene_render_token_is_bound_to_viewport_identity(cx: &mut TestAppContext) {
     let old_space = DockSpaceId::from("old");
     let new_space = DockSpaceId::from("new");
     let mut graph = DockGraph::new();
@@ -1009,7 +1009,7 @@ fn viewport_runtime_host_scene_liveness_token_is_bound_to_viewport_identity(
         leaf_host_scene_fact(old_tabs, old_tabs),
     ));
     let old_identity = crate::DockViewportIdentity::new(old_space.clone(), window.window_id());
-    let stale_old_token = runtime.lease_rendered_viewport_host_scene(old_identity);
+    let stale_old_token = runtime.mark_rendered_viewport_host_scene(old_identity);
 
     assert!(runtime.register_rendered_host_viewport(new_space.clone(), window));
     assert!(runtime.begin_viewport_host_scene(
@@ -1025,7 +1025,8 @@ fn viewport_runtime_host_scene_liveness_token_is_bound_to_viewport_identity(
         leaf_host_scene_fact(new_tabs, new_tabs),
     ));
 
-    let (changed, windows) = runtime.expire_viewport_host_scene_if_unrendered(stale_old_token);
+    let (changed, windows) =
+        runtime.expire_viewport_host_scene_if_not_rendered_after(stale_old_token);
 
     assert!(!changed);
     assert_eq!(windows, Vec::<AnyWindowHandle>::new());
@@ -1034,7 +1035,7 @@ fn viewport_runtime_host_scene_liveness_token_is_bound_to_viewport_identity(
         runtime
             .last_host_scene_screen_position(&new_space)
             .is_some(),
-        "an old-space liveness token for the same window must not expire the replacement viewport"
+        "an old-space render token for the same window must not expire the replacement viewport"
     );
     assert_eq!(runtime.adapter().route_unavailable_reason(&new_space), None);
 }

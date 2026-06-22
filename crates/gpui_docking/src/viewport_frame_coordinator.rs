@@ -10,23 +10,23 @@ use crate::{
 use open_gpui::{Bounds, Pixels, Point, WindowId};
 use std::collections::HashMap;
 
-/// Token proving that a rendered viewport host scene was observed for a specific runtime binding.
+/// Token proving that a viewport host scene was rendered for a specific runtime binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DockViewportHostSceneLivenessToken {
+pub(crate) struct DockViewportHostSceneRenderToken {
     identity: DockViewportIdentity,
-    generation: u64,
+    render_epoch: u64,
 }
 
-impl DockViewportHostSceneLivenessToken {
+impl DockViewportHostSceneRenderToken {
     pub(crate) fn identity(&self) -> &DockViewportIdentity {
         &self.identity
     }
 }
 
-/// Result of checking whether a previously rendered host scene stayed alive.
+/// Result of checking whether a previously rendered host scene was rendered again.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum DockViewportHostSceneExpiration {
-    /// A newer render was leased after this token; keep the scene.
+pub(crate) enum DockViewportHostSceneRenderExpiration {
+    /// A newer render was marked after this token; keep the scene.
     StillCurrent,
     /// The token belongs to a viewport binding that is no longer registered.
     StaleIdentity(DockViewportIdentity),
@@ -35,46 +35,49 @@ pub(crate) enum DockViewportHostSceneExpiration {
 }
 
 #[derive(Debug, Default)]
-struct DockViewportHostSceneLiveness {
-    generations: HashMap<DockViewportIdentity, u64>,
+struct DockViewportHostSceneRenderEpochs {
+    epochs: HashMap<DockViewportIdentity, u64>,
 }
 
-impl DockViewportHostSceneLiveness {
-    fn lease(&mut self, identity: DockViewportIdentity) -> DockViewportHostSceneLivenessToken {
-        let generation = self
-            .generations
+impl DockViewportHostSceneRenderEpochs {
+    fn mark_rendered(
+        &mut self,
+        identity: DockViewportIdentity,
+    ) -> DockViewportHostSceneRenderToken {
+        let render_epoch = self
+            .epochs
             .entry(identity.clone())
-            .and_modify(|generation| *generation = generation.wrapping_add(1))
+            .and_modify(|render_epoch| *render_epoch = render_epoch.wrapping_add(1))
             .or_insert(1);
-        DockViewportHostSceneLivenessToken {
+        DockViewportHostSceneRenderToken {
             identity,
-            generation: *generation,
+            render_epoch: *render_epoch,
         }
     }
 
-    fn is_current(&self, token: &DockViewportHostSceneLivenessToken) -> bool {
-        self.generations.get(&token.identity).copied() == Some(token.generation)
+    fn is_current(&self, token: &DockViewportHostSceneRenderToken) -> bool {
+        self.epochs.get(&token.identity).copied() == Some(token.render_epoch)
     }
 
     fn forget(&mut self, identity: &DockViewportIdentity) {
-        self.generations.remove(identity);
+        self.epochs.remove(identity);
     }
 
     fn forget_window(&mut self, window_id: WindowId) {
-        self.generations
+        self.epochs
             .retain(|identity, _| identity.window_id() != window_id);
     }
 }
 
-/// Coordinates per-frame host-scene facts with delayed liveness expiry.
+/// Coordinates per-frame host-scene facts with delayed render-token expiry.
 ///
 /// ImGui keeps viewport frame activity in one per-frame pass. GPUI render callbacks arrive through
-/// separate probes, so this module centralizes the equivalent host-scene generation and liveness
-/// bookkeeping instead of spreading stale-scene decisions across the runtime.
+/// separate probes, so this module centralizes host-scene content and render-epoch bookkeeping
+/// instead of spreading stale-scene decisions across the runtime.
 #[derive(Debug, Default)]
 pub(crate) struct DockViewportFrameCoordinator {
     host_scenes: DockViewportHostSceneRegistry,
-    liveness: DockViewportHostSceneLiveness,
+    render_epochs: DockViewportHostSceneRenderEpochs,
 }
 
 impl DockViewportFrameCoordinator {
@@ -102,28 +105,28 @@ impl DockViewportFrameCoordinator {
             ))
     }
 
-    pub(crate) fn lease_rendered_host_scene(
+    pub(crate) fn mark_host_scene_rendered(
         &mut self,
         identity: DockViewportIdentity,
-    ) -> DockViewportHostSceneLivenessToken {
-        self.liveness.lease(identity)
+    ) -> DockViewportHostSceneRenderToken {
+        self.render_epochs.mark_rendered(identity)
     }
 
-    pub(crate) fn expire_unrendered_host_scene(
+    pub(crate) fn expire_host_scene_if_not_rendered_after(
         &mut self,
-        token: DockViewportHostSceneLivenessToken,
+        token: DockViewportHostSceneRenderToken,
         current_window_id: Option<WindowId>,
-    ) -> DockViewportHostSceneExpiration {
-        if !self.liveness.is_current(&token) {
-            return DockViewportHostSceneExpiration::StillCurrent;
+    ) -> DockViewportHostSceneRenderExpiration {
+        if !self.render_epochs.is_current(&token) {
+            return DockViewportHostSceneRenderExpiration::StillCurrent;
         }
         let identity = token.identity;
         if current_window_id.is_none_or(|window_id| window_id != identity.window_id()) {
-            self.liveness.forget(&identity);
-            return DockViewportHostSceneExpiration::StaleIdentity(identity);
+            self.render_epochs.forget(&identity);
+            return DockViewportHostSceneRenderExpiration::StaleIdentity(identity);
         }
         self.host_scenes.unregister_window(identity.window_id());
-        DockViewportHostSceneExpiration::Expired(identity)
+        DockViewportHostSceneRenderExpiration::Expired(identity)
     }
 
     #[cfg(test)]
@@ -157,8 +160,8 @@ impl DockViewportFrameCoordinator {
         self.host_scenes.unregister_window(window_id);
     }
 
-    pub(crate) fn forget_window_liveness(&mut self, window_id: WindowId) {
-        self.liveness.forget_window(window_id);
+    pub(crate) fn forget_window_render_epochs(&mut self, window_id: WindowId) {
+        self.render_epochs.forget_window(window_id);
     }
 }
 
@@ -174,26 +177,26 @@ mod tests {
         let space = space("main");
         let window_id = WindowId::from(1);
         let identity = DockViewportIdentity::new(space.clone(), window_id);
-        let old_token = coordinator.lease_rendered_host_scene(identity.clone());
-        let _new_token = coordinator.lease_rendered_host_scene(identity);
+        let old_token = coordinator.mark_host_scene_rendered(identity.clone());
+        let _new_token = coordinator.mark_host_scene_rendered(identity);
 
         assert_eq!(
-            coordinator.expire_unrendered_host_scene(old_token, Some(window_id)),
-            DockViewportHostSceneExpiration::StillCurrent
+            coordinator.expire_host_scene_if_not_rendered_after(old_token, Some(window_id)),
+            DockViewportHostSceneRenderExpiration::StillCurrent
         );
     }
 
     #[test]
-    fn stale_identity_token_only_forgets_liveness() {
+    fn stale_identity_token_only_forgets_render_epoch() {
         let mut coordinator = DockViewportFrameCoordinator::default();
         let space = space("main");
         let window_id = WindowId::from(1);
         let token = coordinator
-            .lease_rendered_host_scene(DockViewportIdentity::new(space.clone(), window_id));
+            .mark_host_scene_rendered(DockViewportIdentity::new(space.clone(), window_id));
 
         assert_eq!(
-            coordinator.expire_unrendered_host_scene(token, None),
-            DockViewportHostSceneExpiration::StaleIdentity(DockViewportIdentity::new(
+            coordinator.expire_host_scene_if_not_rendered_after(token, None),
+            DockViewportHostSceneRenderExpiration::StaleIdentity(DockViewportIdentity::new(
                 space, window_id
             ))
         );
@@ -216,12 +219,12 @@ mod tests {
             DockDropGuideStyle::default(),
         );
         let token = coordinator
-            .lease_rendered_host_scene(DockViewportIdentity::new(space.clone(), window_id));
+            .mark_host_scene_rendered(DockViewportIdentity::new(space.clone(), window_id));
 
         assert!(coordinator.screen_position(&space).is_some());
         assert_eq!(
-            coordinator.expire_unrendered_host_scene(token, Some(window_id)),
-            DockViewportHostSceneExpiration::Expired(DockViewportIdentity::new(
+            coordinator.expire_host_scene_if_not_rendered_after(token, Some(window_id)),
+            DockViewportHostSceneRenderExpiration::Expired(DockViewportIdentity::new(
                 space.clone(),
                 window_id
             ))

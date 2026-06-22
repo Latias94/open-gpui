@@ -3,7 +3,7 @@ use crate::DockViewportActivationTransaction;
 use crate::{
     DockActionApplyError, DockController, DockDropDelivery, DockHost, DockItemId, DockSpaceId,
     DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRouteOutcome,
-    DockViewportDropRouteRequest, DockViewportHostSceneLivenessToken, DockViewportIdentity,
+    DockViewportDropRouteRequest, DockViewportHostSceneRenderToken, DockViewportIdentity,
     DockViewportOpenOutcome, DockViewportOpenStatus, DockViewportPlacementLayout,
     DockViewportPlacementValidationError, DockViewportResolvedDropRoute,
     DockViewportRestoreReadiness, DockViewportRoutedDropPreview, DockViewportRuntime,
@@ -745,24 +745,24 @@ impl DockViewportRuntimeHandle {
             .register_rendered_host_viewport(space, window)
     }
 
-    pub(crate) fn lease_rendered_viewport_host_scene(
+    pub(crate) fn mark_rendered_viewport_host_scene(
         &self,
         identity: DockViewportIdentity,
-    ) -> DockViewportHostSceneLivenessToken {
+    ) -> DockViewportHostSceneRenderToken {
         self.runtime
             .borrow_mut()
-            .lease_rendered_viewport_host_scene(identity)
+            .mark_rendered_viewport_host_scene(identity)
     }
 
-    pub(crate) fn expire_viewport_host_scene_if_unrendered<C: open_gpui::AppContext>(
+    pub(crate) fn expire_viewport_host_scene_if_not_rendered_after<C: open_gpui::AppContext>(
         &self,
-        token: DockViewportHostSceneLivenessToken,
+        token: DockViewportHostSceneRenderToken,
         cx: &mut C,
     ) -> bool {
         let (changed, windows) = self
             .runtime
             .borrow_mut()
-            .expire_viewport_host_scene_if_unrendered(token);
+            .expire_viewport_host_scene_if_not_rendered_after(token);
         refresh_windows(windows, cx);
         changed
     }
