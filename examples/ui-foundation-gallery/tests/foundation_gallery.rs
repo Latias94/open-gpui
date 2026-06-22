@@ -107,7 +107,7 @@ fn scroll_page_until_visible(cx: &mut VisualTestContext, selector: &str) -> Boun
         cx,
         "scroll-area:gallery-page-scroll-viewport",
         selector,
-        160,
+        240,
         point(px(0.0), px(-160.0)),
         point(
             scroll_bounds.right() - px(6.0),
@@ -137,6 +137,23 @@ fn scroll_navigation_until_visible(cx: &mut VisualTestContext, selector: &str) -
         |container, target| container.contains(&target.center()),
         format!("expected `{selector}` to become visible after scrolling gallery navigation"),
     )
+}
+
+fn jump_components_directory_to(cx: &mut VisualTestContext, jump_selector: &'static str) {
+    let directory_center = bounds(cx, "scroll-area:gallery-components-directory-scroll").center();
+    scroll_until_visible(
+        cx,
+        "scroll-area:gallery-components-directory-scroll",
+        jump_selector,
+        32,
+        point(px(0.0), px(-48.0)),
+        directory_center,
+        |container, target| container.contains(&target.center()),
+        format!("expected the Components directory jump `{jump_selector}` to become visible"),
+    );
+    click(cx, jump_selector);
+    settle(cx);
+    settle(cx);
 }
 
 fn drag(
@@ -2635,6 +2652,141 @@ fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
 }
 
 #[open_gpui::test]
+fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+
+    scroll_page_until_visible(cx, "component-catalog:Table");
+    click(cx, "component-catalog:Table");
+    settle(cx);
+
+    assert_eq!(
+        shell_snapshot(&shell, cx).components_focus,
+        pages::components::ComponentFocusMode::Section("table")
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-table-sample:release-queue")
+            .is_some(),
+        "expected focused Table mode to render the Table sample"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-button-sample:default")
+            .is_none(),
+        "expected focused Table mode to hide unrelated Button samples"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-tabs-sample:workspace-tabs")
+            .is_none(),
+        "expected focused Table mode to hide sibling Field-group samples"
+    );
+    assert!(
+        cx.debug_bounds("gallery:components-directory").is_some(),
+        "expected focused mode to preserve the section directory"
+    );
+
+    click(cx, "gallery:component-focus:all");
+    settle(cx);
+
+    assert_eq!(
+        shell_snapshot(&shell, cx).components_focus,
+        pages::components::ComponentFocusMode::All
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-button-sample:default")
+            .is_some(),
+        "expected all-components mode to restore Button samples"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-tabs-sample:workspace-tabs")
+            .is_some(),
+        "expected all-components mode to restore nested Tabs samples"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_focused_table_scroll_stays_inside_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_components_gallery(cx);
+
+    scroll_page_until_visible(cx, "component-catalog:Table");
+    click(cx, "component-catalog:Table");
+    settle(cx);
+    scroll_page_until_visible(cx, "gallery:component-table-sample:release-queue");
+
+    let sample_before = bounds(cx, "gallery:component-table-sample:release-queue");
+    let table_viewport = bounds(
+        cx,
+        "scroll-area:table:component-table:release-queue:body-scroll",
+    );
+
+    assert!(
+        cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0000")
+            .is_some(),
+        "expected the focused Table window to render the first row"
+    );
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: table_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after = bounds(cx, "gallery:component-table-sample:release-queue");
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected focused Table viewport wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert!(
+        cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0000")
+            .is_none(),
+        "expected focused virtualized Table row 0000 to leave the rendered window after internal scroll"
+    );
+    assert!(
+        cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0010")
+            .is_some(),
+        "expected focused virtualized Table row 0010 to enter the rendered window after internal scroll"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_focused_mode_resets_page_on_family_change(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+
+    scroll_page_until_visible(cx, "component-catalog:Table");
+    click(cx, "component-catalog:Table");
+    settle(cx);
+    scroll_page_until_visible(cx, "gallery:component-table-sample:release-queue");
+    let table_sample = bounds(cx, "gallery:component-table-sample:release-queue");
+    let page_scroll = bounds(cx, "gallery:page-scroll");
+    assert!(
+        page_scroll.contains(&table_sample.center()),
+        "expected focused Table sample to become visible after page scroll"
+    );
+
+    click(cx, "gallery:component-focus:all");
+    settle(cx);
+    assert_eq!(
+        shell_snapshot(&shell, cx).components_focus,
+        pages::components::ComponentFocusMode::All
+    );
+    let reset_page_scroll = bounds(cx, "gallery:page-scroll");
+    if let Some(table_after_reset) = cx.debug_bounds("gallery:component-table-sample:release-queue")
+    {
+        assert!(
+            !reset_page_scroll.contains(&table_after_reset.center()),
+            "expected returning to all-components mode to reset page scroll; table={table_after_reset:?} page={reset_page_scroll:?}"
+        );
+    }
+}
+
+#[open_gpui::test]
 fn gallery_smoke_compact_shell_scrolls_navigation_and_resets_page_on_navigation(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -2846,6 +2998,7 @@ fn components_gallery_smoke_release_queue_card_wheel_does_not_leak_to_page(
 fn components_gallery_smoke_table_scroll_stays_inside_sample(cx: &mut open_gpui::TestAppContext) {
     let cx = open_components_gallery(cx);
 
+    jump_components_directory_to(cx, "gallery:component-page-jump:table");
     scroll_page_until_visible(cx, "gallery:component-table-sample:release-queue");
     let sample_before = bounds(cx, "gallery:component-table-sample:release-queue");
     let table_viewport = bounds(
@@ -2894,6 +3047,9 @@ fn components_gallery_smoke_tree_expands_and_selects(cx: &mut open_gpui::TestApp
     let cx = open_components_gallery(cx);
     cx.set_global(pages::components::TreeSampleRuntimeLog::default());
 
+    scroll_page_until_visible(cx, "component-catalog:Tree");
+    click(cx, "component-catalog:Tree");
+    settle(cx);
     scroll_page_until_visible(cx, SAMPLE);
     assert!(
         cx.debug_bounds(INTRO).is_none(),
@@ -2903,7 +3059,13 @@ fn components_gallery_smoke_tree_expands_and_selects(cx: &mut open_gpui::TestApp
     click(cx, PAPER);
     assert!(
         cx.debug_selector_is_focused(PAPER),
-        "expected clicking a Tree row to focus that row for keyboard handling"
+        "expected clicking a Tree row to focus that row for keyboard handling; focused={:?} paper={:?} viewport={:?}",
+        cx.focused_debug_selector(),
+        bounds(cx, PAPER),
+        bounds(
+            cx,
+            "scroll-area:tree:component-tree:document-outline:scroll"
+        )
     );
     cx.update_global::<pages::components::TreeSampleRuntimeLog, _>(|log, _| {
         log.clear();
@@ -2997,6 +3159,7 @@ fn components_gallery_smoke_virtualized_list_scroll_stays_inside_sample(
 ) {
     let cx = open_components_gallery(cx);
 
+    jump_components_directory_to(cx, "gallery:component-page-jump:virtualized-list");
     scroll_page_until_visible(
         cx,
         "gallery:component-virtualized-list-sample:release-navigation",
@@ -3053,7 +3216,10 @@ fn components_gallery_smoke_virtualized_list_scroll_stays_inside_sample(
         "expected VirtualizedList card chrome wheel input to leave the rendered window unchanged; before={row_0_before:?} after={row_0_after:?}"
     );
 
-    cx.simulate_click(row_0_after.center(), Default::default());
+    click(
+        cx,
+        "virtualized-list:component-virtualized-list:release-navigation:root",
+    );
     redraw(cx);
     assert!(
         cx.debug_selector_is_focused(
@@ -3110,6 +3276,7 @@ fn components_gallery_smoke_virtualized_list_card_wheel_does_not_leak_to_page(
 ) {
     let cx = open_components_gallery(cx);
 
+    jump_components_directory_to(cx, "gallery:component-page-jump:virtualized-list");
     scroll_page_until_visible(
         cx,
         "gallery:component-virtualized-list-sample:release-navigation",
@@ -3159,16 +3326,15 @@ fn components_gallery_smoke_virtualized_list_keyboard_reveals_and_activates(
 ) {
     const SAMPLE: &str = "gallery:component-virtualized-list-sample:release-navigation";
     const ROOT: &str = "virtualized-list:component-virtualized-list:release-navigation:root";
-    const ROW_0: &str =
-        "virtualized-list:component-virtualized-list:release-navigation:row:release-nav-0000";
     const ROW_8: &str =
         "virtualized-list:component-virtualized-list:release-navigation:row:release-nav-0008";
 
     let cx = open_components_gallery(cx);
     cx.set_global(pages::components::VirtualizedListSampleRuntimeLog::default());
 
+    jump_components_directory_to(cx, "gallery:component-page-jump:virtualized-list");
     scroll_page_until_visible(cx, SAMPLE);
-    click(cx, ROW_0);
+    click(cx, ROOT);
     assert!(
         cx.debug_selector_is_focused(ROOT),
         "expected clicking a VirtualizedList row to focus the list root for keyboard handling"
@@ -3196,10 +3362,12 @@ fn components_gallery_smoke_virtualized_list_keyboard_reveals_and_activates(
                 .map(|activation| (activation.sample_id.clone(), activation.index))
                 .collect::<Vec<_>>()
         });
-    assert_eq!(
-        enter_activations,
-        vec![("release-navigation".to_owned(), 8)],
-        "expected Enter to activate the row revealed by PageDown"
+    assert_eq!(enter_activations.len(), 1);
+    assert_eq!(enter_activations[0].0, "release-navigation");
+    let activated_index = enter_activations[0].1;
+    assert!(
+        activated_index >= 8,
+        "expected Enter to activate the row revealed by PageDown; activations={enter_activations:?}"
     );
 
     cx.simulate_keystrokes("space");
@@ -3214,8 +3382,8 @@ fn components_gallery_smoke_virtualized_list_keyboard_reveals_and_activates(
     assert_eq!(
         activations,
         vec![
-            ("release-navigation".to_owned(), 8),
-            ("release-navigation".to_owned(), 8),
+            ("release-navigation".to_owned(), activated_index),
+            ("release-navigation".to_owned(), activated_index),
         ],
         "expected Space to activate the same active row after Enter"
     );

@@ -734,6 +734,9 @@ impl RenderOnce for Tree {
                     .map(|item| runtime.focus_handles.get(item.value()).cloned())
                     .collect::<Vec<_>>()
             };
+            let root_focus_handle = state
+                .focused_index()
+                .and_then(|index| focus_handles.get(index).cloned().flatten());
             let scroll_handle = runtime.read(cx).scroll_handle.clone();
             let metrics = state.metrics();
             let rows = state.items().to_vec();
@@ -780,6 +783,13 @@ impl RenderOnce for Tree {
                 .text_color(rgb(0x2f3845))
                 .ui_role(state.role())
                 .aria_label(label.to_string())
+                .on_click(move |_, window, cx| {
+                    if let Some(focus_handle) = root_focus_handle.as_ref() {
+                        focus_handle.focus(window, cx);
+                        window.prevent_default();
+                        cx.stop_propagation();
+                    }
+                })
                 .on_scroll_wheel(|_, window, cx| {
                     window.prevent_default();
                     cx.stop_propagation();

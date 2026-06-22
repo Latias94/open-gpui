@@ -42,6 +42,7 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_foundation_gallery::pages::components::COMPONENT_CATALOG",
     "open_gpui_ui_foundation_gallery::pages::components::ComponentCatalogEntry",
     "open_gpui_ui_foundation_gallery::pages::components::ComponentCatalogStatus",
+    "open_gpui_ui_foundation_gallery::pages::components::ComponentFocusMode",
     "open_gpui_ui_foundation_gallery::pages::components::state_contract_readout_pairs",
     "open_gpui_ui_components::Button",
     "open_gpui_ui_components::ButtonState",
@@ -294,6 +295,95 @@ pub const COMPONENT_PAGE_JUMPS: &[ComponentPageJump] = &[
     },
 ];
 
+/// Components page rendering mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComponentFocusMode {
+    /// Render the full conformance page.
+    All,
+    /// Render one component section plus its local metadata.
+    Section(&'static str),
+}
+
+impl Default for ComponentFocusMode {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
+impl ComponentFocusMode {
+    /// Creates a focus mode for a known Components page section.
+    pub fn section(id: &'static str) -> Option<Self> {
+        focused_section_for_id(id).map(Self::Section)
+    }
+
+    /// Returns the stable reset key used by the outer gallery page viewport.
+    pub const fn reset_key(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Section(id) => id,
+        }
+    }
+
+    /// Returns true when the section should render for this mode.
+    pub const fn shows_section(self, id: &'static str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Section(focused) => str_eq(focused, id),
+        }
+    }
+
+    /// Returns the focused section id when one is active.
+    pub const fn focused_section(self) -> Option<&'static str> {
+        match self {
+            Self::All => None,
+            Self::Section(id) => Some(id),
+        }
+    }
+}
+
+const fn str_eq(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    if left.len() != right.len() {
+        return false;
+    }
+
+    let mut index = 0;
+    while index < left.len() {
+        if left[index] != right[index] {
+            return false;
+        }
+        index += 1;
+    }
+
+    true
+}
+
+/// Returns a section id that can be shown in focused mode.
+pub fn focused_section_for_id(id: &'static str) -> Option<&'static str> {
+    COMPONENT_PAGE_JUMPS
+        .iter()
+        .map(|jump| jump.id)
+        .find(|candidate| {
+            *candidate == id
+                && *candidate != "catalog"
+                && *candidate != "gates"
+                && *candidate != "signals"
+        })
+}
+
+/// Returns the focused section represented by a catalog entry.
+pub fn focused_section_for_catalog_entry(entry: &ComponentCatalogEntry) -> Option<&'static str> {
+    match entry.status {
+        ComponentCatalogStatus::Official | ComponentCatalogStatus::StateContract => {
+            focused_section_for_id(entry.sample_section_id())
+        }
+        ComponentCatalogStatus::AdapterOnly
+        | ComponentCatalogStatus::InternalAnatomy
+        | ComponentCatalogStatus::Deferred => None,
+    }
+}
+
 /// Component catalog status shown by the Components page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComponentCatalogStatus {
@@ -442,6 +532,38 @@ impl ComponentCatalogEntry {
     /// Returns the stable selector used for the visible catalog card.
     pub fn catalog_selector(self) -> String {
         format!("component-catalog:{}", self.name)
+    }
+
+    /// Returns the Components page section that contains this entry's rendered sample or readout.
+    pub fn sample_section_id(self) -> &'static str {
+        match self.name {
+            "StatusCue" | "EmptyState" => "feedback",
+            "TreeState" | "VirtualizedListState" => "state-contracts",
+            "RadioGroup" => "radio-group",
+            "IconButton" => "icon-button",
+            "TextInput" => "text-input",
+            "ScrollArea" => "scroll-area",
+            "VirtualizedList" => "virtualized-list",
+            "Button" => "button",
+            "Badge" => "badge",
+            "Switch" => "switch",
+            "Checkbox" => "checkbox",
+            "Toggle" => "toggle",
+            "Toolbar" => "toolbar",
+            "Sidebar" => "sidebar",
+            "Tree" => "tree",
+            "Listbox" => "listbox",
+            "Select" => "select",
+            "Combobox" => "combobox",
+            "Command" => "command",
+            "Label" => "label",
+            "Field" => "field",
+            "Tabs" => "tabs",
+            "Splitter" => "splitter",
+            "Table" => "table",
+            "Separator" | "Kbd" | "Progress" | "Skeleton" | "Avatar" => "primitives",
+            _ => "catalog",
+        }
     }
 }
 

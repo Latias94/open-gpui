@@ -53,6 +53,17 @@ horizontal plus vertical Splitter pointer dragging, and long Sidebar internal na
 Run the gallery package tests before relying on manual dogfood for those paths.
 The Components-page ScrollArea regressions also cover release-queue wheel isolation so scroll
 gestures on the sample card chrome do not leak to the page shell.
+The Components page has two inspection modes: the full all-components conformance page, and a
+catalog-driven focused component-family view. Directory chips remain pure anchor jumps. Focused
+mode is entered from catalog cards and restored through the explicit `All components` control. The
+focused-view proof is:
+
+```powershell
+cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focuses_catalog_family_and_restores_all_mode
+cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focused_table_scroll_stays_inside_sample
+cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focused_mode_resets_page_on_family_change
+```
+
 Table gallery gates now follow the same split: `open-gpui-ui-core` tests prove row-model and
 virtualizer contracts without rendering, `open-gpui-ui-components` tests prove adapter exports,
 state metadata, and scroll ownership, and gallery smokes prove long table scroll input stays inside
@@ -273,7 +284,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    control-association, decorative, semantic, indeterminate-progress, fallback-initial,
    source-metadata, roving-focus, popup, overflow-axis, scroll-reset, resize-constraint, row-model,
    and virtualized-viewport states. The Badge, Kbd, and Skeleton samples should remain display-only.
-   The Separator samples should distinguish semantic and
+   Use a few catalog cards, such as Table, Tree, and VirtualizedList, to enter focused
+   component-family mode; confirm unrelated samples are hidden, the section directory stays
+   available, nested sample scrolling still stays inside the sample, and `All components` restores
+   the full conformance page with the page scroll reset. The Separator samples should distinguish semantic and
    decorative roles. The Progress samples should cover determinate and indeterminate values, with
    indeterminate progress rendering as a short non-percentage segment rather than a fixed 33% fill.
    The Avatar samples should show derived fallback initials, explicit fallback text, explicit

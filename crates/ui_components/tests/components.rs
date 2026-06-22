@@ -2847,6 +2847,21 @@ fn tree_runtime_expands_reveals_and_selects_items(cx: &mut open_gpui::TestAppCon
         "expected collapsed descendants to stay hidden before expansion"
     );
 
+    let root = cx
+        .debug_bounds("tree:runtime-tree:root")
+        .expect("tree root should render as a focusable interaction region");
+    cx.simulate_click(
+        point(root.left() + px(2.0), root.top() + px(2.0)),
+        Default::default(),
+    );
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_selector_is_focused("tree:runtime-tree:item:paper"),
+        "clicking Tree chrome should focus the current roving item for keyboard navigation"
+    );
+
     let paper = cx
         .debug_bounds("tree:runtime-tree:item:paper")
         .expect("paper row should be visible");
@@ -3242,6 +3257,18 @@ fn virtualized_list_runtime_reveals_active_row_and_emits_activation(
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
+
+    let root = cx
+        .debug_bounds("virtualized-list:runtime-list:root")
+        .expect("virtualized list root should render as a focusable target");
+    cx.simulate_click(root.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_selector_is_focused("virtualized-list:runtime-list:root"),
+        "clicking the VirtualizedList root should focus it for keyboard navigation"
+    );
 
     let row_0 = cx
         .debug_bounds("virtualized-list:runtime-list:row:item-0000")

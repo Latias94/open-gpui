@@ -436,8 +436,13 @@ should expose stable sample ids, real resolved state, and a short gate list that
 regression-prone behaviors each slice must keep covered.
 
 The Components page should keep the official component catalog visible and distinguish shipped
-components from adapter-only helpers, internal anatomy, and deferred primitives. It should also keep
-these gates visible:
+components from adapter-only helpers, internal anatomy, and deferred primitives. It has two
+supported inspection modes: the full all-components conformance page, and a focused
+component-family view entered from official catalog cards. Focused mode may hide unrelated
+sections, but it must keep the section directory available, expose an explicit `All components`
+control, reset the page viewport when the family changes, and keep nested sample scrolling local to
+the sample viewport. Directory chips remain anchor jumps inside the current page mode; they must
+not implicitly change the focused family. The page should also keep these gates visible:
 
 - crate-root and prelude exports stay explicit;
 - adapter-only helper exports stay grouped under `open_gpui_ui_components::gpui_adapter`;
@@ -446,6 +451,8 @@ these gates visible:
 - every official overlay entry keeps matching catalog metadata, component/state signals, rendered
   sample selectors, and visible catalog cards on the Overlay page;
 - gallery samples continue to show real resolved state for each shipped component;
+- all-components and focused component-family modes preserve the catalog, section directory, page
+  scroll reset, and nested scroll containment contracts;
 - the gallery navigation rail and page viewport stay independently scrollable on compact windows;
 - ScrollArea redraws preserve the default keyed runtime handle;
 - Table and virtualizer samples keep long table scrolling inside the table viewport;

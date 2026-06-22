@@ -727,6 +727,7 @@ impl RenderOnce for VirtualizedList {
         let rows = plan.rows().to_vec();
         let list_id = plan.list_id().to_owned();
         let scroll_viewport_id = format!("virtualized-list:{}:viewport", plan.list_id());
+        let root_click_state = list_state.clone();
 
         runtime.update(cx, |runtime, _| {
             if runtime.active_index != list_state.active_index() {
@@ -764,6 +765,14 @@ impl RenderOnce for VirtualizedList {
             .ui_role(plan.role())
             .aria_label(plan.label().to_owned())
             .aria_disabled(list_state.disabled())
+            .on_click({
+                let focus_handle = focus_handle.clone();
+                move |_, window, cx| {
+                    if !root_click_state.disabled() && !root_click_state.visible_empty() {
+                        focus_handle.focus(window, cx);
+                    }
+                }
+            })
             .on_scroll_wheel(|_, window, cx| {
                 window.prevent_default();
                 cx.stop_propagation();

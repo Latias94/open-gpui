@@ -73,6 +73,9 @@ pub struct GalleryShellSnapshot {
 
     /// The default token bundle consumed by the shell.
     pub tokens: ThemeTokens,
+
+    /// Focused Components page mode.
+    pub components_focus: pages::components::ComponentFocusMode,
 }
 
 /// Returns the foundation snapshot for a gallery viewport width.
@@ -98,6 +101,8 @@ pub fn foundation_snapshot(width: Pixels, selected_page: GalleryPage) -> Gallery
         control_size: density.default_size(),
 
         tokens: ThemeTokens::default(),
+
+        components_focus: pages::components::ComponentFocusMode::All,
     }
 }
 
@@ -115,6 +120,7 @@ pub struct GalleryShell {
     tooltip_focus_controls: [FocusHandle; 4],
     focus_a11y: FocusA11yPageState,
     overlay: OverlayPageState,
+    components_focus: pages::components::ComponentFocusMode,
 }
 
 impl GalleryShell {
@@ -149,6 +155,7 @@ impl GalleryShell {
             ],
             focus_a11y: FocusA11yPageState::default(),
             overlay: OverlayPageState::default(),
+            components_focus: pages::components::ComponentFocusMode::All,
         }
     }
 }
@@ -183,7 +190,9 @@ impl GalleryShell {
     /// Returns the current foundation snapshot.
 
     pub fn snapshot(&self) -> GalleryShellSnapshot {
-        foundation_snapshot(self.width, self.selected_page)
+        let mut snapshot = foundation_snapshot(self.width, self.selected_page);
+        snapshot.components_focus = self.components_focus;
+        snapshot
     }
 
     fn select_page(&mut self, page: GalleryPage, cx: &mut Context<Self>) {
@@ -218,6 +227,17 @@ impl GalleryShell {
         cx: &mut Context<Self>,
     ) {
         if mutate(&mut self.overlay) {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_components_focus(
+        &mut self,
+        focus: pages::components::ComponentFocusMode,
+        cx: &mut Context<Self>,
+    ) {
+        if self.components_focus != focus {
+            self.components_focus = focus;
             cx.notify();
         }
     }
@@ -417,6 +437,7 @@ impl GalleryShell {
                 this.child(pages::components::render_components_directory(
                     &component_page_anchors,
                     snapshot,
+                    cx,
                 ))
             })
             .child(
@@ -434,9 +455,21 @@ impl GalleryShell {
                         )
                         .scroll_handle(&self.page_scroll_handle)
                         .with_size(snapshot.control_size)
-                        .reset_on_key(snapshot.selected_page.id()),
+                        .reset_on_key(self.page_scroll_reset_key(snapshot)),
                     ),
             )
+    }
+
+    fn page_scroll_reset_key(&self, snapshot: GalleryShellSnapshot) -> String {
+        if snapshot.selected_page == GalleryPage::Components {
+            format!(
+                "{}:{}",
+                snapshot.selected_page.id(),
+                snapshot.components_focus.reset_key()
+            )
+        } else {
+            snapshot.selected_page.id().to_owned()
+        }
     }
 
     fn render_page_body(
@@ -464,10 +497,13 @@ impl GalleryShell {
                 .render_overlay_page(snapshot, window, cx)
                 .into_any_element(),
 
-            GalleryPage::Components => {
-                pages::components::render_components_page(self, snapshot, component_page_anchors)
-                    .into_any_element()
-            }
+            GalleryPage::Components => pages::components::render_components_page(
+                self,
+                snapshot,
+                component_page_anchors,
+                cx,
+            )
+            .into_any_element(),
         }
     }
 
@@ -3703,18 +3739,20 @@ pub(crate) fn component_page_jump(
     label: &'static str,
     anchor: ScrollAnchor,
     tokens: ThemeTokens,
-) -> impl IntoElement {
+) -> open_gpui::Stateful<open_gpui::Div> {
+    let button = Button::new(format!("gallery-components-jump-button:{id}"), label)
+        .variant(ButtonVariant::Ghost)
+        .with_size(Size::Small)
+        .tokens(tokens)
+        .on_click(move |_, _, _| {
+            anchor.scroll_now();
+        });
+
     div()
         .id(format!("gallery-components-jump:{id}"))
         .debug_selector(move || format!("gallery:component-page-jump:{id}"))
         .flex_none()
-        .child(
-            Button::new(format!("gallery-components-jump-button:{id}"), label)
-                .variant(ButtonVariant::Ghost)
-                .with_size(Size::Small)
-                .tokens(tokens)
-                .on_click(move |_, _, _| anchor.scroll_now()),
-        )
+        .child(button)
 }
 
 pub(crate) fn component_listbox_samples_section(
