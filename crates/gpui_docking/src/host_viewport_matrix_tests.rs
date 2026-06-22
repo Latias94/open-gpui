@@ -604,7 +604,7 @@ fn run_overlapping_source_only_release_without_backend_authority_case(
                 .target,
             DockViewportRouteTarget::Unavailable
         ),
-        "{}: overlapping source-only release must not retarget from geometry or focus order alone, got {:?}",
+        "{}: overlapping source-only release must not retarget from geometry alone, got {:?}",
         case.name,
         status.last_route
     );

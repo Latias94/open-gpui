@@ -1279,7 +1279,7 @@ mod tests {
     }
 
     #[test]
-    fn hovered_host_global_drop_requires_backend_or_focus_authority() {
+    fn hovered_host_global_drop_requires_explicit_route_authority() {
         let main = space("main");
         let window = handle(1);
         let mut adapter = DockViewportAdapter::new();
@@ -1304,22 +1304,7 @@ mod tests {
                 DockViewportTargetContext::new(),
             ),
             DockViewportDropRoute::Unavailable,
-            "a lone geometry hit is diagnostic-only without backend hovered-window, stack, or focus-order authority"
-        );
-
-        assert!(adapter.record_platform_focus_order_window(window.window_id()));
-        assert_eq!(
-            adapter.resolve_payload_drop_route_with_context(
-                main.clone(),
-                DockNodeId::null(),
-                DockViewportDropPayload::Item(item("a")),
-                point(px(115.0), px(225.0)),
-                None,
-                &DockPolicy::default(),
-                DockViewportTargetContext::new(),
-            ),
-            DockViewportDropRoute::Unavailable,
-            "platform focus-order is diagnostic-only and must not authorize a drop route"
+            "a lone geometry hit is diagnostic-only without backend hovered-window or stack authority"
         );
         assert_eq!(
             adapter.resolve_payload_drop_route_with_context(
@@ -1457,7 +1442,7 @@ mod tests {
     }
 
     #[test]
-    fn source_only_global_drop_requires_focus_authority_for_source_fallback() {
+    fn source_only_global_drop_rejects_geometry_only_source_fallback() {
         let main = space("main");
         let window = handle(1);
         let mut adapter = DockViewportAdapter::new();
@@ -1483,13 +1468,6 @@ mod tests {
             adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
             DockViewportDropRoute::Unavailable,
             "source-only release should not infer authority from a lone geometry hit"
-        );
-
-        assert!(adapter.record_platform_focus_order_window(window.window_id()));
-        assert_eq!(
-            adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
-            DockViewportDropRoute::Unavailable,
-            "source-only release must not infer local authority from platform focus order"
         );
     }
 
@@ -1568,14 +1546,6 @@ mod tests {
             route,
             DockViewportDropRoute::Unavailable,
             "event receiver remains diagnostic-only; a lone geometry hit cannot authorize a viewport route"
-        );
-
-        assert!(adapter.record_platform_focus_order_window(target_window.window_id()));
-        let focused_route = adapter.resolve_payload_drop_route(&request, &DockPolicy::default());
-        assert_eq!(
-            focused_route,
-            DockViewportDropRoute::Unavailable,
-            "platform focus-order remains diagnostic-only; backend hover fallback must come from the window stack"
         );
     }
 

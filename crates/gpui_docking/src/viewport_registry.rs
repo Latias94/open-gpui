@@ -43,7 +43,6 @@ pub(crate) enum DockViewportRouteUnavailableReason {
 pub(crate) struct DockViewportLifecycleMachine {
     state: DockViewportLifecycleState,
     facts_generation: u64,
-    platform_focus_order_stamp: Option<u64>,
 }
 
 impl Default for DockViewportLifecycleMachine {
@@ -51,7 +50,6 @@ impl Default for DockViewportLifecycleMachine {
         Self {
             state: DockViewportLifecycleState::RegisteredNotReady,
             facts_generation: 0,
-            platform_focus_order_stamp: None,
         }
     }
 }
@@ -64,10 +62,6 @@ impl DockViewportLifecycleMachine {
 
     fn facts_generation(&self) -> u64 {
         self.facts_generation
-    }
-
-    fn platform_focus_order_stamp(&self) -> u64 {
-        self.platform_focus_order_stamp.unwrap_or(0)
     }
 
     fn route_unavailable_reason(&self) -> Option<DockViewportRouteUnavailableReason> {
@@ -114,10 +108,6 @@ impl DockViewportLifecycleMachine {
         self.state = DockViewportLifecycleState::Stale(DockViewportStaleReason::WindowFactsChanged);
         self.advance_generation();
         true
-    }
-
-    fn record_platform_focus_order(&mut self, platform_focus_order_stamp: u64) {
-        self.platform_focus_order_stamp = Some(platform_focus_order_stamp);
     }
 
     fn advance_generation(&mut self) {
@@ -335,10 +325,6 @@ impl DockViewportSnapshot {
         self.lifecycle.facts_generation()
     }
 
-    pub(crate) fn platform_focus_order_stamp(&self) -> u64 {
-        self.lifecycle.platform_focus_order_stamp()
-    }
-
     pub(crate) fn platform_requests(&self) -> DockViewportPlatformRequests {
         self.platform_requests
     }
@@ -494,11 +480,6 @@ impl DockViewportSnapshot {
         self.lifecycle.cancel_platform_close_request()
     }
 
-    pub(crate) fn record_platform_focus_order(&mut self, platform_focus_order_stamp: u64) {
-        self.lifecycle
-            .record_platform_focus_order(platform_focus_order_stamp);
-    }
-
     fn has_current_route_facts(&self) -> bool {
         self.lifecycle.is_route_ready()
             && !self.has_missing_route_facts()
@@ -515,7 +496,6 @@ impl DockViewportSnapshot {
 pub(crate) struct DockViewportRegistry {
     viewports: BTreeMap<DockSpaceId, DockViewportSnapshot>,
     windows: HashMap<WindowId, DockSpaceId>,
-    next_platform_focus_order_stamp: u64,
 }
 
 impl DockViewportRegistry {
@@ -565,29 +545,6 @@ impl DockViewportRegistry {
         self.viewports
             .insert(space, DockViewportSnapshot::new(window));
         replaced
-    }
-
-    pub(crate) fn record_platform_focus_order_window(&mut self, window_id: WindowId) -> bool {
-        let Some(space) = self.space_for_window_id(window_id).cloned() else {
-            return false;
-        };
-        self.record_platform_focus_order_space(&space)
-    }
-
-    fn record_platform_focus_order_space(&mut self, space: &DockSpaceId) -> bool {
-        let Some(snapshot) = self.viewports.get(space) else {
-            return false;
-        };
-        if self.next_platform_focus_order_stamp != 0
-            && snapshot.platform_focus_order_stamp() == self.next_platform_focus_order_stamp
-        {
-            return false;
-        }
-        self.next_platform_focus_order_stamp = self.next_platform_focus_order_stamp.wrapping_add(1);
-        if let Some(snapshot) = self.viewports.get_mut(space) {
-            snapshot.record_platform_focus_order(self.next_platform_focus_order_stamp);
-        }
-        true
     }
 
     pub(crate) fn unregister_space(&mut self, space: &DockSpaceId) -> Option<DockViewportSnapshot> {
@@ -642,29 +599,6 @@ impl DockViewportRegistry {
 
     pub(crate) fn snapshots(&self) -> impl Iterator<Item = (&DockSpaceId, &DockViewportSnapshot)> {
         self.viewports.iter()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn snapshots_by_platform_focus_order(
-        &self,
-    ) -> Vec<(&DockSpaceId, &DockViewportSnapshot)> {
-        let mut snapshots = self.viewports.iter().collect::<Vec<_>>();
-        snapshots.retain(|(_, snapshot)| snapshot.platform_focus_order_stamp() != 0);
-        snapshots.sort_by(|(left_space, left), (right_space, right)| {
-            right
-                .platform_focus_order_stamp()
-                .cmp(&left.platform_focus_order_stamp())
-                .then_with(|| left_space.cmp(right_space))
-        });
-        snapshots
-    }
-
-    #[cfg(test)]
-    pub(crate) fn spaces_by_platform_focus_order(&self) -> Vec<DockSpaceId> {
-        self.snapshots_by_platform_focus_order()
-            .into_iter()
-            .map(|(space, _)| space.clone())
-            .collect()
     }
 
     #[cfg(test)]
@@ -755,34 +689,6 @@ mod tests {
         assert_eq!(
             registry.space_for_window_id(current_window.window_id()),
             Some(&main)
-        );
-    }
-
-    #[test]
-    fn replacing_a_viewport_clears_the_previous_platform_focus_order_stamp() {
-        let mut registry = DockViewportRegistry::default();
-        let alpha = space("alpha");
-        let zeta = space("zeta");
-        let alpha_window = handle(1);
-        let zeta_window = handle(2);
-        let rebound_window = handle(3);
-
-        registry.register(alpha.clone(), alpha_window);
-        registry.register(zeta.clone(), zeta_window);
-        registry.record_platform_focus_order_window(alpha_window.window_id());
-        registry.record_platform_focus_order_window(zeta_window.window_id());
-        assert_eq!(
-            registry.spaces_by_platform_focus_order(),
-            vec![zeta.clone(), alpha.clone()]
-        );
-
-        registry.register(zeta.clone(), rebound_window);
-
-        assert_eq!(registry.space_for_window_id(zeta_window.window_id()), None);
-        assert_eq!(
-            registry.spaces_by_platform_focus_order(),
-            vec![alpha],
-            "a rebound window must not inherit the previous window's platform focus order stamp"
         );
     }
 

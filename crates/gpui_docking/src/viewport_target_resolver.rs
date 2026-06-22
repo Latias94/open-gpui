@@ -474,7 +474,7 @@ mod tests {
                 &DockViewportTargetContext::new(),
             ),
             None,
-            "a single geometry hit remains diagnostic-only without backend hover, stack, or focus-order authority"
+            "a single geometry hit remains diagnostic-only without backend hover or stack authority"
         );
 
         let single_hovered_known_empty = choose_diagnostic_viewport_target(

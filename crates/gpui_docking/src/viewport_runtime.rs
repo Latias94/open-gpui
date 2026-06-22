@@ -613,20 +613,14 @@ impl DockViewportRuntime {
         })
     }
 
-    pub(crate) fn record_platform_focus_order_window(&mut self, window_id: WindowId) -> bool {
-        self.adapter.record_platform_focus_order_window(window_id)
-    }
-
     fn record_platform_focused_window(&mut self, window_id: WindowId) -> Option<bool> {
         let adapter = &self.adapter;
-        let focus_record =
-            self.backend_focus
-                .record_platform_focused_window(window_id, |candidate| {
-                    adapter.space_for_window_id(candidate).is_some()
-                        && !adapter.window_close_requested(candidate)
-                })?;
-        let focus_order_changed = self.record_platform_focus_order_window(window_id);
-        Some(focus_order_changed || focus_record.changed())
+        self.backend_focus
+            .record_platform_focused_window(window_id, |candidate| {
+                adapter.space_for_window_id(candidate).is_some()
+                    && !adapter.window_close_requested(candidate)
+            })
+            .map(|focus_record| focus_record.changed())
     }
 
     pub(crate) fn reconcile_backend_window_focus(&mut self, cx: &mut App) -> bool {
@@ -1263,9 +1257,7 @@ impl DockViewportRuntime {
     ) -> DockViewportRuntimeRegistration {
         self.retired_windows.remove(&window.window_id());
         self.owned_windows.insert(window.window_id());
-        let window_id = window.window_id();
         let outcome = self.adapter.register_viewport_with_outcome(space, window);
-        self.record_platform_focus_order_window(window_id);
         let mut replaced_windows = Vec::new();
         for removed in outcome.replaced() {
             self.clear_runtime_window_state(&removed.space, removed.window.window_id(), true);
@@ -1295,7 +1287,6 @@ impl DockViewportRuntime {
             Some(_) => false,
             None => {
                 let _ = self.adapter.register_viewport_with_outcome(space, window);
-                self.record_platform_focus_order_window(window.window_id());
                 true
             }
         }
