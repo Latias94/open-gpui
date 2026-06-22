@@ -8,24 +8,22 @@ use crate::{
     DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropActionOutcome,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
     DockViewportDropRouteResolution, DockViewportFocusCoordinator, DockViewportFocusRequest,
-    DockViewportIdentity, DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportPlatformSyncRecord, DockViewportRegisterOutcome, DockViewportResolvedDropRoute,
-    DockViewportRestoreReadiness, DockViewportRoutedDropPreview,
-    DockViewportRoutedDropPreviewReplacement, DockViewportRoutedDropPreviewState,
-    DockViewportRuntimeHandle, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
-    DockViewportShouldCloseStatus, DockViewportTargetHit, DockViewportTearOffBeginOutcome,
-    DockViewportTearOffCancelReason, DockViewportTearOffCancelled, DockViewportTearOffCompleted,
-    DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffSourceStatus,
-    DockViewportTearOffTick, DockViewportWindowFacts, DockViewportWindowOwnership,
-    DockViewportWorkspaceRouteTarget,
+    DockViewportFrameCoordinator, DockViewportHostSceneExpiration,
+    DockViewportHostSceneLivenessToken, DockViewportIdentity, DockViewportPlacementLayout,
+    DockViewportPlacementValidationError, DockViewportPlatformSyncRecord,
+    DockViewportRegisterOutcome, DockViewportResolvedDropRoute, DockViewportRestoreReadiness,
+    DockViewportRoutedDropPreview, DockViewportRoutedDropPreviewReplacement,
+    DockViewportRoutedDropPreviewState, DockViewportRuntimeHandle, DockViewportRuntimeStatus,
+    DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus, DockViewportTargetHit,
+    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
+    DockViewportTearOffCompleted, DockViewportTearOffKey, DockViewportTearOffMachine,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
+    DockViewportTearOffSourceStatus, DockViewportTearOffTick, DockViewportWindowFacts,
+    DockViewportWindowOwnership, DockViewportWorkspaceRouteTarget,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
-    viewport_drop_scene::{
-        DockViewportHostSceneFrame, DockViewportHostSceneRegistration,
-        DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot,
-    },
+    viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_registry::DockViewportPlatformRequests,
     workspace_transaction::DockWorkspacePayloadDropRequest,
 };
@@ -35,7 +33,6 @@ use open_gpui::{
     AnyWindowHandle, App, Bounds, Entity, Pixels, PlatformFocusedWindow, Point, WindowBounds,
     WindowId, WindowOptions, point, px,
 };
-use std::collections::HashMap;
 
 /// Internal owner for controller-backed platform viewport lifecycle.
 ///
@@ -48,7 +45,7 @@ pub(crate) struct DockViewportRuntime {
     controller: Entity<DockController>,
     adapter: DockViewportAdapter,
     close_policy: DockViewportClosePolicy,
-    host_scenes: DockViewportHostSceneRegistry,
+    frame_coordinator: DockViewportFrameCoordinator,
     tear_off: DockViewportTearOffMachine,
     tear_off_tick: DockViewportTearOffTick,
     active_drag: Option<DockViewportActivePayloadDrag>,
@@ -59,7 +56,6 @@ pub(crate) struct DockViewportRuntime {
     backend_focus: DockViewportBackendFocusState,
     close_coordinator: DockViewportCloseCoordinator,
     routed_drop_preview: DockViewportRoutedDropPreviewState,
-    host_scene_liveness: DockViewportHostSceneLiveness,
     status: DockViewportRuntimeStatus,
 }
 
@@ -73,17 +69,6 @@ struct DockRuntimeDragTearOffGeometry {
 struct DockViewportRuntimeRegistration {
     outcome: DockViewportRegisterOutcome,
     replaced_windows: Vec<AnyWindowHandle>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DockViewportHostSceneLivenessToken {
-    identity: DockViewportIdentity,
-    generation: u64,
-}
-
-#[derive(Debug, Default)]
-struct DockViewportHostSceneLiveness {
-    generations: HashMap<DockViewportIdentity, u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,33 +93,6 @@ impl DockViewportPointerInputSyncRequest {
 
     pub(crate) fn requested_accepts_pointer_input(&self) -> bool {
         self.accepts_pointer_input
-    }
-}
-
-impl DockViewportHostSceneLiveness {
-    fn lease(&mut self, identity: DockViewportIdentity) -> DockViewportHostSceneLivenessToken {
-        let generation = self
-            .generations
-            .entry(identity.clone())
-            .and_modify(|generation| *generation = generation.wrapping_add(1))
-            .or_insert(1);
-        DockViewportHostSceneLivenessToken {
-            identity,
-            generation: *generation,
-        }
-    }
-
-    fn is_expired(&self, token: &DockViewportHostSceneLivenessToken) -> bool {
-        self.generations.get(&token.identity).copied() == Some(token.generation)
-    }
-
-    fn forget(&mut self, identity: &DockViewportIdentity) {
-        self.generations.remove(identity);
-    }
-
-    fn forget_window(&mut self, window_id: WindowId) {
-        self.generations
-            .retain(|identity, _| identity.window_id() != window_id);
     }
 }
 
@@ -392,7 +350,7 @@ impl DockViewportRuntime {
             controller,
             adapter: DockViewportAdapter::new(),
             close_policy,
-            host_scenes: DockViewportHostSceneRegistry::default(),
+            frame_coordinator: DockViewportFrameCoordinator::default(),
             tear_off: DockViewportTearOffMachine::default(),
             tear_off_tick: DockViewportTearOffTick::default(),
             active_drag: None,
@@ -403,7 +361,6 @@ impl DockViewportRuntime {
             backend_focus: DockViewportBackendFocusState::default(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewState::default(),
-            host_scene_liveness: DockViewportHostSceneLiveness::default(),
             status: DockViewportRuntimeStatus::default(),
         }
     }
@@ -419,7 +376,7 @@ impl DockViewportRuntime {
             controller,
             adapter,
             close_policy,
-            host_scenes: DockViewportHostSceneRegistry::default(),
+            frame_coordinator: DockViewportFrameCoordinator::default(),
             tear_off: DockViewportTearOffMachine::default(),
             tear_off_tick: DockViewportTearOffTick::default(),
             active_drag: None,
@@ -430,7 +387,6 @@ impl DockViewportRuntime {
             backend_focus: DockViewportBackendFocusState::default(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewState::default(),
-            host_scene_liveness: DockViewportHostSceneLiveness::default(),
             status: DockViewportRuntimeStatus::default(),
         }
     }
@@ -778,20 +734,20 @@ impl DockViewportRuntime {
         &mut self,
         token: DockViewportHostSceneLivenessToken,
     ) -> (bool, Vec<AnyWindowHandle>) {
-        if !self.host_scene_liveness.is_expired(&token) {
-            return (false, Vec::new());
-        }
-        let identity = token.identity;
-        if self
+        let current_window_id = self
             .adapter
-            .window_for_space(identity.space())
-            .is_none_or(|window| window.window_id() != identity.window_id())
+            .window_for_space(token.identity().space())
+            .map(|window| window.window_id());
+        match self
+            .frame_coordinator
+            .expire_unrendered_host_scene(token, current_window_id)
         {
-            self.host_scene_liveness.forget(&identity);
-            return (false, Vec::new());
+            DockViewportHostSceneExpiration::StillCurrent
+            | DockViewportHostSceneExpiration::StaleIdentity(_) => (false, Vec::new()),
+            DockViewportHostSceneExpiration::Expired(identity) => {
+                self.mark_viewport_window_snapshot_stale(identity.window_id())
+            }
         }
-        self.host_scenes.unregister_window(identity.window_id());
-        self.mark_viewport_window_snapshot_stale(identity.window_id())
     }
 
     pub(crate) fn apply_platform_window_facts(
@@ -824,7 +780,7 @@ impl DockViewportRuntime {
             changed |= drag_changed;
             extend_unique_windows(&mut windows, drag_windows);
         }
-        self.host_scenes.unregister_window(window_id);
+        self.frame_coordinator.unregister_window_scene(window_id);
         let (preview_changed, preview_windows) =
             self.clear_routed_drop_preview_if_window_matches(window_id);
         extend_unique_windows(&mut windows, preview_windows);
@@ -919,16 +875,14 @@ impl DockViewportRuntime {
             false
         };
         let changed = self.update_viewport_snapshot(&space, window_facts, host_bounds);
-        let mut registration = self
-            .host_scenes
-            .register(DockViewportHostSceneSnapshot::new(
-                space,
-                window_id,
-                window_facts.current_bounds,
-                host_bounds,
-                host_position,
-                drop_guide_style,
-            ));
+        let mut registration = self.frame_coordinator.register_host_scene(
+            space,
+            window_id,
+            window_facts,
+            host_bounds,
+            host_position,
+            drop_guide_style,
+        );
         registration.changed |= changed || close_cancelled;
         Some(registration)
     }
@@ -937,7 +891,7 @@ impl DockViewportRuntime {
         &mut self,
         identity: DockViewportIdentity,
     ) -> DockViewportHostSceneLivenessToken {
-        self.host_scene_liveness.lease(identity)
+        self.frame_coordinator.lease_rendered_host_scene(identity)
     }
 
     #[cfg(test)]
@@ -947,7 +901,7 @@ impl DockViewportRuntime {
         window_id: WindowId,
         fact: DockHostDropSceneFact,
     ) -> bool {
-        self.host_scenes.push_fact(space, window_id, fact)
+        self.frame_coordinator.push_fact(space, window_id, fact)
     }
 
     pub(crate) fn push_viewport_host_scene_frame_fact(
@@ -955,7 +909,7 @@ impl DockViewportRuntime {
         frame: &DockViewportHostSceneFrame,
         fact: DockHostDropSceneFact,
     ) -> Option<DockViewportHostSceneFrame> {
-        self.host_scenes.push_frame_fact(frame, fact)
+        self.frame_coordinator.push_frame_fact(frame, fact)
     }
 
     pub(crate) fn routed_drop_preview_for(
@@ -1142,8 +1096,8 @@ impl DockViewportRuntime {
         }
         self.window_ownership.clear_window_state(window_id);
         self.backend_focus.discard_window(window_id);
-        self.host_scene_liveness.forget_window(window_id);
-        self.host_scenes.unregister_space(space);
+        self.frame_coordinator.forget_window_liveness(window_id);
+        self.frame_coordinator.unregister_space(space);
         self.clear_pending_activation_for(space, window_id);
         self.status.clear_window_references(space, window_id);
         self.focus.remove_space(space);
@@ -1324,7 +1278,7 @@ impl DockViewportRuntime {
                 let controller = self.controller.read(cx);
                 crate::validate_delivery_workspace_target(
                     &self.adapter,
-                    &self.host_scenes,
+                    self.frame_coordinator.host_scenes(),
                     controller.workspace(),
                     source.source_node(),
                     source.payload(),
@@ -1364,7 +1318,7 @@ impl DockViewportRuntime {
                     let controller = self.controller.read(cx);
                     crate::resolve_delivery_workspace_target(
                         &self.adapter,
-                        &self.host_scenes,
+                        self.frame_coordinator.host_scenes(),
                         controller.workspace(),
                         source_node,
                         &payload,
@@ -1523,7 +1477,7 @@ impl DockViewportRuntime {
         &self,
         space: &DockSpaceId,
     ) -> Option<Point<Pixels>> {
-        self.host_scenes.screen_position(space)
+        self.frame_coordinator.screen_position(space)
     }
 
     #[cfg(test)]
@@ -1542,7 +1496,7 @@ impl DockViewportRuntime {
             return None;
         }
         let policy = self.controller.read(cx).workspace().policy().clone();
-        self.host_scenes.resolve_for_window(
+        self.frame_coordinator.host_scenes().resolve_for_window(
             space,
             Some(window.window_id()),
             host_position,
@@ -1735,7 +1689,7 @@ impl DockViewportRuntime {
         let mut preview_target = None;
         let delivery_target = match crate::resolve_workspace_target_for_route(
             &self.adapter,
-            &self.host_scenes,
+            self.frame_coordinator.host_scenes(),
             &route,
             request,
             workspace,
@@ -1878,7 +1832,7 @@ impl DockViewportRuntime {
             );
             crate::resolve_workspace_target_for_route(
                 &self.adapter,
-                &self.host_scenes,
+                self.frame_coordinator.host_scenes(),
                 &route,
                 request,
                 workspace,
@@ -2133,7 +2087,7 @@ impl DockViewportRuntime {
         if let Some(space) = outcome.space().cloned() {
             let _ = self.clear_runtime_window_state(&space, window_id, false);
         } else {
-            self.host_scenes.unregister_window(window_id);
+            self.frame_coordinator.unregister_window_scene(window_id);
             let _ = self.clear_routed_drop_preview_if_window_matches(window_id);
         }
         outcome
