@@ -100,7 +100,7 @@ fn source_only_known_viewport_root_edge_matrix_rejects_unaccepted_backend_fallba
 }
 
 #[open_gpui::test]
-fn source_only_known_viewport_release_retargets_overlapping_geometry_from_current_backend_facts(
+fn source_only_known_viewport_release_rejects_overlapping_geometry_without_backend_authority(
     cx: &mut TestAppContext,
 ) {
     for case in [
@@ -115,7 +115,7 @@ fn source_only_known_viewport_release_retargets_overlapping_geometry_from_curren
             target: MatrixTarget::LeafCenter,
         },
     ] {
-        run_overlapping_source_only_release_case(cx, case);
+        run_overlapping_source_only_release_without_backend_authority_case(cx, case);
     }
 }
 
@@ -498,7 +498,10 @@ fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixC
     );
 }
 
-fn run_overlapping_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
+fn run_overlapping_source_only_release_without_backend_authority_case(
+    cx: &mut TestAppContext,
+    case: MatrixCase,
+) {
     let source_space = DockSpaceId::from(format!("overlap source:{}", case.name));
     let target_space = DockSpaceId::from(format!("overlap target:{}", case.name));
     let (graph, nodes) = matrix_graph(&source_space, &target_space, case);
@@ -588,7 +591,7 @@ fn run_overlapping_source_only_release_case(cx: &mut TestAppContext, case: Matri
     assert_eq!(
         result,
         Err(DockActionApplyError::DropTargetUnavailable),
-        "{}: overlapping source-only release should fail once current backend facts retarget it to the source viewport without a matching current drop target",
+        "{}: overlapping source-only release should fail without current backend route authority",
         case.name
     );
     let status = runtime.runtime_status();
@@ -599,9 +602,9 @@ fn run_overlapping_source_only_release_case(cx: &mut TestAppContext, case: Matri
                 .as_ref()
                 .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
                 .target,
-            DockViewportRouteTarget::Local { space, .. } if space == &source_space
+            DockViewportRouteTarget::Unavailable
         ),
-        "{}: overlapping source-only release should be retargeted to the source viewport using current backend facts, got {:?}",
+        "{}: overlapping source-only release must not retarget from geometry or focus order alone, got {:?}",
         case.name,
         status.last_route
     );

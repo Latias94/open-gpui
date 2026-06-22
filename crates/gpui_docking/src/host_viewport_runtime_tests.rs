@@ -5565,9 +5565,7 @@ fn viewport_runtime_rejects_resolved_target_snapshot_after_window_facts_go_stale
 }
 
 #[open_gpui::test]
-fn viewport_runtime_uses_platform_focus_order_when_trusted_hovered_window_is_unavailable(
-    cx: &mut TestAppContext,
-) {
+fn viewport_runtime_does_not_use_platform_focus_order_as_drop_authority(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
@@ -5631,21 +5629,14 @@ fn viewport_runtime_uses_platform_focus_order_when_trusted_hovered_window_is_una
     );
     let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
 
-    assert!(
-        matches!(
-            resolution.route(),
-            DockViewportDropRoute::Local {
-                host_position: route_host_position,
-                window_id,
-                authority: crate::DockViewportAuthorizedRouteAuthority::ZOrderFallback,
-                ..
-            } if *route_host_position == host_position && *window_id == source_window.window_id()
-        ),
-        "fresh live-window facts should route to the backend focus-order fallback target"
+    assert_eq!(
+        resolution.route(),
+        &DockViewportDropRoute::Unavailable,
+        "fresh live-window facts must not route through platform focus-order alone"
     );
     assert!(
-        resolution.routed_preview_target_snapshot().is_some(),
-        "fallback route should carry a preview target"
+        resolution.routed_preview_target_snapshot().is_none(),
+        "focus-order-only route must not carry a routed preview target"
     );
     assert!(
         resolution.delivery().is_none(),
@@ -6667,13 +6658,8 @@ fn viewport_runtime_source_only_release_uses_current_backend_fallback_not_last_r
         cx.update(|app| runtime.resolve_payload_drop_delivery(&request_with_stack, app));
     assert_eq!(
         geometry_only_route,
-        DockViewportDropRoute::Local {
-            host_position: point(px(120.0), px(100.0)),
-            window_id: source_opened.window().window_id(),
-            facts_generation: 1,
-            authority: crate::DockViewportAuthorizedRouteAuthority::ZOrderFallback,
-        },
-        "empty target context should still use current platform focus order instead of reusing preview state"
+        DockViewportDropRoute::Unavailable,
+        "empty target context must not use platform focus order or reuse preview state"
     );
 
     assert_eq!(

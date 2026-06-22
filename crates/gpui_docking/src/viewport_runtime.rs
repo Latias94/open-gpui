@@ -58,7 +58,7 @@ pub(crate) struct DockViewportRuntime {
     focus: DockViewportFocusCoordinator,
     pending_activation: Option<DockViewportActivationTransaction>,
     /// Last live docking window observed as backend-focused. Mirrors ImGui's
-    /// `PlatformLastFocusedViewportId` and feeds platform focus-order fallback.
+    /// `PlatformLastFocusedViewportId` for activation and destroyed-focus suppression.
     last_platform_focused_window: Option<WindowId>,
     /// One-shot gate for ImGui's `prev_focused_has_been_destroyed` behavior: when backend focus
     /// moves to another viewport only because the previously focused viewport was destroyed, the

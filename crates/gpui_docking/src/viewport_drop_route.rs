@@ -1289,13 +1289,8 @@ mod tests {
                 &DockPolicy::default(),
                 DockViewportTargetContext::new(),
             ),
-            DockViewportDropRoute::Local {
-                host_position: point(px(5.0), px(5.0)),
-                window_id: window.window_id(),
-                facts_generation: 1,
-                authority: DockViewportAuthorizedRouteAuthority::ZOrderFallback,
-            },
-            "platform focus-order is the explicit ImGui-style fallback authority"
+            DockViewportDropRoute::Unavailable,
+            "platform focus-order is diagnostic-only and must not authorize a drop route"
         );
         assert_eq!(
             adapter.resolve_payload_drop_route_with_context(
@@ -1464,12 +1459,8 @@ mod tests {
         assert!(adapter.record_platform_focus_order_window(window.window_id()));
         assert_eq!(
             adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
-            DockViewportDropRoute::Local {
-                host_position: point(px(5.0), px(5.0)),
-                window_id: window.window_id(),
-                facts_generation: 1,
-                authority: DockViewportAuthorizedRouteAuthority::ZOrderFallback,
-            }
+            DockViewportDropRoute::Unavailable,
+            "source-only release must not infer local authority from platform focus order"
         );
     }
 
@@ -1554,16 +1545,8 @@ mod tests {
         let focused_route = adapter.resolve_payload_drop_route(&request, &DockPolicy::default());
         assert_eq!(
             focused_route,
-            DockViewportDropRoute::KnownViewport {
-                target: DockViewportTargetHit::with_facts_generation(
-                    target,
-                    target_window,
-                    point(px(20.0), px(30.0)),
-                    1,
-                ),
-                authority: DockViewportAuthorizedRouteAuthority::ZOrderFallback,
-            },
-            "global fallback authority must come from platform focus-order semantics"
+            DockViewportDropRoute::Unavailable,
+            "platform focus-order remains diagnostic-only; backend hover fallback must come from the window stack"
         );
     }
 
