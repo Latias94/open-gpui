@@ -23,6 +23,26 @@ pub const SUMMARY: &str =
     "Anchor geometry plus renderer-neutral overlay presence, dismissal, and focus policy.";
 /// Foundation signals rendered by this page.
 pub const SIGNALS: &[&str] = &[
+    "open_gpui_ui_foundation_gallery::pages::overlay::OVERLAY_CATALOG",
+    "open_gpui_ui_foundation_gallery::pages::overlay::OverlayCatalogEntry",
+    "open_gpui_ui_foundation_gallery::pages::overlay::OverlayCatalogStatus",
+    "open_gpui_ui_foundation_gallery::pages::overlay::overlay_sample_selector_pairs",
+    "open_gpui_ui_components::Tooltip",
+    "open_gpui_ui_components::TooltipState",
+    "open_gpui_ui_components::HoverCard",
+    "open_gpui_ui_components::HoverCardState",
+    "open_gpui_ui_components::Popover",
+    "open_gpui_ui_components::PopoverState",
+    "open_gpui_ui_components::Dialog",
+    "open_gpui_ui_components::DialogState",
+    "open_gpui_ui_components::AlertDialog",
+    "open_gpui_ui_components::AlertDialogState",
+    "open_gpui_ui_components::Sheet",
+    "open_gpui_ui_components::SheetState",
+    "open_gpui_ui_components::Menu",
+    "open_gpui_ui_components::MenuState",
+    "open_gpui_ui_components::ContextMenu",
+    "open_gpui_ui_components::ContextMenuState",
     "anchor_rect_from_point()",
     "prefer_visual_bounds()",
     "outer_bounds_with_window_margin()",
@@ -41,6 +61,188 @@ pub const SIGNALS: &[&str] = &[
     "OverlayEdges",
     "OverlaySize",
 ];
+
+/// Overlay catalog status shown by the Overlay page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayCatalogStatus {
+    /// Official overlay component with resolved state, gallery sample, and runtime smoke coverage.
+    Official,
+}
+
+impl OverlayCatalogStatus {
+    /// Stable status label used by tests and the gallery.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Official => "official",
+        }
+    }
+
+    /// Pill colors used by the gallery to render the catalog status badge.
+    pub const fn badge_colors(self) -> (u32, u32, u32) {
+        match self {
+            Self::Official => (0xe8f3ef, 0x9ccdbd, 0x1f5f4d),
+        }
+    }
+}
+
+/// One overlay catalog entry shown by the Overlay page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OverlayCatalogEntry {
+    /// Public overlay component name.
+    pub name: &'static str,
+    /// Current overlay catalog status.
+    pub status: OverlayCatalogStatus,
+    /// Overlay family or behavior area.
+    pub family: &'static str,
+    /// Resolved state contract type.
+    pub state: &'static str,
+    /// Gallery and verification coverage note.
+    pub coverage: &'static str,
+    /// Stable rendered sample selector for this official overlay.
+    pub sample_selector: &'static str,
+    /// Stable selector used for the visible overlay catalog card.
+    pub catalog_selector: &'static str,
+    /// Focused tests or gates that protect this overlay family.
+    pub behavior_gates: &'static [&'static str],
+}
+
+impl OverlayCatalogEntry {
+    /// Creates an official overlay catalog entry with a stable sample selector.
+    pub const fn official(
+        name: &'static str,
+        family: &'static str,
+        state: &'static str,
+        coverage: &'static str,
+        sample_selector: &'static str,
+        catalog_selector: &'static str,
+        behavior_gates: &'static [&'static str],
+    ) -> Self {
+        Self {
+            name,
+            status: OverlayCatalogStatus::Official,
+            family,
+            state,
+            coverage,
+            sample_selector,
+            catalog_selector,
+            behavior_gates,
+        }
+    }
+
+    /// Returns the stable selector used for the visible overlay catalog card.
+    pub const fn catalog_selector(self) -> &'static str {
+        self.catalog_selector
+    }
+}
+
+/// Official overlay catalog entries and their conformance gates.
+pub const OVERLAY_CATALOG: &[OverlayCatalogEntry] = &[
+    OverlayCatalogEntry::official(
+        "Tooltip",
+        "descriptive",
+        "TooltipState",
+        "state samples / hover-focus smoke / manual-open smoke",
+        "gallery:overlay-tooltip-sample:hover-focus",
+        "overlay-catalog:Tooltip",
+        &[
+            "overlay_page_tooltip_samples_expose_focus_hover_and_disabled_contracts",
+            "overlay_gallery_smoke_opens_tooltip_from_hover_focus_and_ignores_disabled",
+            "overlay_gallery_smoke_renders_manual_tooltip_from_state",
+        ],
+    ),
+    OverlayCatalogEntry::official(
+        "HoverCard",
+        "interactive-hover",
+        "HoverCardState",
+        "state samples / trigger smoke / controlled-toggle smoke",
+        "gallery:overlay-hover-card-sample:profile-preview",
+        "overlay-catalog:HoverCard",
+        &[
+            "overlay_page_hover_card_samples_expose_interactive_hover_contracts",
+            "overlay_gallery_smoke_opens_hover_card_from_real_trigger_and_dismisses",
+            "overlay_gallery_smoke_toggles_hover_card_from_control_surface",
+        ],
+    ),
+    OverlayCatalogEntry::official(
+        "Popover",
+        "non-modal",
+        "PopoverState",
+        "state samples / outside-press smoke / focus restore",
+        "gallery:overlay-popover-sample:default-open",
+        "overlay-catalog:Popover",
+        &[
+            "overlay_page_popover_samples_expose_controlled_and_dismissal_contracts",
+            "overlay_gallery_smoke_dismisses_popover_from_outside_press",
+        ],
+    ),
+    OverlayCatalogEntry::official(
+        "Dialog",
+        "modal",
+        "DialogState",
+        "state samples / barrier smoke / escape smoke",
+        "gallery:overlay-dialog-sample:controlled-modal",
+        "overlay-catalog:Dialog",
+        &[
+            "overlay_page_dialog_samples_expose_modal_and_close_contracts",
+            "overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape",
+        ],
+    ),
+    OverlayCatalogEntry::official(
+        "AlertDialog",
+        "modal-action",
+        "AlertDialogState",
+        "state samples / action smoke / cancel focus",
+        "gallery:overlay-alert-dialog-sample:destructive-confirm",
+        "overlay-catalog:AlertDialog",
+        &[
+            "overlay_page_alert_dialog_samples_expose_critical_action_contracts",
+            "overlay_gallery_smoke_closes_alert_dialog_from_action_and_escape",
+        ],
+    ),
+    OverlayCatalogEntry::official(
+        "Sheet",
+        "edge-modal",
+        "SheetState",
+        "state samples / non-modal outside-press smoke",
+        "gallery:overlay-sheet-sample:left-modal",
+        "overlay-catalog:Sheet",
+        &[
+            "overlay_page_sheet_samples_expose_edge_and_policy_contracts",
+            "overlay_gallery_smoke_closes_non_modal_sheet_from_outside_press",
+        ],
+    ),
+    OverlayCatalogEntry::official(
+        "Menu",
+        "menu",
+        "MenuState",
+        "state samples / roving-focus smoke / outside-press smoke",
+        "gallery:overlay-menu-sample:default-open",
+        "overlay-catalog:Menu",
+        &[
+            "overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts",
+            "overlay_gallery_smoke_closes_menu_from_escape_and_outside_press",
+        ],
+    ),
+    OverlayCatalogEntry::official(
+        "ContextMenu",
+        "point-menu",
+        "ContextMenuState",
+        "state samples / point-anchor smoke / escape smoke",
+        "gallery:overlay-context-menu-sample:point-anchor",
+        "overlay-catalog:ContextMenu",
+        &[
+            "overlay_page_context_menu_samples_expose_point_anchor_contracts",
+            "overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses",
+        ],
+    ),
+];
+
+/// Returns the official overlay entries that own rendered sample selectors.
+pub fn overlay_sample_selector_pairs() -> impl Iterator<Item = (&'static str, &'static str)> {
+    OVERLAY_CATALOG
+        .iter()
+        .map(|entry| (entry.name, entry.sample_selector))
+}
 
 const OVERLAY_CONTROLLED_SAMPLE_COUNT: usize = 7;
 

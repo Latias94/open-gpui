@@ -135,6 +135,15 @@ focus model while adding a point anchor and renderer-neutral placement input. Su
 typeahead,
 checkbox/radio items, and application menu integration remain follow-up work.
 
+The Overlay page has its own product catalog instead of being merged into the Components page.
+`open_gpui_ui_foundation_gallery::pages::overlay::OVERLAY_CATALOG` lists Tooltip, HoverCard,
+Popover, Dialog, AlertDialog, Sheet, Menu, and ContextMenu with official status, family metadata,
+resolved-state type, rendered sample selector, coverage summary, and behavior-gate labels.
+`overlay_sample_selector_pairs()` is the focused selector contract for rendered overlay samples.
+Default-open overlay samples may expose default-open metadata, but the gallery must keep them
+visually non-blocking at page load so modal barriers and floating layers do not prevent scrolling
+or navigation.
+
 `ListboxState` is the renderer-neutral collection choice contract. It records grouped and
 standalone option descriptors, separator rows, disabled option state, selected value, active
 descendant value, tab-stop value, APG-style Up/Down/Home/End navigation, Enter/Space activation
@@ -263,6 +272,9 @@ A component is official only when it satisfies the current-crate completion cont
 - the Components gallery exposes real samples, stable sample ids, and resolved-state metadata;
 - every official catalog entry has matching `SIGNALS` entries for its component type and resolved
   state type, plus at least one rendered `gallery:component-*-sample:{id}` selector;
+- every official overlay family has a matching `OVERLAY_CATALOG` row with component/state
+  `SIGNALS`, at least one rendered `gallery:overlay-*-sample:{id}` selector, and named behavior
+  gates;
 - focused tests cover state contracts, and rendered runtime tests cover behavior that state tests
   cannot prove;
 - `docs/verification.md` names any manual or automated gate added by the component.
@@ -431,6 +443,8 @@ these gates visible:
 - adapter-only helper exports stay grouped under `open_gpui_ui_components::gpui_adapter`;
 - every official catalog entry keeps matching component/state signals and a rendered sample
   selector;
+- every official overlay entry keeps matching catalog metadata, component/state signals, rendered
+  sample selectors, and visible catalog cards on the Overlay page;
 - gallery samples continue to show real resolved state for each shipped component;
 - the gallery navigation rail and page viewport stay independently scrollable on compact windows;
 - ScrollArea redraws preserve the default keyed runtime handle;

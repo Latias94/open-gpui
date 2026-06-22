@@ -168,6 +168,13 @@ restores focus to the trigger. The Overlay gallery intentionally keeps default-o
 samples visually closed at page load so modal barriers and floating layers do not block page
 scrolling; the metadata rows still report each sample's resolved default-open contract.
 
+The focused Overlay catalog gates are:
+
+```powershell
+cargo nextest run -p open-gpui-ui-foundation-gallery overlay_page_catalog_entries_have_signals_and_sample_selectors
+cargo nextest run -p open-gpui-ui-foundation-gallery overlay_gallery_smoke_renders_catalog_entries_and_official_samples
+```
+
 The `open-gpui-ui-core` overlay tests are the renderer-neutral gate for shared overlay behavior.
 They should cover layer kind, presence, outside-press policy, Escape policy, focus restore intent,
 initial focus intent, and placement input without opening a GPUI window.

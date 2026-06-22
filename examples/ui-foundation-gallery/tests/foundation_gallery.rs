@@ -66,15 +66,15 @@ fn shell_snapshot(
     cx.update(|_, app| shell.read(app).snapshot())
 }
 
-fn bounds(cx: &mut VisualTestContext, selector: &'static str) -> Bounds<Pixels> {
+fn bounds(cx: &mut VisualTestContext, selector: &str) -> Bounds<Pixels> {
     cx.debug_bounds(selector)
         .unwrap_or_else(|| panic!("expected debug selector `{selector}` to be rendered"))
 }
 
 fn scroll_until_visible(
     cx: &mut VisualTestContext,
-    viewport_selector: &'static str,
-    selector: &'static str,
+    viewport_selector: &str,
+    selector: &str,
     attempts: usize,
     delta: open_gpui::Point<Pixels>,
     scroll_position: open_gpui::Point<Pixels>,
@@ -101,7 +101,7 @@ fn scroll_until_visible(
     panic!("{failure_message}");
 }
 
-fn scroll_page_until_visible(cx: &mut VisualTestContext, selector: &'static str) -> Bounds<Pixels> {
+fn scroll_page_until_visible(cx: &mut VisualTestContext, selector: &str) -> Bounds<Pixels> {
     let scroll_bounds = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
     scroll_until_visible(
         cx,
@@ -122,10 +122,7 @@ fn bounds_overlap_y(container: Bounds<Pixels>, target: Bounds<Pixels>) -> bool {
     target.bottom() >= container.top() && target.top() <= container.bottom()
 }
 
-fn scroll_navigation_until_visible(
-    cx: &mut VisualTestContext,
-    selector: &'static str,
-) -> Bounds<Pixels> {
+fn scroll_navigation_until_visible(cx: &mut VisualTestContext, selector: &str) -> Bounds<Pixels> {
     let scroll_bounds = bounds(cx, "gallery:navigation-scroll");
     scroll_until_visible(
         cx,
@@ -933,6 +930,122 @@ fn overlay_page_context_menu_samples_expose_point_anchor_contracts() {
     assert!(samples[2].state.default_open());
     assert!(samples[2].state.open());
     assert_eq!(samples[2].state.open_mode(), MenuOpenMode::Uncontrolled);
+}
+
+#[test]
+fn overlay_page_catalog_entries_have_signals_and_sample_selectors() {
+    use std::collections::BTreeSet;
+
+    let tokens = ThemeTokens::default();
+    let catalog = pages::overlay::OVERLAY_CATALOG;
+    let names = catalog.iter().map(|entry| entry.name).collect::<Vec<_>>();
+
+    assert_eq!(
+        names,
+        vec![
+            "Tooltip",
+            "HoverCard",
+            "Popover",
+            "Dialog",
+            "AlertDialog",
+            "Sheet",
+            "Menu",
+            "ContextMenu",
+        ]
+    );
+    assert!(
+        catalog
+            .iter()
+            .all(|entry| entry.status == pages::overlay::OverlayCatalogStatus::Official)
+    );
+    assert!(catalog.iter().all(|entry| !entry.family.trim().is_empty()));
+    assert!(catalog.iter().all(|entry| !entry.state.trim().is_empty()));
+    assert!(
+        catalog
+            .iter()
+            .all(|entry| !entry.coverage.trim().is_empty())
+    );
+    assert!(catalog.iter().all(|entry| {
+        !entry.behavior_gates.is_empty()
+            && entry
+                .behavior_gates
+                .iter()
+                .all(|gate| !gate.trim().is_empty())
+    }));
+
+    let catalog_names = catalog
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    let selector_names = pages::overlay::overlay_sample_selector_pairs()
+        .map(|(name, _)| name)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(selector_names, catalog_names);
+
+    let selector_values = pages::overlay::overlay_sample_selector_pairs()
+        .map(|(_, selector)| selector)
+        .collect::<Vec<_>>();
+    let unique_selectors = selector_values.iter().copied().collect::<BTreeSet<_>>();
+    assert_eq!(unique_selectors.len(), selector_values.len());
+
+    let tooltip_samples = pages::overlay::tooltip_samples(tokens);
+    let hover_card_samples = pages::overlay::hover_card_samples(tokens);
+    let popover_samples = pages::overlay::popover_samples(tokens);
+    let dialog_samples = pages::overlay::dialog_samples(tokens);
+    let alert_dialog_samples = pages::overlay::alert_dialog_samples(tokens);
+    let sheet_samples = pages::overlay::sheet_samples(tokens);
+    let menu_samples = pages::overlay::menu_samples(tokens);
+    let context_menu_samples = pages::overlay::context_menu_samples(tokens);
+    let expected_selectors = [
+        ("Tooltip", tooltip_samples[0].debug_selector()),
+        ("HoverCard", hover_card_samples[0].debug_selector()),
+        ("Popover", popover_samples[0].debug_selector()),
+        ("Dialog", dialog_samples[0].debug_selector()),
+        ("AlertDialog", alert_dialog_samples[0].debug_selector()),
+        ("Sheet", sheet_samples[0].debug_selector()),
+        ("Menu", menu_samples[0].debug_selector()),
+        ("ContextMenu", context_menu_samples[0].debug_selector()),
+    ];
+
+    for (name, selector) in expected_selectors {
+        let entry = catalog
+            .iter()
+            .find(|entry| entry.name == name)
+            .unwrap_or_else(|| panic!("expected overlay catalog entry `{name}`"));
+        assert_eq!(entry.sample_selector, selector.as_str());
+    }
+
+    for signal in [
+        "open_gpui_ui_foundation_gallery::pages::overlay::OVERLAY_CATALOG",
+        "open_gpui_ui_foundation_gallery::pages::overlay::OverlayCatalogEntry",
+        "open_gpui_ui_foundation_gallery::pages::overlay::OverlayCatalogStatus",
+        "open_gpui_ui_foundation_gallery::pages::overlay::overlay_sample_selector_pairs",
+    ] {
+        assert!(
+            pages::overlay::SIGNALS.contains(&signal),
+            "expected overlay catalog signal `{signal}`"
+        );
+    }
+
+    let mut missing = Vec::new();
+    for entry in catalog {
+        let component_signal = format!("open_gpui_ui_components::{}", entry.name);
+        if !pages::overlay::SIGNALS.contains(&component_signal.as_str()) {
+            missing.push(format!(
+                "{} component signal `{component_signal}`",
+                entry.name
+            ));
+        }
+        let state_signal = format!("open_gpui_ui_components::{}", entry.state);
+        if !pages::overlay::SIGNALS.contains(&state_signal.as_str()) {
+            missing.push(format!("{} state signal `{state_signal}`", entry.name));
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "official overlay catalog entries must have matching signals: {missing:?}"
+    );
 }
 
 #[test]
@@ -2046,6 +2159,30 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"Role::Cell"));
     assert!(signals.contains(&"Role::Tree"));
     assert!(signals.contains(&"Role::TreeItem"));
+}
+
+#[open_gpui::test]
+fn overlay_gallery_smoke_renders_catalog_entries_and_official_samples(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_overlay_gallery(cx);
+
+    for entry in pages::overlay::OVERLAY_CATALOG {
+        let catalog_card = bounds(cx, entry.catalog_selector());
+        assert!(
+            catalog_card.size.width > px(0.0) && catalog_card.size.height > px(0.0),
+            "expected Overlay page to render official overlay catalog entry `{}`",
+            entry.name
+        );
+    }
+
+    for (name, selector) in pages::overlay::overlay_sample_selector_pairs() {
+        let sample = bounds(cx, selector);
+        assert!(
+            sample.size.width > px(0.0) && sample.size.height > px(0.0),
+            "expected Overlay page to render official {name} sample `{selector}`"
+        );
+    }
 }
 
 #[open_gpui::test]

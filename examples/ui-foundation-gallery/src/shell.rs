@@ -1017,6 +1017,10 @@ impl GalleryShell {
 
         let context_menu_samples = pages::overlay::context_menu_samples(snapshot.tokens);
 
+        let overlay_catalog_cards = pages::overlay::OVERLAY_CATALOG
+            .iter()
+            .map(overlay_catalog_card);
+
         div()
             .id("gallery-overlay-page")
             .debug_selector(|| "gallery:overlay-page".into())
@@ -1267,6 +1271,25 @@ impl GalleryShell {
                                     .text_sm()
                                     .child(if self.overlay.overlay_open() { "open" } else { "closed" }),
                             ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Overlay catalog"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_3()
+                            .flex_wrap()
+                            .children(overlay_catalog_cards),
                     ),
             )
             .child(
@@ -4490,6 +4513,84 @@ fn overlay_behavior_card(sample: &pages::overlay::OverlayBehaviorSample) -> impl
             bool_label(adapter.should_render_deferred_layer()),
             bool_label(adapter.wants_outside_press_handler())
         ))
+}
+
+fn overlay_catalog_card(entry: &pages::overlay::OverlayCatalogEntry) -> impl IntoElement {
+    let (status_bg, status_border, status_text) = entry.status.badge_colors();
+    let catalog_selector = entry.catalog_selector();
+    let gates = entry.behavior_gates.join(" / ");
+
+    div()
+        .id(catalog_selector)
+        .debug_selector(move || catalog_selector.into())
+        .w(px(260.0))
+        .min_h(px(164.0))
+        .flex()
+        .flex_col()
+        .gap_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(0xd6d8ce))
+        .bg(rgb(0xffffff))
+        .p_3()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(open_gpui::FontWeight::BOLD)
+                        .text_color(rgb(0x24313f))
+                        .child(entry.name),
+                )
+                .child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(status_border))
+                        .bg(rgb(status_bg))
+                        .text_color(rgb(status_text))
+                        .text_xs()
+                        .child(entry.status.as_str()),
+                ),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(0x5a6472))
+                .child(format!("family: {}", entry.family)),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(0x5a6472))
+                .child(format!("state: {}", entry.state)),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(0x5a6472))
+                .child(entry.coverage),
+        )
+        .child(
+            div()
+                .text_xs()
+                .line_height(px(18.0))
+                .text_color(rgb(0x5a6472))
+                .child(format!("gates: {gates}")),
+        )
+        .child(
+            div()
+                .text_xs()
+                .line_height(px(18.0))
+                .text_color(rgb(0x5a6472))
+                .child(format!("selector: {}", entry.sample_selector)),
+        )
 }
 
 fn tooltip_state_row(
