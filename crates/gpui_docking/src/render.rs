@@ -1,6 +1,5 @@
 use crate::{
-    DockEdgeDockSizing, DockGraph, DockHost, DockNode, DockNodeId, DockViewportIdentity,
-    DockViewportWindowFacts, DropZone,
+    DockEdgeDockSizing, DockGraph, DockHost, DockNode, DockNodeId, DropZone,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::{DockDropPreview, DockDropRoutePreview},
@@ -18,7 +17,6 @@ use crate::{
     },
     render_split::DockRenderSplitInput,
     viewport_drop_scene::DockViewportHostSceneFrame,
-    viewport_runtime_handle::sync_render_passthrough_pointer_input,
     workspace_move_validation::dock_target_validator,
 };
 use open_gpui::{
@@ -678,26 +676,17 @@ impl DockHost {
                     mouse_position.x - bounds.origin.x,
                     mouse_position.y - bounds.origin.y,
                 );
-                let window_handle = window.window_handle();
-                runtime.reconcile_backend_window_focus(app);
-                runtime.reconcile_viewport_frame_except_window(window_handle.window_id(), app);
-                sync_render_passthrough_pointer_input(&runtime, window, passthrough_pointer_input);
-                runtime.register_rendered_host_viewport(space.clone(), window_handle);
-                let should_watch_host_scene =
-                    runtime.has_routed_drop_preview() || runtime.has_active_payload_drag();
-                let registration = runtime.begin_viewport_host_scene_frame(
+                let preparation = runtime.prepare_rendered_viewport_host_scene_frame(
                     space.clone(),
-                    window_handle.window_id(),
-                    DockViewportWindowFacts::from_window(window, app),
+                    window,
+                    app,
                     bounds,
                     host_position,
                     drop_guide_style,
+                    passthrough_pointer_input,
                 );
-                *frame_slot.borrow_mut() = registration.map(|registration| registration.frame);
-                if should_watch_host_scene {
-                    let identity =
-                        DockViewportIdentity::new(space.clone(), window_handle.window_id());
-                    let token = runtime.mark_rendered_viewport_host_scene(identity);
+                *frame_slot.borrow_mut() = preparation.frame;
+                if let Some(token) = preparation.render_token {
                     let runtime = runtime.clone();
                     window.request_animation_frame();
                     // The next-frame callback runs before that frame renders. Check one frame later

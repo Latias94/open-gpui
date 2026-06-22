@@ -112,7 +112,13 @@ fn apply_pointer_input_sync_request(
     )
 }
 
-pub(crate) fn sync_render_passthrough_pointer_input(
+#[derive(Debug)]
+pub(crate) struct DockViewportRenderedHostScenePreparation {
+    pub(crate) frame: Option<DockViewportHostSceneFrame>,
+    pub(crate) render_token: Option<DockViewportHostSceneRenderToken>,
+}
+
+fn sync_render_passthrough_pointer_input(
     runtime: &DockViewportRuntimeHandle,
     window: &mut Window,
     passthrough: bool,
@@ -743,6 +749,42 @@ impl DockViewportRuntimeHandle {
             host_position,
             drop_guide_style,
         )
+    }
+
+    pub(crate) fn prepare_rendered_viewport_host_scene_frame(
+        &self,
+        space: DockSpaceId,
+        window: &mut Window,
+        cx: &mut App,
+        host_bounds: Bounds<Pixels>,
+        host_position: Point<Pixels>,
+        drop_guide_style: crate::DockDropGuideStyle,
+        passthrough_pointer_input: bool,
+    ) -> DockViewportRenderedHostScenePreparation {
+        let window_handle = window.window_handle();
+        let window_id = window_handle.window_id();
+        self.reconcile_backend_window_focus(cx);
+        self.reconcile_viewport_frame_except_window(window_id, cx);
+        sync_render_passthrough_pointer_input(self, window, passthrough_pointer_input);
+        self.register_rendered_host_viewport(space.clone(), window_handle);
+        let should_watch_host_scene =
+            self.has_routed_drop_preview() || self.has_active_payload_drag();
+        let registration = self.begin_viewport_host_scene_frame(
+            space.clone(),
+            window_id,
+            DockViewportWindowFacts::from_window(window, cx),
+            host_bounds,
+            host_position,
+            drop_guide_style,
+        );
+        let frame = registration.map(|registration| registration.frame);
+        let render_token = should_watch_host_scene.then(|| {
+            self.mark_rendered_viewport_host_scene(DockViewportIdentity::new(space, window_id))
+        });
+        DockViewportRenderedHostScenePreparation {
+            frame,
+            render_token,
+        }
     }
 
     pub(crate) fn register_rendered_host_viewport(
