@@ -364,6 +364,71 @@ impl VirtualizerState {
         }
     }
 
+    /// Resolves a fixed-size virtual window without materializing measurements for items that
+    /// stay outside the render window.
+    ///
+    /// This path is intended for adapters like tables that know their item size up front and only
+    /// need the rendered window plus a compact measurement snapshot. If cached measurements are
+    /// already present, this falls back to the full resolver.
+    pub fn resolve_fixed_window(
+        &self,
+        key_for_index: impl Fn(usize) -> VirtualizerItemKey,
+    ) -> VirtualizerResolvedState {
+        if !self.measurements_by_key.is_empty() {
+            let mut full = self.clone();
+            full.item_keys = (0..self.count).map(key_for_index).collect();
+            return full.resolve();
+        }
+
+        let viewport_extent = nonnegative_px(self.viewport_extent);
+        let scroll_offset = nonnegative_px(self.scroll_offset);
+        let estimated_size = nonnegative_px(self.estimated_size);
+        let gap = nonnegative_px(self.gap);
+        let scroll_margin = nonnegative_px(self.scroll_margin);
+        let visible_range = fixed_visible_range(
+            self.count,
+            scroll_offset,
+            viewport_extent,
+            estimated_size,
+            gap,
+            scroll_margin,
+        );
+        let overscan_range = overscan_range(visible_range.clone(), self.count, self.overscan);
+        let total_size = fixed_total_size(self.count, estimated_size, gap, scroll_margin);
+        let visible_items = fixed_items(
+            visible_range.as_range(),
+            estimated_size,
+            gap,
+            scroll_margin,
+            &key_for_index,
+        );
+        let items = fixed_items(
+            overscan_range.as_range(),
+            estimated_size,
+            gap,
+            scroll_margin,
+            &key_for_index,
+        );
+        let snapshot = VirtualizerSnapshot::new(scroll_offset, []);
+
+        VirtualizerResolvedState {
+            count: self.count,
+            viewport_extent,
+            scroll_offset,
+            estimated_size,
+            overscan: self.overscan,
+            gap,
+            scroll_margin,
+            total_size,
+            visible_range,
+            overscan_range,
+            measurements: items.clone(),
+            visible_items,
+            items,
+            snapshot,
+        }
+    }
+
     fn resolve_measurements(
         &self,
         estimated_size: UiPx,
@@ -398,6 +463,80 @@ impl VirtualizerState {
             .cloned()
             .unwrap_or_else(|| VirtualizerItemKey::new(index.to_string()))
     }
+}
+
+fn fixed_visible_range(
+    count: usize,
+    scroll_offset: UiPx,
+    viewport_extent: UiPx,
+    estimated_size: UiPx,
+    gap: UiPx,
+    scroll_margin: UiPx,
+) -> VirtualizerRange {
+    if count == 0 || viewport_extent.as_f32() <= 0.0 {
+        return VirtualizerRange::empty();
+    }
+
+    let estimated_size = estimated_size.as_f32();
+    if estimated_size <= 0.0 {
+        return VirtualizerRange::empty();
+    }
+
+    let gap = gap.as_f32();
+    let stride = estimated_size + gap;
+    if stride <= 0.0 {
+        return VirtualizerRange::empty();
+    }
+
+    let viewport_start = scroll_offset.as_f32();
+    let viewport_end = viewport_start + viewport_extent.as_f32();
+    let first_item_end = scroll_margin.as_f32() + estimated_size;
+    let start = if viewport_start < first_item_end {
+        0
+    } else {
+        (((viewport_start - first_item_end) / stride).floor() as usize).saturating_add(1)
+    }
+    .min(count);
+    let end = if viewport_end <= scroll_margin.as_f32() {
+        0
+    } else {
+        (((viewport_end - scroll_margin.as_f32()) / stride).ceil() as usize).min(count)
+    };
+
+    VirtualizerRange::new(start, end.max(start))
+}
+
+fn fixed_total_size(count: usize, estimated_size: UiPx, gap: UiPx, scroll_margin: UiPx) -> UiPx {
+    if count == 0 {
+        return UiPx::ZERO;
+    }
+
+    let count = count as f32;
+    let estimated_size = estimated_size.as_f32();
+    let gap = gap.as_f32();
+    let scroll_margin = scroll_margin.as_f32();
+    ui_px((count * estimated_size) + ((count - 1.0) * gap) + (scroll_margin * 2.0))
+}
+
+fn fixed_items(
+    range: Range<usize>,
+    estimated_size: UiPx,
+    gap: UiPx,
+    scroll_margin: UiPx,
+    key_for_index: &impl Fn(usize) -> VirtualizerItemKey,
+) -> Vec<VirtualizerItemMeasurement> {
+    let estimated_size = estimated_size.as_f32();
+    let gap = gap.as_f32();
+    let scroll_margin = scroll_margin.as_f32();
+    let stride = estimated_size + gap;
+
+    range
+        .map(|index| {
+            let start = ui_px(scroll_margin + (index as f32 * stride));
+            let size = ui_px(estimated_size);
+            VirtualizerItemMeasurement::new(index, key_for_index(index), start, size, false)
+        })
+        .collect()
 }
 
 /// Resolved virtualizer output.
@@ -470,7 +609,10 @@ impl VirtualizerResolvedState {
         &self.overscan_range
     }
 
-    /// Returns all item measurements.
+    /// Returns the materialized item measurements for this resolved state.
+    ///
+    /// [`VirtualizerState::resolve`] materializes every item. Fixed-window resolution materializes
+    /// only the rendered window so large lists can avoid per-frame full-list work.
     pub fn measurements(&self) -> &[VirtualizerItemMeasurement] {
         &self.measurements
     }
@@ -614,6 +756,77 @@ mod tests {
 
         assert!(resolved.visible_items().len() <= 5);
         assert!(resolved.items().len() <= resolved.visible_items().len() + resolved.overscan());
+    }
+
+    #[test]
+    fn fixed_window_resolver_materializes_only_rendered_items() {
+        let resolved = VirtualizerState::new(10_000, ui_px(30.0))
+            .with_viewport_extent(ui_px(196.0))
+            .with_scroll_offset(ui_px(3_000.0))
+            .with_overscan(5)
+            .resolve_fixed_window(|index| VirtualizerItemKey::new(format!("row-{index:04}")));
+
+        assert_eq!(resolved.count(), 10_000);
+        assert_eq!(resolved.total_size(), ui_px(300_000.0));
+        assert_eq!(*resolved.visible_range(), VirtualizerRange::new(100, 107));
+        assert_eq!(*resolved.overscan_range(), VirtualizerRange::new(98, 110));
+        assert_eq!(resolved.items().len(), 12);
+        assert_eq!(resolved.measurements().len(), resolved.items().len());
+        assert_eq!(resolved.items()[0].key().as_str(), "row-0098");
+        assert!(resolved.snapshot().measurements().is_empty());
+    }
+
+    #[test]
+    fn fixed_window_resolver_matches_full_fixed_size_boundaries() {
+        for offset in [0.0, 4.0, 5.0, 14.0, 15.0, 16.0, 17.0, 27.0, 65.0, 500.0] {
+            let full = VirtualizerState::new(5, ui_px(10.0))
+                .with_viewport_extent(ui_px(25.0))
+                .with_scroll_offset(ui_px(offset))
+                .with_gap(ui_px(2.0))
+                .with_scroll_margin(ui_px(5.0))
+                .with_overscan(2)
+                .with_item_keys((0..5).map(|index| format!("row-{index}")))
+                .resolve();
+            let fixed = VirtualizerState::new(5, ui_px(10.0))
+                .with_viewport_extent(ui_px(25.0))
+                .with_scroll_offset(ui_px(offset))
+                .with_gap(ui_px(2.0))
+                .with_scroll_margin(ui_px(5.0))
+                .with_overscan(2)
+                .resolve_fixed_window(|index| VirtualizerItemKey::new(format!("row-{index}")));
+
+            assert_eq!(fixed.total_size(), full.total_size(), "offset {offset}");
+            assert_eq!(
+                fixed.visible_range(),
+                full.visible_range(),
+                "offset {offset}"
+            );
+            assert_eq!(
+                fixed.overscan_range(),
+                full.overscan_range(),
+                "offset {offset}"
+            );
+            assert_eq!(
+                fixed.visible_items(),
+                full.visible_items(),
+                "offset {offset}"
+            );
+            assert_eq!(fixed.items(), full.items(), "offset {offset}");
+            assert_eq!(fixed.snapshot().scroll_offset(), ui_px(offset));
+            assert!(fixed.snapshot().measurements().is_empty());
+        }
+    }
+
+    #[test]
+    fn fixed_window_resolver_fallback_keeps_stable_measurement_keys() {
+        let resolved = VirtualizerState::new(3, ui_px(20.0))
+            .with_viewport_extent(ui_px(80.0))
+            .with_measurement("row-1", ui_px(34.0))
+            .resolve_fixed_window(|index| VirtualizerItemKey::new(format!("row-{index}")));
+
+        assert_eq!(resolved.measurements()[1].key().as_str(), "row-1");
+        assert_eq!(resolved.measurements()[1].size(), ui_px(34.0));
+        assert!(resolved.measurements()[1].measured());
     }
 
     #[test]

@@ -108,6 +108,7 @@ pub use open_gpui_ui_core::{
     Sizable, Size, TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableCellValue,
     TableColumn, TableColumnId, TableFilter, TablePagination, TableResolvedRow, TableResolvedState,
     TableRow, TableRowId, TableRowModel, TableRowModelStage, TableSort, TableSortDirection,
-    TableState, ThemeTokens, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
-    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
+    TableState, TableStateCacheKey, ThemeTokens, VirtualizerItemKey, VirtualizerItemMeasurement,
+    VirtualizerRange, VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem,
+    VirtualizerState,
 };

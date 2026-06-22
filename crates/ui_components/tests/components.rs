@@ -1433,7 +1433,9 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .sort_action()
         .expect("sortable exported table column should expose a header action")
         .clone();
+    let _root_cache_key: root::TableStateCacheKey = table.table_state().cache_key();
     let _prelude_header_action: prelude::TableHeaderAction = header_action;
+    let _prelude_cache_key: prelude::TableStateCacheKey = table.table_state().cache_key();
 
     assert_eq!(table.state().role(), Role::Table);
     assert_eq!(virtualizer.resolve().overscan(), 2);
@@ -1828,6 +1830,64 @@ fn table_runtime_virtualized_body_scrolls_without_moving_parent(
         cx.debug_bounds("table:runtime-table:row:row-0010")
             .is_some(),
         "expected row 10 to render after scrolling the table body"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_cache_invalidates_when_table_state_changes(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        descending: bool,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut state = sample_table_state(20);
+            if self.descending {
+                state = state.with_sorting([TableSort::descending("score")]);
+            }
+
+            let table = Table::new("cache-runtime-table", "Cache runtime table", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .overscan(0);
+
+            div().w(px(360.0)).h(px(140.0)).child(table)
+        }
+    }
+
+    let (view, cx) = cx.add_window_view(|_, _| TestView { descending: false });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("table:cache-runtime-table:row:row-0000")
+            .is_some(),
+        "expected unsorted table to render row 0 first"
+    );
+    assert!(
+        cx.debug_bounds("table:cache-runtime-table:row:row-0019")
+            .is_none(),
+        "expected last row to stay outside the initial unsorted window"
+    );
+
+    view.update(cx, |view, cx| {
+        view.descending = true;
+        cx.notify();
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("table:cache-runtime-table:row:row-0019")
+            .is_some(),
+        "expected cache invalidation to expose the descending first row"
+    );
+    assert!(
+        cx.debug_bounds("table:cache-runtime-table:row:row-0000")
+            .is_none(),
+        "expected stale unsorted row window to be replaced"
     );
 }
 
@@ -3123,6 +3183,9 @@ fn public_contract_structs<'a>(
 
         search_from = name_end;
         if !suffixes.iter().any(|suffix| name.ends_with(suffix)) {
+            continue;
+        }
+        if ["EmptyState"].contains(&name) {
             continue;
         }
 

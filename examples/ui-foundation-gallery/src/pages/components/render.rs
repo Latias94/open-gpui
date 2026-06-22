@@ -1275,7 +1275,7 @@ pub(crate) fn render_components_page(
                                     let title = sample.title;
                                     let summary = sample.summary;
                                     let badge = sample.badge;
-                                    let plan = sample.render_plan();
+                                    let state_summary = sample.state_summary();
                                     let table = sample.build_table();
 
                                     div()
@@ -1326,7 +1326,7 @@ pub(crate) fn render_components_page(
                                                 .bg(rgb(0xfcfcf8))
                                                 .child(table),
                                         )
-                                        .child(component_table_state_row(&plan))
+                                        .child(component_table_state_row(&state_summary))
                                 }),
                             )),
                     ),
@@ -1366,10 +1366,9 @@ pub(crate) fn component_tabs_state_row(state: &TabsState) -> impl IntoElement {
         ))
 }
 
-pub(crate) fn component_table_state_row(plan: &TableRenderPlan) -> impl IntoElement {
-    let visible = plan.virtualizer().visible_range();
-    let overscan = plan.virtualizer().overscan_range();
-
+pub(crate) fn component_table_state_row(
+    summary: &super::TableSampleStateSummary,
+) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -1378,22 +1377,18 @@ pub(crate) fn component_table_state_row(plan: &TableRenderPlan) -> impl IntoElem
         .text_color(rgb(0x5a6472))
         .child(format!(
             "{} core / {} final / {} rendered",
-            plan.table().core_model().rows().len(),
-            plan.table().final_model().rows().len(),
-            plan.rendered_row_count()
+            summary.core_rows, summary.final_rows, summary.rendered_rows
         ))
         .child(format!(
             "visible {}..{} / overscan {}..{}",
-            visible.start(),
-            visible.end(),
-            overscan.start(),
-            overscan.end()
+            summary.visible_start,
+            summary.visible_end,
+            summary.overscan_start,
+            summary.overscan_end
         ))
         .child(format!(
             "{} columns / {} aria rows / {} selected",
-            plan.aria_column_count(),
-            plan.aria_row_count(),
-            plan.table().final_model().selected_count()
+            summary.aria_columns, summary.aria_rows, summary.selected_rows
         ))
 }
 

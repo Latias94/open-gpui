@@ -19,6 +19,7 @@ use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
     OverlayPlacementAlignment, OverlayPlacementSide, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
+use std::sync::LazyLock;
 
 #[path = "components/render.rs"]
 mod render;
@@ -875,6 +876,59 @@ pub struct TableSample {
     pub row_height: UiPx,
     /// Overscan row budget.
     pub overscan: usize,
+    /// Precomputed state summary used by the gallery page.
+    state_summary: TableSampleStateSummary,
+}
+
+/// Precomputed state summary for a table sample.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TableSampleStateSummary {
+    /// Core row count after source resolution.
+    pub core_rows: usize,
+    /// Filtered row count after filters apply.
+    pub filtered_rows: usize,
+    /// Final row count after pagination.
+    pub final_rows: usize,
+    /// Rendered body row count after overscan.
+    pub rendered_rows: usize,
+    /// Visible body row count before overscan.
+    pub visible_rows: usize,
+    /// Visible row range start.
+    pub visible_start: usize,
+    /// Visible row range end.
+    pub visible_end: usize,
+    /// Overscan row range start.
+    pub overscan_start: usize,
+    /// Overscan row range end.
+    pub overscan_end: usize,
+    /// Visible column count.
+    pub aria_columns: usize,
+    /// Accessible row count including the header row.
+    pub aria_rows: usize,
+    /// Selected row count in the final model.
+    pub selected_rows: usize,
+}
+
+impl TableSampleStateSummary {
+    fn from_plan(plan: &TableRenderPlan) -> Self {
+        let visible = plan.virtualizer().visible_range();
+        let overscan = plan.virtualizer().overscan_range();
+
+        Self {
+            core_rows: plan.table().core_model().rows().len(),
+            filtered_rows: plan.table().filtered_model().rows().len(),
+            final_rows: plan.table().final_model().rows().len(),
+            rendered_rows: plan.rendered_row_count(),
+            visible_rows: plan.visible_row_count(),
+            visible_start: visible.start(),
+            visible_end: visible.end(),
+            overscan_start: overscan.start(),
+            overscan_end: overscan.end(),
+            aria_columns: plan.aria_column_count(),
+            aria_rows: plan.aria_row_count(),
+            selected_rows: plan.table().final_model().selected_count(),
+        }
+    }
 }
 
 impl TableSample {
@@ -895,6 +949,11 @@ impl TableSample {
     pub fn render_plan(&self) -> TableRenderPlan {
         self.build_table()
             .render_plan(UiPx::ZERO, self.viewport_extent)
+    }
+
+    /// Returns the precomputed state summary used by the gallery page.
+    pub const fn state_summary(&self) -> TableSampleStateSummary {
+        self.state_summary
     }
 }
 
@@ -1908,46 +1967,69 @@ pub fn tabs_samples(tokens: ThemeTokens) -> [TabsSample; 2] {
     ]
 }
 
+static TABLE_SAMPLES: LazyLock<[TableSample; 2]> = LazyLock::new(build_table_samples);
+
 /// Returns table samples backed by real table and virtualizer contracts.
-pub fn table_samples(_tokens: ThemeTokens) -> [TableSample; 2] {
+pub fn table_samples(_tokens: ThemeTokens) -> &'static [TableSample] {
+    TABLE_SAMPLES.as_slice()
+}
+
+fn build_table_samples() -> [TableSample; 2] {
     let release_queue_rows = (0..10_000).map(release_queue_row).collect::<Vec<_>>();
     let filter_board_rows = (0..180).map(filter_board_row).collect::<Vec<_>>();
 
+    let release_queue = TableSample {
+        id: "release-queue",
+        title: "Release queue",
+        summary: "Ten thousand stable rows sorted by score with a local virtualized viewport.",
+        badge: "10k rows",
+        state: TableState::new(release_queue_rows)
+            .with_columns(table_columns())
+            .with_column_order(["name", "team", "status", "score"])
+            .with_sorting([TableSort::descending("score")])
+            .with_selected_rows(["release-queue-row-0005"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 5,
+        state_summary: TableSampleStateSummary::default(),
+    };
+    let filter_board = TableSample {
+        id: "filter-board",
+        title: "Filtered board",
+        summary: "Filtered, sorted, and paginated rows keep selection tied to row ids.",
+        badge: "filtered",
+        state: TableState::new(filter_board_rows)
+            .with_columns(table_columns())
+            .with_column_order(["name", "team", "status", "score"])
+            .with_filters([TableFilter::contains("team", "UI")])
+            .with_sorting([TableSort::descending("score")])
+            .with_selected_rows(["filter-board-row-177"])
+            .with_pagination(TablePagination::new(0, 24)),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
+
     [
-        TableSample {
-            id: "release-queue",
-            title: "Release queue",
-            summary: "Ten thousand stable rows sorted by score with a local virtualized viewport.",
-            badge: "10k rows",
-            state: TableState::new(release_queue_rows)
-                .with_columns(table_columns())
-                .with_column_order(["name", "team", "status", "score"])
-                .with_sorting([TableSort::descending("score")])
-                .with_selected_rows(["release-queue-row-0005"])
-                .with_pagination(TablePagination::disabled()),
-            size: Size::Small,
-            viewport_extent: ui_px(196.0),
-            row_height: ui_px(30.0),
-            overscan: 5,
-        },
-        TableSample {
-            id: "filter-board",
-            title: "Filtered board",
-            summary: "Filtered, sorted, and paginated rows keep selection tied to row ids.",
-            badge: "filtered",
-            state: TableState::new(filter_board_rows)
-                .with_columns(table_columns())
-                .with_column_order(["name", "team", "status", "score"])
-                .with_filters([TableFilter::contains("team", "UI")])
-                .with_sorting([TableSort::descending("score")])
-                .with_selected_rows(["filter-board-row-177"])
-                .with_pagination(TablePagination::new(0, 24)),
-            size: Size::Small,
-            viewport_extent: ui_px(196.0),
-            row_height: ui_px(30.0),
-            overscan: 4,
-        },
+        release_queue.with_state_summary(),
+        filter_board.with_state_summary(),
     ]
+}
+
+impl TableSample {
+    fn with_state_summary(self) -> Self {
+        let plan = self
+            .build_table()
+            .render_plan(UiPx::ZERO, self.viewport_extent);
+        Self {
+            state_summary: TableSampleStateSummary::from_plan(&plan),
+            ..self
+        }
+    }
 }
 
 fn table_columns() -> [TableColumn; 4] {

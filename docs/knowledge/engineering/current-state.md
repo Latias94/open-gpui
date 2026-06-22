@@ -4,9 +4,12 @@ title: open-gpui table and virtualizer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 22f2012
+git_commit: f85e91a
 verified_by:
   - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-core virtualizer table
+  - cargo nextest run -p open-gpui-ui-components table feedback tree virtualized_list
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_table_samples_expose_virtualized_row_model_contract
   - cargo nextest run -p open-gpui-ui-foundation-gallery table
   - cargo check -p open-gpui-ui-foundation-gallery --tests
   - cargo check -p open-gpui-ui-components --tests
@@ -25,9 +28,9 @@ verified_by:
 
 # Current State
 
-- Goal: Complete the Table / Virtualizer implementation, gallery conformance, documentation, and verification for `docs/plans/2026-06-21-001-feat-ui-table-virtualizer-roadmap-plan.md`.
+- Goal: Complete the Table / Virtualizer performance follow-up after `docs/plans/2026-06-21-001-feat-ui-table-virtualizer-roadmap-plan.md`.
 - Branch: `main`
-- Last verified: 2026-06-22, full `open-gpui-ui-core` + `open-gpui-ui-components` + `open-gpui-ui-foundation-gallery` nextest passed 257/257, including `components_gallery_smoke_table_scroll_stays_inside_sample`.
+- Last verified: 2026-06-22, full `open-gpui-ui-core` + `open-gpui-ui-components` + `open-gpui-ui-foundation-gallery` nextest passed 273/273 at pulled HEAD `f85e91a`, including the new feedback/tree/virtualized_list primitives and the Table runtime/performance regression gates.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -44,9 +47,11 @@ verified_by:
 - Done: Added Table gallery contract and runtime smoke coverage proving row-model metadata, a11y roles, virtualized render windows, and nested scroll containment.
 - Done: Added `TableHeaderAction` and `Table::on_sort_requested` so sortable headers emit state-update payloads without moving table state ownership into render code.
 - Done: Hardened the Table adapter after review: live scroll offsets win after virtualizer measurement snapshots, duplicate row ids get unique render/virtualizer keys, and header/body column minimum widths match.
-- Follow-up: Table virtualization currently limits rendered nodes, but row-model resolution and virtualizer measurement resolution still do O(n) work for the 10k gallery sample; next performance slice should cache resolved row models or add a fixed-height fast path.
+- Done: Completed the Table performance follow-up: `TableState` row storage is cheap to clone and exposes a conservative cache key, the GPUI `TableRuntime` caches resolved row models across scroll redraws, `VirtualizerState::resolve_fixed_window` materializes only the visible + overscan window for fixed-height tables, and the Components gallery precomputes table state summaries from lazy static samples instead of rebuilding 10k rows during page render.
+- Done: Reviewed the pulled `feedback`, `tree`, and `virtualized_list` primitives. They fit the current component architecture: `feedback` adds concrete GPUI surfaces, while `tree` and `virtualized_list` are renderer-neutral state contracts that still need gallery/productization follow-up before being treated as finished visible components.
+- Follow-up: Add gallery/catalog/docs slices for the pulled feedback/tree/virtualized_list primitives, and decide whether `VirtualizedListState` should eventually reuse `open_gpui_ui_core::VirtualizerState` or remain a lightweight keyboard/navigation contract.
 - Blocked: None.
-- Next action: commit the Table adapter + gallery/docs slice, then plan the next Table performance slice around row-model caching or fixed-height virtualizer fast paths.
+- Next action: Commit the Table performance slice after final diff review, then plan the next UI component productization slice around feedback/tree/virtualized_list gallery coverage.
 
 # Citations
 
@@ -62,3 +67,4 @@ verified_by:
 [10] Verification command `cargo nextest run -p open-gpui-ui-core`
 [11] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery table`
 [12] Verification command `cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`
+[13] Pull head `f85e91a` - `fix(ui): keep virtualized list test helper import scoped`

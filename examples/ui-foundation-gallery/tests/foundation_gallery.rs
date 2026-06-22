@@ -1487,10 +1487,21 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     let samples = pages::components::table_samples(ThemeTokens::default());
     let release_queue = &samples[0];
     let release_plan = release_queue.render_plan();
+    let release_summary = release_queue.state_summary();
 
     assert_eq!(release_queue.id, "release-queue");
     assert_eq!(release_queue.state.rows().len(), 10_000);
     assert_eq!(release_plan.table().final_model().rows().len(), 10_000);
+    assert_eq!(release_summary.core_rows, 10_000);
+    assert_eq!(release_summary.final_rows, 10_000);
+    assert_eq!(
+        release_summary.rendered_rows,
+        release_plan.rendered_row_count()
+    );
+    assert_eq!(
+        release_summary.visible_rows,
+        release_plan.visible_row_count()
+    );
     assert_eq!(
         release_plan.table().final_model().rows()[0].id().as_str(),
         "release-queue-row-0000"
@@ -1504,11 +1515,15 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
 
     let filter_board = &samples[1];
     let filter_plan = filter_board.render_plan();
+    let filter_summary = filter_board.state_summary();
 
     assert_eq!(filter_board.id, "filter-board");
     assert_eq!(filter_board.state.rows().len(), 180);
     assert_eq!(filter_plan.table().filtered_model().rows().len(), 60);
     assert_eq!(filter_plan.table().final_model().rows().len(), 24);
+    assert_eq!(filter_summary.filtered_rows, 60);
+    assert_eq!(filter_summary.final_rows, 24);
+    assert_eq!(filter_summary.selected_rows, 1);
     assert_eq!(
         filter_plan.table().final_model().rows()[0].id().as_str(),
         "filter-board-row-177"

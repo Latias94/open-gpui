@@ -11,9 +11,9 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{
     Role, Sizable, Size, TableCellValue, TableColumn, TableColumnId, TableResolvedRow,
-    TableResolvedState, TableSort, TableSortDirection, TableState, UiPx,
-    VirtualizerItemMeasurement, VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState,
-    ui_px,
+    TableResolvedState, TableSort, TableSortDirection, TableState, TableStateCacheKey, UiPx,
+    VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerResolvedState, VirtualizerSnapshot,
+    VirtualizerState, ui_px,
 };
 use std::collections::BTreeSet;
 use std::rc::Rc;
@@ -356,7 +356,7 @@ pub struct TableRenderPlan {
     table_id: String,
     label: String,
     metrics: TableMetrics,
-    table: TableResolvedState,
+    table: Rc<TableResolvedState>,
     virtualizer: VirtualizerResolvedState,
     columns: Vec<TableColumnRenderPlan>,
     rows: Vec<TableRowRenderPlan>,
@@ -371,7 +371,7 @@ impl TableRenderPlan {
         table_id: String,
         label: String,
         metrics: TableMetrics,
-        table: TableResolvedState,
+        table: Rc<TableResolvedState>,
         virtualizer: VirtualizerResolvedState,
         columns: Vec<TableColumnRenderPlan>,
     ) -> Self {
@@ -429,8 +429,8 @@ impl TableRenderPlan {
     }
 
     /// Returns the resolved renderer-neutral table state.
-    pub const fn table(&self) -> &TableResolvedState {
-        &self.table
+    pub fn table(&self) -> &TableResolvedState {
+        self.table.as_ref()
     }
 
     /// Returns the resolved renderer-neutral virtualizer state.
@@ -489,9 +489,17 @@ impl TableRenderPlan {
     }
 }
 
+#[derive(Debug, Clone)]
+struct TableResolvedCache {
+    key: TableStateCacheKey,
+    table: Rc<TableResolvedState>,
+    columns: Vec<TableColumnRenderPlan>,
+}
+
 #[derive(Debug, Clone, Default)]
 struct TableRuntime {
     scroll_handle: ScrollHandle,
+    resolved: Option<TableResolvedCache>,
 }
 
 /// A concrete GPUI table renderer using the Open GPUI row-model and virtualizer contracts.
@@ -585,34 +593,57 @@ impl Table {
     /// Resolves table row models and the virtual render window for a viewport.
     pub fn render_plan(&self, scroll_offset: UiPx, viewport_extent: UiPx) -> TableRenderPlan {
         let metrics = self.metrics_for_viewport(viewport_extent);
-        let table = self.state.resolve();
+        let table = Rc::new(self.state.resolve());
         let columns = self.resolve_columns(&table);
-        let final_rows = table.final_model().rows();
-        let duplicate_row_ids = table
-            .duplicate_row_ids()
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        let row_keys = final_rows
-            .iter()
-            .map(|row| row_render_key(row, &duplicate_row_ids));
-        let mut virtualizer = VirtualizerState::new(final_rows.len(), metrics.row_height())
-            .with_viewport_extent(metrics.viewport_extent())
-            .with_overscan(metrics.overscan())
-            .with_item_keys(row_keys);
-
-        if let Some(snapshot) = self.snapshot.clone() {
-            virtualizer = virtualizer.with_snapshot(snapshot);
-        }
-        virtualizer = virtualizer.with_scroll_offset(nonnegative_px(scroll_offset));
+        let virtualizer = self.resolve_virtualizer(&table, metrics, scroll_offset);
 
         TableRenderPlan::resolve(
             self.id.clone(),
             self.label.to_string(),
             metrics,
             table,
-            virtualizer.resolve(),
+            virtualizer,
             columns,
+        )
+    }
+
+    fn render_plan_with_runtime(
+        &self,
+        scroll_offset: UiPx,
+        viewport_extent: UiPx,
+        runtime: &mut TableRuntime,
+    ) -> TableRenderPlan {
+        let metrics = self.metrics_for_viewport(viewport_extent);
+        let cache_key = self.state.cache_key();
+        let needs_resolve = runtime
+            .resolved
+            .as_ref()
+            .map(|cache| cache.key != cache_key)
+            .unwrap_or(true);
+
+        if needs_resolve {
+            let table = Rc::new(self.state.resolve());
+            let columns = self.resolve_columns(&table);
+            runtime.resolved = Some(TableResolvedCache {
+                key: cache_key,
+                table,
+                columns,
+            });
+        }
+
+        let cache = runtime
+            .resolved
+            .as_ref()
+            .expect("table runtime cache should be initialized");
+        let virtualizer = self.resolve_virtualizer(&cache.table, metrics, scroll_offset);
+
+        TableRenderPlan::resolve(
+            self.id.clone(),
+            self.label.to_string(),
+            metrics,
+            cache.table.clone(),
+            virtualizer,
+            cache.columns.clone(),
         )
     }
 
@@ -623,6 +654,40 @@ impl Table {
             metrics.viewport_extent = viewport_extent;
         }
         metrics
+    }
+
+    fn resolve_virtualizer(
+        &self,
+        table: &TableResolvedState,
+        metrics: TableMetrics,
+        scroll_offset: UiPx,
+    ) -> VirtualizerResolvedState {
+        let final_rows = table.final_model().rows();
+        let duplicate_row_ids = table
+            .duplicate_row_ids()
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let virtualizer = VirtualizerState::new(final_rows.len(), metrics.row_height())
+            .with_viewport_extent(metrics.viewport_extent())
+            .with_overscan(metrics.overscan())
+            .with_scroll_offset(nonnegative_px(scroll_offset));
+
+        if let Some(snapshot) = self.snapshot.clone() {
+            let row_keys = final_rows
+                .iter()
+                .map(|row| row_render_key(row, &duplicate_row_ids));
+            return virtualizer
+                .with_item_keys(row_keys)
+                .with_snapshot(snapshot)
+                .with_scroll_offset(nonnegative_px(scroll_offset))
+                .resolve();
+        }
+
+        virtualizer.resolve_fixed_window(|index| {
+            let row = &final_rows[index];
+            VirtualizerItemKey::new(row_render_key(row, &duplicate_row_ids))
+        })
     }
 
     fn resolve_columns(&self, table: &TableResolvedState) -> Vec<TableColumnRenderPlan> {
@@ -655,16 +720,19 @@ impl RenderOnce for Table {
         let runtime_id = format!("table:{}:runtime", self.id);
         let runtime = window.use_keyed_state(runtime_id, cx, |_, _| TableRuntime {
             scroll_handle: ScrollHandle::new(),
+            resolved: None,
         });
         let scroll_handle = runtime.read(cx).scroll_handle.clone();
         let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
         let scroll_offset = ui_px((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
-        let plan = self.render_plan(scroll_offset, viewport_extent);
+        let on_sort_requested = self.on_sort_requested.clone();
+        let plan = runtime.update(cx, |runtime, _| {
+            self.render_plan_with_runtime(scroll_offset, viewport_extent, runtime)
+        });
         let table_id = plan.table_id().to_owned();
         let label = plan.label().to_owned();
         let metrics = plan.metrics();
         let scroll_viewport_id = format!("table:{table_id}:body-scroll");
-        let on_sort_requested = self.on_sort_requested.clone();
 
         div()
             .id(self.id)

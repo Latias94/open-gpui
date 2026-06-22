@@ -2,6 +2,10 @@
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
+static NEXT_TABLE_ROWS_IDENTITY: AtomicU64 = AtomicU64::new(1);
 
 /// Stable renderer-neutral identity for a table row.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -463,24 +467,40 @@ pub const TABLE_ROW_MODEL_V0_PIPELINE: [TableRowModelStage; 5] = [
 ];
 
 /// Renderer-neutral input state for table row-model resolution.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct TableState {
     columns: Vec<TableColumn>,
     column_order: Vec<TableColumnId>,
-    rows: Vec<TableRow>,
+    rows: Arc<[TableRow]>,
+    rows_identity: u64,
     sorting: Vec<TableSort>,
     filters: Vec<TableFilter>,
     selected_rows: BTreeSet<TableRowId>,
     pagination: TablePagination,
 }
 
+impl PartialEq for TableState {
+    fn eq(&self, other: &Self) -> bool {
+        self.columns == other.columns
+            && self.column_order == other.column_order
+            && self.rows.as_ref() == other.rows.as_ref()
+            && self.sorting == other.sorting
+            && self.filters == other.filters
+            && self.selected_rows == other.selected_rows
+            && self.pagination == other.pagination
+    }
+}
+
 impl TableState {
     /// Creates table state from row descriptors.
     pub fn new(rows: impl IntoIterator<Item = TableRow>) -> Self {
+        let rows = rows.into_iter().collect::<Vec<_>>();
+
         Self {
             columns: Vec::new(),
             column_order: Vec::new(),
-            rows: rows.into_iter().collect(),
+            rows: rows.into(),
+            rows_identity: next_table_rows_identity(),
             sorting: Vec::new(),
             filters: Vec::new(),
             selected_rows: BTreeSet::new(),
@@ -537,7 +557,7 @@ impl TableState {
 
     /// Returns source rows.
     pub fn rows(&self) -> &[TableRow] {
-        &self.rows
+        self.rows.as_ref()
     }
 
     /// Returns sort specifications.
@@ -558,6 +578,23 @@ impl TableState {
     /// Returns pagination state.
     pub const fn pagination(&self) -> TablePagination {
         self.pagination
+    }
+
+    /// Returns a cheap identity key for runtime row-model caches.
+    ///
+    /// The key is conservative: cloned states share the row identity, while newly
+    /// constructed states get a new identity even when their row contents match.
+    pub fn cache_key(&self) -> TableStateCacheKey {
+        TableStateCacheKey {
+            rows_identity: self.rows_identity,
+            row_count: self.rows.len(),
+            columns: self.columns.clone(),
+            column_order: self.column_order.clone(),
+            sorting: self.sorting.clone(),
+            filters: self.filters.clone(),
+            selected_rows: self.selected_rows.clone(),
+            pagination: self.pagination,
+        }
     }
 
     /// Returns visible columns in resolved order.
@@ -661,6 +698,35 @@ impl TableState {
 
         left.id().cmp(right.id())
     }
+}
+
+/// Cheap invalidation key for runtime caches of resolved table row models.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableStateCacheKey {
+    rows_identity: u64,
+    row_count: usize,
+    columns: Vec<TableColumn>,
+    column_order: Vec<TableColumnId>,
+    sorting: Vec<TableSort>,
+    filters: Vec<TableFilter>,
+    selected_rows: BTreeSet<TableRowId>,
+    pagination: TablePagination,
+}
+
+impl TableStateCacheKey {
+    /// Returns the opaque identity assigned to this state's row storage.
+    pub const fn rows_identity(&self) -> u64 {
+        self.rows_identity
+    }
+
+    /// Returns the number of source rows covered by this cache key.
+    pub const fn row_count(&self) -> usize {
+        self.row_count
+    }
+}
+
+fn next_table_rows_identity() -> u64 {
+    NEXT_TABLE_ROWS_IDENTITY.fetch_add(1, AtomicOrdering::Relaxed)
 }
 
 /// A resolved row that carries source identity and derived metadata.
@@ -964,5 +1030,36 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["row-a"]
         );
+    }
+
+    #[test]
+    fn cache_key_reuses_row_identity_for_clones_and_invalidates_state_changes() {
+        let base = TableState::new(sample_rows()).with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+            TableColumn::new("score", "Score"),
+        ]);
+        let cloned = base.clone();
+        let sorted = base.clone().with_sorting([TableSort::descending("score")]);
+        let rebuilt = TableState::new(sample_rows()).with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+            TableColumn::new("score", "Score"),
+        ]);
+
+        assert_eq!(base, cloned);
+        assert_eq!(base.cache_key(), cloned.cache_key());
+        assert_eq!(
+            base.cache_key().rows_identity(),
+            cloned.cache_key().rows_identity()
+        );
+
+        assert_ne!(base.cache_key(), sorted.cache_key());
+        assert_eq!(base, rebuilt);
+        assert_ne!(
+            base.cache_key().rows_identity(),
+            rebuilt.cache_key().rows_identity()
+        );
+        assert_ne!(base.cache_key(), rebuilt.cache_key());
     }
 }
