@@ -19,8 +19,8 @@ use crate::{
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_platform_sync::sync_reused_viewport_window,
     viewport_runtime::{
-        DockViewportPointerInputSyncRequest, DockViewportPreparedTearOffDrop,
-        DockViewportRenderWatchToken, DockViewportReusableWindow,
+        DockViewportHostSceneLivenessToken, DockViewportPointerInputSyncRequest,
+        DockViewportPreparedTearOffDrop, DockViewportReusableWindow,
     },
 };
 #[cfg(test)]
@@ -745,25 +745,24 @@ impl DockViewportRuntimeHandle {
             .register_rendered_host_viewport(space, window)
     }
 
-    pub(crate) fn observe_rendered_viewport_host_scene(
+    pub(crate) fn lease_rendered_viewport_host_scene(
         &self,
-        window_id: WindowId,
-    ) -> DockViewportRenderWatchToken {
+        identity: DockViewportIdentity,
+    ) -> DockViewportHostSceneLivenessToken {
         self.runtime
             .borrow_mut()
-            .observe_rendered_viewport_host_scene(window_id)
+            .lease_rendered_viewport_host_scene(identity)
     }
 
     pub(crate) fn expire_viewport_host_scene_if_unrendered<C: open_gpui::AppContext>(
         &self,
-        identity: DockViewportIdentity,
-        token: DockViewportRenderWatchToken,
+        token: DockViewportHostSceneLivenessToken,
         cx: &mut C,
     ) -> bool {
         let (changed, windows) = self
             .runtime
             .borrow_mut()
-            .expire_viewport_host_scene_if_unrendered(identity, token);
+            .expire_viewport_host_scene_if_unrendered(token);
         refresh_windows(windows, cx);
         changed
     }

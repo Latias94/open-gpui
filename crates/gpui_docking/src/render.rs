@@ -695,10 +695,9 @@ impl DockHost {
                 );
                 *frame_slot.borrow_mut() = registration.map(|registration| registration.frame);
                 if should_watch_host_scene {
-                    let token =
-                        runtime.observe_rendered_viewport_host_scene(window_handle.window_id());
                     let identity =
                         DockViewportIdentity::new(space.clone(), window_handle.window_id());
+                    let token = runtime.lease_rendered_viewport_host_scene(identity);
                     let runtime = runtime.clone();
                     window.request_animation_frame();
                     // The next-frame callback runs before that frame renders. Check one frame later
@@ -707,9 +706,7 @@ impl DockHost {
                         let runtime = runtime.clone();
                         window.request_animation_frame();
                         window.on_next_frame(move |window, app| {
-                            if runtime
-                                .expire_viewport_host_scene_if_unrendered(identity, token, app)
-                            {
+                            if runtime.expire_viewport_host_scene_if_unrendered(token, app) {
                                 window.refresh();
                             }
                         });

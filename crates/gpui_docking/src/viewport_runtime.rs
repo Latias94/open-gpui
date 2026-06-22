@@ -59,7 +59,7 @@ pub(crate) struct DockViewportRuntime {
     backend_focus: DockViewportBackendFocusState,
     close_coordinator: DockViewportCloseCoordinator,
     routed_drop_preview: DockViewportRoutedDropPreviewState,
-    render_watchdog: DockViewportRenderWatchdog,
+    host_scene_liveness: DockViewportHostSceneLiveness,
     status: DockViewportRuntimeStatus,
 }
 
@@ -75,15 +75,15 @@ struct DockViewportRuntimeRegistration {
     replaced_windows: Vec<AnyWindowHandle>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DockViewportRenderWatchToken {
-    window_id: WindowId,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockViewportHostSceneLivenessToken {
+    identity: DockViewportIdentity,
     generation: u64,
 }
 
 #[derive(Debug, Default)]
-struct DockViewportRenderWatchdog {
-    generations: HashMap<WindowId, u64>,
+struct DockViewportHostSceneLiveness {
+    generations: HashMap<DockViewportIdentity, u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,25 +111,30 @@ impl DockViewportPointerInputSyncRequest {
     }
 }
 
-impl DockViewportRenderWatchdog {
-    fn observe(&mut self, window_id: WindowId) -> DockViewportRenderWatchToken {
+impl DockViewportHostSceneLiveness {
+    fn lease(&mut self, identity: DockViewportIdentity) -> DockViewportHostSceneLivenessToken {
         let generation = self
             .generations
-            .entry(window_id)
+            .entry(identity.clone())
             .and_modify(|generation| *generation = generation.wrapping_add(1))
             .or_insert(1);
-        DockViewportRenderWatchToken {
-            window_id,
+        DockViewportHostSceneLivenessToken {
+            identity,
             generation: *generation,
         }
     }
 
-    fn is_stale(&self, token: DockViewportRenderWatchToken) -> bool {
-        self.generations.get(&token.window_id).copied() == Some(token.generation)
+    fn is_expired(&self, token: &DockViewportHostSceneLivenessToken) -> bool {
+        self.generations.get(&token.identity).copied() == Some(token.generation)
+    }
+
+    fn forget(&mut self, identity: &DockViewportIdentity) {
+        self.generations.remove(identity);
     }
 
     fn forget_window(&mut self, window_id: WindowId) {
-        self.generations.remove(&window_id);
+        self.generations
+            .retain(|identity, _| identity.window_id() != window_id);
     }
 }
 
@@ -398,7 +403,7 @@ impl DockViewportRuntime {
             backend_focus: DockViewportBackendFocusState::default(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewState::default(),
-            render_watchdog: DockViewportRenderWatchdog::default(),
+            host_scene_liveness: DockViewportHostSceneLiveness::default(),
             status: DockViewportRuntimeStatus::default(),
         }
     }
@@ -425,7 +430,7 @@ impl DockViewportRuntime {
             backend_focus: DockViewportBackendFocusState::default(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewState::default(),
-            render_watchdog: DockViewportRenderWatchdog::default(),
+            host_scene_liveness: DockViewportHostSceneLiveness::default(),
             status: DockViewportRuntimeStatus::default(),
         }
     }
@@ -771,18 +776,18 @@ impl DockViewportRuntime {
 
     pub(crate) fn expire_viewport_host_scene_if_unrendered(
         &mut self,
-        identity: DockViewportIdentity,
-        token: DockViewportRenderWatchToken,
+        token: DockViewportHostSceneLivenessToken,
     ) -> (bool, Vec<AnyWindowHandle>) {
-        if token.window_id != identity.window_id() || !self.render_watchdog.is_stale(token) {
+        if !self.host_scene_liveness.is_expired(&token) {
             return (false, Vec::new());
         }
+        let identity = token.identity;
         if self
             .adapter
             .window_for_space(identity.space())
             .is_none_or(|window| window.window_id() != identity.window_id())
         {
-            self.render_watchdog.forget_window(identity.window_id());
+            self.host_scene_liveness.forget(&identity);
             return (false, Vec::new());
         }
         self.host_scenes.unregister_window(identity.window_id());
@@ -928,11 +933,11 @@ impl DockViewportRuntime {
         Some(registration)
     }
 
-    pub(crate) fn observe_rendered_viewport_host_scene(
+    pub(crate) fn lease_rendered_viewport_host_scene(
         &mut self,
-        window_id: WindowId,
-    ) -> DockViewportRenderWatchToken {
-        self.render_watchdog.observe(window_id)
+        identity: DockViewportIdentity,
+    ) -> DockViewportHostSceneLivenessToken {
+        self.host_scene_liveness.lease(identity)
     }
 
     #[cfg(test)]
@@ -1136,7 +1141,7 @@ impl DockViewportRuntime {
             self.close_coordinator.discard_window(window_id);
         }
         self.window_ownership.clear_window_state(window_id);
-        self.render_watchdog.forget_window(window_id);
+        self.host_scene_liveness.forget_window(window_id);
         self.host_scenes.unregister_space(space);
         self.clear_pending_activation_for(space, window_id);
         self.status.clear_window_references(space, window_id);
