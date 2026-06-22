@@ -1584,6 +1584,47 @@ mod tests {
     }
 
     #[test]
+    fn source_only_global_drop_rejects_window_stack_authority_for_cross_viewport_route() {
+        let source = space("source");
+        let target_space = space("target");
+        let source_window = handle(1);
+        let target_window = handle(2);
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, source.clone(), source_window);
+        register_viewport(&mut adapter, target_space.clone(), target_window);
+
+        for space in [&source, &target_space] {
+            adapter.update_snapshot(
+                space,
+                DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                    100.0, 100.0, 320.0, 240.0,
+                ))),
+                bounds(0.0, 0.0, 320.0, 240.0),
+            );
+        }
+
+        let request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
+            source,
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(120.0), px(140.0)),
+            None,
+            DockViewportPlatformSignals::from_target_context(
+                DockViewportTargetContext::new().with_window_stack([target_window, source_window]),
+            ),
+            DockPayloadDropReleaseOrigin::SourceOnly,
+        );
+
+        let route = adapter.resolve_payload_drop_route(&request, &DockPolicy::default());
+
+        assert_eq!(
+            route,
+            DockViewportDropRoute::Unavailable,
+            "source-only releases must replay an accepted routed preview; window stack fallback is preview authority only"
+        );
+    }
+
+    #[test]
     fn trusted_hovered_none_rejects_geometry_hit() {
         let source = space("source");
         let target_space = space("target");
@@ -2091,7 +2132,7 @@ mod tests {
     }
 
     #[test]
-    fn source_only_overlap_route_authorizes_window_stack_fallback_when_backend_is_unavailable() {
+    fn hovered_host_overlap_route_authorizes_window_stack_fallback_when_backend_is_unavailable() {
         let source = space("source");
         let target = space("target");
         let source_window = handle(1);
@@ -2131,7 +2172,7 @@ mod tests {
                 ),
                 authority: DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
             },
-            "source-only global releases may use front-to-back window stack fallback when the backend lacks hovered-window authority"
+            "hovered-host global releases may use front-to-back window stack fallback when the backend lacks hovered-window authority"
         );
     }
 
