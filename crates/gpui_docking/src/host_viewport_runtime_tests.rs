@@ -7055,7 +7055,7 @@ fn viewport_runtime_hovered_host_release_uses_last_hovered_viewport_when_hover_b
                 if target.window_id() == target_window.window_id()
                     && target.host_position() == target_host_position
                     && *authority
-                        == crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow
+                        == crate::DockViewportAuthorizedRouteAuthority::DragLastHoveredViewportFallback
         ),
         "when hovered-window authority is unavailable, active drag should reuse the last hovered viewport as mouse reference; got {:?}",
         release_resolution.route()

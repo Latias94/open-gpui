@@ -770,10 +770,10 @@ impl DockViewportDropRouteRequest {
         self
     }
 
-    pub(crate) fn with_last_hovered_viewport_window(mut self, window_id: WindowId) -> Self {
+    pub(crate) fn with_drag_last_hovered_viewport_window(mut self, window_id: WindowId) -> Self {
         self.platform_signals = self
             .platform_signals
-            .with_last_hovered_viewport_window(window_id);
+            .with_drag_last_hovered_viewport_window(window_id);
         self
     }
 
@@ -944,13 +944,29 @@ impl DockViewportAdapter {
         &self,
         target_context: DockViewportTargetContext,
     ) -> DockViewportTargetContext {
-        let Some(hovered_window) = target_context.trusted_hovered_window() else {
-            return target_context;
-        };
-        if self.window_input_mask(hovered_window) == Some(DockViewportInputMask::NoInputPassThrough)
+        let target_context =
+            if target_context
+                .trusted_hovered_window()
+                .is_some_and(|hovered_window| {
+                    self.window_input_mask(hovered_window)
+                        == Some(DockViewportInputMask::NoInputPassThrough)
+                })
+            {
+                target_context.without_trusted_hovered_window()
+            } else {
+                target_context
+            };
+
+        if target_context
+            .drag_last_hovered_window()
+            .is_some_and(|last_hovered_window| {
+                self.window_input_mask(last_hovered_window)
+                    == Some(DockViewportInputMask::NoInputPassThrough)
+            })
         {
-            return target_context.without_trusted_hovered_window();
+            return target_context.without_drag_last_hovered_window();
         }
+
         target_context
     }
 

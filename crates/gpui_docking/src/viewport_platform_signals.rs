@@ -10,6 +10,8 @@ use open_gpui::{
 pub(crate) struct DockViewportPlatformSignals {
     /// Trusted backend window reported by the platform as being under the pointer.
     trusted_hovered_signal: DockViewportTrustedHoveredSignal,
+    /// ImGui-style drag fallback captured by the runtime when hover authority is unavailable.
+    drag_last_hovered_window: Option<WindowId>,
     /// Window that delivered the GPUI drag/drop event.
     event_receiver_window: Option<WindowId>,
     /// Front-to-back window stack, when the platform provides it.
@@ -39,6 +41,7 @@ impl DockViewportPlatformSignals {
         };
         Self {
             trusted_hovered_signal,
+            drag_last_hovered_window: None,
             event_receiver_window: None,
             window_stack,
             global_window_bounds: capabilities.global_window_bounds,
@@ -64,12 +67,14 @@ impl DockViewportPlatformSignals {
         self
     }
 
-    pub(crate) fn with_last_hovered_viewport_window(mut self, window_id: WindowId) -> Self {
+    pub(crate) fn with_drag_last_hovered_viewport_window(mut self, window_id: WindowId) -> Self {
         let target_context = self
             .target_context()
-            .with_last_hovered_viewport_window(window_id);
-        let (trusted_hovered_signal, window_stack) = target_context.into_window_signals();
+            .with_drag_last_hovered_viewport_window(window_id);
+        let (trusted_hovered_signal, drag_last_hovered_window, window_stack) =
+            target_context.into_window_signals();
         self.trusted_hovered_signal = trusted_hovered_signal;
+        self.drag_last_hovered_window = drag_last_hovered_window;
         self.window_stack = window_stack;
         self
     }
@@ -79,8 +84,10 @@ impl DockViewportPlatformSignals {
         windows: impl IntoIterator<Item = WindowId>,
     ) -> Self {
         let target_context = self.target_context().with_focus_stamp_window_stack(windows);
-        let (trusted_hovered_signal, window_stack) = target_context.into_window_signals();
+        let (trusted_hovered_signal, drag_last_hovered_window, window_stack) =
+            target_context.into_window_signals();
         self.trusted_hovered_signal = trusted_hovered_signal;
+        self.drag_last_hovered_window = drag_last_hovered_window;
         self.window_stack = window_stack;
         self
     }
@@ -130,13 +137,16 @@ impl DockViewportPlatformSignals {
             self.trusted_hovered_signal,
             self.window_stack.clone(),
         )
+        .with_optional_drag_last_hovered_window(self.drag_last_hovered_window)
     }
 
     #[cfg(test)]
     pub(crate) fn from_target_context(target_context: DockViewportTargetContext) -> Self {
-        let (trusted_hovered_signal, window_stack) = target_context.into_window_signals();
+        let (trusted_hovered_signal, drag_last_hovered_window, window_stack) =
+            target_context.into_window_signals();
         Self {
             trusted_hovered_signal,
+            drag_last_hovered_window,
             event_receiver_window: None,
             window_stack,
             global_window_bounds: true,

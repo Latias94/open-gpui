@@ -467,6 +467,15 @@ mod tests {
         );
         assert_eq!(
             delivery_authority_for_route(&DockViewportDropRoute::KnownViewport {
+                target: target_hit.clone(),
+                authority:
+                    crate::DockViewportAuthorizedRouteAuthority::DragLastHoveredViewportFallback,
+            }),
+            None,
+            "last-hovered viewport fallback is route selection authority, not delivery authority"
+        );
+        assert_eq!(
+            delivery_authority_for_route(&DockViewportDropRoute::KnownViewport {
                 target: target_hit,
                 authority: crate::DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview,
             }),

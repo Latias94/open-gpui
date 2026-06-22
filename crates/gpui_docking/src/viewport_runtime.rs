@@ -1553,7 +1553,7 @@ impl DockViewportRuntime {
                 .clone()
                 .with_resampled_platform_target_context_from_app(app)
         });
-        let request = self.with_last_hovered_viewport_context(request);
+        let request = self.with_drag_last_hovered_viewport_context(request);
         let request = self.with_focus_stamp_fallback_context(request);
         route_resolution = self
             .adapter
@@ -1571,7 +1571,7 @@ impl DockViewportRuntime {
         resolution
     }
 
-    fn with_last_hovered_viewport_context(
+    fn with_drag_last_hovered_viewport_context(
         &self,
         request: DockViewportDropRouteRequest,
     ) -> DockViewportDropRouteRequest {
@@ -1601,7 +1601,7 @@ impl DockViewportRuntime {
         if self.adapter.window_route_ready(identity.window_id()) != Some(true) {
             return request;
         }
-        request.with_last_hovered_viewport_window(identity.window_id())
+        request.with_drag_last_hovered_viewport_window(identity.window_id())
     }
 
     fn with_focus_stamp_fallback_context(

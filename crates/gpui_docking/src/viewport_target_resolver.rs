@@ -189,6 +189,9 @@ pub(crate) enum DockViewportAuthorizedRouteAuthority {
     /// Backend hovered-window signal is unavailable or was discarded for a no-input viewport, and
     /// the platform front-to-back window stack selected this viewport.
     FrontToBackWindowStackFallback,
+    /// Drag/drop is active, hovered-window authority is unavailable, and the runtime reused the last
+    /// hovered viewport as ImGui's mouse reference viewport.
+    DragLastHoveredViewportFallback,
     /// A previously rendered routed preview accepted this target, so release may replay that
     /// accepted target without asking the window-stack fallback to pick a new viewport.
     AcceptedRoutedPreview,
@@ -216,6 +219,13 @@ impl DockAuthorizedViewportRouteTarget {
         }
     }
 
+    fn drag_last_hovered_viewport_fallback(target: DockViewportWindowHit) -> Self {
+        Self {
+            target,
+            authority: DockViewportAuthorizedRouteAuthority::DragLastHoveredViewportFallback,
+        }
+    }
+
     pub(crate) fn event_receiver_local_scene(target: DockViewportTargetHit) -> Self {
         Self {
             target: target.into(),
@@ -239,6 +249,7 @@ impl DockViewportAuthorizedRouteAuthority {
             Self::TrustedHoveredWindow
                 | Self::EventReceiverLocalScene
                 | Self::FrontToBackWindowStackFallback
+                | Self::DragLastHoveredViewportFallback
         )
     }
 }
@@ -296,6 +307,17 @@ fn choose_front_to_back_window_stack_fallback_target(
     None
 }
 
+fn choose_drag_last_hovered_viewport_fallback_target(
+    hits: &[DockViewportWindowHit],
+    context: &DockViewportTargetContext,
+) -> Option<DockAuthorizedViewportRouteTarget> {
+    let last_hovered_window = context.drag_last_hovered_window()?;
+    hits.iter()
+        .find(|hit| hit.window_id() == last_hovered_window)
+        .cloned()
+        .map(DockAuthorizedViewportRouteTarget::drag_last_hovered_viewport_fallback)
+}
+
 pub(crate) fn resolve_authorized_viewport_route_target<I, H>(
     hits: I,
     context: &DockViewportTargetContext,
@@ -312,6 +334,10 @@ where
     match context.trusted_hovered_signal() {
         crate::DockViewportTrustedHoveredSignal::Unavailable => {
             if let Some(target) = choose_front_to_back_window_stack_fallback_target(&hits, context)
+            {
+                return Some(target);
+            }
+            if let Some(target) = choose_drag_last_hovered_viewport_fallback_target(&hits, context)
             {
                 return Some(target);
             }
@@ -417,6 +443,34 @@ mod tests {
             "front-to-back window stack fallback authorizes commits only when hovered-window authority is unavailable"
         );
 
+        assert_eq!(
+            resolve_authorized_viewport_route_target(
+                hits(),
+                &DockViewportTargetContext::new()
+                    .with_drag_last_hovered_viewport_window(second.window_id()),
+            )
+            .map(|target| (target.authority(), target.into_target().space().clone())),
+            Some((
+                DockViewportAuthorizedRouteAuthority::DragLastHoveredViewportFallback,
+                space("zeta"),
+            )),
+            "drag last-hovered fallback is explicit route authority, not trusted backend hover"
+        );
+        assert_eq!(
+            resolve_authorized_viewport_route_target(
+                hits(),
+                &DockViewportTargetContext::new()
+                    .with_drag_last_hovered_viewport_window(second.window_id())
+                    .with_window_stack([first, second]),
+            )
+            .map(|target| (target.authority(), target.into_target().space().clone())),
+            Some((
+                DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
+                space("alpha"),
+            )),
+            "fresh platform window-stack fallback has priority over the drag's last hovered viewport"
+        );
+
         let fallback = choose_diagnostic_viewport_target(
             hits(),
             &DockViewportTargetContext::new().with_window_stack([second, first]),
@@ -463,6 +517,16 @@ mod tests {
                     .with_window_stack([second, first]),
             ),
             None
+        );
+        assert_eq!(
+            resolve_authorized_viewport_route_target(
+                hits(),
+                &DockViewportTargetContext::new()
+                    .with_trusted_hovered_window_known_empty()
+                    .with_drag_last_hovered_viewport_window(second.window_id()),
+            ),
+            None,
+            "trusted hovered=None vetoes drag last-hovered fallback"
         );
 
         let single = choose_diagnostic_viewport_target(
