@@ -12,8 +12,8 @@ pub(crate) struct DockViewportBackendFocusState {
     /// Last live docking window observed as backend-focused. Mirrors ImGui's
     /// `PlatformLastFocusedViewportId` for activation and destroyed-focus suppression.
     last_confirmed_backend_focused_window: Option<WindowId>,
-    focused_stamp_count: u64,
-    focused_window_stamps: HashMap<WindowId, u64>,
+    viewport_z_order_stamp_count: u64,
+    viewport_z_order_stamps: HashMap<WindowId, u64>,
     /// One-shot gate for ImGui's `prev_focused_has_been_destroyed` behavior: when backend focus
     /// moves to another viewport only because the previously focused viewport was destroyed, the
     /// next platform-focus restoration for the newly focused window must be skipped once.
@@ -53,6 +53,12 @@ impl DockViewportBackendFocusState {
         }
         self.pending_activation = Some(activation);
         true
+    }
+
+    pub(crate) fn record_viewport_created(&mut self, window_id: WindowId) {
+        // Mirrors ImGui's AddUpdateViewport(): new platform viewports are assumed front-most for
+        // fallback z-order even when they are opened without requesting platform focus.
+        self.stamp_viewport_z_order(window_id);
     }
 
     pub(crate) fn clear_pending_activation_for(
@@ -96,10 +102,8 @@ impl DockViewportBackendFocusState {
             pending_activation_changed = self.clear_pending_activation_except_window(window_id);
         }
         self.last_confirmed_backend_focused_window = Some(window_id);
-        if focused_changed || !self.focused_window_stamps.contains_key(&window_id) {
-            self.focused_stamp_count = self.focused_stamp_count.wrapping_add(1);
-            self.focused_window_stamps
-                .insert(window_id, self.focused_stamp_count);
+        if focused_changed || !self.viewport_z_order_stamps.contains_key(&window_id) {
+            self.stamp_viewport_z_order(window_id);
         }
         Some(DockViewportBackendFocusRecord {
             focused_changed,
@@ -107,12 +111,12 @@ impl DockViewportBackendFocusState {
         })
     }
 
-    pub(crate) fn front_to_back_focused_windows(
+    pub(crate) fn front_to_back_z_order_windows(
         &self,
         is_live_docking_window: impl Fn(WindowId) -> bool,
     ) -> Vec<WindowId> {
         let mut stamped_windows = self
-            .focused_window_stamps
+            .viewport_z_order_stamps
             .iter()
             .filter_map(|(window_id, stamp)| {
                 is_live_docking_window(*window_id).then_some((*window_id, *stamp))
@@ -130,7 +134,7 @@ impl DockViewportBackendFocusState {
     }
 
     pub(crate) fn discard_window(&mut self, window_id: WindowId) {
-        self.focused_window_stamps.remove(&window_id);
+        self.viewport_z_order_stamps.remove(&window_id);
         if self
             .destroyed_previous_focus_suppression
             .is_some_and(|suppression| suppression.focused_window == window_id)
@@ -205,6 +209,12 @@ impl DockViewportBackendFocusState {
         self.destroyed_previous_focus_suppression = None;
         true
     }
+
+    fn stamp_viewport_z_order(&mut self, window_id: WindowId) {
+        self.viewport_z_order_stamp_count = self.viewport_z_order_stamp_count.wrapping_add(1);
+        self.viewport_z_order_stamps
+            .insert(window_id, self.viewport_z_order_stamp_count);
+    }
 }
 
 #[cfg(test)]
@@ -248,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn focused_window_stamps_expose_front_to_back_fallback_order() {
+    fn viewport_z_order_stamps_expose_front_to_back_fallback_order() {
         let mut state = DockViewportBackendFocusState::default();
         let alpha_window = handle(1);
         let beta_window = handle(2);
@@ -264,19 +274,40 @@ mod tests {
             .expect("alpha returns to front");
 
         assert_eq!(
-            state.front_to_back_focused_windows(|_| true),
+            state.front_to_back_z_order_windows(|_| true),
             vec![alpha_window.window_id(), beta_window.window_id()]
         );
         assert_eq!(
-            state.front_to_back_focused_windows(|window| window == beta_window.window_id()),
+            state.front_to_back_z_order_windows(|window| window == beta_window.window_id()),
             vec![beta_window.window_id()],
             "stale focus stamps are filtered by current live docking-window ownership"
         );
 
         state.discard_window(alpha_window.window_id());
         assert_eq!(
-            state.front_to_back_focused_windows(|_| true),
+            state.front_to_back_z_order_windows(|_| true),
             vec![beta_window.window_id()]
+        );
+    }
+
+    #[test]
+    fn viewport_creation_stamps_front_to_back_fallback_order_without_backend_focus() {
+        let mut state = DockViewportBackendFocusState::default();
+        let alpha_window = handle(1);
+        let beta_window = handle(2);
+
+        state.record_viewport_created(alpha_window.window_id());
+        state.record_viewport_created(beta_window.window_id());
+
+        assert_eq!(
+            state.front_to_back_z_order_windows(|_| true),
+            vec![beta_window.window_id(), alpha_window.window_id()],
+            "new viewport creation should mirror ImGui AddUpdateViewport z-order stamping"
+        );
+        assert_eq!(
+            state.pending_activation(),
+            None,
+            "creation z-order is not backend focus confirmation"
         );
     }
 

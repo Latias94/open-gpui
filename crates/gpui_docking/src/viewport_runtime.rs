@@ -1222,6 +1222,8 @@ impl DockViewportRuntime {
     ) -> DockViewportRuntimeRegistration {
         self.window_ownership
             .register_runtime_window(window.window_id());
+        self.backend_focus
+            .record_viewport_created(window.window_id());
         let outcome = self.adapter.register_viewport_with_outcome(space, window);
         let replaced_windows = self.clear_replaced_viewport_mappings(&outcome, window);
         DockViewportRuntimeRegistration {
@@ -1608,6 +1610,8 @@ impl DockViewportRuntime {
         request: DockViewportDropRouteRequest,
     ) -> DockViewportDropRouteRequest {
         if !request.allows_focus_stamp_fallback()
+            || request.release_origin()
+                == crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly
             || !matches!(
                 request.target_context().trusted_hovered_signal(),
                 crate::DockViewportTrustedHoveredSignal::Unavailable
@@ -1618,7 +1622,7 @@ impl DockViewportRuntime {
         }
         let focused_windows = self
             .backend_focus
-            .front_to_back_focused_windows(|window_id| {
+            .front_to_back_z_order_windows(|window_id| {
                 self.adapter.window_can_authorize_hover_hit(window_id) == Some(true)
             });
         if focused_windows.is_empty() {

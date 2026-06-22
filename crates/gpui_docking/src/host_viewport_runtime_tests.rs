@@ -6759,6 +6759,171 @@ fn viewport_runtime_hovered_host_release_uses_backend_focus_stamp_when_stack_una
 }
 
 #[open_gpui::test]
+fn viewport_runtime_new_viewport_creation_stamps_focus_fallback_order(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+
+    let source_window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let target_window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let _source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(source_window_bounds),
+                    focus: false,
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("source viewport should open without taking focus");
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(target_window_bounds),
+                    focus: false,
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("target viewport should open without taking focus");
+
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_opened.window().window_id(),
+        DockViewportWindowFacts::from_window_bounds(target_window_bounds),
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        point(px(120.0), px(100.0)),
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_opened.window().window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+
+    let platform_signals = cx.update(|app| {
+        crate::DockViewportPlatformSignals::from_app_without_hovered_window_authority(app)
+    });
+    let request = DockViewportDropRouteRequest::from_platform_signals(
+        source_space,
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        point(px(220.0), px(200.0)),
+        None,
+        platform_signals,
+    );
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
+
+    let DockViewportDropRoute::KnownViewport { target, authority } = resolution.route() else {
+        panic!(
+            "newly-created viewports should enter ImGui-style z-order fallback even before backend focus confirmation, got {:?}",
+            resolution.route()
+        );
+    };
+    assert_eq!(target.space(), &target_space);
+    assert_eq!(target.window_id(), target_opened.window().window_id());
+    assert_eq!(
+        *authority,
+        crate::DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback
+    );
+    assert!(resolution.routed_preview_target_snapshot().is_some());
+    assert!(resolution.delivery().is_none());
+}
+
+#[open_gpui::test]
+fn viewport_runtime_source_only_release_ignores_creation_z_order_fallback(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+
+    let target_window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(target_window_bounds),
+                    focus: false,
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("target viewport should open without taking focus");
+
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_opened.window().window_id(),
+        DockViewportWindowFacts::from_window_bounds(target_window_bounds),
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        point(px(120.0), px(100.0)),
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_opened.window().window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+
+    let platform_signals = cx.update(|app| {
+        crate::DockViewportPlatformSignals::from_app_without_hovered_window_authority(app)
+    });
+    let request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
+        source_space,
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        point(px(220.0), px(200.0)),
+        None,
+        platform_signals,
+        DockPayloadDropReleaseOrigin::SourceOnly,
+    );
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
+
+    assert_eq!(
+        resolution.route(),
+        &DockViewportDropRoute::Unavailable,
+        "source-only release must not use viewport creation z-order as cross-viewport authority"
+    );
+    assert!(resolution.delivery().is_none());
+}
+
+#[open_gpui::test]
 fn viewport_runtime_source_only_release_uses_current_backend_fallback_not_last_routed_viewport(
     cx: &mut TestAppContext,
 ) {
