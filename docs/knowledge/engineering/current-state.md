@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: acc6e91
+git_commit: f320da1
 verified_by:
   - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-core virtualizer table
@@ -32,6 +32,10 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-components switch_runtime_click_emits_on_change_with_next_checked
   - cargo nextest run -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-foundation-gallery
+  - cargo fmt -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-foundation-gallery overlay_page_catalog_entries_have_signals_and_sample_selectors overlay_gallery_smoke_renders_catalog_entries_and_official_samples
+  - cargo nextest run -p open-gpui-ui-foundation-gallery overlay
+  - cargo nextest run -p open-gpui-ui-foundation-gallery
   - git diff --check
   - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
 ---
@@ -40,7 +44,7 @@ verified_by:
 
 - Goal: Execute the UI component-library slice around public API stability, Overlay productization, and gallery focused inspection.
 - Branch: `main`
-- Last verified: 2026-06-22, U3 Switch callback cleanup passed `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components component_api_inventory`, `cargo nextest run -p open-gpui-ui-components switch_runtime_click_emits_on_change_with_next_checked`, full `cargo nextest run -p open-gpui-ui-components`, full `cargo nextest run -p open-gpui-ui-foundation-gallery`, and `git diff --check`.
+- Last verified: 2026-06-22, U4 Overlay catalog productization passed `cargo fmt -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-foundation-gallery overlay_page_catalog_entries_have_signals_and_sample_selectors overlay_gallery_smoke_renders_catalog_entries_and_official_samples`, `cargo nextest run -p open-gpui-ui-foundation-gallery overlay`, full `cargo nextest run -p open-gpui-ui-foundation-gallery`, and `git diff --check`.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -68,9 +72,10 @@ verified_by:
 - Done: Wrote `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` for the next slice. It starts with a public API inventory, then normalizes controlled/default/policy builders, callback names, Overlay catalog metadata, and focused Components gallery inspection.
 - Done: Completed U2 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` as commits `e4c46b9` and `b40cb08`. Seed-shaped builders on `Tabs`, `RadioGroup`, `Toolbar`, `Tree`, `VirtualizedList`, `Combobox`, `Command`, `Menu`, and `ContextMenu` now use `default_*` names, `Sidebar::default_focused` covers the adapter-owned focus seed while `Sidebar::selected` stays controlled, state getters such as `ComboboxState::query()` and `CommandState::query()` still expose the current value, the gallery build paths now call the renamed builders, and the contract docs and inventory guard reflect the new ownership vocabulary.
 - Done: Completed U3 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` as `acc6e91`. `Switch::on_click` was removed from the public builder surface in favor of `Switch::on_change`, the API inventory and public-method baseline now classify `Switch::checked` plus `on_change` with the scalar value-change vocabulary, the contract docs no longer list Switch as a callback exception, and a real GPUI runtime test verifies enabled clicks emit the next checked value while disabled switches do not emit changes. Read-only review `u3_callback_review_light` found no blocking issues.
-- Follow-up: Execute U4 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md`: productize Overlay catalog metadata and gates after the callback vocabulary is stable.
+- Done: Completed U4 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` as `f320da1`. The Overlay page now has `OVERLAY_CATALOG`, `OverlayCatalogEntry`, `OverlayCatalogStatus`, and `overlay_sample_selector_pairs()` covering Tooltip, HoverCard, Popover, Dialog, AlertDialog, Sheet, Menu, and ContextMenu. The gallery renders visible Overlay catalog cards, docs describe the overlay catalog contract, and focused tests guard catalog signals plus rendered sample selectors.
+- Follow-up: Execute U5 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md`: add focused component-family viewing to the Components gallery.
 - Blocked: None.
-- Next action: Begin U4 Overlay catalog metadata and gate cleanup from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md`.
+- Next action: Begin U5 focused component-family viewing from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md`.
 
 # Citations
 
@@ -97,3 +102,4 @@ verified_by:
 [21] Commit `b40cb08` - `feat(ui-components): rename query seed builders`
 [22] Commit `acc6e91` - `feat(ui-components): rename switch callback to on_change`
 [23] Read-only review agent `u3_callback_review_light`
+[24] Commit `f320da1` - `feat(gallery): add overlay catalog gates`
