@@ -13,6 +13,7 @@ pub(crate) struct DockWorkspacePayloadDropRequest<'a> {
     pub(crate) source_space: &'a DockSpaceId,
     pub(crate) payload: DockWorkspaceDropPayload<'a>,
     pub(crate) target: DockWorkspaceResolvedDropTarget,
+    pub(crate) frozen_focus_item: Option<&'a DockItemId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,6 +91,7 @@ impl DockWorkspace {
             source_space,
             payload,
             target,
+            frozen_focus_item,
         } = request;
         let (target_space, target) = target.into_parts();
 
@@ -164,11 +166,7 @@ impl DockWorkspace {
             self.graph().activation_focus_item_for_workspace_payload(
                 &payload,
                 Some(&target_space),
-                match payload {
-                    DockWorkspaceDropPayload::Item { item, .. } => Some(item),
-                    DockWorkspaceDropPayload::Tabs { .. }
-                    | DockWorkspaceDropPayload::Floating { .. } => None,
-                },
+                frozen_focus_item,
             ),
         ))
     }
@@ -523,6 +521,7 @@ mod tests {
 
         let outcome = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs: left,
@@ -561,6 +560,7 @@ mod tests {
 
         let outcome = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs: tabs,
@@ -600,6 +600,7 @@ mod tests {
 
         let err = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs: left,
@@ -639,6 +640,7 @@ mod tests {
 
         let err = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs: tabs,
@@ -668,6 +670,7 @@ mod tests {
 
         let err = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs: left,
@@ -706,6 +709,7 @@ mod tests {
 
         let err = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs: left,
@@ -737,6 +741,7 @@ mod tests {
 
         let err = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs: left,
@@ -781,6 +786,7 @@ mod tests {
 
         let outcome = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &source_space,
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs,
@@ -830,6 +836,7 @@ mod tests {
 
         let err = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &source_space,
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs,
@@ -882,6 +889,7 @@ mod tests {
 
         let err = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &source_space,
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs,
@@ -904,6 +912,7 @@ mod tests {
 
         let err = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs: left,
@@ -952,6 +961,7 @@ mod tests {
 
         let err = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &source_space,
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs,
@@ -976,6 +986,7 @@ mod tests {
 
         let outcome = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs: left,
@@ -1005,6 +1016,7 @@ mod tests {
 
         let err = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs: left,
@@ -1043,6 +1055,7 @@ mod tests {
 
         let err = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs: left,
@@ -1084,6 +1097,7 @@ mod tests {
 
         let outcome = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Tabs { source_tabs },
                 target: workspace_kind_target(
@@ -1106,6 +1120,42 @@ mod tests {
     }
 
     #[test]
+    fn resolved_center_target_moves_tabs_stack_with_frozen_focus_item() {
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a"), item("c")],
+            selected: Some(item("c")),
+        });
+        let target_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        let root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![source_tabs, target_tabs],
+            fractions: vec![0.5, 0.5],
+        });
+        graph.set_root(space(), root);
+        let mut workspace = DockWorkspace::new(space(), graph);
+        let focused = item("c");
+
+        let outcome = workspace
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: Some(&focused),
+                source_space: &space(),
+                payload: DockWorkspaceDropPayload::Tabs { source_tabs },
+                target: workspace_kind_target(
+                    &space(),
+                    DockResolvedDropTargetKind::LeafCenter { root, target_tabs },
+                ),
+            })
+            .expect("resolved center stack drop should commit");
+
+        assert_eq!(outcome.action(), DockActionOutcome::Changed);
+        assert_eq!(outcome.focus_item(), Some(&focused));
+    }
+
+    #[test]
     fn resolved_empty_space_target_moves_tabs_stack_when_policy_allows() {
         let mut graph = DockGraph::new();
         let source_tabs = graph.insert_node(DockNode::Tabs {
@@ -1119,6 +1169,7 @@ mod tests {
 
         let outcome = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Tabs { source_tabs },
                 target: workspace_kind_target(
@@ -1197,6 +1248,7 @@ mod tests {
 
                 let outcome = workspace
                     .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                        frozen_focus_item: None,
                         source_space: &source_space,
                         payload,
                         target: workspace_target(&target_space, target),
@@ -1251,6 +1303,7 @@ mod tests {
 
         let outcome = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Tabs { source_tabs },
                 target: workspace_target(&space(), target),
@@ -1338,6 +1391,7 @@ mod tests {
 
         let outcome = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &source_space,
                 payload: DockWorkspaceDropPayload::Floating { floating },
                 target: workspace_target(&target_space, target),
@@ -1409,6 +1463,7 @@ mod tests {
 
         let err = workspace
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                frozen_focus_item: None,
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Item {
                     source_tabs,

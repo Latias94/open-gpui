@@ -137,6 +137,7 @@ pub(crate) struct DockLocalDropDelivery {
     payload: DockDragPayload,
     target_space: DockSpaceId,
     target: DockResolvedDropTarget,
+    frozen_focus_item: Option<DockItemId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -246,11 +247,16 @@ impl DockPayloadDropRelease {
 
 impl DockLocalDropDelivery {
     fn from_release(release: &DockPayloadDropRelease, target: DockResolvedDropTarget) -> Self {
+        let frozen_focus_item = release
+            .drag_session()
+            .and_then(|session| session.focus_item())
+            .cloned();
         Self {
             source_space: release.payload.source_space.clone(),
             payload: release.payload.clone(),
             target_space: release.host_space.clone(),
             target,
+            frozen_focus_item,
         }
     }
 
@@ -262,6 +268,7 @@ impl DockLocalDropDelivery {
                 self.target_space.clone(),
                 self.target.clone(),
             ),
+            frozen_focus_item: self.frozen_focus_item.as_ref(),
         }
     }
 }
@@ -953,6 +960,50 @@ mod tests {
                 target_tabs: tabs,
             }
         );
+    }
+
+    #[test]
+    fn local_drop_delivery_preserves_frozen_focus_item_for_tabs_payload() {
+        let tabs = DockNodeId::null();
+        let position = point(px(120.0), px(90.0));
+        let mut runtime = DockInteractionRuntime::default();
+        runtime.begin_drop_scene(DockHostDropScene::new(position), &DockPolicy::default());
+        runtime.push_drop_scene_fact(
+            position,
+            Vec::new(),
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root: tabs,
+                target_tabs: tabs,
+                bounds: bounds(0.0, 0.0, 240.0, 180.0),
+                is_central: false,
+            }),
+            &DockPolicy::default(),
+        );
+        assert!(runtime.finish_drop_acceptance_pass());
+
+        let payload =
+            DockDragPayload::new_tabs(DockSpaceId::from("main"), tabs, "Tabs".to_string());
+        let focus_item = DockItemId::from("a");
+        let release = DockPayloadDropRelease::hovered_host_with_session(
+            payload.clone(),
+            DockSpaceId::from("main"),
+            position,
+            Some(DockRuntimeDragSession::with_focus_item(
+                42,
+                &payload,
+                Some(focus_item.clone()),
+            )),
+        );
+        let delivery = runtime
+            .take_local_drop_delivery(&release, &DockPolicy::default(), None, None)
+            .expect("previously accepted target should produce a local delivery");
+        let request = delivery.workspace_request();
+
+        assert_eq!(request.frozen_focus_item, Some(&focus_item));
+        assert!(matches!(
+            &request.payload,
+            DockWorkspaceDropPayload::Tabs { source_tabs } if *source_tabs == tabs
+        ));
     }
 
     #[test]

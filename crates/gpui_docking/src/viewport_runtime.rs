@@ -1380,12 +1380,17 @@ impl DockViewportRuntime {
         };
 
         let target_space = target.target_space().clone();
+        let frozen_focus_item = drag_session
+            .as_ref()
+            .and_then(|session| session.focus_item())
+            .cloned();
         let drop_outcome = self.controller.update(cx, |controller, cx| {
             let outcome = controller.workspace_mut().commit_resolved_payload_drop(
                 DockWorkspacePayloadDropRequest {
                     source_space: &source_space,
                     payload: payload.as_workspace_payload(source_node),
                     target,
+                    frozen_focus_item: frozen_focus_item.as_ref(),
                 },
             );
             if outcome
