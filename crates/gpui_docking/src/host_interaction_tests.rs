@@ -1634,7 +1634,13 @@ fn dragging_floating_title_bar_to_tabs_merges_floating_stack(cx: &mut TestAppCon
     let start = debug_bounds(&mut visual, &floating_handle).center();
     let end = debug_bounds(&mut visual, &target_tabs).center();
 
-    simulate_left_drag(&mut visual, start, end);
+    let threshold = point(start.x + px(24.0), start.y);
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let visual = VisualTestContext::from_window(window.into(), cx);
 

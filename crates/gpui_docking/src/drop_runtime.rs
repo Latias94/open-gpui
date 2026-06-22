@@ -180,6 +180,14 @@ impl DockHostDropScene {
         }
     }
 
+    fn same_acceptance_cycle_as(&self, other: &Self) -> bool {
+        self.position == other.position
+            && self.payload_size == other.payload_size
+            && self.drop_guide_style == other.drop_guide_style
+            && self.excluded_nodes == other.excluded_nodes
+            && self.clear_on_miss == other.clear_on_miss
+    }
+
     fn fact_is_excluded(&self, fact: &DockHostDropSceneFact) -> bool {
         self.excluded_nodes
             .iter()
@@ -257,6 +265,23 @@ impl DockDropRuntime {
         let changed = self.resolve_scene(&scene, policy, target_validator, edge_plan_resolver);
         self.scene = Some(scene);
         changed
+    }
+
+    pub(crate) fn ensure_scene_with_validator(
+        &mut self,
+        scene: DockHostDropScene,
+        policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
+        edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
+    ) -> bool {
+        if self
+            .scene
+            .as_ref()
+            .is_some_and(|existing| existing.same_acceptance_cycle_as(&scene))
+        {
+            return false;
+        }
+        self.begin_scene_with_validator(scene, policy, target_validator, edge_plan_resolver)
     }
 
     #[cfg(test)]

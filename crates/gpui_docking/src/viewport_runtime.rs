@@ -959,10 +959,9 @@ impl DockViewportRuntime {
         let Some(session) = session else {
             return false;
         };
-        self.routed_drop_preview_resolution
+        self.routed_drop_preview
             .as_ref()
-            .and_then(|resolution| resolution.delivery())
-            .and_then(|delivery| delivery.drag_session_id())
+            .and_then(DockViewportRoutedDropPreview::drag_session_id)
             == Some(session.id())
     }
 
@@ -982,19 +981,27 @@ impl DockViewportRuntime {
             active_drag.record_last_routed_viewport_identity(Some(identity));
         }
         let next = match resolution.route() {
-            DockViewportDropRoute::KnownViewport { .. } => {
-                resolution.delivery().and_then(|delivery| {
-                    crate::routed_drop_preview_from_delivery(delivery, payload_title)
-                })
+            DockViewportDropRoute::Local { .. } | DockViewportDropRoute::KnownViewport { .. } => {
+                resolution
+                    .routed_preview_target_snapshot()
+                    .and_then(|target| {
+                        crate::routed_drop_preview_from_target(
+                            target,
+                            active_drag_session_id,
+                            payload_title,
+                        )
+                    })
             }
-            DockViewportDropRoute::Rejected(_) => resolution.preview_target().and_then(|target| {
-                crate::routed_rejected_drop_preview_from_target(
-                    target,
-                    active_drag_session_id,
-                    payload_title,
-                )
-            }),
-            DockViewportDropRoute::Local { .. } | DockViewportDropRoute::TearOff => None,
+            DockViewportDropRoute::Rejected(_) => resolution
+                .routed_preview_target_snapshot()
+                .and_then(|target| {
+                    crate::routed_rejected_drop_preview_from_target(
+                        target,
+                        active_drag_session_id,
+                        payload_title,
+                    )
+                }),
+            DockViewportDropRoute::TearOff => None,
             DockViewportDropRoute::Unavailable => None,
         };
         let next_resolution = match resolution.route() {
@@ -1003,7 +1010,7 @@ impl DockViewportRuntime {
         };
         let starts_acceptance_pass = matches!(
             resolution.route(),
-            DockViewportDropRoute::KnownViewport { .. }
+            DockViewportDropRoute::Local { .. } | DockViewportDropRoute::KnownViewport { .. }
         ) && next.is_some();
         if starts_acceptance_pass {
             self.routed_drop_preview_epoch = self.routed_drop_preview_epoch.wrapping_add(1);
@@ -1038,17 +1045,14 @@ impl DockViewportRuntime {
         };
         if !matches!(
             resolution.route(),
-            DockViewportDropRoute::KnownViewport { .. }
+            DockViewportDropRoute::Local { .. } | DockViewportDropRoute::KnownViewport { .. }
         ) {
             return false;
         }
-        let Some(delivery) = resolution.delivery() else {
+        let Some(target) = resolution.routed_preview_target_snapshot() else {
             return false;
         };
-        let Some((target_space, target_window_id, _)) = delivery.routed_preview_target() else {
-            return false;
-        };
-        if target_space != space || target_window_id != window_id {
+        if target.target_space() != space || target.target_window_id() != Some(window_id) {
             return false;
         }
         self.routed_drop_preview_accepted_epoch = Some(self.routed_drop_preview_epoch);
@@ -1060,7 +1064,11 @@ impl DockViewportRuntime {
         request: &DockViewportDropRouteRequest,
         cx: &mut C,
     ) -> DockViewportResolvedDropRoute {
-        self.resolve_payload_drop_delivery(request, cx)
+        let resolution = self.resolve_payload_drop_delivery(request, cx);
+        if resolution.route().is_release_delivery_authority() {
+            return resolution;
+        }
+        resolution.without_delivery()
     }
 
     fn replace_routed_drop_preview(
@@ -1136,12 +1144,6 @@ impl DockViewportRuntime {
             .routed_drop_preview
             .as_ref()
             .is_some_and(|preview| preview.drag_session_id() == Some(session.id()))
-            || self
-                .routed_drop_preview_resolution
-                .as_ref()
-                .and_then(|resolution| resolution.delivery())
-                .and_then(|delivery| delivery.drag_session_id())
-                == Some(session.id())
         {
             self.replace_routed_drop_preview(None, None)
         } else {
@@ -1642,14 +1644,15 @@ impl DockViewportRuntime {
         &self,
         cx: &mut C,
     ) -> bool {
-        let Some(delivery) = self
+        let Some(target) = self
             .routed_drop_preview_resolution
             .as_ref()
-            .and_then(|resolution| resolution.delivery())
+            .and_then(|resolution| resolution.routed_preview_target_snapshot())
         else {
             return false;
         };
-        let Some((target_space, target_window_id, _)) = delivery.routed_preview_target() else {
+        let target_space = target.target_space();
+        let Some(target_window_id) = target.target_window_id() else {
             return false;
         };
         if self.owned_windows.contains(&target_window_id) {
@@ -1699,7 +1702,10 @@ impl DockViewportRuntime {
             workspace,
             payload_classes,
         ) {
-            DockViewportWorkspaceRouteTarget::Resolved(target) => Some(target),
+            DockViewportWorkspaceRouteTarget::Resolved(target) => {
+                preview_target = Some(target.clone());
+                Some(target)
+            }
             DockViewportWorkspaceRouteTarget::NoCurrentHostTarget => None,
             DockViewportWorkspaceRouteTarget::RouteUnavailable => {
                 route = DockViewportDropRoute::Unavailable;
@@ -1781,7 +1787,7 @@ impl DockViewportRuntime {
         route_resolution: &DockViewportDropRouteResolution,
         cx: &mut C,
     ) -> Option<DockViewportResolvedDropRoute> {
-        if !route_resolution.can_replay_accepted_routed_preview(request) {
+        if !self.can_replay_accepted_routed_preview(request, route_resolution) {
             return None;
         }
         let release_can_replay_accepted_preview = request.coordinate_space()
@@ -1802,16 +1808,15 @@ impl DockViewportRuntime {
         if self.routed_drop_preview_accepted_epoch != Some(self.routed_drop_preview_epoch) {
             return None;
         }
-        let preview_resolution = self.routed_drop_preview_resolution.as_ref()?;
-        let Some(delivery) = preview_resolution.delivery() else {
-            return None;
-        };
-        if delivery.drag_session_id() != Some(drag_session.id()) {
+        let preview = self.routed_drop_preview.as_ref()?;
+        if preview.drag_session_id() != Some(drag_session.id()) {
             return None;
         }
-        let (target_space, target_window_id, accepted_target) = delivery.routed_preview_target()?;
-        let target_space = target_space.clone();
-        let accepted_target_key = accepted_target.target_key();
+        let preview_resolution = self.routed_drop_preview_resolution.as_ref()?;
+        let accepted_target = preview_resolution.routed_preview_target_snapshot()?;
+        let target_space = accepted_target.target_space().clone();
+        let target_window_id = accepted_target.target_window_id()?;
+        let accepted_target_key = accepted_target.target_key().clone();
         let host_position = self.accepted_routed_preview_host_position(request, &target_space)?;
         let facts_generation = self
             .adapter
@@ -1879,6 +1884,48 @@ impl DockViewportRuntime {
             route,
             delivery,
             Some(target),
+        ))
+    }
+
+    fn can_replay_accepted_routed_preview(
+        &self,
+        request: &DockViewportDropRouteRequest,
+        route_resolution: &DockViewportDropRouteResolution,
+    ) -> bool {
+        match route_resolution.route_ref() {
+            DockViewportDropRoute::Unavailable => {
+                route_resolution.unavailable_reason()
+                    != Some(crate::DockViewportDropRouteUnavailableReason::BlockedByViewportWindow)
+            }
+            DockViewportDropRoute::TearOff => {
+                request.release_origin()
+                    == crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly
+            }
+            DockViewportDropRoute::Local { window_id, .. } => self
+                .accepted_routed_preview_target()
+                .is_some_and(|(_, target_window_id, _)| target_window_id == *window_id),
+            DockViewportDropRoute::KnownViewport { target, .. } => self
+                .accepted_routed_preview_target()
+                .is_some_and(|(target_space, target_window_id, _)| {
+                    target_space == target.space() && target_window_id == target.window_id()
+                }),
+            DockViewportDropRoute::Rejected(_) => false,
+        }
+    }
+
+    fn accepted_routed_preview_target(
+        &self,
+    ) -> Option<(
+        &DockSpaceId,
+        WindowId,
+        &crate::drop_target::DockResolvedDropTarget,
+    )> {
+        let preview_resolution = self.routed_drop_preview_resolution.as_ref()?;
+        let target = preview_resolution.routed_preview_target_snapshot()?;
+        Some((
+            target.target_space(),
+            target.target_window_id()?,
+            target.target(),
         ))
     }
 

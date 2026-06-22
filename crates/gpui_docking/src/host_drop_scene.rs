@@ -10,7 +10,7 @@ use crate::{
 use open_gpui::{Bounds, Context, Pixels, Point, Size, Window};
 
 impl DockHost {
-    pub(crate) fn begin_host_drop_scene_interaction(
+    pub(crate) fn ensure_host_drop_scene_interaction(
         &mut self,
         payload: &DockDragPayload,
         position: Point<Pixels>,
@@ -35,7 +35,7 @@ impl DockHost {
             };
         let payload_size = self.active_payload_drag_size(payload);
         DockHostInteractionOutcome::from_session_changed(
-            self.interaction_mut().begin_drop_scene_with_validator(
+            self.interaction_mut().ensure_drop_scene_with_validator(
                 DockHostDropScene::new(position)
                     .with_payload_size(payload_size)
                     .with_drop_guide_style(drop_guide_style)

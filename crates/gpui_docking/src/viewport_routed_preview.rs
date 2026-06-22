@@ -45,18 +45,19 @@ impl DockViewportRoutedDropPreview {
     }
 }
 
-pub(crate) fn routed_drop_preview_from_delivery(
-    delivery: &crate::DockDropDelivery,
+pub(crate) fn routed_drop_preview_from_target(
+    target: &DockViewportResolvedDropTargetSnapshot,
+    drag_session_id: Option<u64>,
     payload_title: String,
 ) -> Option<DockViewportRoutedDropPreview> {
-    let (space, window_id, resolved) = delivery.routed_preview_target()?;
-    let space = space.clone();
-    let preview = crate::drop_preview::DockDropPreview::from_resolved_target(resolved)?;
+    let window_id = target.target_window_id()?;
+    let space = target.target_space().clone();
+    let preview = crate::drop_preview::DockDropPreview::from_resolved_target(target.target())?;
     Some(DockViewportRoutedDropPreview::new(
         space,
         window_id,
         preview,
-        delivery.drag_session_id(),
+        drag_session_id,
         payload_title,
     ))
 }
@@ -122,15 +123,14 @@ pub(crate) fn last_routed_viewport_identity_from_resolution(
             if !authority.records_routed_viewport_identity() {
                 return None;
             }
-            let preview_target = resolution.delivery()?.routed_preview_target()?;
-            let (target_space, routed_window_id, _) = preview_target;
-            if routed_window_id != *window_id {
+            let target = resolution.routed_preview_target_snapshot()?;
+            if target.target_window_id() != Some(*window_id) {
                 return None;
             }
-            (target_space.clone(), *window_id)
+            (target.target_space().clone(), *window_id)
         }
         crate::DockViewportDropRoute::Rejected(_) => {
-            let target = resolution.preview_target()?;
+            let target = resolution.routed_preview_target_snapshot()?;
             let window_id = target.target_window_id()?;
             (target.target_space().clone(), window_id)
         }
@@ -147,7 +147,6 @@ pub(crate) fn resolution_targets_window(
     window_id: WindowId,
 ) -> bool {
     resolution
-        .delivery()
-        .and_then(|delivery| delivery.routed_preview_target())
-        .is_some_and(|(_, target_window_id, _)| target_window_id == window_id)
+        .routed_preview_target_snapshot()
+        .is_some_and(|target| target.target_window_id() == Some(window_id))
 }

@@ -410,11 +410,18 @@ impl DockHost {
             .routed_drop_preview_for(self.space(), window.window_handle().window_id());
         let local_preview = self.interaction().drop_preview();
         let route_preview = self.interaction().drop_route_preview();
+        let accepts_routed_preview = routed_preview.is_some();
         let routed_target_preview =
             routed_preview.map(|preview| (preview.preview, Some(preview.payload_title)));
 
         if let Some(preview) = local_preview {
             self.interaction_mut().finish_drop_acceptance_pass();
+            if accepts_routed_preview {
+                self.viewport_runtime().finish_routed_drop_acceptance_pass(
+                    self.space(),
+                    window.window_handle().window_id(),
+                );
+            }
             return Some(self.render_target_drop_preview(session, preview, active_payload_title));
         }
 

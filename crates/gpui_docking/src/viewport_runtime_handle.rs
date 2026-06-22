@@ -889,7 +889,14 @@ impl DockViewportRuntimeHandle {
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let resolution = self.resolve_payload_drop_delivery_for_request(request, cx);
-        let delivery = DockDropDelivery::from_resolution(resolution)?;
+        let delivery = match DockDropDelivery::from_resolution(resolution) {
+            Ok(delivery) => delivery,
+            Err(error) => {
+                let result = Err(error);
+                self.runtime.borrow_mut().record_drop_route_result(&result);
+                return result;
+            }
+        };
         self.deliver_drop_commit_delivery(delivery, cx)
     }
 

@@ -87,22 +87,8 @@ impl DockViewportDropRouteResolution {
         &self.route
     }
 
-    pub(crate) fn can_replay_accepted_routed_preview(
-        &self,
-        request: &DockViewportDropRouteRequest,
-    ) -> bool {
-        match self.route {
-            DockViewportDropRoute::Unavailable => {
-                self.unavailable_reason
-                    != Some(DockViewportDropRouteUnavailableReason::BlockedByViewportWindow)
-            }
-            DockViewportDropRoute::TearOff => {
-                request.release_origin() == DockPayloadDropReleaseOrigin::SourceOnly
-            }
-            DockViewportDropRoute::Local { .. }
-            | DockViewportDropRoute::KnownViewport { .. }
-            | DockViewportDropRoute::Rejected(_) => false,
-        }
+    pub(crate) fn unavailable_reason(&self) -> Option<DockViewportDropRouteUnavailableReason> {
+        self.unavailable_reason
     }
 }
 
@@ -206,8 +192,29 @@ impl DockViewportResolvedDropRoute {
         self.delivery.as_ref()
     }
 
+    #[cfg(test)]
     pub(crate) fn preview_target(&self) -> Option<&DockViewportResolvedDropTargetSnapshot> {
         self.preview_target.as_ref()
+    }
+
+    pub(crate) fn routed_preview_target_snapshot(
+        &self,
+    ) -> Option<&DockViewportResolvedDropTargetSnapshot> {
+        self.preview_target.as_ref().or_else(|| {
+            self.delivery
+                .as_ref()
+                .and_then(|delivery| match &delivery.kind {
+                    DockDropDeliveryKind::Workspace(target) => Some(target),
+                    DockDropDeliveryKind::TearOff(_) => None,
+                })
+        })
+    }
+
+    pub(crate) fn without_delivery(self) -> Self {
+        Self {
+            delivery: None,
+            ..self
+        }
     }
 
     pub(crate) fn into_authorized_delivery(self) -> Result<DockDropDelivery, DockActionApplyError> {
@@ -246,6 +253,16 @@ impl DockViewportDropRoute {
     fn can_authorize_delivery(&self) -> bool {
         match self {
             Self::Local { .. } | Self::KnownViewport { .. } | Self::TearOff => true,
+            Self::Unavailable | Self::Rejected(_) => false,
+        }
+    }
+
+    pub(crate) fn is_release_delivery_authority(&self) -> bool {
+        match self {
+            Self::Local { authority, .. } | Self::KnownViewport { authority, .. } => {
+                *authority == DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview
+            }
+            Self::TearOff => true,
             Self::Unavailable | Self::Rejected(_) => false,
         }
     }
@@ -373,10 +390,6 @@ impl DockViewportResolvedDropTargetSnapshot {
     pub(crate) fn target(&self) -> &DockResolvedDropTarget {
         &self.target
     }
-
-    fn routed_preview_target(&self) -> Option<(&DockSpaceId, WindowId, &DockResolvedDropTarget)> {
-        Some((&self.target_space, self.target_window_id?, self.target()))
-    }
 }
 
 impl DockDropDelivery {
@@ -407,15 +420,6 @@ impl DockDropDelivery {
             DockViewportDropRoute::Unavailable | DockViewportDropRoute::Rejected(_) => return None,
         };
         Some(Self { source, kind })
-    }
-
-    pub(crate) fn routed_preview_target(
-        &self,
-    ) -> Option<(&DockSpaceId, WindowId, &DockResolvedDropTarget)> {
-        match &self.kind {
-            DockDropDeliveryKind::Workspace(delivery) => delivery.routed_preview_target(),
-            DockDropDeliveryKind::TearOff(_) => None,
-        }
     }
 
     pub(crate) fn drag_session_id(&self) -> Option<u64> {
@@ -475,17 +479,16 @@ impl DockDropDelivery {
 }
 
 fn route_can_mint_delivery(
-    request: &DockViewportDropRouteRequest,
+    _request: &DockViewportDropRouteRequest,
     route: &DockViewportDropRoute,
 ) -> bool {
     match route {
-        DockViewportDropRoute::KnownViewport { target, authority }
-            if request.release_origin() == DockPayloadDropReleaseOrigin::SourceOnly
-                && target.space() != request.source_space() =>
-        {
+        DockViewportDropRoute::Local { authority, .. }
+        | DockViewportDropRoute::KnownViewport { authority, .. } => {
             *authority == DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview
         }
-        _ => true,
+        DockViewportDropRoute::TearOff => true,
+        DockViewportDropRoute::Unavailable | DockViewportDropRoute::Rejected(_) => false,
     }
 }
 
@@ -3449,7 +3452,7 @@ mod tests {
     }
 
     #[test]
-    fn known_viewport_drop_delivery_uses_resolved_snapshot() {
+    fn known_viewport_drop_delivery_requires_accepted_routed_preview() {
         let source = space("source");
         let source_tabs = DockNodeId::null();
         let item = item("a");
@@ -3475,22 +3478,37 @@ mod tests {
             target_facts_generation,
         );
 
+        let target_hit = DockViewportTargetHit::with_facts_generation(
+            target,
+            target_window,
+            known_position,
+            target_facts_generation,
+        );
+
         let delivery = DockDropDelivery::from_route_request_with_resolved_target(
             &request,
             DockViewportDropRoute::KnownViewport {
-                target: DockViewportTargetHit::with_facts_generation(
-                    target,
-                    target_window,
-                    known_position,
-                    target_facts_generation,
-                ),
+                target: target_hit.clone(),
                 authority: DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
             },
             Some(resolved_target.clone()),
+        );
+        assert_eq!(
+            delivery, None,
+            "fresh known viewport route should only create preview state, not delivery"
+        );
+
+        let delivery = DockDropDelivery::from_route_request_with_resolved_target(
+            &request,
+            DockViewportDropRoute::KnownViewport {
+                target: target_hit,
+                authority: DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview,
+            },
+            Some(resolved_target.clone()),
         )
-        .expect("resolved known viewport route should derive a delivery");
+        .expect("accepted routed preview should derive a delivery");
         let DockDropDeliveryKind::Workspace(known) = delivery.kind() else {
-            panic!("resolved known viewport route should derive a workspace commit");
+            panic!("accepted known viewport route should derive a workspace commit");
         };
         assert_eq!(delivery.drag_session_id(), Some(drag_session.id()));
         assert_eq!(delivery.source_space(), &source);

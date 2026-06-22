@@ -142,6 +142,23 @@ fn cache_known_viewport_preview_for_test(
     session
 }
 
+fn accepted_preview_delivery_for_test(
+    runtime: &mut DockViewportRuntime,
+    request: &DockViewportDropRouteRequest,
+    target_space: &DockSpaceId,
+    target_window: AnyWindowHandle,
+    cx: &mut TestAppContext,
+) -> DockViewportResolvedDropRoute {
+    let preview_resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(request, app));
+    let (changed, _) = runtime.update_routed_drop_preview(&preview_resolution, "Panel A");
+    assert!(changed, "preview route should publish a routed preview");
+    assert!(
+        runtime.finish_routed_drop_acceptance_pass(target_space, target_window.window_id()),
+        "target viewport should accept the routed preview"
+    );
+    cx.update(|app| runtime.resolve_payload_drop_delivery(request, app))
+}
+
 fn close_window_quietly_for_test(window: AnyWindowHandle, cx: &mut TestAppContext) {
     let _ = window.update(cx, |_, window, _| window.remove_window());
 }
@@ -5199,11 +5216,10 @@ fn viewport_runtime_rejects_stale_known_viewport_delivery_after_target_rebind(
         DockViewportTargetContext::new().with_trusted_hovered_window(old_window),
     )
     .with_drag_session(Some(session.clone()));
-    let stale_plan = cx
-        .update(|app| {
-            DockDropDelivery::from_resolution(runtime.resolve_payload_drop_delivery(&request, app))
-        })
-        .expect("fresh release route should mint a commit plan");
+    let accepted_resolution =
+        accepted_preview_delivery_for_test(&mut runtime, &request, &target_space, old_window, cx);
+    let stale_plan = DockDropDelivery::from_resolution(accepted_resolution)
+        .expect("accepted preview should mint a commit plan");
 
     runtime.register_opened_viewport(target_space.clone(), new_window);
     assert!(runtime.begin_viewport_host_scene(
@@ -5304,8 +5320,23 @@ fn viewport_runtime_revalidates_preview_resolved_target_after_scene_changes(
             if target.window_id() == target_window.window_id()),
         "preview route should target the registered viewport"
     );
-    let commit_plan =
-        DockDropDelivery::from_resolution(resolution).expect("fresh route should mint a plan");
+    assert!(
+        resolution.routed_preview_target_snapshot().is_some(),
+        "fresh route should carry a preview target"
+    );
+    assert!(
+        resolution.delivery().is_none(),
+        "fresh route must not mint delivery before target acceptance"
+    );
+    let accepted_resolution = accepted_preview_delivery_for_test(
+        &mut runtime,
+        &request,
+        &target_space,
+        target_window,
+        cx,
+    );
+    let commit_plan = DockDropDelivery::from_resolution(accepted_resolution)
+        .expect("accepted preview should mint a plan");
 
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
@@ -5391,20 +5422,22 @@ fn viewport_runtime_tabs_drop_uses_recorded_payload_focus(cx: &mut TestAppContex
 
     let payload = DockDragPayload::new_tabs(source_space.clone(), source_tabs, "Stack".to_string());
     let session = cx.update(|app| runtime.begin_payload_drag_with_app(&payload, app));
+    let request = DockViewportDropRouteRequest::from_target_context(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Tabs,
+        screen_position_for_host_position(window_bounds, host_position),
+        None,
+        DockViewportTargetContext::new().with_trusted_hovered_window(opened.window()),
+    )
+    .with_drag_session(Some(session.clone()));
+    let preview_resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
+    cx.update(|app| {
+        runtime.update_routed_drop_preview(&preview_resolution, "Stack", app);
+    });
+    assert!(runtime.finish_routed_drop_acceptance_pass(&target_space, opened.window().window_id()));
     let outcome = cx
-        .update(|app| {
-            let request = DockViewportDropRouteRequest::from_platform_signals(
-                source_space.clone(),
-                source_tabs,
-                DockViewportDropPayload::Tabs,
-                screen_position_for_host_position(window_bounds, host_position),
-                None,
-                crate::DockViewportPlatformSignals::from_app(app)
-                    .with_trusted_hovered_window(opened.window()),
-            )
-            .with_drag_session(Some(session.clone()));
-            runtime.commit_payload_drop_from_screen(&request, app)
-        })
+        .update(|app| runtime.commit_payload_drop_from_screen(&request, app))
         .expect("recorded-focus tabs drop should commit");
     let DockViewportDropRouteOutcome::Action(action) = outcome else {
         panic!("tabs drop should produce an action outcome");
@@ -5497,15 +5530,23 @@ fn viewport_runtime_rejects_resolved_target_snapshot_after_window_facts_go_stale
         "fresh viewport facts should produce a known viewport route"
     );
     assert!(
-        resolution
-            .expect_delivery()
-            .routed_preview_target()
-            .is_some(),
+        resolution.routed_preview_target_snapshot().is_some(),
         "fresh route should capture the resolved host scene target"
     );
 
-    let commit_plan =
-        DockDropDelivery::from_resolution(resolution).expect("fresh route should mint a plan");
+    assert!(
+        resolution.delivery().is_none(),
+        "fresh route must not mint delivery before target acceptance"
+    );
+    let accepted_resolution = accepted_preview_delivery_for_test(
+        &mut runtime,
+        &request,
+        &target_space,
+        target_window,
+        cx,
+    );
+    let commit_plan = DockDropDelivery::from_resolution(accepted_resolution)
+        .expect("accepted preview should mint a plan");
     let (changed, _) = runtime.mark_viewport_window_snapshot_stale(target_window.window_id());
     assert!(changed);
     let result =
@@ -5602,7 +5643,14 @@ fn viewport_runtime_uses_platform_focus_order_when_trusted_hovered_window_is_una
         ),
         "fresh live-window facts should route to the backend focus-order fallback target"
     );
-    assert!(resolution.delivery().is_some());
+    assert!(
+        resolution.routed_preview_target_snapshot().is_some(),
+        "fallback route should carry a preview target"
+    );
+    assert!(
+        resolution.delivery().is_none(),
+        "fallback route must not mint delivery before target acceptance"
+    );
 
     let trusted_request = DockViewportDropRouteRequest::from_target_context(
         source_space,
@@ -5626,7 +5674,16 @@ fn viewport_runtime_uses_platform_focus_order_when_trusted_hovered_window_is_una
         ),
         "trusted hovered live-window facts should route with trusted-hovered authority"
     );
-    assert!(trusted_resolution.delivery().is_some());
+    assert!(
+        trusted_resolution
+            .routed_preview_target_snapshot()
+            .is_some(),
+        "trusted route should carry a preview target"
+    );
+    assert!(
+        trusted_resolution.delivery().is_none(),
+        "trusted route must not mint delivery before target acceptance"
+    );
 }
 
 #[open_gpui::test]
@@ -5929,9 +5986,24 @@ fn viewport_runtime_rejects_cached_local_delivery_after_window_facts_go_stale(
         "fresh source viewport facts should resolve a local route, got {:?}",
         resolution.route()
     );
-    let delivery = resolution.expect_delivery().clone();
-    let commit_plan =
-        DockDropDelivery::from_resolution(resolution).expect("fresh route should mint a plan");
+    assert!(
+        resolution.routed_preview_target_snapshot().is_some(),
+        "fresh local route should carry a preview target"
+    );
+    assert!(
+        resolution.delivery().is_none(),
+        "fresh local route must not mint delivery before target acceptance"
+    );
+    let accepted_resolution = accepted_preview_delivery_for_test(
+        &mut runtime,
+        &request,
+        &source_space,
+        source_window,
+        cx,
+    );
+    let delivery = accepted_resolution.expect_delivery().clone();
+    let commit_plan = DockDropDelivery::from_resolution(accepted_resolution)
+        .expect("accepted preview should mint a plan");
 
     let (changed, _) = runtime.mark_viewport_window_snapshot_stale(source_window.window_id());
     assert!(changed);
@@ -6196,15 +6268,12 @@ fn viewport_runtime_revalidates_resolved_target_snapshot_against_current_policy(
     .with_drag_session(Some(session.clone()));
     let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     assert!(
-        resolution
-            .expect_delivery()
-            .routed_preview_target()
-            .is_some(),
+        resolution.routed_preview_target_snapshot().is_some(),
         "preview should capture the accepted central target"
     );
-    let (_, _, resolved_target) = resolution
-        .expect_delivery()
-        .routed_preview_target()
+    let resolved_target = resolution
+        .routed_preview_target_snapshot()
+        .map(|snapshot| snapshot.target())
         .expect("preview target should be captured");
     assert!(
         matches!(
@@ -6217,6 +6286,15 @@ fn viewport_runtime_revalidates_resolved_target_snapshot_against_current_policy(
         resolved_target.is_central_region,
         "resolved target snapshot should retain the central-region marker"
     );
+    let accepted_resolution = accepted_preview_delivery_for_test(
+        &mut runtime,
+        &request,
+        &target_space,
+        target_window,
+        cx,
+    );
+    let commit_plan = DockDropDelivery::from_resolution(accepted_resolution)
+        .expect("accepted preview should mint a plan");
 
     controller.update(cx, |controller, _| {
         controller
@@ -6224,8 +6302,6 @@ fn viewport_runtime_revalidates_resolved_target_snapshot_against_current_policy(
             .set_allow_central_region_dock_over(false);
     });
 
-    let commit_plan =
-        DockDropDelivery::from_resolution(resolution).expect("fresh route should mint a plan");
     let result =
         cx.update(|app| runtime.deliver_drop_commit_delivery_with_outcome(commit_plan, app));
     assert_eq!(
@@ -6442,8 +6518,8 @@ fn viewport_runtime_preview_respects_payload_dock_class_policy(cx: &mut TestAppC
     assert!(preview.preview.rejected);
     assert!(!preview.preview.payload_tab);
     assert!(
-        !runtime.has_routed_drop_preview_for_drag_session(Some(&session)),
-        "rejected routed previews must not authorize commit delivery"
+        runtime.has_routed_drop_preview_for_drag_session(Some(&session)),
+        "rejected routed previews should stay scoped to the active drag session"
     );
 
     let result = DockDropDelivery::from_resolution(resolution);
@@ -6610,7 +6686,14 @@ fn viewport_runtime_source_only_release_uses_current_backend_fallback_not_last_r
         },
         "window-stack fallback must use the current stack instead of reusing the previewed target"
     );
-    assert!(stack_resolution.delivery().is_some());
+    assert!(
+        stack_resolution.routed_preview_target_snapshot().is_some(),
+        "current stack fallback should still resolve a preview target"
+    );
+    assert!(
+        stack_resolution.delivery().is_none(),
+        "current stack fallback must not mint delivery before target acceptance"
+    );
 
     let request_with_hovered = DockViewportDropRouteRequest::from_target_context(
         source_space.clone(),
@@ -7602,14 +7685,16 @@ fn viewport_runtime_rejects_known_viewport_delivery_without_drag_session(cx: &mu
         None,
         DockViewportTargetContext::new().with_trusted_hovered_window(target_window),
     );
-    let plan = cx
-        .update(|app| {
-            DockDropDelivery::from_resolution(runtime.resolve_payload_drop_delivery(&request, app))
-        })
-        .expect("known viewport route should mint a plan");
-
-    let result = cx.update(|app| runtime.deliver_drop_commit_delivery_with_outcome(plan, app));
-    assert_eq!(result, Err(DockActionApplyError::DropDragSessionMissing));
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
+    assert!(
+        resolution.routed_preview_target_snapshot().is_some(),
+        "fresh known viewport route should carry a preview target"
+    );
+    assert_eq!(
+        DockDropDelivery::from_resolution(resolution),
+        Err(DockActionApplyError::DropTargetUnavailable),
+        "fresh known viewport route must not mint delivery without accepted preview"
+    );
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
             controller.graph().collect_items_in_space(&source_space),
@@ -7686,11 +7771,15 @@ fn viewport_runtime_rejects_known_viewport_delivery_from_stale_drag_session(
         DockViewportTargetContext::new().with_trusted_hovered_window(target_window),
     )
     .with_drag_session(Some(stale_session.clone()));
-    let stale_plan = cx
-        .update(|app| {
-            DockDropDelivery::from_resolution(runtime.resolve_payload_drop_delivery(&request, app))
-        })
-        .expect("fresh route should mint a plan");
+    let accepted_resolution = accepted_preview_delivery_for_test(
+        &mut runtime,
+        &request,
+        &target_space,
+        target_window,
+        cx,
+    );
+    let stale_plan = DockDropDelivery::from_resolution(accepted_resolution)
+        .expect("accepted preview should mint a plan");
 
     let _replacement = runtime.begin_payload_drag(&payload);
     let result =
