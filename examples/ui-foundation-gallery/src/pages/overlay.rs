@@ -943,8 +943,8 @@ impl MenuSample {
 }
 
 /// Returns deterministic menu samples for gallery dogfood.
-pub fn menu_samples(tokens: ThemeTokens) -> [MenuSample; 4] {
-    [
+pub fn menu_samples(tokens: ThemeTokens) -> Vec<MenuSample> {
+    vec![
         {
             let items = vec![
                 MenuItem::action("new", "New"),
@@ -1015,6 +1015,68 @@ pub fn menu_samples(tokens: ThemeTokens) -> [MenuSample; 4] {
                     .state(),
             }
         },
+        {
+            let items = vec![
+                MenuItem::checkbox("show-hidden", "Show hidden files", true),
+                MenuItem::radio("density-compact", "Compact density", false),
+                MenuItem::radio("density-comfortable", "Comfortable density", true),
+                MenuItem::submenu(
+                    "sort",
+                    "Sort by",
+                    [
+                        MenuItem::action("name", "Name"),
+                        MenuItem::action("modified", "Modified"),
+                    ],
+                ),
+                MenuItem::submenu("empty", "Empty submenu", []),
+            ];
+            MenuSample {
+                id: "rich-items",
+                label: "Rich items",
+                focused_value: Some("show-hidden"),
+                state: Menu::new("overlay-menu:rich-items", "Rich items")
+                    .default_open(true)
+                    .default_focused_value("show-hidden")
+                    .items(items)
+                    .tokens(tokens)
+                    .state(),
+            }
+        },
+        {
+            let items = vec![
+                MenuItem::action("alpha", "Alpha"),
+                MenuItem::action("beta", "Beta"),
+                MenuItem::action("bravo", "Bravo"),
+                MenuItem::action("charlie", "Charlie"),
+            ];
+            MenuSample {
+                id: "typeahead",
+                label: "Typeahead",
+                focused_value: Some("beta"),
+                state: Menu::new("overlay-menu:typeahead", "Typeahead")
+                    .default_open(true)
+                    .default_focused_value("beta")
+                    .items(items)
+                    .tokens(tokens)
+                    .state(),
+            }
+        },
+        {
+            let items = (0..12).map(|index| {
+                MenuItem::action(format!("action-{index:02}"), format!("Action {index:02}"))
+            });
+            MenuSample {
+                id: "long-scroll",
+                label: "Long scroll",
+                focused_value: Some("action-00"),
+                state: Menu::new("overlay-menu:long-scroll", "Long scroll")
+                    .default_open(true)
+                    .default_focused_value("action-00")
+                    .items(items)
+                    .tokens(tokens)
+                    .state(),
+            }
+        },
     ]
 }
 
@@ -1073,8 +1135,8 @@ mod tests {
 }
 
 /// Returns deterministic context-menu samples for gallery dogfood.
-pub fn context_menu_samples(tokens: ThemeTokens) -> [ContextMenuSample; 3] {
-    [
+pub fn context_menu_samples(tokens: ThemeTokens) -> Vec<ContextMenuSample> {
+    vec![
         {
             let items = vec![
                 MenuItem::action("duplicate", "Duplicate"),
@@ -1126,6 +1188,50 @@ pub fn context_menu_samples(tokens: ThemeTokens) -> [ContextMenuSample; 3] {
                 state: ContextMenu::new("overlay-context-menu:default-open", "Default area")
                     .default_open(true)
                     .anchor_point(point(px(96.0), px(96.0)))
+                    .items(items)
+                    .tokens(tokens)
+                    .state(),
+            }
+        },
+        {
+            let items = vec![
+                MenuItem::checkbox("snap-grid", "Snap to grid", true),
+                MenuItem::radio("view-icons", "Icon view", false),
+                MenuItem::radio("view-list", "List view", true),
+                MenuItem::submenu(
+                    "arrange",
+                    "Arrange by",
+                    [
+                        MenuItem::action("name", "Name"),
+                        MenuItem::action("type", "Type"),
+                    ],
+                ),
+            ];
+            ContextMenuSample {
+                id: "rich-items",
+                label: "Rich context",
+                focused_value: Some("snap-grid"),
+                state: ContextMenu::new("overlay-context-menu:rich-items", "Rich context area")
+                    .default_open(true)
+                    .anchor_point(point(px(620.0), px(340.0)))
+                    .default_focused_value("snap-grid")
+                    .items(items)
+                    .tokens(tokens)
+                    .state(),
+            }
+        },
+        {
+            let items = (0..12).map(|index| {
+                MenuItem::action(format!("action-{index:02}"), format!("Action {index:02}"))
+            });
+            ContextMenuSample {
+                id: "edge-long",
+                label: "Edge long",
+                focused_value: Some("action-00"),
+                state: ContextMenu::new("overlay-context-menu:edge-long", "Edge long area")
+                    .default_open(true)
+                    .anchor_point(point(px(960.0), px(560.0)))
+                    .default_focused_value("action-00")
                     .items(items)
                     .tokens(tokens)
                     .state(),

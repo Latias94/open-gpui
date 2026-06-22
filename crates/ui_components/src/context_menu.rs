@@ -6,8 +6,8 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent, MouseButton, ParentElement,
-    Pixels, Point, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, anchored,
-    deferred, div, px,
+    Pixels, Point, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
+    Window, anchored, deferred, div, px,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
@@ -19,12 +19,13 @@ use crate::a11y::UiA11yElementExt;
 use crate::focus::focus_ring_shadow;
 use crate::menu::{
     MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuMetrics, MenuOpenMode,
-    MenuSelection, MenuState,
+    MenuSelection, MenuState, MenuSubmenuNavigation, visible_menu_items,
 };
 use crate::overlay::{
     GpuiOverlayPlacement, OverlayResolvedState, focus_restore_requests_trigger, gpui_overlay_state,
     gpui_point_from_ui, outside_press_open_change, ui_point_from_gpui,
 };
+use crate::scroll_area::ScrollArea;
 use crate::theme::ThemeResolver;
 
 /// Resolved context-menu state used by tests, demos, and rendering.
@@ -76,13 +77,7 @@ impl ContextMenuState {
             focus_restore_intent,
             tokens,
         );
-        let placement_input = OverlayPlacementInput::new(
-            OverlayAnchorInput::from_point(anchor_point),
-            ui_size(menu.metrics().min_width(), menu.metrics().item_height()),
-        )
-        .with_side(OverlayPlacementSide::Bottom)
-        .with_alignment(OverlayPlacementAlignment::Start)
-        .with_offset(ui_px(0.0));
+        let placement_input = context_menu_placement_input(anchor_point, &menu);
 
         Self {
             size,
@@ -151,6 +146,26 @@ impl ContextMenuState {
     }
 }
 
+fn context_menu_placement_input(anchor_point: UiPoint, menu: &MenuState) -> OverlayPlacementInput {
+    let metrics = menu.metrics();
+    let visible_count = menu.visible_items().len();
+    let row_gap = ui_px(4.0);
+    let gap_height = row_gap.as_f32() * visible_count.saturating_sub(1) as f32;
+    let content_height = ui_px(metrics.max_height().as_f32().min(
+        metrics.surface_padding().as_f32() * 2.0
+            + metrics.item_height().as_f32() * visible_count as f32
+            + gap_height,
+    ));
+
+    OverlayPlacementInput::new(
+        OverlayAnchorInput::from_point(anchor_point),
+        ui_size(metrics.min_width(), content_height),
+    )
+    .with_side(OverlayPlacementSide::Bottom)
+    .with_alignment(OverlayPlacementAlignment::Start)
+    .with_offset(ui_px(0.0))
+}
+
 /// A concrete GPUI context menu component.
 #[derive(IntoElement)]
 pub struct ContextMenu {
@@ -178,6 +193,9 @@ struct ContextMenuRuntime {
     did_initial_focus: bool,
     seeded_focused_value: bool,
     focused_value: Option<String>,
+    focused_path: Option<Vec<String>>,
+    open_path: Vec<String>,
+    scroll_handle: ScrollHandle,
     content_focus: FocusHandle,
     trigger_focus: FocusHandle,
 }
@@ -324,6 +342,9 @@ impl RenderOnce for ContextMenu {
             did_initial_focus: false,
             seeded_focused_value: false,
             focused_value: self.focused_value.clone(),
+            focused_path: None,
+            open_path: Vec::new(),
+            scroll_handle: ScrollHandle::new(),
             content_focus: content_focus.clone(),
             trigger_focus: trigger_focus.clone(),
         });
@@ -343,6 +364,8 @@ impl RenderOnce for ContextMenu {
                     runtime.did_initial_focus = false;
                     runtime.seeded_focused_value = false;
                     runtime.focused_value = None;
+                    runtime.focused_path = None;
+                    runtime.open_path.clear();
                 }
             });
         }
@@ -354,7 +377,7 @@ impl RenderOnce for ContextMenu {
                 .as_deref()
                 .or(runtime_state.focused_value.as_deref())
         };
-        let state = ContextMenuState::resolve(
+        let mut state = ContextMenuState::resolve(
             self.size,
             Some(resolved_open),
             self.default_open,
@@ -367,6 +390,24 @@ impl RenderOnce for ContextMenu {
             self.focus_restore_intent.clone(),
             self.tokens,
         );
+        state.menu = MenuState::resolve_with_paths(
+            self.size,
+            false,
+            Some(resolved_open),
+            self.default_open,
+            focused_value,
+            runtime_state.focused_path.as_deref(),
+            &runtime_state.open_path,
+            self.items.iter().map(MenuItem::descriptor),
+            OverlayPlacementSide::Bottom,
+            OverlayPlacementAlignment::Start,
+            self.outside_press_policy,
+            self.escape_key_policy,
+            self.initial_focus_intent.clone(),
+            self.focus_restore_intent.clone(),
+            self.tokens,
+        );
+        state.placement_input = context_menu_placement_input(state.anchor_point, &state.menu);
         let id = self.id;
         let debug_id = id.to_string();
         let surface_id: ElementId = (id.clone(), "surface").into();
@@ -380,6 +421,7 @@ impl RenderOnce for ContextMenu {
         let runtime_state = runtime.read(cx).clone();
         let trigger_focus = runtime_state.trigger_focus.clone();
         let content_focus = runtime_state.content_focus.clone();
+        let scroll_handle = runtime_state.scroll_handle.clone();
         let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement =
             GpuiOverlayPlacement::resolve(state.placement_input(), overlay_adapter.snap_margin());
@@ -416,6 +458,8 @@ impl RenderOnce for ContextMenu {
                 open_runtime.update(cx, |runtime, _| {
                     runtime.open = true;
                     runtime.anchor_point = event.position;
+                    runtime.focused_path = None;
+                    runtime.open_path.clear();
                 });
                 if let Some(on_open_change) = open_change.as_ref() {
                     on_open_change(true, window, cx);
@@ -457,6 +501,7 @@ impl RenderOnce for ContextMenu {
                                 runtime.clone(),
                                 trigger_focus.clone(),
                                 content_focus.clone(),
+                                scroll_handle.clone(),
                                 focus_restore.clone(),
                                 on_open_change.clone(),
                                 on_select.clone(),
@@ -476,6 +521,7 @@ fn context_menu_surface(
     runtime: open_gpui::Entity<ContextMenuRuntime>,
     trigger_focus: FocusHandle,
     content_focus: FocusHandle,
+    scroll_handle: ScrollHandle,
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
@@ -488,12 +534,35 @@ fn context_menu_surface(
     let key_open_change = on_open_change.clone();
     let key_select = on_select.clone();
     let surface_debug_id = debug_id.clone();
+    let scroll_viewport_id = format!("context-menu:{debug_id}:surface-scroll");
+    let scrollable_content = state.menu().scrollable_content();
+    let key_items = visible_menu_items(&items, state.menu().open_path());
+    let rows = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .children(context_menu_item_elements(
+            items,
+            state.clone(),
+            debug_id.clone(),
+            runtime.clone(),
+            trigger_focus.clone(),
+            focus_restore.clone(),
+            on_open_change.clone(),
+            on_select.clone(),
+        ));
 
     div()
         .id(surface_id)
         .debug_selector(move || format!("context-menu:{surface_debug_id}:surface"))
         .min_w(gpui_px_from_ui(metrics.min_width()))
         .max_w(gpui_px_from_ui(metrics.max_width()))
+        .when(scrollable_content, |this| {
+            this.h(gpui_px_from_ui(metrics.max_height()))
+        })
+        .when(!scrollable_content, |this| {
+            this.max_h(gpui_px_from_ui(metrics.max_height()))
+        })
         .p(gpui_px_from_ui(metrics.surface_padding()))
         .flex()
         .flex_col()
@@ -519,6 +588,15 @@ fn context_menu_surface(
                 if key == "escape" {
                     cx.stop_propagation();
                     window.prevent_default();
+                    if let Some(target) = key_state.close_submenu_target() {
+                        key_runtime.update(cx, |runtime, _| {
+                            runtime.open_path = target.open_path().to_vec();
+                            runtime.focused_path = Some(target.focused_path().to_vec());
+                            runtime.focused_value = Some(target.focused_value().to_owned());
+                            runtime.seeded_focused_value = true;
+                        });
+                        return;
+                    }
                     close_context_menu(
                         key_runtime.clone(),
                         trigger_focus.clone(),
@@ -530,13 +608,27 @@ fn context_menu_surface(
                     return;
                 }
 
+                if let Some(target) = key_state.submenu_navigation_target(key) {
+                    cx.stop_propagation();
+                    window.prevent_default();
+                    key_runtime.update(cx, |runtime, _| {
+                        runtime.open_path = target.open_path().to_vec();
+                        runtime.focused_path = Some(target.focused_path().to_vec());
+                        runtime.focused_value = Some(target.focused_value().to_owned());
+                        runtime.seeded_focused_value = true;
+                    });
+                    return;
+                }
+
                 if let Some(target) = key_state.navigation_target(key) {
                     cx.stop_propagation();
                     window.prevent_default();
                     let target_value = target.value().to_owned();
+                    let target_path = target.path().to_vec();
                     key_runtime.update(cx, |runtime, _| {
                         runtime.seeded_focused_value = true;
                         runtime.focused_value = Some(target_value);
+                        runtime.focused_path = Some(target_path);
                     });
                     return;
                 }
@@ -544,6 +636,15 @@ fn context_menu_surface(
                 if let Some(selection) = key_state.activation_for_key(key) {
                     cx.stop_propagation();
                     window.prevent_default();
+                    if let Some(item_handler) = key_items
+                        .iter()
+                        .zip(key_state.visible_items())
+                        .find(|(_, item_state)| item_state.path() == selection.path())
+                        .and_then(|(item, _)| item.select_handler())
+                        .as_ref()
+                    {
+                        item_handler(selection.clone(), window, cx);
+                    }
                     if let Some(on_select) = key_select.as_ref() {
                         on_select(selection, window, cx);
                     }
@@ -574,16 +675,14 @@ fn context_menu_surface(
                 );
             })
         })
-        .children(context_menu_item_elements(
-            items,
-            state,
-            debug_id,
-            runtime,
-            trigger_focus,
-            focus_restore,
-            on_open_change,
-            on_select,
-        ))
+        .overflow_hidden()
+        .child(
+            ScrollArea::new(scroll_viewport_id, rows)
+                .vertical()
+                .preserve_scroll()
+                .scroll_handle(&scroll_handle)
+                .with_size(state.size()),
+        )
 }
 
 fn context_menu_item_elements(
@@ -598,13 +697,13 @@ fn context_menu_item_elements(
 ) -> Vec<open_gpui::AnyElement> {
     let metrics = state.metrics();
     let colors = state.colors();
-    let states = state.menu().items().to_vec();
+    let states = state.menu().visible_items().to_vec();
+    let items = visible_menu_items(&items, state.menu().open_path());
 
     items
         .into_iter()
         .zip(states)
-        .enumerate()
-        .map(|(_index, (item, item_state))| match item_state.kind() {
+        .map(|(item, item_state)| match item_state.kind() {
             MenuItemKind::Separator => div()
                 .id(format!("context-menu-separator:{}", item_state.index()))
                 .debug_selector({
@@ -616,7 +715,10 @@ fn context_menu_item_elements(
                 .my_1()
                 .bg(ThemeResolver::resolve(colors.separator()))
                 .into_any_element(),
-            MenuItemKind::Action => {
+            MenuItemKind::Action
+            | MenuItemKind::Checkbox
+            | MenuItemKind::Radio
+            | MenuItemKind::Submenu => {
                 let selection = MenuSelection::from_item(&item_state);
                 let item_handler = item.select_handler();
                 let global_handler = on_select.clone();
@@ -626,20 +728,41 @@ fn context_menu_item_elements(
                 let focus_restore = focus_restore.clone();
                 let item_value = item_state.value().to_owned();
                 let item_label = item_state.label().to_owned();
+                let item_path_key = item_state.path_key();
+                let left_padding =
+                    metrics.item_padding_x() + metrics.submenu_indent() * item_state.depth() as f32;
                 let focused = item_state.focused();
                 let disabled = item_state.disabled();
+                let toggled = item_state.toggled();
+                let has_submenu = item_state.has_submenu();
+                let submenu_navigation = if has_submenu {
+                    item_state
+                        .children()
+                        .iter()
+                        .find(|child| child.focusable())
+                        .map(|child| {
+                            MenuSubmenuNavigation::new(
+                                item_state.path().to_vec(),
+                                child.path().to_vec(),
+                                child.value().to_owned(),
+                            )
+                        })
+                } else {
+                    None
+                };
                 div()
-                    .id(format!("context-menu-item:{}", item_state.value()))
+                    .id(format!("context-menu-item:{item_path_key}"))
                     .debug_selector({
                         let item_debug_id = debug_id.clone();
-                        let item_value = item_state.value().to_owned();
-                        move || format!("context-menu:{item_debug_id}:item:{item_value}")
+                        move || format!("context-menu:{item_debug_id}:item:{item_path_key}")
                     })
                     .min_h(gpui_px_from_ui(metrics.item_height()))
-                    .px(gpui_px_from_ui(metrics.item_padding_x()))
+                    .pl(gpui_px_from_ui(left_padding))
+                    .pr(gpui_px_from_ui(metrics.item_padding_x()))
                     .py(gpui_px_from_ui(metrics.item_padding_y()))
                     .flex()
                     .items_center()
+                    .justify_between()
                     .rounded(gpui_px_from_ui(metrics.radius()))
                     .bg(ThemeResolver::resolve(if focused {
                         colors.item_focus_background()
@@ -654,6 +777,10 @@ fn context_menu_item_elements(
                     .ui_role(Role::MenuItem)
                     .aria_label(item_label.clone())
                     .aria_disabled(disabled)
+                    .when_some(toggled, |this, toggled| this.ui_aria_toggled(toggled))
+                    .when(has_submenu, |this| {
+                        this.aria_expanded(item_state.submenu_open())
+                    })
                     .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                     .when(!disabled, |this| {
                         this.cursor_pointer()
@@ -662,6 +789,17 @@ fn context_menu_item_elements(
                             })
                             .on_click(move |_event: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
+                                if let Some(submenu_navigation) = submenu_navigation.clone() {
+                                    runtime.update(cx, |runtime, _| {
+                                        runtime.open_path = submenu_navigation.open_path().to_vec();
+                                        runtime.focused_path =
+                                            Some(submenu_navigation.focused_path().to_vec());
+                                        runtime.focused_value =
+                                            Some(submenu_navigation.focused_value().to_owned());
+                                        runtime.seeded_focused_value = true;
+                                    });
+                                    return;
+                                }
                                 let Some(selection) = selection.clone() else {
                                     return;
                                 };
@@ -674,6 +812,7 @@ fn context_menu_item_elements(
                                 runtime.update(cx, |runtime, _| {
                                     runtime.seeded_focused_value = true;
                                     runtime.focused_value = Some(item_value.clone());
+                                    runtime.focused_path = Some(item_state.path().to_vec());
                                 });
                                 close_context_menu(
                                     runtime.clone(),
@@ -686,6 +825,15 @@ fn context_menu_item_elements(
                             })
                     })
                     .child(item_label)
+                    .when_some(toggled, |this, toggled| {
+                        let marker = if toggled == open_gpui_ui_core::Toggled::True {
+                            "checked"
+                        } else {
+                            ""
+                        };
+                        this.child(div().ml_2().child(marker))
+                    })
+                    .when(has_submenu, |this| this.child(div().ml_2().child(">")))
                     .into_any_element()
             }
         })
@@ -705,6 +853,8 @@ fn close_context_menu(
         runtime.did_initial_focus = false;
         runtime.seeded_focused_value = false;
         runtime.focused_value = None;
+        runtime.focused_path = None;
+        runtime.open_path.clear();
     });
     if let Some(on_open_change) = on_open_change.as_ref() {
         on_open_change(false, window, cx);

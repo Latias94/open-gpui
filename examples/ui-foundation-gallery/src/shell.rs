@@ -1719,8 +1719,10 @@ impl GalleryShell {
                                 ),
                             )
                             .child(self.render_menu_sample_card(&menu_samples[2], false, cx))
-
-                            .child(self.render_menu_sample_card(&menu_samples[3], false, cx)),
+                            .child(self.render_menu_sample_card(&menu_samples[3], false, cx))
+                            .child(self.render_menu_sample_card(&menu_samples[4], false, cx))
+                            .child(self.render_menu_sample_card(&menu_samples[5], false, cx))
+                            .child(self.render_menu_sample_card(&menu_samples[6], false, cx)),
 
                     ),
 
@@ -1772,13 +1774,19 @@ impl GalleryShell {
                                 ),
                             )
                             .child(self.render_context_menu_sample_card(
-
                                 &context_menu_samples[2],
-
                                 false,
-
                                 cx,
-
+                            ))
+                            .child(self.render_context_menu_sample_card(
+                                &context_menu_samples[3],
+                                false,
+                                cx,
+                            ))
+                            .child(self.render_context_menu_sample_card(
+                                &context_menu_samples[4],
+                                false,
+                                cx,
                             )),
 
                     ),
@@ -5019,6 +5027,24 @@ fn resolved_menu_items(items: &[open_gpui_ui_components::MenuItemState]) -> Vec<
                 MenuItem::action(item_state.value(), item_state.label().to_owned())
                     .disabled(item_state.disabled())
             }
+            open_gpui_ui_components::MenuItemKind::Checkbox => MenuItem::checkbox(
+                item_state.value(),
+                item_state.label().to_owned(),
+                item_state.checked(),
+            )
+            .disabled(item_state.disabled()),
+            open_gpui_ui_components::MenuItemKind::Radio => MenuItem::radio(
+                item_state.value(),
+                item_state.label().to_owned(),
+                item_state.checked(),
+            )
+            .disabled(item_state.disabled()),
+            open_gpui_ui_components::MenuItemKind::Submenu => MenuItem::submenu(
+                item_state.value(),
+                item_state.label().to_owned(),
+                resolved_menu_items(item_state.children()),
+            )
+            .disabled(item_state.disabled()),
         })
         .collect()
 }

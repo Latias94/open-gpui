@@ -2164,6 +2164,142 @@ fn menu_navigation_and_activation_skip_disabled_and_separator_items() {
 }
 
 #[test]
+fn menu_state_resolves_checked_radio_and_submenu_item_contracts() {
+    let state = Menu::new("view-menu", "View")
+        .open(true)
+        .default_focused_value("show-hidden")
+        .items([
+            MenuItem::checkbox("show-hidden", "Show hidden files", true),
+            MenuItem::radio("density-compact", "Compact", false),
+            MenuItem::radio("density-comfortable", "Comfortable", true),
+            MenuItem::submenu(
+                "sort",
+                "Sort by",
+                [
+                    MenuItem::action("name", "Name"),
+                    MenuItem::action("name", "Nested duplicate name"),
+                ],
+            ),
+            MenuItem::submenu("empty", "Empty submenu", []),
+            MenuItem::separator("separator"),
+        ])
+        .state();
+
+    assert_eq!(state.items()[0].kind(), MenuItemKind::Checkbox);
+    assert!(state.items()[0].checked());
+    assert_eq!(state.items()[0].toggled(), Some(Toggled::True));
+    assert!(state.items()[0].activation_enabled());
+    let checkbox_selection = state
+        .activation_for_key("enter")
+        .expect("focused checkbox should activate");
+    assert_eq!(checkbox_selection.kind(), MenuItemKind::Checkbox);
+    assert!(checkbox_selection.checked());
+    assert_eq!(checkbox_selection.path_key(), "0:show-hidden");
+
+    assert_eq!(state.items()[1].kind(), MenuItemKind::Radio);
+    assert_eq!(state.items()[1].toggled(), Some(Toggled::False));
+    assert_eq!(state.items()[2].toggled(), Some(Toggled::True));
+
+    let submenu = &state.items()[3];
+    assert_eq!(submenu.kind(), MenuItemKind::Submenu);
+    assert!(submenu.focusable());
+    assert!(!submenu.activation_enabled());
+    assert_eq!(submenu.child_count(), 2);
+    assert_eq!(submenu.children()[0].parent_value(), Some("sort"));
+    assert_eq!(submenu.path_key(), "3:sort");
+    assert_eq!(submenu.children()[0].path_key(), "3:sort/0:name");
+    assert_eq!(submenu.children()[1].path_key(), "3:sort/1:name");
+
+    let empty_submenu = &state.items()[4];
+    assert_eq!(empty_submenu.kind(), MenuItemKind::Submenu);
+    assert!(!empty_submenu.focusable());
+    assert!(!empty_submenu.activation_enabled());
+    assert!(!state.items()[5].focusable());
+}
+
+#[test]
+fn menu_state_resolves_typeahead_without_runtime_timer_state() {
+    let state = Menu::new("search-menu", "Search")
+        .open(true)
+        .default_focused_value("beta")
+        .items([
+            MenuItem::action("alpha", "Alpha"),
+            MenuItem::action("beta", "Beta"),
+            MenuItem::separator("separator"),
+            MenuItem::action("blocked", "Bravo blocked").disabled(true),
+            MenuItem::checkbox("bravo", "Bravo visible", false),
+            MenuItem::submenu("empty", "Bravo empty submenu", []),
+        ])
+        .state();
+
+    assert_eq!(
+        state.typeahead_target(" br").map(|item| item.value()),
+        Some("bravo")
+    );
+    assert_eq!(
+        state.typeahead_target("AL").map(|item| item.value()),
+        Some("alpha")
+    );
+    assert!(state.typeahead_target("").is_none());
+    assert!(state.typeahead_target("missing").is_none());
+}
+
+#[test]
+fn menu_state_resolves_visible_submenu_navigation_and_local_scroll_contract() {
+    let state = Menu::new("nested-menu", "Nested")
+        .open(true)
+        .default_focused_value("sort")
+        .items([
+            MenuItem::action("open", "Open"),
+            MenuItem::submenu(
+                "sort",
+                "Sort by",
+                [
+                    MenuItem::action("name", "Name"),
+                    MenuItem::action("modified", "Modified"),
+                ],
+            ),
+            MenuItem::action("close", "Close"),
+        ])
+        .state();
+
+    assert_eq!(state.focused_value(), Some("sort"));
+    assert_eq!(state.focused_path_key().as_deref(), Some("1:sort"));
+    assert_eq!(state.visible_items().len(), 3);
+    let opened = state
+        .submenu_navigation_target("right")
+        .expect("Right should open a focused submenu");
+    let _: open_gpui_ui_components::MenuSubmenuNavigation = opened.clone();
+    assert_eq!(opened.open_path_key().as_deref(), Some("1:sort"));
+    assert_eq!(opened.focused_path_key(), "1:sort/0:name");
+    assert_eq!(opened.focused_value(), "name");
+
+    let long_state = Menu::new("long-menu", "Long")
+        .open(true)
+        .items(
+            (0..10).map(|index| MenuItem::action(format!("item-{index}"), format!("Item {index}"))),
+        )
+        .state();
+    assert!(long_state.scrollable_content());
+    assert_eq!(long_state.visible_items().len(), 10);
+}
+
+#[test]
+fn menu_state_discards_invalid_runtime_submenu_paths_after_items_change() {
+    let state = Menu::new("changed-menu", "Changed")
+        .open(true)
+        .default_focused_value("sort")
+        .item(MenuItem::submenu("sort", "Sort by", []))
+        .state();
+
+    assert_eq!(state.visible_items().len(), 1);
+    assert_eq!(state.focused_value(), None);
+    assert_eq!(state.open_path_key(), None);
+    assert!(!state.items()[0].focusable());
+    assert!(state.submenu_navigation_target("right").is_none());
+}
+
+#[test]
 fn menu_runtime_keyboard_navigation_keeps_runtime_focused_value_after_rerender() {
     let state = Menu::new("runtime-menu", "Runtime menu")
         .open(true)
@@ -2188,18 +2324,24 @@ fn menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender(
 ) {
     struct TestView {
         selections: Rc<RefCell<Vec<MenuSelection>>>,
+        item_selections: Rc<RefCell<Vec<MenuSelection>>>,
     }
 
     impl Render for TestView {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let selections = self.selections.clone();
+            let item_selections = self.item_selections.clone();
 
             div().size_full().child(
                 Menu::new("runtime-menu", "Runtime menu")
                     .default_focused_value("copy")
                     .item(MenuItem::action("cut", "Cut"))
                     .item(MenuItem::action("copy", "Copy"))
-                    .item(MenuItem::action("select-all", "Select all"))
+                    .item(MenuItem::action("select-all", "Select all").on_select(
+                        move |selection, _, _| {
+                            item_selections.borrow_mut().push(selection);
+                        },
+                    ))
                     .on_select(move |selection, _, _| {
                         selections.borrow_mut().push(selection);
                     }),
@@ -2208,8 +2350,10 @@ fn menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender(
     }
 
     let selections = Rc::new(RefCell::new(Vec::new()));
+    let item_selections = Rc::new(RefCell::new(Vec::new()));
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         selections: selections.clone(),
+        item_selections: item_selections.clone(),
     });
     cx.update(|window, cx| {
         window.draw(cx).clear();
@@ -2243,10 +2387,104 @@ fn menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender(
     });
 
     let after_enter = selections.borrow().clone();
+    let after_item_enter = item_selections.borrow().clone();
     assert_eq!(after_enter.len(), 1);
     assert_eq!(after_enter[0].index(), 2);
     assert_eq!(after_enter[0].value(), "select-all");
     assert_eq!(after_enter[0].label(), "Select all");
+    assert_eq!(after_item_enter.len(), 1);
+    assert_eq!(after_item_enter[0].path_key(), "2:select-all");
+}
+
+#[open_gpui::test]
+fn menu_runtime_keyboard_submenu_opens_and_selects_child(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<MenuSelection>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+
+            div().size_full().child(
+                Menu::new("runtime-submenu", "Runtime submenu")
+                    .default_focused_value("sort")
+                    .item(MenuItem::action("open", "Open"))
+                    .item(MenuItem::submenu(
+                        "sort",
+                        "Sort by",
+                        [
+                            MenuItem::action("name", "Name"),
+                            MenuItem::action("modified", "Modified"),
+                        ],
+                    ))
+                    .on_select(move |selection, _, _| {
+                        selections.borrow_mut().push(selection);
+                    }),
+            )
+        }
+    }
+
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let trigger = cx
+        .debug_bounds("menu:runtime-submenu:trigger")
+        .expect("runtime submenu trigger should render");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:runtime-submenu:item:1:sort/0:name")
+            .is_none(),
+        "submenu child should not render before opening the branch"
+    );
+
+    cx.simulate_keystrokes("right");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:runtime-submenu:item:1:sort/0:name")
+            .is_some(),
+        "Right should open the focused submenu branch"
+    );
+
+    cx.simulate_keystrokes("left");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:runtime-submenu:item:1:sort/0:name")
+            .is_none(),
+        "Left should close the active submenu branch and return focus to the trigger row"
+    );
+
+    cx.simulate_keystrokes("right");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:runtime-submenu:item:1:sort/0:name")
+            .is_some(),
+        "Right should reopen the submenu branch after closing it"
+    );
+
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let after_enter = selections.borrow().clone();
+    assert_eq!(after_enter.len(), 1);
+    assert_eq!(after_enter[0].path_key(), "1:sort/0:name");
+    assert_eq!(after_enter[0].value(), "name");
 }
 
 #[test]
@@ -2303,11 +2541,18 @@ fn context_menu_state_reuses_menu_model_and_point_anchor_placement() {
         OverlayPlacementAlignment::Start
     );
     assert_eq!(placement_input.offset(), ui_px(0.0));
+    let placement_row_gap =
+        ui_px(4.0).as_f32() * (state.menu().visible_items().len().saturating_sub(1) as f32);
     assert_eq!(
         placement_input.content_size(),
         ui_size(
             ui_px(state.metrics().min_width().as_f32()),
-            ui_px(state.metrics().item_height().as_f32())
+            ui_px(
+                state.metrics().surface_padding().as_f32() * 2.0
+                    + state.metrics().item_height().as_f32()
+                        * state.menu().visible_items().len() as f32
+                    + placement_row_gap
+            )
         )
     );
     let placement = GpuiOverlayPlacement::resolve(placement_input, DEFAULT_OVERLAY_SAFE_MARGIN);
@@ -2357,17 +2602,63 @@ fn context_menu_state_navigation_target_prefers_runtime_focused_value() {
     );
 }
 
+#[test]
+fn context_menu_state_reuses_visible_submenu_navigation_contract() {
+    let anchor = point(px(320.0), px(220.0));
+    let state = ContextMenu::new("nested-context-menu", "Nested context menu")
+        .open(true)
+        .anchor_point(anchor)
+        .default_focused_value("organize")
+        .item(MenuItem::action("duplicate", "Duplicate"))
+        .item(MenuItem::submenu(
+            "organize",
+            "Organize",
+            [
+                MenuItem::action("move", "Move"),
+                MenuItem::action("tag", "Tag"),
+            ],
+        ))
+        .state();
+
+    assert_eq!(state.menu().focused_value(), Some("organize"));
+    let opened = state
+        .menu()
+        .submenu_navigation_target("right")
+        .expect("ContextMenu should reuse Menu submenu navigation");
+    assert_eq!(opened.open_path_key().as_deref(), Some("1:organize"));
+    assert_eq!(opened.focused_path_key(), "1:organize/0:move");
+}
+
+#[test]
+fn context_menu_state_uses_clamped_visible_menu_size_for_point_placement() {
+    let state = ContextMenu::new("edge-long-context-menu", "Edge long context menu")
+        .open(true)
+        .anchor_point(point(px(960.0), px(560.0)))
+        .items(
+            (0..12).map(|index| MenuItem::action(format!("item-{index}"), format!("Item {index}"))),
+        )
+        .state();
+
+    assert!(state.menu().scrollable_content());
+    assert_eq!(
+        state.placement_input().content_size(),
+        ui_size(state.metrics().min_width(), state.metrics().max_height())
+    );
+}
+
 #[open_gpui::test]
 fn context_menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender(
     cx: &mut open_gpui::TestAppContext,
 ) {
     struct TestView {
         selections: Rc<RefCell<Vec<MenuSelection>>>,
+        item_selections: Rc<RefCell<Vec<MenuSelection>>>,
     }
 
     impl Render for TestView {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let selections = self.selections.clone();
+            let item_selections = self.item_selections.clone();
 
             div().size_full().child(
                 ContextMenu::new("runtime-context-menu", "Runtime context menu")
@@ -2375,7 +2666,11 @@ fn context_menu_runtime_keyboard_navigation_preserves_focused_value_after_rerend
                     .default_focused_value("copy")
                     .item(MenuItem::action("cut", "Cut"))
                     .item(MenuItem::action("copy", "Copy"))
-                    .item(MenuItem::action("select-all", "Select all"))
+                    .item(MenuItem::action("select-all", "Select all").on_select(
+                        move |selection, _, _| {
+                            item_selections.borrow_mut().push(selection);
+                        },
+                    ))
                     .on_select(move |selection, _, _| {
                         selections.borrow_mut().push(selection);
                     }),
@@ -2384,8 +2679,10 @@ fn context_menu_runtime_keyboard_navigation_preserves_focused_value_after_rerend
     }
 
     let selections = Rc::new(RefCell::new(Vec::new()));
+    let item_selections = Rc::new(RefCell::new(Vec::new()));
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         selections: selections.clone(),
+        item_selections: item_selections.clone(),
     });
     cx.update(|window, cx| {
         window.draw(cx).clear();
@@ -2422,10 +2719,13 @@ fn context_menu_runtime_keyboard_navigation_preserves_focused_value_after_rerend
     });
 
     let after_enter = selections.borrow().clone();
+    let after_item_enter = item_selections.borrow().clone();
     assert_eq!(after_enter.len(), 1);
     assert_eq!(after_enter[0].index(), 2);
     assert_eq!(after_enter[0].value(), "select-all");
     assert_eq!(after_enter[0].label(), "Select all");
+    assert_eq!(after_item_enter.len(), 1);
+    assert_eq!(after_item_enter[0].path_key(), "2:select-all");
 }
 
 #[test]
@@ -4690,6 +4990,18 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             .index_snapshot(root_command_snapshot)
             .render_plan();
     let _root_command_row: Option<&root::CommandRowRenderPlan> = root_command_plan.rows().first();
+    let root_menu_state = root::Menu::new("root-menu", "Menu")
+        .default_open(true)
+        .default_focused_value("more")
+        .item(root::MenuItem::submenu(
+            "more",
+            "More",
+            [root::MenuItem::action("nested", "Nested")],
+        ))
+        .state();
+    let root_menu_submenu_navigation: root::MenuSubmenuNavigation = root_menu_state
+        .submenu_navigation_target("right")
+        .expect("root MenuSubmenuNavigation should be exported");
     let root_scroll = root::ScrollArea::new("scroll", div());
     let root_splitter = root::Splitter::new("split");
     let root_tabs = root::Tabs::new("tabs");
@@ -4727,6 +5039,18 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             .render_plan();
     let _prelude_command_row: Option<&prelude::CommandRowRenderPlan> =
         prelude_command_plan.rows().first();
+    let prelude_menu_state = prelude::Menu::new("prelude-menu", "Menu")
+        .default_open(true)
+        .default_focused_value("more")
+        .item(prelude::MenuItem::submenu(
+            "more",
+            "More",
+            [prelude::MenuItem::action("nested", "Nested")],
+        ))
+        .state();
+    let prelude_menu_submenu_navigation: prelude::MenuSubmenuNavigation = prelude_menu_state
+        .submenu_navigation_target("right")
+        .expect("prelude MenuSubmenuNavigation should be exported");
     let prelude_scroll = prelude::ScrollArea::new("scroll", div());
     let prelude_splitter = prelude::Splitter::new("split");
     let prelude_tabs = prelude::Tabs::new("tabs");
@@ -4750,6 +5074,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_combobox.state(),
         root_command.state(),
         root_command_plan.role(),
+        root_menu_submenu_navigation.focused_value(),
         root_scroll.state(),
         root_splitter.state(),
         root_tabs.state(),
@@ -4771,6 +5096,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_combobox.state(),
         prelude_command.state(),
         prelude_command_plan.row_role(),
+        prelude_menu_submenu_navigation.focused_value(),
         prelude_scroll.state(),
         prelude_splitter.state(),
         prelude_tabs.state(),

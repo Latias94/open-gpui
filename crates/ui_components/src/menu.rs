@@ -6,12 +6,13 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent, ParentElement,
-    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
+    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, anchored,
+    deferred, div,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
     OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role,
-    Sizable, Size, ThemeTokens, UiPx, ui_point, ui_px, ui_size,
+    Sizable, Size, ThemeTokens, Toggled, UiPx, ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -22,7 +23,11 @@ use crate::overlay::{
     focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
 };
 use crate::roving_focus::{first_enabled, last_enabled, next_enabled};
+use crate::scroll_area::ScrollArea;
 use crate::theme::ThemeResolver;
+
+/// Default threshold where menu surfaces become locally scrollable.
+pub const DEFAULT_SCROLLABLE_MENU_ITEM_COUNT_THRESHOLD: usize = 8;
 
 /// Menu open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -49,8 +54,40 @@ impl MenuOpenMode {
 pub enum MenuItemKind {
     /// Activatable command item.
     Action,
+    /// Checkable menu item. Checked state is caller-owned.
+    Checkbox,
+    /// Radio-style menu item. Checked state is caller-owned.
+    Radio,
     /// Visual separator. Separators are not focusable or activatable.
     Separator,
+    /// Submenu trigger item.
+    Submenu,
+}
+
+impl MenuItemKind {
+    /// Returns a stable item-kind label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Action => "action",
+            Self::Checkbox => "checkbox",
+            Self::Radio => "radio",
+            Self::Separator => "separator",
+            Self::Submenu => "submenu",
+        }
+    }
+
+    /// Returns whether this kind can be activated when enabled.
+    pub const fn activatable(self) -> bool {
+        matches!(self, Self::Action | Self::Checkbox | Self::Radio)
+    }
+
+    /// Returns whether this kind can receive roving focus when enabled.
+    pub const fn focusable(self) -> bool {
+        matches!(
+            self,
+            Self::Action | Self::Checkbox | Self::Radio | Self::Submenu
+        )
+    }
 }
 
 /// Pure descriptor for one menu item.
@@ -60,6 +97,8 @@ pub struct MenuItemDescriptor {
     label: String,
     kind: MenuItemKind,
     disabled: bool,
+    checked: bool,
+    children: Vec<MenuItemDescriptor>,
 }
 
 impl MenuItemDescriptor {
@@ -70,6 +109,32 @@ impl MenuItemDescriptor {
             label: label.into(),
             kind: MenuItemKind::Action,
             disabled: false,
+            checked: false,
+            children: Vec::new(),
+        }
+    }
+
+    /// Creates a checkbox item descriptor.
+    pub fn checkbox(value: impl Into<String>, label: impl Into<String>, checked: bool) -> Self {
+        Self {
+            value: value.into(),
+            label: label.into(),
+            kind: MenuItemKind::Checkbox,
+            disabled: false,
+            checked,
+            children: Vec::new(),
+        }
+    }
+
+    /// Creates a radio item descriptor.
+    pub fn radio(value: impl Into<String>, label: impl Into<String>, checked: bool) -> Self {
+        Self {
+            value: value.into(),
+            label: label.into(),
+            kind: MenuItemKind::Radio,
+            disabled: false,
+            checked,
+            children: Vec::new(),
         }
     }
 
@@ -80,13 +145,55 @@ impl MenuItemDescriptor {
             label: String::new(),
             kind: MenuItemKind::Separator,
             disabled: true,
+            checked: false,
+            children: Vec::new(),
         }
     }
 
-    /// Marks an action item as disabled.
+    /// Creates a submenu descriptor.
+    pub fn submenu(
+        value: impl Into<String>,
+        label: impl Into<String>,
+        children: impl IntoIterator<Item = MenuItemDescriptor>,
+    ) -> Self {
+        Self {
+            value: value.into(),
+            label: label.into(),
+            kind: MenuItemKind::Submenu,
+            disabled: false,
+            checked: false,
+            children: children.into_iter().collect(),
+        }
+    }
+
+    /// Marks an activatable or submenu item as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
-        if self.kind == MenuItemKind::Action {
+        if self.kind != MenuItemKind::Separator {
             self.disabled = disabled;
+        }
+        self
+    }
+
+    /// Applies caller-owned checked state to checkbox and radio items.
+    pub fn checked(mut self, checked: bool) -> Self {
+        if matches!(self.kind, MenuItemKind::Checkbox | MenuItemKind::Radio) {
+            self.checked = checked;
+        }
+        self
+    }
+
+    /// Adds one submenu child descriptor.
+    pub fn child(mut self, child: MenuItemDescriptor) -> Self {
+        if self.kind == MenuItemKind::Submenu {
+            self.children.push(child);
+        }
+        self
+    }
+
+    /// Adds many submenu child descriptors.
+    pub fn children(mut self, children: impl IntoIterator<Item = MenuItemDescriptor>) -> Self {
+        if self.kind == MenuItemKind::Submenu {
+            self.children.extend(children);
         }
         self
     }
@@ -111,9 +218,21 @@ impl MenuItemDescriptor {
         self.disabled
     }
 
+    /// Returns caller-owned checked state for checkbox and radio items.
+    pub const fn checked_state(&self) -> bool {
+        self.checked
+    }
+
+    /// Returns submenu child descriptors.
+    pub fn children_ref(&self) -> &[MenuItemDescriptor] {
+        &self.children
+    }
+
     /// Returns whether the item participates in roving focus.
     pub const fn focusable(&self) -> bool {
-        matches!(self.kind, MenuItemKind::Action) && !self.disabled
+        self.kind.focusable()
+            && !self.disabled
+            && (!matches!(self.kind, MenuItemKind::Submenu) || !self.children.is_empty())
     }
 }
 
@@ -217,6 +336,8 @@ pub struct MenuMetrics {
     text_size: UiPx,
     min_width: UiPx,
     max_width: UiPx,
+    max_height: UiPx,
+    submenu_indent: UiPx,
 }
 
 impl MenuMetrics {
@@ -235,6 +356,11 @@ impl MenuMetrics {
             text_size: size.control_text_px(),
             min_width: ui_px(180.0),
             max_width: ui_px(320.0),
+            max_height: ui_px(280.0),
+            submenu_indent: match size {
+                Size::XSmall | Size::Small => ui_px(14.0),
+                Size::Medium | Size::Large => ui_px(18.0),
+            },
         }
     }
 
@@ -297,23 +423,60 @@ impl MenuMetrics {
     pub const fn max_width(self) -> UiPx {
         self.max_width
     }
+
+    /// Returns maximum menu surface height before local scrolling.
+    pub const fn max_height(self) -> UiPx {
+        self.max_height
+    }
+
+    /// Returns additional indentation per submenu depth.
+    pub const fn submenu_indent(self) -> UiPx {
+        self.submenu_indent
+    }
 }
 
 /// Resolved menu item state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItemState {
     index: usize,
+    parent_value: Option<String>,
+    path: Vec<String>,
+    depth: usize,
     value: String,
     label: String,
     kind: MenuItemKind,
     disabled: bool,
+    checked: bool,
     focused: bool,
+    submenu_open: bool,
+    child_count: usize,
+    children: Vec<MenuItemState>,
 }
 
 impl MenuItemState {
     /// Returns the zero-based item index.
     pub const fn index(&self) -> usize {
         self.index
+    }
+
+    /// Returns the parent submenu value, if this item is nested.
+    pub fn parent_value(&self) -> Option<&str> {
+        self.parent_value.as_deref()
+    }
+
+    /// Returns the stable tree path for this item.
+    pub fn path(&self) -> &[String] {
+        &self.path
+    }
+
+    /// Returns the stable tree path as a compact key.
+    pub fn path_key(&self) -> String {
+        self.path.join("/")
+    }
+
+    /// Returns zero-based menu depth.
+    pub const fn depth(&self) -> usize {
+        self.depth
     }
 
     /// Returns the stable item value.
@@ -336,9 +499,28 @@ impl MenuItemState {
         self.disabled
     }
 
+    /// Returns caller-owned checked state for checkbox and radio items.
+    pub const fn checked(&self) -> bool {
+        self.checked
+    }
+
+    /// Returns toggle metadata for checkbox and radio rows.
+    pub const fn toggled(&self) -> Option<Toggled> {
+        match self.kind {
+            MenuItemKind::Checkbox | MenuItemKind::Radio => Some(if self.checked {
+                Toggled::True
+            } else {
+                Toggled::False
+            }),
+            _ => None,
+        }
+    }
+
     /// Returns whether the item can receive roving focus.
     pub const fn focusable(&self) -> bool {
-        matches!(self.kind, MenuItemKind::Action) && !self.disabled
+        self.kind.focusable()
+            && !self.disabled
+            && (!matches!(self.kind, MenuItemKind::Submenu) || self.child_count > 0)
     }
 
     /// Returns whether the item has roving focus.
@@ -348,13 +530,36 @@ impl MenuItemState {
 
     /// Returns whether activation handlers should run for this item.
     pub const fn activation_enabled(&self) -> bool {
-        self.focusable()
+        self.focusable() && self.kind.activatable()
+    }
+
+    /// Returns whether this item owns a submenu.
+    pub const fn has_submenu(&self) -> bool {
+        matches!(self.kind, MenuItemKind::Submenu) && self.child_count > 0
+    }
+
+    /// Returns whether this submenu branch is open.
+    pub const fn submenu_open(&self) -> bool {
+        self.submenu_open
+    }
+
+    /// Returns number of direct submenu children.
+    pub const fn child_count(&self) -> usize {
+        self.child_count
+    }
+
+    /// Returns direct submenu child states.
+    pub fn children(&self) -> &[MenuItemState] {
+        &self.children
     }
 
     /// Returns the accessibility role.
     pub const fn role(&self) -> Option<Role> {
         match self.kind {
-            MenuItemKind::Action => Some(Role::MenuItem),
+            MenuItemKind::Action
+            | MenuItemKind::Checkbox
+            | MenuItemKind::Radio
+            | MenuItemKind::Submenu => Some(Role::MenuItem),
             MenuItemKind::Separator => None,
         }
     }
@@ -364,8 +569,11 @@ impl MenuItemState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuSelection {
     index: usize,
+    path: Vec<String>,
     value: String,
     label: String,
+    kind: MenuItemKind,
+    checked: bool,
 }
 
 impl MenuSelection {
@@ -373,14 +581,27 @@ impl MenuSelection {
     pub fn from_item(item: &MenuItemState) -> Option<Self> {
         item.activation_enabled().then(|| Self {
             index: item.index,
+            path: item.path.clone(),
             value: item.value.clone(),
             label: item.label.clone(),
+            kind: item.kind,
+            checked: item.checked,
         })
     }
 
     /// Returns the selected item index.
     pub const fn index(&self) -> usize {
         self.index
+    }
+
+    /// Returns the selected item stable tree path.
+    pub fn path(&self) -> &[String] {
+        &self.path
+    }
+
+    /// Returns the selected item stable tree path as a compact key.
+    pub fn path_key(&self) -> String {
+        self.path.join("/")
     }
 
     /// Returns the selected item value.
@@ -392,6 +613,196 @@ impl MenuSelection {
     pub fn label(&self) -> &str {
         &self.label
     }
+
+    /// Returns selected item kind.
+    pub const fn kind(&self) -> MenuItemKind {
+        self.kind
+    }
+
+    /// Returns checked state at the time of activation for checkable rows.
+    pub const fn checked(&self) -> bool {
+        self.checked
+    }
+}
+
+/// Pure submenu navigation target produced from a keyboard action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MenuSubmenuNavigation {
+    open_path: Vec<String>,
+    focused_path: Vec<String>,
+    focused_value: String,
+}
+
+impl MenuSubmenuNavigation {
+    pub(crate) fn new(
+        open_path: Vec<String>,
+        focused_path: Vec<String>,
+        focused_value: String,
+    ) -> Self {
+        Self {
+            open_path,
+            focused_path,
+            focused_value,
+        }
+    }
+
+    /// Returns the submenu branch path that should remain open.
+    pub fn open_path(&self) -> &[String] {
+        &self.open_path
+    }
+
+    /// Returns the submenu branch path as a compact key, or `None` when all branches close.
+    pub fn open_path_key(&self) -> Option<String> {
+        (!self.open_path.is_empty()).then(|| self.open_path.join("/"))
+    }
+
+    /// Returns the item path that should receive roving focus.
+    pub fn focused_path(&self) -> &[String] {
+        &self.focused_path
+    }
+
+    /// Returns the focused item path as a compact key.
+    pub fn focused_path_key(&self) -> String {
+        self.focused_path.join("/")
+    }
+
+    /// Returns the focused item value.
+    pub fn focused_value(&self) -> &str {
+        &self.focused_value
+    }
+}
+
+fn menu_item_state_from_descriptor(
+    index: usize,
+    parent_value: Option<String>,
+    path: Vec<String>,
+    depth: usize,
+    descriptor: &MenuItemDescriptor,
+    focused_path: Option<&[String]>,
+    open_path: &[String],
+) -> MenuItemState {
+    let child_parent = Some(descriptor.value.clone());
+    let child_path_base = path.clone();
+    let submenu_open = matches!(descriptor.kind, MenuItemKind::Submenu)
+        && !descriptor.children.is_empty()
+        && menu_path_is_open(&path, open_path);
+    let children = descriptor
+        .children
+        .iter()
+        .enumerate()
+        .map(|(child_index, child)| {
+            let mut child_path = child_path_base.clone();
+            child_path.push(format!("{child_index}:{}", child.value));
+            menu_item_state_from_descriptor(
+                child_index,
+                child_parent.clone(),
+                child_path,
+                depth.saturating_add(1),
+                child,
+                focused_path,
+                open_path,
+            )
+        })
+        .collect::<Vec<_>>();
+    let child_count = children.len();
+    let focused = focused_path.is_some_and(|focused_path| focused_path == path.as_slice());
+
+    MenuItemState {
+        index,
+        parent_value,
+        path,
+        depth,
+        value: descriptor.value.clone(),
+        label: descriptor.label.clone(),
+        kind: descriptor.kind,
+        disabled: descriptor.disabled,
+        checked: descriptor.checked,
+        focused,
+        submenu_open,
+        child_count,
+        children,
+    }
+}
+
+fn menu_item_states_from_descriptors(
+    descriptors: &[MenuItemDescriptor],
+    focused_path: Option<&[String]>,
+    open_path: &[String],
+) -> Vec<MenuItemState> {
+    descriptors
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let path = vec![format!("{index}:{}", item.value)];
+            menu_item_state_from_descriptor(index, None, path, 0, item, focused_path, open_path)
+        })
+        .collect()
+}
+
+fn visible_menu_item_states(items: &[MenuItemState]) -> Vec<MenuItemState> {
+    let mut visible = Vec::new();
+    flatten_visible_menu_item_states(items, &mut visible);
+    visible
+}
+
+fn flatten_visible_menu_item_states(items: &[MenuItemState], visible: &mut Vec<MenuItemState>) {
+    for item in items {
+        visible.push(item.clone());
+        if item.submenu_open() {
+            flatten_visible_menu_item_states(item.children(), visible);
+        }
+    }
+}
+
+fn first_focusable_menu_path(items: &[MenuItemState]) -> Option<Vec<String>> {
+    visible_menu_item_states(items)
+        .into_iter()
+        .find(MenuItemState::focusable)
+        .map(|item| item.path)
+}
+
+fn menu_path_for_value(items: &[MenuItemState], value: &str) -> Option<Vec<String>> {
+    visible_menu_item_states(items)
+        .into_iter()
+        .find(|item| item.focusable() && item.value() == value)
+        .map(|item| item.path)
+}
+
+fn menu_path_is_focusable(items: &[MenuItemState], path: &[String]) -> bool {
+    visible_menu_item_states(items)
+        .into_iter()
+        .any(|item| item.path() == path && item.focusable())
+}
+
+fn menu_path_is_openable(items: &[MenuItemState], path: &[String]) -> bool {
+    find_menu_item_state_by_path(items, path)
+        .is_some_and(|item| item.has_submenu() && item.focusable())
+}
+
+fn menu_path_is_open(path: &[String], open_path: &[String]) -> bool {
+    !path.is_empty() && open_path.len() >= path.len() && open_path.starts_with(path)
+}
+
+fn find_menu_item_state_by_path<'a>(
+    items: &'a [MenuItemState],
+    path: &[String],
+) -> Option<&'a MenuItemState> {
+    for item in items {
+        if item.path() == path {
+            return Some(item);
+        }
+        if let Some(child) = find_menu_item_state_by_path(item.children(), path) {
+            return Some(child);
+        }
+    }
+    None
+}
+
+fn first_focusable_child_path(item: &MenuItemState) -> Option<Vec<String>> {
+    item.children()
+        .iter()
+        .find(|child| child.focusable())
+        .map(|child| child.path().to_vec())
 }
 
 /// Resolved menu state used by tests, demos, and rendering.
@@ -410,7 +821,10 @@ pub struct MenuState {
     focus_restore_intent: FocusRestoreIntent,
     trigger_selected: bool,
     items: Vec<MenuItemState>,
+    visible_items: Vec<MenuItemState>,
     focused_index: Option<usize>,
+    focused_path: Option<Vec<String>>,
+    open_path: Vec<String>,
     metrics: MenuMetrics,
     colors: MenuColors,
     focus_ring: FocusRing,
@@ -435,6 +849,44 @@ impl MenuState {
         focus_restore_intent: FocusRestoreIntent,
         tokens: ThemeTokens,
     ) -> Self {
+        Self::resolve_with_paths(
+            size,
+            disabled,
+            open,
+            default_open,
+            focused_value,
+            None,
+            &[],
+            items,
+            placement_side,
+            placement_alignment,
+            outside_press_policy,
+            escape_key_policy,
+            initial_focus_intent,
+            focus_restore_intent,
+            tokens,
+        )
+    }
+
+    /// Resolves menu state with adapter-owned submenu and focus paths applied.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn resolve_with_paths(
+        size: Size,
+        disabled: bool,
+        open: Option<bool>,
+        default_open: bool,
+        focused_value: Option<&str>,
+        focused_path: Option<&[String]>,
+        open_path: &[String],
+        items: impl IntoIterator<Item = MenuItemDescriptor>,
+        placement_side: OverlayPlacementSide,
+        placement_alignment: OverlayPlacementAlignment,
+        outside_press_policy: OutsidePressPolicy,
+        escape_key_policy: EscapeKeyPolicy,
+        initial_focus_intent: InitialFocusIntent,
+        focus_restore_intent: FocusRestoreIntent,
+        tokens: ThemeTokens,
+    ) -> Self {
         let open_mode = if open.is_some() {
             MenuOpenMode::Controlled
         } else {
@@ -443,33 +895,35 @@ impl MenuState {
         let descriptors: Vec<MenuItemDescriptor> = items.into_iter().collect();
         let requested_open = open.unwrap_or(default_open);
         let open = requested_open && !disabled && !descriptors.is_empty();
-        let disabled_map: Vec<bool> = descriptors.iter().map(|item| !item.focusable()).collect();
-        let focused_index = if open {
-            focused_value
-                .and_then(|value| {
-                    descriptors
-                        .iter()
-                        .position(|item| item.value() == value && item.focusable())
+        let mut open_path = if open { open_path.to_vec() } else { Vec::new() };
+        let provisional_items = menu_item_states_from_descriptors(&descriptors, None, &open_path);
+        if !menu_path_is_openable(&provisional_items, &open_path) {
+            open_path.clear();
+        }
+        let provisional_items = if open_path.is_empty() {
+            menu_item_states_from_descriptors(&descriptors, None, &[])
+        } else {
+            provisional_items
+        };
+        let focused_path = if open {
+            focused_path
+                .filter(|path| menu_path_is_focusable(&provisional_items, path))
+                .map(|path| path.to_vec())
+                .or_else(|| {
+                    focused_value.and_then(|value| menu_path_for_value(&provisional_items, value))
                 })
-                .or_else(|| first_enabled(&disabled_map))
+                .or_else(|| first_focusable_menu_path(&provisional_items))
         } else {
             None
         };
-        let items = descriptors
-            .into_iter()
-            .enumerate()
-            .map(|(index, item)| {
-                let focused = focused_index == Some(index);
-                MenuItemState {
-                    index,
-                    value: item.value,
-                    label: item.label,
-                    kind: item.kind,
-                    disabled: item.disabled,
-                    focused,
-                }
-            })
-            .collect();
+        let items =
+            menu_item_states_from_descriptors(&descriptors, focused_path.as_deref(), &open_path);
+        let visible_items = visible_menu_item_states(&items);
+        let focused_index = focused_path.as_ref().and_then(|focused_path| {
+            visible_items
+                .iter()
+                .position(|item| item.path() == focused_path.as_slice())
+        });
         let presence = if open {
             OverlayPresence::open()
         } else {
@@ -497,7 +951,10 @@ impl MenuState {
             focus_restore_intent,
             trigger_selected: open,
             items,
+            visible_items,
             focused_index,
+            focused_path,
+            open_path,
             metrics: MenuMetrics::from_size(size),
             colors,
             focus_ring: FocusRing::from_color(colors.focus_ring()),
@@ -570,15 +1027,40 @@ impl MenuState {
         &self.items
     }
 
-    /// Returns focused item index.
+    /// Returns visible menu rows after submenu expansion is applied.
+    pub fn visible_items(&self) -> &[MenuItemState] {
+        &self.visible_items
+    }
+
+    /// Returns focused visible item index.
     pub const fn focused_index(&self) -> Option<usize> {
         self.focused_index
+    }
+
+    /// Returns focused item stable path.
+    pub fn focused_path(&self) -> Option<&[String]> {
+        self.focused_path.as_deref()
+    }
+
+    /// Returns focused item stable path as a compact key.
+    pub fn focused_path_key(&self) -> Option<String> {
+        self.focused_path.as_ref().map(|path| path.join("/"))
+    }
+
+    /// Returns the deepest open submenu path.
+    pub fn open_path(&self) -> &[String] {
+        &self.open_path
+    }
+
+    /// Returns the deepest open submenu path as a compact key.
+    pub fn open_path_key(&self) -> Option<String> {
+        (!self.open_path.is_empty()).then(|| self.open_path.join("/"))
     }
 
     /// Returns focused item value.
     pub fn focused_value(&self) -> Option<&str> {
         self.focused_index
-            .and_then(|index| self.items.get(index))
+            .and_then(|index| self.visible_items.get(index))
             .map(MenuItemState::value)
     }
 
@@ -586,7 +1068,27 @@ impl MenuState {
     pub fn navigation_target(&self, key: &str) -> Option<&MenuItemState> {
         let current = self.focused_index?;
         let disabled = self.disabled_map();
-        menu_navigation_target(key, current, &disabled).and_then(|index| self.items.get(index))
+        menu_navigation_target(key, current, &disabled)
+            .and_then(|index| self.visible_items.get(index))
+    }
+
+    /// Resolves a typeahead target for a caller-owned text buffer.
+    pub fn typeahead_target(&self, query: &str) -> Option<&MenuItemState> {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() {
+            return None;
+        }
+
+        let len = self.visible_items.len();
+        if len == 0 {
+            return None;
+        }
+
+        let start = self.focused_index.map_or(0, |index| (index + 1) % len);
+        (0..len)
+            .map(|step| (start + step) % len)
+            .filter_map(|index| self.visible_items.get(index))
+            .find(|item| item.focusable() && item.label().to_lowercase().starts_with(&query))
     }
 
     /// Resolves an activation payload for an APG-style activation key.
@@ -596,8 +1098,60 @@ impl MenuState {
         }
 
         self.focused_index
-            .and_then(|index| self.items.get(index))
+            .and_then(|index| self.visible_items.get(index))
             .and_then(MenuSelection::from_item)
+    }
+
+    /// Resolves submenu open/close targets for Right and Left keys.
+    pub fn submenu_navigation_target(&self, key: &str) -> Option<MenuSubmenuNavigation> {
+        let current = self
+            .focused_index
+            .and_then(|index| self.visible_items.get(index))?;
+
+        match key {
+            "right" if current.has_submenu() => {
+                let focused_path = first_focusable_child_path(current)?;
+                let focused_item = find_menu_item_state_by_path(&self.items, &focused_path)?;
+                Some(MenuSubmenuNavigation::new(
+                    current.path().to_vec(),
+                    focused_path,
+                    focused_item.value().to_owned(),
+                ))
+            }
+            "left" => self.close_submenu_target(),
+            _ => None,
+        }
+    }
+
+    /// Resolves the next branch/focus target when closing an active submenu branch.
+    pub fn close_submenu_target(&self) -> Option<MenuSubmenuNavigation> {
+        let current = self
+            .focused_index
+            .and_then(|index| self.visible_items.get(index))?;
+
+        if current.depth() == 0 {
+            return current.submenu_open().then(|| {
+                MenuSubmenuNavigation::new(
+                    Vec::new(),
+                    current.path().to_vec(),
+                    current.value().to_owned(),
+                )
+            });
+        }
+
+        let parent_path = current.path()[..current.path().len().saturating_sub(1)].to_vec();
+        let parent = find_menu_item_state_by_path(&self.items, &parent_path)?;
+        let next_open_path = parent_path[..parent_path.len().saturating_sub(1)].to_vec();
+        Some(MenuSubmenuNavigation::new(
+            next_open_path,
+            parent_path,
+            parent.value().to_owned(),
+        ))
+    }
+
+    /// Returns whether the menu surface should use a local scroll viewport.
+    pub fn scrollable_content(&self) -> bool {
+        self.visible_items.len() > DEFAULT_SCROLLABLE_MENU_ITEM_COUNT_THRESHOLD
     }
 
     /// Returns trigger accessibility role.
@@ -631,7 +1185,10 @@ impl MenuState {
     }
 
     fn disabled_map(&self) -> Vec<bool> {
-        self.items.iter().map(|item| !item.focusable()).collect()
+        self.visible_items
+            .iter()
+            .map(|item| !item.focusable())
+            .collect()
     }
 }
 
@@ -646,18 +1203,165 @@ pub fn menu_navigation_target(key: &str, current: usize, disabled: &[bool]) -> O
     }
 }
 
+fn menu_item_element(
+    item: MenuItem,
+    item_state: MenuItemState,
+    debug_prefix: &'static str,
+    debug_id: String,
+    metrics: MenuMetrics,
+    colors: MenuColors,
+    runtime: open_gpui::Entity<MenuRuntime>,
+    trigger_focus: FocusHandle,
+    focus_restore: FocusRestoreIntent,
+    on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
+    on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
+) -> AnyElement {
+    match item_state.kind() {
+        MenuItemKind::Separator => div()
+            .id(format!("{debug_prefix}-separator:{}", item_state.index()))
+            .debug_selector({
+                let separator_debug_id = debug_id.clone();
+                let separator_index = item_state.index();
+                move || format!("{debug_prefix}:{separator_debug_id}:separator:{separator_index}")
+            })
+            .h(gpui_px_from_ui(metrics.separator_height()))
+            .my_1()
+            .bg(ThemeResolver::resolve(colors.separator()))
+            .into_any_element(),
+        MenuItemKind::Action
+        | MenuItemKind::Checkbox
+        | MenuItemKind::Radio
+        | MenuItemKind::Submenu => {
+            let selection = MenuSelection::from_item(&item_state);
+            let item_handler = item.on_select.clone();
+            let global_handler = on_select.clone();
+            let item_label = item_state.label().to_owned();
+            let item_path_key = item_state.path_key();
+            let left_padding =
+                metrics.item_padding_x() + metrics.submenu_indent() * item_state.depth() as f32;
+            let focused = item_state.focused();
+            let disabled = item_state.disabled();
+            let toggled = item_state.toggled();
+            let has_submenu = item_state.has_submenu();
+            let submenu_navigation = if has_submenu {
+                item_state
+                    .children()
+                    .iter()
+                    .find(|child| child.focusable())
+                    .map(|child| {
+                        MenuSubmenuNavigation::new(
+                            item_state.path().to_vec(),
+                            child.path().to_vec(),
+                            child.value().to_owned(),
+                        )
+                    })
+            } else {
+                None
+            };
+
+            div()
+                .id(format!("{debug_prefix}-item:{item_path_key}"))
+                .debug_selector({
+                    let item_debug_id = debug_id.clone();
+                    move || format!("{debug_prefix}:{item_debug_id}:item:{item_path_key}")
+                })
+                .min_h(gpui_px_from_ui(metrics.item_height()))
+                .pl(gpui_px_from_ui(left_padding))
+                .pr(gpui_px_from_ui(metrics.item_padding_x()))
+                .py(gpui_px_from_ui(metrics.item_padding_y()))
+                .flex()
+                .items_center()
+                .justify_between()
+                .rounded(gpui_px_from_ui(metrics.radius()))
+                .bg(ThemeResolver::resolve(if focused {
+                    colors.item_focus_background()
+                } else {
+                    colors.item_background()
+                }))
+                .text_color(ThemeResolver::resolve(if disabled {
+                    colors.item_disabled_foreground()
+                } else {
+                    colors.foreground()
+                }))
+                .ui_role(Role::MenuItem)
+                .aria_label(item_label.clone())
+                .aria_disabled(disabled)
+                .when_some(toggled, |this, toggled| this.ui_aria_toggled(toggled))
+                .when(has_submenu, |this| {
+                    this.aria_expanded(item_state.submenu_open())
+                })
+                .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
+                .when(!disabled, |this| {
+                    this.cursor_pointer()
+                        .hover(move |style| {
+                            style.bg(ThemeResolver::resolve(colors.item_hover_background()))
+                        })
+                        .on_click(move |_event: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            if let Some(submenu_navigation) = submenu_navigation.clone() {
+                                runtime.update(cx, |runtime, _| {
+                                    runtime.open_path = submenu_navigation.open_path().to_vec();
+                                    runtime.focused_path =
+                                        Some(submenu_navigation.focused_path().to_vec());
+                                    runtime.focused_value =
+                                        Some(submenu_navigation.focused_value().to_owned());
+                                });
+                                return;
+                            }
+                            let Some(selection) = selection.clone() else {
+                                return;
+                            };
+                            if let Some(item_handler) = item_handler.as_ref() {
+                                item_handler(selection.clone(), window, cx);
+                            }
+                            if let Some(global_handler) = global_handler.as_ref() {
+                                global_handler(selection, window, cx);
+                            }
+                            close_menu(
+                                runtime.clone(),
+                                trigger_focus.clone(),
+                                focus_restore.clone(),
+                                on_open_change.clone(),
+                                window,
+                                cx,
+                            );
+                        })
+                })
+                .child(item_label)
+                .when_some(toggled, |this, toggled| {
+                    let marker = if toggled == Toggled::True {
+                        "checked"
+                    } else {
+                        ""
+                    };
+                    this.child(div().ml_2().child(marker))
+                })
+                .when(has_submenu, |this| this.child(div().ml_2().child(">")))
+                .into_any_element()
+        }
+    }
+}
+
 /// A concrete GPUI menu item.
 #[derive(Clone)]
 pub struct MenuItem {
     descriptor: MenuItemDescriptor,
+    children: Vec<MenuItem>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
 }
 
 impl MenuItem {
     /// Creates a menu item from a pure descriptor.
     pub fn from_descriptor(descriptor: MenuItemDescriptor) -> Self {
+        let children = descriptor
+            .children_ref()
+            .iter()
+            .cloned()
+            .map(MenuItem::from_descriptor)
+            .collect();
         Self {
             descriptor,
+            children,
             on_select: None,
         }
     }
@@ -667,6 +1371,31 @@ impl MenuItem {
         let label = label.into();
         Self {
             descriptor: MenuItemDescriptor::action(value, label.to_string()),
+            children: Vec::new(),
+            on_select: None,
+        }
+    }
+
+    /// Creates a checkbox menu item.
+    pub fn checkbox(
+        value: impl Into<String>,
+        label: impl Into<SharedString>,
+        checked: bool,
+    ) -> Self {
+        let label = label.into();
+        Self {
+            descriptor: MenuItemDescriptor::checkbox(value, label.to_string(), checked),
+            children: Vec::new(),
+            on_select: None,
+        }
+    }
+
+    /// Creates a radio-style menu item.
+    pub fn radio(value: impl Into<String>, label: impl Into<SharedString>, checked: bool) -> Self {
+        let label = label.into();
+        Self {
+            descriptor: MenuItemDescriptor::radio(value, label.to_string(), checked),
+            children: Vec::new(),
             on_select: None,
         }
     }
@@ -675,6 +1404,26 @@ impl MenuItem {
     pub fn separator(value: impl Into<String>) -> Self {
         Self {
             descriptor: MenuItemDescriptor::separator(value),
+            children: Vec::new(),
+            on_select: None,
+        }
+    }
+
+    /// Creates a submenu trigger item.
+    pub fn submenu(
+        value: impl Into<String>,
+        label: impl Into<SharedString>,
+        children: impl IntoIterator<Item = MenuItem>,
+    ) -> Self {
+        let label = label.into();
+        let children: Vec<MenuItem> = children.into_iter().collect();
+        Self {
+            descriptor: MenuItemDescriptor::submenu(
+                value,
+                label.to_string(),
+                children.iter().map(MenuItem::descriptor),
+            ),
+            children,
             on_select: None,
         }
     }
@@ -682,6 +1431,34 @@ impl MenuItem {
     /// Marks the menu item as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.descriptor = self.descriptor.disabled(disabled);
+        self
+    }
+
+    /// Applies caller-owned checked state to checkbox and radio items.
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.descriptor = self.descriptor.checked(checked);
+        self
+    }
+
+    /// Adds one submenu child.
+    pub fn child(mut self, child: MenuItem) -> Self {
+        if self.descriptor.kind() == MenuItemKind::Submenu {
+            let child_descriptor = child.descriptor();
+            self.children.push(child.clone());
+            self.descriptor = self.descriptor.child(child_descriptor);
+        }
+        self
+    }
+
+    /// Adds many submenu children.
+    pub fn children(mut self, children: impl IntoIterator<Item = MenuItem>) -> Self {
+        if self.descriptor.kind() == MenuItemKind::Submenu {
+            let children: Vec<MenuItem> = children.into_iter().collect();
+            self.descriptor = self
+                .descriptor
+                .children(children.iter().map(MenuItem::descriptor));
+            self.children.extend(children);
+        }
         self
     }
 
@@ -696,6 +1473,15 @@ impl MenuItem {
 
     /// Returns a pure descriptor for this item.
     pub fn descriptor(&self) -> MenuItemDescriptor {
+        if self.descriptor.kind == MenuItemKind::Submenu {
+            return MenuItemDescriptor::submenu(
+                self.descriptor.value(),
+                self.descriptor.label(),
+                self.children.iter().map(MenuItem::descriptor),
+            )
+            .disabled(self.descriptor.disabled_state());
+        }
+
         self.descriptor.clone()
     }
 
@@ -703,6 +1489,10 @@ impl MenuItem {
         &self,
     ) -> Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>> {
         self.on_select.clone()
+    }
+
+    pub(crate) fn child_items(&self) -> &[MenuItem] {
+        &self.children
     }
 }
 
@@ -734,6 +1524,9 @@ struct MenuRuntime {
     did_initial_focus: bool,
     trigger_focus: FocusHandle,
     focused_value: Option<String>,
+    focused_path: Option<Vec<String>>,
+    open_path: Vec<String>,
+    scroll_handle: ScrollHandle,
     content_focus: FocusHandle,
 }
 
@@ -896,6 +1689,9 @@ impl RenderOnce for Menu {
             trigger_focus: trigger_focus.clone(),
             content_focus: content_focus.clone(),
             focused_value: self.focused_value.clone(),
+            focused_path: None,
+            open_path: Vec::new(),
+            scroll_handle: ScrollHandle::new(),
         });
         let runtime_state = runtime.read(cx).clone();
         let controlled_open = self.open;
@@ -907,6 +1703,8 @@ impl RenderOnce for Menu {
                 if !resolved_open {
                     runtime.did_initial_focus = false;
                     runtime.focused_value = None;
+                    runtime.focused_path = None;
+                    runtime.open_path.clear();
                 }
             });
         }
@@ -915,12 +1713,14 @@ impl RenderOnce for Menu {
             .focused_value
             .as_deref()
             .or(self.focused_value.as_deref());
-        let state = MenuState::resolve(
+        let state = MenuState::resolve_with_paths(
             self.size,
             self.disabled,
             Some(resolved_open),
             self.default_open,
             focused_value,
+            runtime_state.focused_path.as_deref(),
+            &runtime_state.open_path,
             descriptors.clone(),
             self.placement_side,
             self.placement_alignment,
@@ -943,6 +1743,7 @@ impl RenderOnce for Menu {
         let initial_focus = state.initial_focus_intent().clone();
         let trigger_focus = runtime_state.trigger_focus.clone();
         let content_focus = runtime_state.content_focus.clone();
+        let scroll_handle = runtime_state.scroll_handle.clone();
         let trigger_focus_for_escape = trigger_focus.clone();
         let focus_restore_for_escape = focus_restore.clone();
         let trigger_focus_for_content = trigger_focus.clone();
@@ -1051,6 +1852,8 @@ impl RenderOnce for Menu {
                                     if !next_open {
                                         runtime.did_initial_focus = false;
                                         runtime.focused_value = None;
+                                        runtime.focused_path = None;
+                                        runtime.open_path.clear();
                                     }
                                 });
                                 if let Some(on_open_change) = on_open_change.as_ref() {
@@ -1075,6 +1878,7 @@ impl RenderOnce for Menu {
                                 runtime.clone(),
                                 trigger_focus_for_content.clone(),
                                 content_focus.clone(),
+                                scroll_handle.clone(),
                                 focus_restore_for_content.clone(),
                                 on_open_change.clone(),
                                 on_select.clone(),
@@ -1094,6 +1898,7 @@ fn menu_content_element(
     runtime: open_gpui::Entity<MenuRuntime>,
     trigger_focus: FocusHandle,
     content_focus: FocusHandle,
+    scroll_handle: ScrollHandle,
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
@@ -1109,6 +1914,19 @@ fn menu_content_element(
     let focus_restore_for_keydown = focus_restore.clone();
     let trigger_focus_for_outside = trigger_focus.clone();
     let focus_restore_for_outside = focus_restore.clone();
+    let scroll_viewport_id = format!("menu:{debug_id}:content-scroll");
+    let scrollable_content = state.scrollable_content();
+    let key_items = visible_menu_items(&items, state.open_path());
+    let rows = div().flex().flex_col().gap_1().children(menu_item_elements(
+        items,
+        state.clone(),
+        debug_id.clone(),
+        runtime.clone(),
+        trigger_focus.clone(),
+        focus_restore.clone(),
+        on_open_change.clone(),
+        on_select.clone(),
+    ));
 
     div()
         .id(content_id)
@@ -1118,6 +1936,12 @@ fn menu_content_element(
         })
         .min_w(gpui_px_from_ui(metrics.min_width()))
         .max_w(gpui_px_from_ui(metrics.max_width()))
+        .when(scrollable_content, |this| {
+            this.h(gpui_px_from_ui(metrics.max_height()))
+        })
+        .when(!scrollable_content, |this| {
+            this.max_h(gpui_px_from_ui(metrics.max_height()))
+        })
         .p(gpui_px_from_ui(metrics.surface_padding()))
         .flex()
         .flex_col()
@@ -1140,6 +1964,14 @@ fn menu_content_element(
             if key == "escape" {
                 cx.stop_propagation();
                 window.prevent_default();
+                if let Some(target) = key_state.close_submenu_target() {
+                    key_runtime.update(cx, |runtime, _| {
+                        runtime.open_path = target.open_path().to_vec();
+                        runtime.focused_path = Some(target.focused_path().to_vec());
+                        runtime.focused_value = Some(target.focused_value().to_owned());
+                    });
+                    return;
+                }
                 close_menu(
                     key_runtime.clone(),
                     trigger_focus_for_keydown.clone(),
@@ -1151,12 +1983,25 @@ fn menu_content_element(
                 return;
             }
 
+            if let Some(target) = key_state.submenu_navigation_target(key) {
+                cx.stop_propagation();
+                window.prevent_default();
+                key_runtime.update(cx, |runtime, _| {
+                    runtime.open_path = target.open_path().to_vec();
+                    runtime.focused_path = Some(target.focused_path().to_vec());
+                    runtime.focused_value = Some(target.focused_value().to_owned());
+                });
+                return;
+            }
+
             if let Some(target) = key_state.navigation_target(key) {
                 cx.stop_propagation();
                 window.prevent_default();
                 let target_value = target.value().to_owned();
+                let target_path = target.path().to_vec();
                 key_runtime.update(cx, |runtime, _| {
                     runtime.focused_value = Some(target_value);
+                    runtime.focused_path = Some(target_path);
                 });
                 return;
             }
@@ -1164,6 +2009,15 @@ fn menu_content_element(
             if let Some(selection) = key_state.activation_for_key(key) {
                 cx.stop_propagation();
                 window.prevent_default();
+                if let Some(item_handler) = key_items
+                    .iter()
+                    .zip(key_state.visible_items())
+                    .find(|(_, item_state)| item_state.path() == selection.path())
+                    .and_then(|(item, _)| item.select_handler())
+                    .as_ref()
+                {
+                    item_handler(selection.clone(), window, cx);
+                }
                 if let Some(on_select) = key_select.as_ref() {
                     on_select(selection, window, cx);
                 }
@@ -1191,16 +2045,14 @@ fn menu_content_element(
                 );
             })
         })
-        .children(menu_item_elements(
-            items,
-            state,
-            debug_id,
-            runtime,
-            trigger_focus,
-            focus_restore,
-            on_open_change,
-            on_select,
-        ))
+        .overflow_hidden()
+        .child(
+            ScrollArea::new(scroll_viewport_id, rows)
+                .vertical()
+                .preserve_scroll()
+                .scroll_handle(&scroll_handle)
+                .with_size(state.size()),
+        )
 }
 
 fn menu_item_elements(
@@ -1215,93 +2067,55 @@ fn menu_item_elements(
 ) -> Vec<AnyElement> {
     let metrics = state.metrics();
     let colors = state.colors();
-    let states = state.items().to_vec();
+    let states = state.visible_items().to_vec();
+    let items = visible_menu_items(&items, state.open_path());
 
     items
         .into_iter()
         .zip(states)
-        .enumerate()
-        .map(|(_, (item, item_state))| match item_state.kind() {
-            MenuItemKind::Separator => div()
-                .id(format!("menu-separator:{}", item_state.index()))
-                .debug_selector({
-                    let separator_debug_id = debug_id.clone();
-                    let separator_index = item_state.index();
-                    move || format!("menu:{separator_debug_id}:separator:{separator_index}")
-                })
-                .h(gpui_px_from_ui(metrics.separator_height()))
-                .my_1()
-                .bg(ThemeResolver::resolve(colors.separator()))
-                .into_any_element(),
-            MenuItemKind::Action => {
-                let selection = MenuSelection::from_item(&item_state);
-                let item_handler = item.on_select.clone();
-                let global_handler = on_select.clone();
-                let runtime = runtime.clone();
-                let on_open_change = on_open_change.clone();
-                let trigger_focus = trigger_focus.clone();
-                let focus_restore = focus_restore.clone();
-                let item_label = item_state.label().to_owned();
-                let focused = item_state.focused();
-                let disabled = item_state.disabled();
-                div()
-                    .id(format!("menu-item:{}", item_state.value()))
-                    .debug_selector({
-                        let item_debug_id = debug_id.clone();
-                        let item_value = item_state.value().to_owned();
-                        move || format!("menu:{item_debug_id}:item:{item_value}")
-                    })
-                    .min_h(gpui_px_from_ui(metrics.item_height()))
-                    .px(gpui_px_from_ui(metrics.item_padding_x()))
-                    .py(gpui_px_from_ui(metrics.item_padding_y()))
-                    .flex()
-                    .items_center()
-                    .rounded(gpui_px_from_ui(metrics.radius()))
-                    .bg(ThemeResolver::resolve(if focused {
-                        colors.item_focus_background()
-                    } else {
-                        colors.item_background()
-                    }))
-                    .text_color(ThemeResolver::resolve(if disabled {
-                        colors.item_disabled_foreground()
-                    } else {
-                        colors.foreground()
-                    }))
-                    .ui_role(Role::MenuItem)
-                    .aria_label(item_label.clone())
-                    .aria_disabled(disabled)
-                    .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
-                    .when(!disabled, |this| {
-                        this.cursor_pointer()
-                            .hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.item_hover_background()))
-                            })
-                            .on_click(move |_event: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                let Some(selection) = selection.clone() else {
-                                    return;
-                                };
-                                if let Some(item_handler) = item_handler.as_ref() {
-                                    item_handler(selection.clone(), window, cx);
-                                }
-                                if let Some(global_handler) = global_handler.as_ref() {
-                                    global_handler(selection, window, cx);
-                                }
-                                close_menu(
-                                    runtime.clone(),
-                                    trigger_focus.clone(),
-                                    focus_restore.clone(),
-                                    on_open_change.clone(),
-                                    window,
-                                    cx,
-                                );
-                            })
-                    })
-                    .child(item_label)
-                    .into_any_element()
-            }
+        .map(|(item, item_state)| {
+            menu_item_element(
+                item,
+                item_state,
+                "menu",
+                debug_id.clone(),
+                metrics,
+                colors,
+                runtime.clone(),
+                trigger_focus.clone(),
+                focus_restore.clone(),
+                on_open_change.clone(),
+                on_select.clone(),
+            )
         })
         .collect()
+}
+
+/// Returns concrete menu items that are visible for the current submenu path.
+pub(crate) fn visible_menu_items(items: &[MenuItem], open_path: &[String]) -> Vec<MenuItem> {
+    let mut visible = Vec::new();
+    let mut parent_path = Vec::new();
+    flatten_visible_menu_items(items, &mut parent_path, open_path, &mut visible);
+    visible
+}
+
+fn flatten_visible_menu_items(
+    items: &[MenuItem],
+    parent_path: &mut Vec<String>,
+    open_path: &[String],
+    visible: &mut Vec<MenuItem>,
+) {
+    for (index, item) in items.iter().enumerate() {
+        parent_path.push(format!("{index}:{}", item.descriptor.value()));
+        visible.push(item.clone());
+        if item.descriptor.kind() == MenuItemKind::Submenu
+            && !item.child_items().is_empty()
+            && menu_path_is_open(parent_path, open_path)
+        {
+            flatten_visible_menu_items(item.child_items(), parent_path, open_path, visible);
+        }
+        parent_path.pop();
+    }
 }
 
 fn close_menu(
@@ -1316,6 +2130,8 @@ fn close_menu(
         runtime.open = false;
         runtime.did_initial_focus = false;
         runtime.focused_value = None;
+        runtime.focused_path = None;
+        runtime.open_path.clear();
     });
     if let Some(on_open_change) = on_open_change.as_ref() {
         on_open_change(false, window, cx);

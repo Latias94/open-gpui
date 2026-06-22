@@ -376,6 +376,18 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     crate exports, gallery metadata, ScrollArea redraw persistence, Splitter runtime constraints,
     Tabs overflow, `table-virtualization`, `tree-renderer`, `virtualized-list-renderer`, and
     explicit accessible metadata on icon-only and label-association samples.
+   The Overlay Menu and ContextMenu samples should expose action, checkbox, radio, separator,
+   disabled, submenu, typeahead, controlled-open, outside-policy, and point-anchor variants. Use
+   `cargo nextest run -p open-gpui-ui-components menu` and `cargo nextest run -p
+   open-gpui-ui-components context_menu` to verify rich item payloads, pure typeahead,
+   visible-submenu keyboard navigation, local menu scrollability, and context-menu reuse. Use
+   `cargo nextest run -p open-gpui-ui-foundation-gallery
+   overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts
+   overlay_page_context_menu_samples_expose_point_anchor_contracts
+   overlay_page_catalog_entries_have_signals_and_sample_selectors
+   overlay_gallery_smoke_closes_menu_from_escape_and_outside_press
+   overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses` plus `cargo check -p
+   open-gpui-ui-foundation-gallery --tests` after changing the overlay menu family.
 7. Re-run `cargo nextest run -p open-gpui-ui-components` and `cargo nextest run -p
    open-gpui-ui-foundation-gallery` if a manual check exposes a component or gallery regression.
 

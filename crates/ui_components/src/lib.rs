@@ -111,7 +111,7 @@ pub use listbox::{
 };
 pub use menu::{
     Menu, MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuItemState, MenuMetrics,
-    MenuOpenMode, MenuSelection, MenuState, menu_navigation_target,
+    MenuOpenMode, MenuSelection, MenuState, MenuSubmenuNavigation, menu_navigation_target,
 };
 pub use open_gpui_ui_core::{
     TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableCellValue, TableColumn,

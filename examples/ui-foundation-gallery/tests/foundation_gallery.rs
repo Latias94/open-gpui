@@ -15,7 +15,7 @@ use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
     InitialFocusIntent, Orientation, OutsidePressPolicy, OverlayLayerKind,
     OverlayPlacementAlignment, OverlayPlacementSide, PanelAdaptiveClass, Role, Size, ThemeTokens,
-    Toggled, semantic, ui_px,
+    Toggled, semantic, ui_point, ui_px,
 };
 use open_gpui_ui_foundation_gallery::{
     DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, GalleryShell, GalleryShellSnapshot,
@@ -909,7 +909,7 @@ fn overlay_page_sheet_samples_expose_edge_and_policy_contracts() {
 fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
     let samples = pages::overlay::menu_samples(ThemeTokens::default());
 
-    assert_eq!(samples.len(), 4);
+    assert_eq!(samples.len(), 7);
     assert_eq!(samples[0].id, "default-open");
     assert_eq!(samples[0].focused_value, Some("save"));
     assert_eq!(samples[0].state.open_mode(), MenuOpenMode::Uncontrolled);
@@ -956,13 +956,37 @@ fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
     assert_eq!(samples[3].focused_value, None);
     assert!(samples[3].state.disabled());
     assert!(!samples[3].state.open());
+
+    assert_eq!(samples[4].id, "rich-items");
+    assert_eq!(samples[4].focused_value, Some("show-hidden"));
+    assert!(samples[4].state.open());
+    assert_eq!(samples[4].state.items()[0].kind(), MenuItemKind::Checkbox);
+    assert_eq!(samples[4].state.items()[0].toggled(), Some(Toggled::True));
+    assert_eq!(samples[4].state.items()[1].kind(), MenuItemKind::Radio);
+    assert_eq!(samples[4].state.items()[1].toggled(), Some(Toggled::False));
+    assert_eq!(samples[4].state.items()[2].toggled(), Some(Toggled::True));
+    assert!(samples[4].state.items()[3].has_submenu());
+    assert!(!samples[4].state.items()[4].focusable());
+
+    assert_eq!(samples[5].id, "typeahead");
+    assert_eq!(
+        samples[5]
+            .state
+            .typeahead_target("br")
+            .map(|item| item.value()),
+        Some("bravo")
+    );
+
+    assert_eq!(samples[6].id, "long-scroll");
+    assert!(samples[6].state.scrollable_content());
+    assert_eq!(samples[6].state.visible_items().len(), 12);
 }
 
 #[test]
 fn overlay_page_context_menu_samples_expose_point_anchor_contracts() {
     let samples = pages::overlay::context_menu_samples(ThemeTokens::default());
 
-    assert_eq!(samples.len(), 3);
+    assert_eq!(samples.len(), 5);
     assert_eq!(samples[0].id, "point-anchor");
     assert_eq!(samples[0].focused_value, Some("duplicate"));
     assert!(samples[0].state.default_open());
@@ -998,6 +1022,30 @@ fn overlay_page_context_menu_samples_expose_point_anchor_contracts() {
     assert!(samples[2].state.default_open());
     assert!(samples[2].state.open());
     assert_eq!(samples[2].state.open_mode(), MenuOpenMode::Uncontrolled);
+
+    assert_eq!(samples[3].id, "rich-items");
+    assert_eq!(samples[3].focused_value, Some("snap-grid"));
+    assert!(samples[3].state.open());
+    assert_eq!(
+        samples[3].state.menu().items()[0].kind(),
+        MenuItemKind::Checkbox
+    );
+    assert_eq!(
+        samples[3].state.menu().items()[0].toggled(),
+        Some(Toggled::True)
+    );
+    assert!(samples[3].state.menu().items()[3].has_submenu());
+    assert_eq!(
+        samples[3].state.anchor_point(),
+        ui_point(ui_px(620.0), ui_px(340.0))
+    );
+
+    assert_eq!(samples[4].id, "edge-long");
+    assert!(samples[4].state.menu().scrollable_content());
+    assert_eq!(
+        samples[4].state.anchor_point(),
+        ui_point(ui_px(960.0), ui_px(560.0))
+    );
 }
 
 #[test]

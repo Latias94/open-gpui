@@ -128,12 +128,16 @@ state, deferred anchored rendering, Escape/outside event wiring, and pointer/foc
 coordination.
 
 `MenuState` and `ContextMenuState` are the first menu overlay contracts. `MenuState` records
-controlled versus uncontrolled open mode, action and separator items, disabled item state, roving
-focus, activation payloads, Escape policy, outside-press policy, placement preference, resolved
-metrics, token intents, and menu layer state. `ContextMenuState` reuses the same item and roving
-focus model while adding a point anchor and renderer-neutral placement input. Submenus, menu bars,
-typeahead,
-checkbox/radio items, and application menu integration remain follow-up work.
+controlled versus uncontrolled open mode, action, checkbox, radio, separator, and submenu items,
+caller-owned checked state, disabled item state, stable item paths, visible submenu rows, roving
+focus, pure typeahead targets, keyboard submenu open/close targets, activation payloads with item
+kind/path/checked-at-activation, local scrollability, Escape policy, outside-press policy,
+placement preference, resolved metrics, token intents, and menu layer state. `ContextMenuState`
+reuses the same item, submenu, typeahead, scrollability, and roving focus model while adding a point
+anchor and renderer-neutral placement input sized from the visible menu surface. Keyboard and
+pointer activation both invoke item-level selection handlers before component-level selection
+handlers. Hover corridor submenu opening, menu bars, application menu integration, global command
+dispatch, and native OS menu bridging remain follow-up work.
 
 The Overlay page has its own product catalog instead of being merged into the Components page.
 `open_gpui_ui_foundation_gallery::pages::overlay::OVERLAY_CATALOG` lists Tooltip, HoverCard,
