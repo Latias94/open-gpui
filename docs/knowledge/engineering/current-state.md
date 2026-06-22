@@ -4,7 +4,7 @@ title: open-gpui table and virtualizer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: f85e91a
+git_commit: 8b4237b
 verified_by:
   - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-core virtualizer table
@@ -30,7 +30,7 @@ verified_by:
 
 - Goal: Complete the Table / Virtualizer performance follow-up after `docs/plans/2026-06-21-001-feat-ui-table-virtualizer-roadmap-plan.md`.
 - Branch: `main`
-- Last verified: 2026-06-22, full `open-gpui-ui-core` + `open-gpui-ui-components` + `open-gpui-ui-foundation-gallery` nextest passed 273/273 at pulled HEAD `f85e91a`, including the new feedback/tree/virtualized_list primitives and the Table runtime/performance regression gates.
+- Last verified: 2026-06-22, full `open-gpui-ui-core` + `open-gpui-ui-components` + `open-gpui-ui-foundation-gallery` nextest passed 273/273 before commit `8b4237b`, including the new feedback/tree/virtualized_list primitives and the Table runtime/performance regression gates.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -68,3 +68,4 @@ verified_by:
 [11] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery table`
 [12] Verification command `cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`
 [13] Pull head `f85e91a` - `fix(ui): keep virtualized list test helper import scoped`
+[14] Commit `8b4237b` - `perf(ui-components): cache table virtual windows`
