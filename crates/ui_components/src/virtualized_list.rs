@@ -1,12 +1,25 @@
 //! Renderer-neutral state for virtualized list surfaces.
 
+use crate::a11y::UiA11yElementExt;
+use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
+use crate::scroll_area::ScrollArea;
+use open_gpui::prelude::*;
+use open_gpui::{
+    App, ClickEvent, Entity, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
+    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div, point,
+    px, rgb,
+};
 #[cfg(test)]
 use open_gpui_ui_core::ui_px;
 use open_gpui_ui_core::{
-    Role, Size, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerResolvedState,
-    VirtualizerState,
+    Role, Sizable, Size, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
+    VirtualizerResolvedState, VirtualizerState,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
+
+type VirtualizedListActivationHandler =
+    Rc<dyn Fn(VirtualizedListActivation, &mut Window, &mut App)>;
 
 /// Scroll alignment requested when a virtualized row should be revealed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -102,6 +115,18 @@ impl VirtualizedListMetrics {
     /// Returns the number of rows the adapter should keep beyond the viewport.
     pub const fn overscan_count(self) -> usize {
         self.overscan_count
+    }
+
+    /// Returns the same metrics with a different row height.
+    pub fn with_row_height(mut self, row_height: UiPx) -> Self {
+        self.row_height = nonnegative_px(row_height);
+        self
+    }
+
+    /// Returns the same metrics with a different overscan budget.
+    pub const fn with_overscan_count(mut self, overscan_count: usize) -> Self {
+        self.overscan_count = overscan_count;
+        self
     }
 }
 
@@ -200,6 +225,12 @@ impl VirtualizedListState {
     /// Returns resolved metrics.
     pub const fn metrics(&self) -> VirtualizedListMetrics {
         self.metrics
+    }
+
+    /// Returns the same state with a different resolved metric bundle.
+    pub const fn with_metrics(mut self, metrics: VirtualizedListMetrics) -> Self {
+        self.metrics = metrics;
+        self
     }
 
     /// Returns the default viewport extent implied by the resolved metrics and viewport item count.
@@ -368,35 +399,36 @@ impl VirtualizedListRenderPlan {
         list_id: impl Into<String>,
         label: impl Into<String>,
         state: VirtualizedListState,
-        items: impl IntoIterator<Item = VirtualizedListItemDescriptor>,
+        items: &[VirtualizedListItemDescriptor],
         scroll_offset: UiPx,
         viewport_extent: UiPx,
     ) -> Self {
-        let descriptors = items.into_iter().collect::<Vec<_>>();
+        let metrics = state.metrics();
         let state = VirtualizedListState::resolve(
             state.size(),
             state.disabled(),
-            descriptors.len(),
+            items.len(),
             state.active_index(),
             state.selected_index(),
             Some(state.viewport_item_count()),
-        );
+        )
+        .with_metrics(metrics);
         let metrics = state.metrics();
         let viewport_extent = resolve_viewport_extent(&state, viewport_extent);
-        let duplicate_keys = duplicate_item_keys(&descriptors);
-        let virtualizer = VirtualizerState::new(descriptors.len(), metrics.row_height())
+        let duplicate_keys = duplicate_item_keys(items);
+        let virtualizer = VirtualizerState::new(items.len(), metrics.row_height())
             .with_viewport_extent(viewport_extent)
             .with_overscan(metrics.overscan_count())
             .with_scroll_offset(nonnegative_px(scroll_offset))
             .resolve_fixed_window(|index| {
-                let item = &descriptors[index];
+                let item = &items[index];
                 VirtualizerItemKey::new(virtualized_list_render_key(item, index, &duplicate_keys))
             });
         let rows = virtualizer
             .items()
             .iter()
             .filter_map(|measurement| {
-                descriptors.get(measurement.index()).cloned().map(|item| {
+                items.get(measurement.index()).cloned().map(|item| {
                     let render_key =
                         virtualized_list_render_key(&item, measurement.index(), &duplicate_keys);
                     VirtualizedListRowRenderPlan::new(
@@ -486,6 +518,466 @@ impl VirtualizedListRenderPlan {
     /// Returns the selected row, when one is resolved.
     pub fn selected_row(&self) -> Option<&VirtualizedListRowRenderPlan> {
         self.rows.iter().find(|row| row.selected())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct VirtualizedListRuntime {
+    scroll_handle: ScrollHandle,
+    active_index: Option<usize>,
+    selected_index: Option<usize>,
+    pending_scroll_to_active: Option<usize>,
+}
+
+/// A concrete GPUI virtualized list renderer.
+#[derive(IntoElement)]
+pub struct VirtualizedList {
+    id: String,
+    label: SharedString,
+    items: Rc<Vec<VirtualizedListItemDescriptor>>,
+    size: Size,
+    disabled: bool,
+    active_index: Option<usize>,
+    selected_index: Option<usize>,
+    viewport_item_count: usize,
+    metrics: VirtualizedListMetrics,
+    on_activate: Option<VirtualizedListActivationHandler>,
+}
+
+impl VirtualizedList {
+    /// Creates a new virtualized list renderer.
+    pub fn new(
+        id: impl Into<String>,
+        label: impl Into<SharedString>,
+        items: impl IntoIterator<Item = VirtualizedListItemDescriptor>,
+    ) -> Self {
+        let size = Size::Medium;
+
+        Self {
+            id: id.into(),
+            label: label.into(),
+            items: Rc::new(items.into_iter().collect()),
+            size,
+            disabled: false,
+            active_index: None,
+            selected_index: None,
+            viewport_item_count: DEFAULT_VIRTUALIZED_LIST_VIEWPORT_ITEM_COUNT,
+            metrics: VirtualizedListMetrics::from_size(size),
+            on_activate: None,
+        }
+    }
+
+    /// Marks the list as disabled.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// Seeds the active item index.
+    pub fn active_index(mut self, index: usize) -> Self {
+        self.active_index = Some(index);
+        self
+    }
+
+    /// Seeds the selected item index.
+    pub fn selected_index(mut self, index: usize) -> Self {
+        self.selected_index = Some(index);
+        self
+    }
+
+    /// Applies the estimated viewport item count used for keyboard page navigation.
+    pub fn viewport_item_count(mut self, count: usize) -> Self {
+        self.viewport_item_count = count.max(1);
+        self
+    }
+
+    /// Applies a fixed row height.
+    pub fn row_height(mut self, row_height: UiPx) -> Self {
+        self.metrics = self.metrics.with_row_height(row_height);
+        self
+    }
+
+    /// Applies the overscan row budget.
+    pub fn overscan(mut self, overscan: usize) -> Self {
+        self.metrics = self.metrics.with_overscan_count(overscan);
+        self
+    }
+
+    /// Registers an activation handler for clicked or keyboard-activated rows.
+    pub fn on_activate(
+        mut self,
+        handler: impl Fn(VirtualizedListActivation, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_activate = Some(Rc::new(handler));
+        self
+    }
+
+    /// Returns the resolved render plan at the default viewport origin.
+    pub fn state(&self) -> VirtualizedListRenderPlan {
+        self.render_plan(
+            UiPx::ZERO,
+            self.metrics.row_height() * self.viewport_item_count as f32,
+        )
+    }
+
+    /// Resolves the renderer-neutral state and virtual window for the current list.
+    pub fn render_plan(
+        &self,
+        scroll_offset: UiPx,
+        viewport_extent: UiPx,
+    ) -> VirtualizedListRenderPlan {
+        let state = self.resolved_state(
+            self.active_index,
+            self.selected_index,
+            self.viewport_item_count,
+        );
+        VirtualizedListRenderPlan::resolve(
+            self.id.clone(),
+            self.label.to_string(),
+            state,
+            self.items.as_slice(),
+            scroll_offset,
+            viewport_extent,
+        )
+    }
+
+    fn resolved_state(
+        &self,
+        active_index: Option<usize>,
+        selected_index: Option<usize>,
+        viewport_item_count: usize,
+    ) -> VirtualizedListState {
+        VirtualizedListState::resolve(
+            self.size,
+            self.disabled,
+            self.items.len(),
+            active_index,
+            selected_index,
+            Some(viewport_item_count.max(1)),
+        )
+        .with_metrics(self.metrics)
+    }
+}
+
+impl Sizable for VirtualizedList {
+    fn with_size(mut self, size: Size) -> Self {
+        self.size = size;
+        self.metrics = VirtualizedListMetrics::from_size(size);
+        self
+    }
+}
+
+impl RenderOnce for VirtualizedList {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let runtime_id = format!("virtualized-list:{}:runtime", self.id);
+        let debug_id = self.id.to_string();
+        let runtime = window.use_keyed_state(runtime_id, cx, |_, _| VirtualizedListRuntime {
+            scroll_handle: ScrollHandle::new(),
+            active_index: self.active_index,
+            selected_index: self.selected_index,
+            pending_scroll_to_active: None,
+        });
+        let runtime_state = runtime.read(cx).clone();
+        let scroll_handle = runtime_state.scroll_handle.clone();
+        let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
+        let viewport_item_count = resolve_viewport_item_count(
+            self.metrics.row_height(),
+            viewport_extent,
+            self.viewport_item_count,
+        );
+        let active_index = self.active_index.or(runtime_state.active_index);
+        let selected_index = self.selected_index.or(runtime_state.selected_index);
+        let state = self.resolved_state(active_index, selected_index, viewport_item_count);
+        if let Some(pending_scroll_to_active) = runtime_state.pending_scroll_to_active {
+            scroll_active_index(&scroll_handle, &state, pending_scroll_to_active);
+            runtime.update(cx, |runtime, _| {
+                runtime.pending_scroll_to_active = None;
+            });
+        }
+        let scroll_offset =
+            UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
+        let plan = VirtualizedListRenderPlan::resolve(
+            self.id.clone(),
+            self.label.to_string(),
+            state.clone(),
+            self.items.as_slice(),
+            scroll_offset,
+            viewport_extent,
+        );
+        let on_activate = self.on_activate.clone();
+        let list_state = plan.state().clone();
+        let row_role = plan.row_role();
+        let rows = plan.rows().to_vec();
+        let list_id = plan.list_id().to_owned();
+        let scroll_viewport_id = format!("virtualized-list:{}:viewport", plan.list_id());
+
+        runtime.update(cx, |runtime, _| {
+            if runtime.active_index != list_state.active_index() {
+                runtime.active_index = list_state.active_index();
+                runtime.pending_scroll_to_active = list_state.active_index();
+            }
+            if runtime.selected_index != list_state.selected_index() {
+                runtime.selected_index = list_state.selected_index();
+            }
+        });
+
+        div()
+            .id(self.id)
+            .debug_selector({
+                let debug_id = debug_id.clone();
+                move || format!("virtualized-list:{debug_id}:root")
+            })
+            .size_full()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(rgb(0xd6d8ce))
+            .bg(rgb(0xffffff))
+            .text_size(gpui_px_from_ui(self.size.control_text_px()))
+            .text_color(rgb(0x2f3845))
+            .focusable()
+            .tab_group()
+            .tab_stop(!list_state.disabled() && !list_state.visible_empty())
+            .focus_visible(|style| style.border_color(rgb(0x2f80ed)))
+            .ui_role(plan.role())
+            .aria_label(plan.label().to_owned())
+            .aria_disabled(list_state.disabled())
+            .on_scroll_wheel(|_, window, cx| {
+                window.prevent_default();
+                cx.stop_propagation();
+            })
+            .on_key_down({
+                let runtime = runtime.clone();
+                let scroll_handle = scroll_handle.clone();
+                let on_activate = on_activate.clone();
+                let items = self.items.clone();
+                let plan_state = list_state.clone();
+                move |event: &KeyDownEvent, window, cx| {
+                    handle_virtualized_list_key_down(
+                        &plan_state,
+                        items.as_slice(),
+                        runtime.clone(),
+                        scroll_handle.clone(),
+                        on_activate.clone(),
+                        event,
+                        window,
+                        cx,
+                    );
+                }
+            })
+            .child(
+                div().flex_1().min_h(px(0.0)).child(
+                    ScrollArea::new(
+                        scroll_viewport_id,
+                        render_virtualized_list_body(
+                            &list_id,
+                            &rows,
+                            plan.virtualizer().total_size(),
+                            row_role,
+                            runtime.clone(),
+                            on_activate,
+                        ),
+                    )
+                    .vertical()
+                    .scroll_handle(&scroll_handle)
+                    .with_size(self.size),
+                ),
+            )
+    }
+}
+
+fn render_virtualized_list_body(
+    list_id: &str,
+    rows: &[VirtualizedListRowRenderPlan],
+    total_size: UiPx,
+    row_role: Role,
+    runtime: Entity<VirtualizedListRuntime>,
+    on_activate: Option<VirtualizedListActivationHandler>,
+) -> impl IntoElement {
+    let rows = rows.to_vec();
+    let list_id = list_id.to_owned();
+    let body_id = format!("virtualized-list:{list_id}:body");
+
+    div()
+        .id(body_id.clone())
+        .debug_selector({
+            let body_id = body_id.clone();
+            move || body_id.clone()
+        })
+        .relative()
+        .w_full()
+        .h(gpui_px_from_ui(total_size))
+        .children(rows.into_iter().map(move |row| {
+            render_virtualized_list_row(
+                list_id.clone(),
+                row,
+                row_role,
+                runtime.clone(),
+                on_activate.clone(),
+            )
+        }))
+}
+
+fn render_virtualized_list_row(
+    list_id: String,
+    row: VirtualizedListRowRenderPlan,
+    row_role: Role,
+    runtime: Entity<VirtualizedListRuntime>,
+    on_activate: Option<VirtualizedListActivationHandler>,
+) -> impl IntoElement {
+    let render_key = row.render_key().to_owned();
+    let row_index = row.index();
+    let activation = VirtualizedListActivation::new(row_index);
+    let row_background = if row.selected() {
+        rgb(0xe7f0ff)
+    } else if row.active() {
+        rgb(0xeef2f7)
+    } else if row.index().is_multiple_of(2) {
+        rgb(0xffffff)
+    } else {
+        rgb(0xf8f9f3)
+    };
+    let text_color = if row.disabled() {
+        rgb(0x8b93a1)
+    } else {
+        rgb(0x2f3845)
+    };
+
+    div()
+        .id(format!("virtualized-list:{list_id}:row:{render_key}"))
+        .debug_selector({
+            let list_id = list_id.clone();
+            let render_key = render_key.clone();
+            move || format!("virtualized-list:{list_id}:row:{render_key}")
+        })
+        .absolute()
+        .top(gpui_px_from_ui(row.virtual_start()))
+        .left(px(0.0))
+        .right(px(0.0))
+        .h(gpui_px_from_ui(row.virtual_size()))
+        .min_w(px(0.0))
+        .flex()
+        .items_center()
+        .overflow_hidden()
+        .border_b_1()
+        .border_color(rgb(0xe2e4dc))
+        .bg(row_background)
+        .text_color(text_color)
+        .focusable()
+        .tab_stop(row.active())
+        .ui_role(row_role)
+        .aria_selected(row.selected())
+        .aria_disabled(row.disabled())
+        .aria_position_in_set(row.position_in_set())
+        .when(!row.disabled(), |this| {
+            this.cursor_pointer().hover(|style| style.bg(rgb(0xeef2f7)))
+        })
+        .when(!row.disabled(), |this| {
+            let runtime = runtime.clone();
+            let on_activate = on_activate.clone();
+            this.on_click(move |_event: &ClickEvent, window, cx| {
+                cx.stop_propagation();
+                window.prevent_default();
+                runtime.update(cx, |runtime, _| {
+                    runtime.active_index = Some(row_index);
+                    runtime.selected_index = Some(row_index);
+                    runtime.pending_scroll_to_active = None;
+                });
+                if let Some(on_activate) = on_activate.as_ref() {
+                    on_activate(activation, window, cx);
+                }
+            })
+        })
+        .child(row.label().to_owned())
+}
+
+fn handle_virtualized_list_key_down(
+    state: &VirtualizedListState,
+    items: &[VirtualizedListItemDescriptor],
+    runtime: Entity<VirtualizedListRuntime>,
+    scroll_handle: ScrollHandle,
+    on_activate: Option<VirtualizedListActivationHandler>,
+    event: &KeyDownEvent,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if state.disabled() || state.visible_empty() {
+        return;
+    }
+
+    let key = event.keystroke.key.as_str();
+    if let Some(target) = state.navigation_target(key) {
+        cx.stop_propagation();
+        window.prevent_default();
+        runtime.update(cx, |runtime, _| {
+            runtime.active_index = Some(target);
+            runtime.pending_scroll_to_active = Some(target);
+        });
+        scroll_active_index(&scroll_handle, state, target);
+        return;
+    }
+
+    if let Some(activation) = state.activation_for_key(key) {
+        let Some(item) = items.get(activation.index()) else {
+            return;
+        };
+        if item.disabled_state() {
+            return;
+        }
+
+        cx.stop_propagation();
+        window.prevent_default();
+        runtime.update(cx, |runtime, _| {
+            runtime.active_index = Some(activation.index());
+            runtime.selected_index = Some(activation.index());
+            runtime.pending_scroll_to_active = Some(activation.index());
+        });
+        scroll_active_index(&scroll_handle, state, activation.index());
+        if let Some(on_activate) = on_activate.as_ref() {
+            on_activate(activation, window, cx);
+        }
+    }
+}
+
+fn scroll_active_index(scroll_handle: &ScrollHandle, state: &VirtualizedListState, index: usize) {
+    let viewport_extent =
+        resolve_viewport_extent(state, ui_px_from_gpui(scroll_handle.bounds().size.height));
+    let current_scroll_offset =
+        UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
+    let target = virtualized_list_scroll_target(
+        VirtualizedListScrollStrategy::Nearest,
+        index,
+        state.item_count(),
+        state.metrics().row_height(),
+        viewport_extent,
+        current_scroll_offset,
+    );
+    scroll_handle.set_offset(point(px(0.0), -gpui_px_from_ui(target)));
+}
+
+fn resolve_viewport_item_count(row_height: UiPx, viewport_extent: UiPx, fallback: usize) -> usize {
+    let row_height = nonnegative_px(row_height);
+    let viewport_extent = nonnegative_px(viewport_extent);
+    if viewport_extent.as_f32() > 0.0 && row_height.as_f32() > 0.0 {
+        (viewport_extent.as_f32() / row_height.as_f32())
+            .ceil()
+            .max(1.0) as usize
+    } else {
+        fallback.max(1)
+    }
+}
+
+const DEFAULT_VIRTUALIZED_LIST_VIEWPORT_ITEM_COUNT: usize = 8;
+
+const fn nonnegative_px(value: UiPx) -> UiPx {
+    if value.as_f32() < 0.0 {
+        UiPx::ZERO
+    } else {
+        value
     }
 }
 
@@ -597,14 +1089,6 @@ fn virtualized_list_render_key(
     }
 }
 
-fn nonnegative_px(value: UiPx) -> UiPx {
-    if value.as_f32() < 0.0 {
-        UiPx::ZERO
-    } else {
-        value
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -670,7 +1154,7 @@ mod tests {
             "virtualized-list",
             "Virtualized list",
             state,
-            items,
+            &items,
             ui_px(56.0),
             ui_px(56.0),
         );

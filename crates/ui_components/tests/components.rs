@@ -22,10 +22,11 @@ use open_gpui_ui_components::{
     TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode,
     ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
     ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, VirtualizedListActivation,
-    VirtualizedListItemDescriptor, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
-    VirtualizedListScrollStrategy, VirtualizedListState, VirtualizerItemKey, VirtualizerRange,
-    VirtualizerSnapshot, VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, VirtualizedList,
+    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRenderPlan,
+    VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
+    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
+    active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -1374,7 +1375,7 @@ fn virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts(
         "contracts-list",
         "Contracts list",
         state,
-        items,
+        &items,
         ui_px(2_800.0),
         ui_px(196.0),
     );
@@ -1428,6 +1429,40 @@ fn virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts(
         ),
         ui_px(2_912.0)
     );
+}
+
+#[test]
+fn virtualized_list_component_render_plan_applies_builder_metrics() {
+    let items = (0..32)
+        .map(|index| {
+            VirtualizedListItemDescriptor::new(
+                format!("item-{index:04}"),
+                format!("Item {index:04}"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let plan = VirtualizedList::new("builder-list", "Builder list", items)
+        .with_size(Size::Small)
+        .row_height(ui_px(24.0))
+        .overscan(2)
+        .active_index(5)
+        .selected_index(3)
+        .viewport_item_count(4)
+        .render_plan(ui_px(48.0), ui_px(96.0));
+
+    assert_eq!(plan.metrics().row_height(), ui_px(24.0));
+    assert_eq!(plan.overscan_count(), 2);
+    assert_eq!(plan.visible_row_count(), 4);
+    assert_eq!(
+        *plan.virtualizer().visible_range(),
+        VirtualizerRange::new(2, 6)
+    );
+    assert_eq!(
+        *plan.virtualizer().overscan_range(),
+        VirtualizerRange::new(1, 7)
+    );
+    assert_eq!(plan.active_row().map(|row| row.index()), Some(5));
+    assert_eq!(plan.selected_row().map(|row| row.index()), Some(3));
 }
 
 #[test]
@@ -1555,6 +1590,14 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
             )
         })
         .collect::<Vec<_>>();
+    let root_virtualized_list: root::VirtualizedList = root::VirtualizedList::new(
+        "root-virtualized-component",
+        "Root virtualized component",
+        root_virtualized_items.clone(),
+    )
+    .active_index(4)
+    .selected_index(4)
+    .viewport_item_count(3);
     let prelude_virtualized_items = (0..12)
         .map(|index| {
             prelude::VirtualizedListItemDescriptor::new(
@@ -1563,12 +1606,20 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
             )
         })
         .collect::<Vec<_>>();
+    let prelude_virtualized_list: prelude::VirtualizedList = prelude::VirtualizedList::new(
+        "prelude-virtualized-component",
+        "Prelude virtualized component",
+        prelude_virtualized_items.clone(),
+    )
+    .active_index(4)
+    .selected_index(4)
+    .viewport_item_count(3);
     let root_virtualized_plan: root::VirtualizedListRenderPlan =
         root::VirtualizedListRenderPlan::resolve(
             "root-virtualized-list",
             "Root virtualized list",
             root_virtualized_state.clone(),
-            root_virtualized_items,
+            &root_virtualized_items,
             ui_px(28.0),
             ui_px(56.0),
         );
@@ -1577,7 +1628,7 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
             "prelude-virtualized-list",
             "Prelude virtualized list",
             prelude_virtualized_state.clone(),
-            prelude_virtualized_items,
+            &prelude_virtualized_items,
             ui_px(28.0),
             ui_px(56.0),
         );
@@ -1585,6 +1636,8 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         root_virtualized_plan.active_row().unwrap();
     let _prelude_virtualized_row: &prelude::VirtualizedListRowRenderPlan =
         prelude_virtualized_plan.active_row().unwrap();
+    let root_virtualized_component_plan = root_virtualized_list.state();
+    let prelude_virtualized_component_plan = prelude_virtualized_list.state();
     let _root_tree_toggle: Option<root::TreeToggle> =
         root::TreeToggle::from_item(&root_tree_state.items()[0]);
     let _prelude_tree_toggle: Option<prelude::TreeToggle> =
@@ -1626,6 +1679,11 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     assert_eq!(
         prelude_virtualized_state.navigation_target("pagedown"),
         Some(7)
+    );
+    assert_eq!(root_virtualized_component_plan.role(), Role::ListBox);
+    assert_eq!(
+        prelude_virtualized_component_plan.row_role(),
+        Role::ListBoxOption
     );
     assert_eq!(root_virtualized_plan.role(), Role::ListBox);
     assert_eq!(prelude_virtualized_plan.row_role(), Role::ListBoxOption);
@@ -1707,6 +1765,80 @@ fn table_runtime_header_click_emits_sort_action(cx: &mut open_gpui::TestAppConte
         Some(TableSortDirection::Ascending)
     );
     assert_eq!(actions[0].next_sorting()[0].column().as_str(), "score");
+}
+
+#[open_gpui::test]
+fn virtualized_list_runtime_reveals_active_row_and_emits_activation(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        activations: Rc<RefCell<Vec<usize>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let activations = self.activations.clone();
+            let items = (0..100).map(|index| {
+                VirtualizedListItemDescriptor::new(
+                    format!("item-{index:04}"),
+                    format!("Item {index:04}"),
+                )
+            });
+
+            div().size_full().child(
+                div().w(px(240.0)).h(px(112.0)).child(
+                    VirtualizedList::new("runtime-list", "Runtime list", items)
+                        .with_size(Size::Small)
+                        .row_height(ui_px(28.0))
+                        .viewport_item_count(4)
+                        .overscan(2)
+                        .on_activate(move |activation, _, _| {
+                            activations.borrow_mut().push(activation.index());
+                        }),
+                ),
+            )
+        }
+    }
+
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        activations: activations.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let row_0 = cx
+        .debug_bounds("virtualized-list:runtime-list:row:item-0000")
+        .expect("row 0 should render before keyboard navigation");
+    cx.simulate_click(row_0.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    activations.borrow_mut().clear();
+
+    let row_4_before = cx
+        .debug_bounds("virtualized-list:runtime-list:row:item-0004")
+        .expect("row 4 should be present in the overscan window before PageDown");
+    cx.simulate_keystrokes("pagedown");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let row_4_after = cx
+        .debug_bounds("virtualized-list:runtime-list:row:item-0004")
+        .expect("row 4 should stay rendered after PageDown reveal");
+    assert!(
+        row_4_after.top() < row_4_before.top(),
+        "expected PageDown to scroll the new active row upward; before={row_4_before:?} after={row_4_after:?}"
+    );
+
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(activations.borrow().as_slice(), &[4]);
 }
 
 #[open_gpui::test]

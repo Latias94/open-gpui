@@ -101,9 +101,10 @@ pub use crate::tree::{
     TreeSelection, TreeState, TreeToggle, tree_navigation_target,
 };
 pub use crate::virtualized_list::{
-    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListMetrics,
-    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState, virtualized_list_navigation_target, virtualized_list_scroll_target,
+    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
+    VirtualizedListScrollStrategy, VirtualizedListState, virtualized_list_navigation_target,
+    virtualized_list_scroll_target,
 };
 pub use open_gpui_ui_core::{
     Sizable, Size, TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableCellValue,
