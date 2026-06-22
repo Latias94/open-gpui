@@ -72,6 +72,17 @@ struct DockViewportRuntimeRegistration {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DockViewportRouteSnapshotResampleBarrier {
+    /// The hovered-host request was resolved from a target window whose facts cannot be refreshed
+    /// from the current app context. The sampled route remains the authoritative release snapshot.
+    HoveredHostTargetWindow,
+    /// A source-only release has a routed preview whose target window is not owned by this runtime
+    /// context and cannot be refreshed here. The delivery gate still requires target-render
+    /// acceptance before replaying the snapshot.
+    RoutedPreviewTargetWindow,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DockViewportPointerInputSyncRequest {
     window: AnyWindowHandle,
     /// Desired live platform state. Route facts only change after a later window-facts refresh
@@ -1525,22 +1536,10 @@ impl DockViewportRuntime {
             return resolution;
         }
 
-        let resolver_only_hover_request = request.release_origin()
-            == crate::interaction::DockPayloadDropReleaseOrigin::HoveredHost
-            && request.event_receiver_window().is_none();
-        if resolver_only_hover_request
-            && self.route_resolution_targets_unrefreshable_window(&route_resolution, cx)
+        if self
+            .route_snapshot_resample_barrier(request, &route_resolution, cx)
+            .is_some()
         {
-            let route = route_resolution.into_route();
-            let resolution = self.resolve_payload_drop_delivery_resolution(request, route, cx);
-            self.status.record_route(request, resolution.route());
-            return resolution;
-        }
-
-        let source_only_preview_waiting_for_render = request.release_origin()
-            == crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly
-            && self.routed_preview_targets_unowned_unrefreshable_window(cx);
-        if source_only_preview_waiting_for_render {
             let route = route_resolution.into_route();
             let resolution = self.resolve_payload_drop_delivery_resolution(request, route, cx);
             self.status.record_route(request, resolution.route());
@@ -1628,20 +1627,53 @@ impl DockViewportRuntime {
         request.with_focus_stamp_window_stack(focused_windows)
     }
 
-    fn route_resolution_targets_unrefreshable_window<C: open_gpui::AppContext>(
+    fn route_snapshot_resample_barrier<C: open_gpui::AppContext>(
         &self,
+        request: &DockViewportDropRouteRequest,
+        route_resolution: &DockViewportDropRouteResolution,
+        cx: &mut C,
+    ) -> Option<DockViewportRouteSnapshotResampleBarrier> {
+        if self.hovered_host_request_uses_authoritative_target_snapshot(
+            request,
+            route_resolution,
+            cx,
+        ) {
+            return Some(DockViewportRouteSnapshotResampleBarrier::HoveredHostTargetWindow);
+        }
+        if self.source_only_request_uses_routed_preview_target_snapshot(request, cx) {
+            return Some(DockViewportRouteSnapshotResampleBarrier::RoutedPreviewTargetWindow);
+        }
+        None
+    }
+
+    fn hovered_host_request_uses_authoritative_target_snapshot<C: open_gpui::AppContext>(
+        &self,
+        request: &DockViewportDropRouteRequest,
         route_resolution: &DockViewportDropRouteResolution,
         cx: &mut C,
     ) -> bool {
-        route_resolution
-            .target_window(&self.adapter)
-            .is_some_and(|window| self.window_ownership.is_window_unrefreshable(window, cx))
+        if request.release_origin() != crate::interaction::DockPayloadDropReleaseOrigin::HoveredHost
+            || request.event_receiver_window().is_some()
+        {
+            return false;
+        }
+        let Some(window) = route_resolution.target_window(&self.adapter) else {
+            return false;
+        };
+        !self
+            .window_ownership
+            .window_allows_runtime_snapshot_resample(window, cx)
     }
 
-    fn routed_preview_targets_unowned_unrefreshable_window<C: open_gpui::AppContext>(
+    fn source_only_request_uses_routed_preview_target_snapshot<C: open_gpui::AppContext>(
         &self,
+        request: &DockViewportDropRouteRequest,
         cx: &mut C,
     ) -> bool {
+        if request.release_origin() != crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly
+        {
+            return false;
+        }
         let Some(target) = self.routed_drop_preview.resolution_target_snapshot() else {
             return false;
         };
@@ -1654,7 +1686,7 @@ impl DockViewportRuntime {
             .filter(|window| window.window_id() == target_window_id)
             .is_some_and(|window| {
                 self.window_ownership
-                    .is_unowned_window_unrefreshable(window, cx)
+                    .unowned_window_blocks_runtime_snapshot_resample(window, cx)
             })
     }
 

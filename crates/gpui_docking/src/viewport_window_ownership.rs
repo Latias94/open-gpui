@@ -31,20 +31,21 @@ impl DockViewportWindowOwnership {
         self.owned_windows.contains(&window_id)
     }
 
-    pub(crate) fn is_window_unrefreshable<C: AppContext>(
+    pub(crate) fn window_allows_runtime_snapshot_resample<C: AppContext>(
         &self,
         window: AnyWindowHandle,
         cx: &mut C,
     ) -> bool {
-        window.update(cx, |_, _, _| ()).is_err()
+        window.update(cx, |_, _, _| ()).is_ok()
     }
 
-    pub(crate) fn is_unowned_window_unrefreshable<C: AppContext>(
+    pub(crate) fn unowned_window_blocks_runtime_snapshot_resample<C: AppContext>(
         &self,
         window: AnyWindowHandle,
         cx: &mut C,
     ) -> bool {
-        !self.is_owned(window.window_id()) && self.is_window_unrefreshable(window, cx)
+        !self.is_owned(window.window_id())
+            && !self.window_allows_runtime_snapshot_resample(window, cx)
     }
 
     pub(crate) fn record_render_passthrough_pointer_input(&mut self, window_id: WindowId) -> bool {
