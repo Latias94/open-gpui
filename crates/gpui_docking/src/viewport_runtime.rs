@@ -1,15 +1,6 @@
 #[cfg(test)]
 use crate::viewport_registry::DockViewportRouteUnavailableReason;
 use crate::{
-    drag::{DockDragPayload, DockDragTearOffGeometry},
-    drop_runtime::DockHostDropSceneFact,
-    interaction::DockRuntimeDragSession,
-    viewport_drop_scene::{
-        DockViewportHostSceneFrame, DockViewportHostSceneRegistration,
-        DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot,
-    },
-    viewport_registry::DockViewportPlatformRequests,
-    workspace_transaction::DockWorkspacePayloadDropRequest,
     DockActionApplyError, DockActionOutcome, DockController, DockDropDelivery, DockItemId,
     DockSpaceId, DockViewportActivationTransaction, DockViewportAdapter,
     DockViewportAuthorizedRouteAuthority, DockViewportCloseCoordinator, DockViewportCloseOutcome,
@@ -20,16 +11,24 @@ use crate::{
     DockViewportPlatformSyncRecord, DockViewportRegisterOutcome, DockViewportResolvedDropRoute,
     DockViewportRestoreReadiness, DockViewportRoutedDropPreview, DockViewportRuntimeHandle,
     DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus,
-    DockViewportTargetContext,
-    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
-    DockViewportTearOffCompleted, DockViewportTearOffKey, DockViewportTearOffMachine,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
-    DockViewportTearOffSourceStatus, DockViewportTearOffTick, DockViewportTrustedHoveredSignal,
-    DockViewportWindowFacts, DockViewportWorkspaceRouteTarget,
+    DockViewportTargetContext, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
+    DockViewportTearOffCancelled, DockViewportTearOffCompleted, DockViewportTearOffKey,
+    DockViewportTearOffMachine, DockViewportTearOffOpenOutcome, DockViewportTearOffPending,
+    DockViewportTearOffRequest, DockViewportTearOffSourceStatus, DockViewportTearOffTick,
+    DockViewportTrustedHoveredSignal, DockViewportWindowFacts, DockViewportWorkspaceRouteTarget,
+    drag::{DockDragPayload, DockDragTearOffGeometry},
+    drop_runtime::DockHostDropSceneFact,
+    interaction::DockRuntimeDragSession,
+    viewport_drop_scene::{
+        DockViewportHostSceneFrame, DockViewportHostSceneRegistration,
+        DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot,
+    },
+    viewport_registry::DockViewportPlatformRequests,
+    workspace_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{
-    point, px, size, AnyWindowHandle, App, AppContext as _, Bounds, Entity, Pixels,
-    PlatformFocusedWindow, Point, WindowBounds, WindowId, WindowOptions,
+    AnyWindowHandle, App, AppContext as _, Bounds, Entity, Pixels, PlatformFocusedWindow, Point,
+    WindowBounds, WindowId, WindowOptions, point, px, size,
 };
 use std::collections::HashSet;
 
@@ -860,9 +859,11 @@ impl DockViewportRuntime {
             self.active_drag.as_ref().map(|drag| drag.session()),
         );
         let next = match resolution.route() {
-            DockViewportDropRoute::KnownViewport { .. } => resolution
-                .delivery()
-                .and_then(|delivery| crate::routed_drop_preview_from_delivery(delivery, payload_title)),
+            DockViewportDropRoute::KnownViewport { .. } => {
+                resolution.delivery().and_then(|delivery| {
+                    crate::routed_drop_preview_from_delivery(delivery, payload_title)
+                })
+            }
             DockViewportDropRoute::Rejected(_) => resolution.preview_target().and_then(|target| {
                 crate::routed_rejected_drop_preview_from_target(target, payload_title)
             }),
@@ -942,7 +943,9 @@ impl DockViewportRuntime {
         next: Option<DockViewportRoutedDropPreview>,
         next_resolution: Option<DockViewportResolvedDropRoute>,
     ) -> (bool, Vec<AnyWindowHandle>) {
-        if self.routed_drop_preview == next && self.routed_drop_preview_resolution == next_resolution {
+        if self.routed_drop_preview == next
+            && self.routed_drop_preview_resolution == next_resolution
+        {
             return (false, Vec::new());
         }
 
@@ -955,7 +958,10 @@ impl DockViewportRuntime {
                 );
             }
             if let Some(next) = next.as_ref() {
-                crate::push_unique_window(&mut windows, self.adapter.window_for_space(next.space()));
+                crate::push_unique_window(
+                    &mut windows,
+                    self.adapter.window_for_space(next.space()),
+                );
             }
         }
 
@@ -1516,9 +1522,11 @@ impl DockViewportRuntime {
                 .backend_hover_fallback_window_stack()
                 .to_vec(),
         );
-        let fallback_route = self
-            .adapter
-            .resolve_payload_drop_route_with_target_context(request, policy, fallback_context);
+        let fallback_route = self.adapter.resolve_payload_drop_route_with_target_context(
+            request,
+            policy,
+            fallback_context,
+        );
         match fallback_route {
             DockViewportDropRoute::Local {
                 host_position,

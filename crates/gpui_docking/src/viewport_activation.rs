@@ -129,8 +129,10 @@ pub(crate) fn apply_viewport_activation_transaction(
         return DockViewportActivationApplyOutcome::NoTarget;
     };
 
-    let focus_command =
-        DockViewportFocusCommand::new(transaction.focus_source(), transaction.focus_request().clone());
+    let focus_command = DockViewportFocusCommand::new(
+        transaction.focus_source(),
+        transaction.focus_request().clone(),
+    );
     let window_activation = transaction.window_activation();
     let outcome = Rc::new(Cell::new(
         DockViewportActivationApplyOutcome::WindowUnavailable,
@@ -628,12 +630,10 @@ mod tests {
 
         let changed = host.update(cx, |host, _| {
             assert!(
-                host.request_viewport_focus_command(
-                    DockViewportFocusCommand::new(
-                        DockViewportFocusCommandSource::CloseRecovery,
-                        DockViewportFocusRequest::panel("a"),
-                    )
-                )
+                host.request_viewport_focus_command(DockViewportFocusCommand::new(
+                    DockViewportFocusCommandSource::CloseRecovery,
+                    DockViewportFocusRequest::panel("a"),
+                ))
             );
             host.request_viewport_focus_command(DockViewportFocusCommand::platform_activation(
                 DockViewportFocusRequest::panel("a"),

@@ -245,7 +245,11 @@ fn pending_panel_focus_targets_active_focusable_panel(cx: &mut TestAppContext) {
     let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
 
     host.update(cx, |host, cx| {
-        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("a")))));
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item(
+                "a"
+            )))
+        ));
         cx.notify();
     });
     cx.run_until_parked();
@@ -640,11 +644,9 @@ fn close_recovery_does_not_reveal_hidden_recorded_panel(cx: &mut TestAppContext)
 
     host.update(cx, |host, cx| {
         assert!(
-            host.request_viewport_focus_command(
-                DockViewportFocusCommand::viewport_activation(
-                    DockViewportFocusRequest::panel("b"),
-                ),
-            )
+            host.request_viewport_focus_command(DockViewportFocusCommand::close_recovery(
+                DockViewportFocusRequest::panel("b"),
+            ),)
         );
         cx.notify();
     });
@@ -707,7 +709,9 @@ fn platform_activation_after_no_panel_focus_does_not_restore_old_panel(cx: &mut 
 
     host.update(cx, |host, cx| {
         assert!(host.request_viewport_focus_command(
-            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::no_panel_focus())
+            DockViewportFocusCommand::viewport_activation(
+                DockViewportFocusRequest::no_panel_focus()
+            )
         ));
         cx.notify();
     });
@@ -762,7 +766,11 @@ fn viewport_activation_failure_clears_request_without_blurring_current_focus(
     });
 
     host.update(cx, |host, cx| {
-        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("a")))));
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item(
+                "a"
+            )))
+        ));
         cx.notify();
     });
     cx.run_until_parked();
@@ -796,7 +804,11 @@ fn viewport_failed_panel_focus_preserves_current_focus_and_history(cx: &mut Test
     let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
 
     host.update(cx, |host, cx| {
-        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("a")))));
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item(
+                "a"
+            )))
+        ));
         cx.notify();
     });
     cx.run_until_parked();
@@ -818,7 +830,11 @@ fn viewport_failed_panel_focus_preserves_current_focus_and_history(cx: &mut Test
     cx.run_until_parked();
 
     host.update(cx, |host, cx| {
-        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("b")))));
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item(
+                "b"
+            )))
+        ));
         cx.notify();
     });
     visual.run_until_parked();
@@ -944,13 +960,9 @@ fn close_recovery_restore_failure_does_not_overwrite_had_panel_focus_fact(cx: &m
     host.update(cx, |host, cx| {
         host.viewport_runtime()
             .record_panel_focus(host.space().clone(), item("a"));
-        assert!(
-            host.request_viewport_focus_command(
-                crate::DockViewportFocusCommand::viewport_activation(
-                    DockViewportFocusRequest::panel("b")
-                )
-            )
-        );
+        assert!(host.request_viewport_focus_command(
+            crate::DockViewportFocusCommand::close_recovery(DockViewportFocusRequest::panel("b"))
+        ));
         cx.notify();
     });
     cx.run_until_parked();
@@ -975,7 +987,11 @@ fn viewport_no_panel_focus_request_blurs_without_restore(cx: &mut TestAppContext
     let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
 
     host.update(cx, |host, cx| {
-        assert!(host.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item("a")))));
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item(
+                "a"
+            )))
+        ));
         cx.notify();
     });
     visual.run_until_parked();
@@ -985,7 +1001,9 @@ fn viewport_no_panel_focus_request_blurs_without_restore(cx: &mut TestAppContext
 
     host.update(cx, |host, cx| {
         assert!(host.request_viewport_focus_command(
-            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::no_panel_focus())
+            DockViewportFocusCommand::viewport_activation(
+                DockViewportFocusRequest::no_panel_focus()
+            )
         ));
         cx.notify();
     });

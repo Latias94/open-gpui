@@ -97,7 +97,10 @@ pub(crate) fn routed_rejected_drop_preview_from_target(
     ))
 }
 
-pub(crate) fn push_unique_window(windows: &mut Vec<AnyWindowHandle>, window: Option<AnyWindowHandle>) {
+pub(crate) fn push_unique_window(
+    windows: &mut Vec<AnyWindowHandle>,
+    window: Option<AnyWindowHandle>,
+) {
     let Some(window) = window else {
         return;
     };

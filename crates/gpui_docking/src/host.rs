@@ -3,9 +3,9 @@ use crate::debug::DockDebugInstrumentation;
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockNodeId, DockSpaceId,
     DockViewportFocusCommand, DockViewportFocusCommandSource, DockViewportFocusRequest,
-    DockViewportRuntimeHandle,
-    geometry::DockDropGuideStyle, host_render_session::DockHostRenderSession,
-    interaction::DockInteractionRuntime, workspace::DockWorkspace,
+    DockViewportRuntimeHandle, geometry::DockDropGuideStyle,
+    host_render_session::DockHostRenderSession, interaction::DockInteractionRuntime,
+    workspace::DockWorkspace,
 };
 use open_gpui::{
     App, AppContext as _, Context, Entity, FocusHandle, MouseButton, Pixels, Subscription, Window,
@@ -229,23 +229,19 @@ impl DockHost {
         if self.pending_focus_command.as_ref() == Some(&command) {
             return false;
         }
-        if self
-            .pending_focus_command
-            .as_ref()
-            .is_some_and(|existing| {
-                matches!(
-                    (command.source(), existing.source()),
-                    (
-                        DockViewportFocusCommandSource::PlatformActivation,
-                        DockViewportFocusCommandSource::ViewportActivation
-                            | DockViewportFocusCommandSource::CloseRecovery,
-                    ) | (
-                        DockViewportFocusCommandSource::ViewportActivation,
-                        DockViewportFocusCommandSource::CloseRecovery
-                    )
+        if self.pending_focus_command.as_ref().is_some_and(|existing| {
+            matches!(
+                (command.source(), existing.source()),
+                (
+                    DockViewportFocusCommandSource::PlatformActivation,
+                    DockViewportFocusCommandSource::ViewportActivation
+                        | DockViewportFocusCommandSource::CloseRecovery,
+                ) | (
+                    DockViewportFocusCommandSource::ViewportActivation,
+                    DockViewportFocusCommandSource::CloseRecovery
                 )
-            })
-        {
+            )
+        }) {
             return false;
         }
         self.pending_focus_command = Some(command);
@@ -263,8 +259,8 @@ impl DockHost {
         };
         match command.request().clone() {
             DockViewportFocusRequest::Panel(item) => {
-                let should_preselect = command.source()
-                    == crate::DockViewportFocusCommandSource::ViewportActivation;
+                let should_preselect =
+                    command.source() == crate::DockViewportFocusCommandSource::ViewportActivation;
                 match session
                     .visible_panel_registration(&item)
                     .map(|panel| panel.request_focus(window, cx))
@@ -320,11 +316,7 @@ impl DockHost {
         }
     }
 
-    pub(crate) fn remember_panel_focus(
-        &mut self,
-        item: DockItemId,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn remember_panel_focus(&mut self, item: DockItemId, cx: &mut Context<Self>) {
         let space = self.space().clone();
         self.viewport_runtime()
             .record_panel_focus(space, item.clone());
