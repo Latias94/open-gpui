@@ -1,7 +1,8 @@
 use crate::{
-    DockCentralRegion, DockFloatingContainer, DockGraph, DockHost, DockNode, DockNodeId,
-    DockPanelDescriptor, DockViewportFocusCommand, DockViewportFocusRequest, DockWorkspace,
-    SplitAxis, debug::DockDebugRegion, host_test_support::*,
+    DockCentralRegion, DockController, DockFloatingContainer, DockGraph, DockHost, DockNode,
+    DockNodeId, DockPanelDescriptor, DockViewportFocusCommand, DockViewportFocusRequest,
+    DockViewportPlatformSyncAction, DockWorkspace, SplitAxis, debug::DockDebugRegion,
+    host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Entity, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext,
@@ -1316,6 +1317,148 @@ fn empty_central_passthrough_renders_full_host_drop_target(cx: &mut TestAppConte
 
     assert_close(width(bounds), 320.0);
     assert_close(height(bounds), 200.0);
+}
+
+#[open_gpui::test]
+fn empty_central_passthrough_syncs_window_pointer_input(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    graph.set_central_region(
+        space(),
+        DockCentralRegion::empty().with_passthrough_when_empty(true),
+    );
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, _visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(320.0), px(200.0)));
+
+    assert!(
+        !window
+            .update(cx, |_, window, _| window.accepts_pointer_input())
+            .expect("host window should remain live"),
+        "empty central passthrough should make the host window click-through"
+    );
+    let runtime = host.update(cx, |host, _| host.viewport_runtime().clone());
+    assert_eq!(
+        runtime
+            .runtime_status()
+            .last_platform_sync
+            .as_ref()
+            .map(|sync| sync.applied.as_slice()),
+        Some([DockViewportPlatformSyncAction::PointerInput { enabled: false }].as_slice())
+    );
+
+    controller.update(cx, |controller, cx| {
+        let mut graph = controller.graph().clone();
+        let tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        graph.set_root(space(), tabs);
+        graph.set_central_region(
+            space(),
+            DockCentralRegion::with_node(tabs).with_passthrough_when_empty(true),
+        );
+        controller.workspace_mut().set_graph(graph);
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    assert!(
+        window
+            .update(cx, |_, window, _| window.accepts_pointer_input())
+            .expect("host window should remain live"),
+        "repopulating the central region should restore the render-owned pointer input sync"
+    );
+    assert_eq!(
+        runtime
+            .runtime_status()
+            .last_platform_sync
+            .as_ref()
+            .map(|sync| sync.applied.as_slice()),
+        Some([DockViewportPlatformSyncAction::PointerInput { enabled: true }].as_slice())
+    );
+}
+
+#[open_gpui::test]
+fn empty_central_passthrough_with_floating_content_keeps_window_pointer_input(
+    cx: &mut TestAppContext,
+) {
+    let mut graph = DockGraph::new();
+    graph.set_central_region(
+        space(),
+        DockCentralRegion::empty().with_passthrough_when_empty(true),
+    );
+    let floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_tabs,
+    });
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(20.0, 20.0, 220.0, 140.0),
+        });
+    let (window, host, visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A")],
+        size(px(320.0), px(220.0)),
+    );
+
+    assert!(
+        window
+            .update(cx, |_, window, _| window.accepts_pointer_input())
+            .expect("host window should remain live"),
+        "window-level click-through would also pierce floating content"
+    );
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Floating { node: floating }).is_some(),
+        "floating overlay should still render above the empty central region"
+    );
+    let runtime = host.update(cx, |host, _| host.viewport_runtime().clone());
+    assert_eq!(
+        runtime.runtime_status().last_platform_sync,
+        None,
+        "empty central with floating content must not request whole-window pointer passthrough"
+    );
+}
+
+#[open_gpui::test]
+fn ordinary_render_does_not_restore_externally_owned_pointer_passthrough(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a"]);
+    let (window, _host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A")],
+        size(px(320.0), px(200.0)),
+    );
+    assert_ne!(root, DockNodeId::null(), "test graph should have a root");
+
+    assert!(
+        !window
+            .update(cx, |_, window, _| {
+                window.set_accepts_pointer_input(false);
+                window.accepts_pointer_input()
+            })
+            .expect("host window should remain live"),
+        "test setup should make the source viewport click-through outside render passthrough"
+    );
+
+    window
+        .update(cx, |_, window, _| window.refresh())
+        .expect("host window should remain live");
+    cx.run_until_parked();
+
+    assert!(
+        !window
+            .update(cx, |_, window, _| window.accepts_pointer_input())
+            .expect("host window should remain live"),
+        "ordinary render must not restore no-input owned by another runtime transaction"
+    );
 }
 
 #[open_gpui::test]

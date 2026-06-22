@@ -33,7 +33,7 @@ use crate::{
 use open_gpui::WindowBounds;
 use open_gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, Entity, Pixels, Point, Result, Subscription,
-    WindowId, WindowOptions,
+    Window, WindowId, WindowOptions,
 };
 #[cfg(test)]
 use std::cell::{Ref, RefMut};
@@ -110,6 +110,61 @@ fn apply_pointer_input_sync_request(
             })
             .unwrap_or_else(|_| unsupported_pointer_input_sync(window_id, accepts_pointer_input)),
     )
+}
+
+pub(crate) fn sync_render_passthrough_pointer_input(
+    runtime: &DockViewportRuntimeHandle,
+    window: &mut Window,
+    passthrough: bool,
+) -> bool {
+    let window_id = window.window_handle().window_id();
+    if passthrough {
+        if !window.accepts_pointer_input() {
+            return false;
+        }
+        runtime
+            .runtime
+            .borrow_mut()
+            .record_render_passthrough_pointer_input(window_id);
+        return apply_render_pointer_input_sync(runtime, window, false);
+    }
+
+    if !runtime
+        .runtime
+        .borrow_mut()
+        .take_render_passthrough_pointer_input(window_id)
+    {
+        return false;
+    }
+    if window.accepts_pointer_input() {
+        return false;
+    }
+    apply_render_pointer_input_sync(runtime, window, true)
+}
+
+fn apply_render_pointer_input_sync(
+    runtime: &DockViewportRuntimeHandle,
+    window: &mut Window,
+    accepts_pointer_input: bool,
+) -> bool {
+    let window_id = window.window_handle().window_id();
+    let sync_record = if window.set_accepts_pointer_input(accepts_pointer_input) {
+        crate::DockViewportPlatformSyncRecord {
+            window_id,
+            applied: vec![crate::DockViewportPlatformSyncAction::PointerInput {
+                enabled: accepts_pointer_input,
+            }],
+            skipped_requests: Vec::new(),
+            unsupported_requests: Vec::new(),
+        }
+    } else {
+        unsupported_pointer_input_sync(window_id, accepts_pointer_input)
+    };
+    runtime
+        .runtime
+        .borrow_mut()
+        .record_platform_sync(sync_record);
+    true
 }
 
 fn apply_close_recovery_activation_for_runtime(

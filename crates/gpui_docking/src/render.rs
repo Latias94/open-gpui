@@ -18,6 +18,7 @@ use crate::{
     },
     render_split::DockRenderSplitInput,
     viewport_drop_scene::DockViewportHostSceneFrame,
+    viewport_runtime_handle::sync_render_passthrough_pointer_input,
     workspace_move_validation::dock_target_validator,
 };
 use open_gpui::{
@@ -143,6 +144,7 @@ impl Render for DockHost {
         host = host.child(self.render_viewport_host_scene_probe(
             &viewport_host_scene_frame,
             session.drop_guide_style(),
+            session.empty_central_requests_platform_pointer_passthrough(),
         ));
 
         if let Some(root) = session.root() {
@@ -666,6 +668,7 @@ impl DockHost {
         &self,
         frame_slot: &DockViewportHostSceneFrameSlot,
         drop_guide_style: geometry::DockDropGuideStyle,
+        passthrough_pointer_input: bool,
     ) -> AnyElement {
         let runtime = self.viewport_runtime().clone();
         let space = self.space().clone();
@@ -680,6 +683,7 @@ impl DockHost {
                 let window_handle = window.window_handle();
                 runtime.reconcile_backend_window_focus(app);
                 runtime.reconcile_viewport_frame_except_window(window_handle.window_id(), app);
+                sync_render_passthrough_pointer_input(&runtime, window, passthrough_pointer_input);
                 runtime.register_rendered_host_viewport(space.clone(), window_handle);
                 let registration = runtime.begin_viewport_host_scene_frame(
                     space,

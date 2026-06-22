@@ -55,6 +55,7 @@ pub(crate) struct DockViewportRuntime {
     next_drag_session_id: u64,
     owned_windows: HashSet<WindowId>,
     retired_windows: HashSet<WindowId>,
+    render_passthrough_windows: HashSet<WindowId>,
     focus: DockViewportFocusCoordinator,
     pending_activation: Option<DockViewportActivationTransaction>,
     /// Last live docking window observed as backend-focused. Mirrors ImGui's
@@ -349,6 +350,7 @@ impl DockViewportRuntime {
             next_drag_session_id: 0,
             owned_windows: HashSet::new(),
             retired_windows: HashSet::new(),
+            render_passthrough_windows: HashSet::new(),
             focus: DockViewportFocusCoordinator::default(),
             pending_activation: None,
             last_platform_focused_window: None,
@@ -381,6 +383,7 @@ impl DockViewportRuntime {
             next_drag_session_id: 0,
             owned_windows: HashSet::new(),
             retired_windows: HashSet::new(),
+            render_passthrough_windows: HashSet::new(),
             focus: DockViewportFocusCoordinator::default(),
             pending_activation: None,
             last_platform_focused_window: None,
@@ -769,7 +772,16 @@ impl DockViewportRuntime {
         if removed {
             self.retired_windows.insert(window_id);
         }
+        self.render_passthrough_windows.remove(&window_id);
         removed
+    }
+
+    pub(crate) fn record_render_passthrough_pointer_input(&mut self, window_id: WindowId) -> bool {
+        self.render_passthrough_windows.insert(window_id)
+    }
+
+    pub(crate) fn take_render_passthrough_pointer_input(&mut self, window_id: WindowId) -> bool {
+        self.render_passthrough_windows.remove(&window_id)
     }
 
     /// Returns the close policy used by [`handle_window_should_close`](Self::handle_window_should_close).
@@ -1200,6 +1212,7 @@ impl DockViewportRuntime {
         if discard_close_plan {
             self.close_coordinator.discard_window(window_id);
         }
+        self.render_passthrough_windows.remove(&window_id);
         self.host_scenes.unregister_space(space);
         self.clear_pending_activation_for(space, window_id);
         self.status.clear_window_references(space, window_id);
