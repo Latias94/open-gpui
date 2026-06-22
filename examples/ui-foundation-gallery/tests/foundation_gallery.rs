@@ -956,6 +956,7 @@ fn components_page_samples_expose_component_metadata() {
     let toggles = pages::components::toggle_samples(tokens);
     let toolbars = pages::components::toolbar_samples(tokens);
     let sidebars = pages::components::sidebar_samples(tokens);
+    let trees = pages::components::tree_samples(tokens);
     let listboxes = pages::components::listbox_samples(tokens);
     let selects = pages::components::select_samples(tokens);
     let comboboxes = pages::components::combobox_samples(tokens);
@@ -985,6 +986,7 @@ fn components_page_samples_expose_component_metadata() {
             "Toggle",
             "Toolbar",
             "Sidebar",
+            "Tree",
             "Listbox",
             "Select",
             "Combobox",
@@ -1045,7 +1047,7 @@ fn components_page_samples_expose_component_metadata() {
             .all(|entry| entry.sample_selector.is_none() && entry.state_contract_selector.is_some())
     );
 
-    assert_eq!(gates.len(), 9);
+    assert_eq!(gates.len(), 10);
     assert_eq!(gates[0].id, "public-api-exports");
     assert!(
         gates[0]
@@ -1062,9 +1064,10 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(gates[3].id, "splitter-runtime");
     assert_eq!(gates[4].id, "tabs-overflow");
     assert_eq!(gates[5].id, "table-virtualization");
-    assert_eq!(gates[6].id, "virtualized-list-renderer");
-    assert_eq!(gates[7].id, "state-contract-readouts");
-    assert_eq!(gates[8].id, "a11y-labels");
+    assert_eq!(gates[6].id, "tree-renderer");
+    assert_eq!(gates[7].id, "virtualized-list-renderer");
+    assert_eq!(gates[8].id, "state-contract-readouts");
+    assert_eq!(gates[9].id, "a11y-labels");
 
     assert_eq!(buttons.len(), 6);
     assert_eq!(buttons[0].id, "default");
@@ -1216,6 +1219,20 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(sidebars[2].state.side().as_str(), "right");
     assert!(sidebars[2].state.scrollable());
     assert!(sidebars[2].state.items().len() > 8);
+
+    assert_eq!(trees.len(), 1);
+    let tree = &trees[0];
+    assert_eq!(tree.id, "document-outline");
+    assert_eq!(tree.state.role(), Role::Tree);
+    assert_eq!(tree.state.item_role(), Role::TreeItem);
+    assert_eq!(tree.state.selected_value(), Some("paper"));
+    assert_eq!(tree.state.focused_value(), Some("paper"));
+    assert!(tree.state.items().len() > 12);
+    assert!(matches!(
+        tree.state.keyboard_action_for_key("right"),
+        Some(TreeKeyboardAction::Toggle(toggle)) if toggle.value() == "paper" && toggle.expanded()
+    ));
+    assert_eq!(tree.build_tree().state().role(), Role::Tree);
 
     assert_eq!(listboxes.len(), 2);
     assert_eq!(listboxes[0].id, "assignee-listbox");
@@ -1651,10 +1668,6 @@ fn state_contract_catalog_entries_have_signals_and_readout_selectors() {
             "expected state-contract signal `{signal}`"
         );
     }
-    assert!(
-        !pages::components::SIGNALS.contains(&"open_gpui_ui_components::Tree"),
-        "TreeState contract must not imply a completed Tree renderer signal"
-    );
 }
 
 #[test]
@@ -1989,6 +2002,7 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(gates.iter().any(|gate| gate.id == "scroll-redraw"));
     assert!(gates.iter().any(|gate| gate.id == "tabs-overflow"));
     assert!(gates.iter().any(|gate| gate.id == "table-virtualization"));
+    assert!(gates.iter().any(|gate| gate.id == "tree-renderer"));
     assert!(
         gates
             .iter()
@@ -2013,11 +2027,12 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"open_gpui_ui_components::CommandState"));
     assert!(signals.contains(&"open_gpui_ui_components::Table"));
     assert!(signals.contains(&"open_gpui_ui_components::TableState"));
+    assert!(signals.contains(&"open_gpui_ui_components::Tree"));
+    assert!(signals.contains(&"open_gpui_ui_components::TreeState"));
     assert!(signals.contains(&"open_gpui_ui_components::VirtualizedList"));
     assert!(signals.contains(&"open_gpui_ui_components::VirtualizedListItemDescriptor"));
     assert!(signals.contains(&"open_gpui_ui_components::VirtualizedListRenderPlan"));
     assert!(signals.contains(&"open_gpui_ui_components::VirtualizerState"));
-    assert!(signals.contains(&"open_gpui_ui_components::TreeState"));
     assert!(signals.contains(&"open_gpui_ui_components::VirtualizedListState"));
     assert!(signals.contains(&"Role::ListBox"));
     assert!(signals.contains(&"Role::ListBoxOption"));
@@ -2029,6 +2044,8 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"Role::Row"));
     assert!(signals.contains(&"Role::ColumnHeader"));
     assert!(signals.contains(&"Role::Cell"));
+    assert!(signals.contains(&"Role::Tree"));
+    assert!(signals.contains(&"Role::TreeItem"));
 }
 
 #[open_gpui::test]
@@ -2503,12 +2520,26 @@ fn gallery_smoke_compact_shell_scrolls_navigation_and_resets_page_on_navigation(
         GalleryPage::Components
     );
 
-    let scroll_area_sample =
-        scroll_page_until_visible(cx, "gallery:component-scroll-area-sample:data-grid");
+    let directory_viewport = bounds(cx, "scroll-area:gallery-components-directory-scroll");
+    scroll_until_visible(
+        cx,
+        "scroll-area:gallery-components-directory-scroll",
+        "gallery:component-page-jump:tree",
+        16,
+        point(px(0.0), px(-48.0)),
+        directory_viewport.center(),
+        |container, target| container.contains(&target.center()),
+        "expected compact Components directory to reveal the Tree jump".to_string(),
+    );
+    click(cx, "gallery:component-page-jump:tree");
+    settle(cx);
+    settle(cx);
+
+    let tree_sample = bounds(cx, "gallery:component-tree-sample:document-outline");
     let page_scroll = bounds(cx, "gallery:page-scroll");
     assert!(
-        bounds_overlap_y(page_scroll, scroll_area_sample),
-        "expected compact Components page to scroll until a deep component sample is visible"
+        bounds_overlap_y(page_scroll, tree_sample),
+        "expected compact Components page to scroll until the Tree sample is visible"
     );
 
     scroll_navigation_until_visible(cx, "gallery:navigation-item:overlay");
@@ -2530,12 +2561,12 @@ fn gallery_smoke_compact_shell_scrolls_navigation_and_resets_page_on_navigation(
     );
 
     let reset_page_scroll = bounds(cx, "gallery:page-scroll");
-    if let Some(scroll_area_after_reset) =
-        cx.debug_bounds("gallery:component-scroll-area-sample:data-grid")
+    if let Some(tree_after_reset) =
+        cx.debug_bounds("gallery:component-tree-sample:document-outline")
     {
         assert!(
-            !bounds_overlap_y(reset_page_scroll, scroll_area_after_reset),
-            "expected compact navigation to reset page scroll after switching away and back; scroll_area={scroll_area_after_reset:?} page={reset_page_scroll:?}"
+            !bounds_overlap_y(reset_page_scroll, tree_after_reset),
+            "expected compact navigation to reset page scroll after switching away and back; tree={tree_after_reset:?} page={reset_page_scroll:?}"
         );
     }
 }
@@ -2714,6 +2745,112 @@ fn components_gallery_smoke_table_scroll_stays_inside_sample(cx: &mut open_gpui:
         cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0010")
             .is_some(),
         "expected virtualized Table row 0010 to enter the rendered window after internal scroll"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_tree_expands_and_selects(cx: &mut open_gpui::TestAppContext) {
+    const SAMPLE: &str = "gallery:component-tree-sample:document-outline";
+    const PAPER: &str = "tree:component-tree:document-outline:item:paper";
+    const INTRO: &str = "tree:component-tree:document-outline:item:intro";
+
+    let cx = open_components_gallery(cx);
+    cx.set_global(pages::components::TreeSampleRuntimeLog::default());
+
+    scroll_page_until_visible(cx, SAMPLE);
+    assert!(
+        cx.debug_bounds(INTRO).is_none(),
+        "expected collapsed Tree descendants to stay hidden before expansion"
+    );
+
+    click(cx, PAPER);
+    assert!(
+        cx.debug_selector_is_focused(PAPER),
+        "expected clicking a Tree row to focus that row for keyboard handling"
+    );
+    cx.update_global::<pages::components::TreeSampleRuntimeLog, _>(|log, _| {
+        log.clear();
+    });
+
+    cx.simulate_keystrokes("right");
+    redraw(cx);
+    assert!(
+        cx.debug_bounds(INTRO).is_some(),
+        "expected the Paper branch to reveal its child after toggling open"
+    );
+    let toggles = cx.read_global::<pages::components::TreeSampleRuntimeLog, _>(|log, _| {
+        log.toggles()
+            .iter()
+            .map(|toggle| {
+                (
+                    toggle.sample_id.clone(),
+                    toggle.value.clone(),
+                    toggle.expanded,
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        toggles,
+        vec![("document-outline".to_owned(), "paper".to_owned(), true)],
+        "expected right arrow to expand the focused root branch"
+    );
+
+    cx.simulate_keystrokes("down");
+    redraw(cx);
+    assert!(
+        cx.debug_selector_is_focused(INTRO),
+        "expected Down to move focus to the newly revealed child row"
+    );
+
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    let selections = cx.read_global::<pages::components::TreeSampleRuntimeLog, _>(|log, _| {
+        log.selections()
+            .iter()
+            .map(|selection| (selection.sample_id.clone(), selection.value.clone()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        selections,
+        vec![("document-outline".to_owned(), "intro".to_owned())],
+        "expected Enter to select the focused child row"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_tree_card_wheel_does_not_leak_to_page(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE: &str = "gallery:component-tree-sample:document-outline";
+    const VIEWPORT: &str = "scroll-area:tree:component-tree:document-outline:scroll";
+    const ITEM: &str = "tree:component-tree:document-outline:item:appendix-01";
+
+    let cx = open_components_gallery(cx);
+
+    scroll_page_until_visible(cx, SAMPLE);
+    let sample_before = bounds(cx, SAMPLE);
+    let item_before = bounds(cx, ITEM);
+    let viewport = bounds(cx, VIEWPORT);
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    let item_after = bounds(cx, ITEM);
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected Tree card wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert!(
+        item_after.top() < item_before.top(),
+        "expected Tree card wheel input to move the inner viewport; before={item_before:?} after={item_after:?}"
     );
 }
 

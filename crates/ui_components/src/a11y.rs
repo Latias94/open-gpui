@@ -20,6 +20,8 @@ pub fn gpui_role_from_ui(role: Role) -> GpuiRole {
         Role::Navigation => GpuiRole::Navigation,
         Role::Section => GpuiRole::Section,
         Role::Group => GpuiRole::Group,
+        Role::Tree => GpuiRole::Tree,
+        Role::TreeItem => GpuiRole::TreeItem,
         Role::Table => GpuiRole::Table,
         Role::Row => GpuiRole::Row,
         Role::ColumnHeader => GpuiRole::ColumnHeader,

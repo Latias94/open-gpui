@@ -1,6 +1,6 @@
 ---
 type: Current State
-title: open-gpui table and virtualizer implementation state
+title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
@@ -35,9 +35,9 @@ verified_by:
 
 # Current State
 
-- Goal: Complete the `VirtualizedList` official renderer promotion, gallery runtime proof, docs refresh, and verified local `main` push.
+- Goal: Complete the `Tree` official renderer promotion, gallery runtime proof, docs refresh, and verified local `main` push.
 - Branch: `main`
-- Last verified: 2026-06-22, `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components` passed 179/179, `cargo nextest run -p open-gpui-ui-foundation-gallery` passed 64/64, `git diff --check` passed, and the engineering wiki memory bundle validated after the VirtualizedList promotion and shared-slice API follow-up.
+- Last verified: 2026-06-22, `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-core` passed 43/43, `cargo nextest run -p open-gpui-ui-components` passed 180/180, `cargo nextest run -p open-gpui-ui-foundation-gallery` passed 66/66, `git diff --check` passed, and the engineering wiki memory bundle validated after the Tree renderer productization slice.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -61,9 +61,10 @@ verified_by:
 - Done: Promoted `VirtualizedList` into the official Components catalog and page directory with a 10k-item `release-navigation` sample, stable sample selectors, a `virtualized-list-renderer` gate, nested scroll containment smoke, and a full-page PageDown plus Enter/Space activation smoke backed by the gallery runtime log.
 - Done: Tightened `VirtualizedList::from_shared_items` to accept `Arc<[VirtualizedListItemDescriptor]>`, so shared large-list storage exposes a slice contract instead of leaking `Vec` storage details.
 - Done: Added standard controlled TextInput ergonomics with `TextInput::value(...).on_change(...)`. The adapter now creates a keyed `TextInputController` when `on_change` is supplied, emits sanitized single-line values, and keeps callbacks out of `TextInputState`.
-- Follow-up: Design real `Tree` and any future list-family renderers separately. Keep `VirtualizedListState` as the keyboard/navigation contract while the official `VirtualizedList` adapter owns the GPUI runtime and scroll handle.
+- Done: Promoted `Tree` into the official Components surface. The adapter composes `TreeState` with keyed GPUI runtime state, focus handles, expansion overrides, selection/toggle callbacks, and an inner `ScrollArea`. The gallery now has a `document-outline` Tree sample, `tree-renderer` conformance gate, runtime selection/toggle log, keyboard expand/select smoke, and nested scroll containment smoke. `TreeState` remains visible as the renderer-neutral hierarchy readout beside the official component.
+- Follow-up: Continue list-family refinements from the concrete component surface. `TreeState` and `VirtualizedListState` should remain renderer-neutral contracts while official adapters own GPUI runtime, focus, and scroll handles.
 - Blocked: None.
-- Next action: Push local `main`, then move to Tree renderer or list-family refinements.
+- Next action: Finish remaining verification, commit, push local `main`, then plan the next component-library slice.
 
 # Citations
 
@@ -83,3 +84,4 @@ verified_by:
 [14] Commit `8b4237b` - `perf(ui-components): cache table virtual windows`
 [15] Commit `474ac18` - `feat(ui-components): productize feedback and state contracts`
 [16] Plan `docs/plans/2026-06-22-002-feat-ui-virtualized-list-renderer-plan.md`
+[17] Verification evidence `docs/knowledge/engineering/verification/tree-renderer-productization-20260622.md`

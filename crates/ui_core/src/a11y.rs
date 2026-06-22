@@ -25,6 +25,10 @@ pub enum Role {
     Section,
     /// A generic grouped collection.
     Group,
+    /// A hierarchical tree container.
+    Tree,
+    /// A tree item in a hierarchical collection.
+    TreeItem,
     /// A table container.
     Table,
     /// A table row.

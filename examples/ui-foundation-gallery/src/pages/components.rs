@@ -14,7 +14,7 @@ use open_gpui_ui_components::{
     Switch, SwitchState, Table, TableColumn, TableFilter, TablePagination, TableRenderPlan,
     TableRow, TableSort, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
     TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, TreeItemDescriptor, TreeState,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
     VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
     VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
 };
@@ -125,6 +125,8 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::VirtualizedListItemDescriptor",
     "open_gpui_ui_components::VirtualizedListRenderPlan",
     "open_gpui_ui_components::VirtualizerState",
+    "open_gpui_ui_components::Tree",
+    "open_gpui_ui_components::TreeMetrics",
     "open_gpui_ui_components::TreeState",
     "open_gpui_ui_components::TreeItemDescriptor",
     "open_gpui_ui_components::TreeItemState",
@@ -163,6 +165,8 @@ pub const SIGNALS: &[&str] = &[
     "Role::Row",
     "Role::ColumnHeader",
     "Role::Cell",
+    "Role::Tree",
+    "Role::TreeItem",
 ];
 
 /// Stable jump targets for the Components page navigator.
@@ -199,6 +203,10 @@ pub const COMPONENT_PAGE_JUMPS: &[ComponentPageJump] = &[
     ComponentPageJump {
         id: "sidebar",
         label: "Sidebar",
+    },
+    ComponentPageJump {
+        id: "tree",
+        label: "Tree",
     },
     ComponentPageJump {
         id: "toolbar",
@@ -503,6 +511,13 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "gallery:component-sidebar-sample:workspace-sidebar",
     ),
     ComponentCatalogEntry::official(
+        "Tree",
+        "hierarchy",
+        "TreeState",
+        "exports / gallery / tree runtime smoke",
+        "gallery:component-tree-sample:document-outline",
+    ),
+    ComponentCatalogEntry::official(
         "Listbox",
         "choice",
         "ListboxState",
@@ -647,7 +662,7 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "TreeState",
         "hierarchy",
         "TreeState",
-        "state contract / renderer deferred",
+        "state contract / renderer readout",
         "gallery:component-tree-state-contract:document-outline",
     ),
     ComponentCatalogEntry::state_contract(
@@ -751,6 +766,18 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
         ],
     },
     ComponentConformanceGate {
+        id: "tree-renderer",
+        title: "Tree renderer contract",
+        summary: "Tree composes renderer-neutral hierarchy state with GPUI focus, expansion, selection, and local scroll ownership.",
+        evidence: &[
+            "Tree::state",
+            "TreeState::keyboard_action_for_key",
+            "tree_runtime_expands_reveals_and_selects_items",
+            "components_gallery_smoke_tree_expands_and_selects",
+            "components_gallery_smoke_tree_card_wheel_does_not_leak_to_page",
+        ],
+    },
+    ComponentConformanceGate {
         id: "virtualized-list-renderer",
         title: "VirtualizedList renderer contract",
         summary: "VirtualizedList keeps its state contract, row reveal logic, and inner scroll ownership aligned with the rendered adapter.",
@@ -766,7 +793,7 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
     ComponentConformanceGate {
         id: "state-contract-readouts",
         title: "State contract readouts",
-        summary: "Renderer-neutral TreeState and VirtualizedListState stay visible without counting as official renderers.",
+        summary: "Renderer-neutral TreeState and VirtualizedListState stay visible beside concrete renderers.",
         evidence: &[
             "state_contract_readout_pairs",
             "TreeState::keyboard_action_for_key",
@@ -909,6 +936,119 @@ impl TreeStateContractSample {
     /// Returns the stable debug selector used by the state-contract gallery section.
     pub fn debug_selector(&self) -> String {
         format!("gallery:component-tree-state-contract:{}", self.id)
+    }
+}
+
+/// One rendered tree sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TreeSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample title.
+    pub title: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Stable badge label.
+    pub badge: &'static str,
+    /// Root item descriptors consumed by the concrete tree renderer.
+    pub items: Vec<TreeItemDescriptor>,
+    /// Resolved renderer-neutral tree state.
+    pub state: TreeState,
+    /// Visual size applied to the concrete tree.
+    pub size: Size,
+}
+
+/// One selection captured from the rendered gallery `Tree` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeSampleSelection {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Selected item value.
+    pub value: String,
+}
+
+/// One expansion toggle captured from the rendered gallery `Tree` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeSampleToggleEvent {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Toggled item value.
+    pub value: String,
+    /// Desired expanded state after the toggle.
+    pub expanded: bool,
+}
+
+/// Runtime interaction log used by gallery Tree smoke tests.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct TreeSampleRuntimeLog {
+    selections: Vec<TreeSampleSelection>,
+    toggles: Vec<TreeSampleToggleEvent>,
+}
+
+impl Global for TreeSampleRuntimeLog {}
+
+impl TreeSampleRuntimeLog {
+    /// Returns captured selections in event order.
+    pub fn selections(&self) -> &[TreeSampleSelection] {
+        &self.selections
+    }
+
+    /// Returns captured toggles in event order.
+    pub fn toggles(&self) -> &[TreeSampleToggleEvent] {
+        &self.toggles
+    }
+
+    /// Clears captured interactions.
+    pub fn clear(&mut self) {
+        self.selections.clear();
+        self.toggles.clear();
+    }
+}
+
+/// Records a gallery `Tree` selection in app-global sample state.
+pub fn record_tree_selection(sample_id: impl Into<String>, value: impl Into<String>, cx: &mut App) {
+    cx.update_default_global::<TreeSampleRuntimeLog, _>(|log, _| {
+        log.selections.push(TreeSampleSelection {
+            sample_id: sample_id.into(),
+            value: value.into(),
+        });
+    });
+}
+
+/// Records a gallery `Tree` expansion toggle in app-global sample state.
+pub fn record_tree_toggle(
+    sample_id: impl Into<String>,
+    value: impl Into<String>,
+    expanded: bool,
+    cx: &mut App,
+) {
+    cx.update_default_global::<TreeSampleRuntimeLog, _>(|log, _| {
+        log.toggles.push(TreeSampleToggleEvent {
+            sample_id: sample_id.into(),
+            value: value.into(),
+            expanded,
+        });
+    });
+}
+
+impl TreeSample {
+    /// Builds the concrete GPUI tree for this sample.
+    pub fn build_tree(&self) -> Tree {
+        let mut tree = Tree::new(
+            format!("component-tree:{}", self.id),
+            self.title,
+            self.items.clone(),
+        )
+        .with_size(self.size);
+
+        if let Some(selected) = self.state.selected_value() {
+            tree = tree.selected(selected);
+        }
+        if let Some(focused) = self.state.focused_value() {
+            tree = tree.focused(focused);
+        }
+
+        tree
     }
 }
 
@@ -1576,6 +1716,7 @@ impl_component_sample_selectors!(RadioGroupSample, "component-radio-sample");
 impl_component_sample_selectors!(ToggleSample, "component-toggle-sample");
 impl_component_sample_selectors!(ToolbarSample, "component-toolbar-sample");
 impl_component_sample_selectors!(SidebarSample, "component-sidebar-sample");
+impl_component_sample_selectors!(TreeSample, "component-tree-sample");
 impl_component_sample_selectors!(ListboxSample, "component-listbox-sample");
 impl_component_sample_selectors!(SelectSample, "component-select-sample");
 impl_component_sample_selectors!(ComboboxSample, "component-combobox-sample");
@@ -1953,7 +2094,36 @@ pub fn empty_state_samples(tokens: ThemeTokens) -> [EmptyStateSample; 2] {
     )
 }
 
-/// Returns tree state-contract samples for renderer follow-up review.
+static TREE_SAMPLES: LazyLock<[TreeSample; 1]> = LazyLock::new(build_tree_samples);
+
+/// Returns tree samples backed by the concrete renderer and hierarchy contract.
+pub fn tree_samples(_tokens: ThemeTokens) -> &'static [TreeSample] {
+    TREE_SAMPLES.as_slice()
+}
+
+fn build_tree_samples() -> [TreeSample; 1] {
+    let size = Size::Small;
+    let items = document_outline_tree_sample_items();
+    let state = TreeState::resolve(
+        size,
+        "Document outline",
+        Some("paper"),
+        Some("paper"),
+        items.clone(),
+    );
+
+    [TreeSample {
+        id: "document-outline",
+        title: "Document outline",
+        summary: "Expandable hierarchy with roving focus, selection, and an owned scroll viewport.",
+        badge: "tree",
+        items,
+        state,
+        size,
+    }]
+}
+
+/// Returns tree state-contract samples for renderer-neutral review.
 pub fn tree_state_contract_samples() -> [TreeStateContractSample; 1] {
     [TreeStateContractSample {
         id: "document-outline",
@@ -1967,6 +2137,29 @@ pub fn tree_state_contract_samples() -> [TreeStateContractSample; 1] {
             document_outline_tree_items(),
         ),
     }]
+}
+
+fn document_outline_tree_sample_items() -> Vec<TreeItemDescriptor> {
+    let appendix_items = (1..=12).map(|index| {
+        TreeItemDescriptor::new(
+            format!("appendix-{index:02}"),
+            format!("Appendix section {index:02}"),
+        )
+    });
+
+    vec![
+        TreeItemDescriptor::new("paper", "Paper")
+            .child(TreeItemDescriptor::new("intro", "Introduction"))
+            .child(
+                TreeItemDescriptor::new("figures", "Figures")
+                    .child(TreeItemDescriptor::new("figure-1", "Figure 1")),
+            ),
+        TreeItemDescriptor::new("appendix", "Appendix")
+            .expanded(true)
+            .children(appendix_items),
+        TreeItemDescriptor::new("disabled", "Disabled").disabled(true),
+        TreeItemDescriptor::new("notes", "Notes"),
+    ]
 }
 
 fn document_outline_tree_items() -> Vec<TreeItemDescriptor> {

@@ -169,7 +169,7 @@ pub use tooltip::{
     TooltipOpenIntent, TooltipState,
 };
 pub use tree::{
-    TreeFocusTarget, TreeItemDescriptor, TreeItemState, TreeKeyboardAction, TreeMetrics,
+    Tree, TreeFocusTarget, TreeItemDescriptor, TreeItemState, TreeKeyboardAction, TreeMetrics,
     TreeSelection, TreeState, TreeToggle, tree_navigation_target,
 };
 pub use virtualized_list::{

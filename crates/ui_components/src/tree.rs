@@ -1,8 +1,22 @@
-//! Renderer-neutral state for hierarchical tree surfaces.
+//! Tree component and renderer-neutral state for hierarchical tree surfaces.
 
-use open_gpui_ui_core::{Size, UiPx, ui_px};
+use crate::a11y::UiA11yElementExt;
+use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
+use crate::scroll_area::ScrollArea;
+use open_gpui::prelude::*;
+use open_gpui::{
+    App, ClickEvent, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
+    ParentElement, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
+    Window, div, point, px, rgb,
+};
+use open_gpui_ui_core::{Role, Sizable, Size, UiPx, ui_px};
+use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use crate::roving_focus::{first_enabled, last_enabled, next_enabled};
+
+type TreeSelectHandler = Rc<dyn Fn(TreeSelection, &mut Window, &mut App)>;
+type TreeToggleHandler = Rc<dyn Fn(TreeToggle, &mut Window, &mut App)>;
 
 /// Pure descriptor for one tree item.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,6 +159,11 @@ pub struct TreeItemState {
 }
 
 impl TreeItemState {
+    /// Returns the accessibility role for the tree item.
+    pub const fn role(&self) -> Role {
+        Role::TreeItem
+    }
+
     /// Returns the zero-based visible item index.
     pub const fn index(&self) -> usize {
         self.index
@@ -385,6 +404,16 @@ impl TreeState {
         self.size
     }
 
+    /// Returns the tree accessibility role.
+    pub const fn role(&self) -> Role {
+        Role::Tree
+    }
+
+    /// Returns the accessibility role for visible tree item rows.
+    pub const fn item_role(&self) -> Role {
+        Role::TreeItem
+    }
+
     /// Returns the accessible tree label.
     pub fn label(&self) -> &str {
         &self.label
@@ -400,9 +429,33 @@ impl TreeState {
         self.selected_index
     }
 
+    /// Returns selected visible item value.
+    pub fn selected_value(&self) -> Option<&str> {
+        self.selected_index
+            .and_then(|index| self.items.get(index))
+            .map(TreeItemState::value)
+    }
+
+    /// Returns selected visible item.
+    pub fn selected_item(&self) -> Option<&TreeItemState> {
+        self.selected_index.and_then(|index| self.items.get(index))
+    }
+
     /// Returns focused visible item index.
     pub const fn focused_index(&self) -> Option<usize> {
         self.focused_index
+    }
+
+    /// Returns focused visible item value.
+    pub fn focused_value(&self) -> Option<&str> {
+        self.focused_index
+            .and_then(|index| self.items.get(index))
+            .map(TreeItemState::value)
+    }
+
+    /// Returns focused visible item.
+    pub fn focused_item(&self) -> Option<&TreeItemState> {
+        self.focused_index.and_then(|index| self.items.get(index))
     }
 
     /// Returns resolved metrics.
@@ -474,6 +527,595 @@ pub fn tree_navigation_target(key: &str, current: usize, disabled: &[bool]) -> O
         "up" => next_enabled(disabled, current, false, true),
         "down" => next_enabled(disabled, current, true, true),
         _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct TreeRuntime {
+    scroll_handle: ScrollHandle,
+    selected_value: Option<String>,
+    focused_value: Option<String>,
+    expanded_values: BTreeMap<String, bool>,
+    focus_handles: BTreeMap<String, FocusHandle>,
+}
+
+impl TreeRuntime {
+    fn sync(&mut self, state: &TreeState, cx: &mut Context<Self>) {
+        self.focus_handles
+            .retain(|value, _| state.items().iter().any(|item| item.value() == value));
+
+        for item in state.items().iter().filter(|item| item.focusable()) {
+            self.focus_handles
+                .entry(item.value().to_owned())
+                .or_insert_with(|| cx.focus_handle());
+        }
+
+        self.selected_value = state.selected_value().map(str::to_owned);
+        self.focused_value = state.focused_value().map(str::to_owned);
+    }
+
+    fn set_focused(&mut self, value: &str, cx: &mut Context<Self>) -> Option<FocusHandle> {
+        let value = value.to_owned();
+        let changed = self.focused_value.as_deref() != Some(value.as_str());
+        self.focused_value = Some(value.clone());
+        if changed {
+            cx.notify();
+        }
+        self.focus_handles.get(&value).cloned()
+    }
+
+    fn set_selected(&mut self, value: &str, cx: &mut Context<Self>) {
+        let changed = self.selected_value.as_deref() != Some(value);
+        self.selected_value = Some(value.to_owned());
+        if changed {
+            cx.notify();
+        }
+    }
+
+    fn set_expanded(&mut self, value: &str, expanded: bool, cx: &mut Context<Self>) {
+        let changed = self.expanded_values.get(value).copied() != Some(expanded);
+        self.expanded_values.insert(value.to_owned(), expanded);
+        if changed {
+            cx.notify();
+        }
+    }
+}
+
+/// A concrete GPUI tree renderer backed by [`TreeState`].
+#[derive(IntoElement)]
+pub struct Tree {
+    id: String,
+    label: SharedString,
+    items: Vec<TreeItemDescriptor>,
+    size: Size,
+    selected_value: Option<String>,
+    focused_value: Option<String>,
+    on_select: Option<TreeSelectHandler>,
+    on_toggle: Option<TreeToggleHandler>,
+}
+
+impl Tree {
+    /// Creates a new tree renderer.
+    pub fn new(
+        id: impl Into<String>,
+        label: impl Into<SharedString>,
+        items: impl IntoIterator<Item = TreeItemDescriptor>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            items: items.into_iter().collect(),
+            size: Size::Medium,
+            selected_value: None,
+            focused_value: None,
+            on_select: None,
+            on_toggle: None,
+        }
+    }
+
+    /// Adds one root item descriptor.
+    pub fn item(mut self, item: TreeItemDescriptor) -> Self {
+        self.items.push(item);
+        self
+    }
+
+    /// Seeds the selected item value.
+    pub fn selected(mut self, value: impl Into<SharedString>) -> Self {
+        self.selected_value = Some(value.into().to_string());
+        self
+    }
+
+    /// Seeds the focused item value.
+    pub fn focused(mut self, value: impl Into<SharedString>) -> Self {
+        self.focused_value = Some(value.into().to_string());
+        self
+    }
+
+    /// Registers a tree selection handler.
+    pub fn on_select(
+        mut self,
+        handler: impl Fn(TreeSelection, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_select = Some(Rc::new(handler));
+        self
+    }
+
+    /// Registers a tree expansion toggle handler.
+    pub fn on_toggle(
+        mut self,
+        handler: impl Fn(TreeToggle, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_toggle = Some(Rc::new(handler));
+        self
+    }
+
+    /// Returns root item descriptors.
+    pub fn items(&self) -> &[TreeItemDescriptor] {
+        &self.items
+    }
+
+    /// Returns resolved tree state from the builder seed.
+    pub fn state(&self) -> TreeState {
+        self.resolve_state(
+            self.items.clone(),
+            self.selected_value.as_deref(),
+            self.focused_value.as_deref(),
+        )
+    }
+
+    fn resolve_state(
+        &self,
+        items: Vec<TreeItemDescriptor>,
+        selected_value: Option<&str>,
+        focused_value: Option<&str>,
+    ) -> TreeState {
+        TreeState::resolve(
+            self.size,
+            self.label.to_string(),
+            selected_value,
+            focused_value,
+            items,
+        )
+    }
+}
+
+impl Sizable for Tree {
+    fn with_size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+}
+
+impl RenderOnce for Tree {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let Tree {
+            id,
+            label,
+            items,
+            size,
+            selected_value,
+            focused_value,
+            on_select,
+            on_toggle,
+        } = self;
+
+        window.with_id(id.clone(), |window| {
+            let debug_id = id.clone();
+            let runtime = window.use_keyed_state("runtime", cx, |_, _| TreeRuntime {
+                scroll_handle: ScrollHandle::new(),
+                selected_value: selected_value.clone(),
+                focused_value: focused_value.clone(),
+                expanded_values: BTreeMap::new(),
+                focus_handles: BTreeMap::new(),
+            });
+            let runtime_snapshot = runtime.read(cx).clone();
+            let resolved_items =
+                apply_tree_expanded_overrides(&items, &runtime_snapshot.expanded_values);
+            let state = TreeState::resolve(
+                size,
+                label.to_string(),
+                runtime_snapshot
+                    .selected_value
+                    .as_deref()
+                    .or(selected_value.as_deref()),
+                runtime_snapshot
+                    .focused_value
+                    .as_deref()
+                    .or(focused_value.as_deref()),
+                resolved_items,
+            );
+            runtime.update(cx, |runtime, cx| runtime.sync(&state, cx));
+
+            let focus_handles = {
+                let runtime = runtime.read(cx);
+                state
+                    .items()
+                    .iter()
+                    .map(|item| runtime.focus_handles.get(item.value()).cloned())
+                    .collect::<Vec<_>>()
+            };
+            let scroll_handle = runtime.read(cx).scroll_handle.clone();
+            let metrics = state.metrics();
+            let rows = state.items().to_vec();
+            let content = div()
+                .debug_selector({
+                    let debug_id = debug_id.clone();
+                    move || format!("tree:{debug_id}:content")
+                })
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p(gpui_px_from_ui(ui_px(6.0)))
+                .children(rows.into_iter().enumerate().map(|(index, item)| {
+                    render_tree_item(
+                        debug_id.clone(),
+                        item,
+                        focus_handles.get(index).cloned().flatten(),
+                        metrics,
+                        runtime.clone(),
+                        scroll_handle.clone(),
+                        state.clone(),
+                        on_select.clone(),
+                        on_toggle.clone(),
+                    )
+                }));
+
+            div()
+                .id(id.clone())
+                .debug_selector({
+                    let debug_id = debug_id.clone();
+                    move || format!("tree:{debug_id}:root")
+                })
+                .size_full()
+                .min_w(px(0.0))
+                .min_h(px(0.0))
+                .flex()
+                .flex_col()
+                .overflow_hidden()
+                .rounded(px(6.0))
+                .border_1()
+                .border_color(rgb(0xd6d8ce))
+                .bg(rgb(0xffffff))
+                .text_size(gpui_px_from_ui(metrics.text_size()))
+                .text_color(rgb(0x2f3845))
+                .ui_role(state.role())
+                .aria_label(label.to_string())
+                .on_scroll_wheel(|_, window, cx| {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                })
+                .child(
+                    div().flex_1().min_h(px(0.0)).child(
+                        ScrollArea::new(format!("tree:{id}:scroll"), content)
+                            .vertical()
+                            .with_size(size)
+                            .scroll_handle(&scroll_handle),
+                    ),
+                )
+        })
+    }
+}
+
+fn render_tree_item(
+    tree_id: String,
+    item: TreeItemState,
+    focus_handle: Option<FocusHandle>,
+    metrics: TreeMetrics,
+    runtime: Entity<TreeRuntime>,
+    scroll_handle: ScrollHandle,
+    state: TreeState,
+    on_select: Option<TreeSelectHandler>,
+    on_toggle: Option<TreeToggleHandler>,
+) -> impl IntoElement {
+    let item_value = item.value().to_owned();
+    let item_label = item.label().to_owned();
+    let item_index = item.index();
+    let disabled = item.disabled();
+    let selected = item.selected();
+    let focused = item.focused();
+    let has_children = item.has_children();
+    let expanded = item.expanded();
+    let selection = TreeSelection::from_item(&item);
+    let toggle = TreeToggle::from_item(&item);
+    let row_background = if selected {
+        rgb(0xe8f3ef)
+    } else if focused {
+        rgb(0xeef2f7)
+    } else {
+        rgb(0xffffff)
+    };
+    let text_color = if disabled {
+        rgb(0x7a8492)
+    } else {
+        rgb(0x2f3845)
+    };
+    let indent = metrics.indent_width() * item.depth() as f32;
+    let item_position = item.position_in_set();
+    let item_size_of_set = item.size_of_set();
+
+    div()
+        .id(format!("tree:{tree_id}:item:{item_value}"))
+        .debug_selector({
+            let tree_id = tree_id.clone();
+            let item_value = item_value.clone();
+            move || format!("tree:{tree_id}:item:{item_value}")
+        })
+        .min_h(gpui_px_from_ui(metrics.row_height()))
+        .w_full()
+        .px(gpui_px_from_ui(metrics.row_padding_x()))
+        .py(gpui_px_from_ui(metrics.row_padding_y()))
+        .flex()
+        .items_center()
+        .gap_2()
+        .rounded_sm()
+        .bg(row_background)
+        .text_color(text_color)
+        .overflow_hidden()
+        .ui_role(item.role())
+        .aria_label(item.label().to_owned())
+        .aria_selected(selected)
+        .aria_disabled(disabled)
+        .aria_level(item.depth() + 1)
+        .when(has_children, |this| this.aria_expanded(expanded))
+        .when_some(item_position, |this, position| {
+            this.aria_position_in_set(position)
+                .aria_size_of_set(item_size_of_set)
+        })
+        .focusable()
+        .tab_stop(focused)
+        .when_some(focus_handle.clone(), |this, focus_handle| {
+            this.track_focus(&focus_handle)
+        })
+        .focus_visible(|style| style.border_color(rgb(0x2f80ed)))
+        .when(!disabled, |this| {
+            this.cursor_pointer().hover(|style| style.bg(rgb(0xf1f5ee)))
+        })
+        .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
+        .when(!disabled, |this| {
+            let runtime = runtime.clone();
+            let on_select = on_select.clone();
+            let selection = selection.clone();
+            let focus_handle = focus_handle.clone();
+            let scroll_handle = scroll_handle.clone();
+            let state = state.clone();
+            let item_value = item_value.clone();
+            this.on_click(move |_event: &ClickEvent, window, cx| {
+                cx.stop_propagation();
+                window.prevent_default();
+                runtime.update(cx, |runtime, cx| {
+                    runtime.set_focused(&item_value, cx);
+                    runtime.set_selected(&item_value, cx);
+                });
+                if let Some(focus_handle) = focus_handle.as_ref() {
+                    focus_handle.focus(window, cx);
+                }
+                scroll_tree_item_into_view(&scroll_handle, &state, item_index);
+                if let Some(selection) = selection.clone() {
+                    if let Some(on_select) = on_select.as_ref() {
+                        on_select(selection, window, cx);
+                    }
+                }
+            })
+        })
+        .on_key_down({
+            let runtime = runtime.clone();
+            let scroll_handle = scroll_handle.clone();
+            let on_select = on_select.clone();
+            let on_toggle = on_toggle.clone();
+            move |event: &KeyDownEvent, window, cx| {
+                handle_tree_key_down(
+                    &state,
+                    runtime.clone(),
+                    scroll_handle.clone(),
+                    on_select.clone(),
+                    on_toggle.clone(),
+                    event,
+                    window,
+                    cx,
+                );
+            }
+        })
+        .child(div().w(gpui_px_from_ui(indent)).flex_none())
+        .child(tree_disclosure(
+            tree_id,
+            item_value,
+            item_label.clone(),
+            has_children,
+            expanded,
+            disabled,
+            toggle,
+            runtime,
+            focus_handle,
+            on_toggle,
+        ))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .overflow_hidden()
+                .child(item_label),
+        )
+}
+
+fn tree_disclosure(
+    tree_id: String,
+    item_value: String,
+    item_label: String,
+    has_children: bool,
+    expanded: bool,
+    disabled: bool,
+    toggle: Option<TreeToggle>,
+    runtime: Entity<TreeRuntime>,
+    focus_handle: Option<FocusHandle>,
+    on_toggle: Option<TreeToggleHandler>,
+) -> impl IntoElement {
+    let glyph = if !has_children {
+        ""
+    } else if expanded {
+        "v"
+    } else {
+        ">"
+    };
+    let aria_label = if expanded {
+        format!("Collapse {item_label}")
+    } else {
+        format!("Expand {item_label}")
+    };
+
+    div()
+        .id(format!("tree:{tree_id}:toggle:{item_value}"))
+        .debug_selector({
+            let tree_id = tree_id.clone();
+            let item_value = item_value.clone();
+            move || format!("tree:{tree_id}:toggle:{item_value}")
+        })
+        .w(px(18.0))
+        .h(px(18.0))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_sm()
+        .text_xs()
+        .ui_role(Role::Button)
+        .aria_label(aria_label)
+        .aria_expanded(expanded)
+        .aria_disabled(disabled || !has_children)
+        .when(has_children && !disabled, |this| {
+            this.cursor_pointer()
+                .hover(|style| style.bg(rgb(0xe8ede6)))
+                .on_click(move |_event: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    window.prevent_default();
+                    let Some(toggle) = toggle.clone() else {
+                        return;
+                    };
+                    runtime.update(cx, |runtime, cx| {
+                        runtime.set_focused(toggle.value(), cx);
+                        runtime.set_expanded(toggle.value(), toggle.expanded(), cx);
+                    });
+                    if let Some(focus_handle) = focus_handle.as_ref() {
+                        focus_handle.focus(window, cx);
+                    }
+                    if let Some(on_toggle) = on_toggle.as_ref() {
+                        on_toggle(toggle, window, cx);
+                    }
+                })
+        })
+        .child(glyph)
+}
+
+fn handle_tree_key_down(
+    state: &TreeState,
+    runtime: Entity<TreeRuntime>,
+    scroll_handle: ScrollHandle,
+    on_select: Option<TreeSelectHandler>,
+    on_toggle: Option<TreeToggleHandler>,
+    event: &KeyDownEvent,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if event.keystroke.modifiers.modified() {
+        return;
+    }
+
+    let key = event.keystroke.key.as_str();
+    let Some(action) = state.keyboard_action_for_key(key) else {
+        return;
+    };
+
+    cx.stop_propagation();
+    window.prevent_default();
+
+    match action {
+        TreeKeyboardAction::Focus(target) => {
+            let target_index = target.index();
+            let focus_handle =
+                runtime.update(cx, |runtime, cx| runtime.set_focused(target.value(), cx));
+            if let Some(focus_handle) = focus_handle {
+                focus_handle.focus(window, cx);
+            }
+            scroll_tree_item_into_view(&scroll_handle, state, target_index);
+        }
+        TreeKeyboardAction::Toggle(toggle) => {
+            runtime.update(cx, |runtime, cx| {
+                runtime.set_focused(toggle.value(), cx);
+                runtime.set_expanded(toggle.value(), toggle.expanded(), cx);
+            });
+            if let Some(on_toggle) = on_toggle.as_ref() {
+                on_toggle(toggle, window, cx);
+            }
+        }
+        TreeKeyboardAction::Select(selection) => {
+            let selection_index = selection.index();
+            runtime.update(cx, |runtime, cx| {
+                runtime.set_focused(selection.value(), cx);
+                runtime.set_selected(selection.value(), cx);
+            });
+            scroll_tree_item_into_view(&scroll_handle, state, selection_index);
+            if let Some(on_select) = on_select.as_ref() {
+                on_select(selection, window, cx);
+            }
+        }
+    }
+}
+
+fn scroll_tree_item_into_view(scroll_handle: &ScrollHandle, state: &TreeState, index: usize) {
+    let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
+    let row_height = nonnegative_px(state.metrics().row_height());
+    if viewport_extent.as_f32() <= 0.0 || row_height.as_f32() <= 0.0 {
+        return;
+    }
+
+    let total_extent = row_height * state.items().len() as f32;
+    let current_scroll_offset =
+        UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
+    let row_start = row_height * index as f32;
+    let row_end = row_start + row_height;
+    let max_scroll = nonnegative_px(total_extent - viewport_extent);
+    let target = if row_start < current_scroll_offset {
+        row_start
+    } else if row_end > current_scroll_offset + viewport_extent {
+        row_end - viewport_extent
+    } else {
+        current_scroll_offset
+    };
+    let target = target.max(UiPx::ZERO).min(max_scroll);
+
+    scroll_handle.set_offset(point(px(0.0), -gpui_px_from_ui(target)));
+}
+
+fn apply_tree_expanded_overrides(
+    items: &[TreeItemDescriptor],
+    expanded_values: &BTreeMap<String, bool>,
+) -> Vec<TreeItemDescriptor> {
+    items
+        .iter()
+        .map(|item| apply_tree_expanded_override(item, expanded_values))
+        .collect()
+}
+
+fn apply_tree_expanded_override(
+    item: &TreeItemDescriptor,
+    expanded_values: &BTreeMap<String, bool>,
+) -> TreeItemDescriptor {
+    let mut item = item.clone();
+    if let Some(expanded) = expanded_values.get(item.value()) {
+        item.expanded = *expanded;
+    }
+    item.children = item
+        .children
+        .iter()
+        .map(|child| apply_tree_expanded_override(child, expanded_values))
+        .collect();
+    item
+}
+
+const fn nonnegative_px(value: UiPx) -> UiPx {
+    if value.as_f32() < 0.0 {
+        UiPx::ZERO
+    } else {
+        value
     }
 }
 

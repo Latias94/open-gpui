@@ -14,6 +14,7 @@ pub(crate) struct ComponentPageAnchors {
     state_contracts: ScrollAnchor,
     gates: ScrollAnchor,
     sidebar: ScrollAnchor,
+    tree: ScrollAnchor,
     toolbar: ScrollAnchor,
     listbox: ScrollAnchor,
     select: ScrollAnchor,
@@ -48,6 +49,7 @@ impl ComponentPageAnchors {
             state_contracts: anchor(),
             gates: anchor(),
             sidebar: anchor(),
+            tree: anchor(),
             toolbar: anchor(),
             listbox: anchor(),
             select: anchor(),
@@ -80,6 +82,7 @@ impl ComponentPageAnchors {
             "state-contracts" => self.state_contracts.clone(),
             "gates" => self.gates.clone(),
             "sidebar" => self.sidebar.clone(),
+            "tree" => self.tree.clone(),
             "toolbar" => self.toolbar.clone(),
             "listbox" => self.listbox.clone(),
             "select" => self.select.clone(),
@@ -238,6 +241,7 @@ pub(crate) fn render_components_page(
     let avatar_samples = pages::components::avatar_samples(snapshot.tokens);
     let status_cue_samples = pages::components::status_cue_samples(snapshot.tokens);
     let empty_state_samples = pages::components::empty_state_samples(snapshot.tokens);
+    let tree_samples = pages::components::tree_samples(snapshot.tokens);
     let tree_state_contract_samples = pages::components::tree_state_contract_samples();
     let virtualized_list_state_contract_samples =
         pages::components::virtualized_list_state_contract_samples();
@@ -434,6 +438,10 @@ pub(crate) fn render_components_page(
                         }),
                     )),
             ),
+        )
+        .child(
+            component_page_section("tree", anchors.tree.clone())
+                .child(component_tree_samples_section(tree_samples)),
         )
         .child(
             component_page_section("toolbar", anchors.toolbar.clone()).child(
@@ -1464,6 +1472,95 @@ pub(crate) fn render_components_page(
                     component_page_section("signals", anchors.signals.clone())
                         .child(shell.render_signal_list(snapshot.selected_page)),
                 ),
+        )
+}
+
+fn component_tree_samples_section(
+    tree_samples: &'static [pages::components::TreeSample],
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .child("Tree"),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(tree_samples.iter().map(|sample| {
+                    let sample_id = sample.id;
+                    let debug_selector = sample.debug_selector();
+                    let title = sample.title;
+                    let summary = sample.summary;
+                    let badge = sample.badge;
+                    let state = sample.state.clone();
+                    let sample_id_for_selection = sample_id.to_owned();
+                    let sample_id_for_toggle = sample_id.to_owned();
+                    let tree = sample
+                        .build_tree()
+                        .on_select(move |selection, _, cx| {
+                            pages::components::record_tree_selection(
+                                sample_id_for_selection.clone(),
+                                selection.value().to_owned(),
+                                cx,
+                            );
+                        })
+                        .on_toggle(move |toggle, _, cx| {
+                            pages::components::record_tree_toggle(
+                                sample_id_for_toggle.clone(),
+                                toggle.value().to_owned(),
+                                toggle.expanded(),
+                                cx,
+                            );
+                        });
+
+                    div()
+                        .id(format!("component-tree-sample:{sample_id}"))
+                        .debug_selector(move || debug_selector)
+                        .w(px(420.0))
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .bg(rgb(0xffffff))
+                        .on_scroll_wheel(|_, window, cx| {
+                            window.prevent_default();
+                            cx.stop_propagation();
+                        })
+                        .p_3()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                        .child(title),
+                                )
+                                .child(label_pill(badge)),
+                        )
+                        .child(div().text_xs().text_color(rgb(0x5a6472)).child(summary))
+                        .child(
+                            div()
+                                .h(px(240.0))
+                                .min_h(px(0.0))
+                                .overflow_hidden()
+                                .child(tree),
+                        )
+                        .child(component_tree_state_contract_row(&state))
+                })),
         )
 }
 

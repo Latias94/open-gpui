@@ -17,6 +17,7 @@
 * [Gallery architecture review 2026-06-18](subagents/gallery-architecture-review-20260618.md) - Subagent finding on remaining deletion seams in the UI foundation gallery.
 * [Menu runtime focus regression verification](verification/menu-runtime-focus-regression-20260620.md) - Verification evidence for the menu/context-menu runtime focus repair.
 * [Gallery scroll and viewport hardening verification](verification/gallery-scroll-viewport-hardening-20260621.md) - Verification evidence for navigation rail, ScrollArea, and vertical Tabs scroll regressions.
+* [Tree renderer productization verification](verification/tree-renderer-productization-20260622.md) - Verification evidence for the official Tree renderer, gallery sample, and nested scroll smokes.
 
 ## Concepts
 

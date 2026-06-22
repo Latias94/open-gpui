@@ -22,11 +22,11 @@ use open_gpui_ui_components::{
     TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode,
     ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
     ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, VirtualizedList,
-    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRenderPlan,
-    VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
-    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
-    active_index_from_str_keys, first_enabled,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
+    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
+    VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -1465,6 +1465,102 @@ fn virtualized_list_component_render_plan_applies_builder_metrics() {
     assert_eq!(plan.selected_row().map(|row| row.index()), Some(3));
 }
 
+#[open_gpui::test]
+fn tree_runtime_expands_reveals_and_selects_items(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<String>>>,
+        toggles: Rc<RefCell<Vec<(String, bool)>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+            let toggles = self.toggles.clone();
+            let tree = Tree::new(
+                "runtime-tree",
+                "Runtime tree",
+                vec![
+                    TreeItemDescriptor::new("paper", "Paper")
+                        .child(TreeItemDescriptor::new("intro", "Introduction"))
+                        .child(
+                            TreeItemDescriptor::new("figures", "Figures")
+                                .child(TreeItemDescriptor::new("figure-1", "Figure 1")),
+                        ),
+                    TreeItemDescriptor::new("notes", "Notes"),
+                ],
+            )
+            .with_size(Size::Small)
+            .focused("paper")
+            .on_select(move |selection, _, _| {
+                selections.borrow_mut().push(selection.value().to_owned());
+            })
+            .on_toggle(move |toggle, _, _| {
+                toggles
+                    .borrow_mut()
+                    .push((toggle.value().to_owned(), toggle.expanded()));
+            });
+
+            div()
+                .size_full()
+                .child(div().w(px(280.0)).h(px(180.0)).child(tree))
+        }
+    }
+
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let toggles = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+        toggles: toggles.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("tree:runtime-tree:item:paper").is_some(),
+        "expected the root tree item to render before expansion"
+    );
+    assert!(
+        cx.debug_bounds("tree:runtime-tree:item:intro").is_none(),
+        "expected collapsed descendants to stay hidden before expansion"
+    );
+
+    let paper = cx
+        .debug_bounds("tree:runtime-tree:item:paper")
+        .expect("paper row should be visible");
+    cx.simulate_click(paper.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    selections.borrow_mut().clear();
+
+    cx.simulate_keystrokes("right");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        toggles.borrow().as_slice(),
+        [("paper".to_owned(), true)],
+        "expected right arrow to expand the focused root branch"
+    );
+    assert!(
+        cx.debug_bounds("tree:runtime-tree:item:intro").is_some(),
+        "expected expanded descendants to render after toggling open"
+    );
+
+    cx.simulate_keystrokes("down");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(selections.borrow().as_slice(), ["intro".to_owned()]);
+}
+
 #[test]
 fn table_header_action_cycles_sorting_without_render_coupling() {
     let unsorted = Table::new("sort-cycle", "Sort cycle", sample_table_state(8))
@@ -1569,6 +1665,16 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
             .child(root::TreeItemDescriptor::new("child", "Child"));
     let prelude_tree_descriptor: prelude::TreeItemDescriptor =
         prelude::TreeItemDescriptor::new("root", "Root");
+    let root_tree: root::Tree =
+        root::Tree::new("root-tree", "Root tree", [root_tree_descriptor.clone()])
+            .selected("root")
+            .focused("root");
+    let prelude_tree: prelude::Tree = prelude::Tree::new(
+        "prelude-tree",
+        "Prelude tree",
+        [prelude::TreeItemDescriptor::new("root", "Root")],
+    )
+    .focused("root");
     let root_tree_state: root::TreeState = root::TreeState::resolve(
         Size::Medium,
         "Tree",
@@ -1638,6 +1744,8 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         prelude_virtualized_plan.active_row().unwrap();
     let root_virtualized_component_plan = root_virtualized_list.state();
     let prelude_virtualized_component_plan = prelude_virtualized_list.state();
+    let root_tree_component_state = root_tree.state();
+    let prelude_tree_component_state = prelude_tree.state();
     let _root_tree_toggle: Option<root::TreeToggle> =
         root::TreeToggle::from_item(&root_tree_state.items()[0]);
     let _prelude_tree_toggle: Option<prelude::TreeToggle> =
@@ -1665,8 +1773,13 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     assert_eq!(prelude_status_cue.state().role(), Role::Label);
     assert_eq!(root_empty_state.state().role(), Role::Section);
     assert_eq!(prelude_empty_state.state().role(), Role::Section);
+    assert_eq!(root_tree_component_state.role(), Role::Tree);
+    assert_eq!(prelude_tree_component_state.item_role(), Role::TreeItem);
+    assert_eq!(root_tree_component_state.focused_value(), Some("root"));
     assert_eq!(root_tree_state.items().len(), 1);
     assert_eq!(prelude_tree_state.items().len(), 1);
+    assert_eq!(root_tree_state.role(), Role::Tree);
+    assert_eq!(root_tree_state.items()[0].role(), Role::TreeItem);
     assert_eq!(root::tree_navigation_target("home", 0, &[false]), Some(0));
     assert_eq!(
         prelude::tree_navigation_target("home", 0, &[false]),
@@ -3272,6 +3385,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
 fn gpui_role_mapping_covers_neutral_image_and_separator_fallback() {
     assert_eq!(gpui_role_from_ui(Role::Image), open_gpui::Role::Image);
     assert_eq!(gpui_role_from_ui(Role::Separator), open_gpui::Role::Group);
+    assert_eq!(gpui_role_from_ui(Role::Tree), open_gpui::Role::Tree);
+    assert_eq!(gpui_role_from_ui(Role::TreeItem), open_gpui::Role::TreeItem);
     assert_eq!(gpui_role_from_ui(Role::Table), open_gpui::Role::Table);
     assert_eq!(gpui_role_from_ui(Role::Row), open_gpui::Role::Row);
     assert_eq!(

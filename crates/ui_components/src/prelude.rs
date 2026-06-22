@@ -97,7 +97,7 @@ pub use crate::tooltip::{
     TooltipOpenIntent, TooltipState,
 };
 pub use crate::tree::{
-    TreeFocusTarget, TreeItemDescriptor, TreeItemState, TreeKeyboardAction, TreeMetrics,
+    Tree, TreeFocusTarget, TreeItemDescriptor, TreeItemState, TreeKeyboardAction, TreeMetrics,
     TreeSelection, TreeState, TreeToggle, tree_navigation_target,
 };
 pub use crate::virtualized_list::{

@@ -118,22 +118,27 @@ the Components page.
 contract gate. Entries marked `state-contract` must declare `state_contract_selector`, must not
 declare official `sample_selector`, and must stay disjoint from `official_sample_selector_pairs`.
 The current state contracts are `TreeState` and `VirtualizedListState`; their signals cover state,
-descriptor, action/result, helper, and payload types. `TreeState` must not imply a non-existent
-`Tree` component signal. `VirtualizedListState` remains a reusable keyboard/navigation state
-contract even though `VirtualizedList` is now an official rendered component. The Components page
-smoke also verifies every `state_contract_readout_pairs()` selector is visible.
+descriptor, action/result, helper, and payload types. `TreeState` remains a reusable hierarchy
+contract even though `Tree` is now an official rendered component, matching the
+`VirtualizedListState` / `VirtualizedList` split. The Components page smoke also verifies every
+`state_contract_readout_pairs()` selector is visible.
 The official Table gate requires `Table`, `TableState`, `VirtualizerState`, role signals for table
 rows and cells, and at least one `gallery:component-table-sample:{id}` selector. Table smokes and
 state tests assert that rendered row selectors stay bounded by the virtualizer's visible rows plus
 overscan, scroll input stays inside the table viewport, sortable header actions emit state-update
 payloads, and sort/filter state follows stable row ids rather than numeric positions.
+The official Tree gate requires `Tree`, `TreeState`, `TreeMetrics`, tree/tree-item role signals,
+and at least one `gallery:component-tree-sample:{id}` selector. Component runtime tests verify
+expansion, reveal, and selection payloads; gallery smokes verify keyboard expansion/selection
+through the sample runtime log and prove Tree wheel input stays inside the sample viewport.
 Tree and virtualized-list state-contract samples are verified through
 `components_page_samples_expose_component_metadata`: Tree readouts assert visible flattening,
 disabled-row position skipping, navigation skipping, toggle payloads, and Enter/Space selection
 actions; virtualized-list state-contract readouts assert active/selected indices, PageUp/PageDown
 clamping, activation payloads, viewport item count, overscan, and semantic scroll strategy labels.
-The same metadata test now also checks the official `VirtualizedList` sample's 10k item count,
-listbox roles, active/selected state, visible range, and overscan summary.
+The same metadata test now also checks the official `Tree` sample's role metadata and keyboard
+toggle payload, plus the official `VirtualizedList` sample's 10k item count, listbox roles,
+active/selected state, visible range, and overscan summary.
 
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left
@@ -303,7 +308,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     page overflows. The Table samples should expose the `release-queue` 10k-row virtualized window,
     the filtered/sorted/paginated `filter-board` model, stable selected row ids, table/row/cell
     accessibility metadata, sortable header metadata, and an internal body viewport that scrolls
-    without moving the outer Components page. The VirtualizedList sample should expose the
+    without moving the outer Components page. The Tree sample should expose `document-outline`,
+    tree/tree-item accessibility metadata, expandable `Paper` children, a state readout, an inner
+    viewport that scrolls without moving the outer Components page, and selection/toggle events
+    through the gallery sample runtime log. The VirtualizedList sample should expose the
     `release-navigation` 10k-item window, listbox/listbox-option roles, active/selected
     metadata, visible/overscan readouts, an internal viewport that scrolls without moving the
     outer Components page, card-chrome wheel containment, and PageDown plus Enter/Space activation
@@ -315,8 +323,8 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     adapter-only helpers and internal anatomy, and confirms Separator, Kbd, Progress, Skeleton, and
     Avatar are official entries with state types, then confirm the visible gate cards for explicit
     crate exports, gallery metadata, ScrollArea redraw persistence, Splitter runtime constraints,
-    Tabs overflow, `table-virtualization`, `virtualized-list-renderer`, and explicit accessible
-    metadata on icon-only and label-association samples.
+    Tabs overflow, `table-virtualization`, `tree-renderer`, `virtualized-list-renderer`, and
+    explicit accessible metadata on icon-only and label-association samples.
 7. Re-run `cargo nextest run -p open-gpui-ui-components` and `cargo nextest run -p
    open-gpui-ui-foundation-gallery` if a manual check exposes a component or gallery regression.
 

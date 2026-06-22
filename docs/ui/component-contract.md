@@ -240,10 +240,11 @@ catalog for this contract. Entries marked `official` satisfy the checklist above
 components. Entries marked `internal-anatomy` are public parts of a component family, such as
 toolbar or listbox item descriptors, and should not be promoted to standalone components without a
 new resolved-state contract. Entries marked `state-contract` are public renderer-neutral contracts
-with gallery readouts and signal coverage, but no completed GPUI renderer yet. They must use
+with gallery readouts and signal coverage, but they are not themselves rendered GPUI components.
+They may sit beside an official adapter, as `TreeState` does for `Tree`. They must use
 `state_contract_selector`, not the official `sample_selector`, and they must not satisfy the
-official rendered-component gate by accident. Entries marked `deferred` are planned components that
-must not be treated as shipped API until they satisfy the checklist.
+official rendered-component gate by accident. Entries marked `deferred` are planned components
+that must not be treated as shipped API until they satisfy the checklist.
 
 ## Theme Resolution
 
@@ -502,9 +503,12 @@ snapshot measurements but not captured scroll offsets. Grouped rows, expanded tr
 columns, sticky headers, aggregation, and two-dimensional grid virtualization remain follow-up work.
 `StatusCue` and `EmptyState` are official feedback components. They expose resolved feedback
 intent, size, role, metrics, and token intents, while the GPUI adapters own concrete styling and
-rendered debug selectors. `TreeState` is intentionally classified as a state contract rather than
-an official rendered component. It covers visible flattening, selected/focused metadata,
-disabled-item skipping, expansion toggle payloads, and keyboard selection/focus/toggle actions.
+rendered debug selectors. `Tree` is now an official rendered component backed by `TreeState`.
+Its adapter owns keyed GPUI runtime state, focus handles, expansion overrides, selection/toggle
+callbacks, and a persistent inner `ScrollHandle`. `TreeState` remains the renderer-neutral
+hierarchy contract and gallery readout for visible flattening, selected/focused metadata,
+disabled-item skipping, expansion toggle payloads, tree/tree-item roles, and keyboard
+selection/focus/toggle actions.
 `VirtualizedList` is now an official rendered component. Its adapter resolves a
 `VirtualizedListRenderPlan` from stable descriptors, owns a keyed GPUI runtime plus persistent
 `ScrollHandle`, and keeps row rendering inside its viewport. `VirtualizedListState` remains the
