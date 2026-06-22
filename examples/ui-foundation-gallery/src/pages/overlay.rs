@@ -757,7 +757,7 @@ pub fn menu_samples(tokens: ThemeTokens) -> [MenuSample; 4] {
                 focused_value: Some("save"),
                 state: Menu::new("overlay-menu:default-open", "Default open")
                     .default_open(true)
-                    .focused_value(focused_value)
+                    .default_focused_value(focused_value)
                     .items(items)
                     .tokens(tokens)
                     .state(),
@@ -776,7 +776,7 @@ pub fn menu_samples(tokens: ThemeTokens) -> [MenuSample; 4] {
                 focused_value: Some("copy"),
                 state: Menu::new("overlay-menu:controlled", "Controlled")
                     .open(false)
-                    .focused_value(focused_value)
+                    .default_focused_value(focused_value)
                     .items(items)
                     .tokens(tokens)
                     .state(),
@@ -887,7 +887,7 @@ pub fn context_menu_samples(tokens: ThemeTokens) -> [ContextMenuSample; 3] {
                 state: ContextMenu::new("overlay-context-menu:point-anchor", "Right click area")
                     .default_open(true)
                     .anchor_point(point(px(520.0), px(300.0)))
-                    .focused_value(focused_value)
+                    .default_focused_value(focused_value)
                     .items(items)
                     .tokens(tokens)
                     .state(),
@@ -906,7 +906,7 @@ pub fn context_menu_samples(tokens: ThemeTokens) -> [ContextMenuSample; 3] {
                 state: ContextMenu::new("overlay-context-menu:controlled", "Controlled area")
                     .open(false)
                     .anchor_point(point(px(280.0), px(160.0)))
-                    .focused_value(focused_value)
+                    .default_focused_value(focused_value)
                     .items(items)
                     .tokens(tokens)
                     .state(),

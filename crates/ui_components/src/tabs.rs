@@ -569,8 +569,8 @@ impl Tabs {
         self
     }
 
-    /// Seeds the selected tab value.
-    pub fn selected(mut self, value: impl Into<String>) -> Self {
+    /// Applies the default selected tab value for adapter-owned runtime state.
+    pub fn default_selected(mut self, value: impl Into<String>) -> Self {
         self.selected_value = Some(value.into());
         self
     }

@@ -1042,10 +1042,10 @@ impl TreeSample {
         .with_size(self.size);
 
         if let Some(selected) = self.state.selected_value() {
-            tree = tree.selected(selected);
+            tree = tree.default_selected(selected);
         }
         if let Some(focused) = self.state.focused_value() {
-            tree = tree.focused(focused);
+            tree = tree.default_focused(focused);
         }
 
         tree
@@ -1204,10 +1204,10 @@ impl VirtualizedListSample {
         .disabled(self.state.disabled());
 
         if let Some(active_index) = self.state.active_index() {
-            list = list.active_index(active_index);
+            list = list.default_active_index(active_index);
         }
         if let Some(selected_index) = self.state.selected_index() {
-            list = list.selected_index(selected_index);
+            list = list.default_selected_index(selected_index);
         }
 
         list
@@ -1338,7 +1338,7 @@ impl TabsSample {
         );
 
         if let Some(selected) = self.state.selected_value() {
-            tabs.selected(selected)
+            tabs.default_selected(selected)
         } else {
             tabs
         }
@@ -1567,7 +1567,7 @@ impl ToolbarSample {
         .tokens(tokens);
 
         if let Some(focused) = self.state.focused_value() {
-            toolbar = toolbar.focused(focused);
+            toolbar = toolbar.default_focused(focused);
         }
 
         for item in &self.items {

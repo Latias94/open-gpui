@@ -619,14 +619,14 @@ impl Tree {
         self
     }
 
-    /// Seeds the selected item value.
-    pub fn selected(mut self, value: impl Into<SharedString>) -> Self {
+    /// Applies the default selected item value for adapter-owned runtime state.
+    pub fn default_selected(mut self, value: impl Into<SharedString>) -> Self {
         self.selected_value = Some(value.into().to_string());
         self
     }
 
-    /// Seeds the focused item value.
-    pub fn focused(mut self, value: impl Into<SharedString>) -> Self {
+    /// Applies the default focused item value for adapter-owned runtime state.
+    pub fn default_focused(mut self, value: impl Into<SharedString>) -> Self {
         self.focused_value = Some(value.into().to_string());
         self
     }

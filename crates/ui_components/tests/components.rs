@@ -157,8 +157,11 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "RadioGroup",
-        controlled_inputs: &["selected"],
-        default_seeds: &[],
+        controlled_inputs: &[],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_selected",
+            runtime_value: "selected",
+        }],
         legacy_seed_inputs: &[],
         policy_hints: &["orientation"],
         callbacks: &[CallbackApi {
@@ -183,8 +186,11 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Toolbar",
-        controlled_inputs: &["focused"],
-        default_seeds: &[],
+        controlled_inputs: &[],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_focused",
+            runtime_value: "focused",
+        }],
         legacy_seed_inputs: &[],
         policy_hints: &["orientation"],
         callbacks: &[CallbackApi {
@@ -196,8 +202,11 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Sidebar",
-        controlled_inputs: &["collapsed", "selected", "focused"],
-        default_seeds: &[],
+        controlled_inputs: &["collapsed", "selected"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_focused",
+            runtime_value: "focused",
+        }],
         legacy_seed_inputs: &[],
         policy_hints: &["side", "variant", "collapse_mode"],
         callbacks: &[CallbackApi {
@@ -209,8 +218,17 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Tree",
-        controlled_inputs: &["selected", "focused"],
-        default_seeds: &[],
+        controlled_inputs: &[],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_selected",
+                runtime_value: "selected",
+            },
+            DefaultSeedApi {
+                builder: "default_focused",
+                runtime_value: "focused",
+            },
+        ],
         legacy_seed_inputs: &[],
         policy_hints: &[],
         callbacks: &[
@@ -353,8 +371,11 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     ComponentApiInventoryEntry {
         component: "Tabs",
         controlled_inputs: &[],
-        default_seeds: &[],
-        legacy_seed_inputs: &["selected"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_selected",
+            runtime_value: "selected",
+        }],
+        legacy_seed_inputs: &[],
         policy_hints: &["orientation", "activation_mode"],
         callbacks: &[CallbackApi {
             name: "on_selection_change",
@@ -398,8 +419,17 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "VirtualizedList",
-        controlled_inputs: &["active_index", "selected_index"],
-        default_seeds: &[],
+        controlled_inputs: &[],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_active_index",
+                runtime_value: "active_index",
+            },
+            DefaultSeedApi {
+                builder: "default_selected_index",
+                runtime_value: "selected_index",
+            },
+        ],
         legacy_seed_inputs: &[],
         policy_hints: &["viewport_item_count", "row_height", "overscan"],
         callbacks: &[CallbackApi {
@@ -624,11 +654,17 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Menu",
-        controlled_inputs: &["open", "focused_value"],
-        default_seeds: &[DefaultSeedApi {
-            builder: "default_open",
-            runtime_value: "open",
-        }],
+        controlled_inputs: &["open"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_open",
+                runtime_value: "open",
+            },
+            DefaultSeedApi {
+                builder: "default_focused_value",
+                runtime_value: "focused_value",
+            },
+        ],
         legacy_seed_inputs: &[],
         policy_hints: &[
             "placement",
@@ -652,11 +688,17 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "ContextMenu",
-        controlled_inputs: &["open", "focused_value"],
-        default_seeds: &[DefaultSeedApi {
-            builder: "default_open",
-            runtime_value: "open",
-        }],
+        controlled_inputs: &["open"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_open",
+                runtime_value: "open",
+            },
+            DefaultSeedApi {
+                builder: "default_focused_value",
+                runtime_value: "focused_value",
+            },
+        ],
         legacy_seed_inputs: &[],
         policy_hints: &[
             "anchor_point",
@@ -861,7 +903,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "new",
             "label",
             "orientation",
-            "selected",
+            "default_selected",
             "disabled",
             "required",
             "tokens",
@@ -881,7 +923,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
         "Toolbar" => &[
             "new",
             "orientation",
-            "focused",
+            "default_focused",
             "disabled",
             "tokens",
             "item",
@@ -899,7 +941,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "collapsed",
             "disabled",
             "selected",
-            "focused",
+            "default_focused",
             "tokens",
             "section",
             "sections",
@@ -909,8 +951,8 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
         "Tree" => &[
             "new",
             "item",
-            "selected",
-            "focused",
+            "default_selected",
+            "default_focused",
             "on_select",
             "on_toggle",
             "items",
@@ -1042,7 +1084,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "new",
             "orientation",
             "activation_mode",
-            "selected",
+            "default_selected",
             "tokens",
             "item",
             "on_selection_change",
@@ -1086,8 +1128,8 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "new",
             "from_shared_items",
             "disabled",
-            "active_index",
-            "selected_index",
+            "default_active_index",
+            "default_selected_index",
             "viewport_item_count",
             "row_height",
             "overscan",
@@ -1220,7 +1262,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "disabled",
             "open",
             "default_open",
-            "focused_value",
+            "default_focused_value",
             "placement",
             "outside_press_policy",
             "escape_key_policy",
@@ -1238,7 +1280,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "open",
             "default_open",
             "anchor_point",
-            "focused_value",
+            "default_focused_value",
             "outside_press_policy",
             "escape_key_policy",
             "initial_focus_intent",
@@ -1984,7 +2026,7 @@ fn sheet_state_models_non_modal_and_explicit_dismiss_policy() {
 fn menu_state_records_items_roving_focus_and_overlay_policy() {
     let state = Menu::new("file-menu", "File")
         .open(true)
-        .focused_value("save")
+        .default_focused_value("save")
         .item(MenuItem::action("new", "New"))
         .item(MenuItem::action("save", "Save"))
         .item(MenuItem::separator("separator"))
@@ -2037,7 +2079,7 @@ fn menu_state_defaults_focus_to_first_focusable_item_when_open() {
 fn menu_navigation_and_activation_skip_disabled_and_separator_items() {
     let state = Menu::new("edit-menu", "Edit")
         .open(true)
-        .focused_value("copy")
+        .default_focused_value("copy")
         .items([
             MenuItem::action("cut", "Cut"),
             MenuItem::action("copy", "Copy"),
@@ -2074,7 +2116,7 @@ fn menu_navigation_and_activation_skip_disabled_and_separator_items() {
 fn menu_runtime_keyboard_navigation_keeps_runtime_focused_value_after_rerender() {
     let state = Menu::new("runtime-menu", "Runtime menu")
         .open(true)
-        .focused_value("copy")
+        .default_focused_value("copy")
         .items([
             MenuItem::action("cut", "Cut"),
             MenuItem::action("copy", "Copy"),
@@ -2103,7 +2145,7 @@ fn menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender(
 
             div().size_full().child(
                 Menu::new("runtime-menu", "Runtime menu")
-                    .focused_value("copy")
+                    .default_focused_value("copy")
                     .item(MenuItem::action("cut", "Cut"))
                     .item(MenuItem::action("copy", "Copy"))
                     .item(MenuItem::action("select-all", "Select all"))
@@ -2187,7 +2229,7 @@ fn context_menu_state_reuses_menu_model_and_point_anchor_placement() {
     let state = ContextMenu::new("canvas-context-menu", "Canvas menu")
         .open(true)
         .anchor_point(anchor)
-        .focused_value("duplicate")
+        .default_focused_value("duplicate")
         .item(MenuItem::action("duplicate", "Duplicate"))
         .item(MenuItem::separator("separator"))
         .item(MenuItem::action("delete", "Delete").disabled(true))
@@ -2248,7 +2290,7 @@ fn context_menu_state_navigation_target_prefers_runtime_focused_value() {
     let state = ContextMenu::new("runtime-context-menu", "Runtime context menu")
         .open(true)
         .anchor_point(anchor)
-        .focused_value("copy")
+        .default_focused_value("copy")
         .item(MenuItem::action("cut", "Cut"))
         .item(MenuItem::action("copy", "Copy"))
         .item(MenuItem::action("select-all", "Select all"))
@@ -2279,7 +2321,7 @@ fn context_menu_runtime_keyboard_navigation_preserves_focused_value_after_rerend
             div().size_full().child(
                 ContextMenu::new("runtime-context-menu", "Runtime context menu")
                     .anchor_point(point(px(280.0), px(160.0)))
-                    .focused_value("copy")
+                    .default_focused_value("copy")
                     .item(MenuItem::action("cut", "Cut"))
                     .item(MenuItem::action("copy", "Copy"))
                     .item(MenuItem::action("select-all", "Select all"))
@@ -2439,7 +2481,7 @@ fn tabs_builder_state_falls_back_to_first_enabled_tab() {
         .orientation(Orientation::Horizontal)
         .activation_mode(TabsActivationMode::Automatic)
         .with_size(Size::Large)
-        .selected("history")
+        .default_selected("history")
         .item(TabsItem::new("overview", "Overview", div()))
         .item(TabsItem::new("details", "Details", div()))
         .item(TabsItem::new("history", "History", div()).disabled(true))
@@ -2707,8 +2749,8 @@ fn virtualized_list_component_render_plan_applies_builder_metrics() {
         .with_size(Size::Small)
         .row_height(ui_px(24.0))
         .overscan(2)
-        .active_index(5)
-        .selected_index(3)
+        .default_active_index(5)
+        .default_selected_index(3)
         .viewport_item_count(4)
         .render_plan(ui_px(48.0), ui_px(96.0));
 
@@ -2752,7 +2794,7 @@ fn tree_runtime_expands_reveals_and_selects_items(cx: &mut open_gpui::TestAppCon
                 ],
             )
             .with_size(Size::Small)
-            .focused("paper")
+            .default_focused("paper")
             .on_select(move |selection, _, _| {
                 selections.borrow_mut().push(selection.value().to_owned());
             })
@@ -2929,14 +2971,14 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         prelude::TreeItemDescriptor::new("root", "Root");
     let root_tree: root::Tree =
         root::Tree::new("root-tree", "Root tree", [root_tree_descriptor.clone()])
-            .selected("root")
-            .focused("root");
+            .default_selected("root")
+            .default_focused("root");
     let prelude_tree: prelude::Tree = prelude::Tree::new(
         "prelude-tree",
         "Prelude tree",
         [prelude::TreeItemDescriptor::new("root", "Root")],
     )
-    .focused("root");
+    .default_focused("root");
     let root_tree_state: root::TreeState = root::TreeState::resolve(
         Size::Medium,
         "Tree",
@@ -2963,8 +3005,8 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         "Root virtualized component",
         root_virtualized_items.clone(),
     )
-    .active_index(4)
-    .selected_index(4)
+    .default_active_index(4)
+    .default_selected_index(4)
     .viewport_item_count(3);
     let prelude_virtualized_items = (0..12)
         .map(|index| {
@@ -2979,8 +3021,8 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         "Prelude virtualized component",
         prelude_virtualized_items.clone(),
     )
-    .active_index(4)
-    .selected_index(4)
+    .default_active_index(4)
+    .default_selected_index(4)
     .viewport_item_count(3);
     let root_virtualized_plan: root::VirtualizedListRenderPlan =
         root::VirtualizedListRenderPlan::resolve(
@@ -3737,7 +3779,7 @@ fn tabs_vertical_tablist_scrolls_when_constrained(cx: &mut open_gpui::TestAppCon
                 Tabs::new("overflow-tabs")
                     .orientation(Orientation::Vertical)
                     .small()
-                    .selected("tab-0"),
+                    .default_selected("tab-0"),
                 |tabs, index| {
                     tabs.item(TabsItem::new(
                         format!("tab-{index}"),
@@ -3799,7 +3841,7 @@ fn tabs_runtime_manual_keyboard_activation_preserves_selected_seed_and_payloads(
             div().size_full().child(
                 Tabs::new("runtime-tabs")
                     .activation_mode(TabsActivationMode::Manual)
-                    .selected("details")
+                    .default_selected("details")
                     .item(TabsItem::new(
                         "overview",
                         "Overview",
@@ -3956,7 +3998,7 @@ fn toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items(
             div().size_full().child(
                 Toolbar::new("keyboard-toolbar", "Keyboard toolbar")
                     .small()
-                    .focused("bold")
+                    .default_focused("bold")
                     .item(ToolbarItem::icon("undo", "U", "Undo"))
                     .item(ToolbarItem::icon("redo", "R", "Redo").disabled(true))
                     .item(ToolbarItem::separator("history-separator"))
@@ -4294,7 +4336,7 @@ fn radio_group_runtime_keyboard_navigation_skips_disabled_items_and_payloads(
                 RadioGroup::new("runtime-radio")
                     .label("Runtime radio")
                     .orientation(Orientation::Horizontal)
-                    .selected("personal")
+                    .default_selected("personal")
                     .item(RadioItem::new("personal", "Personal"))
                     .item(RadioItem::new("team", "Team").disabled(true))
                     .item(RadioItem::new("enterprise", "Enterprise"))
@@ -4438,7 +4480,7 @@ fn radio_group_builder_state_falls_back_to_first_enabled_item() {
         .orientation(Orientation::Horizontal)
         .with_size(Size::Large)
         .required(true)
-        .selected("enterprise")
+        .default_selected("enterprise")
         .item(RadioItem::new("starter", "Starter"))
         .item(RadioItem::new("pro", "Pro"))
         .item(RadioItem::new("enterprise", "Enterprise").disabled(true))
@@ -4780,7 +4822,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_sort_requested",
         "on_toggle",
     ];
-    const CURRENT_LEGACY_SEED_INPUTS: &[(&str, &str)] = &[("Tabs", "selected")];
+    const CURRENT_LEGACY_SEED_INPUTS: &[(&str, &str)] = &[];
 
     let mut seen = std::collections::BTreeSet::new();
     for entry in COMPONENT_API_INVENTORY {
@@ -4857,14 +4899,30 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
     assert_inventory_contains_controlled_input("Select", "selected");
     assert_inventory_contains_controlled_input("Select", "active");
     assert_inventory_contains_callback("Select", "on_select", "SelectSelection");
-    assert_inventory_contains_controlled_input("Tree", "selected");
+    assert_inventory_contains_default_seed("Tabs", "default_selected", "selected");
+    assert_inventory_contains_default_seed("RadioGroup", "default_selected", "selected");
+    assert_inventory_contains_default_seed("Toolbar", "default_focused", "focused");
+    assert_inventory_contains_default_seed("Sidebar", "default_focused", "focused");
+    assert_inventory_contains_default_seed("Tree", "default_selected", "selected");
+    assert_inventory_contains_default_seed("Tree", "default_focused", "focused");
     assert_inventory_contains_callback("Tree", "on_toggle", "TreeToggle");
-    assert_inventory_contains_controlled_input("VirtualizedList", "active_index");
+    assert_inventory_contains_default_seed(
+        "VirtualizedList",
+        "default_active_index",
+        "active_index",
+    );
+    assert_inventory_contains_default_seed(
+        "VirtualizedList",
+        "default_selected_index",
+        "selected_index",
+    );
     assert_inventory_contains_callback(
         "VirtualizedList",
         "on_activate",
         "VirtualizedListActivation",
     );
+    assert_inventory_contains_default_seed("Menu", "default_focused_value", "focused_value");
+    assert_inventory_contains_default_seed("ContextMenu", "default_focused_value", "focused_value");
 }
 
 #[test]
@@ -5515,7 +5573,7 @@ fn toolbar_builder_state_skips_disabled_and_separator_items() {
     let state = Toolbar::new("editor-tools", "Editor")
         .orientation(Orientation::Vertical)
         .large()
-        .focused("missing")
+        .default_focused("missing")
         .item(ToolbarItem::action("cut", "Cut").disabled(true))
         .item(ToolbarItem::separator("clipboard-separator"))
         .item(ToolbarItem::icon("copy", "C", "Copy"))
@@ -7275,7 +7333,7 @@ fn default_theme_resolves_all_current_component_color_intents() {
     ];
     let radio_groups = [
         RadioGroup::new("plan")
-            .selected("team")
+            .default_selected("team")
             .item(RadioItem::new("personal", "Personal"))
             .item(RadioItem::new("team", "Team"))
             .state(),

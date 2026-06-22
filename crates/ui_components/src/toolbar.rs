@@ -618,8 +618,8 @@ impl Toolbar {
         self
     }
 
-    /// Seeds the focused toolbar item value.
-    pub fn focused(mut self, value: impl Into<String>) -> Self {
+    /// Applies the default focused toolbar item value for adapter-owned runtime state.
+    pub fn default_focused(mut self, value: impl Into<String>) -> Self {
         self.focused_value = Some(value.into());
         self
     }

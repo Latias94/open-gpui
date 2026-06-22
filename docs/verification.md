@@ -79,8 +79,8 @@ Combobox, Command, Tabs, and Toolbar keyboard navigation. The focused TextInput 
 standalone controller-backed input, clicks its real root, accepts simulated platform text, sanitizes
 single-line input, and verifies the controller caret ends at the inserted text. The focused
 RadioGroup test renders real radio
-items, rejects disabled clicks, skips disabled items with arrow navigation, verifies click and
-arrow-selection payloads, and confirms Space on an already selected radio does not emit a duplicate
+items, rejects disabled clicks, skips disabled items with arrow navigation, verifies default
+selection seeding, click and arrow-selection payloads, and confirms Space on an already selected radio does not emit a duplicate
 selection change. The focused Listbox test renders real standalone, separator, and grouped options,
 rejects disabled clicks, keeps arrow navigation selection-free, skips disabled/separator rows, and
 verifies Enter and Space dispatch both option-level and listbox-level selection callbacks. The
@@ -92,7 +92,7 @@ select filtered options with ordered select/open callbacks. The focused Command 
 controller-backed text input, type a query, verify inline and dialog command filtering, select the
 active command with keyboard navigation, keep non-dialog content open, and verify dialog selection,
 Escape, and outside press remove the modal content. The focused Tabs test renders real tabs,
-preserves the builder-selected seed on the first frame, rejects disabled tab clicks, keeps manual
+preserves the `default_selected` seed on the first frame, rejects disabled tab clicks, keeps manual
 arrow navigation as focus-only, and activates focused tabs with Enter and Space. The focused
 Toolbar test renders real toolbar items, moves roving focus with arrow/Home keys, skips disabled and
 separator items, and activates the focused item with Enter.

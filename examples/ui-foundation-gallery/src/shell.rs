@@ -2461,7 +2461,7 @@ impl GalleryShell {
                 .open(controlled_open);
 
             let menu = menu.when_some(focused_value, |menu, focused_value| {
-                menu.focused_value(focused_value)
+                menu.default_focused_value(focused_value)
             });
 
             menu.items(state_items.clone()).state()
@@ -2486,7 +2486,7 @@ impl GalleryShell {
             .escape_key_policy(state.escape_key_policy());
 
         let menu = menu.when_some(focused_value, |menu, focused_value| {
-            menu.focused_value(focused_value)
+            menu.default_focused_value(focused_value)
         });
 
         let menu = match state.open_mode() {
@@ -2593,7 +2593,7 @@ impl GalleryShell {
 
             let context_menu = context_menu
                 .when_some(focused_value, |context_menu, focused_value| {
-                    context_menu.focused_value(focused_value)
+                    context_menu.default_focused_value(focused_value)
                 });
 
             context_menu
@@ -2622,7 +2622,7 @@ impl GalleryShell {
                 .escape_key_policy(state.menu().escape_key_policy());
 
         let context_menu = context_menu.when_some(focused_value, |context_menu, focused_value| {
-            context_menu.focused_value(focused_value)
+            context_menu.default_focused_value(focused_value)
         });
 
         let context_menu = match state.open_mode() {

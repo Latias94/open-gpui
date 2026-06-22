@@ -1136,8 +1136,8 @@ impl Sidebar {
         self
     }
 
-    /// Applies the focused item value.
-    pub fn focused(mut self, value: impl Into<String>) -> Self {
+    /// Applies the default focused item value for adapter-owned runtime state.
+    pub fn default_focused(mut self, value: impl Into<String>) -> Self {
         self.focused_value = Some(value.into());
         self
     }

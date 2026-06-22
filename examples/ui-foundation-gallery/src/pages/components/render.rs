@@ -357,7 +357,7 @@ pub(crate) fn render_components_page(
                                 sidebar = sidebar.selected(selected);
                             }
                             if let Some(focused) = state.focused_value() {
-                                sidebar = sidebar.focused(focused);
+                                sidebar = sidebar.default_focused(focused);
                             }
                             for section in state.sections() {
                                 let mut sidebar_section =
@@ -952,7 +952,9 @@ pub(crate) fn render_components_page(
                                                 ))
                                                 .label(sample.title)
                                                 .orientation(state.orientation())
-                                                .selected(state.selected_value().unwrap_or("none"))
+                                                .default_selected(
+                                                    state.selected_value().unwrap_or("none"),
+                                                )
                                                 .required(state.required())
                                                 .disabled(state.disabled())
                                                 .with_size(state.size())

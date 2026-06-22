@@ -588,14 +588,14 @@ impl VirtualizedList {
         self
     }
 
-    /// Seeds the active item index.
-    pub fn active_index(mut self, index: usize) -> Self {
+    /// Applies the default active item index for adapter-owned runtime state.
+    pub fn default_active_index(mut self, index: usize) -> Self {
         self.active_index = Some(index);
         self
     }
 
-    /// Seeds the selected item index.
-    pub fn selected_index(mut self, index: usize) -> Self {
+    /// Applies the default selected item index for adapter-owned runtime state.
+    pub fn default_selected_index(mut self, index: usize) -> Self {
         self.selected_index = Some(index);
         self
     }

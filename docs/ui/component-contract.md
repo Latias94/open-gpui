@@ -227,11 +227,17 @@ Callbacks should use a small semantic vocabulary: `on_change` for scalar value c
 `on_open_change` for overlay visibility requests, `on_selection_change` for persistent selection
 state, `on_select` for committed item selection or action-like choice, `on_activate` for activation
 without persistent selection ownership, and `on_toggle` for expansion or tri-state toggle payloads.
-Current bootstrap exceptions such as `Button::on_click`, `Switch::on_click`,
-`AlertDialog::on_action`, `AlertDialog::on_cancel`, `Sheet::on_close`, and
-`Table::on_sort_requested` must stay explicit in the API inventory until a follow-up unit either
-renames them or records why the exception is intentional. `Tabs::selected` is currently pinned as
-a legacy seed exception and should not be copied into new components.
+Seed-shaped runtime builders must stay explicit in the API inventory. Current examples include
+`Tabs::default_selected`, `RadioGroup::default_selected`, `Toolbar::default_focused`,
+`Sidebar::default_focused`, `Tree::default_selected`, `Tree::default_focused`,
+`VirtualizedList::default_active_index`, `VirtualizedList::default_selected_index`,
+`Menu::default_focused_value`, and `ContextMenu::default_focused_value`. Direct names such as
+`Sidebar::selected`, `Listbox::selected`, `Select::selected`, `Combobox::selected`, and
+`Command::selected` remain reserved for caller-owned render-frame inputs. Current bootstrap
+callback exceptions such as `Button::on_click`, `Switch::on_click`, `AlertDialog::on_action`,
+`AlertDialog::on_cancel`, `Sheet::on_close`, and `Table::on_sort_requested` must stay explicit in
+the API inventory until a follow-up unit either renames them or records why the exception is
+intentional.
 
 Keep crate-root exports explicit. Do not use wildcard public re-exports in component crates.
 GPUI-specific helpers that remain public for concrete applications must be reachable through
@@ -247,8 +253,8 @@ A component is official only when it satisfies the current-crate completion cont
 - it has a public resolved-state or descriptor type that avoids GPUI runtime/rendering types;
 - crate-root and prelude exports are explicit and covered by public export tests;
 - its public interaction API has a `COMPONENT_API_INVENTORY` row classifying render inputs,
-  controlled runtime inputs, `default_*` seeds, legacy seed exceptions, policy hints, callbacks,
-  callback payload types, and renderer-neutral resolved-state ownership;
+  controlled runtime inputs, `default_*` seeds, policy hints, callbacks, callback payload types,
+  and renderer-neutral resolved-state ownership;
 - metrics, sizes, colors, focus rings, and accessibility metadata use foundation vocabulary;
 - callbacks, focus handles, scroll handles, image loading, deferred rendering, and subscriptions
   stay in the GPUI adapter layer;
