@@ -104,6 +104,18 @@ clamping, indeterminate progress, Avatar fallback initials, explicit accessible 
 metrics, `Role::Image`, and source metadata staying outside image-loading ownership. The gallery metadata and
 short-viewport smoke tests also verify those primitives are listed as official catalog entries and
 render visible samples with stable debug selectors.
+The public API inventory gate lives in `crates/ui_components/tests/components.rs` as
+`component_api_inventory_covers_official_gallery_catalog` and
+`component_api_inventory_uses_stable_ownership_vocabulary`. Run the focused proof with:
+
+```sh
+cargo nextest run -p open-gpui-ui-components component_api_inventory
+```
+
+That gate checks that every official Components catalog entry has a matching API inventory row,
+that overlay families are explicitly listed, that public method baselines catch top-level builder
+drift, that render/controlled/default/policy vocabulary stays consistent, and that
+renderer-neutral resolved state remains free of GPUI runtime types.
 Feedback coverage now promotes `StatusCue` and `EmptyState` as official rendered Components
 catalog entries. The focused component tests verify root/prelude exports, feedback intent labels,
 resolved roles, metrics, and theme color intents. The gallery metadata tests require their

@@ -206,10 +206,32 @@ is renderer-specific.
 
 ## Public API
 
-Prefer Rust builder-style APIs with explicit enums and semantic event names. Use names such as
-`on_activate`, `on_change`, `on_open_change`, and `on_selection_change` when adding new events.
-Device-specific names such as `on_click` are acceptable only when maintaining an existing unstable
-bootstrap API.
+Prefer Rust builder-style APIs with explicit enums and semantic event names. Public interaction
+builders should fall into one of four ownership buckets:
+
+- **render input**: the caller supplies a plain render prop that does not represent adapter-owned
+  runtime state. Examples include visible labels, descriptions, variants, tokens, and static
+  source metadata.
+- **controlled runtime input**: the caller supplies the current render-frame value for state the
+  adapter may also mutate. Direct semantic names such as `value`, `open`, `selected`, `active`,
+  `focused`, `checked`, `pressed`, `collapsed`, `active_index`, and `selected_index` belong here.
+- **default seed**: the caller supplies the first value for adapter-owned runtime state. These
+  builders must use `default_*` and document the runtime value they seed, such as
+  `default_open -> open`.
+- **policy hint**: the caller describes adapter behavior without transferring value ownership.
+  Examples include `initial_focus_intent`, `focus_restore_intent`, `outside_press_policy`,
+  `escape_key_policy`, placement inputs, scroll reset policy, and externally supplied adapter
+  handles.
+
+Callbacks should use a small semantic vocabulary: `on_change` for scalar value changes,
+`on_open_change` for overlay visibility requests, `on_selection_change` for persistent selection
+state, `on_select` for committed item selection or action-like choice, `on_activate` for activation
+without persistent selection ownership, and `on_toggle` for expansion or tri-state toggle payloads.
+Current bootstrap exceptions such as `Button::on_click`, `Switch::on_click`,
+`AlertDialog::on_action`, `AlertDialog::on_cancel`, `Sheet::on_close`, and
+`Table::on_sort_requested` must stay explicit in the API inventory until a follow-up unit either
+renames them or records why the exception is intentional. `Tabs::selected` is currently pinned as
+a legacy seed exception and should not be copied into new components.
 
 Keep crate-root exports explicit. Do not use wildcard public re-exports in component crates.
 GPUI-specific helpers that remain public for concrete applications must be reachable through
@@ -224,6 +246,9 @@ A component is official only when it satisfies the current-crate completion cont
 
 - it has a public resolved-state or descriptor type that avoids GPUI runtime/rendering types;
 - crate-root and prelude exports are explicit and covered by public export tests;
+- its public interaction API has a `COMPONENT_API_INVENTORY` row classifying render inputs,
+  controlled runtime inputs, `default_*` seeds, legacy seed exceptions, policy hints, callbacks,
+  callback payload types, and renderer-neutral resolved-state ownership;
 - metrics, sizes, colors, focus rings, and accessibility metadata use foundation vocabulary;
 - callbacks, focus handles, scroll handles, image loading, deferred rendering, and subscriptions
   stay in the GPUI adapter layer;

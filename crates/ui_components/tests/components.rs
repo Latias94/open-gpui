@@ -56,6 +56,1268 @@ const TEST_ACCENT: TokenKey = TokenKey::new("test.accent");
 const TEST_FOCUS_RING: TokenKey = TokenKey::new("test.focus_ring");
 const TEST_DESTRUCTIVE: TokenKey = TokenKey::new("test.destructive");
 
+#[derive(Debug)]
+struct DefaultSeedApi {
+    builder: &'static str,
+    runtime_value: &'static str,
+}
+
+#[derive(Debug)]
+struct CallbackApi {
+    name: &'static str,
+    payload: &'static str,
+}
+
+#[derive(Debug)]
+struct ComponentApiInventoryEntry {
+    component: &'static str,
+    controlled_inputs: &'static [&'static str],
+    default_seeds: &'static [DefaultSeedApi],
+    legacy_seed_inputs: &'static [&'static str],
+    policy_hints: &'static [&'static str],
+    callbacks: &'static [CallbackApi],
+    renderer_neutral_state: bool,
+    no_interaction_note: Option<&'static str>,
+}
+
+impl ComponentApiInventoryEntry {
+    fn has_classification(&self) -> bool {
+        !component_render_inputs(self.component).is_empty()
+            || !self.controlled_inputs.is_empty()
+            || !self.default_seeds.is_empty()
+            || !self.legacy_seed_inputs.is_empty()
+            || !self.policy_hints.is_empty()
+            || !self.callbacks.is_empty()
+            || self.no_interaction_note.is_some()
+    }
+}
+
+const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
+    ComponentApiInventoryEntry {
+        component: "Button",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &[],
+        callbacks: &[CallbackApi {
+            name: "on_click",
+            payload: "ClickEvent",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Badge",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &[],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: Some("display-only primitive"),
+    },
+    ComponentApiInventoryEntry {
+        component: "IconButton",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &[],
+        callbacks: &[CallbackApi {
+            name: "on_click",
+            payload: "ClickEvent",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Switch",
+        controlled_inputs: &["checked"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &[],
+        callbacks: &[CallbackApi {
+            name: "on_click",
+            payload: "bool",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Checkbox",
+        controlled_inputs: &["checked", "checked_state"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &[],
+        callbacks: &[CallbackApi {
+            name: "on_toggle",
+            payload: "Toggled",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "RadioGroup",
+        controlled_inputs: &["selected"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["orientation"],
+        callbacks: &[CallbackApi {
+            name: "on_selection_change",
+            payload: "RadioSelection",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Toggle",
+        controlled_inputs: &["pressed"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &[],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "bool",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Toolbar",
+        controlled_inputs: &["focused"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["orientation"],
+        callbacks: &[CallbackApi {
+            name: "on_select",
+            payload: "ToolbarSelection",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Sidebar",
+        controlled_inputs: &["collapsed", "selected", "focused"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["side", "variant", "collapse_mode"],
+        callbacks: &[CallbackApi {
+            name: "on_selection_change",
+            payload: "SidebarSelection",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Tree",
+        controlled_inputs: &["selected", "focused"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &[],
+        callbacks: &[
+            CallbackApi {
+                name: "on_select",
+                payload: "TreeSelection",
+            },
+            CallbackApi {
+                name: "on_toggle",
+                payload: "TreeToggle",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Listbox",
+        controlled_inputs: &["selected", "active"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["embedded", "typeahead_query"],
+        callbacks: &[CallbackApi {
+            name: "on_select",
+            payload: "ListboxSelection",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Select",
+        controlled_inputs: &["open", "selected", "active"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open",
+            runtime_value: "open",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "placement",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+        ],
+        callbacks: &[
+            CallbackApi {
+                name: "on_open_change",
+                payload: "bool",
+            },
+            CallbackApi {
+                name: "on_select",
+                payload: "SelectSelection",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Combobox",
+        controlled_inputs: &["open", "query", "selected", "active"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open",
+            runtime_value: "open",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &["placement", "outside_press_policy"],
+        callbacks: &[
+            CallbackApi {
+                name: "on_open_change",
+                payload: "bool",
+            },
+            CallbackApi {
+                name: "on_select",
+                payload: "ComboboxSelection",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Command",
+        controlled_inputs: &["open", "query", "selected", "active"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open",
+            runtime_value: "open",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "dialog",
+            "dialog_enabled",
+            "outside_press_policy",
+            "escape_key_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+        ],
+        callbacks: &[
+            CallbackApi {
+                name: "on_open_change",
+                payload: "bool",
+            },
+            CallbackApi {
+                name: "on_select",
+                payload: "CommandSelection",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Label",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["for_control"],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: Some("control-association primitive"),
+    },
+    ComponentApiInventoryEntry {
+        component: "TextInput",
+        controlled_inputs: &["value"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["controller"],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "String",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Field",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["control"],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: Some("composition wrapper"),
+    },
+    ComponentApiInventoryEntry {
+        component: "Tabs",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &["selected"],
+        policy_hints: &["orientation", "activation_mode"],
+        callbacks: &[CallbackApi {
+            name: "on_selection_change",
+            payload: "TabsSelection",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "ScrollArea",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["axis", "reset_on_key", "preserve_scroll", "scroll_handle"],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Splitter",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["orientation", "panel"],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Table",
+        controlled_inputs: &["state"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["virtualizer_snapshot"],
+        callbacks: &[CallbackApi {
+            name: "on_sort_requested",
+            payload: "TableHeaderAction",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "VirtualizedList",
+        controlled_inputs: &["active_index", "selected_index"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["viewport_item_count", "row_height", "overscan"],
+        callbacks: &[CallbackApi {
+            name: "on_activate",
+            payload: "VirtualizedListActivation",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "StatusCue",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &[],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: Some("feedback readout"),
+    },
+    ComponentApiInventoryEntry {
+        component: "EmptyState",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &[],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: Some("feedback readout"),
+    },
+    ComponentApiInventoryEntry {
+        component: "Separator",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["orientation", "decorative"],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: Some("display-only primitive"),
+    },
+    ComponentApiInventoryEntry {
+        component: "Kbd",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &[],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: Some("display-only primitive"),
+    },
+    ComponentApiInventoryEntry {
+        component: "Progress",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["indeterminate"],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: Some("status readout"),
+    },
+    ComponentApiInventoryEntry {
+        component: "Skeleton",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &[],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: Some("display-only loading placeholder"),
+    },
+    ComponentApiInventoryEntry {
+        component: "Avatar",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["accessible_label"],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: Some("identity readout"),
+    },
+    ComponentApiInventoryEntry {
+        component: "Tooltip",
+        controlled_inputs: &["open"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "open_intent",
+            "placement_side",
+            "placement_alignment",
+            "delay",
+        ],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "HoverCard",
+        controlled_inputs: &["open"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open",
+            runtime_value: "open",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "open_intent",
+            "placement_side",
+            "placement_alignment",
+            "delay",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+        ],
+        callbacks: &[CallbackApi {
+            name: "on_open_change",
+            payload: "bool",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Popover",
+        controlled_inputs: &["open"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open",
+            runtime_value: "open",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+        ],
+        callbacks: &[CallbackApi {
+            name: "on_open_change",
+            payload: "bool",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Dialog",
+        controlled_inputs: &["open"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open",
+            runtime_value: "open",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "outside_press_policy",
+            "escape_key_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+        ],
+        callbacks: &[CallbackApi {
+            name: "on_open_change",
+            payload: "bool",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "AlertDialog",
+        controlled_inputs: &["open"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open",
+            runtime_value: "open",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "outside_press_policy",
+            "escape_key_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+        ],
+        callbacks: &[
+            CallbackApi {
+                name: "on_cancel",
+                payload: "()",
+            },
+            CallbackApi {
+                name: "on_action",
+                payload: "()",
+            },
+            CallbackApi {
+                name: "on_open_change",
+                payload: "bool",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Sheet",
+        controlled_inputs: &["open"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open",
+            runtime_value: "open",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "side",
+            "modal_mode",
+            "close_affordance",
+            "outside_press_policy",
+            "escape_key_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+        ],
+        callbacks: &[
+            CallbackApi {
+                name: "on_close",
+                payload: "()",
+            },
+            CallbackApi {
+                name: "on_open_change",
+                payload: "bool",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Menu",
+        controlled_inputs: &["open", "focused_value"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open",
+            runtime_value: "open",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "placement",
+            "outside_press_policy",
+            "escape_key_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+        ],
+        callbacks: &[
+            CallbackApi {
+                name: "on_open_change",
+                payload: "bool",
+            },
+            CallbackApi {
+                name: "on_select",
+                payload: "MenuSelection",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "ContextMenu",
+        controlled_inputs: &["open", "focused_value"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open",
+            runtime_value: "open",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "anchor_point",
+            "outside_press_policy",
+            "escape_key_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+        ],
+        callbacks: &[
+            CallbackApi {
+                name: "on_open_change",
+                payload: "bool",
+            },
+            CallbackApi {
+                name: "on_select",
+                payload: "MenuSelection",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+];
+
+fn component_render_inputs(component: &str) -> &'static [&'static str] {
+    match component {
+        "Button" => &["variant", "disabled", "selected"],
+        "Badge" => &["variant"],
+        "IconButton" => &["variant", "disabled"],
+        "Switch" => &["label", "disabled"],
+        "Checkbox" => &["label", "indeterminate", "disabled", "required", "invalid"],
+        "RadioGroup" => &["label", "disabled", "required", "item"],
+        "Toggle" => &["variant", "disabled"],
+        "Toolbar" => &["disabled", "item", "items"],
+        "Sidebar" => &["disabled", "section", "sections"],
+        "Tree" => &["item", "items"],
+        "Listbox" => &[
+            "option",
+            "options",
+            "group",
+            "groups",
+            "disabled",
+            "empty_label",
+        ],
+        "Select" => &[
+            "placeholder",
+            "option",
+            "options",
+            "group",
+            "groups",
+            "disabled",
+        ],
+        "Combobox" => &[
+            "placeholder",
+            "option",
+            "options",
+            "group",
+            "groups",
+            "disabled",
+            "required",
+            "empty_label",
+        ],
+        "Command" => &[
+            "placeholder",
+            "trigger_label",
+            "item",
+            "items",
+            "group",
+            "groups",
+            "disabled",
+            "dialog_description",
+            "loading",
+            "idle",
+            "empty_label",
+        ],
+        "Label" => &["required", "disabled"],
+        "TextInput" => &[
+            "placeholder",
+            "disabled",
+            "read_only",
+            "invalid",
+            "required",
+        ],
+        "Field" => &[
+            "help_text",
+            "help",
+            "error_text",
+            "error",
+            "required",
+            "disabled",
+            "invalid",
+        ],
+        "Tabs" => &["item"],
+        "Splitter" => &["disabled", "panel"],
+        "Table" => &[
+            "label",
+            "overscan",
+            "row_height",
+            "header_height",
+            "viewport_extent",
+            "min_column_width",
+        ],
+        "VirtualizedList" => &["disabled", "viewport_item_count", "row_height", "overscan"],
+        "StatusCue" => &["intent"],
+        "EmptyState" => &["description", "intent"],
+        "Separator" => &["orientation", "vertical", "decorative"],
+        "Progress" => &["value", "indeterminate"],
+        "Skeleton" => &["subtle"],
+        "Avatar" => &["source", "fallback", "accessible_label"],
+        "Tooltip" => &["disabled"],
+        "HoverCard" => &["disabled"],
+        "Popover" => &["disabled"],
+        "Dialog" => &["description", "disabled"],
+        "AlertDialog" => &[
+            "intent",
+            "cancel_label",
+            "disabled",
+            "cancel_disabled",
+            "action_disabled",
+        ],
+        "Sheet" => &["description", "disabled"],
+        "Menu" => &["item", "items", "disabled"],
+        "ContextMenu" => &["item", "items"],
+        _ => &[],
+    }
+}
+
+fn component_source_file(component: &str) -> &'static str {
+    match component {
+        "Button" => "button.rs",
+        "Badge" => "badge.rs",
+        "IconButton" => "icon_button.rs",
+        "Switch" => "switch.rs",
+        "Checkbox" => "checkbox.rs",
+        "RadioGroup" => "radio.rs",
+        "Toggle" => "toggle.rs",
+        "Toolbar" => "toolbar.rs",
+        "Sidebar" => "sidebar.rs",
+        "Tree" => "tree.rs",
+        "Listbox" => "listbox.rs",
+        "Select" => "select.rs",
+        "Combobox" => "combobox.rs",
+        "Command" => "command.rs",
+        "Label" => "label.rs",
+        "TextInput" => "text_input.rs",
+        "Field" => "field.rs",
+        "Tabs" => "tabs.rs",
+        "ScrollArea" => "scroll_area.rs",
+        "Splitter" => "splitter.rs",
+        "Table" => "table.rs",
+        "VirtualizedList" => "virtualized_list.rs",
+        "StatusCue" => "feedback.rs",
+        "EmptyState" => "feedback.rs",
+        "Separator" => "separator.rs",
+        "Kbd" => "kbd.rs",
+        "Progress" => "progress.rs",
+        "Skeleton" => "skeleton.rs",
+        "Avatar" => "avatar.rs",
+        "Tooltip" => "tooltip.rs",
+        "HoverCard" => "hover_card.rs",
+        "Popover" => "popover.rs",
+        "Dialog" => "dialog.rs",
+        "AlertDialog" => "alert_dialog.rs",
+        "Sheet" => "sheet.rs",
+        "Menu" => "menu.rs",
+        "ContextMenu" => "context_menu.rs",
+        _ => panic!("missing source file mapping for `{component}`"),
+    }
+}
+
+fn component_public_methods(component: &str) -> &'static [&'static str] {
+    match component {
+        "Button" => &[
+            "new", "variant", "disabled", "selected", "tokens", "on_click", "state",
+        ],
+        "Badge" => &["new", "variant", "tokens", "state"],
+        "IconButton" => &[
+            "new",
+            "variant",
+            "disabled",
+            "tokens",
+            "on_click",
+            "accessible_label",
+            "state",
+        ],
+        "Switch" => &[
+            "new", "label", "checked", "disabled", "tokens", "on_click", "state",
+        ],
+        "Checkbox" => &[
+            "new",
+            "label",
+            "checked",
+            "indeterminate",
+            "checked_state",
+            "disabled",
+            "required",
+            "invalid",
+            "tokens",
+            "on_toggle",
+            "state",
+        ],
+        "RadioGroup" => &[
+            "new",
+            "label",
+            "orientation",
+            "selected",
+            "disabled",
+            "required",
+            "tokens",
+            "item",
+            "on_selection_change",
+            "state",
+        ],
+        "Toggle" => &[
+            "new",
+            "variant",
+            "pressed",
+            "disabled",
+            "tokens",
+            "on_change",
+            "state",
+        ],
+        "Toolbar" => &[
+            "new",
+            "orientation",
+            "focused",
+            "disabled",
+            "tokens",
+            "item",
+            "items",
+            "on_select",
+            "state",
+        ],
+        "Sidebar" => &[
+            "new",
+            "side",
+            "left",
+            "right",
+            "variant",
+            "collapse_mode",
+            "collapsed",
+            "disabled",
+            "selected",
+            "focused",
+            "tokens",
+            "section",
+            "sections",
+            "on_selection_change",
+            "state",
+        ],
+        "Tree" => &[
+            "new",
+            "item",
+            "selected",
+            "focused",
+            "on_select",
+            "on_toggle",
+            "items",
+            "state",
+        ],
+        "Listbox" => &[
+            "new",
+            "option",
+            "options",
+            "group",
+            "groups",
+            "disabled",
+            "embedded",
+            "selected",
+            "active",
+            "typeahead_query",
+            "empty_label",
+            "tokens",
+            "on_select",
+            "state",
+        ],
+        "Select" => &[
+            "new",
+            "placeholder",
+            "option",
+            "options",
+            "group",
+            "groups",
+            "disabled",
+            "open",
+            "default_open",
+            "selected",
+            "active",
+            "placement",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
+            "on_select",
+            "state",
+        ],
+        "Combobox" => &[
+            "new",
+            "placeholder",
+            "option",
+            "options",
+            "group",
+            "groups",
+            "disabled",
+            "required",
+            "open",
+            "default_open",
+            "query",
+            "selected",
+            "active",
+            "empty_label",
+            "placement",
+            "outside_press_policy",
+            "tokens",
+            "on_open_change",
+            "on_select",
+            "state",
+        ],
+        "Command" => &[
+            "new",
+            "placeholder",
+            "trigger_label",
+            "item",
+            "items",
+            "group",
+            "groups",
+            "disabled",
+            "open",
+            "default_open",
+            "dialog",
+            "dialog_enabled",
+            "dialog_description",
+            "query",
+            "selected",
+            "active",
+            "loading",
+            "idle",
+            "empty_label",
+            "outside_press_policy",
+            "escape_key_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
+            "on_select",
+            "state",
+        ],
+        "Label" => &[
+            "new",
+            "for_control",
+            "required",
+            "disabled",
+            "tokens",
+            "state",
+        ],
+        "TextInput" => &[
+            "new",
+            "controller",
+            "value",
+            "on_change",
+            "placeholder",
+            "disabled",
+            "read_only",
+            "invalid",
+            "required",
+            "tokens",
+            "state",
+        ],
+        "Field" => &[
+            "new",
+            "help_text",
+            "help",
+            "error_text",
+            "error",
+            "required",
+            "disabled",
+            "invalid",
+            "tokens",
+            "control",
+            "state",
+        ],
+        "Tabs" => &[
+            "new",
+            "orientation",
+            "activation_mode",
+            "selected",
+            "tokens",
+            "item",
+            "on_selection_change",
+            "state",
+        ],
+        "ScrollArea" => &[
+            "new",
+            "axis",
+            "vertical",
+            "horizontal",
+            "both",
+            "scroll_handle",
+            "reset_on_key",
+            "preserve_scroll",
+            "state",
+        ],
+        "Splitter" => &[
+            "new",
+            "orientation",
+            "horizontal",
+            "vertical",
+            "disabled",
+            "panel",
+            "state",
+        ],
+        "Table" => &[
+            "new",
+            "label",
+            "overscan",
+            "row_height",
+            "header_height",
+            "viewport_extent",
+            "min_column_width",
+            "virtualizer_snapshot",
+            "on_sort_requested",
+            "table_state",
+            "state",
+            "render_plan",
+        ],
+        "VirtualizedList" => &[
+            "new",
+            "from_shared_items",
+            "disabled",
+            "active_index",
+            "selected_index",
+            "viewport_item_count",
+            "row_height",
+            "overscan",
+            "on_activate",
+            "state",
+            "render_plan",
+        ],
+        "StatusCue" => &["new", "intent", "tokens", "state"],
+        "EmptyState" => &["new", "description", "intent", "tokens", "state"],
+        "Separator" => &[
+            "new",
+            "orientation",
+            "vertical",
+            "decorative",
+            "tokens",
+            "state",
+        ],
+        "Kbd" => &["new", "tokens", "state"],
+        "Progress" => &["new", "value", "indeterminate", "tokens", "state"],
+        "Skeleton" => &["new", "subtle", "tokens", "state"],
+        "Avatar" => &[
+            "new",
+            "source",
+            "fallback",
+            "accessible_label",
+            "tokens",
+            "state",
+        ],
+        "Tooltip" => &[
+            "new",
+            "element",
+            "disabled",
+            "open",
+            "open_intent",
+            "placement_side",
+            "placement_alignment",
+            "delay",
+            "tokens",
+            "state",
+        ],
+        "HoverCard" => &[
+            "new",
+            "element",
+            "disabled",
+            "open",
+            "default_open",
+            "open_intent",
+            "placement_side",
+            "placement_alignment",
+            "delay",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
+            "state",
+        ],
+        "Popover" => &[
+            "new",
+            "element",
+            "disabled",
+            "open",
+            "default_open",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
+            "state",
+        ],
+        "Dialog" => &[
+            "new",
+            "element",
+            "description",
+            "disabled",
+            "open",
+            "default_open",
+            "outside_press_policy",
+            "escape_key_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
+            "state",
+        ],
+        "AlertDialog" => &[
+            "new",
+            "intent",
+            "cancel_label",
+            "disabled",
+            "cancel_disabled",
+            "action_disabled",
+            "open",
+            "default_open",
+            "outside_press_policy",
+            "escape_key_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_cancel",
+            "on_action",
+            "on_open_change",
+            "state",
+        ],
+        "Sheet" => &[
+            "new",
+            "element",
+            "description",
+            "disabled",
+            "open",
+            "default_open",
+            "side",
+            "modal_mode",
+            "close_affordance",
+            "outside_press_policy",
+            "escape_key_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_close",
+            "on_open_change",
+            "state",
+        ],
+        "Menu" => &[
+            "new",
+            "item",
+            "items",
+            "disabled",
+            "open",
+            "default_open",
+            "focused_value",
+            "placement",
+            "outside_press_policy",
+            "escape_key_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
+            "on_select",
+            "state",
+        ],
+        "ContextMenu" => &[
+            "new",
+            "item",
+            "items",
+            "open",
+            "default_open",
+            "anchor_point",
+            "focused_value",
+            "outside_press_policy",
+            "escape_key_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
+            "on_select",
+            "state",
+        ],
+        _ => panic!("missing public method baseline for `{component}`"),
+    }
+}
+
+fn component_public_methods_from_source(component: &str) -> Vec<String> {
+    const MARKER_PREFIX: &str = "impl ";
+
+    let source_file = component_source_file(component);
+    let source_path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/");
+    let source_path = format!("{source_path}{source_file}");
+    let source = std::fs::read_to_string(&source_path)
+        .unwrap_or_else(|error| panic!("failed to read {source_path}: {error}"));
+    let marker = format!("{MARKER_PREFIX}{component} {{");
+    let impl_start = source
+        .find(&marker)
+        .unwrap_or_else(|| panic!("missing `{marker}` in {source_file}"));
+    let body_start = source[impl_start..]
+        .find('{')
+        .map(|offset| impl_start + offset)
+        .expect("impl body should open with `{`");
+
+    let mut depth = 0usize;
+    let mut body_end = None;
+    for (index, ch) in source[body_start..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    body_end = Some(body_start + index);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let body_end = body_end.expect("impl body should close");
+    let body = &source[body_start + 1..body_end];
+    let mut methods = Vec::new();
+
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if let Some(signature) = trimmed.strip_prefix("pub const fn ") {
+            let before_paren = signature
+                .split_once('(')
+                .map(|(name, _)| name)
+                .unwrap_or(signature);
+            let name = before_paren
+                .split_once('<')
+                .map(|(name, _)| name)
+                .unwrap_or(before_paren)
+                .trim();
+            methods.push(name.to_string());
+        } else if let Some(signature) = trimmed.strip_prefix("pub fn ") {
+            let before_paren = signature
+                .split_once('(')
+                .map(|(name, _)| name)
+                .unwrap_or(signature);
+            let name = before_paren
+                .split_once('<')
+                .map(|(name, _)| name)
+                .unwrap_or(before_paren)
+                .trim();
+            methods.push(name.to_string());
+        }
+    }
+
+    methods
+}
+
 fn custom_tokens() -> ThemeTokens {
     ThemeTokens {
         surface: TEST_SURFACE,
@@ -3394,6 +4656,215 @@ fn gpui_role_mapping_covers_neutral_image_and_separator_fallback() {
         open_gpui::Role::ColumnHeader
     );
     assert_eq!(gpui_role_from_ui(Role::Cell), open_gpui::Role::Cell);
+}
+
+fn official_component_catalog_names_from_gallery_source() -> Vec<String> {
+    const GALLERY_COMPONENTS_SOURCE: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/ui-foundation-gallery/src/pages/components.rs"
+    );
+    const MARKER: &str = "ComponentCatalogEntry::official(";
+
+    let source = std::fs::read_to_string(GALLERY_COMPONENTS_SOURCE)
+        .unwrap_or_else(|error| panic!("failed to read {GALLERY_COMPONENTS_SOURCE}: {error}"));
+    let mut remaining = source.as_str();
+    let mut names = Vec::new();
+
+    while let Some(marker_index) = remaining.find(MARKER) {
+        remaining = &remaining[marker_index + MARKER.len()..];
+        let name_start = remaining
+            .find('"')
+            .unwrap_or_else(|| panic!("missing catalog name opener after {MARKER}"));
+        remaining = &remaining[name_start + 1..];
+        let name_end = remaining
+            .find('"')
+            .unwrap_or_else(|| panic!("missing catalog name closer after {MARKER}"));
+        names.push(remaining[..name_end].to_string());
+        remaining = &remaining[name_end + 1..];
+    }
+
+    assert!(
+        !names.is_empty(),
+        "Components gallery source should contain official catalog entries"
+    );
+    names
+}
+
+fn component_api_entry(component: &str) -> &'static ComponentApiInventoryEntry {
+    COMPONENT_API_INVENTORY
+        .iter()
+        .find(|entry| entry.component == component)
+        .unwrap_or_else(|| panic!("missing component API inventory row for `{component}`"))
+}
+
+fn assert_inventory_contains_controlled_input(component: &str, input: &str) {
+    let entry = component_api_entry(component);
+    assert!(
+        entry.controlled_inputs.contains(&input),
+        "{component} inventory should classify `{input}` as a controlled input"
+    );
+}
+
+fn assert_inventory_contains_default_seed(component: &str, builder: &str, runtime_value: &str) {
+    let entry = component_api_entry(component);
+    assert!(
+        entry
+            .default_seeds
+            .iter()
+            .any(|seed| seed.builder == builder && seed.runtime_value == runtime_value),
+        "{component} inventory should classify `{builder}` as a default seed for `{runtime_value}`"
+    );
+}
+
+fn assert_inventory_contains_callback(component: &str, name: &str, payload: &str) {
+    let entry = component_api_entry(component);
+    assert!(
+        entry
+            .callbacks
+            .iter()
+            .any(|callback| callback.name == name && callback.payload == payload),
+        "{component} inventory should document callback `{name}` payload `{payload}`"
+    );
+}
+
+#[test]
+fn component_api_inventory_covers_official_gallery_catalog() {
+    use std::collections::BTreeSet;
+
+    let inventory_names = COMPONENT_API_INVENTORY
+        .iter()
+        .map(|entry| entry.component.to_string())
+        .collect::<BTreeSet<_>>();
+    let catalog_names = official_component_catalog_names_from_gallery_source()
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+
+    let missing = catalog_names
+        .difference(&inventory_names)
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        missing.is_empty(),
+        "official Components catalog entries need public API inventory rows: {missing:?}"
+    );
+
+    for overlay in [
+        "Tooltip",
+        "HoverCard",
+        "Popover",
+        "Dialog",
+        "AlertDialog",
+        "Sheet",
+        "Menu",
+        "ContextMenu",
+    ] {
+        assert!(
+            inventory_names.contains(overlay),
+            "overlay component `{overlay}` needs a public API inventory row"
+        );
+    }
+}
+
+#[test]
+fn component_api_inventory_uses_stable_ownership_vocabulary() {
+    const CURRENT_CALLBACK_NAMES: &[&str] = &[
+        "on_activate",
+        "on_action",
+        "on_cancel",
+        "on_change",
+        "on_click",
+        "on_close",
+        "on_open_change",
+        "on_select",
+        "on_selection_change",
+        "on_sort_requested",
+        "on_toggle",
+    ];
+    const CURRENT_LEGACY_SEED_INPUTS: &[(&str, &str)] = &[("Tabs", "selected")];
+
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in COMPONENT_API_INVENTORY {
+        assert!(
+            seen.insert(entry.component),
+            "component API inventory contains duplicate row for `{}`",
+            entry.component
+        );
+        assert!(
+            entry.has_classification(),
+            "{} must document at least one API ownership bucket or no-interaction note",
+            entry.component
+        );
+        assert!(
+            entry.renderer_neutral_state,
+            "{} resolved state must remain renderer-neutral",
+            entry.component
+        );
+        let source_methods = component_public_methods_from_source(entry.component);
+        let expected_methods = component_public_methods(entry.component)
+            .iter()
+            .map(|method| method.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            source_methods, expected_methods,
+            "{} public method surface drifted; update COMPONENT_API_INVENTORY and the method baseline together",
+            entry.component
+        );
+
+        for seed in entry.default_seeds {
+            assert!(
+                seed.builder.starts_with("default_"),
+                "{} default seed `{}` must use default_* naming",
+                entry.component,
+                seed.builder
+            );
+            assert!(
+                !seed.runtime_value.is_empty(),
+                "{} default seed `{}` must name the adapter-owned runtime value it seeds",
+                entry.component,
+                seed.builder
+            );
+        }
+
+        for callback in entry.callbacks {
+            assert!(
+                CURRENT_CALLBACK_NAMES.contains(&callback.name),
+                "{} callback `{}` is not part of the current inventory vocabulary",
+                entry.component,
+                callback.name
+            );
+            assert!(
+                !callback.payload.is_empty(),
+                "{} callback `{}` must document its payload type",
+                entry.component,
+                callback.name
+            );
+        }
+
+        for legacy_seed in entry.legacy_seed_inputs {
+            assert!(
+                CURRENT_LEGACY_SEED_INPUTS.contains(&(entry.component, *legacy_seed)),
+                "{} legacy seed `{}` needs an explicit migration decision before U2",
+                entry.component,
+                legacy_seed
+            );
+        }
+    }
+
+    assert_inventory_contains_controlled_input("TextInput", "value");
+    assert_inventory_contains_callback("TextInput", "on_change", "String");
+    assert_inventory_contains_default_seed("Popover", "default_open", "open");
+    assert_inventory_contains_callback("Popover", "on_open_change", "bool");
+    assert_inventory_contains_controlled_input("Select", "selected");
+    assert_inventory_contains_controlled_input("Select", "active");
+    assert_inventory_contains_callback("Select", "on_select", "SelectSelection");
+    assert_inventory_contains_controlled_input("Tree", "selected");
+    assert_inventory_contains_callback("Tree", "on_toggle", "TreeToggle");
+    assert_inventory_contains_controlled_input("VirtualizedList", "active_index");
+    assert_inventory_contains_callback(
+        "VirtualizedList",
+        "on_activate",
+        "VirtualizedListActivation",
+    );
 }
 
 #[test]
