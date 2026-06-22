@@ -10,7 +10,7 @@ pub(crate) struct DockViewportBackendFocusState {
     pending_activation: Option<DockViewportActivationTransaction>,
     /// Last live docking window observed as backend-focused. Mirrors ImGui's
     /// `PlatformLastFocusedViewportId` for activation and destroyed-focus suppression.
-    last_platform_focused_window: Option<WindowId>,
+    last_confirmed_backend_focused_window: Option<WindowId>,
     /// One-shot gate for ImGui's `prev_focused_has_been_destroyed` behavior: when backend focus
     /// moves to another viewport only because the previously focused viewport was destroyed, the
     /// next platform-focus restoration for the newly focused window must be skipped once.
@@ -68,7 +68,7 @@ impl DockViewportBackendFocusState {
         true
     }
 
-    pub(crate) fn record_platform_focused_window(
+    pub(crate) fn record_confirmed_backend_focused_window(
         &mut self,
         window_id: WindowId,
         is_live_docking_window: impl Fn(WindowId) -> bool,
@@ -77,7 +77,7 @@ impl DockViewportBackendFocusState {
             return None;
         }
 
-        let previous_focused_window = self.last_platform_focused_window;
+        let previous_focused_window = self.last_confirmed_backend_focused_window;
         let focused_changed = previous_focused_window != Some(window_id);
         let mut pending_activation_changed = false;
         if focused_changed {
@@ -92,7 +92,7 @@ impl DockViewportBackendFocusState {
             };
             pending_activation_changed = self.clear_pending_activation_except_window(window_id);
         }
-        self.last_platform_focused_window = Some(window_id);
+        self.last_confirmed_backend_focused_window = Some(window_id);
         Some(DockViewportBackendFocusRecord {
             focused_changed,
             pending_activation_changed,
@@ -192,7 +192,7 @@ mod tests {
         );
 
         let record = state
-            .record_platform_focused_window(alpha_window.window_id(), |window| {
+            .record_confirmed_backend_focused_window(alpha_window.window_id(), |window| {
                 window == alpha_window.window_id() || window == beta_window.window_id()
             })
             .expect("alpha is a live docking viewport");
@@ -217,12 +217,12 @@ mod tests {
         focus.record_panel_focus(beta_space.clone(), item("b"));
 
         state
-            .record_platform_focused_window(alpha_window.window_id(), |window| {
+            .record_confirmed_backend_focused_window(alpha_window.window_id(), |window| {
                 window == alpha_window.window_id() || window == beta_window.window_id()
             })
             .expect("alpha starts live");
         state
-            .record_platform_focused_window(beta_window.window_id(), |window| {
+            .record_confirmed_backend_focused_window(beta_window.window_id(), |window| {
                 window == beta_window.window_id()
             })
             .expect("beta is live after alpha was destroyed");

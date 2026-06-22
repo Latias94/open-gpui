@@ -1472,7 +1472,7 @@ mod tests {
     }
 
     #[test]
-    fn drop_route_authorizes_backend_hover_fallback_when_hovered_backend_is_unavailable() {
+    fn drop_route_authorizes_window_stack_fallback_when_hovered_backend_is_unavailable() {
         let source = space("source");
         let alpha = space("alpha");
         let zeta = space("zeta");
@@ -1511,14 +1511,14 @@ mod tests {
                     point(px(20.0), px(40.0)),
                     1,
                 ),
-                authority: DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+                authority: DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
             },
-            "backend hover fallback authorizes a route when the hovered-window backend is unavailable"
+            "front-to-back window stack fallback authorizes a route when the hovered-window backend is unavailable"
         );
     }
 
     #[test]
-    fn hovered_host_global_drop_keeps_event_receiver_diagnostic_under_backend_hover_fallback() {
+    fn hovered_host_global_drop_keeps_event_receiver_diagnostic_under_window_stack_fallback() {
         let source = space("source");
         let target = space("target");
         let target_window = handle(2);
@@ -1550,7 +1550,7 @@ mod tests {
     }
 
     #[test]
-    fn source_only_global_drop_rejects_backend_hover_fallback_for_cross_viewport_route() {
+    fn source_only_global_drop_rejects_window_stack_fallback_for_cross_viewport_route() {
         let source = space("source");
         let target_space = space("target");
         let receiver_window = handle(1);
@@ -2091,7 +2091,7 @@ mod tests {
     }
 
     #[test]
-    fn source_only_overlap_route_authorizes_backend_hover_fallback_when_backend_is_unavailable() {
+    fn source_only_overlap_route_authorizes_window_stack_fallback_when_backend_is_unavailable() {
         let source = space("source");
         let target = space("target");
         let source_window = handle(1);
@@ -2129,14 +2129,14 @@ mod tests {
                     point(px(20.0), px(40.0)),
                     1,
                 ),
-                authority: DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+                authority: DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
             },
-            "source-only global releases may use backend hover fallback when the backend lacks hovered-window authority"
+            "source-only global releases may use front-to-back window stack fallback when the backend lacks hovered-window authority"
         );
     }
 
     #[test]
-    fn no_input_hovered_viewport_uses_backend_hover_fallback_authority() {
+    fn no_input_hovered_viewport_uses_window_stack_fallback_authority() {
         let source = space("source");
         let top = space("top");
         let underlay = space("underlay");
@@ -2183,7 +2183,7 @@ mod tests {
                     point(px(20.0), px(40.0)),
                     1,
                 ),
-                authority: DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+                authority: DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
             },
             "when backend hover reports a no-input viewport, ImGui-style stack fallback authorizes the underlay commit"
         );
@@ -2238,7 +2238,7 @@ mod tests {
                     point(px(20.0), px(40.0)),
                     1,
                 ),
-                authority: DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+                authority: DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
             },
             "a backend that still reports a no-input viewport as hovered should be treated as a fallback case, not as an authoritative hovered target"
         );
@@ -2356,7 +2356,7 @@ mod tests {
     }
 
     #[test]
-    fn backend_hover_fallback_skips_no_input_viewports_from_registry_facts() {
+    fn window_stack_fallback_skips_no_input_viewports_from_registry_facts() {
         let source = space("source");
         let top = space("top");
         let underlay = space("underlay");
@@ -2407,9 +2407,9 @@ mod tests {
                     point(px(20.0), px(40.0)),
                     1,
                 ),
-                authority: DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+                authority: DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
             },
-            "backend-hover fallback derives its target from the route-ready window stack and geometry"
+            "front-to-back window stack fallback derives its target from route-ready registry facts and geometry"
         );
 
         let signals_with_no_input_hover =
@@ -2433,7 +2433,7 @@ mod tests {
                     point(px(20.0), px(40.0)),
                     1,
                 ),
-                authority: DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+                authority: DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
             },
             "registry no-input facts use the same ImGui-style stack fallback underlay target"
         );
@@ -2498,7 +2498,7 @@ mod tests {
                     point(px(20.0), px(40.0)),
                     1,
                 ),
-                authority: DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+                authority: DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
             },
             "the ImGui-style fallback search skips non-routable viewports and authorizes the first route-ready underlay"
         );
@@ -2598,14 +2598,14 @@ mod tests {
                     point(px(20.0), px(40.0)),
                     1,
                 ),
-                authority: DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+                authority: DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
             },
             "registered no-input route facts should trigger ImGui-style fallback underlay routing"
         );
     }
 
     #[test]
-    fn no_input_hovered_backend_hover_fallback_can_resolve_back_to_source() {
+    fn no_input_hovered_window_stack_fallback_can_resolve_back_to_source() {
         let source = space("source");
         let top = space("top");
         let top_window = handle(1);
@@ -2648,7 +2648,7 @@ mod tests {
                 host_position: point(px(20.0), px(40.0)),
                 window_id: source_window.window_id(),
                 facts_generation: 1,
-                authority: DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+                authority: DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
             },
             "no-input hovered authority falls back to the route-ready source viewport when that is the underlay"
         );
@@ -2756,7 +2756,7 @@ mod tests {
                     point(px(20.0), px(40.0)),
                     1,
                 ),
-                authority: DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+                authority: DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
             },
             "a no-input hovered id should fall back to the frontmost route-ready stack entry"
         );
@@ -3117,7 +3117,7 @@ mod tests {
                     point(px(20.0), px(30.0)),
                     1,
                 ),
-                authority: DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+                authority: DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
             },
             "global-bounds backends may use window-stack fallback when hovered-window authority is unavailable"
         );

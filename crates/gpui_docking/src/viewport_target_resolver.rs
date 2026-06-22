@@ -188,9 +188,9 @@ pub(crate) enum DockViewportAuthorizedRouteAuthority {
     EventReceiverLocalScene,
     /// Backend hovered-window signal is unavailable or was discarded for a no-input viewport, and
     /// the platform front-to-back window stack selected this viewport.
-    PlatformWindowStackFallback,
+    FrontToBackWindowStackFallback,
     /// A previously rendered routed preview accepted this target, so release may replay that
-    /// accepted target without asking backend-hover fallback to pick a new viewport.
+    /// accepted target without asking the window-stack fallback to pick a new viewport.
     AcceptedRoutedPreview,
 }
 
@@ -209,10 +209,10 @@ impl DockAuthorizedViewportRouteTarget {
         }
     }
 
-    fn platform_window_stack_fallback(target: DockViewportWindowHit) -> Self {
+    fn front_to_back_window_stack_fallback(target: DockViewportWindowHit) -> Self {
         Self {
             target,
-            authority: DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+            authority: DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
         }
     }
 
@@ -238,7 +238,7 @@ impl DockViewportAuthorizedRouteAuthority {
             self,
             Self::TrustedHoveredWindow
                 | Self::EventReceiverLocalScene
-                | Self::PlatformWindowStackFallback
+                | Self::FrontToBackWindowStackFallback
         )
     }
 }
@@ -254,7 +254,7 @@ pub(crate) fn choose_diagnostic_viewport_target(
         .collect::<Vec<_>>();
     choose_trusted_hovered_viewport_target(&window_hits, context)
         .or_else(|| {
-            choose_backend_hover_fallback_viewport_target(&window_hits, context)
+            choose_front_to_back_window_stack_fallback_target(&window_hits, context)
                 .map(DockAuthorizedViewportRouteTarget::into_target)
         })
         .and_then(DockViewportWindowHit::into_target_hit)
@@ -275,12 +275,12 @@ fn choose_trusted_hovered_viewport_target(
         .cloned()
 }
 
-fn choose_backend_hover_fallback_viewport_target(
+fn choose_front_to_back_window_stack_fallback_target(
     hits: &[DockViewportWindowHit],
     context: &DockViewportTargetContext,
 ) -> Option<DockAuthorizedViewportRouteTarget> {
     let stacked = context
-        .backend_hover_fallback_window_stack()
+        .front_to_back_window_stack_for_hover_fallback()
         .iter()
         .find_map(|window_id| {
             hits.iter()
@@ -288,7 +288,9 @@ fn choose_backend_hover_fallback_viewport_target(
                 .cloned()
         });
     if let Some(target) = stacked {
-        return Some(DockAuthorizedViewportRouteTarget::platform_window_stack_fallback(target));
+        return Some(
+            DockAuthorizedViewportRouteTarget::front_to_back_window_stack_fallback(target),
+        );
     }
 
     None
@@ -309,7 +311,8 @@ where
 
     match context.trusted_hovered_signal() {
         crate::DockViewportTrustedHoveredSignal::Unavailable => {
-            if let Some(target) = choose_backend_hover_fallback_viewport_target(&hits, context) {
+            if let Some(target) = choose_front_to_back_window_stack_fallback_target(&hits, context)
+            {
                 return Some(target);
             }
         }
@@ -408,10 +411,10 @@ mod tests {
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             Some((
-                DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+                DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
                 space("zeta"),
             )),
-            "backend hover fallback authorizes commits only when hovered-window authority is unavailable"
+            "front-to-back window stack fallback authorizes commits only when hovered-window authority is unavailable"
         );
 
         let fallback = choose_diagnostic_viewport_target(
@@ -427,7 +430,7 @@ mod tests {
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             Some((
-                DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+                DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
                 space("zeta"),
             ))
         );
@@ -530,7 +533,7 @@ mod tests {
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             Some((
-                DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+                DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
                 space("zeta"),
             )),
             "window stack fallback is commit authority when trusted hovered-window data is unavailable"
@@ -542,7 +545,7 @@ mod tests {
             )
             .map(|target| (target.authority(), target.into_target().space().clone())),
             Some((
-                DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+                DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
                 space("zeta"),
             )),
             "window stack fallback is commit authority in the backend-hover-unavailable path"

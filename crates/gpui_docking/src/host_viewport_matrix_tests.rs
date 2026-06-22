@@ -623,7 +623,7 @@ fn assert_source_only_unaccepted_backend_fallback_rejected(
     assert_eq!(
         result,
         Err(DockActionApplyError::DropTargetUnavailable),
-        "{}: source-only backend-hover fallback must not commit without an accepted routed preview",
+        "{}: source-only window stack fallback must not commit without an accepted routed preview",
         case.name
     );
     let status = runtime.runtime_status();
@@ -636,7 +636,7 @@ fn assert_source_only_unaccepted_backend_fallback_rejected(
                 .target,
             DockViewportRouteTarget::Unavailable
         ),
-        "{}: source-only backend-hover fallback should be recorded as unavailable without accepted preview, got {:?}",
+        "{}: source-only window stack fallback should be recorded as unavailable without accepted preview, got {:?}",
         case.name,
         status.last_route
     );

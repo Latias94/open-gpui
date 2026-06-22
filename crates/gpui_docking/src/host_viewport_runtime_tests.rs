@@ -1225,7 +1225,7 @@ fn unfocused_new_viewport_close_does_not_suppress_next_platform_focus_restore(
 }
 
 #[open_gpui::test]
-fn closing_non_last_platform_focused_viewport_does_not_suppress_platform_focus_restore(
+fn closing_non_last_confirmed_backend_focused_viewport_does_not_suppress_platform_focus_restore(
     cx: &mut TestAppContext,
 ) {
     let main_space = DockSpaceId::from("main");
@@ -1314,7 +1314,7 @@ fn closing_non_last_platform_focused_viewport_does_not_suppress_platform_focus_r
 }
 
 #[open_gpui::test]
-fn closing_last_platform_focused_viewport_suppresses_platform_focus_restore_once(
+fn closing_last_confirmed_backend_focused_viewport_suppresses_platform_focus_restore_once(
     cx: &mut TestAppContext,
 ) {
     let main_space = DockSpaceId::from("main");
@@ -1659,7 +1659,7 @@ fn pending_activation_is_not_suppressed_by_mouse_down(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
-fn non_docking_backend_focus_does_not_overwrite_last_platform_focused_viewport(
+fn non_docking_backend_focus_does_not_overwrite_last_confirmed_backend_focused_viewport(
     cx: &mut TestAppContext,
 ) {
     let main_space = DockSpaceId::from("main");
@@ -6514,7 +6514,7 @@ fn viewport_runtime_source_only_release_uses_current_backend_fallback_not_last_r
             host_position: point(px(120.0), px(100.0)),
             window_id: source_opened.window().window_id(),
             facts_generation: 1,
-            authority: crate::DockViewportAuthorizedRouteAuthority::PlatformWindowStackFallback,
+            authority: crate::DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
         },
         "window-stack fallback must use the current stack instead of reusing the previewed target"
     );

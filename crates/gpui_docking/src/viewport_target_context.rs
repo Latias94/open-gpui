@@ -117,7 +117,7 @@ impl DockViewportTargetContext {
         self.trusted_hovered_signal
     }
 
-    pub(crate) fn backend_hover_fallback_window_stack(&self) -> &[WindowId] {
+    pub(crate) fn front_to_back_window_stack_for_hover_fallback(&self) -> &[WindowId] {
         self.window_stack.as_slice()
     }
 
@@ -186,7 +186,10 @@ mod tests {
         );
 
         assert_eq!(context.trusted_hovered_window(), Some(third));
-        assert_eq!(context.backend_hover_fallback_window_stack(), &[first]);
+        assert_eq!(
+            context.front_to_back_window_stack_for_hover_fallback(),
+            &[first]
+        );
     }
 
     #[test]
@@ -206,7 +209,7 @@ mod tests {
             DockViewportTrustedHoveredSignal::Unavailable
         );
         assert_eq!(
-            context.backend_hover_fallback_window_stack(),
+            context.front_to_back_window_stack_for_hover_fallback(),
             &[top, underlay]
         );
     }
@@ -221,7 +224,7 @@ mod tests {
         );
 
         assert_eq!(
-            context.backend_hover_fallback_window_stack(),
+            context.front_to_back_window_stack_for_hover_fallback(),
             &[front, back]
         );
     }

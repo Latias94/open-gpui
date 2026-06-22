@@ -613,10 +613,10 @@ impl DockViewportRuntime {
         })
     }
 
-    fn record_platform_focused_window(&mut self, window_id: WindowId) -> Option<bool> {
+    fn record_confirmed_backend_focused_window(&mut self, window_id: WindowId) -> Option<bool> {
         let adapter = &self.adapter;
         self.backend_focus
-            .record_platform_focused_window(window_id, |candidate| {
+            .record_confirmed_backend_focused_window(window_id, |candidate| {
                 adapter.space_for_window_id(candidate).is_some()
                     && !adapter.window_close_requested(candidate)
             })
@@ -626,7 +626,7 @@ impl DockViewportRuntime {
     pub(crate) fn reconcile_backend_window_focus(&mut self, cx: &mut App) -> bool {
         match cx.focused_window() {
             PlatformFocusedWindow::Window(window) => self
-                .record_platform_focused_window(window.window_id())
+                .record_confirmed_backend_focused_window(window.window_id())
                 .unwrap_or(false),
             PlatformFocusedWindow::NoWindow => false,
             PlatformFocusedWindow::Unavailable => false,
@@ -665,7 +665,7 @@ impl DockViewportRuntime {
             return None;
         }
 
-        self.record_platform_focused_window(window_id)
+        self.record_confirmed_backend_focused_window(window_id)
             .expect("backend focus was already validated as a live docking window");
         self.backend_focus
             .focus_command_for_confirmed_backend_window_focus(
