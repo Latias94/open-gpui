@@ -4,7 +4,7 @@ title: open-gpui table and virtualizer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 474ac18
+git_commit: b349f4b
 verified_by:
   - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-core virtualizer table
@@ -30,13 +30,14 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-foundation-gallery
   - git diff --check
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
 ---
 
 # Current State
 
-- Goal: Plan the `VirtualizedList` GPUI renderer follow-up after the feedback/tree/virtualized-list productization slice.
+- Goal: Complete the `VirtualizedList` official renderer promotion, gallery runtime proof, docs refresh, and verified local `main` push.
 - Branch: `main`
-- Last verified: 2026-06-22, focused `open-gpui-ui-components` and `open-gpui-ui-foundation-gallery` nextest passed before commit `474ac18`, including the feedback/tree/virtualized-list productization gates and the Components gallery short-viewport smoke.
+- Last verified: 2026-06-22, `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components` passed 179/179, `cargo nextest run -p open-gpui-ui-foundation-gallery` passed 64/64, `git diff --check` passed, and the engineering wiki memory bundle validated after the VirtualizedList promotion and shared-slice API follow-up.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -54,13 +55,15 @@ verified_by:
 - Done: Added `TableHeaderAction` and `Table::on_sort_requested` so sortable headers emit state-update payloads without moving table state ownership into render code.
 - Done: Hardened the Table adapter after review: live scroll offsets win after virtualizer measurement snapshots, duplicate row ids get unique render/virtualizer keys, and header/body column minimum widths match.
 - Done: Completed the Table performance follow-up: `TableState` row storage is cheap to clone and exposes a conservative cache key, the GPUI `TableRuntime` caches resolved row models across scroll redraws, `VirtualizerState::resolve_fixed_window` materializes only the visible + overscan window for fixed-height tables, and the Components gallery precomputes table state summaries from lazy static samples instead of rebuilding 10k rows during page render.
-- Done: Productized the pulled `feedback`, `tree`, and `virtualized_list` primitives in the Components gallery. `StatusCue` and `EmptyState` are now official rendered feedback components with catalog entries, signals, gallery samples, root selector smoke coverage, export tests, and theme-intent coverage. `TreeState` and `VirtualizedListState` are now explicit `state-contract` catalog entries with separate readout selectors, signal gates, and gallery readouts.
+- Done: Productized the pulled `feedback`, `tree`, and `virtualized_list` primitives in the Components gallery. `StatusCue` and `EmptyState` are now official rendered feedback components with catalog entries, signals, gallery samples, root selector smoke coverage, export tests, and theme-intent coverage. `TreeState` remains an explicit `state-contract` catalog entry, while `VirtualizedListState` now sits beside the official `VirtualizedList` renderer as the keyboard/navigation contract and gallery readout surface.
 - Done: Pushed the productization slice to `origin/main` as commit `474ac18` after rebasing onto remote commit `45d3199`.
-- Done: Wrote the follow-up plan for a real `VirtualizedList` GPUI renderer that composes `VirtualizedListState` with `open_gpui_ui_core::VirtualizerState` instead of treating the state contract as a rendered component.
+- Done: Wrote the follow-up plan for a real `VirtualizedList` GPUI renderer that composes `VirtualizedListState` with `open_gpui_ui_core::VirtualizerState` instead of treating the state contract as a rendered component, then implemented the concrete adapter and gallery promotion.
+- Done: Promoted `VirtualizedList` into the official Components catalog and page directory with a 10k-item `release-navigation` sample, stable sample selectors, a `virtualized-list-renderer` gate, nested scroll containment smoke, and a full-page PageDown plus Enter/Space activation smoke backed by the gallery runtime log.
+- Done: Tightened `VirtualizedList::from_shared_items` to accept `Arc<[VirtualizedListItemDescriptor]>`, so shared large-list storage exposes a slice contract instead of leaking `Vec` storage details.
 - Done: Added standard controlled TextInput ergonomics with `TextInput::value(...).on_change(...)`. The adapter now creates a keyed `TextInputController` when `on_change` is supplied, emits sanitized single-line values, and keeps callbacks out of `TextInputState`.
-- Follow-up: Design real `Tree` and `VirtualizedList` GPUI renderers separately. Keep `VirtualizedListState` as the keyboard/navigation contract unless renderer work proves it should compose more directly with `open_gpui_ui_core::VirtualizerState`, which remains the rendered range engine.
+- Follow-up: Design real `Tree` and any future list-family renderers separately. Keep `VirtualizedListState` as the keyboard/navigation contract while the official `VirtualizedList` adapter owns the GPUI runtime and scroll handle.
 - Blocked: None.
-- Next action: Execute `docs/plans/2026-06-22-002-feat-ui-virtualized-list-renderer-plan.md`, starting with the render-plan contract and scroll-to-active helper before promoting `VirtualizedList` to the official component catalog.
+- Next action: Push local `main`, then move to Tree renderer or list-family refinements.
 
 # Citations
 
