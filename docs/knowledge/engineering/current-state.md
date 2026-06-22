@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 029826e
+git_commit: 0d82a9d
 verified_by:
   - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-core virtualizer table
@@ -43,9 +43,9 @@ verified_by:
 
 # Current State
 
-- Goal: Execute the gallery automation regression hardening slice, then move to the next UI productization follow-up.
+- Goal: Execute the next UI component-depth slice from the Command plan.
 - Branch: `main`
-- Last verified: 2026-06-22, the focused catalog matrix passed `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focuses_every_focusable_catalog_entry`, and the full `cargo nextest run -p open-gpui-ui-foundation-gallery` passed 72/72 after the RadioGroup nesting fix.
+- Last verified: 2026-06-22, the focused catalog matrix passed `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focuses_every_focusable_catalog_entry`, and the full `cargo nextest run -p open-gpui-ui-foundation-gallery` passed 72/72 after the RadioGroup nesting fix. The automation hardening slice is committed as `0d82a9d`.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -77,9 +77,11 @@ verified_by:
 - Done: Completed U5 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` as `029826e`. The Components page now has `ComponentFocusMode::All` and catalog-driven focused component-family viewing, with an explicit `All components` control, directory chips kept as pure anchor jumps, focus-mode page scroll reset keys, and smoke coverage for all-mode restoration, family switching reset, and focused Table nested scroll containment.
 - Done: Hardened composite-widget focus ergonomics by letting `Tree` and `VirtualizedList` roots focus their current keyboard target when clicked. Tree row clicks remain the explicit gallery interaction path; subagent review confirmed the Tree smoke should enter focused Tree mode via the catalog before clicking the concrete `paper` row.
 - Done: Wrote `docs/plans/2026-06-22-004-test-ui-gallery-automation-regression-plan.md`, added a catalog-driven focused-mode matrix smoke for every focusable Components catalog entry, fixed the RadioGroup nesting bug so its focused selector renders in `radio-group` mode, and updated `docs/verification.md` with the new gate.
+- Done: Recorded the component-depth roadmap in `docs/knowledge/engineering/decisions/open-gpui-ui-component-depth-roadmap.md`: deepen `Command`, then `Menu` / `ContextMenu`, then advanced `Table` and `Tree` behavior before adding more shallow primitives.
+- Done: Wrote `docs/plans/2026-06-22-005-feat-ui-command-depth-plan.md` for the next `Command` depth slice. The plan covers renderer-neutral ranking, controlled query ergonomics, optional multi-selection, virtualized long results, app-owned index snapshots, focused gallery samples, and contract / verification memory updates.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Blocked: None.
-- Next action: Commit the automation hardening slice, then choose the next follow-up around screenshot/image-diff regression tooling or the next UI productization gap.
+- Next action: Start `ce-work` against `docs/plans/2026-06-22-005-feat-ui-command-depth-plan.md` unless a new user-facing regression needs priority first.
 
 # Citations
 
@@ -111,3 +113,5 @@ verified_by:
 [26] Subagent finding `docs/knowledge/engineering/subagents/u5-focused-components-tree-smoke-review.md`
 [27] Plan `docs/plans/2026-06-22-004-test-ui-gallery-automation-regression-plan.md`
 [28] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery`
+[29] Decision `docs/knowledge/engineering/decisions/open-gpui-ui-component-depth-roadmap.md`
+[30] Plan `docs/plans/2026-06-22-005-feat-ui-command-depth-plan.md`
