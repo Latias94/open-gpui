@@ -1,7 +1,7 @@
 use crate::{
     DockActionApplyError, DockEdgeDockSizing, DockPolicyError, DockSpaceId, DockViewportAdapter,
-    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteRequest,
-    DockViewportResolvedDropTargetSnapshot, DockWorkspace, DropZone,
+    DockViewportAuthorizedRouteAuthority, DockViewportDropPayload, DockViewportDropRoute,
+    DockViewportDropRouteRequest, DockViewportResolvedDropTargetSnapshot, DockWorkspace, DropZone,
     drop_target::{DockDropResolution, DockResolvedDropTarget, validate_resolved_drop_target},
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistry},
     workspace_move_validation::{DockPayloadDockClasses, dock_target_validator},
@@ -22,6 +22,39 @@ pub(crate) enum DockViewportWorkspaceRouteTarget {
         reason: DockPolicyError,
     },
     NotWorkspaceRoute,
+}
+
+/// Authority that can upgrade a routed drop snapshot into an actual delivery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockViewportDeliveryAuthority {
+    /// Mirrors ImGui's AcceptBeforeDelivery path: a target rendered and accepted the preview.
+    AcceptedRoutedPreview,
+    /// The release is outside registered host viewports and may open a new platform viewport.
+    TearOff,
+}
+
+impl DockViewportDeliveryAuthority {
+    pub(crate) fn from_route(route: &DockViewportDropRoute) -> Option<Self> {
+        match route {
+            DockViewportDropRoute::Local { authority, .. }
+            | DockViewportDropRoute::KnownViewport { authority, .. }
+                if *authority == DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview =>
+            {
+                Some(Self::AcceptedRoutedPreview)
+            }
+            DockViewportDropRoute::TearOff => Some(Self::TearOff),
+            DockViewportDropRoute::Local { .. }
+            | DockViewportDropRoute::KnownViewport { .. }
+            | DockViewportDropRoute::Unavailable
+            | DockViewportDropRoute::Rejected(_) => None,
+        }
+    }
+}
+
+pub(crate) fn delivery_authority_for_route(
+    route: &DockViewportDropRoute,
+) -> Option<DockViewportDeliveryAuthority> {
+    DockViewportDeliveryAuthority::from_route(route)
 }
 
 #[derive(Clone, Copy)]
@@ -396,6 +429,61 @@ mod tests {
     };
     use open_gpui::{Bounds, WindowBounds, point, px, size};
     use slotmap::Key;
+
+    #[test]
+    fn delivery_authority_is_separate_from_route_selection_authority() {
+        let source_window = handle(1);
+        let target = space("target");
+        let target_window = handle(2);
+        let host_position = point(px(12.0), px(34.0));
+        let target_hit = crate::DockViewportTargetHit::with_facts_generation(
+            target,
+            target_window,
+            host_position,
+            7,
+        );
+
+        assert_eq!(
+            delivery_authority_for_route(&DockViewportDropRoute::Local {
+                host_position,
+                window_id: source_window.window_id(),
+                facts_generation: 7,
+                authority: crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
+            }),
+            None,
+            "fresh backend hover route selects a preview target but must not authorize delivery"
+        );
+        assert_eq!(
+            delivery_authority_for_route(&DockViewportDropRoute::KnownViewport {
+                target: target_hit.clone(),
+                authority:
+                    crate::DockViewportAuthorizedRouteAuthority::FrontToBackWindowStackFallback,
+            }),
+            None,
+            "window-stack fallback is route selection authority, not delivery authority"
+        );
+        assert_eq!(
+            delivery_authority_for_route(&DockViewportDropRoute::KnownViewport {
+                target: target_hit,
+                authority: crate::DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview,
+            }),
+            Some(DockViewportDeliveryAuthority::AcceptedRoutedPreview)
+        );
+        assert_eq!(
+            delivery_authority_for_route(&DockViewportDropRoute::TearOff),
+            Some(DockViewportDeliveryAuthority::TearOff)
+        );
+        assert_eq!(
+            delivery_authority_for_route(&DockViewportDropRoute::Rejected(
+                DockPolicyError::PlatformViewportsDisabled,
+            )),
+            None
+        );
+        assert_eq!(
+            delivery_authority_for_route(&DockViewportDropRoute::Unavailable),
+            None
+        );
+    }
 
     #[test]
     fn local_route_requires_current_window_host_scene_identity() {

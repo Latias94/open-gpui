@@ -245,7 +245,7 @@ impl DockViewportResolvedDropRoute {
         preview_target: Option<DockViewportResolvedDropTargetSnapshot>,
     ) -> Self {
         debug_assert!(
-            delivery.is_none() || route.is_release_delivery_authority(),
+            delivery.is_none() || crate::delivery_authority_for_route(&route).is_some(),
             "resolved viewport routes may carry delivery only when the route has release authority"
         );
         Self {
@@ -289,7 +289,7 @@ impl DockViewportResolvedDropRoute {
     }
 
     pub(crate) fn into_authorized_delivery(self) -> Result<DockDropDelivery, DockActionApplyError> {
-        if !self.route.can_authorize_delivery() {
+        if crate::delivery_authority_for_route(&self.route).is_none() {
             return Err(self.route.delivery_error());
         }
         self.delivery.ok_or_else(|| self.route.delivery_error())
@@ -318,20 +318,6 @@ impl DockViewportDropRoute {
             Self::Unavailable | Self::Local { .. } | Self::KnownViewport { .. } | Self::TearOff => {
                 DockActionApplyError::DropTargetUnavailable
             }
-        }
-    }
-
-    fn can_authorize_delivery(&self) -> bool {
-        self.is_release_delivery_authority()
-    }
-
-    pub(crate) fn is_release_delivery_authority(&self) -> bool {
-        match self {
-            Self::Local { authority, .. } | Self::KnownViewport { authority, .. } => {
-                *authority == DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview
-            }
-            Self::TearOff => true,
-            Self::Unavailable | Self::Rejected(_) => false,
         }
     }
 }
@@ -488,9 +474,7 @@ impl DockDropDelivery {
         route: DockViewportDropRoute,
         resolved_target: Option<DockViewportResolvedDropTargetSnapshot>,
     ) -> Option<Self> {
-        if !route_can_mint_delivery(&route) {
-            return None;
-        }
+        let _authority = crate::delivery_authority_for_route(&route)?;
         let source = DockDropDeliverySource::from_request(request);
         let kind = match route {
             DockViewportDropRoute::Local { .. } | DockViewportDropRoute::KnownViewport { .. } => {
@@ -558,10 +542,6 @@ impl DockDropDelivery {
     ) -> Result<Self, DockActionApplyError> {
         resolution.into_authorized_delivery()
     }
-}
-
-fn route_can_mint_delivery(route: &DockViewportDropRoute) -> bool {
-    route.is_release_delivery_authority()
 }
 
 fn tear_off_request_from_drop_route_request(

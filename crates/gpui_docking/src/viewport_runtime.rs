@@ -1047,7 +1047,7 @@ impl DockViewportRuntime {
         cx: &mut C,
     ) -> DockViewportResolvedDropRoute {
         let resolution = self.resolve_payload_drop_delivery(request, cx);
-        if resolution.route().is_release_delivery_authority() {
+        if crate::delivery_authority_for_route(resolution.route()).is_some() {
             return resolution;
         }
         resolution.without_delivery()
