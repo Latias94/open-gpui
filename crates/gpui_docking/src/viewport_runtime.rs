@@ -17,7 +17,8 @@ use crate::{
     DockViewportTearOffCancelReason, DockViewportTearOffCancelled, DockViewportTearOffCompleted,
     DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
     DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffSourceStatus,
-    DockViewportTearOffTick, DockViewportWindowFacts, DockViewportWorkspaceRouteTarget,
+    DockViewportTearOffTick, DockViewportWindowFacts, DockViewportWindowOwnership,
+    DockViewportWorkspaceRouteTarget,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
@@ -34,7 +35,6 @@ use open_gpui::{
     AnyWindowHandle, App, Bounds, Entity, Pixels, PlatformFocusedWindow, Point, WindowBounds,
     WindowId, WindowOptions, point, px,
 };
-use std::collections::HashSet;
 
 /// Internal owner for controller-backed platform viewport lifecycle.
 ///
@@ -65,49 +65,6 @@ pub(crate) struct DockViewportRuntime {
 struct DockRuntimeDragTearOffGeometry {
     drag_session_id: u64,
     geometry: DockDragTearOffGeometry,
-}
-
-#[derive(Debug, Default)]
-struct DockViewportWindowOwnership {
-    owned_windows: HashSet<WindowId>,
-    retired_windows: HashSet<WindowId>,
-    render_passthrough_windows: HashSet<WindowId>,
-}
-
-impl DockViewportWindowOwnership {
-    fn register_runtime_window(&mut self, window_id: WindowId) {
-        self.retired_windows.remove(&window_id);
-        self.owned_windows.insert(window_id);
-    }
-
-    fn discard_owned_window(&mut self, window_id: WindowId) -> bool {
-        let removed = self.owned_windows.remove(&window_id);
-        if removed {
-            self.retired_windows.insert(window_id);
-        }
-        self.render_passthrough_windows.remove(&window_id);
-        removed
-    }
-
-    fn is_retired(&self, window_id: WindowId) -> bool {
-        self.retired_windows.contains(&window_id)
-    }
-
-    fn is_owned(&self, window_id: WindowId) -> bool {
-        self.owned_windows.contains(&window_id)
-    }
-
-    fn record_render_passthrough_pointer_input(&mut self, window_id: WindowId) -> bool {
-        self.render_passthrough_windows.insert(window_id)
-    }
-
-    fn take_render_passthrough_pointer_input(&mut self, window_id: WindowId) -> bool {
-        self.render_passthrough_windows.remove(&window_id)
-    }
-
-    fn clear_window_state(&mut self, window_id: WindowId) {
-        self.render_passthrough_windows.remove(&window_id);
-    }
 }
 
 #[derive(Debug)]
@@ -1541,7 +1498,7 @@ impl DockViewportRuntime {
         cx: &mut C,
     ) -> bool {
         self.route_resolution_target_window(route_resolution)
-            .is_some_and(|window| window.update(cx, |_, _, _| ()).is_err())
+            .is_some_and(|window| self.window_ownership.is_window_unrefreshable(window, cx))
     }
 
     fn route_resolution_target_window(
@@ -1574,13 +1531,13 @@ impl DockViewportRuntime {
         let Some(target_window_id) = target.target_window_id() else {
             return false;
         };
-        if self.window_ownership.is_owned(target_window_id) {
-            return false;
-        }
         self.adapter
             .window_for_space(target_space)
             .filter(|window| window.window_id() == target_window_id)
-            .is_some_and(|window| window.update(cx, |_, _, _| ()).is_err())
+            .is_some_and(|window| {
+                self.window_ownership
+                    .is_unowned_window_unrefreshable(window, cx)
+            })
     }
 
     fn resolve_payload_drop_delivery_resolution<C: open_gpui::AppContext>(

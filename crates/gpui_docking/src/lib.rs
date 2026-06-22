@@ -155,6 +155,7 @@ mod viewport_target_context;
 mod viewport_target_resolver;
 mod viewport_tear_off;
 mod viewport_tear_off_authority;
+mod viewport_window_ownership;
 mod workspace;
 mod workspace_action;
 mod workspace_floating_transaction;
@@ -245,4 +246,5 @@ pub(crate) use viewport_tear_off::{
     DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffTick,
 };
 pub(crate) use viewport_tear_off_authority::*;
+pub(crate) use viewport_window_ownership::*;
 pub use workspace::*;
