@@ -774,6 +774,42 @@ fn viewport_runtime_opened_viewport_assumes_front_most_for_platform_focus_order(
 }
 
 #[open_gpui::test]
+fn viewport_runtime_render_registered_viewport_assumes_front_most_for_platform_focus_order(
+    cx: &mut TestAppContext,
+) {
+    let alpha_space = DockSpaceId::from("alpha");
+    let zeta_space = DockSpaceId::from("zeta");
+    let mut graph = DockGraph::new();
+    let alpha_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let zeta_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("z")],
+        selected: Some(item("z")),
+    });
+    graph.set_root(alpha_space.clone(), alpha_tabs);
+    graph.set_root(zeta_space.clone(), zeta_tabs);
+
+    let mut workspace = DockWorkspace::new(alpha_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("z"), "Panel Z", test_view(cx, "Z"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut runtime = DockViewportRuntime::new(controller);
+    let alpha_window = handle(1);
+    let zeta_window = handle(2);
+
+    assert!(runtime.register_rendered_host_viewport(alpha_space.clone(), alpha_window));
+    assert!(runtime.register_rendered_host_viewport(zeta_space.clone(), zeta_window));
+
+    assert_eq!(
+        runtime.adapter().spaces_by_platform_focus_order(),
+        vec![zeta_space, alpha_space],
+        "render-discovered viewports should participate in ImGui-style fallback z-order"
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_reconciles_backend_focus_for_platform_focus_order(cx: &mut TestAppContext) {
     let alpha_space = DockSpaceId::from("alpha");
     let zeta_space = DockSpaceId::from("zeta");

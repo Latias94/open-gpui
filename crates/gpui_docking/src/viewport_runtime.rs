@@ -1304,6 +1304,7 @@ impl DockViewportRuntime {
             Some(_) => false,
             None => {
                 let _ = self.adapter.register_viewport_with_outcome(space, window);
+                self.record_platform_focus_order_window(window.window_id());
                 true
             }
         }

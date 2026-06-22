@@ -1052,6 +1052,9 @@ impl DockViewportAdapter {
             crate::DockViewportTrustedHoveredSignal::Trusted(_) => return None,
         }
         let receiver_window = request.event_receiver_window()?;
+        if self.window_route_ready(receiver_window) != Some(true) {
+            return None;
+        }
         let receiver_space = self.space_for_window_id(receiver_window)?;
         if receiver_space != request.source_space() {
             return None;
@@ -1756,6 +1759,46 @@ mod tests {
             DockViewportDropRoute::Unavailable,
             "event-receiver local coordinates without scene authority must not become a route"
         );
+    }
+
+    #[test]
+    fn event_receiver_local_scene_authority_requires_route_ready_window() {
+        for pointer_routing in [
+            DockViewportPointerRouting::NoInputPassThrough,
+            DockViewportPointerRouting::Minimized,
+        ] {
+            let source = space("source");
+            let source_window = handle(1);
+            let mut adapter = DockViewportAdapter::new();
+            register_viewport(&mut adapter, source.clone(), source_window);
+            adapter.update_snapshot(
+                &source,
+                DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                    100.0, 200.0, 800.0, 600.0,
+                )))
+                .with_pointer_routing(pointer_routing),
+                bounds(10.0, 20.0, 300.0, 200.0),
+            );
+            let request = DockViewportDropRouteRequest::from_platform_signals(
+                source,
+                DockNodeId::null(),
+                DockViewportDropPayload::Item(item("a")),
+                point(px(30.0), px(50.0)),
+                None,
+                signals_with_receiver(
+                    DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
+                    source_window,
+                )
+                .with_global_window_bounds(false),
+            )
+            .with_accepted_local_scene_route_authority(true);
+
+            assert_eq!(
+                adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
+                DockViewportDropRoute::Unavailable,
+                "event-receiver scene authority must not bypass {pointer_routing:?} route readiness"
+            );
+        }
     }
 
     #[test]
