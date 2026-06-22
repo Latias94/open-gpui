@@ -1686,19 +1686,24 @@ impl DockViewportRuntime {
         }
 
         self.reconcile_viewport_frame_except_window(request.event_receiver_window(), cx);
+        let request = cx.read_entity(&self.controller, |_, app| {
+            request
+                .clone()
+                .with_resampled_platform_target_context_from_app(app)
+        });
         route_resolution = self
             .adapter
-            .resolve_payload_drop_route_resolution(request, &policy);
+            .resolve_payload_drop_route_resolution(&request, &policy);
         if let Some(resolution) =
-            self.resolve_accepted_routed_preview_resolution(request, &route_resolution, cx)
+            self.resolve_accepted_routed_preview_resolution(&request, &route_resolution, cx)
         {
-            self.status.record_route(request, resolution.route());
+            self.status.record_route(&request, resolution.route());
             return resolution;
         }
 
         let route = route_resolution.into_route();
-        let resolution = self.resolve_payload_drop_delivery_resolution(request, route, cx);
-        self.status.record_route(request, resolution.route());
+        let resolution = self.resolve_payload_drop_delivery_resolution(&request, route, cx);
+        self.status.record_route(&request, resolution.route());
         resolution
     }
 

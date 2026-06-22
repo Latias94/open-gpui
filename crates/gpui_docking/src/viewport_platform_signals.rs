@@ -16,6 +16,9 @@ pub(crate) struct DockViewportPlatformSignals {
     window_stack: DockViewportFrontToBackWindowStack,
     /// Window bounds are reported in a shared desktop coordinate space.
     global_window_bounds: bool,
+    /// Target arbitration signals came from the live app backend and may be refreshed before
+    /// resolving delivery.
+    resample_target_context_from_app: bool,
 }
 
 impl DockViewportPlatformSignals {
@@ -34,6 +37,7 @@ impl DockViewportPlatformSignals {
             event_receiver_window: None,
             window_stack,
             global_window_bounds: capabilities.global_window_bounds,
+            resample_target_context_from_app: true,
         }
     }
 
@@ -42,11 +46,24 @@ impl DockViewportPlatformSignals {
         Self::from_app(cx).with_event_receiver_window(window.window_handle())
     }
 
+    /// Refreshes backend target arbitration signals while preserving release-time coordinate
+    /// semantics captured from the event receiver.
+    pub(crate) fn with_resampled_target_context_from_app(mut self, cx: &App) -> Self {
+        if !self.resample_target_context_from_app {
+            return self;
+        }
+        let current = Self::from_app(cx);
+        self.trusted_hovered_signal = current.trusted_hovered_signal;
+        self.window_stack = current.window_stack;
+        self
+    }
+
     /// Captures app-level signals for release paths that did not sample the hovered window.
     #[cfg(test)]
     pub(crate) fn from_app_without_hovered_window_authority(cx: &App) -> Self {
         let mut signals = Self::from_app(cx);
         signals.trusted_hovered_signal = DockViewportTrustedHoveredSignal::Unavailable;
+        signals.resample_target_context_from_app = false;
         signals
     }
 
@@ -58,6 +75,7 @@ impl DockViewportPlatformSignals {
     ) -> Self {
         self.trusted_hovered_signal =
             DockViewportTrustedHoveredSignal::Trusted(window.into().window_id());
+        self.resample_target_context_from_app = false;
         self
     }
 
@@ -91,6 +109,7 @@ impl DockViewportPlatformSignals {
             event_receiver_window: None,
             window_stack,
             global_window_bounds: true,
+            resample_target_context_from_app: false,
         }
     }
 

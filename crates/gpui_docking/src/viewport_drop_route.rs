@@ -714,6 +714,16 @@ impl DockViewportDropRouteRequest {
         self
     }
 
+    pub(crate) fn with_resampled_platform_target_context_from_app(
+        mut self,
+        cx: &open_gpui::App,
+    ) -> Self {
+        self.platform_signals = self
+            .platform_signals
+            .with_resampled_target_context_from_app(cx);
+        self
+    }
+
     pub(crate) fn source_space(&self) -> &DockSpaceId {
         &self.source_space
     }
