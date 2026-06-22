@@ -4,7 +4,8 @@ use crate::{
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
     DockViewportFocusRequest, DockViewportShouldCloseOutcome, DockViewportTearOffOpenOutcome,
     viewport_registry::{
-        DockViewportRouteUnavailableReason, DockViewportSnapshot, DockViewportStaleReason,
+        DockViewportInputMask, DockViewportRouteUnavailableReason, DockViewportSnapshot,
+        DockViewportStaleReason,
     },
 };
 use open_gpui::{
@@ -41,6 +42,8 @@ pub struct DockViewportLifecycleRecord {
     pub window_id: WindowId,
     /// Route-readiness status derived from the viewport lifecycle machine.
     pub route_status: DockViewportRouteStatus,
+    /// Platform input-mask state observed for the viewport window.
+    pub input_status: DockViewportInputStatus,
     /// Generation of the latest platform/host route facts.
     pub facts_generation: u64,
 }
@@ -59,10 +62,19 @@ pub enum DockViewportRouteStatus {
     },
     /// The latest platform facts say the window is minimized.
     Minimized,
-    /// The latest platform facts say the window is a native no-input/click-through viewport.
-    NoInputPassThrough,
     /// The lifecycle state was ready, but one of the required route fact snapshots is absent.
     MissingRouteFacts,
+}
+
+/// Platform input-mask status for a registered viewport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportInputStatus {
+    /// The window receives pointer input.
+    ReceivesInput,
+    /// The window is minimized.
+    Minimized,
+    /// The window is native no-input/click-through.
+    NoInputPassThrough,
 }
 
 /// Public diagnostic reason for stale viewport route facts.
@@ -468,6 +480,7 @@ impl DockViewportLifecycleRecord {
             space,
             window_id: snapshot.window.window_id(),
             route_status: DockViewportRouteStatus::from_snapshot(snapshot),
+            input_status: DockViewportInputStatus::from(snapshot.input_mask),
             facts_generation: snapshot.facts_generation(),
         }
     }
@@ -484,10 +497,17 @@ impl DockViewportRouteStatus {
                 reason: DockViewportStaleStatusReason::from(reason),
             },
             Some(DockViewportRouteUnavailableReason::Minimized) => Self::Minimized,
-            Some(DockViewportRouteUnavailableReason::NoInputPassThrough) => {
-                Self::NoInputPassThrough
-            }
             Some(DockViewportRouteUnavailableReason::MissingRouteFacts) => Self::MissingRouteFacts,
+        }
+    }
+}
+
+impl From<DockViewportInputMask> for DockViewportInputStatus {
+    fn from(input_mask: DockViewportInputMask) -> Self {
+        match input_mask {
+            DockViewportInputMask::ReceivesInput => Self::ReceivesInput,
+            DockViewportInputMask::Minimized => Self::Minimized,
+            DockViewportInputMask::NoInputPassThrough => Self::NoInputPassThrough,
         }
     }
 }
@@ -694,10 +714,10 @@ mod tests {
     use super::*;
     use crate::DockViewportFocusRequest;
     use crate::{
-        DockViewportWindowFacts,
+        DockViewportInputStatus, DockViewportWindowFacts,
         drag::DockDragPayload,
         interaction::DockRuntimeDragSession,
-        viewport_registry::DockViewportPointerRouting,
+        viewport_registry::DockViewportInputMask,
         viewport_test_support::{bounds, handle, space},
     };
     use open_gpui::{WindowBounds, point, px};
@@ -716,6 +736,7 @@ mod tests {
             registered.route_status,
             DockViewportRouteStatus::RegisteredNotReady
         );
+        assert_eq!(registered.input_status, DockViewportInputStatus::Minimized);
         assert_eq!(registered.facts_generation, 0);
 
         assert!(snapshot.update_route_facts(
@@ -726,6 +747,7 @@ mod tests {
         ));
         let ready = DockViewportLifecycleRecord::from_snapshot(space.clone(), &snapshot);
         assert_eq!(ready.route_status, DockViewportRouteStatus::RouteReady);
+        assert_eq!(ready.input_status, DockViewportInputStatus::ReceivesInput);
         assert_eq!(ready.facts_generation, 1);
 
         assert!(
@@ -733,29 +755,37 @@ mod tests {
                 DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
                     100.0, 200.0, 320.0, 240.0
                 )))
-                .with_pointer_routing(DockViewportPointerRouting::Minimized),
+                .with_input_mask(DockViewportInputMask::Minimized),
                 bounds(0.0, 0.0, 320.0, 240.0)
             )
         );
         let minimized = DockViewportLifecycleRecord::from_snapshot(space.clone(), &snapshot);
         assert_eq!(minimized.route_status, DockViewportRouteStatus::Minimized);
-        assert_eq!(minimized.facts_generation, 2);
+        assert_eq!(minimized.input_status, DockViewportInputStatus::Minimized);
+        assert_eq!(
+            minimized.facts_generation, 1,
+            "input-mask-only changes do not advance route facts generation"
+        );
 
         assert!(
             snapshot.update_route_facts(
                 DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
                     100.0, 200.0, 320.0, 240.0
                 )))
-                .with_pointer_routing(DockViewportPointerRouting::NoInputPassThrough),
+                .with_input_mask(DockViewportInputMask::NoInputPassThrough),
                 bounds(0.0, 0.0, 320.0, 240.0)
             )
         );
         let no_input = DockViewportLifecycleRecord::from_snapshot(space.clone(), &snapshot);
+        assert_eq!(no_input.route_status, DockViewportRouteStatus::RouteReady);
         assert_eq!(
-            no_input.route_status,
-            DockViewportRouteStatus::NoInputPassThrough
+            no_input.input_status,
+            DockViewportInputStatus::NoInputPassThrough
         );
-        assert_eq!(no_input.facts_generation, 3);
+        assert_eq!(
+            no_input.facts_generation, 1,
+            "input-mask-only changes do not advance route facts generation"
+        );
 
         assert!(snapshot.mark_route_facts_stale(DockViewportStaleReason::WindowFactsChanged));
         let stale = DockViewportLifecycleRecord::from_snapshot(space.clone(), &snapshot);
@@ -765,7 +795,7 @@ mod tests {
                 reason: DockViewportStaleStatusReason::WindowFactsChanged
             }
         );
-        assert_eq!(stale.facts_generation, 4);
+        assert_eq!(stale.facts_generation, 2);
 
         assert!(snapshot.mark_route_facts_stale(DockViewportStaleReason::PlatformCloseRequested));
         let closing = DockViewportLifecycleRecord::from_snapshot(space, &snapshot);
@@ -775,7 +805,7 @@ mod tests {
                 reason: DockViewportStaleStatusReason::PlatformCloseRequested
             }
         );
-        assert_eq!(closing.facts_generation, 5);
+        assert_eq!(closing.facts_generation, 3);
     }
 
     #[test]

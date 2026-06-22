@@ -4,13 +4,13 @@ use crate::{
     DockSpaceId, DockViewportAdapter, DockViewportClosePolicy, DockViewportCloseStatus,
     DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
     DockViewportDropRouteRequest, DockViewportFocusCommand, DockViewportFocusRequest,
-    DockViewportOpenStatus, DockViewportPlatformSyncAction, DockViewportPlatformSyncRequest,
-    DockViewportPlatformSyncSkippedReason, DockViewportResolvedDropRoute, DockViewportRouteStatus,
-    DockViewportRouteTarget, DockViewportRuntime, DockViewportRuntimeHandle,
-    DockViewportShouldCloseStatus, DockViewportStaleStatusReason, DockViewportTargetContext,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
-    DockViewportTearOffPlacementSource, DockViewportTearOffRequest, DockViewportWindowActivation,
-    DockViewportWindowFacts, DockWorkspace, SplitAxis,
+    DockViewportInputStatus, DockViewportOpenStatus, DockViewportPlatformSyncAction,
+    DockViewportPlatformSyncRequest, DockViewportPlatformSyncSkippedReason,
+    DockViewportResolvedDropRoute, DockViewportRouteStatus, DockViewportRouteTarget,
+    DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
+    DockViewportStaleStatusReason, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
+    DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementSource, DockViewportTearOffRequest,
+    DockViewportWindowActivation, DockViewportWindowFacts, DockWorkspace, SplitAxis,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -20,7 +20,7 @@ use crate::{
         DockViewportActivationApplyOutcome, apply_viewport_activation_transaction,
     },
     viewport_registry::{
-        DockViewportPointerRouting, DockViewportRouteUnavailableReason, DockViewportStaleReason,
+        DockViewportInputMask, DockViewportRouteUnavailableReason, DockViewportStaleReason,
     },
     viewport_tear_off::{
         DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffTick,
@@ -44,6 +44,18 @@ fn tear_off_request(
         point(px(900.0), px(900.0)),
         None,
     )
+}
+
+fn viewport_input_status(
+    runtime: &DockViewportRuntimeHandle,
+    space: &DockSpaceId,
+) -> Option<DockViewportInputStatus> {
+    runtime
+        .runtime_status()
+        .viewport_lifecycle
+        .iter()
+        .find(|record| &record.space == space)
+        .map(|record| record.input_status)
 }
 
 fn leaf_host_scene_fact(
@@ -86,8 +98,8 @@ fn viewport_window_facts_report_native_no_input_windows(cx: &mut TestAppContext)
         .update(cx, |_, window, app| {
             assert!(!window.accepts_pointer_input());
             assert_eq!(
-                DockViewportWindowFacts::from_window(window, app).pointer_routing,
-                DockViewportPointerRouting::NoInputPassThrough
+                DockViewportWindowFacts::from_window(window, app).input_mask,
+                DockViewportInputMask::NoInputPassThrough
             );
         })
         .expect("no-input test window should remain live");
@@ -186,7 +198,7 @@ fn viewport_runtime_drag_restores_original_no_input_source_state(cx: &mut TestAp
         DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
             0.0, 0.0, 360.0, 220.0,
         )))
-        .with_pointer_routing(DockViewportPointerRouting::NoInputPassThrough),
+        .with_input_mask(DockViewportInputMask::NoInputPassThrough),
         floating_bounds(0.0, 0.0, 360.0, 220.0),
     );
     let controller = cx.new(|_| DockController::new(DockWorkspace::new(source.clone(), graph)));
@@ -346,7 +358,12 @@ fn viewport_runtime_syncs_supported_options_when_reusing_window(cx: &mut TestApp
     );
     assert_eq!(
         runtime.viewport_route_unavailable_reason(&secondary_space),
-        Some(DockViewportRouteUnavailableReason::NoInputPassThrough),
+        None,
+        "native no-input should not invalidate route facts"
+    );
+    assert_eq!(
+        viewport_input_status(&runtime, &secondary_space),
+        Some(DockViewportInputStatus::NoInputPassThrough),
         "runtime registry must observe the reused window's live no-input state"
     );
 

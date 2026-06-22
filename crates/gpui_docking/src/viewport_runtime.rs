@@ -562,11 +562,7 @@ impl DockViewportRuntime {
         let Some(snapshot) = self.adapter.snapshot(payload.identity().source_space()) else {
             return Some(true);
         };
-        match snapshot.pointer_routing {
-            crate::viewport_registry::DockViewportPointerRouting::Routable => Some(true),
-            crate::viewport_registry::DockViewportPointerRouting::NoInputPassThrough => Some(false),
-            crate::viewport_registry::DockViewportPointerRouting::Minimized => Some(true),
-        }
+        Some(snapshot.input_mask.drag_restore_accepts_pointer_input())
     }
 
     #[cfg(test)]

@@ -8,7 +8,7 @@ use crate::{
     drop_target::{DockDropTargetKey, DockResolvedDropTarget},
     interaction::{DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
     viewport_drop_scene::DockViewportHostSceneFrame,
-    viewport_registry::DockViewportWindowBoundsFrame,
+    viewport_registry::{DockViewportInputMask, DockViewportWindowBoundsFrame},
     viewport_target_resolver::{
         DockAuthorizedViewportRouteTarget, resolve_authorized_viewport_route_target,
     },
@@ -935,9 +935,7 @@ impl DockViewportAdapter {
         let Some(hovered_window) = target_context.trusted_hovered_window() else {
             return target_context;
         };
-        if self
-            .space_for_window_id(hovered_window)
-            .is_some_and(|space| self.space_is_no_input_pass_through(space))
+        if self.window_input_mask(hovered_window) == Some(DockViewportInputMask::NoInputPassThrough)
         {
             return target_context.without_trusted_hovered_window();
         }
@@ -949,10 +947,7 @@ impl DockViewportAdapter {
         request: &DockViewportDropRouteRequest,
         target_context: &DockViewportTargetContext,
     ) -> DockViewportDropRoutePlan {
-        if target_context
-            .trusted_hovered_window()
-            .is_some_and(|hovered| self.window_route_ready(hovered) == Some(false))
-        {
+        if self.trusted_hovered_window_is_known_but_unusable(target_context) {
             return DockViewportDropRoutePlan::unavailable(
                 DockViewportDropRouteUnavailableReason::BlockedByViewportWindow,
             );
@@ -993,6 +988,15 @@ impl DockViewportAdapter {
         }
 
         DockViewportDropRoutePlan::OutsideRegisteredViewport
+    }
+
+    fn trusted_hovered_window_is_known_but_unusable(
+        &self,
+        target_context: &DockViewportTargetContext,
+    ) -> bool {
+        target_context
+            .trusted_hovered_window()
+            .is_some_and(|hovered| self.window_can_authorize_hover_hit(hovered) == Some(false))
     }
 
     fn resolve_global_screen_payload_drop_route_plan(
@@ -1145,9 +1149,6 @@ impl DockViewportAdapter {
             return None;
         }
         let receiver_window = request.event_receiver_window()?;
-        if self.window_route_ready(receiver_window) != Some(true) {
-            return None;
-        }
         let receiver_space = self.space_for_window_id(receiver_window)?;
         if receiver_space != request.source_space() {
             return None;
@@ -1156,15 +1157,17 @@ impl DockViewportAdapter {
         if snapshot.window.window_id() != receiver_window {
             return None;
         }
+        let facts_generation =
+            self.snapshot_facts_generation(request.source_space(), receiver_window)?;
         if let Some(proof) = proof
             && (!proof.matches_viewport(request.source_space(), receiver_window)
-                || proof.generation() != snapshot.facts_generation())
+                || proof.generation() != facts_generation)
         {
             return None;
         }
         Some(DockEventReceiverLocalSceneAuthority {
             receiver_window,
-            facts_generation: snapshot.facts_generation(),
+            facts_generation,
             host_bounds: snapshot.host_bounds?,
             global_screen_bounds: snapshot.global_screen_bounds(),
         })
@@ -1209,10 +1212,6 @@ impl DockViewportAdapter {
         if target_context.trusted_hovered_window() != Some(receiver_window) {
             return None;
         }
-        if self.window_route_ready(receiver_window) != Some(true) {
-            return None;
-        }
-
         let target_space = self.space_for_window_id(receiver_window).cloned()?;
         let target_window = self.window_for_space(&target_space)?;
         let host_position = self.window_to_host(&target_space, request.release_position())?;
@@ -1233,10 +1232,7 @@ impl DockViewportAdapter {
         if let Some(hovered_window) = target_context.trusted_hovered_window()
             && self
                 .window_for_space(request.source_space())
-                .is_some_and(|window| {
-                    window.window_id() == hovered_window
-                        && self.window_route_ready(hovered_window) == Some(true)
-                })
+                .is_some_and(|window| window.window_id() == hovered_window)
             && let Some(host_position) =
                 self.window_to_host(request.source_space(), request.release_position())
         {
@@ -1296,7 +1292,7 @@ mod tests {
             DockViewportHostSceneFrame, DockViewportHostSceneRegistry,
             DockViewportHostSceneSnapshot,
         },
-        viewport_registry::{DockViewportPointerRouting, DockViewportWindowBoundsFrame},
+        viewport_registry::{DockViewportInputMask, DockViewportWindowBoundsFrame},
         viewport_test_support::{bounds, handle, item, register_viewport, space},
     };
     use open_gpui::{DisplayId, WindowBounds, WindowId, point, px};
@@ -1992,47 +1988,86 @@ mod tests {
     }
 
     #[test]
-    fn event_receiver_local_scene_proof_requires_route_ready_window() {
-        for pointer_routing in [
-            DockViewportPointerRouting::NoInputPassThrough,
-            DockViewportPointerRouting::Minimized,
-        ] {
-            let source = space("source");
-            let source_window = handle(1);
-            let mut adapter = DockViewportAdapter::new();
-            register_viewport(&mut adapter, source.clone(), source_window);
-            adapter.update_snapshot(
-                &source,
-                DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
-                    100.0, 200.0, 800.0, 600.0,
-                )))
-                .with_pointer_routing(pointer_routing),
-                bounds(10.0, 20.0, 300.0, 200.0),
-            );
-            let request = DockViewportDropRouteRequest::from_platform_signals(
-                source.clone(),
-                DockNodeId::null(),
-                DockViewportDropPayload::Item(item("a")),
-                point(px(30.0), px(50.0)),
-                None,
-                signals_with_receiver(
-                    DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
-                    source_window,
-                )
-                .with_global_window_bounds(false),
-            )
-            .with_event_receiver_local_scene_proof(Some(scene_proof(
-                &source,
+    fn event_receiver_local_scene_proof_accepts_no_input_when_scene_generation_matches() {
+        let source = space("source");
+        let source_window = handle(1);
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, source.clone(), source_window);
+        adapter.update_snapshot(
+            &source,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 200.0, 800.0, 600.0,
+            )))
+            .with_input_mask(DockViewportInputMask::NoInputPassThrough),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source.clone(),
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(30.0), px(50.0)),
+            None,
+            signals_with_receiver(
+                DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
                 source_window,
-                1,
-            )));
+            )
+            .with_global_window_bounds(false),
+        )
+        .with_event_receiver_local_scene_proof(Some(scene_proof(
+            &source,
+            source_window,
+            1,
+        )));
 
-            assert_eq!(
-                adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
-                DockViewportDropRoute::Unavailable,
-                "event-receiver scene proof must not bypass {pointer_routing:?} route readiness"
-            );
-        }
+        assert_eq!(
+            adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
+            DockViewportDropRoute::Local {
+                host_position: point(px(20.0), px(30.0)),
+                window_id: source_window.window_id(),
+                facts_generation: 1,
+                authority: DockViewportAuthorizedRouteAuthority::EventReceiverLocalScene,
+            },
+            "native no-input is an input mask, not stale route facts, when a matching scene proof exists"
+        );
+    }
+
+    #[test]
+    fn event_receiver_local_scene_proof_rejects_minimized_window() {
+        let source = space("source");
+        let source_window = handle(1);
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, source.clone(), source_window);
+        adapter.update_snapshot(
+            &source,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 200.0, 800.0, 600.0,
+            )))
+            .with_input_mask(DockViewportInputMask::Minimized),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source.clone(),
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(30.0), px(50.0)),
+            None,
+            signals_with_receiver(
+                DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
+                source_window,
+            )
+            .with_global_window_bounds(false),
+        )
+        .with_event_receiver_local_scene_proof(Some(scene_proof(
+            &source,
+            source_window,
+            1,
+        )));
+
+        assert_eq!(
+            adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
+            DockViewportDropRoute::Unavailable,
+            "event-receiver scene proof must not bypass minimized route readiness"
+        );
     }
 
     #[test]
@@ -2357,7 +2392,7 @@ mod tests {
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
                 100.0, 100.0, 320.0, 240.0,
             )))
-            .with_pointer_routing(DockViewportPointerRouting::NoInputPassThrough),
+            .with_input_mask(DockViewportInputMask::NoInputPassThrough),
             bounds(0.0, 0.0, 320.0, 240.0),
         );
         adapter.update_snapshot(
@@ -2411,7 +2446,7 @@ mod tests {
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
                 100.0, 100.0, 320.0, 240.0,
             )))
-            .with_pointer_routing(DockViewportPointerRouting::NoInputPassThrough),
+            .with_input_mask(DockViewportInputMask::NoInputPassThrough),
             bounds(0.0, 0.0, 320.0, 240.0),
         );
         adapter.update_snapshot(
@@ -2465,7 +2500,7 @@ mod tests {
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
                 100.0, 100.0, 320.0, 240.0,
             )))
-            .with_pointer_routing(DockViewportPointerRouting::NoInputPassThrough),
+            .with_input_mask(DockViewportInputMask::NoInputPassThrough),
             bounds(0.0, 0.0, 320.0, 240.0),
         );
         adapter.update_snapshot(
@@ -2577,7 +2612,7 @@ mod tests {
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
                 100.0, 100.0, 320.0, 240.0,
             )))
-            .with_pointer_routing(DockViewportPointerRouting::NoInputPassThrough),
+            .with_input_mask(DockViewportInputMask::NoInputPassThrough),
             bounds(0.0, 0.0, 320.0, 240.0),
         );
         adapter.update_snapshot(
@@ -2664,7 +2699,7 @@ mod tests {
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
                 100.0, 100.0, 320.0, 240.0,
             )))
-            .with_pointer_routing(DockViewportPointerRouting::NoInputPassThrough),
+            .with_input_mask(DockViewportInputMask::NoInputPassThrough),
             bounds(0.0, 0.0, 320.0, 240.0),
         );
         adapter.update_snapshot(
@@ -2672,7 +2707,7 @@ mod tests {
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
                 100.0, 100.0, 320.0, 240.0,
             )))
-            .with_pointer_routing(DockViewportPointerRouting::Minimized),
+            .with_input_mask(DockViewportInputMask::Minimized),
             bounds(0.0, 0.0, 320.0, 240.0),
         );
         adapter.update_snapshot(
@@ -2726,7 +2761,7 @@ mod tests {
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
                 100.0, 100.0, 320.0, 240.0,
             )))
-            .with_pointer_routing(DockViewportPointerRouting::Minimized),
+            .with_input_mask(DockViewportInputMask::Minimized),
             bounds(0.0, 0.0, 320.0, 240.0),
         );
         adapter.update_snapshot(
@@ -2772,7 +2807,7 @@ mod tests {
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
                 100.0, 100.0, 320.0, 240.0,
             )))
-            .with_pointer_routing(DockViewportPointerRouting::NoInputPassThrough),
+            .with_input_mask(DockViewportInputMask::NoInputPassThrough),
             bounds(0.0, 0.0, 320.0, 240.0),
         );
         adapter.update_snapshot(
@@ -2825,7 +2860,7 @@ mod tests {
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
                 100.0, 100.0, 320.0, 240.0,
             )))
-            .with_pointer_routing(DockViewportPointerRouting::NoInputPassThrough),
+            .with_input_mask(DockViewportInputMask::NoInputPassThrough),
             bounds(0.0, 0.0, 320.0, 240.0),
         );
         adapter.update_snapshot(
@@ -2930,7 +2965,7 @@ mod tests {
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
                 100.0, 100.0, 320.0, 240.0,
             )))
-            .with_pointer_routing(DockViewportPointerRouting::NoInputPassThrough),
+            .with_input_mask(DockViewportInputMask::NoInputPassThrough),
             bounds(0.0, 0.0, 320.0, 240.0),
         );
         adapter.update_snapshot(

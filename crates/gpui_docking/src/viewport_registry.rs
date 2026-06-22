@@ -32,8 +32,6 @@ pub(crate) enum DockViewportRouteUnavailableReason {
     Stale(DockViewportStaleReason),
     /// The latest platform facts say the window is minimized.
     Minimized,
-    /// The latest platform facts say the window is a native no-input/click-through viewport.
-    NoInputPassThrough,
     /// Lifecycle claims readiness, but one of the required platform/host fact snapshots is absent.
     MissingRouteFacts,
 }
@@ -124,8 +122,8 @@ pub(crate) struct DockViewportWindowFacts {
     pub(crate) window_bounds: WindowBounds,
     /// Current window rectangle tagged with the coordinate space the backend can actually report.
     pub(crate) current_bounds: DockViewportWindowBoundsFrame,
-    /// Current platform pointer-routing state.
-    pub(crate) pointer_routing: DockViewportPointerRouting,
+    /// Current platform input mask.
+    pub(crate) input_mask: DockViewportInputMask,
 }
 
 /// Coordinate frame for a live viewport window rectangle.
@@ -152,15 +150,32 @@ impl DockViewportWindowBoundsFrame {
     }
 }
 
-/// Current platform pointer-routing state for a viewport window.
+/// Current platform input mask for a viewport window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DockViewportPointerRouting {
-    /// The window can be hit-tested and routed normally.
-    Routable,
-    /// The window is minimized and must not authorize a route or no-input underlay.
+pub(crate) enum DockViewportInputMask {
+    /// The window receives pointer input and may be selected by hovered-window hit testing.
+    ReceivesInput,
+    /// The window is minimized and must not authorize a route or no-input underlay routing.
     Minimized,
-    /// The window is explicitly click-through, so routing may pass through it with backend support.
+    /// The window is explicitly click-through, so hovered-window hit testing should skip it.
     NoInputPassThrough,
+}
+
+impl DockViewportInputMask {
+    pub(crate) fn drag_restore_accepts_pointer_input(self) -> bool {
+        match self {
+            Self::ReceivesInput | Self::Minimized => true,
+            Self::NoInputPassThrough => false,
+        }
+    }
+
+    pub(crate) fn participates_in_hover_hit_testing(self) -> bool {
+        matches!(self, Self::ReceivesInput)
+    }
+
+    fn is_minimized(self) -> bool {
+        matches!(self, Self::Minimized)
+    }
 }
 
 /// Platform-window requests reported by the backend and not yet consumed by a fresh host scene.
@@ -193,7 +208,7 @@ impl DockViewportWindowFacts {
             display_id,
             window_bounds,
             current_bounds,
-            pointer_routing: DockViewportPointerRouting::Routable,
+            input_mask: DockViewportInputMask::ReceivesInput,
         }
     }
 
@@ -209,19 +224,16 @@ impl DockViewportWindowFacts {
             current_bounds,
         );
         if window.is_minimized() {
-            facts.pointer_routing = DockViewportPointerRouting::Minimized;
+            facts.input_mask = DockViewportInputMask::Minimized;
         } else if !window.accepts_pointer_input() {
-            facts.pointer_routing = DockViewportPointerRouting::NoInputPassThrough;
+            facts.input_mask = DockViewportInputMask::NoInputPassThrough;
         }
         facts
     }
 
     #[cfg(test)]
-    pub(crate) fn with_pointer_routing(
-        mut self,
-        pointer_routing: DockViewportPointerRouting,
-    ) -> Self {
-        self.pointer_routing = pointer_routing;
+    pub(crate) fn with_input_mask(mut self, input_mask: DockViewportInputMask) -> Self {
+        self.input_mask = input_mask;
         self
     }
 
@@ -264,8 +276,8 @@ pub(crate) struct DockViewportSnapshot {
     pub(crate) current_bounds: Option<DockViewportWindowBoundsFrame>,
     /// Last known dock host bounds in window-local coordinates.
     pub(crate) host_bounds: Option<Bounds<Pixels>>,
-    /// Last known platform pointer-routing state.
-    pub(crate) pointer_routing: DockViewportPointerRouting,
+    /// Last known platform input mask.
+    pub(crate) input_mask: DockViewportInputMask,
     platform_requests: DockViewportPlatformRequests,
     lifecycle: DockViewportLifecycleMachine,
 }
@@ -279,7 +291,7 @@ impl DockViewportSnapshot {
             window_bounds: None,
             current_bounds: None,
             host_bounds: None,
-            pointer_routing: DockViewportPointerRouting::Minimized,
+            input_mask: DockViewportInputMask::Minimized,
             platform_requests: DockViewportPlatformRequests::default(),
             lifecycle: DockViewportLifecycleMachine::default(),
         }
@@ -301,20 +313,18 @@ impl DockViewportSnapshot {
         if self.has_missing_route_facts() {
             return Some(DockViewportRouteUnavailableReason::MissingRouteFacts);
         }
-        match self.pointer_routing {
-            DockViewportPointerRouting::Routable => {}
-            DockViewportPointerRouting::Minimized => {
-                return Some(DockViewportRouteUnavailableReason::Minimized);
-            }
-            DockViewportPointerRouting::NoInputPassThrough => {
-                return Some(DockViewportRouteUnavailableReason::NoInputPassThrough);
-            }
+        if self.input_mask.is_minimized() {
+            return Some(DockViewportRouteUnavailableReason::Minimized);
         }
         None
     }
 
     pub(crate) fn is_route_ready(&self) -> bool {
         self.has_current_route_facts()
+    }
+
+    pub(crate) fn can_authorize_hover_hit(&self) -> bool {
+        self.has_current_route_facts() && self.input_mask.participates_in_hover_hit_testing()
     }
 
     pub(crate) fn is_platform_close_requested(&self) -> bool {
@@ -351,26 +361,25 @@ impl DockViewportSnapshot {
         let window_bounds = Some(window_facts.window_bounds);
         let current_bounds = Some(window_facts.current_bounds);
         let host_bounds = Some(host_bounds);
-        let pointer_routing = window_facts.pointer_routing;
-        if self.display_id == display_id
+        let input_mask = window_facts.input_mask;
+        if self.lifecycle.is_route_ready()
+            && self.display_id == display_id
             && self.window_bounds == window_bounds
             && self.current_bounds == current_bounds
             && self.host_bounds == host_bounds
-            && self.pointer_routing == pointer_routing
-            && self.lifecycle.is_route_ready()
         {
-            if self.platform_requests == DockViewportPlatformRequests::default() {
-                return false;
-            }
+            let changed = self.input_mask != input_mask
+                || self.platform_requests != DockViewportPlatformRequests::default();
+            self.input_mask = input_mask;
             self.platform_requests = DockViewportPlatformRequests::default();
-            return true;
+            return changed;
         }
 
         self.display_id = display_id;
         self.window_bounds = window_bounds;
         self.current_bounds = current_bounds;
         self.host_bounds = host_bounds;
-        self.pointer_routing = pointer_routing;
+        self.input_mask = input_mask;
         self.platform_requests = DockViewportPlatformRequests::default();
         self.lifecycle.mark_route_ready();
         true
@@ -402,8 +411,8 @@ impl DockViewportSnapshot {
     ) -> bool {
         if !self.lifecycle.is_route_ready()
             || self.host_bounds.is_none()
-            || self.pointer_routing != DockViewportPointerRouting::Routable
-            || window_facts.pointer_routing != DockViewportPointerRouting::Routable
+            || self.input_mask.is_minimized()
+            || window_facts.input_mask.is_minimized()
         {
             return false;
         }
@@ -441,11 +450,11 @@ impl DockViewportSnapshot {
         let display_id = window_facts.display_id;
         let window_bounds = Some(window_facts.window_bounds);
         let current_bounds = Some(window_facts.current_bounds);
-        let pointer_routing = window_facts.pointer_routing;
+        let input_mask = window_facts.input_mask;
         if self.display_id == display_id
             && self.window_bounds == window_bounds
             && self.current_bounds == current_bounds
-            && self.pointer_routing == pointer_routing
+            && self.input_mask == input_mask
         {
             return false;
         }
@@ -453,22 +462,16 @@ impl DockViewportSnapshot {
         self.display_id = display_id;
         self.window_bounds = window_bounds;
         self.current_bounds = current_bounds;
-        self.pointer_routing = pointer_routing;
+        self.input_mask = input_mask;
         true
     }
 
-    pub(crate) fn refresh_pointer_routing(
-        &mut self,
-        pointer_routing: DockViewportPointerRouting,
-    ) -> bool {
-        if self.lifecycle.is_platform_close_requested() || self.pointer_routing == pointer_routing {
+    pub(crate) fn refresh_input_mask(&mut self, input_mask: DockViewportInputMask) -> bool {
+        if self.lifecycle.is_platform_close_requested() || self.input_mask == input_mask {
             return false;
         }
 
-        self.pointer_routing = pointer_routing;
-        if self.lifecycle.is_route_ready() {
-            self.lifecycle.mark_route_ready();
-        }
+        self.input_mask = input_mask;
         true
     }
 
@@ -483,7 +486,7 @@ impl DockViewportSnapshot {
     fn has_current_route_facts(&self) -> bool {
         self.lifecycle.is_route_ready()
             && !self.has_missing_route_facts()
-            && self.pointer_routing == DockViewportPointerRouting::Routable
+            && !self.input_mask.is_minimized()
     }
 
     fn has_missing_route_facts(&self) -> bool {
@@ -708,7 +711,7 @@ mod tests {
                     open_gpui::point(open_gpui::px(100.0), open_gpui::px(100.0)),
                     open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
                 )))
-                .with_pointer_routing(DockViewportPointerRouting::Minimized),
+                .with_input_mask(DockViewportInputMask::Minimized),
                 Bounds::new(
                     open_gpui::point(open_gpui::px(0.0), open_gpui::px(0.0)),
                     open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
@@ -724,7 +727,7 @@ mod tests {
     }
 
     #[test]
-    fn no_input_window_facts_are_not_route_ready() {
+    fn no_input_window_facts_keep_route_facts_ready_but_are_hover_ineligible() {
         let mut registry = DockViewportRegistry::default();
         let main = space("main");
         let window = handle(1);
@@ -739,7 +742,7 @@ mod tests {
                     open_gpui::point(open_gpui::px(100.0), open_gpui::px(100.0)),
                     open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
                 )))
-                .with_pointer_routing(DockViewportPointerRouting::NoInputPassThrough),
+                .with_input_mask(DockViewportInputMask::NoInputPassThrough),
                 Bounds::new(
                     open_gpui::point(open_gpui::px(0.0), open_gpui::px(0.0)),
                     open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
@@ -747,11 +750,9 @@ mod tests {
             )
         );
 
-        assert!(!snapshot.is_route_ready());
-        assert_eq!(
-            snapshot.route_unavailable_reason(),
-            Some(DockViewportRouteUnavailableReason::NoInputPassThrough)
-        );
+        assert!(snapshot.is_route_ready());
+        assert!(!snapshot.can_authorize_hover_hit());
+        assert_eq!(snapshot.route_unavailable_reason(), None);
     }
 
     #[test]

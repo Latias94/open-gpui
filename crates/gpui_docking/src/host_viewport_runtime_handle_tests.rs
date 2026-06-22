@@ -3,11 +3,12 @@ use crate::{
     DockGraphDropTarget, DockItemId, DockNode, DockNodeId, DockPanel, DockPolicy, DockSpaceId,
     DockViewportClosePolicy, DockViewportDropOutcomeKind, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportFocusCommand, DockViewportFocusRequest, DockViewportOpenStatus,
-    DockViewportPlatformSignals, DockViewportRouteStatus, DockViewportRuntimeHandle,
-    DockViewportShouldCloseStatus, DockViewportStaleStatusReason, DockViewportTargetContext,
-    DockViewportTearOffBeginOutcome, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
-    DockViewportTearOffTick, DockViewportWindowFacts, DockWorkspace, DropZone, SplitAxis,
+    DockViewportFocusCommand, DockViewportFocusRequest, DockViewportInputStatus,
+    DockViewportOpenStatus, DockViewportPlatformSignals, DockViewportRouteStatus,
+    DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportStaleStatusReason,
+    DockViewportTargetContext, DockViewportTearOffBeginOutcome, DockViewportTearOffOpenOutcome,
+    DockViewportTearOffRequest, DockViewportTearOffTick, DockViewportWindowFacts, DockWorkspace,
+    DropZone, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::DockDropRoutePreviewKind,
@@ -36,6 +37,18 @@ fn tear_off_request(
         point(px(900.0), px(900.0)),
         None,
     )
+}
+
+fn viewport_input_status(
+    runtime: &DockViewportRuntimeHandle,
+    space: &DockSpaceId,
+) -> Option<DockViewportInputStatus> {
+    runtime
+        .runtime_status()
+        .viewport_lifecycle
+        .iter()
+        .find(|record| &record.space == space)
+        .map(|record| record.input_status)
 }
 
 fn leaf_host_scene_fact(root: DockNodeId, target_tabs: DockNodeId) -> DockHostDropSceneFact {
@@ -167,8 +180,13 @@ fn viewport_runtime_handle_tracks_payload_drag_session(cx: &mut TestAppContext) 
     );
     assert_eq!(
         runtime.viewport_route_unavailable_reason(&source),
-        Some(DockViewportRouteUnavailableReason::NoInputPassThrough),
-        "drag begin should publish native no-input routing state before the next release"
+        None,
+        "native no-input should not invalidate route facts"
+    );
+    assert_eq!(
+        viewport_input_status(&runtime, &source),
+        Some(DockViewportInputStatus::NoInputPassThrough),
+        "drag begin should publish native no-input input state before the next release"
     );
     assert_eq!(
         runtime.active_payload_drag_session(&payload),
@@ -293,16 +311,15 @@ fn viewport_drag_preserves_no_input_source_window(cx: &mut TestAppContext) {
             DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
                 0.0, 0.0, 360.0, 220.0,
             )))
-            .with_pointer_routing(
-                crate::viewport_registry::DockViewportPointerRouting::NoInputPassThrough
-            ),
+            .with_input_mask(crate::viewport_registry::DockViewportInputMask::NoInputPassThrough),
             floating_bounds(0.0, 0.0, 360.0, 220.0),
             center_drop_position(floating_bounds(0.0, 0.0, 360.0, 220.0)),
         )
     );
+    assert_eq!(runtime.viewport_route_unavailable_reason(&source), None);
     assert_eq!(
-        runtime.viewport_route_unavailable_reason(&source),
-        Some(DockViewportRouteUnavailableReason::NoInputPassThrough)
+        viewport_input_status(&runtime, &source),
+        Some(DockViewportInputStatus::NoInputPassThrough)
     );
 
     let session = cx.update(|app| runtime.begin_payload_drag_with_app(&payload, app));
@@ -322,9 +339,10 @@ fn viewport_drag_preserves_no_input_source_window(cx: &mut TestAppContext) {
             .expect("source viewport should remain live"),
         "drag finish must restore the source window's original no-input state"
     );
+    assert_eq!(runtime.viewport_route_unavailable_reason(&source), None);
     assert_eq!(
-        runtime.viewport_route_unavailable_reason(&source),
-        Some(DockViewportRouteUnavailableReason::NoInputPassThrough)
+        viewport_input_status(&runtime, &source),
+        Some(DockViewportInputStatus::NoInputPassThrough)
     );
 }
 

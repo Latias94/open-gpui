@@ -5,7 +5,7 @@ use crate::viewport_target_resolver::choose_diagnostic_viewport_target;
 use crate::{
     DockSpaceId,
     viewport_registry::{
-        DockViewportPlatformRequests, DockViewportPointerRouting, DockViewportRegistry,
+        DockViewportInputMask, DockViewportPlatformRequests, DockViewportRegistry,
     },
 };
 use open_gpui::{AnyWindowHandle, WindowId};
@@ -70,10 +70,19 @@ impl DockViewportAdapter {
             .map(|snapshot| snapshot.is_route_ready())
     }
 
-    pub(crate) fn space_is_no_input_pass_through(&self, space: &DockSpaceId) -> bool {
-        self.snapshot(space).is_some_and(|snapshot| {
-            snapshot.pointer_routing == DockViewportPointerRouting::NoInputPassThrough
-        })
+    pub(crate) fn window_can_authorize_hover_hit(&self, window_id: WindowId) -> Option<bool> {
+        let space = self.space_for_window_id(window_id)?;
+        self.snapshot(space)
+            .map(|snapshot| snapshot.can_authorize_hover_hit())
+    }
+
+    pub(crate) fn space_input_mask(&self, space: &DockSpaceId) -> Option<DockViewportInputMask> {
+        self.snapshot(space).map(|snapshot| snapshot.input_mask)
+    }
+
+    pub(crate) fn window_input_mask(&self, window_id: WindowId) -> Option<DockViewportInputMask> {
+        let space = self.space_for_window_id(window_id)?;
+        self.space_input_mask(space)
     }
 
     pub(crate) fn window_close_requested(&self, window_id: WindowId) -> bool {
