@@ -6148,6 +6148,18 @@ fn filled_text_input_reports_value_state() {
 }
 
 #[test]
+fn controlled_text_input_on_change_marks_input_controller_driven() {
+    let state = TextInput::new("email", "Email")
+        .value("hello@example.com")
+        .on_change(|_, _, _| {})
+        .state();
+
+    assert!(state.controller_driven());
+    assert!(state.editable());
+    assert_eq!(state.value(), "hello@example.com");
+}
+
+#[test]
 fn disabled_and_read_only_text_inputs_block_editability() {
     let tokens = custom_tokens();
     let disabled = TextInput::new("disabled", "Disabled")
@@ -6341,6 +6353,60 @@ fn text_input_runtime_accepts_controller_backed_simulated_input(
             controller.value().len()..controller.value().len()
         );
     });
+}
+
+#[open_gpui::test]
+fn controlled_text_input_on_change_accepts_input_without_supplied_controller(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        value: Rc<RefCell<String>>,
+        changes: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let value = self.value.borrow().clone();
+            let next_value = self.value.clone();
+            let changes = self.changes.clone();
+
+            div().size_full().child(
+                TextInput::new("controlled-text-input", "Controlled text input")
+                    .value(value)
+                    .placeholder("Type here")
+                    .on_change(move |value, _, _| {
+                        *next_value.borrow_mut() = value.clone();
+                        changes.borrow_mut().push(value);
+                    }),
+            )
+        }
+    }
+
+    cx.update(init_text_input);
+    let value = Rc::new(RefCell::new(String::new()));
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        value: value.clone(),
+        changes: changes.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let input = cx
+        .debug_bounds("text-input:controlled-text-input:root")
+        .expect("controlled text input should expose a stable debug selector");
+    cx.simulate_click(input.center(), Default::default());
+    cx.simulate_input("hello\nworld");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(value.borrow().as_str(), "hello world");
+    assert_eq!(
+        changes.borrow().last().map(String::as_str),
+        Some("hello world")
+    );
 }
 
 #[open_gpui::test]

@@ -442,10 +442,14 @@ Before extraction, keep these boundary rules explicit:
 The runtime theme table currently covers semantic component colors for light, dark, and
 high-contrast snapshots, but there is not yet an app-level theme registry, user theme loading, or
 JSON schema. Single-line editable text input now uses GPUI's `EntityInputHandler`/
-`ElementInputHandler` path through `TextInputController`; richer editor behavior such as
-multiline input, password masking, undo/redo, and completion remains out of scope. `Field` still
-stays separate from the editing controller and remains composition-only. `focus_ring_shadow` is
-GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.
+`ElementInputHandler` path through `TextInputController`. Applications can either supply an
+adapter-owned controller directly or use the standard controlled shape
+`TextInput::value(...).on_change(...)`; the latter creates a keyed adapter controller internally,
+emits sanitized single-line values, and expects callers to feed the accepted value back through
+`value` on the next render. Richer editor behavior such as multiline input, password masking,
+undo/redo, and completion remains out of scope. `Field` still stays separate from the editing
+controller and remains composition-only. `focus_ring_shadow` is GPUI-adapter code and should stay
+out of a future headless crate if `FocusRing` is extracted.
 ADR 0008 keeps current-crate productization as the active roadmap. ADR 0006 keeps
 `open-gpui-ui-headless` deferred after the strict boundary checkpoint, and ADR 0007 records the
 post-boundary extraction design without creating the behavior crate.

@@ -1,7 +1,7 @@
 //! Text input component.
 
 use crate::geometry::gpui_px_from_ui;
-use std::ops::Range;
+use std::{fmt, ops::Range, rc::Rc};
 
 use open_gpui::prelude::*;
 use open_gpui::{
@@ -18,6 +18,8 @@ use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::theme::ThemeResolver;
+
+type TextInputChangeHandler = Rc<dyn Fn(String, &mut Window, &mut App)>;
 
 /// Resolved text input color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,7 +179,6 @@ pub(crate) mod adapter {
     ///
     /// This is a GPUI adapter-only API. A future headless text model should not depend on
     /// `EntityInputHandler`, `FocusHandle`, shaped lines, or GPUI window/layout types exposed here.
-    #[derive(Debug)]
     pub struct TextInputController {
         focus_handle: FocusHandle,
         content: SharedString,
@@ -190,6 +191,26 @@ pub(crate) mod adapter {
         is_selecting: bool,
         disabled: bool,
         read_only: bool,
+        on_change: Option<TextInputChangeHandler>,
+    }
+
+    impl fmt::Debug for TextInputController {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("TextInputController")
+                .field("focus_handle", &self.focus_handle)
+                .field("content", &self.content)
+                .field("placeholder", &self.placeholder)
+                .field("selected_range", &self.selected_range)
+                .field("selection_reversed", &self.selection_reversed)
+                .field("marked_range", &self.marked_range)
+                .field("last_layout", &self.last_layout)
+                .field("last_bounds", &self.last_bounds)
+                .field("is_selecting", &self.is_selecting)
+                .field("disabled", &self.disabled)
+                .field("read_only", &self.read_only)
+                .field("on_change", &self.on_change.as_ref().map(|_| "<handler>"))
+                .finish()
+        }
     }
 
     impl TextInputController {
@@ -207,6 +228,7 @@ pub(crate) mod adapter {
                 is_selecting: false,
                 disabled: false,
                 read_only: false,
+                on_change: None,
             }
         }
 
@@ -379,9 +401,32 @@ pub(crate) mod adapter {
             cx.notify();
         }
 
-        pub(super) fn sync_interaction_state(&mut self, disabled: bool, read_only: bool) {
+        pub(super) fn sync_adapter_state(
+            &mut self,
+            controlled_value: Option<&str>,
+            placeholder: Option<SharedString>,
+            disabled: bool,
+            read_only: bool,
+            on_change: Option<TextInputChangeHandler>,
+        ) {
             self.disabled = disabled;
             self.read_only = read_only;
+            self.on_change = on_change;
+
+            if let Some(placeholder) = placeholder {
+                self.placeholder = placeholder;
+            }
+
+            if let Some(value) = controlled_value {
+                let value = sanitize_single_line(value);
+                if self.content.as_ref() != value {
+                    self.content = value.into();
+                    let cursor = clamp_to_char_boundary(self.value(), self.cursor_offset());
+                    self.selected_range = cursor..cursor;
+                    self.selection_reversed = false;
+                    self.marked_range = None;
+                }
+            }
         }
 
         pub(super) fn cursor_offset(&self) -> usize {
@@ -534,6 +579,12 @@ pub(crate) mod adapter {
                 })
                 .unwrap_or(new_end..new_end);
             self.selection_reversed = false;
+        }
+
+        fn dispatch_change(&self, window: &mut Window, cx: &mut App) {
+            if let Some(on_change) = self.on_change.as_ref().cloned() {
+                on_change(self.content.to_string(), window, cx);
+            }
         }
 
         pub(super) fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
@@ -749,7 +800,11 @@ pub(crate) mod adapter {
             if !self.accepts_editing() {
                 return;
             }
+            let previous = self.content.clone();
             self.replace_text_in_range_inner(range_utf16, new_text);
+            if previous != self.content {
+                self.dispatch_change(_window, cx);
+            }
             cx.notify();
         }
 
@@ -764,7 +819,11 @@ pub(crate) mod adapter {
             if !self.accepts_editing() {
                 return;
             }
+            let previous = self.content.clone();
             self.replace_and_mark_text_in_range_inner(range_utf16, new_text, selected_utf16);
+            if previous != self.content {
+                self.dispatch_change(_window, cx);
+            }
             cx.notify();
         }
 
@@ -988,6 +1047,7 @@ pub struct TextInput {
     invalid: bool,
     required: bool,
     tokens: ThemeTokens,
+    on_change: Option<TextInputChangeHandler>,
 }
 
 impl TextInput {
@@ -1005,6 +1065,7 @@ impl TextInput {
             invalid: false,
             required: false,
             tokens: ThemeTokens::default(),
+            on_change: None,
         }
     }
 
@@ -1019,6 +1080,16 @@ impl TextInput {
     /// Sets the displayed value.
     pub fn value(mut self, value: impl Into<SharedString>) -> Self {
         self.value = value.into();
+        self
+    }
+
+    /// Registers a controlled value-change handler.
+    ///
+    /// When set, the input creates an adapter-owned controller, accepts text editing, and calls the
+    /// handler with the next sanitized single-line value. Callers should feed that value back through
+    /// [`TextInput::value`] on the next render.
+    pub fn on_change(mut self, handler: impl Fn(String, &mut Window, &mut App) + 'static) -> Self {
+        self.on_change = Some(Rc::new(handler));
         self
     }
 
@@ -1068,7 +1139,7 @@ impl TextInput {
             self.read_only,
             self.invalid,
             self.required,
-            self.controller.is_some(),
+            self.controller.is_some() || self.on_change.is_some(),
             self.tokens,
         )
     }
@@ -1085,14 +1156,31 @@ impl RenderOnce for TextInput {
     fn render(self, _window: &mut Window, _cx: &mut open_gpui::App) -> impl IntoElement {
         let state = self.state();
         let debug_id = self.id.to_string();
+        let runtime_id = format!("text-input:{debug_id}:controller");
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
-        let controller = self.controller.clone();
+        let controller = self.controller.clone().or_else(|| {
+            self.on_change.as_ref().map(|_| {
+                let initial_value = self.value.clone();
+                _window.use_keyed_state(runtime_id, _cx, |_, cx| {
+                    TextInputController::with_value(initial_value, cx)
+                })
+            })
+        });
         let builder_placeholder = self.placeholder.clone().unwrap_or_default();
         if let Some(controller) = controller.as_ref() {
+            let controlled_value = self.on_change.as_ref().map(|_| self.value.as_ref());
+            let placeholder = self.placeholder.clone();
+            let on_change = self.on_change.clone();
             controller.update(_cx, |controller, _cx| {
-                controller.sync_interaction_state(state.disabled(), state.read_only());
+                controller.sync_adapter_state(
+                    controlled_value,
+                    placeholder,
+                    state.disabled(),
+                    state.read_only(),
+                    on_change,
+                );
             });
         }
         let controller_text = controller.as_ref().map(|controller| controller.read(_cx));
