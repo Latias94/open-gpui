@@ -1,7 +1,9 @@
 use crate::{
     DockViewportFrontToBackWindowStack, DockViewportTargetContext, DockViewportTrustedHoveredSignal,
 };
-use open_gpui::{AnyWindowHandle, App, PlatformHoveredWindow, Window, WindowId};
+use open_gpui::{
+    AnyWindowHandle, App, PlatformHoveredWindow, PlatformViewportCapabilities, Window, WindowId,
+};
 
 /// Snapshot of platform window signals used to arbitrate overlapping viewport hits.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -20,7 +22,8 @@ impl DockViewportPlatformSignals {
     /// Captures GPUI application-level platform signals.
     pub(crate) fn from_app(cx: &App) -> Self {
         let capabilities = cx.viewport_capabilities();
-        let trusted_hovered_signal = trusted_hovered_signal_from_platform(cx.hovered_window());
+        let trusted_hovered_signal =
+            trusted_hovered_signal_from_platform(cx.hovered_window(), capabilities);
         let window_stack = if capabilities.window_stack {
             DockViewportFrontToBackWindowStack::from_windows(cx.window_stack().unwrap_or_default())
         } else {
@@ -100,12 +103,57 @@ impl DockViewportPlatformSignals {
 
 fn trusted_hovered_signal_from_platform(
     hovered_window: PlatformHoveredWindow,
+    capabilities: PlatformViewportCapabilities,
 ) -> DockViewportTrustedHoveredSignal {
     match hovered_window {
         PlatformHoveredWindow::Unavailable => DockViewportTrustedHoveredSignal::Unavailable,
         PlatformHoveredWindow::NoWindow => DockViewportTrustedHoveredSignal::TrustedNone,
-        PlatformHoveredWindow::Window(window) => {
+        PlatformHoveredWindow::Window(window) if capabilities.hovered_window_ignores_no_input => {
             DockViewportTrustedHoveredSignal::Trusted(window.window_id())
         }
+        PlatformHoveredWindow::Window(_) => DockViewportTrustedHoveredSignal::Unavailable,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::viewport_test_support::handle;
+
+    #[test]
+    fn hovered_window_signal_requires_no_input_passthrough_capability() {
+        let window = handle(7);
+        let passthrough_capabilities = PlatformViewportCapabilities {
+            hovered_window_ignores_no_input: true,
+            ..Default::default()
+        };
+        let non_passthrough_capabilities = PlatformViewportCapabilities {
+            hovered_window_ignores_no_input: false,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            trusted_hovered_signal_from_platform(
+                PlatformHoveredWindow::Window(window),
+                passthrough_capabilities,
+            ),
+            DockViewportTrustedHoveredSignal::Trusted(window.window_id())
+        );
+        assert_eq!(
+            trusted_hovered_signal_from_platform(
+                PlatformHoveredWindow::Window(window),
+                non_passthrough_capabilities,
+            ),
+            DockViewportTrustedHoveredSignal::Unavailable,
+            "a hovered window is not trusted unless the backend can ignore no-input viewports"
+        );
+        assert_eq!(
+            trusted_hovered_signal_from_platform(
+                PlatformHoveredWindow::NoWindow,
+                non_passthrough_capabilities,
+            ),
+            DockViewportTrustedHoveredSignal::TrustedNone,
+            "reliable hovered=None remains explicit backend authority"
+        );
     }
 }
