@@ -965,6 +965,11 @@ impl DockViewportRuntime {
             == Some(session.id())
     }
 
+    #[cfg(test)]
+    pub(crate) fn routed_drop_preview_is_accepted(&self) -> bool {
+        self.routed_drop_preview_accepted_epoch == Some(self.routed_drop_preview_epoch)
+    }
+
     pub(crate) fn update_routed_drop_preview(
         &mut self,
         resolution: &DockViewportResolvedDropRoute,
@@ -1893,10 +1898,18 @@ impl DockViewportRuntime {
         route_resolution: &DockViewportDropRouteResolution,
     ) -> bool {
         match route_resolution.route_ref() {
-            DockViewportDropRoute::Unavailable => {
-                route_resolution.unavailable_reason()
-                    != Some(crate::DockViewportDropRouteUnavailableReason::BlockedByViewportWindow)
-            }
+            DockViewportDropRoute::Unavailable => match route_resolution.unavailable_reason() {
+                Some(crate::DockViewportDropRouteUnavailableReason::BlockedByViewportWindow) => {
+                    false
+                }
+                Some(crate::DockViewportDropRouteUnavailableReason::TrustedHoveredNone) => {
+                    request.release_origin()
+                        == crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly
+                }
+                Some(crate::DockViewportDropRouteUnavailableReason::NoViewportAuthority) | None => {
+                    true
+                }
+            },
             DockViewportDropRoute::TearOff => {
                 request.release_origin()
                     == crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly

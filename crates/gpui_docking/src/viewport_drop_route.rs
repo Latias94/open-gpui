@@ -55,6 +55,9 @@ pub(crate) enum DockViewportDropRouteUnavailableReason {
     /// A viewport window or host target was present, but no current backend authority selected a
     /// commit-capable route.
     NoViewportAuthority,
+    /// The backend explicitly reported hovered=None for this snapshot. This must not be treated as
+    /// an unavailable backend signal; hovered-host releases cannot replay through it.
+    TrustedHoveredNone,
 }
 
 /// A viewport drop route plus internal routing diagnostics used by runtime replay policy.
@@ -177,6 +180,10 @@ impl DockViewportResolvedDropRoute {
         delivery: Option<DockDropDelivery>,
         preview_target: Option<DockViewportResolvedDropTargetSnapshot>,
     ) -> Self {
+        debug_assert!(
+            delivery.is_none() || route.is_release_delivery_authority(),
+            "resolved viewport routes may carry delivery only when the route has release authority"
+        );
         Self {
             route,
             delivery,
@@ -251,10 +258,7 @@ impl DockViewportDropRoute {
     }
 
     fn can_authorize_delivery(&self) -> bool {
-        match self {
-            Self::Local { .. } | Self::KnownViewport { .. } | Self::TearOff => true,
-            Self::Unavailable | Self::Rejected(_) => false,
-        }
+        self.is_release_delivery_authority()
     }
 
     pub(crate) fn is_release_delivery_authority(&self) -> bool {
@@ -264,6 +268,20 @@ impl DockViewportDropRoute {
             }
             Self::TearOff => true,
             Self::Unavailable | Self::Rejected(_) => false,
+        }
+    }
+}
+
+fn unavailable_route_authority_reason(
+    target_context: &DockViewportTargetContext,
+) -> DockViewportDropRouteUnavailableReason {
+    match target_context.trusted_hovered_signal() {
+        crate::DockViewportTrustedHoveredSignal::TrustedNone => {
+            DockViewportDropRouteUnavailableReason::TrustedHoveredNone
+        }
+        crate::DockViewportTrustedHoveredSignal::Unavailable
+        | crate::DockViewportTrustedHoveredSignal::Trusted(_) => {
+            DockViewportDropRouteUnavailableReason::NoViewportAuthority
         }
     }
 }
@@ -406,7 +424,7 @@ impl DockDropDelivery {
         route: DockViewportDropRoute,
         resolved_target: Option<DockViewportResolvedDropTargetSnapshot>,
     ) -> Option<Self> {
-        if !route_can_mint_delivery(request, &route) {
+        if !route_can_mint_delivery(&route) {
             return None;
         }
         let source = DockDropDeliverySource::from_request(request);
@@ -478,18 +496,8 @@ impl DockDropDelivery {
     }
 }
 
-fn route_can_mint_delivery(
-    _request: &DockViewportDropRouteRequest,
-    route: &DockViewportDropRoute,
-) -> bool {
-    match route {
-        DockViewportDropRoute::Local { authority, .. }
-        | DockViewportDropRoute::KnownViewport { authority, .. } => {
-            *authority == DockViewportAuthorizedRouteAuthority::AcceptedRoutedPreview
-        }
-        DockViewportDropRoute::TearOff => true,
-        DockViewportDropRoute::Unavailable | DockViewportDropRoute::Rejected(_) => false,
-    }
+fn route_can_mint_delivery(route: &DockViewportDropRoute) -> bool {
+    route.is_release_delivery_authority()
 }
 
 fn tear_off_request_from_drop_route_request(
@@ -878,7 +886,7 @@ impl DockViewportAdapter {
                     return DockViewportDropRouteResolution::route(route);
                 }
                 return DockViewportDropRouteResolution::unavailable(
-                    DockViewportDropRouteUnavailableReason::NoViewportAuthority,
+                    unavailable_route_authority_reason(&target_context),
                 );
             }
             DockViewportPointerCoordinateSpace::SourceLocalOnly => {
@@ -938,9 +946,9 @@ impl DockViewportAdapter {
                 ));
             }
             return has_any_hits.then(|| {
-                DockViewportDropRouteResolution::unavailable(
-                    DockViewportDropRouteUnavailableReason::NoViewportAuthority,
-                )
+                DockViewportDropRouteResolution::unavailable(unavailable_route_authority_reason(
+                    target_context,
+                ))
             });
         };
         let route_authority = resolution.authority();
@@ -1620,12 +1628,17 @@ mod tests {
             ),
         );
 
-        let route = adapter.resolve_payload_drop_route(&request, &policy);
+        let resolution = adapter.resolve_payload_drop_route_resolution(&request, &policy);
 
         assert_eq!(
-            route,
-            DockViewportDropRoute::Unavailable,
+            resolution.route_ref(),
+            &DockViewportDropRoute::Unavailable,
             "trusted hovered=None must override geometry-only app hits"
+        );
+        assert_eq!(
+            resolution.unavailable_reason(),
+            Some(DockViewportDropRouteUnavailableReason::TrustedHoveredNone),
+            "trusted hovered=None should stay distinct from an unavailable hovered backend"
         );
     }
 

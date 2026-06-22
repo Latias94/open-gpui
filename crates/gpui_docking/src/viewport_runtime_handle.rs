@@ -862,6 +862,11 @@ impl DockViewportRuntimeHandle {
     }
 
     #[cfg(test)]
+    pub(crate) fn routed_drop_preview_is_accepted(&self) -> bool {
+        self.runtime.borrow().routed_drop_preview_is_accepted()
+    }
+
+    #[cfg(test)]
     pub(crate) fn last_routed_viewport_identity_for_drag_session(
         &self,
         session: Option<&DockRuntimeDragSession>,

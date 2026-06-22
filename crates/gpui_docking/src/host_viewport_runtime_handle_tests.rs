@@ -1,6 +1,6 @@
 use crate::{
     DockAction, DockActionApplyError, DockController, DockDropDelivery, DockGraph,
-    DockGraphDropTarget, DockItemId, DockNode, DockNodeId, DockPanel, DockSpaceId,
+    DockGraphDropTarget, DockItemId, DockNode, DockNodeId, DockPanel, DockPolicy, DockSpaceId,
     DockViewportClosePolicy, DockViewportDropOutcomeKind, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
     DockViewportFocusCommand, DockViewportFocusRequest, DockViewportOpenStatus,
@@ -11,7 +11,7 @@ use crate::{
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::DockDropRoutePreviewKind,
-    drop_runtime::DockHostDropSceneFact,
+    drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     drop_target::{DockDropResolveSource, DockLeafDropTarget, DockResolvedDropTargetKind},
     host_test_support::*,
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
@@ -3724,6 +3724,162 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
         )
         .is_some(),
         "source viewport can still show the route marker while the target draws the dock overlay"
+    );
+}
+
+#[open_gpui::test]
+fn local_preview_render_does_not_accept_hidden_routed_preview(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(target_bounds),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    let target_window = target_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("target viewport should render DockHost");
+    let target_host = target_window
+        .root(cx)
+        .expect("target viewport should expose DockHost root");
+
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_opened.window().window_id(),
+        DockViewportWindowFacts::from_window_bounds(target_bounds),
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        target_center_host_position(),
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_opened.window().window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let session = runtime.begin_payload_drag(&payload);
+    let target_screen_position =
+        screen_position_for_host_position(target_bounds, target_center_host_position());
+    let preview_request = DockViewportDropRouteRequest::from_target_context(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        target_screen_position,
+        None,
+        DockViewportTargetContext::new().with_trusted_hovered_window(target_opened.window()),
+    )
+    .with_drag_session(Some(session.clone()));
+    let preview_resolution =
+        cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
+    assert!(
+        matches!(
+            preview_resolution.route(),
+            DockViewportDropRoute::KnownViewport { .. }
+        ),
+        "preview setup should resolve a known viewport route, got {:?}",
+        preview_resolution.route()
+    );
+    assert!(
+        preview_resolution.delivery().is_none(),
+        "fresh routed preview must not mint delivery before target render acceptance"
+    );
+
+    target_window
+        .update(cx, |host, window, cx| {
+            let position = target_center_host_position();
+            host.interaction_mut()
+                .begin_drop_scene(DockHostDropScene::new(position), &DockPolicy::default());
+            assert!(host.interaction_mut().push_drop_scene_fact(
+                position,
+                Vec::new(),
+                leaf_host_scene_fact(target_tabs, target_tabs),
+                &DockPolicy::default(),
+            ));
+            assert!(
+                host.interaction().drop_preview().is_some(),
+                "test setup should create a local target preview before render"
+            );
+            window.refresh();
+            cx.notify();
+        })
+        .expect("target host should publish a local drop preview");
+    cx.update(|app| {
+        runtime.update_routed_drop_preview(&preview_resolution, "Panel A", app);
+    });
+    assert!(
+        !runtime.routed_drop_preview_is_accepted(),
+        "publishing a routed preview while local preview exists must not accept the hidden routed preview"
+    );
+    cx.run_until_parked();
+    assert!(
+        !runtime.routed_drop_preview_is_accepted(),
+        "rendering the local preview must not accept the hidden routed preview"
+    );
+    target_window
+        .update(cx, |host, _, _| {
+            assert!(
+                host.interaction().drop_preview().is_some(),
+                "local target preview should remain available after render"
+            );
+        })
+        .expect("target host should remain live after render");
+
+    let target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+    assert!(
+        !runtime.routed_drop_preview_is_accepted(),
+        "visual inspection must still leave the hidden routed preview unaccepted"
+    );
+    assert!(
+        selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_some(),
+        "target viewport should render the local drop preview"
+    );
+
+    let release_resolution =
+        cx.update(|app| runtime.resolve_payload_drop_delivery_for_request(&preview_request, app));
+    assert!(
+        matches!(
+            release_resolution.route(),
+            DockViewportDropRoute::KnownViewport { .. }
+        ),
+        "hidden routed preview must not be upgraded to AcceptedRoutedPreview, got {:?}",
+        release_resolution.route()
+    );
+    assert_eq!(
+        DockDropDelivery::from_resolution(release_resolution),
+        Err(DockActionApplyError::DropTargetUnavailable),
+        "a routed preview that was not the rendered preview must not authorize delivery"
     );
 }
 
