@@ -10,6 +10,7 @@ use crate::button::{ButtonColors, ButtonVariant};
 use crate::checkbox::CheckboxColors;
 use crate::color::{ColorIntent, ColorState};
 use crate::dialog::DialogColors;
+use crate::feedback::{FeedbackColors, FeedbackIntent};
 use crate::field::FieldColors;
 use crate::hover_card::HoverCardColors;
 use crate::kbd::KbdColors;
@@ -567,6 +568,34 @@ impl ThemeResolver {
     pub(crate) const fn skeleton_colors(tokens: ThemeTokens) -> SkeletonColors {
         SkeletonColors {
             background: ColorIntent::new(tokens.surface_muted, DEFAULT_GHOST_SURFACE),
+        }
+    }
+
+    pub(crate) const fn feedback_colors(
+        tokens: ThemeTokens,
+        intent: FeedbackIntent,
+    ) -> FeedbackColors {
+        let marker = match intent {
+            FeedbackIntent::Neutral => ColorIntent::new(tokens.text_muted, DEFAULT_TEXT_MUTED),
+            FeedbackIntent::Info | FeedbackIntent::Success => {
+                ColorIntent::new(tokens.accent, DEFAULT_ACCENT)
+            }
+            FeedbackIntent::Warning => {
+                ColorIntent::with_state(tokens.text_muted, ColorState::Message, 0xbf8700)
+            }
+            FeedbackIntent::Danger => ColorIntent::with_state(
+                tokens.destructive,
+                ColorState::Invalid,
+                DEFAULT_DESTRUCTIVE,
+            ),
+        };
+
+        FeedbackColors {
+            background: ColorIntent::new(tokens.surface_muted, DEFAULT_GHOST_SURFACE),
+            foreground: ColorIntent::new(tokens.text, DEFAULT_TEXT),
+            muted_foreground: ColorIntent::new(tokens.text_muted, DEFAULT_TEXT_MUTED),
+            border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
+            marker,
         }
     }
 
