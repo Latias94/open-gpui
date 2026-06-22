@@ -13,9 +13,7 @@ use crate::{
         DockAuthorizedViewportRouteTarget, resolve_authorized_viewport_route_target,
     },
 };
-#[cfg(test)]
-use open_gpui::Bounds;
-use open_gpui::{AnyWindowHandle, Pixels, Point, Size, WindowBounds, WindowId};
+use open_gpui::{AnyWindowHandle, Bounds, Pixels, Point, Size, WindowBounds, WindowId};
 
 /// Runtime route for a rendered drag release before workspace mutation.
 #[derive(Debug, Clone, PartialEq)]
@@ -169,6 +167,42 @@ struct DockTrustedHoveredWindowLocalDropTarget {
     target_window: AnyWindowHandle,
     host_position: Point<Pixels>,
     facts_generation: u64,
+}
+
+enum DockEventReceiverLocalSceneAuthorityMode {
+    HitTestedScene,
+    AcceptedScene,
+}
+
+struct DockEventReceiverLocalSceneAuthority {
+    receiver_window: WindowId,
+    facts_generation: u64,
+    host_bounds: Bounds<Pixels>,
+    global_screen_bounds: Option<Bounds<Pixels>>,
+}
+
+impl DockEventReceiverLocalSceneAuthority {
+    fn host_position_from_window_position(
+        &self,
+        window_position: Point<Pixels>,
+    ) -> Option<Point<Pixels>> {
+        if !self.host_bounds.contains(&window_position) {
+            return None;
+        }
+        Some(open_gpui::point(
+            window_position.x - self.host_bounds.origin.x,
+            window_position.y - self.host_bounds.origin.y,
+        ))
+    }
+
+    fn local_route(&self, host_position: Point<Pixels>) -> DockViewportDropRoute {
+        DockViewportDropRoute::Local {
+            host_position,
+            window_id: self.receiver_window,
+            facts_generation: self.facts_generation,
+            authority: DockViewportAuthorizedRouteAuthority::EventReceiverLocalScene,
+        }
+    }
 }
 
 /// Delivery facts for a resolved viewport drop route.
@@ -1017,24 +1051,14 @@ impl DockViewportAdapter {
         target_context: &DockViewportTargetContext,
         hits: &[DockViewportTargetHit],
     ) -> Option<DockAuthorizedViewportRouteTarget> {
-        let receiver_window = request.event_receiver_window()?;
-        if self.window_route_ready(receiver_window) != Some(true) {
-            return None;
-        }
-        let receiver_space = self.space_for_window_id(receiver_window)?;
-        if receiver_space != request.source_space() {
-            return None;
-        }
-        match target_context.trusted_hovered_signal() {
-            crate::DockViewportTrustedHoveredSignal::Unavailable => {}
-            crate::DockViewportTrustedHoveredSignal::TrustedNone
-                if request.accepted_local_scene_route_authority() => {}
-            crate::DockViewportTrustedHoveredSignal::TrustedNone
-            | crate::DockViewportTrustedHoveredSignal::Trusted(_) => return None,
-        }
-        let receiver_hit = hits
-            .iter()
-            .find(|hit| hit.window_id() == receiver_window && hit.space() == receiver_space)?;
+        let authority = self.event_receiver_local_scene_authority(
+            request,
+            target_context,
+            DockEventReceiverLocalSceneAuthorityMode::HitTestedScene,
+        )?;
+        let receiver_hit = hits.iter().find(|hit| {
+            hit.window_id() == authority.receiver_window && hit.space() == request.source_space()
+        })?;
         Some(DockAuthorizedViewportRouteTarget::event_receiver_local_scene(receiver_hit.clone()))
     }
 
@@ -1043,14 +1067,14 @@ impl DockViewportAdapter {
         request: &DockViewportDropRouteRequest,
         target_context: &DockViewportTargetContext,
     ) -> Option<DockViewportDropRoute> {
-        let receiver_window =
-            self.authorized_event_receiver_local_scene_window(request, target_context)?;
-        let host_position = self.event_receiver_window_to_host_for_scene_authority(
+        let authority = self.event_receiver_local_scene_authority(
             request,
-            receiver_window,
-            request.release_position(),
+            target_context,
+            DockEventReceiverLocalSceneAuthorityMode::AcceptedScene,
         )?;
-        self.event_receiver_local_scene_route(request, receiver_window, host_position)
+        let host_position =
+            authority.host_position_from_window_position(request.release_position())?;
+        Some(authority.local_route(host_position))
     }
 
     fn resolve_event_receiver_global_scene_payload_drop_route(
@@ -1058,11 +1082,12 @@ impl DockViewportAdapter {
         request: &DockViewportDropRouteRequest,
         target_context: &DockViewportTargetContext,
     ) -> Option<DockViewportDropRoute> {
-        let receiver_window =
-            self.authorized_event_receiver_local_scene_window(request, target_context)?;
-        let screen_bounds = self
-            .snapshot(request.source_space())?
-            .global_screen_bounds()?;
+        let authority = self.event_receiver_local_scene_authority(
+            request,
+            target_context,
+            DockEventReceiverLocalSceneAuthorityMode::AcceptedScene,
+        )?;
+        let screen_bounds = authority.global_screen_bounds?;
         if !screen_bounds.contains(&request.release_position()) {
             return None;
         }
@@ -1070,26 +1095,31 @@ impl DockViewportAdapter {
             request.release_position().x - screen_bounds.origin.x,
             request.release_position().y - screen_bounds.origin.y,
         );
-        let host_position = self.event_receiver_window_to_host_for_scene_authority(
-            request,
-            receiver_window,
-            window_position,
-        )?;
-        self.event_receiver_local_scene_route(request, receiver_window, host_position)
+        let host_position = authority.host_position_from_window_position(window_position)?;
+        Some(authority.local_route(host_position))
     }
 
-    fn authorized_event_receiver_local_scene_window(
+    fn event_receiver_local_scene_authority(
         &self,
         request: &DockViewportDropRouteRequest,
         target_context: &DockViewportTargetContext,
-    ) -> Option<WindowId> {
-        if !request.accepted_local_scene_route_authority() {
-            return None;
-        }
-        match target_context.trusted_hovered_signal() {
-            crate::DockViewportTrustedHoveredSignal::Unavailable
-            | crate::DockViewportTrustedHoveredSignal::TrustedNone => {}
-            crate::DockViewportTrustedHoveredSignal::Trusted(_) => return None,
+        mode: DockEventReceiverLocalSceneAuthorityMode,
+    ) -> Option<DockEventReceiverLocalSceneAuthority> {
+        match (mode, target_context.trusted_hovered_signal()) {
+            (
+                DockEventReceiverLocalSceneAuthorityMode::HitTestedScene,
+                crate::DockViewportTrustedHoveredSignal::Unavailable,
+            ) => {}
+            (
+                DockEventReceiverLocalSceneAuthorityMode::HitTestedScene,
+                crate::DockViewportTrustedHoveredSignal::TrustedNone,
+            )
+            | (
+                DockEventReceiverLocalSceneAuthorityMode::AcceptedScene,
+                crate::DockViewportTrustedHoveredSignal::Unavailable
+                | crate::DockViewportTrustedHoveredSignal::TrustedNone,
+            ) if request.accepted_local_scene_route_authority() => {}
+            _ => return None,
         }
         let receiver_window = request.event_receiver_window()?;
         if self.window_route_ready(receiver_window) != Some(true) {
@@ -1099,45 +1129,15 @@ impl DockViewportAdapter {
         if receiver_space != request.source_space() {
             return None;
         }
-        Some(receiver_window)
-    }
-
-    fn event_receiver_window_to_host_for_scene_authority(
-        &self,
-        request: &DockViewportDropRouteRequest,
-        receiver_window: WindowId,
-        window_position: Point<Pixels>,
-    ) -> Option<Point<Pixels>> {
         let snapshot = self.snapshot(request.source_space())?;
         if snapshot.window.window_id() != receiver_window {
             return None;
         }
-        let host_bounds = snapshot.host_bounds?;
-        if !host_bounds.contains(&window_position) {
-            return None;
-        }
-        Some(open_gpui::point(
-            window_position.x - host_bounds.origin.x,
-            window_position.y - host_bounds.origin.y,
-        ))
-    }
-
-    fn event_receiver_local_scene_route(
-        &self,
-        request: &DockViewportDropRouteRequest,
-        receiver_window: WindowId,
-        host_position: Point<Pixels>,
-    ) -> Option<DockViewportDropRoute> {
-        let snapshot = self.snapshot(request.source_space())?;
-        if snapshot.window.window_id() != receiver_window {
-            return None;
-        }
-        let facts_generation = snapshot.facts_generation();
-        Some(DockViewportDropRoute::Local {
-            host_position,
-            window_id: receiver_window,
-            facts_generation,
-            authority: DockViewportAuthorizedRouteAuthority::EventReceiverLocalScene,
+        Some(DockEventReceiverLocalSceneAuthority {
+            receiver_window,
+            facts_generation: snapshot.facts_generation(),
+            host_bounds: snapshot.host_bounds?,
+            global_screen_bounds: snapshot.global_screen_bounds(),
         })
     }
 
