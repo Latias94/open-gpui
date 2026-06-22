@@ -139,7 +139,7 @@ fn scroll_navigation_until_visible(cx: &mut VisualTestContext, selector: &str) -
     )
 }
 
-fn jump_components_directory_to(cx: &mut VisualTestContext, jump_selector: &'static str) {
+fn jump_components_directory_to(cx: &mut VisualTestContext, jump_selector: &str) {
     let directory_center = bounds(cx, "scroll-area:gallery-components-directory-scroll").center();
     scroll_until_visible(
         cx,
@@ -154,6 +154,57 @@ fn jump_components_directory_to(cx: &mut VisualTestContext, jump_selector: &'sta
     click(cx, jump_selector);
     settle(cx);
     settle(cx);
+}
+
+fn focus_components_catalog_entry(
+    shell: &Entity<GalleryShell>,
+    cx: &mut VisualTestContext,
+    entry: &pages::components::ComponentCatalogEntry,
+) -> pages::components::ComponentFocusMode {
+    let catalog_selector = entry.catalog_selector();
+    let focus = pages::components::focused_section_for_catalog_entry(entry)
+        .unwrap_or_else(|| panic!("expected focusable catalog entry `{}`", entry.name));
+    let expected_focus = pages::components::ComponentFocusMode::Section(focus);
+
+    scroll_page_until_visible(cx, catalog_selector.as_str());
+    click(cx, catalog_selector.as_str());
+    settle(cx);
+
+    assert_eq!(
+        shell_snapshot(shell, cx).components_focus,
+        expected_focus,
+        "expected catalog card `{}` to enter focused mode",
+        entry.name
+    );
+
+    let focus_selector = entry
+        .sample_selector
+        .or(entry.state_contract_selector)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected focused selector for catalog entry `{}`",
+                entry.name
+            )
+        });
+    let section_selector = format!("gallery:components-section:{focus}");
+
+    assert!(
+        cx.debug_bounds(section_selector.as_str()).is_some(),
+        "expected focused catalog entry `{}` to render section `{section_selector}`",
+        entry.name
+    );
+    assert!(
+        cx.debug_bounds(focus_selector).is_some(),
+        "expected focused catalog entry `{}` to render selector `{focus_selector}`",
+        entry.name
+    );
+    assert!(
+        cx.debug_bounds("gallery:components-directory").is_some(),
+        "expected focused catalog entry `{}` to keep the section directory available",
+        entry.name
+    );
+
+    expected_focus
 }
 
 fn drag(
@@ -184,13 +235,13 @@ fn drag(
     redraw(cx);
 }
 
-fn click(cx: &mut VisualTestContext, selector: &'static str) {
+fn click(cx: &mut VisualTestContext, selector: &str) {
     let target = bounds(cx, selector).center();
     cx.simulate_click(target, Default::default());
     redraw(cx);
 }
 
-fn right_click(cx: &mut VisualTestContext, selector: &'static str) {
+fn right_click(cx: &mut VisualTestContext, selector: &str) {
     let target = bounds(cx, selector).center();
     cx.simulate_mouse_down(target, MouseButton::Right, Default::default());
     cx.simulate_mouse_up(target, MouseButton::Right, Default::default());
@@ -2657,14 +2708,11 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
 ) {
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
-    scroll_page_until_visible(cx, "component-catalog:Table");
-    click(cx, "component-catalog:Table");
-    settle(cx);
-
-    assert_eq!(
-        shell_snapshot(&shell, cx).components_focus,
-        pages::components::ComponentFocusMode::Section("table")
-    );
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
     assert!(
         cx.debug_bounds("gallery:component-table-sample:release-queue")
             .is_some(),
@@ -2701,6 +2749,58 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
         cx.debug_bounds("gallery:component-tabs-sample:workspace-tabs")
             .is_some(),
         "expected all-components mode to restore nested Tabs samples"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_focuses_every_focusable_catalog_entry(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    let mut visited = Vec::new();
+    let expected = pages::components::COMPONENT_CATALOG
+        .iter()
+        .filter(|entry| pages::components::focused_section_for_catalog_entry(entry).is_some())
+        .count();
+
+    for entry in pages::components::COMPONENT_CATALOG
+        .iter()
+        .filter(|entry| pages::components::focused_section_for_catalog_entry(entry).is_some())
+    {
+        focus_components_catalog_entry(&shell, cx, entry);
+        visited.push(entry.name);
+    }
+
+    click(cx, "gallery:component-focus:all");
+    settle(cx);
+
+    assert_eq!(
+        shell_snapshot(&shell, cx).components_focus,
+        pages::components::ComponentFocusMode::All,
+        "expected `All components` to restore all-mode after matrix traversal"
+    );
+    for selector in [
+        "gallery:component-button-sample:default",
+        "gallery:component-tabs-sample:workspace-tabs",
+    ] {
+        assert!(
+            cx.debug_bounds(selector).is_some(),
+            "expected all-mode restoration after matrix traversal to render `{selector}`"
+        );
+    }
+
+    assert_eq!(
+        visited.len(),
+        expected,
+        "expected focused catalog matrix to cover every focusable catalog entry"
+    );
+    assert!(
+        visited.contains(&"TreeState") && visited.contains(&"VirtualizedListState"),
+        "expected focused catalog matrix to include state-contract entries; visited={visited:?}"
+    );
+    assert!(
+        !visited.contains(&"TextInputController"),
+        "expected focused catalog matrix to exclude adapter-only helpers; visited={visited:?}"
     );
 }
 

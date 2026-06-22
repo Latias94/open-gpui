@@ -35,6 +35,7 @@ verified_by:
   - cargo fmt -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-foundation-gallery overlay_page_catalog_entries_have_signals_and_sample_selectors overlay_gallery_smoke_renders_catalog_entries_and_official_samples
   - cargo nextest run -p open-gpui-ui-foundation-gallery overlay
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focuses_every_focusable_catalog_entry
   - cargo nextest run -p open-gpui-ui-foundation-gallery
   - git diff --check
   - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
@@ -42,9 +43,9 @@ verified_by:
 
 # Current State
 
-- Goal: Execute the UI component-library slice around public API stability, Overlay productization, and gallery focused inspection.
+- Goal: Execute the gallery automation regression hardening slice, then move to the next UI productization follow-up.
 - Branch: `main`
-- Last verified: 2026-06-22, U5 focused Components gallery view passed `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, full `cargo nextest run -p open-gpui-ui-components` (183/183), full `cargo nextest run -p open-gpui-ui-foundation-gallery` (71/71), and `git diff --check`.
+- Last verified: 2026-06-22, the focused catalog matrix passed `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focuses_every_focusable_catalog_entry`, and the full `cargo nextest run -p open-gpui-ui-foundation-gallery` passed 72/72 after the RadioGroup nesting fix.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -75,9 +76,10 @@ verified_by:
 - Done: Completed U4 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` as `f320da1`. The Overlay page now has `OVERLAY_CATALOG`, `OverlayCatalogEntry`, `OverlayCatalogStatus`, and `overlay_sample_selector_pairs()` covering Tooltip, HoverCard, Popover, Dialog, AlertDialog, Sheet, Menu, and ContextMenu. The gallery renders visible Overlay catalog cards, docs describe the overlay catalog contract, and focused tests guard catalog signals plus rendered sample selectors.
 - Done: Completed U5 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` as `029826e`. The Components page now has `ComponentFocusMode::All` and catalog-driven focused component-family viewing, with an explicit `All components` control, directory chips kept as pure anchor jumps, focus-mode page scroll reset keys, and smoke coverage for all-mode restoration, family switching reset, and focused Table nested scroll containment.
 - Done: Hardened composite-widget focus ergonomics by letting `Tree` and `VirtualizedList` roots focus their current keyboard target when clicked. Tree row clicks remain the explicit gallery interaction path; subagent review confirmed the Tree smoke should enter focused Tree mode via the catalog before clicking the concrete `paper` row.
+- Done: Wrote `docs/plans/2026-06-22-004-test-ui-gallery-automation-regression-plan.md`, added a catalog-driven focused-mode matrix smoke for every focusable Components catalog entry, fixed the RadioGroup nesting bug so its focused selector renders in `radio-group` mode, and updated `docs/verification.md` with the new gate.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Blocked: None.
-- Next action: Continue the next UI component productization/API cleanup slice after U5, using `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` as the current decision artifact.
+- Next action: Commit the automation hardening slice, then choose the next follow-up around screenshot/image-diff regression tooling or the next UI productization gap.
 
 # Citations
 
@@ -107,3 +109,5 @@ verified_by:
 [24] Commit `f320da1` - `feat(gallery): add overlay catalog gates`
 [25] Commit `029826e` - `feat(gallery): add focused component view`
 [26] Subagent finding `docs/knowledge/engineering/subagents/u5-focused-components-tree-smoke-review.md`
+[27] Plan `docs/plans/2026-06-22-004-test-ui-gallery-automation-regression-plan.md`
+[28] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery`

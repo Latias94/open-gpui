@@ -56,9 +56,12 @@ gestures on the sample card chrome do not leak to the page shell.
 The Components page has two inspection modes: the full all-components conformance page, and a
 catalog-driven focused component-family view. Directory chips remain pure anchor jumps. Focused
 mode is entered from catalog cards and restored through the explicit `All components` control. The
-focused-view proof is:
+focused-view proof includes a catalog-driven matrix that opens every focusable official or
+state-contract catalog entry, plus focused runtime smokes for scroll reset and nested scroll
+containment:
 
 ```powershell
+cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focuses_every_focusable_catalog_entry
 cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focuses_catalog_family_and_restores_all_mode
 cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focused_table_scroll_stays_inside_sample
 cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focused_mode_resets_page_on_family_change

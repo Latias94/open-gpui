@@ -1045,67 +1045,63 @@ pub(crate) fn render_components_page(
                                             }),
                                     ),
                                 ),
-                        )
+                        ),
+                )
+                .child(
+                    component_page_section("radio-group", anchors.radio_group.clone())
+                        .when(!show_component_section(focus_mode, "radio-group"), |this| {
+                            this.hidden()
+                        })
                         .child(
-                            component_page_section("radio-group", anchors.radio_group.clone())
-                                .when(!show_component_section(focus_mode, "radio-group"), |this| {
-                                    this.hidden()
-                                })
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
                                 .child(
                                     div()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_2()
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .font_weight(open_gpui::FontWeight::BOLD)
-                                                .child("RadioGroup"),
-                                        )
-                                        .child(div().flex().gap_3().flex_wrap().children(
-                                            radio_samples.into_iter().map(|sample| {
-                                                let sample_id = sample.id;
-                                                let debug_selector = sample.debug_selector();
-                                                let state = sample.state.clone();
-                                                let mut radio = RadioGroup::new(format!(
-                                                    "component-radio:{}",
-                                                    sample.id
-                                                ))
-                                                .label(sample.title)
-                                                .orientation(state.orientation())
-                                                .default_selected(
-                                                    state.selected_value().unwrap_or("none"),
-                                                )
-                                                .required(state.required())
-                                                .disabled(state.disabled())
-                                                .with_size(state.size())
-                                                .tokens(snapshot.tokens);
-                                                for item in state.items().iter() {
-                                                    radio = radio.item(
-                                                        RadioItem::new(item.value(), item.label())
-                                                            .disabled(item.disabled()),
-                                                    );
-                                                }
+                                        .text_sm()
+                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                        .child("RadioGroup"),
+                                )
+                                .child(div().flex().gap_3().flex_wrap().children(
+                                    radio_samples.into_iter().map(|sample| {
+                                        let sample_id = sample.id;
+                                        let debug_selector = sample.debug_selector();
+                                        let state = sample.state.clone();
+                                        let mut radio = RadioGroup::new(format!(
+                                            "component-radio:{}",
+                                            sample.id
+                                        ))
+                                        .label(sample.title)
+                                        .orientation(state.orientation())
+                                        .default_selected(state.selected_value().unwrap_or("none"))
+                                        .required(state.required())
+                                        .disabled(state.disabled())
+                                        .with_size(state.size())
+                                        .tokens(snapshot.tokens);
+                                        for item in state.items().iter() {
+                                            radio = radio.item(
+                                                RadioItem::new(item.value(), item.label())
+                                                    .disabled(item.disabled()),
+                                            );
+                                        }
 
-                                                div()
-                                                    .id(format!(
-                                                        "component-radio-sample:{sample_id}"
-                                                    ))
-                                                    .debug_selector(move || debug_selector)
-                                                    .min_w(px(240.0))
-                                                    .flex()
-                                                    .flex_col()
-                                                    .gap_2()
-                                                    .rounded_sm()
-                                                    .border_1()
-                                                    .border_color(rgb(0xd6d8ce))
-                                                    .bg(rgb(0xffffff))
-                                                    .p_3()
-                                                    .child(radio)
-                                                    .child(component_radio_state_row(&state))
-                                            }),
-                                        )),
-                                ),
+                                        div()
+                                            .id(format!("component-radio-sample:{sample_id}"))
+                                            .debug_selector(move || debug_selector)
+                                            .min_w(px(240.0))
+                                            .flex()
+                                            .flex_col()
+                                            .gap_2()
+                                            .rounded_sm()
+                                            .border_1()
+                                            .border_color(rgb(0xd6d8ce))
+                                            .bg(rgb(0xffffff))
+                                            .p_3()
+                                            .child(radio)
+                                            .child(component_radio_state_row(&state))
+                                    }),
+                                )),
                         ),
                 )
                 .child(
