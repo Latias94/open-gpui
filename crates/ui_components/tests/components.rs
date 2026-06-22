@@ -22,9 +22,10 @@ use open_gpui_ui_components::{
     TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode,
     ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
     ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, VirtualizerItemKey,
-    VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem, active_index_from_str_keys,
-    first_enabled,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, VirtualizedListActivation,
+    VirtualizedListItemDescriptor, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
+    VirtualizedListScrollStrategy, VirtualizedListState, VirtualizerItemKey, VirtualizerRange,
+    VirtualizerSnapshot, VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -32,7 +33,7 @@ use open_gpui_ui_components::{
         point_anchor_placement,
     },
     last_enabled, listbox_navigation_target, menu_navigation_target, next_enabled,
-    sidebar_navigation_target, toolbar_navigation_target,
+    sidebar_navigation_target, toolbar_navigation_target, virtualized_list_scroll_target,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation,
@@ -1352,6 +1353,84 @@ fn table_render_plan_disambiguates_duplicate_row_ids_for_rendering() {
 }
 
 #[test]
+fn virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts() {
+    let items = (0..10_000)
+        .map(|index| {
+            VirtualizedListItemDescriptor::new(
+                format!("item-{index:04}"),
+                format!("Item {index:04}"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let state = VirtualizedListState::resolve(
+        Size::Small,
+        false,
+        items.len(),
+        Some(104),
+        Some(101),
+        Some(7),
+    );
+    let plan = VirtualizedListRenderPlan::resolve(
+        "contracts-list",
+        "Contracts list",
+        state,
+        items,
+        ui_px(2_800.0),
+        ui_px(196.0),
+    );
+
+    assert_eq!(plan.role(), Role::ListBox);
+    assert_eq!(plan.row_role(), Role::ListBoxOption);
+    assert_eq!(plan.virtualizer().count(), 10_000);
+    assert_eq!(plan.virtualizer().total_size(), ui_px(280_000.0));
+    assert_eq!(
+        *plan.virtualizer().visible_range(),
+        VirtualizerRange::new(100, 107)
+    );
+    assert_eq!(
+        *plan.virtualizer().overscan_range(),
+        VirtualizerRange::new(98, 109)
+    );
+    assert_eq!(plan.visible_row_count(), 7);
+    assert_eq!(plan.rendered_row_count(), 11);
+    assert_eq!(plan.rows()[0].index(), 98);
+    assert_eq!(plan.rows()[0].render_key(), "item-0098");
+
+    let active_row: &VirtualizedListRowRenderPlan =
+        plan.active_row().expect("active row should be rendered");
+    assert_eq!(active_row.index(), 104);
+    assert_eq!(active_row.key(), "item-0104");
+    assert_eq!(active_row.label(), "Item 0104");
+    assert!(active_row.active());
+    assert!(!active_row.selected());
+    assert_eq!(active_row.role(), Role::ListBoxOption);
+    assert_eq!(active_row.position_in_set(), 105);
+    assert_eq!(active_row.size_of_set(), 10_000);
+    assert_eq!(active_row.virtual_start(), ui_px(2_912.0));
+    assert_eq!(active_row.virtual_size(), ui_px(28.0));
+
+    let selected_row = plan
+        .selected_row()
+        .expect("selected row should be rendered");
+    assert_eq!(selected_row.index(), 101);
+    assert!(selected_row.selected());
+
+    let activation = VirtualizedListActivation::new(active_row.index());
+    assert_eq!(activation.index(), 104);
+    assert_eq!(
+        virtualized_list_scroll_target(
+            VirtualizedListScrollStrategy::Top,
+            activation.index(),
+            plan.state().item_count(),
+            plan.metrics().row_height(),
+            plan.virtualizer().viewport_extent(),
+            plan.virtualizer().scroll_offset(),
+        ),
+        ui_px(2_912.0)
+    );
+}
+
+#[test]
 fn table_header_action_cycles_sorting_without_render_coupling() {
     let unsorted = Table::new("sort-cycle", "Sort cycle", sample_table_state(8))
         .render_plan(UiPx::ZERO, ui_px(120.0));
@@ -1468,6 +1547,44 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         root::VirtualizedListState::resolve(Size::Small, false, 12, Some(4), Some(4), Some(3));
     let prelude_virtualized_state: prelude::VirtualizedListState =
         prelude::VirtualizedListState::resolve(Size::Small, false, 12, Some(4), Some(4), Some(3));
+    let root_virtualized_items = (0..12)
+        .map(|index| {
+            root::VirtualizedListItemDescriptor::new(
+                format!("root-item-{index}"),
+                format!("Root item {index}"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let prelude_virtualized_items = (0..12)
+        .map(|index| {
+            prelude::VirtualizedListItemDescriptor::new(
+                format!("prelude-item-{index}"),
+                format!("Prelude item {index}"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let root_virtualized_plan: root::VirtualizedListRenderPlan =
+        root::VirtualizedListRenderPlan::resolve(
+            "root-virtualized-list",
+            "Root virtualized list",
+            root_virtualized_state.clone(),
+            root_virtualized_items,
+            ui_px(28.0),
+            ui_px(56.0),
+        );
+    let prelude_virtualized_plan: prelude::VirtualizedListRenderPlan =
+        prelude::VirtualizedListRenderPlan::resolve(
+            "prelude-virtualized-list",
+            "Prelude virtualized list",
+            prelude_virtualized_state.clone(),
+            prelude_virtualized_items,
+            ui_px(28.0),
+            ui_px(56.0),
+        );
+    let _root_virtualized_row: &root::VirtualizedListRowRenderPlan =
+        root_virtualized_plan.active_row().unwrap();
+    let _prelude_virtualized_row: &prelude::VirtualizedListRowRenderPlan =
+        prelude_virtualized_plan.active_row().unwrap();
     let _root_tree_toggle: Option<root::TreeToggle> =
         root::TreeToggle::from_item(&root_tree_state.items()[0]);
     let _prelude_tree_toggle: Option<prelude::TreeToggle> =
@@ -1509,6 +1626,30 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     assert_eq!(
         prelude_virtualized_state.navigation_target("pagedown"),
         Some(7)
+    );
+    assert_eq!(root_virtualized_plan.role(), Role::ListBox);
+    assert_eq!(prelude_virtualized_plan.row_role(), Role::ListBoxOption);
+    assert_eq!(
+        root::virtualized_list_scroll_target(
+            root::VirtualizedListScrollStrategy::Top,
+            4,
+            root_virtualized_plan.state().item_count(),
+            root_virtualized_plan.metrics().row_height(),
+            root_virtualized_plan.virtualizer().viewport_extent(),
+            root_virtualized_plan.virtualizer().scroll_offset(),
+        ),
+        ui_px(112.0)
+    );
+    assert_eq!(
+        prelude::virtualized_list_scroll_target(
+            prelude::VirtualizedListScrollStrategy::Top,
+            4,
+            prelude_virtualized_plan.state().item_count(),
+            prelude_virtualized_plan.metrics().row_height(),
+            prelude_virtualized_plan.virtualizer().viewport_extent(),
+            prelude_virtualized_plan.virtualizer().scroll_offset(),
+        ),
+        ui_px(112.0)
     );
     assert_eq!(
         root::virtualized_list_navigation_target("end", 4, 12, 3),

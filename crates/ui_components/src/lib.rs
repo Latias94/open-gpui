@@ -173,6 +173,7 @@ pub use tree::{
     TreeSelection, TreeState, TreeToggle, tree_navigation_target,
 };
 pub use virtualized_list::{
-    VirtualizedListActivation, VirtualizedListMetrics, VirtualizedListScrollStrategy,
-    VirtualizedListState, virtualized_list_navigation_target,
+    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListMetrics,
+    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState, virtualized_list_navigation_target, virtualized_list_scroll_target,
 };
