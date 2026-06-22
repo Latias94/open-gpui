@@ -1167,7 +1167,8 @@ impl DockViewportRuntime {
         window_id: WindowId,
         discard_close_plan: bool,
     ) -> Vec<AnyWindowHandle> {
-        let (_, mut windows) = self.clear_routed_drop_preview_if_window_matches(window_id);
+        let mut update = DockViewportRuntimeUpdate::default();
+        update.merge_parts(self.clear_routed_drop_preview_if_window_matches(window_id));
         if discard_close_plan {
             self.close_coordinator.discard_window(window_id);
         }
@@ -1179,9 +1180,8 @@ impl DockViewportRuntime {
         self.clear_pending_activation_for(space, window_id);
         self.status.clear_window_references(space, window_id);
         self.focus.remove_space(space);
-        let (_, drag_windows) = self.finish_payload_drag_for_source_space(space);
-        extend_unique_windows(&mut windows, drag_windows);
-        windows
+        update.merge_parts(self.finish_payload_drag_for_source_space(space));
+        update.into_parts().1
     }
 
     fn finish_payload_drag_for_source_space(
