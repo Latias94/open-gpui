@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: f320da1
+git_commit: 029826e
 verified_by:
   - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-core virtualizer table
@@ -44,7 +44,7 @@ verified_by:
 
 - Goal: Execute the UI component-library slice around public API stability, Overlay productization, and gallery focused inspection.
 - Branch: `main`
-- Last verified: 2026-06-22, U4 Overlay catalog productization passed `cargo fmt -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-foundation-gallery overlay_page_catalog_entries_have_signals_and_sample_selectors overlay_gallery_smoke_renders_catalog_entries_and_official_samples`, `cargo nextest run -p open-gpui-ui-foundation-gallery overlay`, full `cargo nextest run -p open-gpui-ui-foundation-gallery`, and `git diff --check`.
+- Last verified: 2026-06-22, U5 focused Components gallery view passed `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, full `cargo nextest run -p open-gpui-ui-components` (183/183), full `cargo nextest run -p open-gpui-ui-foundation-gallery` (71/71), and `git diff --check`.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -73,9 +73,11 @@ verified_by:
 - Done: Completed U2 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` as commits `e4c46b9` and `b40cb08`. Seed-shaped builders on `Tabs`, `RadioGroup`, `Toolbar`, `Tree`, `VirtualizedList`, `Combobox`, `Command`, `Menu`, and `ContextMenu` now use `default_*` names, `Sidebar::default_focused` covers the adapter-owned focus seed while `Sidebar::selected` stays controlled, state getters such as `ComboboxState::query()` and `CommandState::query()` still expose the current value, the gallery build paths now call the renamed builders, and the contract docs and inventory guard reflect the new ownership vocabulary.
 - Done: Completed U3 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` as `acc6e91`. `Switch::on_click` was removed from the public builder surface in favor of `Switch::on_change`, the API inventory and public-method baseline now classify `Switch::checked` plus `on_change` with the scalar value-change vocabulary, the contract docs no longer list Switch as a callback exception, and a real GPUI runtime test verifies enabled clicks emit the next checked value while disabled switches do not emit changes. Read-only review `u3_callback_review_light` found no blocking issues.
 - Done: Completed U4 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` as `f320da1`. The Overlay page now has `OVERLAY_CATALOG`, `OverlayCatalogEntry`, `OverlayCatalogStatus`, and `overlay_sample_selector_pairs()` covering Tooltip, HoverCard, Popover, Dialog, AlertDialog, Sheet, Menu, and ContextMenu. The gallery renders visible Overlay catalog cards, docs describe the overlay catalog contract, and focused tests guard catalog signals plus rendered sample selectors.
-- Follow-up: Execute U5 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md`: add focused component-family viewing to the Components gallery.
+- Done: Completed U5 from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` as `029826e`. The Components page now has `ComponentFocusMode::All` and catalog-driven focused component-family viewing, with an explicit `All components` control, directory chips kept as pure anchor jumps, focus-mode page scroll reset keys, and smoke coverage for all-mode restoration, family switching reset, and focused Table nested scroll containment.
+- Done: Hardened composite-widget focus ergonomics by letting `Tree` and `VirtualizedList` roots focus their current keyboard target when clicked. Tree row clicks remain the explicit gallery interaction path; subagent review confirmed the Tree smoke should enter focused Tree mode via the catalog before clicking the concrete `paper` row.
+- Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Blocked: None.
-- Next action: Begin U5 focused component-family viewing from `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md`.
+- Next action: Continue the next UI component productization/API cleanup slice after U5, using `docs/plans/2026-06-22-003-feat-ui-api-overlay-productization-plan.md` as the current decision artifact.
 
 # Citations
 
@@ -103,3 +105,5 @@ verified_by:
 [22] Commit `acc6e91` - `feat(ui-components): rename switch callback to on_change`
 [23] Read-only review agent `u3_callback_review_light`
 [24] Commit `f320da1` - `feat(gallery): add overlay catalog gates`
+[25] Commit `029826e` - `feat(gallery): add focused component view`
+[26] Subagent finding `docs/knowledge/engineering/subagents/u5-focused-components-tree-smoke-review.md`

@@ -15,6 +15,7 @@
 * [Text input controller research](subagents/text-input-controller-research.md) - Subagent finding on the minimal editable TextInputController slice.
 * [UI component roadmap reference research](subagents/ui-component-roadmap-reference-research.md) - Reference repository findings for the next official component roadmap.
 * [Gallery architecture review 2026-06-18](subagents/gallery-architecture-review-20260618.md) - Subagent finding on remaining deletion seams in the UI foundation gallery.
+* [U5 focused Components Tree smoke review](subagents/u5-focused-components-tree-smoke-review.md) - Subagent finding on the focused-mode Tree gallery smoke and root click-to-focus behavior.
 * [Menu runtime focus regression verification](verification/menu-runtime-focus-regression-20260620.md) - Verification evidence for the menu/context-menu runtime focus repair.
 * [Gallery scroll and viewport hardening verification](verification/gallery-scroll-viewport-hardening-20260621.md) - Verification evidence for navigation rail, ScrollArea, and vertical Tabs scroll regressions.
 * [Tree renderer productization verification](verification/tree-renderer-productization-20260622.md) - Verification evidence for the official Tree renderer, gallery sample, and nested scroll smokes.
