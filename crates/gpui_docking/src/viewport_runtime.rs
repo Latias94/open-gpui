@@ -1490,6 +1490,9 @@ impl DockViewportRuntime {
 
         Ok(WindowOptions {
             window_bounds: Some(window_bounds),
+            // Tear-off viewports are activated after graph commit and runtime registration, so
+            // panel focus restoration flows through the explicit activation transaction.
+            focus: false,
             ..Default::default()
         })
     }

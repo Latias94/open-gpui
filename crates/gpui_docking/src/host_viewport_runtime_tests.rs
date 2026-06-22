@@ -8276,12 +8276,13 @@ fn viewport_runtime_tear_off_suggested_bounds_authorize_missing_global_release_p
         DockViewportTearOffPlacementSource::Suggested
     );
     assert_eq!(placement.window_bounds(), suggested);
-    assert_eq!(
-        runtime
-            .tear_off_window_options(&request)
-            .expect("suggested bounds should produce window options")
-            .window_bounds,
-        Some(suggested)
+    let options = runtime
+        .tear_off_window_options(&request)
+        .expect("suggested bounds should produce window options");
+    assert_eq!(options.window_bounds, Some(suggested));
+    assert!(
+        !options.focus,
+        "tear-off windows must not take focus before graph commit and runtime activation"
     );
 }
 
