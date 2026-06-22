@@ -295,6 +295,12 @@ impl DockControllerBuilder {
         self
     }
 
+    /// Enables or disables restoring dock-panel focus when a platform window gains focus.
+    pub fn platform_focus_sets_dock_focus(mut self, enabled: bool) -> Self {
+        self.policy.set_platform_focus_sets_dock_focus(enabled);
+        self
+    }
+
     /// Allows one dock class to be dropped into the given dock space.
     pub fn allow_dock_class_in_space(
         mut self,

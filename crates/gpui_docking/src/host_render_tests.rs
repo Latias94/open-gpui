@@ -658,6 +658,72 @@ fn platform_activation_restores_recorded_panel_after_non_docking_focus_owner(
 }
 
 #[open_gpui::test]
+fn platform_activation_policy_can_leave_dock_focus_unchanged(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a", "b"]);
+    let panel_b = test_view(cx, "B");
+    let focus_b = cx.read_entity(&panel_b, |panel, cx| panel.focus_handle(cx));
+
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace
+        .policy_mut()
+        .set_platform_focus_sets_dock_focus(false);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_focusable_panel_view(item("b"), "Panel B", panel_b);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    let tab_b = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("b"),
+        },
+    )
+    .expect("tab B selector should be emitted");
+    let tab_b_bounds = debug_bounds(&mut visual, &tab_b);
+    visual.simulate_click(tab_b_bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+    visual.update(|window, cx| {
+        assert_eq!(window.focused(cx), Some(focus_b));
+    });
+
+    let stealer = visual.update(|_, cx| cx.focus_handle());
+    visual.update(|window, cx| {
+        window.focus(&stealer, cx);
+        assert_eq!(window.focused(cx), Some(stealer.clone()));
+    });
+    host.update(cx, |host, _| {
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            Some(true),
+            "the opt-out should not erase recorded dock focus history"
+        );
+    });
+
+    visual.deactivate_window();
+    window
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("window should activate");
+    cx.run_until_parked();
+
+    host.update(cx, |host, _| {
+        assert_eq!(host.pending_focus_command(), None);
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            Some(true),
+            "platform focus opt-out should skip restoration without rewriting focus history"
+        );
+    });
+    visual.update(|window, cx| {
+        assert_eq!(
+            window.focused(cx),
+            Some(stealer),
+            "policy-disabled platform activation should not restore recorded dock panel focus"
+        );
+    });
+}
+
+#[open_gpui::test]
 fn platform_activation_does_not_reveal_hidden_recorded_panel(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph_with_selected(&["a", "b"], "a");
     let panel_a = test_view(cx, "A");

@@ -29,6 +29,7 @@ fn controller_builder_sets_layout_panels_policy_and_options() {
         .allow_dock_class_in_space(space(), "tool")
         .allow_floating(true)
         .allow_platform_viewports(true)
+        .platform_focus_sets_dock_focus(false)
         .options(options)
         .build();
 
@@ -36,6 +37,7 @@ fn controller_builder_sets_layout_panels_policy_and_options() {
     assert!(controller.graph().root(&space()).is_some());
     assert!(controller.policy().allows_floating());
     assert!(controller.policy().allows_platform_viewports());
+    assert!(!controller.policy().platform_focus_sets_dock_focus());
     assert_eq!(controller.options().empty_message, "No panels");
 
     let explorer = controller

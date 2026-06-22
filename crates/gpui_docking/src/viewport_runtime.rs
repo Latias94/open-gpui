@@ -715,12 +715,18 @@ impl DockViewportRuntime {
 
         self.record_confirmed_backend_focused_window(window_id)
             .expect("backend focus was already validated as a live docking window");
+        let platform_focus_sets_dock_focus = self
+            .controller
+            .read(cx)
+            .policy()
+            .platform_focus_sets_dock_focus();
         self.backend_focus
             .focus_command_for_confirmed_backend_window_focus(
                 &self.focus,
                 space,
                 window_id,
                 mouse_down,
+                platform_focus_sets_dock_focus,
             )
     }
 
