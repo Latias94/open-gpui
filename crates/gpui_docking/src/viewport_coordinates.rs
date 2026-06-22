@@ -159,14 +159,13 @@ impl DockViewportAdapter {
         let Some(snapshot) = self.snapshot_mut(&space) else {
             return false;
         };
-        snapshot.mark_route_facts_stale(DockViewportStaleReason::PlatformCloseRequested)
+        snapshot.mark_platform_close_requested()
     }
 
-    /// Cancels a previously accepted platform close request without restoring stale route facts.
+    /// Cancels a previously accepted platform close request.
     ///
-    /// The next rendered host scene must publish fresh route facts before the window can route
-    /// drops again. This mirrors ImGui's per-frame request flags without guessing that a render
-    /// implies the platform close was aborted.
+    /// Close is a platform request flag, not a route-facts generation. Cancelling it restores
+    /// whatever route facts were otherwise current.
     pub(crate) fn cancel_window_close_requested(&mut self, window_id: WindowId) -> bool {
         let Some(space) = self.space_for_window_id(window_id).cloned() else {
             return false;
@@ -594,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn cancel_window_close_request_requires_next_live_update_before_routing() {
+    fn cancel_window_close_request_restores_current_route_facts() {
         let mut adapter = DockViewportAdapter::new();
         let main = space("main");
         let window = handle(1);
@@ -610,17 +609,14 @@ mod tests {
 
         assert!(adapter.mark_window_close_requested(window.window_id()));
         assert!(!adapter.route_ready(&main));
-        assert!(adapter.cancel_window_close_requested(window.window_id()));
-        assert!(!adapter.route_ready(&main));
         assert_eq!(
             adapter.route_unavailable_reason(&main),
-            Some(DockViewportRouteUnavailableReason::Stale(
-                DockViewportStaleReason::WindowFactsChanged
-            ))
+            Some(DockViewportRouteUnavailableReason::PlatformCloseRequested)
         );
-
-        assert!(adapter.update_snapshot(&main, window_facts, host_bounds));
+        assert!(adapter.cancel_window_close_requested(window.window_id()));
         assert!(adapter.route_ready(&main));
+        assert_eq!(adapter.route_unavailable_reason(&main), None);
+        assert!(!adapter.update_snapshot(&main, window_facts, host_bounds));
         assert!(!adapter.cancel_window_close_requested(window.window_id()));
     }
 

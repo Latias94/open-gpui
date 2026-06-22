@@ -8,9 +8,9 @@ use crate::{
     DockViewportPlatformSyncRequest, DockViewportPlatformSyncSkippedReason,
     DockViewportResolvedDropRoute, DockViewportRouteStatus, DockViewportRouteTarget,
     DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
-    DockViewportStaleStatusReason, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementSource, DockViewportTearOffRequest,
-    DockViewportWindowActivation, DockViewportWindowFacts, DockWorkspace, SplitAxis,
+    DockViewportTargetContext, DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
+    DockViewportTearOffPlacementSource, DockViewportTearOffRequest, DockViewportWindowActivation,
+    DockViewportWindowFacts, DockWorkspace, SplitAxis,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -4208,10 +4208,10 @@ fn viewport_runtime_merge_back_should_close_auto_cancels_when_window_renders_aga
         .expect("pending close should keep the mapping for the close callback");
     assert_eq!(
         detached_lifecycle.route_status,
-        DockViewportRouteStatus::Stale {
-            reason: DockViewportStaleStatusReason::PlatformCloseRequested,
-        }
+        DockViewportRouteStatus::RouteReady,
+        "pending close is a platform request flag, not stale route facts"
     );
+    assert!(detached_lifecycle.platform_request_status.close_requested);
     assert_eq!(
         runtime.last_host_scene_screen_position(&detached_space),
         None
@@ -4256,6 +4256,7 @@ fn viewport_runtime_merge_back_should_close_auto_cancels_when_window_renders_aga
         detached_lifecycle.route_status,
         DockViewportRouteStatus::RouteReady
     );
+    assert!(!detached_lifecycle.platform_request_status.close_requested);
     let fresh_resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     assert!(
         matches!(
@@ -4335,10 +4336,10 @@ fn viewport_runtime_retain_should_close_auto_cancels_when_window_renders_again(
         .expect("pending retain close should keep lifecycle diagnostics");
     assert_eq!(
         detached_lifecycle.route_status,
-        DockViewportRouteStatus::Stale {
-            reason: DockViewportStaleStatusReason::PlatformCloseRequested,
-        }
+        DockViewportRouteStatus::RouteReady,
+        "pending retain close is a platform request flag, not stale route facts"
     );
+    assert!(detached_lifecycle.platform_request_status.close_requested);
     assert_eq!(
         runtime.last_host_scene_screen_position(&detached_space),
         None
@@ -4383,6 +4384,7 @@ fn viewport_runtime_retain_should_close_auto_cancels_when_window_renders_again(
         detached_lifecycle.route_status,
         DockViewportRouteStatus::RouteReady
     );
+    assert!(!detached_lifecycle.platform_request_status.close_requested);
     let fresh_resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     assert!(
         matches!(
@@ -4394,7 +4396,9 @@ fn viewport_runtime_retain_should_close_auto_cancels_when_window_renders_again(
 }
 
 #[open_gpui::test]
-fn viewport_runtime_cancel_retain_should_close_requires_fresh_route_facts(cx: &mut TestAppContext) {
+fn viewport_runtime_cancel_retain_should_close_restores_current_route_facts(
+    cx: &mut TestAppContext,
+) {
     let detached_space = DockSpaceId::from("detached");
     let mut graph = DockGraph::new();
     let detached_tabs = graph.insert_node(DockNode::Tabs {
@@ -4448,11 +4452,10 @@ fn viewport_runtime_cancel_retain_should_close_requires_fresh_route_facts(cx: &m
         .expect("cancelled close should keep the viewport registered");
     assert_eq!(
         detached_lifecycle.route_status,
-        DockViewportRouteStatus::Stale {
-            reason: DockViewportStaleStatusReason::WindowFactsChanged,
-        },
-        "cancel should not resurrect route facts captured before the close request"
+        DockViewportRouteStatus::RouteReady,
+        "cancel clears only the close request flag and restores otherwise-current route facts"
     );
+    assert!(!detached_lifecycle.platform_request_status.close_requested);
 
     let request = DockViewportDropRouteRequest::from_target_context(
         detached_space.clone(),
@@ -4462,24 +4465,6 @@ fn viewport_runtime_cancel_retain_should_close_requires_fresh_route_facts(cx: &m
         None,
         DockViewportTargetContext::new().with_trusted_hovered_window(window),
     );
-    let stale_resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
-    assert_eq!(
-        stale_resolution.route(),
-        &DockViewportDropRoute::Unavailable
-    );
-
-    assert!(runtime.begin_viewport_host_scene(
-        detached_space.clone(),
-        window.window_id(),
-        DockViewportWindowFacts::from_window_bounds(window_bounds),
-        host_bounds,
-        host_position,
-    ));
-    assert!(runtime.push_viewport_host_scene_fact(
-        &detached_space,
-        window.window_id(),
-        leaf_host_scene_fact(detached_tabs, detached_tabs),
-    ));
     let fresh_resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     let DockViewportDropRoute::Local {
         host_position: routed_position,
@@ -4499,7 +4484,7 @@ fn viewport_runtime_cancel_retain_should_close_requires_fresh_route_facts(cx: &m
 }
 
 #[open_gpui::test]
-fn viewport_runtime_cancel_merge_back_should_close_requires_fresh_route_facts(
+fn viewport_runtime_cancel_merge_back_should_close_restores_current_route_facts(
     cx: &mut TestAppContext,
 ) {
     let main_space = DockSpaceId::from("main");
@@ -4562,11 +4547,10 @@ fn viewport_runtime_cancel_merge_back_should_close_requires_fresh_route_facts(
         .expect("cancelled close should keep the viewport registered");
     assert_eq!(
         detached_lifecycle.route_status,
-        DockViewportRouteStatus::Stale {
-            reason: DockViewportStaleStatusReason::WindowFactsChanged,
-        },
-        "cancel should not resurrect route facts captured before the close request"
+        DockViewportRouteStatus::RouteReady,
+        "cancel clears only the close request flag and restores otherwise-current route facts"
     );
+    assert!(!detached_lifecycle.platform_request_status.close_requested);
 }
 
 #[open_gpui::test]

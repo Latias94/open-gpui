@@ -4,8 +4,8 @@ use crate::{
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
     DockViewportFocusRequest, DockViewportShouldCloseOutcome, DockViewportTearOffOpenOutcome,
     viewport_registry::{
-        DockViewportInputMask, DockViewportRouteUnavailableReason, DockViewportSnapshot,
-        DockViewportStaleReason,
+        DockViewportInputMask, DockViewportPlatformRequests, DockViewportRouteUnavailableReason,
+        DockViewportSnapshot, DockViewportStaleReason,
     },
 };
 use open_gpui::{
@@ -33,22 +33,24 @@ pub struct DockViewportRuntimeStatus {
     pub last_platform_sync: Option<DockViewportPlatformSyncRecord>,
 }
 
-/// Current route-readiness record for one registered viewport.
+/// Current route-facts and platform-request record for one registered viewport.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DockViewportLifecycleRecord {
     /// Logical dock space rendered by the viewport window.
     pub space: DockSpaceId,
     /// GPUI window currently bound to the logical dock space.
     pub window_id: WindowId,
-    /// Route-readiness status derived from the viewport lifecycle machine.
+    /// Route-facts status derived from the viewport lifecycle machine.
     pub route_status: DockViewportRouteStatus,
     /// Platform input-mask state observed for the viewport window.
     pub input_status: DockViewportInputStatus,
+    /// Platform request flags pending for this viewport window.
+    pub platform_request_status: DockViewportPlatformRequestStatus,
     /// Generation of the latest platform/host route facts.
     pub facts_generation: u64,
 }
 
-/// Route-readiness status for a registered viewport.
+/// Route-facts status for a registered viewport.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DockViewportRouteStatus {
     /// The space/window binding exists, but no rendered host scene has published route facts yet.
@@ -64,6 +66,15 @@ pub enum DockViewportRouteStatus {
     Minimized,
     /// The lifecycle state was ready, but one of the required route fact snapshots is absent.
     MissingRouteFacts,
+}
+
+/// Platform request status for a registered viewport.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DockViewportPlatformRequestStatus {
+    /// The platform has requested that this viewport should close.
+    pub close_requested: bool,
+    /// The platform has requested or reported an authoritative resize.
+    pub resize_requested: bool,
 }
 
 /// Platform input-mask status for a registered viewport.
@@ -82,8 +93,6 @@ pub enum DockViewportInputStatus {
 pub enum DockViewportStaleStatusReason {
     /// GPUI reported platform window facts changed after the last rendered host scene.
     WindowFactsChanged,
-    /// GPUI accepted a platform close request and the window is waiting for the close callback.
-    PlatformCloseRequested,
 }
 
 /// Payload shape recorded in viewport runtime diagnostics.
@@ -481,6 +490,9 @@ impl DockViewportLifecycleRecord {
             window_id: snapshot.window.window_id(),
             route_status: DockViewportRouteStatus::from_snapshot(snapshot),
             input_status: DockViewportInputStatus::from(snapshot.input_mask),
+            platform_request_status: DockViewportPlatformRequestStatus::from(
+                snapshot.platform_requests(),
+            ),
             facts_generation: snapshot.facts_generation(),
         }
     }
@@ -488,8 +500,11 @@ impl DockViewportLifecycleRecord {
 
 impl DockViewportRouteStatus {
     fn from_snapshot(snapshot: &DockViewportSnapshot) -> Self {
-        match snapshot.route_unavailable_reason() {
+        match snapshot.route_facts_unavailable_reason() {
             None => Self::RouteReady,
+            Some(DockViewportRouteUnavailableReason::PlatformCloseRequested) => {
+                unreachable!("platform close requests are not route-facts lifecycle state")
+            }
             Some(DockViewportRouteUnavailableReason::RegisteredNotReady) => {
                 Self::RegisteredNotReady
             }
@@ -512,11 +527,19 @@ impl From<DockViewportInputMask> for DockViewportInputStatus {
     }
 }
 
+impl From<DockViewportPlatformRequests> for DockViewportPlatformRequestStatus {
+    fn from(requests: DockViewportPlatformRequests) -> Self {
+        Self {
+            close_requested: requests.close_requested,
+            resize_requested: requests.resize_requested,
+        }
+    }
+}
+
 impl From<DockViewportStaleReason> for DockViewportStaleStatusReason {
     fn from(reason: DockViewportStaleReason) -> Self {
         match reason {
             DockViewportStaleReason::WindowFactsChanged => Self::WindowFactsChanged,
-            DockViewportStaleReason::PlatformCloseRequested => Self::PlatformCloseRequested,
         }
     }
 }
@@ -737,6 +760,10 @@ mod tests {
             DockViewportRouteStatus::RegisteredNotReady
         );
         assert_eq!(registered.input_status, DockViewportInputStatus::Minimized);
+        assert_eq!(
+            registered.platform_request_status,
+            DockViewportPlatformRequestStatus::default()
+        );
         assert_eq!(registered.facts_generation, 0);
 
         assert!(snapshot.update_route_facts(
@@ -748,6 +775,10 @@ mod tests {
         let ready = DockViewportLifecycleRecord::from_snapshot(space.clone(), &snapshot);
         assert_eq!(ready.route_status, DockViewportRouteStatus::RouteReady);
         assert_eq!(ready.input_status, DockViewportInputStatus::ReceivesInput);
+        assert_eq!(
+            ready.platform_request_status,
+            DockViewportPlatformRequestStatus::default()
+        );
         assert_eq!(ready.facts_generation, 1);
 
         assert!(
@@ -797,15 +828,23 @@ mod tests {
         );
         assert_eq!(stale.facts_generation, 2);
 
-        assert!(snapshot.mark_route_facts_stale(DockViewportStaleReason::PlatformCloseRequested));
+        assert!(snapshot.mark_platform_close_requested());
         let closing = DockViewportLifecycleRecord::from_snapshot(space, &snapshot);
         assert_eq!(
             closing.route_status,
             DockViewportRouteStatus::Stale {
-                reason: DockViewportStaleStatusReason::PlatformCloseRequested
+                reason: DockViewportStaleStatusReason::WindowFactsChanged
+            },
+            "close requests do not replace the current route-facts lifecycle"
+        );
+        assert_eq!(
+            closing.platform_request_status,
+            DockViewportPlatformRequestStatus {
+                close_requested: true,
+                resize_requested: false,
             }
         );
-        assert_eq!(closing.facts_generation, 3);
+        assert_eq!(closing.facts_generation, 2);
     }
 
     #[test]
