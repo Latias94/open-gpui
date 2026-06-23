@@ -17,6 +17,12 @@ depends_on:
   - repo-ref/fret/ecosystem/fret-ui-headless/src/table/row_expanding.rs
   - repo-ref/fret/ecosystem/fret-ui-headless/src/table/column_pinning.rs
   - repo-ref/fret/docs/adr/0100-headless-table-engine.md
+  - repo-ref/tanstack-table/docs/guide/row-models.md
+  - repo-ref/tanstack-table/docs/reference/index/interfaces/TableState_ColumnGrouping.md
+  - repo-ref/tanstack-table/docs/reference/index/interfaces/TableState_RowExpanding.md
+  - repo-ref/tanstack-table/docs/reference/index/interfaces/TableState_ColumnPinning.md
+  - repo-ref/tanstack-table/docs/reference/index/interfaces/Table_RowModels_Grouped.md
+  - repo-ref/tanstack-table/docs/reference/index/interfaces/Table_RowModels_Expanded.md
 ---
 
 # Open GPUI Table Depth Plan
@@ -293,3 +299,9 @@ and which gallery selectors prove the new behavior.
 - `repo-ref/fret/ecosystem/fret-ui-headless/src/table/row_expanding.rs`
 - `repo-ref/fret/ecosystem/fret-ui-headless/src/table/column_pinning.rs`
 - `repo-ref/fret/docs/adr/0100-headless-table-engine.md`
+- `repo-ref/tanstack-table/docs/guide/row-models.md`
+- `repo-ref/tanstack-table/docs/reference/index/interfaces/TableState_ColumnGrouping.md`
+- `repo-ref/tanstack-table/docs/reference/index/interfaces/TableState_RowExpanding.md`
+- `repo-ref/tanstack-table/docs/reference/index/interfaces/TableState_ColumnPinning.md`
+- `repo-ref/tanstack-table/docs/reference/index/interfaces/Table_RowModels_Grouped.md`
+- `repo-ref/tanstack-table/docs/reference/index/interfaces/Table_RowModels_Expanded.md`
