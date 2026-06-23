@@ -20,10 +20,11 @@ use open_gpui_ui_components::{
     SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor,
     SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
     Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
-    TableCenterColumnWindowPlan, TableColumn, TableColumnPinning, TableColumnRegion,
-    TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableExpansionMode,
-    TableFilter, TableHeaderAction, TablePagination, TableRow, TableRowChildrenLoadState,
-    TableSort, TableSortDirection, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem,
+    TableCellValue, TableCenterColumnWindowPlan, TableColumn, TableColumnFacets, TableColumnId,
+    TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
+    TableColumnSizingChange, TableExpansionMode, TableFacetValueCount, TableFilter,
+    TableHeaderAction, TablePagination, TableRow, TableRowChildrenLoadState, TableSort,
+    TableSortDirection, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem,
     TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver,
     ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
     ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
@@ -452,6 +453,8 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             "expansion_mode",
             "filtering_mode",
             "sorting_mode",
+            "faceting_mode",
+            "facet_metadata",
             "pagination_mode",
             "pagination_totals",
             "enable_column_resizing",
@@ -1487,6 +1490,17 @@ fn sample_table_state(row_count: usize) -> TableState {
         TableColumn::new("team", "Team"),
         TableColumn::new("score", "Score"),
     ])
+}
+
+fn text_facet_counts(facet: &TableColumnFacets) -> Vec<(String, usize)> {
+    facet
+        .unique_values()
+        .iter()
+        .map(|entry| match entry.value() {
+            TableCellValue::Text(value) => (value.clone(), entry.count()),
+            value => panic!("expected text facet value, got {value:?}"),
+        })
+        .collect()
 }
 
 fn sample_pinned_table_state() -> TableState {
@@ -3261,6 +3275,91 @@ fn table_render_plan_exposes_manual_row_model_metadata() {
 }
 
 #[test]
+fn table_render_plan_exposes_faceting_metadata() {
+    let state = TableState::new([
+        TableRow::new("row-1")
+            .with_cell("team", "UI")
+            .with_cell("status", "Ready")
+            .with_cell("score", 10_usize),
+        TableRow::new("row-2")
+            .with_cell("team", "UI")
+            .with_cell("status", "Blocked")
+            .with_cell("score", 20_usize),
+        TableRow::new("row-3")
+            .with_cell("team", "API")
+            .with_cell("status", "Ready")
+            .with_cell("score", 30_usize),
+        TableRow::new("row-4")
+            .with_cell("team", "UI")
+            .with_cell("status", "Ready")
+            .with_cell("score", 40_usize),
+    ])
+    .with_columns([
+        TableColumn::new("team", "Team"),
+        TableColumn::new("status", "Status"),
+        TableColumn::new("score", "Score"),
+    ])
+    .with_filters([
+        TableFilter::contains("status", "Ready"),
+        TableFilter::contains("team", "UI"),
+    ])
+    .with_pagination(TablePagination::new(0, 1))
+    .with_manual_facets(
+        [TableColumnFacets::manual("status", 64).with_unique_values([
+            TableFacetValueCount::new("Blocked", 24),
+            TableFacetValueCount::new("Ready", 40),
+        ])],
+    );
+
+    let plan = Table::new("faceted-table", "Faceted table", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    assert_eq!(plan.faceting_mode(), TableStageMode::Client);
+    assert_eq!(plan.column_facets().len(), 3);
+    assert_eq!(
+        plan.rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["row-1"],
+        "pagination still limits the rendered row window"
+    );
+
+    let status = plan
+        .column_facet(&TableColumnId::new("status"))
+        .expect("status facet should resolve");
+    assert_eq!(status.mode(), TableStageMode::Manual);
+    assert_eq!(status.row_count(), 64);
+    assert_eq!(
+        text_facet_counts(status),
+        [("Blocked".to_string(), 24), ("Ready".to_string(), 40)],
+        "manual facet payloads should survive render-plan resolution"
+    );
+
+    let team = plan
+        .column_facet(&TableColumnId::new("team"))
+        .expect("team facet should resolve");
+    assert_eq!(team.mode(), TableStageMode::Client);
+    assert_eq!(team.row_count(), 3);
+    assert_eq!(
+        text_facet_counts(team),
+        [("API".to_string(), 1), ("UI".to_string(), 2)],
+        "client facets ignore their own column filter and honor the other filters"
+    );
+
+    let score = plan
+        .column_facet(&TableColumnId::new("score"))
+        .expect("score facet should resolve");
+    let range = score
+        .numeric_range()
+        .expect("score facet should expose a numeric range");
+    assert_eq!(range.min(), 10.0);
+    assert_eq!(range.max(), 40.0);
+}
+
+#[test]
 fn table_render_plan_exposes_pinned_column_regions() {
     let flat_plan = Table::new("flat-table", "Flat table", sample_table_state(1))
         .render_plan(UiPx::ZERO, ui_px(96.0));
@@ -4017,6 +4116,13 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _prelude_expansion_mode: prelude::TableExpansionMode = prelude::TableExpansionMode::Client;
     let _root_stage_mode: root::TableStageMode = root::TableStageMode::Manual;
     let _prelude_stage_mode: prelude::TableStageMode = prelude::TableStageMode::Client;
+    let root_facet_value = root::TableFacetValueCount::new("Ready", 2);
+    let root_facets: root::TableColumnFacets =
+        root::TableColumnFacets::manual("status", 2).with_unique_values([root_facet_value]);
+    let _prelude_facets: prelude::TableColumnFacets = root_facets.clone();
+    let _root_facet_range: Option<root::TableFacetRange> = root::TableFacetRange::new(1.0, 2.0);
+    let _prelude_facet_value: prelude::TableFacetValueCount =
+        prelude::TableFacetValueCount::new("Blocked", 1);
     let _root_child_load_state: root::TableRowChildrenLoadState =
         root::TableRowChildrenLoadState::loading("Loading children");
     let _prelude_child_load_state: prelude::TableRowChildrenLoadState =
@@ -4113,6 +4219,7 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .clone();
 
     assert_eq!(root_plan.role(), Role::Table);
+    assert!(!root_plan.column_facets().is_empty());
     assert_eq!(
         root::TableRowActivationKind::DoubleClick.as_str(),
         "double-click"

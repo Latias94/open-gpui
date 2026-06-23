@@ -11,13 +11,14 @@ use open_gpui::{
     StatefulInteractiveElement, Styled, Window, div, point, px, rgb,
 };
 use open_gpui_ui_core::{
-    Role, Sizable, Size, TableCellValue, TableColumn, TableColumnId, TableColumnRegion,
-    TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState, TableColumnSizing,
-    TableExpansionMode, TableExpansionState, TableResolvedColumnSizing, TableResolvedRow,
-    TableResolvedState, TableRowChildrenLoadState, TableRowId, TableSort, TableSortDirection,
-    TableStageMode, TableState, TableStateCacheKey, TableTreeRow, UiPx, VirtualizerItemKey,
-    VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState, VirtualizerSnapshot,
-    VirtualizerState, drag_table_column_resize, end_table_column_resize, ui_px,
+    Role, Sizable, Size, TableCellValue, TableColumn, TableColumnFacets, TableColumnId,
+    TableColumnRegion, TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState,
+    TableColumnSizing, TableExpansionMode, TableExpansionState, TableResolvedColumnSizing,
+    TableResolvedRow, TableResolvedState, TableRowChildrenLoadState, TableRowId, TableSort,
+    TableSortDirection, TableStageMode, TableState, TableStateCacheKey, TableTreeRow, UiPx,
+    VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState,
+    VirtualizerSnapshot, VirtualizerState, drag_table_column_resize, end_table_column_resize,
+    ui_px,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -993,6 +994,7 @@ pub struct TableRenderPlan {
     pagination_mode: TableStageMode,
     pagination_row_count: Option<usize>,
     pagination_page_count: Option<usize>,
+    faceting_mode: TableStageMode,
     rows: Vec<TableRowRenderPlan>,
     role: Role,
     header_row_role: Role,
@@ -1067,6 +1069,7 @@ impl TableRenderPlan {
             pagination_mode: pagination.mode(),
             pagination_row_count: pagination.row_count(),
             pagination_page_count: pagination.page_count(),
+            faceting_mode: state.faceting_mode(),
             rows,
             role: Role::Table,
             header_row_role: Role::Row,
@@ -1118,6 +1121,21 @@ impl TableRenderPlan {
     /// Returns the explicit or derived total page count, when supplied.
     pub const fn pagination_page_count(&self) -> Option<usize> {
         self.pagination_page_count
+    }
+
+    /// Returns whether faceting was resolved locally or supplied by the caller.
+    pub const fn faceting_mode(&self) -> TableStageMode {
+        self.faceting_mode
+    }
+
+    /// Returns resolved facet metadata for configured columns.
+    pub fn column_facets(&self) -> &[TableColumnFacets] {
+        self.table.column_facets()
+    }
+
+    /// Returns resolved facet metadata for one configured column.
+    pub fn column_facet(&self, column: &TableColumnId) -> Option<&TableColumnFacets> {
+        self.table.column_facet(column)
     }
 
     /// Returns the resolved renderer-neutral virtualizer state.

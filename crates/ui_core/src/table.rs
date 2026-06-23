@@ -1358,6 +1358,176 @@ impl Default for TablePagination {
     }
 }
 
+/// Count for one faceted table value.
+#[derive(Debug, Clone)]
+pub struct TableFacetValueCount {
+    value: TableCellValue,
+    count: usize,
+}
+
+impl PartialEq for TableFacetValueCount {
+    fn eq(&self, other: &Self) -> bool {
+        self.count == other.count
+            && TableFacetValueKey::from_value(&self.value)
+                == TableFacetValueKey::from_value(&other.value)
+    }
+}
+
+impl TableFacetValueCount {
+    /// Creates a count entry for one faceted value.
+    pub fn new(value: impl Into<TableCellValue>, count: usize) -> Self {
+        Self {
+            value: value.into(),
+            count,
+        }
+    }
+
+    /// Returns the faceted value.
+    pub const fn value(&self) -> &TableCellValue {
+        &self.value
+    }
+
+    /// Returns the number of rows that produced this value.
+    pub const fn count(&self) -> usize {
+        self.count
+    }
+}
+
+/// Numeric min/max metadata for a faceted column.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TableFacetRange {
+    min: f64,
+    max: f64,
+}
+
+impl TableFacetRange {
+    /// Creates a numeric range when both bounds are finite.
+    pub fn new(left: f64, right: f64) -> Option<Self> {
+        if !left.is_finite() || !right.is_finite() {
+            return None;
+        }
+
+        Some(if left <= right {
+            Self {
+                min: left,
+                max: right,
+            }
+        } else {
+            Self {
+                min: right,
+                max: left,
+            }
+        })
+    }
+
+    /// Returns the lower numeric bound.
+    pub const fn min(self) -> f64 {
+        self.min
+    }
+
+    /// Returns the upper numeric bound.
+    pub const fn max(self) -> f64 {
+        self.max
+    }
+}
+
+/// Faceting metadata for one table column.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableColumnFacets {
+    column: TableColumnId,
+    mode: TableStageMode,
+    row_count: usize,
+    unique_values: Vec<TableFacetValueCount>,
+    numeric_range: Option<TableFacetRange>,
+}
+
+impl TableColumnFacets {
+    /// Creates empty client-derived facet metadata for one column.
+    pub fn new(column: impl Into<TableColumnId>) -> Self {
+        Self {
+            column: column.into(),
+            mode: TableStageMode::Client,
+            row_count: 0,
+            unique_values: Vec::new(),
+            numeric_range: None,
+        }
+    }
+
+    /// Creates empty manual facet metadata for one column.
+    pub fn manual(column: impl Into<TableColumnId>, row_count: usize) -> Self {
+        Self::new(column)
+            .with_mode(TableStageMode::Manual)
+            .with_row_count(row_count)
+    }
+
+    fn client(
+        column: TableColumnId,
+        row_count: usize,
+        unique_values: Vec<TableFacetValueCount>,
+        numeric_range: Option<TableFacetRange>,
+    ) -> Self {
+        Self {
+            column,
+            mode: TableStageMode::Client,
+            row_count,
+            unique_values,
+            numeric_range,
+        }
+    }
+
+    /// Returns the faceted column identity.
+    pub const fn column(&self) -> &TableColumnId {
+        &self.column
+    }
+
+    /// Returns whether this facet summary was locally derived or caller supplied.
+    pub const fn mode(&self) -> TableStageMode {
+        self.mode
+    }
+
+    /// Returns the number of rows covered by this facet summary.
+    pub const fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    /// Returns unique values and their row counts.
+    pub fn unique_values(&self) -> &[TableFacetValueCount] {
+        &self.unique_values
+    }
+
+    /// Returns the numeric min/max range, when any finite numeric values exist.
+    pub const fn numeric_range(&self) -> Option<TableFacetRange> {
+        self.numeric_range
+    }
+
+    /// Applies the facet ownership mode.
+    pub const fn with_mode(mut self, mode: TableStageMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Applies the row count covered by this facet summary.
+    pub const fn with_row_count(mut self, row_count: usize) -> Self {
+        self.row_count = row_count;
+        self
+    }
+
+    /// Applies unique values and their row counts.
+    pub fn with_unique_values(
+        mut self,
+        unique_values: impl IntoIterator<Item = TableFacetValueCount>,
+    ) -> Self {
+        self.unique_values = unique_values.into_iter().collect();
+        self
+    }
+
+    /// Applies a numeric min/max range when both bounds are finite.
+    pub fn with_numeric_range(mut self, min: f64, max: f64) -> Self {
+        self.numeric_range = TableFacetRange::new(min, max);
+        self
+    }
+}
+
 /// Built-in aggregate calculation for grouped table rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableAggregateKind {
@@ -1570,6 +1740,8 @@ pub struct TableState {
     sorting_mode: TableStageMode,
     filters: Vec<TableFilter>,
     filtering_mode: TableStageMode,
+    faceting_mode: TableStageMode,
+    manual_facets: Vec<TableColumnFacets>,
     grouping: Vec<TableColumnId>,
     aggregations: Vec<TableAggregation>,
     expansion: TableExpansionState,
@@ -1589,6 +1761,8 @@ impl PartialEq for TableState {
             && self.sorting_mode == other.sorting_mode
             && self.filters == other.filters
             && self.filtering_mode == other.filtering_mode
+            && self.faceting_mode == other.faceting_mode
+            && self.manual_facets == other.manual_facets
             && self.grouping == other.grouping
             && self.aggregations == other.aggregations
             && self.expansion == other.expansion
@@ -1614,6 +1788,8 @@ impl TableState {
             sorting_mode: TableStageMode::default(),
             filters: Vec::new(),
             filtering_mode: TableStageMode::default(),
+            faceting_mode: TableStageMode::default(),
+            manual_facets: Vec::new(),
             grouping: Vec::new(),
             aggregations: Vec::new(),
             expansion: TableExpansionState::default(),
@@ -1683,6 +1859,34 @@ impl TableState {
     /// Marks filtering as caller-owned.
     pub const fn with_manual_filtering(mut self) -> Self {
         self.filtering_mode = TableStageMode::Manual;
+        self
+    }
+
+    /// Applies faceting ownership mode.
+    pub const fn with_faceting_mode(mut self, faceting_mode: TableStageMode) -> Self {
+        self.faceting_mode = faceting_mode;
+        self
+    }
+
+    /// Marks faceting as caller-owned.
+    pub const fn with_manual_faceting(mut self) -> Self {
+        self.faceting_mode = TableStageMode::Manual;
+        self
+    }
+
+    /// Applies caller-owned facet payloads keyed by column id.
+    pub fn with_manual_facets(
+        mut self,
+        facets: impl IntoIterator<Item = TableColumnFacets>,
+    ) -> Self {
+        let mut facets_by_column = BTreeMap::new();
+        for facet in facets {
+            facets_by_column.insert(
+                facet.column().clone(),
+                facet.with_mode(TableStageMode::Manual),
+            );
+        }
+        self.manual_facets = facets_by_column.into_values().collect();
         self
     }
 
@@ -1785,6 +1989,16 @@ impl TableState {
         self.filtering_mode
     }
 
+    /// Returns the faceting ownership mode.
+    pub const fn faceting_mode(&self) -> TableStageMode {
+        self.faceting_mode
+    }
+
+    /// Returns caller-owned facet payloads.
+    pub fn manual_facets(&self) -> &[TableColumnFacets] {
+        &self.manual_facets
+    }
+
     /// Returns grouping column ids in outer-to-inner order.
     pub fn grouping(&self) -> &[TableColumnId] {
         &self.grouping
@@ -1841,6 +2055,8 @@ impl TableState {
             sorting_mode: self.sorting_mode,
             filters: self.filters.clone(),
             filtering_mode: self.filtering_mode,
+            faceting_mode: self.faceting_mode,
+            manual_facets: self.manual_facets.clone(),
             grouping: self.grouping.clone(),
             aggregations: self.aggregations.clone(),
             expansion: self.expansion.clone(),
@@ -1904,13 +2120,14 @@ impl TableState {
             &mut source_index,
         );
         let core_rows = flatten_nodes(&source_nodes);
+        let column_facets = self.resolve_column_facets(&source_nodes);
 
         let core_model = TableRowModel::new(TableRowModelStage::Core, core_rows);
 
         let filtered_nodes = if self.filtering_mode.is_manual() {
             source_nodes.clone()
         } else {
-            filter_source_row_nodes(&source_nodes, &self.filters)
+            filter_source_row_nodes(&source_nodes, &self.filters, None)
         };
         let filtered_rows = flatten_nodes(&filtered_nodes);
         let filtered_model = TableRowModel::new(TableRowModelStage::Filtered, filtered_rows);
@@ -1959,6 +2176,8 @@ impl TableState {
             visible_column_regions,
             visible_column_sizing,
             duplicate_row_ids: duplicate_row_ids.into_iter().collect(),
+            faceting_mode: self.faceting_mode,
+            column_facets,
             core_model,
             filtered_model,
             grouped_model,
@@ -2026,6 +2245,32 @@ impl TableState {
         }
         rows
     }
+
+    fn resolve_column_facets(&self, source_nodes: &[TableRowNode]) -> Vec<TableColumnFacets> {
+        self.columns
+            .iter()
+            .filter_map(|column| {
+                if let Some(manual) = self
+                    .manual_facets
+                    .iter()
+                    .find(|facet| facet.column() == column.id())
+                {
+                    return Some(manual.clone());
+                }
+
+                if self.faceting_mode.is_manual() {
+                    return None;
+                }
+
+                Some(resolve_client_column_facets(
+                    column.id().clone(),
+                    source_nodes,
+                    &self.filters,
+                    self.filtering_mode,
+                ))
+            })
+            .collect()
+    }
 }
 
 /// Cheap invalidation key for runtime caches of resolved table row models.
@@ -2041,6 +2286,8 @@ pub struct TableStateCacheKey {
     sorting_mode: TableStageMode,
     filters: Vec<TableFilter>,
     filtering_mode: TableStageMode,
+    faceting_mode: TableStageMode,
+    manual_facets: Vec<TableColumnFacets>,
     grouping: Vec<TableColumnId>,
     aggregations: Vec<TableAggregation>,
     expansion: TableExpansionState,
@@ -2093,6 +2340,129 @@ fn unique_column_ids(
         .map(Into::into)
         .filter(|column| seen.insert(column.clone()))
         .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum TableFacetValueKey {
+    Empty,
+    Bool(bool),
+    Number(u64),
+    Text(String),
+}
+
+impl TableFacetValueKey {
+    fn from_value(value: &TableCellValue) -> Self {
+        match value {
+            TableCellValue::Empty => Self::Empty,
+            TableCellValue::Bool(value) => Self::Bool(*value),
+            TableCellValue::Number(value) => Self::Number(table_facet_number_key(*value)),
+            TableCellValue::Text(value) => Self::Text(value.clone()),
+        }
+    }
+}
+
+fn table_facet_number_key(value: f64) -> u64 {
+    let normalized = if value == 0.0 { 0.0 } else { value };
+    let bits = normalized.to_bits();
+    if bits & (1 << 63) != 0 {
+        !bits
+    } else {
+        bits | (1 << 63)
+    }
+}
+
+fn resolve_client_column_facets(
+    column_id: TableColumnId,
+    source_nodes: &[TableRowNode],
+    filters: &[TableFilter],
+    filtering_mode: TableStageMode,
+) -> TableColumnFacets {
+    let mut unique_values = BTreeMap::<TableFacetValueKey, TableFacetValueCount>::new();
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let mut found_numeric = false;
+    let mut row_count = 0;
+
+    {
+        let mut visit = |row: &TableResolvedRow| {
+            row_count += 1;
+            let value = row.cell(&column_id).cloned().unwrap_or_default();
+            let key = TableFacetValueKey::from_value(&value);
+            unique_values
+                .entry(key)
+                .and_modify(|entry| entry.count += 1)
+                .or_insert_with(|| TableFacetValueCount::new(value.clone(), 1));
+
+            if let TableCellValue::Number(number) = value {
+                if number.is_finite() {
+                    found_numeric = true;
+                    if number < min {
+                        min = number;
+                    }
+                    if number > max {
+                        max = number;
+                    }
+                }
+            }
+        };
+
+        visit_facet_rows(
+            source_nodes,
+            filters,
+            &column_id,
+            filtering_mode,
+            &mut visit,
+        );
+    }
+
+    let numeric_range = if found_numeric {
+        TableFacetRange::new(min, max)
+    } else {
+        None
+    };
+
+    TableColumnFacets::client(
+        column_id,
+        row_count,
+        unique_values.into_values().collect(),
+        numeric_range,
+    )
+}
+
+fn visit_facet_rows(
+    nodes: &[TableRowNode],
+    filters: &[TableFilter],
+    excluded_column: &TableColumnId,
+    filtering_mode: TableStageMode,
+    visit: &mut impl FnMut(&TableResolvedRow),
+) {
+    for node in nodes {
+        if !filtering_mode.is_manual()
+            && !row_matches_facet_filters(&node.row, filters, excluded_column)
+        {
+            continue;
+        }
+
+        visit(&node.row);
+        visit_facet_rows(
+            &node.children,
+            filters,
+            excluded_column,
+            filtering_mode,
+            visit,
+        );
+    }
+}
+
+fn row_matches_facet_filters(
+    row: &TableResolvedRow,
+    filters: &[TableFilter],
+    excluded_column: &TableColumnId,
+) -> bool {
+    filters.iter().all(|filter| {
+        filter.column() == excluded_column
+            || row.source().is_some_and(|source| filter.matches(source))
+    })
 }
 
 /// Metadata for a grouped table row.
@@ -2472,6 +2842,8 @@ pub struct TableResolvedState {
     visible_column_regions: TableColumnRegions,
     visible_column_sizing: TableResolvedColumnSizingRegions,
     duplicate_row_ids: Vec<TableRowId>,
+    faceting_mode: TableStageMode,
+    column_facets: Vec<TableColumnFacets>,
     core_model: TableRowModel,
     filtered_model: TableRowModel,
     grouped_model: TableRowModel,
@@ -2495,6 +2867,23 @@ impl TableResolvedState {
     /// Returns resolved visible column sizing split into pinned regions.
     pub const fn visible_column_sizing(&self) -> &TableResolvedColumnSizingRegions {
         &self.visible_column_sizing
+    }
+
+    /// Returns the faceting ownership mode.
+    pub const fn faceting_mode(&self) -> TableStageMode {
+        self.faceting_mode
+    }
+
+    /// Returns resolved facet metadata for configured columns.
+    pub fn column_facets(&self) -> &[TableColumnFacets] {
+        &self.column_facets
+    }
+
+    /// Returns resolved facet metadata for one configured column.
+    pub fn column_facet(&self, column: &TableColumnId) -> Option<&TableColumnFacets> {
+        self.column_facets
+            .iter()
+            .find(|facet| facet.column() == column)
     }
 
     /// Returns duplicate source row ids detected during resolution.
@@ -2609,8 +2998,16 @@ fn build_source_row_nodes(
         .collect()
 }
 
-fn filter_source_row_nodes(nodes: &[TableRowNode], filters: &[TableFilter]) -> Vec<TableRowNode> {
-    if filters.is_empty() {
+fn filter_source_row_nodes(
+    nodes: &[TableRowNode],
+    filters: &[TableFilter],
+    excluded_column: Option<&TableColumnId>,
+) -> Vec<TableRowNode> {
+    if filters.is_empty()
+        || filters
+            .iter()
+            .all(|filter| excluded_column.is_some_and(|column| filter.column() == column))
+    {
         return nodes.to_vec();
     }
 
@@ -2618,13 +3015,16 @@ fn filter_source_row_nodes(nodes: &[TableRowNode], filters: &[TableFilter]) -> V
         .iter()
         .filter_map(|node| {
             let source = node.row.source()?;
-            if !filters.iter().all(|filter| filter.matches(source)) {
+            if !filters.iter().all(|filter| {
+                excluded_column.is_some_and(|column| filter.column() == column)
+                    || filter.matches(source)
+            }) {
                 return None;
             }
 
             Some(TableRowNode {
                 row: node.row.clone(),
-                children: filter_source_row_nodes(&node.children, filters),
+                children: filter_source_row_nodes(&node.children, filters, excluded_column),
             })
         })
         .collect()
@@ -2891,6 +3291,17 @@ mod tests {
                 .with_cell("team", "docs")
                 .with_cell("score", 20_usize),
         ]
+    }
+
+    fn text_facet_counts(facet: &TableColumnFacets) -> Vec<(String, usize)> {
+        facet
+            .unique_values()
+            .iter()
+            .map(|entry| match entry.value() {
+                TableCellValue::Text(value) => (value.clone(), entry.count()),
+                value => panic!("expected text facet value, got {value:?}"),
+            })
+            .collect()
     }
 
     #[test]
@@ -3294,6 +3705,226 @@ mod tests {
             state
                 .with_pagination(TablePagination::manual(0, 1, 30))
                 .cache_key()
+        );
+    }
+
+    #[test]
+    fn facet_values_are_deterministic_and_ranges_ignore_non_numeric_values() {
+        let resolved = TableState::new([
+            TableRow::new("row-empty").with_cell("score", 4_usize),
+            TableRow::new("row-bool")
+                .with_cell("mixed", true)
+                .with_cell("score", "n/a"),
+            TableRow::new("row-number")
+                .with_cell("mixed", 1_usize)
+                .with_cell("score", 10_usize),
+            TableRow::new("row-number-2")
+                .with_cell("mixed", 1_usize)
+                .with_cell("score", f64::INFINITY),
+            TableRow::new("row-text")
+                .with_cell("mixed", "1")
+                .with_cell("score", f64::NAN),
+        ])
+        .with_columns([
+            TableColumn::new("mixed", "Mixed"),
+            TableColumn::new("score", "Score"),
+        ])
+        .resolve();
+
+        let mixed = resolved
+            .column_facet(&TableColumnId::new("mixed"))
+            .expect("mixed facet should resolve");
+
+        assert_eq!(mixed.mode(), TableStageMode::Client);
+        assert_eq!(mixed.row_count(), 5);
+        assert_eq!(mixed.unique_values().len(), 4);
+        assert!(matches!(
+            mixed.unique_values()[0].value(),
+            TableCellValue::Empty
+        ));
+        assert_eq!(mixed.unique_values()[0].count(), 1);
+        assert!(matches!(
+            mixed.unique_values()[1].value(),
+            TableCellValue::Bool(true)
+        ));
+        assert_eq!(mixed.unique_values()[1].count(), 1);
+        assert!(matches!(
+            mixed.unique_values()[2].value(),
+            TableCellValue::Number(value) if *value == 1.0
+        ));
+        assert_eq!(mixed.unique_values()[2].count(), 2);
+        assert!(matches!(
+            mixed.unique_values()[3].value(),
+            TableCellValue::Text(value) if value == "1"
+        ));
+        assert_eq!(mixed.unique_values()[3].count(), 1);
+
+        let score = resolved
+            .column_facet(&TableColumnId::new("score"))
+            .expect("score facet should resolve");
+        let range = score
+            .numeric_range()
+            .expect("finite score values should produce a range");
+        assert_eq!(range.min(), 4.0);
+        assert_eq!(range.max(), 10.0);
+    }
+
+    #[test]
+    fn client_facets_exclude_own_filter_and_ignore_pagination() {
+        let resolved = TableState::new([
+            TableRow::new("row-1")
+                .with_cell("team", "UI")
+                .with_cell("status", "Ready")
+                .with_cell("score", 10_usize),
+            TableRow::new("row-2")
+                .with_cell("team", "UI")
+                .with_cell("status", "Blocked")
+                .with_cell("score", 20_usize),
+            TableRow::new("row-3")
+                .with_cell("team", "API")
+                .with_cell("status", "Ready")
+                .with_cell("score", 30_usize),
+            TableRow::new("row-4")
+                .with_cell("team", "UI")
+                .with_cell("status", "Ready")
+                .with_cell("score", 40_usize),
+        ])
+        .with_columns([
+            TableColumn::new("team", "Team"),
+            TableColumn::new("status", "Status"),
+            TableColumn::new("score", "Score"),
+        ])
+        .with_filters([
+            TableFilter::contains("status", "Ready"),
+            TableFilter::contains("team", "UI"),
+        ])
+        .with_pagination(TablePagination::new(0, 1))
+        .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-1"],
+            "pagination still limits the final row model"
+        );
+
+        let status = resolved
+            .column_facet(&TableColumnId::new("status"))
+            .expect("status facet should resolve");
+        assert_eq!(status.row_count(), 3);
+        assert_eq!(
+            text_facet_counts(status),
+            [("Blocked".to_string(), 1), ("Ready".to_string(), 2)],
+            "status facet ignores its own filter and honors the team filter"
+        );
+
+        let team = resolved
+            .column_facet(&TableColumnId::new("team"))
+            .expect("team facet should resolve");
+        assert_eq!(team.row_count(), 3);
+        assert_eq!(
+            text_facet_counts(team),
+            [("API".to_string(), 1), ("UI".to_string(), 2)],
+            "team facet ignores its own filter and honors the status filter"
+        );
+    }
+
+    #[test]
+    fn manual_filtering_client_facets_describe_supplied_snapshot() {
+        let resolved = TableState::new(sample_rows())
+            .with_columns([TableColumn::new("team", "Team")])
+            .with_filters([TableFilter::contains("team", "missing")])
+            .with_manual_filtering()
+            .resolve();
+
+        let team = resolved
+            .column_facet(&TableColumnId::new("team"))
+            .expect("team facet should resolve");
+
+        assert_eq!(team.mode(), TableStageMode::Client);
+        assert_eq!(team.row_count(), 3);
+        assert_eq!(
+            text_facet_counts(team),
+            [("design".to_string(), 1), ("ops".to_string(), 2)],
+            "manual filtering leaves client facets scoped to the supplied snapshot"
+        );
+    }
+
+    #[test]
+    fn manual_facet_payloads_override_client_facets_and_cache_keys() {
+        let base = TableState::new([
+            TableRow::new("row-1").with_cell("status", "Ready"),
+            TableRow::new("row-2").with_cell("status", "Ready"),
+        ])
+        .with_columns([TableColumn::new("status", "Status")]);
+        let server_facets = TableColumnFacets::manual("status", 64).with_unique_values([
+            TableFacetValueCount::new("Blocked", 24),
+            TableFacetValueCount::new("Ready", 40),
+        ]);
+
+        let resolved = base
+            .clone()
+            .with_manual_facets([server_facets.clone()])
+            .resolve();
+        let status = resolved
+            .column_facet(&TableColumnId::new("status"))
+            .expect("status facet should resolve");
+
+        assert_eq!(status.mode(), TableStageMode::Manual);
+        assert_eq!(status.row_count(), 64);
+        assert_eq!(
+            text_facet_counts(status),
+            [("Blocked".to_string(), 24), ("Ready".to_string(), 40)],
+            "manual payloads should not be derived from the current row snapshot"
+        );
+
+        assert_ne!(
+            base.cache_key(),
+            base.clone().with_manual_faceting().cache_key(),
+            "faceting ownership participates in cache keys"
+        );
+        assert_ne!(
+            base.clone().with_manual_facets([server_facets]).cache_key(),
+            base.clone()
+                .with_manual_facets([TableColumnFacets::manual("status", 64)
+                    .with_unique_values([TableFacetValueCount::new("Ready", 64)])])
+                .cache_key(),
+            "manual facet payload content participates in cache keys"
+        );
+
+        let nan_facets = TableColumnFacets::manual("status", 2)
+            .with_unique_values([TableFacetValueCount::new(f64::NAN, 2)]);
+        let same_nan_facets = TableColumnFacets::manual("status", 2)
+            .with_unique_values([TableFacetValueCount::new(f64::NAN, 2)]);
+        assert_eq!(
+            nan_facets, same_nan_facets,
+            "facet equality should use stable numeric keys instead of raw f64 equality"
+        );
+        assert_eq!(
+            base.clone().with_manual_facets([nan_facets]).cache_key(),
+            base.clone()
+                .with_manual_facets([same_nan_facets])
+                .cache_key(),
+            "manual facet NaN payloads should not make cache keys non-reflexive"
+        );
+
+        let unknown = base
+            .with_manual_facets([TableColumnFacets::manual("missing", 10)])
+            .resolve();
+        assert!(
+            unknown
+                .column_facet(&TableColumnId::new("missing"))
+                .is_none()
+        );
+        assert!(
+            unknown
+                .column_facet(&TableColumnId::new("status"))
+                .is_some(),
+            "unknown manual payloads do not corrupt configured-column facets"
         );
     }
 

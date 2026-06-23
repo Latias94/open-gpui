@@ -2400,6 +2400,24 @@ pub(crate) fn component_table_state_row(
         ));
     }
 
+    if summary.facet_columns > 0 {
+        row = row.child(format!(
+            "facets {} columns / {} manual / status {} values total {} / score {}..{}",
+            summary.facet_columns,
+            summary.manual_facet_columns,
+            summary.status_facet_values,
+            summary.status_facet_total_count,
+            summary
+                .score_facet_min
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_owned()),
+            summary
+                .score_facet_max
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_owned())
+        ));
+    }
+
     if summary.pinned_left_columns > 0 || summary.pinned_right_columns > 0 {
         row = row.child(format!(
             "pinned {}-{}-{} / widths {}-{}-{}px / {} resizable columns",

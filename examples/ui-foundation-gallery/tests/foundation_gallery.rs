@@ -7,10 +7,10 @@ use open_gpui_ui_components::{
     CommandIndexSnapshotMode, CommandOpenMode, CommandSelectionMode, DialogOpenMode,
     FeedbackIntent, HoverCardOpenIntent, HoverCardOpenMode, MenuItemKind, MenuOpenMode,
     OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableColumnId,
-    TableColumnRegion, TableExpansionMode, TableExpansionState, TableRowChildrenLoadState,
-    TableRowId, TableStageMode, ThemeMode, ToggleVariant, TooltipOpenIntent, TreeKeyboardAction,
-    VirtualizedListScrollStrategy,
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableColumnFacets,
+    TableColumnId, TableColumnRegion, TableExpansionMode, TableExpansionState,
+    TableRowChildrenLoadState, TableRowId, TableStageMode, ThemeMode, ToggleVariant,
+    TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
     gpui_adapter::{DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state},
 };
 use open_gpui_ui_core::{
@@ -81,6 +81,22 @@ fn table_sample<'a>(
         .iter()
         .find(|sample| sample.id == id)
         .unwrap_or_else(|| panic!("expected table sample `{id}`"))
+}
+
+fn text_facet_counts(facet: &TableColumnFacets) -> Vec<(String, usize)> {
+    facet
+        .unique_values()
+        .iter()
+        .map(|entry| (entry.value().filter_text(), entry.count()))
+        .collect()
+}
+
+fn facet_total_count(facet: &TableColumnFacets) -> usize {
+    facet
+        .unique_values()
+        .iter()
+        .map(|entry| entry.count())
+        .sum()
 }
 
 fn scroll_until_visible(
@@ -1691,9 +1707,43 @@ fn components_page_samples_expose_component_metadata() {
 
     let filter_board = table_sample(tables, "filter-board");
     let filter_plan = filter_board.render_plan();
+    let filter_summary = filter_board.state_summary();
     assert_eq!(filter_plan.table().filtered_model().rows().len(), 60);
     assert_eq!(filter_plan.table().final_model().rows().len(), 24);
     assert_eq!(filter_plan.table().final_model().selected_count(), 1);
+    assert_eq!(filter_summary.facet_columns, 4);
+    assert_eq!(filter_summary.manual_facet_columns, 0);
+    assert_eq!(filter_summary.status_facet_values, 4);
+    assert_eq!(filter_summary.status_facet_total_count, 60);
+    assert_eq!(filter_summary.score_facet_min, Some(0));
+    assert_eq!(filter_summary.score_facet_max, Some(177));
+
+    let status_facet = filter_plan
+        .column_facet(&TableColumnId::new("status"))
+        .expect("filter-board status facet should resolve");
+    assert_eq!(status_facet.mode(), TableStageMode::Client);
+    assert_eq!(status_facet.row_count(), 60);
+    assert_eq!(
+        text_facet_counts(status_facet),
+        [
+            ("Doing".to_string(), 15),
+            ("Done".to_string(), 15),
+            ("Review".to_string(), 15),
+            ("Todo".to_string(), 15),
+        ],
+        "client facets should ignore the target column filter and stay deterministic"
+    );
+
+    let score_facet = filter_plan
+        .column_facet(&TableColumnId::new("score"))
+        .expect("filter-board score facet should resolve");
+    assert_eq!(score_facet.mode(), TableStageMode::Client);
+    assert_eq!(score_facet.row_count(), 60);
+    let score_range = score_facet
+        .numeric_range()
+        .expect("score facet should expose a numeric range");
+    assert_eq!(score_range.min(), 0.0);
+    assert_eq!(score_range.max(), 177.0);
 
     let server_paged = table_sample(tables, "server-paged");
     let server_page_plan = server_paged.render_plan();
@@ -1712,8 +1762,41 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(server_page_summary.pagination_page_size, 8);
     assert_eq!(server_page_summary.pagination_row_count, Some(64));
     assert_eq!(server_page_summary.pagination_page_count, Some(8));
+    assert_eq!(server_page_summary.facet_columns, 4);
+    assert_eq!(server_page_summary.manual_facet_columns, 2);
+    assert_eq!(server_page_summary.status_facet_values, 4);
+    assert_eq!(server_page_summary.status_facet_total_count, 64);
+    assert_eq!(server_page_summary.score_facet_min, Some(1));
+    assert_eq!(server_page_summary.score_facet_max, Some(64));
     assert_eq!(server_page_plan.pagination_row_count(), Some(64));
     assert_eq!(server_page_plan.pagination_page_count(), Some(8));
+    assert_eq!(server_page_plan.faceting_mode(), TableStageMode::Client);
+    assert_eq!(server_page_plan.column_facets().len(), 4);
+    let server_status_facet = server_page_plan
+        .column_facet(&TableColumnId::new("status"))
+        .expect("server-paged status facet should resolve");
+    assert_eq!(server_status_facet.mode(), TableStageMode::Manual);
+    assert_eq!(server_status_facet.row_count(), 64);
+    assert_eq!(
+        text_facet_counts(server_status_facet),
+        [
+            ("Blocked".to_string(), 16),
+            ("Queued".to_string(), 16),
+            ("Ready".to_string(), 16),
+            ("Review".to_string(), 16),
+        ],
+        "server facet payloads should stay visible in render-plan metadata"
+    );
+    let server_score_facet = server_page_plan
+        .column_facet(&TableColumnId::new("score"))
+        .expect("server-paged score facet should resolve");
+    assert_eq!(server_score_facet.mode(), TableStageMode::Manual);
+    assert_eq!(server_score_facet.row_count(), 64);
+    let server_score_range = server_score_facet
+        .numeric_range()
+        .expect("server score facet should expose a numeric range");
+    assert_eq!(server_score_range.min(), 1.0);
+    assert_eq!(server_score_range.max(), 64.0);
     assert_eq!(
         server_page_plan
             .table()
@@ -2260,12 +2343,24 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(filter_summary.filtered_rows, 60);
     assert_eq!(filter_summary.final_rows, 24);
     assert_eq!(filter_summary.selected_rows, 1);
+    assert_eq!(filter_summary.facet_columns, 4);
+    assert_eq!(filter_summary.manual_facet_columns, 0);
+    assert_eq!(filter_summary.status_facet_values, 4);
+    assert_eq!(filter_summary.status_facet_total_count, 60);
+    assert_eq!(filter_summary.score_facet_min, Some(0));
+    assert_eq!(filter_summary.score_facet_max, Some(177));
     assert_eq!(
         filter_plan.table().final_model().rows()[0].id().as_str(),
         "filter-board-row-177"
     );
     assert_eq!(filter_plan.table().final_model().selected_count(), 1);
     assert_eq!(filter_plan.aria_column_count(), 4);
+    let filter_status_facet = filter_plan
+        .column_facet(&TableColumnId::new("status"))
+        .expect("filter-board status facet should resolve");
+    assert_eq!(filter_status_facet.mode(), TableStageMode::Client);
+    assert_eq!(filter_status_facet.row_count(), 60);
+    assert_eq!(facet_total_count(filter_status_facet), 60);
 
     let server_paged = table_sample(samples, "server-paged");
     let server_page_plan = server_paged.render_plan();
@@ -2289,6 +2384,24 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(server_page_summary.pagination_page_size, 8);
     assert_eq!(server_page_summary.pagination_row_count, Some(64));
     assert_eq!(server_page_summary.pagination_page_count, Some(8));
+    assert_eq!(server_page_summary.facet_columns, 4);
+    assert_eq!(server_page_summary.manual_facet_columns, 2);
+    assert_eq!(server_page_summary.status_facet_values, 4);
+    assert_eq!(server_page_summary.status_facet_total_count, 64);
+    assert_eq!(server_page_summary.score_facet_min, Some(1));
+    assert_eq!(server_page_summary.score_facet_max, Some(64));
+    let server_status_facet = server_page_plan
+        .column_facet(&TableColumnId::new("status"))
+        .expect("server-paged status facet should resolve");
+    assert_eq!(server_status_facet.mode(), TableStageMode::Manual);
+    assert_eq!(server_status_facet.row_count(), 64);
+    assert_eq!(facet_total_count(server_status_facet), 64);
+    let server_score_range = server_page_plan
+        .column_facet(&TableColumnId::new("score"))
+        .and_then(|facet| facet.numeric_range())
+        .expect("server-paged score facet should resolve");
+    assert_eq!(server_score_range.min(), 1.0);
+    assert_eq!(server_score_range.max(), 64.0);
     assert_eq!(
         server_page_plan
             .table()

@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: bfa91df
+git_commit: 500045e
 verified_by:
   - cargo fmt -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-components table component_api_inventory
@@ -81,11 +81,11 @@ verified_by:
 
 # Current State
 
-- Goal: Execute `docs/plans/2026-06-23-007-feat-ui-table-manual-row-model-controls-plan.md`.
+- Goal: Execute `docs/plans/2026-06-23-008-feat-ui-table-faceting-filter-metadata-plan.md`.
 - Branch: `main`
-- Last verified: 2026-06-23, focused manual-expansion Table gates passed:
+- Last verified: 2026-06-23, focused Table faceting metadata gates passed:
   `cargo nextest run -p open-gpui-ui-core table`,
-  `cargo nextest run -p open-gpui-ui-components table component_api_inventory`, and
+  `cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit`, and
   `cargo nextest run -p open-gpui-ui-foundation-gallery table`.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
@@ -131,6 +131,29 @@ verified_by:
   that renders only the app-supplied page snapshot while exposing total row and page counts in the
   state readout. Contract docs and verification docs describe manual row-model controls as shipped
   behavior.
+- Done: Wrote `docs/plans/2026-06-23-008-feat-ui-table-faceting-filter-metadata-plan.md` as the next
+  Table slice. The plan follows TanStack and Fret faceting references, narrows the first pass to
+  per-column facet metadata, unique value counts, numeric ranges, and manual/server facet payloads,
+  and defers global faceting plus concrete faceted filter toolbar UI.
+- Done: Implemented the Table faceting/filter metadata slice in the working tree. `ui_core::TableState`
+  now resolves deterministic per-column facet summaries with unique value counts and numeric
+  ranges, excludes the target column's own local filter for client facets, accepts explicit
+  manual/server facet payloads, and includes faceting inputs in state equality/cache keys.
+  `ui_components::TableRenderPlan` exposes faceting ownership plus column facet metadata, with
+  crate-root/prelude exports covering the new contract types.
+- Done: The Components gallery now proves both client and server facet metadata. `filter-board`
+  exposes status unique counts and score ranges derived before pagination, while `server-paged`
+  supplies manual status counts and score range metadata for the full 64-row server set even though
+  the sample renders only the current 8-row page snapshot. `docs/ui/component-contract.md` and
+  `docs/verification.md` record per-column faceting metadata as shipped while keeping global
+  faceting, rich filter controls, async option search, and fetch/cache orchestration deferred.
+- Done: Simplification review removed the remaining hot-path facet metadata copies: core facet
+  resolution uses a recursive visitor instead of intermediate filtered/flattened row vectors, and
+  `TableRenderPlan` delegates facet access to its shared resolved table state instead of cloning the
+  payload. Focused code review also found and fixed the NaN equality edge case for
+  `TableFacetValueCount`, so manual facet payloads with NaN values no longer make cache-key
+  comparisons non-reflexive. Final scoped gates, `git diff --check`, and engineering wiki
+  validation passed.
 - Done: Wrote `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` as the next Table slice. The plan keeps tree-data rows separate from synthetic grouping, reuses `TableExpansionState` for source hierarchy, adds row interaction payloads and focus semantics, and scopes the first gallery proof to a focused tree-data Table sample with runtime expansion and activation coverage.
 - Done: Completed U5/U6 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `25875d0`. The Components gallery now includes `release-matrix`, a wide pinned Table sample with fourteen center metrics, and a focused smoke that proves far center columns stay unmounted before scroll, mount after horizontal scroll, and keep the outer Components page plus fixed lanes stationary. The gallery state row is also less noisy for non-grouped tables, and the Table contract / verification docs now describe the center-column window as a first-class adapter behavior.
 - Done: Completed the sticky pinned Table slice on top of `3273c1a`: the GPUI Table adapter keeps vertical wheel input inside pinned table bodies, `release-rollup` exposes explicit left/center/right lane widths, and the focused gallery smoke proves horizontal center-lane scrolling leaves left/right pinned lanes plus the outer Components page fixed.
@@ -197,14 +220,15 @@ verified_by:
 - Done: Completed U4 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `5d67277`. Added plan-level accessibility coverage for virtualized center columns, runtime sort coverage for a rendered center header after horizontal scroll, and resize-geometry coverage proving the virtual center window recomputes from committed sizing while preserving the rendered column identity set.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Follow-up: The column sizing / resize, sticky pinned-column, center-column virtualization,
-  tree-data, row-interaction, manual-expansion, and manual row-model control slices are complete.
-  Remaining Table follow-ups are two-dimensional grid virtualization, custom aggregation callbacks,
-  faceting value payloads, row pinning, row selection variants, cell editing, and standalone
-  headless extraction if cross-framework pressure appears.
+  tree-data, row-interaction, manual-expansion, manual row-model control, and per-column faceting
+  metadata slices are complete. Remaining later Table follow-ups are two-dimensional grid
+  virtualization, custom aggregation callbacks, row pinning, row selection variants, cell editing,
+  global faceting, concrete faceted filter UI, and standalone headless extraction if cross-framework
+  pressure appears.
 - Blocked: None.
-- Next action: Pick the next Table follow-up boundary. The strongest product-shaped options are
-  faceting payloads, row pinning, row selection variants, or cell editing before attempting full
-  two-axis grid virtualization.
+- Next action: Run final quality checks for
+  `docs/plans/2026-06-23-008-feat-ui-table-faceting-filter-metadata-plan.md`, validate engineering
+  memory, then commit the Table faceting metadata slice.
 
 # Citations
 

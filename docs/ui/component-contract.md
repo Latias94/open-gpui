@@ -449,17 +449,20 @@ lane from adapter-owned horizontal scroll input: it exposes visible and overscan
 center columns, total center width, and leading/trailing spacer widths. The adapter keeps left/right
 pinned lanes fully mounted while mounting only the rendered center-column window, so the center can
 scroll without moving pinned columns or the outer page. `TableRenderPlan` also exposes the current
-filtering, sorting, and pagination ownership modes plus pagination row/page totals so gallery
-readouts and consumers can distinguish local row-model transforms from app-owned server snapshots.
+filtering, sorting, pagination, and faceting ownership modes plus pagination row/page totals and
+per-column facet metadata so gallery readouts and consumers can distinguish local row-model
+transforms from app-owned server snapshots. Facet metadata covers deterministic unique value/count
+entries, numeric min/max ranges, and explicit manual/server payloads keyed by column id; concrete
+filter popovers, async option search, and fetching/cache lifecycles remain application-owned.
 
 An official Table entry must satisfy the normal component completion gate: `Table` and `TableState`
 exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
 entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests for row
 identity, grouping, source-tree expansion, row interaction payloads, and virtualizer behavior, and
 gallery runtime tests for nested scroll containment. Custom aggregation callbacks, sticky headers,
-autosize-by-content, data-source fetch/cache orchestration, faceted value payloads, row pinning,
-checkbox/range selection, cell editing, and full two-axis grid virtualization beyond the pinned
-center-column window remain follow-up capabilities.
+autosize-by-content, data-source fetch/cache orchestration, global faceting, concrete faceted
+filter controls, row pinning, checkbox/range selection, cell editing, and full two-axis grid
+virtualization beyond the pinned center-column window remain follow-up capabilities.
 
 ## Splitter Constraints
 
@@ -608,11 +611,15 @@ For pinned samples, the adapter renders fixed left/right lanes plus a shared hor
 backed by `TableCenterColumnWindowPlan`, so off-window center headers and cells are unmounted while
 spacer geometry preserves the full scrollable width. It also ships GPUI resize handles with
 controlled commit callbacks and on-end/on-change resize mode support.
+Table faceting is a metadata sidecar over configured columns: client facets derive unique
+value/count entries and numeric ranges from the source snapshot while excluding the target column's
+own local filter, and manual facet payloads can replace client-derived summaries for server-owned
+counts without giving the component crate fetch/cache responsibility.
 `VirtualizerState` covers one-dimensional range math, stable item keys, measurement idempotence,
 overscan, total size, and snapshot/restore data in `ui_core`; the Table adapter restores snapshot
 measurements but not captured scroll offsets. Custom aggregate callbacks, sticky headers,
-autosize-by-content, data-source orchestration, faceted value payloads, row pinning, and full
-two-axis grid virtualization remain follow-up work.
+autosize-by-content, data-source orchestration, global faceting, concrete faceted filter controls,
+row pinning, and full two-axis grid virtualization remain follow-up work.
 `StatusCue` and `EmptyState` are official feedback components. They expose resolved feedback
 intent, size, role, metrics, and token intents, while the GPUI adapters own concrete styling and
 rendered debug selectors. `Tree` is now an official rendered component backed by `TreeState`.

@@ -6,6 +6,27 @@ status: active
 
 # Log
 
+- 2026-06-23: Implemented `docs/plans/2026-06-23-008-feat-ui-table-faceting-filter-metadata-plan.md`
+  in the working tree. `ui_core::TableState` now resolves per-column facet metadata, deterministic
+  unique value counts, numeric ranges, and manual/server facet payloads with cache-key coverage.
+  `ui_components::TableRenderPlan` exposes faceting ownership and column facets through the public
+  contract, and the Components gallery readouts prove `filter-board` client facets plus
+  `server-paged` manual facet payloads for a 64-row server set. Updated the component contract and
+  verification docs. Simplification review removed hot-path facet payload copies from core
+  resolution and `TableRenderPlan`; focused code review found and fixed the NaN equality edge case
+  for manual facet payload/cache-key comparisons. Verified `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`,
+  `cargo nextest run -p open-gpui-ui-core table`,
+  `cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit`,
+  `cargo nextest run -p open-gpui-ui-foundation-gallery table`, `git diff --check`, and
+  engineering wiki validation. Next action is committing the completed slice.
+- 2026-06-23: Wrote `docs/plans/2026-06-23-008-feat-ui-table-faceting-filter-metadata-plan.md`
+  as the next Table follow-up. The plan uses TanStack Table's per-column faceted row model,
+  unique-value count, and min/max references plus Fret's Rust-native faceting parity helpers. Scope
+  is limited to per-column faceting metadata, deterministic unique value counts, numeric ranges,
+  manual/server facet payloads, render-plan exposure, and gallery readouts. Global faceting,
+  concrete faceted filter toolbar UI, async fetching, row pinning, selection variants, editing, and
+  two-axis grid virtualization remain deferred. Next action is U1: add core facet value/count/range
+  types and stable facet keying in `crates/ui_core/src/table.rs`.
 - 2026-06-23: Completed `docs/plans/2026-06-23-007-feat-ui-table-manual-row-model-controls-plan.md`
   as `d6e5c0d`. `ui_core::TableState` now supports independent manual filtering and sorting via
   `TableStageMode`, `TablePagination::manual` carries server row-count/page-count metadata, and

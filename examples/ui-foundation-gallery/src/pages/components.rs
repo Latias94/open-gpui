@@ -12,15 +12,16 @@ use open_gpui_ui_components::{
     ScrollResetPolicy, SelectState, Separator, SeparatorState, SidebarCollapseMode,
     SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
     Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
-    Switch, SwitchState, Table, TableAggregation, TableColumn, TableColumnPinning,
-    TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableExpansionMode,
-    TableExpansionState, TableFilter, TablePagination, TableRenderPlan, TableRow,
-    TableRowActivation, TableRowChildrenLoadState, TableRowExpansionToggle, TableSort,
-    TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState,
-    TextInput, TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
-    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
-    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
+    Switch, SwitchState, Table, TableAggregation, TableColumn, TableColumnFacets, TableColumnId,
+    TableColumnPinning, TableColumnRegion, TableColumnSizing, TableColumnSizingChange,
+    TableExpansionMode, TableExpansionState, TableFacetValueCount, TableFilter, TablePagination,
+    TableRenderPlan, TableRow, TableRowActivation, TableRowChildrenLoadState,
+    TableRowExpansionToggle, TableSort, TableStageMode, TableState, Tabs, TabsActivationMode,
+    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState,
+    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
+    Tree, TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListItemDescriptor,
+    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -128,6 +129,9 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::TableState",
     "open_gpui_ui_components::TableHeaderAction",
     "open_gpui_ui_components::TableAggregation",
+    "open_gpui_ui_components::TableColumnFacets",
+    "open_gpui_ui_components::TableFacetValueCount",
+    "open_gpui_ui_components::TableFacetRange",
     "open_gpui_ui_components::TableColumnPinning",
     "open_gpui_ui_components::TableColumnRegion",
     "open_gpui_ui_components::TableColumnSizing",
@@ -1833,6 +1837,18 @@ pub struct TableSampleStateSummary {
     pub pagination_row_count: Option<usize>,
     /// Total page count, if any.
     pub pagination_page_count: Option<usize>,
+    /// Resolved facet summary count.
+    pub facet_columns: usize,
+    /// Resolved caller-owned facet summary count.
+    pub manual_facet_columns: usize,
+    /// Unique status facet value count.
+    pub status_facet_values: usize,
+    /// Sum of status facet value counts.
+    pub status_facet_total_count: usize,
+    /// Rounded score facet minimum, if present.
+    pub score_facet_min: Option<usize>,
+    /// Rounded score facet maximum, if present.
+    pub score_facet_max: Option<usize>,
     /// Configured grouping column count.
     pub grouping_columns: usize,
     /// Configured aggregate column count.
@@ -1895,6 +1911,14 @@ impl TableSampleStateSummary {
             .count();
         let tree_depth = final_rows.iter().map(|row| row.depth()).max().unwrap_or(0);
         let regions = plan.table().visible_column_regions();
+        let status_column = TableColumnId::new("status");
+        let score_column = TableColumnId::new("score");
+        let status_facet = plan.column_facet(&status_column);
+        let score_range = plan
+            .column_facet(&score_column)
+            .and_then(|facet| facet.numeric_range());
+        let score_facet_min = score_range.map(|range| range.min().round() as usize);
+        let score_facet_max = score_range.map(|range| range.max().round() as usize);
         let (all_rows_expanded, expanded_group_inputs, expanded_tree_inputs) =
             match state.expansion() {
                 TableExpansionState::All => (
@@ -1964,6 +1988,26 @@ impl TableSampleStateSummary {
             pagination_page_size: state.pagination().page_size(),
             pagination_row_count: plan.pagination_row_count(),
             pagination_page_count: plan.pagination_page_count(),
+            facet_columns: plan.column_facets().len(),
+            manual_facet_columns: plan
+                .column_facets()
+                .iter()
+                .filter(|facet| facet.mode() == TableStageMode::Manual)
+                .count(),
+            status_facet_values: status_facet
+                .map(|facet| facet.unique_values().len())
+                .unwrap_or(0),
+            status_facet_total_count: status_facet
+                .map(|facet| {
+                    facet
+                        .unique_values()
+                        .iter()
+                        .map(|entry| entry.count())
+                        .sum()
+                })
+                .unwrap_or(0),
+            score_facet_min,
+            score_facet_max,
             grouping_columns: state.grouping().len(),
             aggregation_count: state.aggregations().len(),
             expanded_group_inputs,
@@ -3361,7 +3405,16 @@ fn build_table_samples() -> Vec<TableSample> {
             .with_sorting([TableSort::ascending("score")])
             .with_manual_sorting()
             .with_selected_rows(["server-paged-row-0018"])
-            .with_pagination(TablePagination::manual(2, 8, 64)),
+            .with_pagination(TablePagination::manual(2, 8, 64))
+            .with_manual_facets([
+                TableColumnFacets::manual("score", 64).with_numeric_range(1.0, 64.0),
+                TableColumnFacets::manual("status", 64).with_unique_values([
+                    TableFacetValueCount::new("Blocked", 16),
+                    TableFacetValueCount::new("Queued", 16),
+                    TableFacetValueCount::new("Ready", 16),
+                    TableFacetValueCount::new("Review", 16),
+                ]),
+            ]),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
         row_height: ui_px(30.0),
