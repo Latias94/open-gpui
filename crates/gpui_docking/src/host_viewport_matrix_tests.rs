@@ -100,7 +100,7 @@ fn source_only_known_viewport_root_edge_matrix_rejects_unaccepted_backend_fallba
 }
 
 #[open_gpui::test]
-fn source_only_known_viewport_release_rejects_overlapping_geometry_without_backend_authority(
+fn source_only_known_viewport_release_rejects_overlapping_geometry_without_backend_route_selection(
     cx: &mut TestAppContext,
 ) {
     for case in [
@@ -115,7 +115,7 @@ fn source_only_known_viewport_release_rejects_overlapping_geometry_without_backe
             target: MatrixTarget::LeafCenter,
         },
     ] {
-        run_overlapping_source_only_release_without_backend_authority_case(cx, case);
+        run_overlapping_source_only_release_without_backend_route_selection_case(cx, case);
     }
 }
 
@@ -362,7 +362,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
     let source_release_signals = source_opened
         .window()
         .update(cx, |_, _, app| {
-            DockViewportPlatformSignals::from_app_without_hovered_window_authority(app)
+            DockViewportPlatformSignals::from_app_without_hovered_window_signal(app)
         })
         .unwrap_or_else(|_| panic!("{}: source window should still be live", case.name));
     let drag_payload = case
@@ -465,7 +465,7 @@ fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixC
     let source_release_signals = source_opened
         .window()
         .update(cx, |_, _, app| {
-            DockViewportPlatformSignals::from_app_without_hovered_window_authority(app)
+            DockViewportPlatformSignals::from_app_without_hovered_window_signal(app)
         })
         .unwrap_or_else(|_| panic!("{}: source window should still be live", case.name));
     let drag_payload = case
@@ -498,7 +498,7 @@ fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixC
     );
 }
 
-fn run_overlapping_source_only_release_without_backend_authority_case(
+fn run_overlapping_source_only_release_without_backend_route_selection_case(
     cx: &mut TestAppContext,
     case: MatrixCase,
 ) {
@@ -571,7 +571,7 @@ fn run_overlapping_source_only_release_without_backend_authority_case(
     let source_release_signals = source_opened
         .window()
         .update(cx, |_, _, app| {
-            DockViewportPlatformSignals::from_app_without_hovered_window_authority(app)
+            DockViewportPlatformSignals::from_app_without_hovered_window_signal(app)
         })
         .unwrap_or_else(|_| panic!("{}: source window should still be live", case.name));
 
@@ -591,7 +591,7 @@ fn run_overlapping_source_only_release_without_backend_authority_case(
     assert_eq!(
         result,
         Err(DockActionApplyError::DropTargetUnavailable),
-        "{}: overlapping source-only release should fail without current backend route authority",
+        "{}: overlapping source-only release should fail without current backend route selection",
         case.name
     );
     let status = runtime.runtime_status();

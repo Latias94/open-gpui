@@ -2,15 +2,83 @@ use crate::{
     DockViewportFrontToBackWindowStack, DockViewportTargetContext, DockViewportTrustedHoveredSignal,
 };
 use open_gpui::{
-    AnyWindowHandle, App, PlatformHoveredWindow, PlatformViewportCapabilities, Window, WindowId,
+    AnyWindowHandle, App, PlatformFocusedWindow, PlatformHoveredWindow,
+    PlatformViewportCapabilities, Window, WindowId,
 };
+
+/// Backend focus permit for using focus stamps as a hover fallback source.
+///
+/// This token is derived from the current backend focus signal. An available token preserves
+/// focus-stamp fallback eligibility for a live app snapshot; it does not promote synthetic
+/// snapshots into focus-stamp fallback eligibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockViewportFocusStampFallbackPermit {
+    Available,
+    Unavailable,
+}
+
+impl DockViewportFocusStampFallbackPermit {
+    pub(crate) fn from_backend_focus(focus: PlatformFocusedWindow) -> Self {
+        if focus.is_available() {
+            Self::Available
+        } else {
+            Self::Unavailable
+        }
+    }
+
+    #[cfg(test)]
+    fn available_for_test() -> Self {
+        Self::Available
+    }
+
+    #[cfg(test)]
+    fn unavailable_for_test() -> Self {
+        Self::Unavailable
+    }
+
+    fn is_unavailable(self) -> bool {
+        matches!(self, Self::Unavailable)
+    }
+}
+
+/// Whether focus-stamp ordering is eligible as an ImGui-style backend fallback.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum DockViewportFocusStampFallbackPolicy {
+    /// The snapshot was explicit or backend focus was unavailable.
+    #[default]
+    Disabled,
+    /// The snapshot came from live backend signals and may use focus stamps when needed.
+    LiveBackendAllowed,
+}
+
+impl DockViewportFocusStampFallbackPolicy {
+    fn allows_focus_stamp_fallback(self) -> bool {
+        matches!(self, Self::LiveBackendAllowed)
+    }
+}
+
+/// Whether target-arbitration signals may be refreshed from the live app backend.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum DockViewportTargetContextResampling {
+    /// The snapshot was constructed explicitly and must not consult live backend state.
+    #[default]
+    FrozenSnapshot,
+    /// The snapshot came from the live app backend and may be refreshed before delivery.
+    LiveAppBackend,
+}
+
+impl DockViewportTargetContextResampling {
+    fn allows_live_app_backend(self) -> bool {
+        matches!(self, Self::LiveAppBackend)
+    }
+}
 
 /// Snapshot of platform window signals used to arbitrate overlapping viewport hits.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct DockViewportPlatformSignals {
     /// Trusted backend window reported by the platform as being under the pointer.
     trusted_hovered_signal: DockViewportTrustedHoveredSignal,
-    /// ImGui-style drag fallback captured by the runtime when hover authority is unavailable.
+    /// ImGui-style drag fallback captured by the runtime when the hovered-window signal is unavailable.
     drag_last_hovered_window: Option<WindowId>,
     /// Window that delivered the GPUI drag/drop event.
     event_receiver_window: Option<WindowId>,
@@ -18,12 +86,10 @@ pub(crate) struct DockViewportPlatformSignals {
     window_stack: DockViewportFrontToBackWindowStack,
     /// Window bounds are reported in a shared desktop coordinate space.
     global_window_bounds: bool,
-    /// Target arbitration signals came from the live app backend and may be refreshed before
-    /// resolving delivery.
-    resample_target_context_from_app: bool,
-    /// ImGui-style focused-window stamps may be used when live backend hover and stack signals are
-    /// both unavailable.
-    allow_focus_stamp_fallback: bool,
+    /// Target arbitration signals came from an explicit snapshot or the live app backend.
+    target_context_resampling: DockViewportTargetContextResampling,
+    /// ImGui-style focused-window stamp fallback policy for this platform snapshot.
+    focus_stamp_fallback_policy: DockViewportFocusStampFallbackPolicy,
 }
 
 impl DockViewportPlatformSignals {
@@ -45,8 +111,8 @@ impl DockViewportPlatformSignals {
             event_receiver_window: None,
             window_stack,
             global_window_bounds: capabilities.global_window_bounds,
-            resample_target_context_from_app: true,
-            allow_focus_stamp_fallback: true,
+            target_context_resampling: DockViewportTargetContextResampling::LiveAppBackend,
+            focus_stamp_fallback_policy: DockViewportFocusStampFallbackPolicy::LiveBackendAllowed,
         }
     }
 
@@ -58,7 +124,7 @@ impl DockViewportPlatformSignals {
     /// Refreshes backend target arbitration signals while preserving release-time coordinate
     /// semantics captured from the event receiver.
     pub(crate) fn with_resampled_target_context_from_app(mut self, cx: &App) -> Self {
-        if !self.resample_target_context_from_app {
+        if !self.target_context_resampling.allows_live_app_backend() {
             return self;
         }
         let current = Self::from_app(cx);
@@ -67,37 +133,35 @@ impl DockViewportPlatformSignals {
         self
     }
 
-    pub(crate) fn with_drag_last_hovered_viewport_window(mut self, window_id: WindowId) -> Self {
+    pub(crate) fn with_drag_last_hovered_viewport_window(self, window_id: WindowId) -> Self {
         let target_context = self
             .target_context()
             .with_drag_last_hovered_viewport_window(window_id);
-        let (trusted_hovered_signal, drag_last_hovered_window, window_stack) =
-            target_context.into_window_signals();
-        self.trusted_hovered_signal = trusted_hovered_signal;
-        self.drag_last_hovered_window = drag_last_hovered_window;
-        self.window_stack = window_stack;
-        self
+        self.apply_target_context(target_context)
     }
 
     pub(crate) fn with_focus_stamp_window_stack(
-        mut self,
+        self,
         windows: impl IntoIterator<Item = WindowId>,
     ) -> Self {
         let target_context = self.target_context().with_focus_stamp_window_stack(windows);
-        let (trusted_hovered_signal, drag_last_hovered_window, window_stack) =
-            target_context.into_window_signals();
-        self.trusted_hovered_signal = trusted_hovered_signal;
-        self.drag_last_hovered_window = drag_last_hovered_window;
-        self.window_stack = window_stack;
-        self
+        self.apply_target_context(target_context)
     }
 
     /// Captures app-level signals for release paths that did not sample the hovered window.
     #[cfg(test)]
-    pub(crate) fn from_app_without_hovered_window_authority(cx: &App) -> Self {
+    pub(crate) fn from_app_without_hovered_window_signal(cx: &App) -> Self {
         let mut signals = Self::from_app(cx);
         signals.trusted_hovered_signal = DockViewportTrustedHoveredSignal::Unavailable;
-        signals.resample_target_context_from_app = false;
+        signals.target_context_resampling = DockViewportTargetContextResampling::FrozenSnapshot;
+        signals
+    }
+
+    /// Captures app-level signals for tests where backend hover and window-stack signals are absent.
+    #[cfg(test)]
+    pub(crate) fn from_app_without_target_window_signals(cx: &App) -> Self {
+        let mut signals = Self::from_app_without_hovered_window_signal(cx);
+        signals.window_stack = DockViewportFrontToBackWindowStack::default();
         signals
     }
 
@@ -109,7 +173,13 @@ impl DockViewportPlatformSignals {
     ) -> Self {
         self.trusted_hovered_signal =
             DockViewportTrustedHoveredSignal::Trusted(window.into().window_id());
-        self.resample_target_context_from_app = false;
+        self.target_context_resampling = DockViewportTargetContextResampling::FrozenSnapshot;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_target_context_resampling_from_app(mut self) -> Self {
+        self.target_context_resampling = DockViewportTargetContextResampling::LiveAppBackend;
         self
     }
 
@@ -128,7 +198,20 @@ impl DockViewportPlatformSignals {
     }
 
     pub(crate) fn allows_focus_stamp_fallback(&self) -> bool {
-        self.allow_focus_stamp_fallback
+        self.focus_stamp_fallback_policy
+            .allows_focus_stamp_fallback()
+    }
+
+    pub(crate) fn with_focus_stamp_fallback_permit(
+        mut self,
+        permit: DockViewportFocusStampFallbackPermit,
+    ) -> Self {
+        if permit.is_unavailable() {
+            self.focus_stamp_fallback_policy = DockViewportFocusStampFallbackPolicy::Disabled;
+            let target_context = self.target_context().without_focus_stamp_window_stack();
+            self = self.apply_target_context(target_context);
+        }
+        self
     }
 
     /// Converts the platform snapshot into the pure resolver context.
@@ -142,17 +225,24 @@ impl DockViewportPlatformSignals {
 
     #[cfg(test)]
     pub(crate) fn from_target_context(target_context: DockViewportTargetContext) -> Self {
-        let (trusted_hovered_signal, drag_last_hovered_window, window_stack) =
-            target_context.into_window_signals();
+        let window_signals = target_context.into_window_signals();
         Self {
-            trusted_hovered_signal,
-            drag_last_hovered_window,
+            trusted_hovered_signal: window_signals.trusted_hovered_signal,
+            drag_last_hovered_window: window_signals.drag_last_hovered_window,
             event_receiver_window: None,
-            window_stack,
+            window_stack: window_signals.window_stack,
             global_window_bounds: true,
-            resample_target_context_from_app: false,
-            allow_focus_stamp_fallback: false,
+            target_context_resampling: DockViewportTargetContextResampling::FrozenSnapshot,
+            focus_stamp_fallback_policy: DockViewportFocusStampFallbackPolicy::Disabled,
         }
+    }
+
+    fn apply_target_context(mut self, target_context: DockViewportTargetContext) -> Self {
+        let window_signals = target_context.into_window_signals();
+        self.trusted_hovered_signal = window_signals.trusted_hovered_signal;
+        self.drag_last_hovered_window = window_signals.drag_last_hovered_window;
+        self.window_stack = window_signals.window_stack;
+        self
     }
 
     #[cfg(test)]
@@ -214,7 +304,80 @@ mod tests {
                 non_passthrough_capabilities,
             ),
             DockViewportTrustedHoveredSignal::TrustedNone,
-            "reliable hovered=None remains explicit backend authority"
+            "reliable hovered=None remains an explicit backend hovered-window signal"
         );
+    }
+
+    #[test]
+    fn disabling_focus_stamp_fallback_clears_only_focus_stamp_stack() {
+        let focused = handle(7);
+        let platform_front = handle(9);
+
+        let focus_stamp_signals = DockViewportPlatformSignals::from_target_context(
+            DockViewportTargetContext::new().with_focus_stamp_window_stack([focused.window_id()]),
+        )
+        .with_focus_stamp_fallback_permit(
+            DockViewportFocusStampFallbackPermit::unavailable_for_test(),
+        );
+        assert!(!focus_stamp_signals.allows_focus_stamp_fallback());
+        assert_eq!(
+            focus_stamp_signals
+                .target_context()
+                .front_to_back_window_stack_for_hover_fallback(),
+            &[]
+        );
+
+        let platform_signals = DockViewportPlatformSignals::from_target_context(
+            DockViewportTargetContext::new().with_window_stack([platform_front]),
+        )
+        .with_focus_stamp_fallback_permit(
+            DockViewportFocusStampFallbackPermit::unavailable_for_test(),
+        );
+        assert!(!platform_signals.allows_focus_stamp_fallback());
+        assert_eq!(
+            platform_signals
+                .target_context()
+                .front_to_back_window_stack_for_hover_fallback(),
+            &[platform_front.window_id()]
+        );
+    }
+
+    #[test]
+    fn focus_stamp_permit_is_derived_from_backend_focus_availability() {
+        let focused = handle(7);
+
+        let window_focus_permit = DockViewportFocusStampFallbackPermit::from_backend_focus(
+            PlatformFocusedWindow::Window(focused),
+        );
+        assert!(!window_focus_permit.is_unavailable());
+
+        let no_window_focus_permit = DockViewportFocusStampFallbackPermit::from_backend_focus(
+            PlatformFocusedWindow::NoWindow,
+        );
+        assert!(!no_window_focus_permit.is_unavailable());
+
+        let unavailable_focus_permit = DockViewportFocusStampFallbackPermit::from_backend_focus(
+            PlatformFocusedWindow::Unavailable,
+        );
+        assert!(unavailable_focus_permit.is_unavailable());
+    }
+
+    #[test]
+    fn available_focus_stamp_permit_preserves_existing_focus_stamp_stack() {
+        let focused = handle(7);
+        let signals = DockViewportPlatformSignals::from_target_context(
+            DockViewportTargetContext::new().with_focus_stamp_window_stack([focused.window_id()]),
+        )
+        .with_focus_stamp_fallback_permit(
+            DockViewportFocusStampFallbackPermit::available_for_test(),
+        );
+
+        assert_eq!(
+            signals
+                .target_context()
+                .front_to_back_window_stack_for_hover_fallback(),
+            &[focused.window_id()]
+        );
+        assert!(!signals.allows_focus_stamp_fallback());
     }
 }

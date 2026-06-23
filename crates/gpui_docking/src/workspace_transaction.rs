@@ -46,6 +46,11 @@ pub(crate) struct DockWorkspaceResolvedDropTarget {
     target: DockResolvedDropTarget,
 }
 
+pub(crate) struct DockWorkspaceResolvedDropTargetParts {
+    pub(crate) target_space: DockSpaceId,
+    pub(crate) target: DockResolvedDropTarget,
+}
+
 impl DockWorkspaceResolvedDropTarget {
     pub(crate) fn new(target_space: DockSpaceId, target: DockResolvedDropTarget) -> Self {
         Self {
@@ -63,8 +68,11 @@ impl DockWorkspaceResolvedDropTarget {
         &self.target
     }
 
-    pub(crate) fn into_parts(self) -> (DockSpaceId, DockResolvedDropTarget) {
-        (self.target_space, self.target)
+    pub(crate) fn into_parts(self) -> DockWorkspaceResolvedDropTargetParts {
+        DockWorkspaceResolvedDropTargetParts {
+            target_space: self.target_space,
+            target: self.target,
+        }
     }
 }
 
@@ -93,13 +101,17 @@ impl DockWorkspace {
             target,
             frozen_focus_item,
         } = request;
-        let (target_space, target) = target.into_parts();
+        let drop_target = target.into_parts();
 
         let target = {
             let payload_classes = self.payload_dock_classes_for_workspace_payload(&payload);
             let target_validator =
-                dock_target_validator(&target_space, &payload_classes, self.policy());
-            match validate_resolved_drop_target(target, self.policy(), Some(&target_validator)) {
+                dock_target_validator(&drop_target.target_space, &payload_classes, self.policy());
+            match validate_resolved_drop_target(
+                drop_target.target,
+                self.policy(),
+                Some(&target_validator),
+            ) {
                 DockDropResolution::Valid(target) => target,
                 DockDropResolution::Rejected(rejection) => {
                     return Err(DockActionApplyError::Policy(rejection.reason));
@@ -107,7 +119,7 @@ impl DockWorkspace {
             }
         };
         validate_resolved_target_drop_box(&target)?;
-        validate_resolved_target_graph_identity(self, &target_space, &target)?;
+        validate_resolved_target_graph_identity(self, &drop_target.target_space, &target)?;
 
         let action = match target.kind {
             DockResolvedDropTargetKind::TabBar {
@@ -116,7 +128,7 @@ impl DockWorkspace {
             } => self.commit_resolved_payload_graph_target_drop(
                 source_space,
                 payload,
-                &target_space,
+                &drop_target.target_space,
                 DockGraphDropTarget::tab_bar(target_tabs, insert_index),
             ),
             DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
@@ -124,7 +136,7 @@ impl DockWorkspace {
                 .commit_resolved_payload_graph_target_drop(
                     source_space,
                     payload,
-                    &target_space,
+                    &drop_target.target_space,
                     DockGraphDropTarget::center(target_tabs),
                 ),
             DockResolvedDropTargetKind::InnerEdge {
@@ -134,15 +146,25 @@ impl DockWorkspace {
             } => self.commit_resolved_payload_graph_target_drop(
                 source_space,
                 payload,
-                &target_space,
-                self.resolve_edge_graph_drop_target(&target_space, target_tabs, zone, &target)?,
+                &drop_target.target_space,
+                self.resolve_edge_graph_drop_target(
+                    &drop_target.target_space,
+                    target_tabs,
+                    zone,
+                    &target,
+                )?,
             ),
             DockResolvedDropTargetKind::RootEdge { root, zone, .. } => self
                 .commit_resolved_payload_graph_target_drop(
                     source_space,
                     payload,
-                    &target_space,
-                    self.resolve_edge_graph_drop_target(&target_space, root, zone, &target)?,
+                    &drop_target.target_space,
+                    self.resolve_edge_graph_drop_target(
+                        &drop_target.target_space,
+                        root,
+                        zone,
+                        &target,
+                    )?,
                 ),
             DockResolvedDropTargetKind::EmptyDockSpace { space } => {
                 if target.is_central_region {
@@ -165,7 +187,7 @@ impl DockWorkspace {
             action,
             self.graph().activation_focus_item_for_workspace_payload(
                 &payload,
-                Some(&target_space),
+                Some(&drop_target.target_space),
                 frozen_focus_item,
             ),
         ))

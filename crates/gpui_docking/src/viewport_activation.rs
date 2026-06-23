@@ -14,6 +14,33 @@ pub(crate) enum DockViewportWindowActivation {
     DoNotRequest,
 }
 
+/// Backend-focus observation for a viewport activation transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockViewportActivationBackendFocusObservation {
+    /// The platform backend already reports the target viewport window as focused.
+    TargetFocused,
+    /// The target viewport window is not currently backend-focused, or backend focus is unknown.
+    TargetNotFocused,
+}
+
+impl DockViewportActivationBackendFocusObservation {
+    pub(crate) fn from_platform_focused_window(
+        focused_window: PlatformFocusedWindow,
+        target_window: AnyWindowHandle,
+    ) -> Self {
+        match focused_window {
+            PlatformFocusedWindow::Window(window) if window == target_window => Self::TargetFocused,
+            PlatformFocusedWindow::Window(_)
+            | PlatformFocusedWindow::NoWindow
+            | PlatformFocusedWindow::Unavailable => Self::TargetNotFocused,
+        }
+    }
+
+    pub(crate) fn target_focused(self) -> bool {
+        matches!(self, Self::TargetFocused)
+    }
+}
+
 /// Runtime viewport activation transaction selected by drop, tear-off, or close recovery.
 ///
 /// Creating this value records intent only. Platform activation and host focus are applied only by
@@ -74,6 +101,13 @@ impl DockViewportActivationTransaction {
         self.window_activation
     }
 
+    pub(crate) fn requests_window_activation(&self) -> bool {
+        matches!(
+            self.window_activation,
+            DockViewportWindowActivation::Request
+        )
+    }
+
     pub(crate) fn focus_request(&self) -> &DockViewportFocusRequest {
         &self.focus_request
     }
@@ -101,8 +135,8 @@ pub(crate) enum DockViewportActivationApplyOutcome {
         changed: bool,
         focus_command_queued: bool,
         window_activation_requested: bool,
-        backend_focus_confirmed: bool,
-        pending_backend_focus: bool,
+        backend_focus: DockViewportActivationBackendFocusObservation,
+        backend_focus_apply: DockViewportActivationBackendFocusApply,
     },
 }
 
@@ -115,6 +149,80 @@ impl DockViewportActivationApplyOutcome {
             | Self::WrongRootView
             | Self::SpaceMismatch => false,
         }
+    }
+}
+
+/// Runtime backend-focus state updates performed while applying a viewport activation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum DockViewportActivationBackendFocusRecordEffect {
+    #[default]
+    Unchanged,
+    RecordedTargetFocus,
+}
+
+impl DockViewportActivationBackendFocusRecordEffect {
+    pub(crate) fn from_changed(changed: bool) -> Self {
+        if changed {
+            Self::RecordedTargetFocus
+        } else {
+            Self::Unchanged
+        }
+    }
+
+    fn changed(self) -> bool {
+        matches!(self, Self::RecordedTargetFocus)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum DockViewportActivationPendingBackendFocusEffect {
+    #[default]
+    Unchanged,
+    RecordedPendingTarget,
+    ClearedConfirmedTarget,
+}
+
+impl DockViewportActivationPendingBackendFocusEffect {
+    pub(crate) fn from_recorded(recorded: bool) -> Self {
+        if recorded {
+            Self::RecordedPendingTarget
+        } else {
+            Self::Unchanged
+        }
+    }
+
+    pub(crate) fn from_cleared(cleared: bool) -> Self {
+        if cleared {
+            Self::ClearedConfirmedTarget
+        } else {
+            Self::Unchanged
+        }
+    }
+
+    fn changed(self) -> bool {
+        !matches!(self, Self::Unchanged)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct DockViewportActivationBackendFocusApply {
+    backend_focus_record: DockViewportActivationBackendFocusRecordEffect,
+    pending_backend_focus: DockViewportActivationPendingBackendFocusEffect,
+}
+
+impl DockViewportActivationBackendFocusApply {
+    pub(crate) fn new(
+        backend_focus_record: DockViewportActivationBackendFocusRecordEffect,
+        pending_backend_focus: DockViewportActivationPendingBackendFocusEffect,
+    ) -> Self {
+        Self {
+            backend_focus_record,
+            pending_backend_focus,
+        }
+    }
+
+    pub(crate) fn changed(self) -> bool {
+        self.backend_focus_record.changed() || self.pending_backend_focus.changed()
     }
 }
 
@@ -151,37 +259,32 @@ pub(crate) fn apply_viewport_activation_transaction(
                 return;
             }
             host.update(cx, |host, cx| {
-                let backend_focus = cx.focused_window();
-                let backend_focus_confirmed = matches!(
-                    backend_focus,
-                    PlatformFocusedWindow::Window(window) if window == transaction.window()
-                );
-                let focus_changed = if backend_focus_confirmed {
+                let backend_focus =
+                    DockViewportActivationBackendFocusObservation::from_platform_focused_window(
+                        cx.focused_window(),
+                        transaction.window(),
+                    );
+                let backend_focus_apply = host
+                    .viewport_runtime()
+                    .apply_activation_backend_focus(&transaction, backend_focus);
+                let focus_changed = if backend_focus.target_focused() {
                     host.request_viewport_focus_command(focus_command.clone())
                 } else {
                     false
                 };
-                let pending_backend_focus = should_activate_window
-                    && !backend_focus_confirmed
-                    && host
-                        .viewport_runtime()
-                        .record_pending_activation(transaction.clone());
-                if backend_focus_confirmed {
-                    host.viewport_runtime()
-                        .clear_pending_activation_for(transaction.space(), transaction.window_id());
-                }
                 let window_activation_requested =
-                    should_activate_window && !backend_focus_confirmed;
+                    should_activate_window && !backend_focus.target_focused();
                 if window_activation_requested {
                     window.activate_window();
                 }
-                let changed = focus_changed || window_activation_requested || pending_backend_focus;
+                let changed =
+                    backend_focus_apply.changed() || focus_changed || window_activation_requested;
                 outcome_flag.set(DockViewportActivationApplyOutcome::Applied {
                     changed,
                     focus_command_queued: focus_changed,
                     window_activation_requested,
-                    backend_focus_confirmed,
-                    pending_backend_focus,
+                    backend_focus,
+                    backend_focus_apply,
                 });
                 if changed {
                     cx.notify();
@@ -204,6 +307,31 @@ mod tests {
         host_test_support::{open_host, space, tabs_graph},
     };
     use open_gpui::{AppContext as _, TestAppContext, px, size};
+
+    fn unchanged_backend_focus_apply() -> DockViewportActivationBackendFocusApply {
+        DockViewportActivationBackendFocusApply::default()
+    }
+
+    fn recorded_pending_backend_focus() -> DockViewportActivationBackendFocusApply {
+        DockViewportActivationBackendFocusApply::new(
+            DockViewportActivationBackendFocusRecordEffect::Unchanged,
+            DockViewportActivationPendingBackendFocusEffect::RecordedPendingTarget,
+        )
+    }
+
+    fn recorded_confirmed_backend_focus() -> DockViewportActivationBackendFocusApply {
+        DockViewportActivationBackendFocusApply::new(
+            DockViewportActivationBackendFocusRecordEffect::RecordedTargetFocus,
+            DockViewportActivationPendingBackendFocusEffect::Unchanged,
+        )
+    }
+
+    fn cleared_pending_backend_focus() -> DockViewportActivationBackendFocusApply {
+        DockViewportActivationBackendFocusApply::new(
+            DockViewportActivationBackendFocusRecordEffect::Unchanged,
+            DockViewportActivationPendingBackendFocusEffect::ClearedConfirmedTarget,
+        )
+    }
 
     #[open_gpui::test]
     fn activation_without_target_reports_no_target(cx: &mut TestAppContext) {
@@ -243,8 +371,8 @@ mod tests {
                 changed: true,
                 focus_command_queued: false,
                 window_activation_requested: true,
-                backend_focus_confirmed: false,
-                pending_backend_focus: true,
+                backend_focus: DockViewportActivationBackendFocusObservation::TargetNotFocused,
+                backend_focus_apply: recorded_pending_backend_focus(),
             }
         );
         assert_eq!(pending_request, None);
@@ -294,8 +422,8 @@ mod tests {
                 changed: true,
                 focus_command_queued: false,
                 window_activation_requested: true,
-                backend_focus_confirmed: false,
-                pending_backend_focus: true,
+                backend_focus: DockViewportActivationBackendFocusObservation::TargetNotFocused,
+                backend_focus_apply: recorded_pending_backend_focus(),
             }
         );
         assert_eq!(pending_request, None);
@@ -346,11 +474,107 @@ mod tests {
                 changed: true,
                 focus_command_queued: true,
                 window_activation_requested: false,
-                backend_focus_confirmed: true,
-                pending_backend_focus: false,
+                backend_focus: DockViewportActivationBackendFocusObservation::TargetFocused,
+                backend_focus_apply: unchanged_backend_focus_apply(),
             }
         );
         assert_eq!(pending_request, Some(DockViewportFocusRequest::panel("a")));
+    }
+
+    #[open_gpui::test]
+    fn activation_confirmed_backend_focus_records_runtime_focus_even_when_focus_command_is_queued(
+        cx: &mut TestAppContext,
+    ) {
+        let (graph, _) = tabs_graph(&["a"]);
+        let (window, host, _visual) = open_host(
+            cx,
+            graph,
+            &[("a", "Panel A", "A")],
+            size(px(320.0), px(240.0)),
+        );
+        host.update(cx, |host, _| {
+            assert!(host.request_viewport_focus_command(
+                DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel("a"))
+            ));
+        });
+        let activation = DockViewportActivationTransaction::new(
+            space(),
+            window,
+            DockViewportFocusRequest::panel("a"),
+        );
+
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("viewport should become the backend-focused window");
+
+        let outcome = cx.update(|app| apply_viewport_activation_transaction(Some(activation), app));
+
+        assert_eq!(
+            outcome,
+            DockViewportActivationApplyOutcome::Applied {
+                changed: true,
+                focus_command_queued: false,
+                window_activation_requested: false,
+                backend_focus: DockViewportActivationBackendFocusObservation::TargetFocused,
+                backend_focus_apply: recorded_confirmed_backend_focus(),
+            },
+            "confirmed backend focus should still update runtime focus stamps even when the focus command was already queued"
+        );
+    }
+
+    #[open_gpui::test]
+    fn activation_confirmed_backend_focus_reports_pending_clear_as_changed(
+        cx: &mut TestAppContext,
+    ) {
+        let (graph, _) = tabs_graph(&["a"]);
+        let (window, host, _visual) = open_host(
+            cx,
+            graph,
+            &[("a", "Panel A", "A")],
+            size(px(320.0), px(240.0)),
+        );
+        let activation = DockViewportActivationTransaction::new(
+            space(),
+            window,
+            DockViewportFocusRequest::panel("a"),
+        );
+        host.update(cx, |host, _| {
+            assert!(
+                host.viewport_runtime()
+                    .record_confirmed_backend_focus_for_window(window.window_id())
+            );
+            assert!(host.request_viewport_focus_command(
+                DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel("a"))
+            ));
+            assert!(
+                host.viewport_runtime()
+                    .record_pending_activation(activation.clone())
+            );
+        });
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("viewport should be backend-focused before applying pending activation");
+
+        let (outcome, pending_activation) = cx.update(|app| {
+            let outcome = apply_viewport_activation_transaction(Some(activation), app);
+            let pending_activation = app.read_entity(&host, |host, _| {
+                host.viewport_runtime().pending_activation()
+            });
+            (outcome, pending_activation)
+        });
+
+        assert_eq!(
+            outcome,
+            DockViewportActivationApplyOutcome::Applied {
+                changed: true,
+                focus_command_queued: false,
+                window_activation_requested: false,
+                backend_focus: DockViewportActivationBackendFocusObservation::TargetFocused,
+                backend_focus_apply: cleared_pending_backend_focus(),
+            },
+            "consuming a confirmed pending activation must notify even when focus and backend stamps were already current"
+        );
+        assert_eq!(pending_activation, None);
     }
 
     #[open_gpui::test]
@@ -421,8 +645,8 @@ mod tests {
                 changed: true,
                 focus_command_queued: false,
                 window_activation_requested: true,
-                backend_focus_confirmed: false,
-                pending_backend_focus: true,
+                backend_focus: DockViewportActivationBackendFocusObservation::TargetNotFocused,
+                backend_focus_apply: recorded_pending_backend_focus(),
             }
         );
         assert_eq!(pending_request, Some(DockViewportFocusRequest::panel("a")));
@@ -484,8 +708,8 @@ mod tests {
                 changed: true,
                 focus_command_queued: false,
                 window_activation_requested: true,
-                backend_focus_confirmed: false,
-                pending_backend_focus: true,
+                backend_focus: DockViewportActivationBackendFocusObservation::TargetNotFocused,
+                backend_focus_apply: recorded_pending_backend_focus(),
             }
         );
         assert_eq!(pending_request, Some(DockViewportFocusRequest::panel("a")));
@@ -534,8 +758,8 @@ mod tests {
                 changed: false,
                 focus_command_queued: false,
                 window_activation_requested: false,
-                backend_focus_confirmed: false,
-                pending_backend_focus: false,
+                backend_focus: DockViewportActivationBackendFocusObservation::TargetNotFocused,
+                backend_focus_apply: unchanged_backend_focus_apply(),
             }
         );
         assert!(!active);
@@ -579,8 +803,8 @@ mod tests {
                 changed: false,
                 focus_command_queued: false,
                 window_activation_requested: false,
-                backend_focus_confirmed: false,
-                pending_backend_focus: false,
+                backend_focus: DockViewportActivationBackendFocusObservation::TargetNotFocused,
+                backend_focus_apply: unchanged_backend_focus_apply(),
             }
         );
         assert!(!active);

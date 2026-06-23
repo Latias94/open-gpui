@@ -24,6 +24,7 @@ pub(crate) struct TestPlatform {
 
     pub(crate) active_window: RefCell<Option<TestWindow>>,
     pub(crate) focused_window_available: RefCell<bool>,
+    pub(crate) hovered_window_available: RefCell<bool>,
     pub(crate) hovered_window: RefCell<Option<TestWindow>>,
     window_stack: RefCell<Option<Vec<TestWindow>>>,
     active_display: Rc<dyn PlatformDisplay>,
@@ -132,6 +133,7 @@ impl TestPlatform {
             active_display: Rc::new(TestDisplay::new()),
             active_window: Default::default(),
             focused_window_available: RefCell::new(true),
+            hovered_window_available: RefCell::new(true),
             hovered_window: Default::default(),
             window_stack: Default::default(),
             expect_restart: Default::default(),
@@ -265,6 +267,10 @@ impl TestPlatform {
 
     pub(crate) fn set_focused_window_available(&self, available: bool) {
         *self.focused_window_available.borrow_mut() = available;
+    }
+
+    pub(crate) fn set_hovered_window_available(&self, available: bool) {
+        *self.hovered_window_available.borrow_mut() = available;
     }
 
     pub(crate) fn set_hovered_window(&self, window: Option<TestWindow>) {
@@ -414,6 +420,9 @@ impl Platform for TestPlatform {
     }
 
     fn hovered_window(&self) -> PlatformHoveredWindow {
+        if !*self.hovered_window_available.borrow() {
+            return PlatformHoveredWindow::Unavailable;
+        }
         PlatformHoveredWindow::from_window(
             self.hovered_window
                 .borrow()

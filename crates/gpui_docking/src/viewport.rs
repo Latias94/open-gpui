@@ -70,10 +70,10 @@ impl DockViewportAdapter {
             .map(|snapshot| snapshot.is_route_ready())
     }
 
-    pub(crate) fn window_can_authorize_hover_hit(&self, window_id: WindowId) -> Option<bool> {
+    pub(crate) fn window_can_route_hover_hit(&self, window_id: WindowId) -> Option<bool> {
         let space = self.space_for_window_id(window_id)?;
         self.snapshot(space)
-            .map(|snapshot| snapshot.can_authorize_hover_hit())
+            .map(|snapshot| snapshot.can_route_hover_hit())
     }
 
     pub(crate) fn space_input_mask(&self, space: &DockSpaceId) -> Option<DockViewportInputMask> {
@@ -340,7 +340,7 @@ mod tests {
             choose_diagnostic_viewport_target(hits, &DockViewportTargetContext::new())
                 .map(|target| target.space().clone()),
             Some(alpha.clone()),
-            "default viewport hit testing uses stable space order when no backend target authority exists"
+            "default viewport hit testing uses stable space order when no backend target selection exists"
         );
     }
 

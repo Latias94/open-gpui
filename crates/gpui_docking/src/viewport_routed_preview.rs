@@ -334,10 +334,10 @@ pub(crate) fn last_routed_viewport_identity_from_resolution(
     resolution: &DockViewportResolvedDropRoute,
     drag_session: Option<&DockRuntimeDragSession>,
 ) -> Option<DockViewportIdentity> {
-    route_authority_viewport_identity_from_resolution(resolution, drag_session)
+    route_selection_viewport_identity_from_resolution(resolution, drag_session)
 }
 
-pub(crate) fn route_authority_viewport_identity_from_resolution(
+pub(crate) fn route_selection_viewport_identity_from_resolution(
     resolution: &DockViewportResolvedDropRoute,
     drag_session: Option<&DockRuntimeDragSession>,
 ) -> Option<DockViewportIdentity> {
@@ -350,18 +350,16 @@ pub(crate) fn route_authority_viewport_identity_from_resolution(
     }
 
     let (target_space, target_window_id) = match resolution.route() {
-        crate::DockViewportDropRoute::KnownViewport { target, authority } => {
-            if !authority.records_routed_viewport_identity() {
+        crate::DockViewportDropRoute::KnownViewport { target, source } => {
+            if !source.records_routed_viewport_identity() {
                 return None;
             }
             (target.space().clone(), target.window_id())
         }
         crate::DockViewportDropRoute::Local {
-            window_id,
-            authority,
-            ..
+            window_id, source, ..
         } => {
-            if !authority.records_routed_viewport_identity() {
+            if !source.records_routed_viewport_identity() {
                 return None;
             }
             let target = resolution.routed_preview_target_snapshot()?;

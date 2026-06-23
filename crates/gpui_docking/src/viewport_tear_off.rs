@@ -1,6 +1,6 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockGraph, DockItemId, DockNodeId, DockSpaceId,
-    DockViewportActivationTransaction, DockViewportFocusRequest,
+    DockViewportActivationTransaction, DockViewportFocusRequest, DockViewportWindowEffects,
     drag::{DockDragPayload, DockDragPayloadKind, DockDragTearOffGeometry},
     interaction::DockRuntimeDragSession,
     workspace_transaction::DockWorkspaceDropPayload,
@@ -178,24 +178,6 @@ impl DockViewportTearOffRequest {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct DockViewportTearOffTick(u64);
-
-impl DockViewportTearOffTick {
-    #[cfg(test)]
-    pub const fn new(tick: u64) -> Self {
-        Self(tick)
-    }
-
-    pub(crate) const fn as_u64(self) -> u64 {
-        self.0
-    }
-
-    pub const fn saturating_add(self, ticks: u64) -> Self {
-        Self(self.0.saturating_add(ticks))
-    }
-}
-
 /// Runtime state for a tear-off request that is waiting for a platform viewport.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportTearOffPending {
@@ -203,6 +185,8 @@ pub(crate) struct DockViewportTearOffPending {
     request: DockViewportTearOffRequest,
     /// Empty logical dock space that will receive the torn-off payload.
     target_space: DockSpaceId,
+    /// Runtime window that hosted the source space when the tear-off was prepared.
+    source_window: Option<AnyWindowHandle>,
     /// Panel item that should receive GPUI focus after the tear-off completes.
     focus_item: Option<DockItemId>,
 }
@@ -216,8 +200,38 @@ impl DockViewportTearOffPending {
         &self.target_space
     }
 
+    pub(crate) fn source_window(&self) -> Option<AnyWindowHandle> {
+        self.source_window
+    }
+
     pub(crate) fn focus_item(&self) -> Option<&DockItemId> {
         self.focus_item.as_ref()
+    }
+}
+
+/// Graph mutation for a pending tear-off has been committed and is waiting for viewport
+/// registration.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockViewportCommittedTearOffMove {
+    pending: DockViewportTearOffPending,
+    action: crate::DockActionOutcome,
+}
+
+pub(crate) struct DockViewportCommittedTearOffMoveCommit {
+    pub(crate) pending: DockViewportTearOffPending,
+    pub(crate) action: crate::DockActionOutcome,
+}
+
+impl DockViewportCommittedTearOffMove {
+    fn new(pending: DockViewportTearOffPending, action: crate::DockActionOutcome) -> Self {
+        Self { pending, action }
+    }
+
+    pub(crate) fn into_commit(self) -> DockViewportCommittedTearOffMoveCommit {
+        DockViewportCommittedTearOffMoveCommit {
+            pending: self.pending,
+            action: self.action,
+        }
     }
 }
 
@@ -239,13 +253,22 @@ pub enum DockViewportTearOffCancelReason {
 /// Cancelled tear-off request and the reason it could not complete.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportTearOffCancelled {
+    /// Pending request that was removed from the tear-off queue.
+    pending: DockViewportTearOffPending,
     /// Reason the request was removed before commit.
     reason: DockViewportTearOffCancelReason,
 }
 
 impl DockViewportTearOffCancelled {
-    pub(crate) fn new(reason: DockViewportTearOffCancelReason) -> Self {
-        Self { reason }
+    pub(crate) fn new(
+        pending: DockViewportTearOffPending,
+        reason: DockViewportTearOffCancelReason,
+    ) -> Self {
+        Self { pending, reason }
+    }
+
+    pub(crate) fn pending(&self) -> &DockViewportTearOffPending {
+        &self.pending
     }
 
     pub(crate) fn reason(&self) -> DockViewportTearOffCancelReason {
@@ -262,6 +285,12 @@ pub(crate) struct DockViewportTearOffCompleted {
     registration: crate::DockViewportRegisterOutcome,
     /// Runtime-owned windows superseded while completing this tear-off.
     replaced_windows: Vec<AnyWindowHandle>,
+    /// Surviving runtime windows affected by registration cleanup.
+    registration_affected_windows: Vec<AnyWindowHandle>,
+    /// Runtime-owned source windows whose logical space became empty after the tear-off move.
+    vacated_source_windows: Vec<AnyWindowHandle>,
+    /// Surviving runtime windows affected while vacating the source viewport.
+    vacated_source_affected_windows: Vec<AnyWindowHandle>,
     /// Graph transaction outcome that committed before the platform window was opened.
     action: crate::DockActionOutcome,
 }
@@ -271,12 +300,18 @@ impl DockViewportTearOffCompleted {
         pending: DockViewportTearOffPending,
         registration: crate::DockViewportRegisterOutcome,
         replaced_windows: Vec<AnyWindowHandle>,
+        registration_affected_windows: Vec<AnyWindowHandle>,
+        vacated_source_windows: Vec<AnyWindowHandle>,
+        vacated_source_affected_windows: Vec<AnyWindowHandle>,
         action: crate::DockActionOutcome,
     ) -> Self {
         Self {
             pending,
             registration,
             replaced_windows,
+            registration_affected_windows,
+            vacated_source_windows,
+            vacated_source_affected_windows,
             action,
         }
     }
@@ -289,8 +324,26 @@ impl DockViewportTearOffCompleted {
         &self.registration
     }
 
-    pub(crate) fn replaced_windows(&self) -> &[AnyWindowHandle] {
-        &self.replaced_windows
+    pub(crate) fn affected_windows(&self) -> Vec<AnyWindowHandle> {
+        let mut windows = self.registration_affected_windows.clone();
+        extend_unique_windows(
+            &mut windows,
+            self.vacated_source_affected_windows.iter().cloned(),
+        );
+        windows
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_window_effects(&self) -> bool {
+        self.window_effects().has_effects()
+    }
+
+    pub(crate) fn window_effects(&self) -> DockViewportWindowEffects {
+        DockViewportWindowEffects::new(
+            self.replaced_windows.clone(),
+            self.affected_windows(),
+            self.vacated_source_windows.clone(),
+        )
     }
 
     pub(crate) fn action(&self) -> crate::DockActionOutcome {
@@ -323,6 +376,8 @@ pub(crate) struct DockViewportDropActionOutcome {
     action: DockActionOutcome,
     /// Runtime activation transaction to apply after the drop, when known.
     activation: Option<DockViewportActivationTransaction>,
+    /// Viewport window effects requested by cleanup while committing the drop.
+    window_effects: DockViewportWindowEffects,
 }
 
 impl DockViewportDropActionOutcome {
@@ -330,7 +385,16 @@ impl DockViewportDropActionOutcome {
         action: DockActionOutcome,
         activation: Option<DockViewportActivationTransaction>,
     ) -> Self {
-        Self { action, activation }
+        Self {
+            action,
+            activation,
+            window_effects: DockViewportWindowEffects::default(),
+        }
+    }
+
+    pub(crate) fn with_window_effects(mut self, window_effects: DockViewportWindowEffects) -> Self {
+        self.window_effects = window_effects;
+        self
     }
 
     pub(crate) fn action(&self) -> DockActionOutcome {
@@ -339,6 +403,10 @@ impl DockViewportDropActionOutcome {
 
     pub(crate) fn activation(&self) -> Option<&DockViewportActivationTransaction> {
         self.activation.as_ref()
+    }
+
+    pub(crate) fn window_effects(&self) -> DockViewportWindowEffects {
+        self.window_effects.clone()
     }
 }
 
@@ -369,6 +437,27 @@ impl DockViewportDropRouteOutcome {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn affected_windows(&self) -> Vec<AnyWindowHandle> {
+        self.window_effects().refresh().to_vec()
+    }
+
+    pub(crate) fn has_window_effects(&self) -> bool {
+        self.window_effects().has_effects()
+    }
+
+    pub(crate) fn window_effects(&self) -> DockViewportWindowEffects {
+        match self {
+            DockViewportDropRouteOutcome::Action(outcome) => outcome.window_effects(),
+            DockViewportDropRouteOutcome::TearOff(outcome) => match outcome.as_ref() {
+                DockViewportTearOffOpenOutcome::Completed(completed) => completed.window_effects(),
+                DockViewportTearOffOpenOutcome::Duplicate(_) => {
+                    DockViewportWindowEffects::default()
+                }
+            },
+        }
+    }
+
     pub(crate) fn action_result(&self) -> Result<DockActionOutcome, DockActionApplyError> {
         match self {
             DockViewportDropRouteOutcome::Action(outcome) => Ok(outcome.action()),
@@ -377,6 +466,21 @@ impl DockViewportDropRouteOutcome {
                 DockViewportTearOffOpenOutcome::Duplicate(_) => Ok(DockActionOutcome::Unchanged),
             },
         }
+    }
+}
+
+fn extend_unique_windows(
+    windows: &mut Vec<AnyWindowHandle>,
+    next_windows: impl IntoIterator<Item = AnyWindowHandle>,
+) {
+    for window in next_windows {
+        if windows
+            .iter()
+            .any(|existing| existing.window_id() == window.window_id())
+        {
+            continue;
+        }
+        windows.push(window);
     }
 }
 
@@ -416,8 +520,8 @@ impl DockViewportTearOffMachine {
         &mut self,
         request: DockViewportTearOffRequest,
         target_space: DockSpaceId,
+        source_window: Option<AnyWindowHandle>,
         focus_item: Option<DockItemId>,
-        _now: DockViewportTearOffTick,
     ) -> DockViewportTearOffBeginOutcome {
         let key = request.key();
         if let Some(pending) = self.pending_by_key.get(&key) {
@@ -427,6 +531,7 @@ impl DockViewportTearOffMachine {
         let pending = DockViewportTearOffPending {
             request,
             target_space,
+            source_window,
             focus_item,
         };
         self.pending_by_key.insert(key, pending.clone());
@@ -440,25 +545,36 @@ impl DockViewportTearOffMachine {
     ) -> Option<DockViewportTearOffCancelled> {
         self.pending_by_key
             .remove(key)
-            .map(|_| DockViewportTearOffCancelled::new(reason))
+            .map(|pending| DockViewportTearOffCancelled::new(pending, reason))
+    }
+
+    pub(crate) fn is_current_pending(&self, pending: &DockViewportTearOffPending) -> bool {
+        let key = pending.request().key();
+        self.pending_by_key.get(&key) == Some(pending)
     }
 
     pub(crate) fn take_committed(
         &mut self,
         pending: &DockViewportTearOffPending,
-    ) -> Option<DockViewportTearOffPending> {
-        let key = pending.request().key();
-        if self.pending_by_key.get(&key) != Some(pending) {
+        action: crate::DockActionOutcome,
+    ) -> Option<DockViewportCommittedTearOffMove> {
+        if !self.is_current_pending(pending) {
             return None;
         }
-        self.pending_by_key.remove(&key)
+        let key = pending.request().key();
+        self.pending_by_key
+            .remove(&key)
+            .map(|pending| DockViewportCommittedTearOffMove::new(pending, action))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::viewport_test_support::{item, space};
+    use crate::{
+        DockActionOutcome, DockViewportAdapter,
+        viewport_test_support::{handle, item, space},
+    };
     use open_gpui::{point, px};
     use slotmap::Key;
 
@@ -473,18 +589,8 @@ mod tests {
             None,
         );
 
-        let first = machine.begin(
-            request.clone(),
-            space("detached"),
-            None,
-            DockViewportTearOffTick::new(1),
-        );
-        let second = machine.begin(
-            request,
-            space("other"),
-            None,
-            DockViewportTearOffTick::new(2),
-        );
+        let first = machine.begin(request.clone(), space("detached"), None, None);
+        let second = machine.begin(request, space("other"), None, None);
 
         assert!(matches!(first, DockViewportTearOffBeginOutcome::Pending(_)));
         let DockViewportTearOffBeginOutcome::Duplicate(existing) = second else {
@@ -506,18 +612,8 @@ mod tests {
             None,
         );
 
-        let first = machine.begin(
-            request.clone(),
-            space("detached"),
-            None,
-            DockViewportTearOffTick::new(1),
-        );
-        let second = machine.begin(
-            request,
-            space("other"),
-            None,
-            DockViewportTearOffTick::new(2),
-        );
+        let first = machine.begin(request.clone(), space("detached"), None, None);
+        let second = machine.begin(request, space("other"), None, None);
 
         assert!(matches!(first, DockViewportTearOffBeginOutcome::Pending(_)));
         let DockViewportTearOffBeginOutcome::Duplicate(existing) = second else {
@@ -540,12 +636,7 @@ mod tests {
         );
         let key = request.key();
 
-        machine.begin(
-            request,
-            space("detached"),
-            None,
-            DockViewportTearOffTick::new(1),
-        );
+        machine.begin(request, space("detached"), None, None);
         let cancelled = machine
             .cancel(&key, DockViewportTearOffCancelReason::Cancelled)
             .expect("pending request should cancel");
@@ -554,6 +645,7 @@ mod tests {
             cancelled.reason(),
             DockViewportTearOffCancelReason::Cancelled
         );
+        assert_eq!(cancelled.pending().target_space(), &space("detached"));
         assert_eq!(machine.len(), 0);
     }
 
@@ -568,12 +660,9 @@ mod tests {
             None,
         );
         let key = request.key();
-        let DockViewportTearOffBeginOutcome::Pending(cancelled_pending) = machine.begin(
-            request.clone(),
-            space("detached"),
-            None,
-            DockViewportTearOffTick::new(1),
-        ) else {
+        let DockViewportTearOffBeginOutcome::Pending(cancelled_pending) =
+            machine.begin(request.clone(), space("detached"), None, None)
+        else {
             panic!("first request should become pending");
         };
         assert!(
@@ -581,21 +670,80 @@ mod tests {
                 .cancel(&key, DockViewportTearOffCancelReason::Cancelled)
                 .is_some()
         );
-        let DockViewportTearOffBeginOutcome::Pending(current_pending) = machine.begin(
-            request,
-            space("other"),
-            None,
-            DockViewportTearOffTick::new(603),
-        ) else {
+        let DockViewportTearOffBeginOutcome::Pending(current_pending) =
+            machine.begin(request, space("other"), None, None)
+        else {
             panic!("new request after cancellation should become pending");
         };
 
-        assert_eq!(machine.take_committed(&cancelled_pending), None);
-        assert_eq!(machine.len(), 1);
+        assert!(!machine.is_current_pending(&cancelled_pending));
         assert_eq!(
-            machine.take_committed(&current_pending).as_ref(),
-            Some(&current_pending)
+            machine.take_committed(&cancelled_pending, DockActionOutcome::Unchanged),
+            None
         );
+        assert_eq!(machine.len(), 1);
+        assert!(machine.is_current_pending(&current_pending));
+        let committed = machine
+            .take_committed(&current_pending, DockActionOutcome::Unchanged)
+            .expect("current pending request should produce committed token");
+        let commit = committed.into_commit();
+        assert_eq!(commit.pending, current_pending);
+        assert_eq!(commit.action, DockActionOutcome::Unchanged);
         assert_eq!(machine.len(), 0);
+    }
+
+    #[test]
+    fn completed_tear_off_aggregates_window_effects_without_duplicates() {
+        let mut machine = DockViewportTearOffMachine::default();
+        let request = DockViewportTearOffRequest::new(
+            space("main"),
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(900.0), px(900.0)),
+            None,
+        );
+        let DockViewportTearOffBeginOutcome::Pending(pending) =
+            machine.begin(request, space("detached"), None, None)
+        else {
+            panic!("request should become pending");
+        };
+        let mut adapter = DockViewportAdapter::new();
+        let registration = adapter.register_viewport_with_outcome(space("detached"), handle(1));
+        let first_affected = handle(2);
+        let second_affected = handle(3);
+        let replaced_window = handle(4);
+        let vacated_source_window = handle(5);
+
+        let completed = DockViewportTearOffCompleted::new(
+            pending,
+            registration,
+            vec![replaced_window],
+            vec![first_affected, second_affected],
+            vec![vacated_source_window],
+            vec![second_affected, first_affected],
+            DockActionOutcome::Changed,
+        );
+        let route = DockViewportDropRouteOutcome::tear_off(
+            DockViewportTearOffOpenOutcome::Completed(completed.clone()),
+        );
+
+        assert!(completed.has_window_effects());
+        assert_eq!(
+            completed.affected_windows(),
+            vec![first_affected, second_affected],
+            "registration and vacated-source cleanup should refresh each affected window once"
+        );
+        let effects = completed.window_effects();
+        assert_eq!(effects.close_now(), &[replaced_window]);
+        assert_eq!(effects.refresh(), &[first_affected, second_affected]);
+        assert_eq!(
+            effects.close_after_current_effect(),
+            &[vacated_source_window]
+        );
+        assert!(route.has_window_effects());
+        assert_eq!(
+            route.affected_windows(),
+            vec![first_affected, second_affected]
+        );
     }
 }

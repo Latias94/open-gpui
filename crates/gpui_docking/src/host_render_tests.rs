@@ -1,8 +1,8 @@
 use crate::{
     DockCentralRegion, DockController, DockFloatingContainer, DockGraph, DockHost, DockNode,
-    DockNodeId, DockPanelDescriptor, DockViewportFocusCommand, DockViewportFocusRequest,
-    DockViewportPlatformSyncAction, DockWorkspace, SplitAxis, debug::DockDebugRegion,
-    host_test_support::*,
+    DockNodeId, DockPanelDescriptor, DockViewportActivationTransaction, DockViewportFocusCommand,
+    DockViewportFocusRequest, DockViewportPlatformSyncAction, DockWorkspace, SplitAxis,
+    debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Entity, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext,
@@ -574,6 +574,19 @@ fn platform_activation_does_not_restore_panel_focus_while_mouse_is_pressed(
         assert_eq!(window.focused(cx), Some(focus_b.clone()));
     });
 
+    visual.deactivate_window();
+    window
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("window should activate for initial backend focus confirmation");
+    cx.run_until_parked();
+    visual.update(|window, cx| {
+        assert_eq!(
+            window.focused(cx),
+            Some(focus_b.clone()),
+            "initial backend focus suppression should not disturb already-focused dock panel"
+        );
+    });
+
     let stealer = visual.update(|_, cx| cx.focus_handle());
     visual.update(|window, cx| {
         window.focus(&stealer, cx);
@@ -626,6 +639,19 @@ fn platform_activation_restores_recorded_panel_after_non_docking_focus_owner(
         assert_eq!(window.focused(cx), Some(focus_b.clone()));
     });
 
+    visual.deactivate_window();
+    window
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("window should activate for initial backend focus confirmation");
+    cx.run_until_parked();
+    visual.update(|window, cx| {
+        assert_eq!(
+            window.focused(cx),
+            Some(focus_b.clone()),
+            "initial backend focus suppression should not disturb already-focused dock panel"
+        );
+    });
+
     let stealer = visual.update(|_, cx| cx.focus_handle());
     visual.update(|window, cx| {
         window.focus(&stealer, cx);
@@ -654,6 +680,70 @@ fn platform_activation_restores_recorded_panel_after_non_docking_focus_owner(
             Some(focus_b),
             "backend-confirmed platform activation should restore recorded dock focus"
         );
+    });
+}
+
+#[open_gpui::test]
+fn platform_activation_notifies_when_pending_activation_is_consumed_without_new_focus_command(
+    cx: &mut TestAppContext,
+) {
+    let (graph, root) = tabs_graph_with_selected(&["a", "b"], "a");
+    let panel_b = test_view(cx, "B");
+    let focus_b = cx.read_entity(&panel_b, |panel, cx| panel.focus_handle(cx));
+
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_focusable_panel_view(item("b"), "Panel B", panel_b);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+    let controller = host.update(cx, |host, _| host.controller().clone());
+    let activation = DockViewportActivationTransaction::new(
+        space(),
+        window,
+        DockViewportFocusRequest::panel("b"),
+    );
+
+    host.update(cx, |host, _| {
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item(
+                "b"
+            )))
+        ));
+        assert!(
+            host.viewport_runtime()
+                .record_pending_activation(activation.clone())
+        );
+    });
+
+    visual.deactivate_window();
+    window
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("window should activate");
+    cx.run_until_parked();
+
+    host.update(cx, |host, _| {
+        assert_eq!(
+            host.viewport_runtime().pending_activation(),
+            None,
+            "platform activation should consume the matching pending activation"
+        );
+        assert_eq!(
+            host.pending_focus_command(),
+            None,
+            "consuming pending activation is a runtime change and must notify even when the focus command was already queued"
+        );
+    });
+    visual.update(|window, cx| {
+        assert_eq!(window.focused(cx), Some(focus_b));
+    });
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { selected, .. } = controller
+            .graph()
+            .node(root)
+            .expect("root tabs should exist")
+        else {
+            panic!("root should remain tabs");
+        };
+        assert_eq!(selected.as_ref(), Some(&item("b")));
     });
 }
 

@@ -8,19 +8,42 @@ pub(crate) struct DockViewportWindowOwnership {
     render_passthrough_windows: HashSet<WindowId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockViewportWindowRetirement {
+    RetiredNow,
+    AlreadyRetired,
+    Unowned,
+}
+
+impl DockViewportWindowRetirement {
+    pub(crate) fn should_close_window(self) -> bool {
+        matches!(self, Self::RetiredNow | Self::AlreadyRetired)
+    }
+
+    #[cfg(test)]
+    fn changed(self) -> bool {
+        matches!(self, Self::RetiredNow)
+    }
+}
+
 impl DockViewportWindowOwnership {
     pub(crate) fn register_runtime_window(&mut self, window_id: WindowId) {
         self.retired_windows.remove(&window_id);
         self.owned_windows.insert(window_id);
     }
 
-    pub(crate) fn discard_owned_window(&mut self, window_id: WindowId) -> bool {
+    pub(crate) fn retire_window(&mut self, window_id: WindowId) -> DockViewportWindowRetirement {
         let removed = self.owned_windows.remove(&window_id);
+        self.render_passthrough_windows.remove(&window_id);
         if removed {
             self.retired_windows.insert(window_id);
+            return DockViewportWindowRetirement::RetiredNow;
         }
-        self.render_passthrough_windows.remove(&window_id);
-        removed
+        if self.retired_windows.contains(&window_id) {
+            DockViewportWindowRetirement::AlreadyRetired
+        } else {
+            DockViewportWindowRetirement::Unowned
+        }
     }
 
     pub(crate) fn is_retired(&self, window_id: WindowId) -> bool {
@@ -71,16 +94,29 @@ mod tests {
         let window_id = WindowId::from(7);
 
         assert!(!ownership.is_owned(window_id));
-        assert!(!ownership.discard_owned_window(window_id));
+        assert_eq!(
+            ownership.retire_window(window_id),
+            DockViewportWindowRetirement::Unowned
+        );
         assert!(!ownership.is_retired(window_id));
 
         ownership.register_runtime_window(window_id);
         assert!(ownership.is_owned(window_id));
         assert!(!ownership.is_retired(window_id));
 
-        assert!(ownership.discard_owned_window(window_id));
+        let retired = ownership.retire_window(window_id);
+        assert_eq!(retired, DockViewportWindowRetirement::RetiredNow);
+        assert!(retired.changed());
+        assert!(retired.should_close_window());
         assert!(!ownership.is_owned(window_id));
         assert!(ownership.is_retired(window_id));
+        let already_retired = ownership.retire_window(window_id);
+        assert_eq!(
+            already_retired,
+            DockViewportWindowRetirement::AlreadyRetired
+        );
+        assert!(!already_retired.changed());
+        assert!(already_retired.should_close_window());
 
         ownership.register_runtime_window(window_id);
         assert!(ownership.is_owned(window_id));
@@ -103,7 +139,10 @@ mod tests {
 
         ownership.register_runtime_window(window_id);
         assert!(ownership.record_render_passthrough_pointer_input(window_id));
-        assert!(ownership.discard_owned_window(window_id));
+        assert_eq!(
+            ownership.retire_window(window_id),
+            DockViewportWindowRetirement::RetiredNow
+        );
         assert!(!ownership.take_render_passthrough_pointer_input(window_id));
     }
 }

@@ -7,8 +7,8 @@ use open_gpui::{AnyWindowHandle, AppContext, Bounds, Pixels, Point, WindowId, po
 impl DockViewportAdapter {
     /// Collects all registered platform viewport windows containing a screen point.
     ///
-    /// Input-eligible hits may authorize a host target. Stale/not-ready hits are retained as
-    /// blockers so fallback authority cannot pass through an opaque viewport window. Native
+    /// Input-eligible hits may provide a host target. Stale/not-ready hits are retained as
+    /// blockers so fallback route selection cannot pass through an opaque viewport window. Native
     /// no-input and minimized windows are skipped like ImGui's viewport fallback.
     pub(crate) fn global_screen_viewport_window_hits(
         &self,
@@ -151,7 +151,7 @@ impl DockViewportAdapter {
     /// Marks a registered window as closing until the platform close callback unregisters it.
     ///
     /// This keeps the space/window mapping available for close attribution while removing the
-    /// route authority of a viewport whose contents were already merged back during should-close.
+    /// route selection for a viewport whose contents were already merged back during should-close.
     pub(crate) fn mark_window_close_requested(&mut self, window_id: WindowId) -> bool {
         let Some(space) = self.space_for_window_id(window_id).cloned() else {
             return false;

@@ -60,12 +60,16 @@ impl DockHost {
             tear_off_geometry,
         )
         .with_event_receiver_local_scene_proof(event_receiver_local_scene_proof);
-        let resolution = runtime.resolve_payload_drop_delivery(&request, cx);
+        let resolution_outcome = runtime.resolve_payload_drop_delivery_outcome(&request, cx);
+        let route_resolution_changed = resolution_outcome.changed();
+        let resolution = resolution_outcome.resolution();
         let routed_preview_changed =
-            runtime.update_routed_drop_preview(&resolution, payload.title(), cx);
+            runtime.update_routed_drop_preview(resolution, payload.title(), cx);
         DockHostInteractionOutcome::from_session_changed(
-            self.interaction_mut()
-                .update_drop_route_preview(&resolution, position)
+            route_resolution_changed
+                || self
+                    .interaction_mut()
+                    .update_drop_route_preview(resolution, position)
                 || routed_preview_changed,
         )
     }

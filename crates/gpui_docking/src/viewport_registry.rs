@@ -21,7 +21,7 @@ pub(crate) enum DockViewportStaleReason {
     WindowFactsChanged,
 }
 
-/// Why a registered viewport cannot currently authorize routing.
+/// Why a registered viewport cannot currently provide route facts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockViewportRouteUnavailableReason {
     /// GPUI accepted a platform close request and the window is waiting for the close callback.
@@ -113,7 +113,7 @@ pub(crate) struct DockViewportWindowFacts {
 /// Coordinate frame for a live viewport window rectangle.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum DockViewportWindowBoundsFrame {
-    /// Bounds are in a shared desktop coordinate space and may authorize global hit testing.
+    /// Bounds are in a shared desktop coordinate space and may provide global hit testing.
     GlobalScreen(Bounds<Pixels>),
     /// Bounds are only meaningful in the receiver window's local coordinate space.
     WindowLocal(Bounds<Pixels>),
@@ -139,7 +139,7 @@ impl DockViewportWindowBoundsFrame {
 pub(crate) enum DockViewportInputMask {
     /// The window receives pointer input and may be selected by hovered-window hit testing.
     ReceivesInput,
-    /// The window is minimized and must not authorize a route or no-input underlay routing.
+    /// The window is minimized and must not select a route or no-input underlay routing.
     Minimized,
     /// The window is explicitly click-through, so hovered-window hit testing should skip it.
     NoInputPassThrough,
@@ -319,7 +319,7 @@ impl DockViewportSnapshot {
         self.route_unavailable_reason().is_none()
     }
 
-    pub(crate) fn can_authorize_hover_hit(&self) -> bool {
+    pub(crate) fn can_route_hover_hit(&self) -> bool {
         self.is_route_ready() && self.input_mask.participates_in_hover_hit_testing()
     }
 
@@ -750,7 +750,7 @@ mod tests {
         );
 
         assert!(snapshot.is_route_ready());
-        assert!(!snapshot.can_authorize_hover_hit());
+        assert!(!snapshot.can_route_hover_hit());
         assert_eq!(snapshot.route_unavailable_reason(), None);
     }
 

@@ -89,16 +89,15 @@ pub(crate) struct DockViewportTargetContext {
     window_stack: DockViewportFrontToBackWindowStack,
 }
 
-impl DockViewportTrustedHoveredSignal {
-    #[cfg(test)]
-    pub(crate) fn from_parts(window: Option<WindowId>, known: bool) -> Self {
-        match (window, known) {
-            (Some(window), _) => Self::Trusted(window),
-            (None, true) => Self::TrustedNone,
-            (None, false) => Self::Unavailable,
-        }
-    }
+/// Window arbitration signals extracted from a target context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockViewportWindowSignals {
+    pub(crate) trusted_hovered_signal: DockViewportTrustedHoveredSignal,
+    pub(crate) drag_last_hovered_window: Option<WindowId>,
+    pub(crate) window_stack: DockViewportFrontToBackWindowStack,
+}
 
+impl DockViewportTrustedHoveredSignal {
     pub(crate) fn trusted_window(self) -> Option<WindowId> {
         match self {
             Self::Trusted(window) => Some(window),
@@ -120,16 +119,12 @@ impl DockViewportTargetContext {
     }
 
     #[cfg(test)]
-    pub(crate) fn from_window_signals_with_hovered_known(
-        platform_hovered_window: Option<WindowId>,
-        platform_hovered_window_known: bool,
+    pub(crate) fn from_window_signals_with_trusted_hovered_signal(
+        trusted_hovered_signal: DockViewportTrustedHoveredSignal,
         window_stack: Vec<WindowId>,
     ) -> Self {
         Self::from_window_signals(
-            DockViewportTrustedHoveredSignal::from_parts(
-                platform_hovered_window,
-                platform_hovered_window_known,
-            ),
+            trusted_hovered_signal,
             DockViewportFrontToBackWindowStack::from_window_ids(
                 window_stack,
                 DockViewportWindowStackSource::Platform,
@@ -209,18 +204,19 @@ impl DockViewportTargetContext {
         self
     }
 
-    pub(crate) fn into_window_signals(
-        self,
-    ) -> (
-        DockViewportTrustedHoveredSignal,
-        Option<WindowId>,
-        DockViewportFrontToBackWindowStack,
-    ) {
-        (
-            self.trusted_hovered_signal,
-            self.drag_last_hovered_window,
-            self.window_stack,
-        )
+    pub(crate) fn without_focus_stamp_window_stack(mut self) -> Self {
+        if self.window_stack.source() == DockViewportWindowStackSource::FocusStampFallback {
+            self.window_stack = DockViewportFrontToBackWindowStack::default();
+        }
+        self
+    }
+
+    pub(crate) fn into_window_signals(self) -> DockViewportWindowSignals {
+        DockViewportWindowSignals {
+            trusted_hovered_signal: self.trusted_hovered_signal,
+            drag_last_hovered_window: self.drag_last_hovered_window,
+            window_stack: self.window_stack,
+        }
     }
 
     /// Creates an empty target context that only supports diagnostic ordering.
@@ -266,9 +262,8 @@ mod tests {
     fn trusted_hovered_window_beats_backend_fallback_order() {
         let first = WindowId::from(1);
         let third = WindowId::from(3);
-        let context = DockViewportTargetContext::from_window_signals_with_hovered_known(
-            Some(third),
-            true,
+        let context = DockViewportTargetContext::from_window_signals_with_trusted_hovered_signal(
+            DockViewportTrustedHoveredSignal::Trusted(third),
             vec![first],
         );
 
@@ -287,9 +282,8 @@ mod tests {
     fn clearing_trusted_hovered_window_preserves_stack_fallback() {
         let top = WindowId::from(1);
         let underlay = WindowId::from(2);
-        let context = DockViewportTargetContext::from_window_signals_with_hovered_known(
-            Some(top),
-            true,
+        let context = DockViewportTargetContext::from_window_signals_with_trusted_hovered_signal(
+            DockViewportTrustedHoveredSignal::Trusted(top),
             vec![top, underlay],
         )
         .without_trusted_hovered_window();
@@ -327,7 +321,7 @@ mod tests {
         assert_eq!(
             trusted_current.trusted_hovered_window(),
             Some(current_hovered),
-            "fresh backend hovered-window authority wins over the drag's last hovered viewport"
+            "fresh backend hovered-window signal wins over the drag's last hovered viewport"
         );
         assert_eq!(
             trusted_current.drag_last_hovered_window(),
@@ -383,6 +377,33 @@ mod tests {
         let platform = DockViewportTargetContext::new()
             .with_window_stack([platform_front])
             .with_focus_stamp_window_stack([focused]);
+        assert_eq!(
+            platform.front_to_back_window_stack_for_hover_fallback(),
+            &[platform_front.window_id()]
+        );
+        assert_eq!(
+            platform.window_stack_source(),
+            DockViewportWindowStackSource::Platform
+        );
+    }
+
+    #[test]
+    fn clearing_focus_stamp_stack_preserves_platform_stack() {
+        let focused = WindowId::from(7);
+        let platform_front = crate::viewport_test_support::handle(9);
+
+        let cleared = DockViewportTargetContext::new()
+            .with_focus_stamp_window_stack([focused])
+            .without_focus_stamp_window_stack();
+        assert_eq!(cleared.front_to_back_window_stack_for_hover_fallback(), &[]);
+        assert_eq!(
+            cleared.window_stack_source(),
+            DockViewportWindowStackSource::Unavailable
+        );
+
+        let platform = DockViewportTargetContext::new()
+            .with_window_stack([platform_front])
+            .without_focus_stamp_window_stack();
         assert_eq!(
             platform.front_to_back_window_stack_for_hover_fallback(),
             &[platform_front.window_id()]

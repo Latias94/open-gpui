@@ -2,13 +2,13 @@
 use crate::debug::DockDebugInstrumentation;
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockSpaceId,
-    DockViewportFocusCommand, DockViewportFocusRequest, DockViewportRuntimeHandle,
-    geometry::DockDropGuideStyle, host_render_session::DockHostRenderSession,
-    interaction::DockInteractionRuntime, workspace::DockWorkspace,
+    DockViewportFocusCommand, DockViewportFocusRequest, DockViewportPlatformFocusRestoreGate,
+    DockViewportRuntimeHandle, geometry::DockDropGuideStyle,
+    host_render_session::DockHostRenderSession, interaction::DockInteractionRuntime,
+    workspace::DockWorkspace,
 };
 use open_gpui::{
-    App, AppContext as _, Context, Entity, FocusHandle, MouseButton, Pixels, Subscription, Window,
-    px,
+    AppContext as _, Context, Entity, FocusHandle, Pixels, Subscription, Window, WindowId, px,
 };
 use std::collections::HashMap;
 
@@ -151,29 +151,43 @@ impl DockHost {
             return;
         }
 
-        let runtime = self.viewport_runtime().clone();
-
-        let activation_runtime = runtime.clone();
         self.viewport_activation_subscription = Some(cx.observe_window_activation(
             window,
             move |host, window, cx| {
                 if window.is_window_active() {
-                    let window_id = window.window_handle().window_id();
-                    let mouse_down = any_mouse_button_pressed(cx);
-                    if let Some(command) = activation_runtime
-                        .focus_command_for_confirmed_backend_window_focus(
-                            host.space(),
-                            window_id,
-                            mouse_down,
-                            cx,
-                        )
-                        && host.request_viewport_focus_command(command)
-                    {
-                        cx.notify();
-                    }
+                    host.apply_confirmed_backend_window_focus(
+                        window.window_handle().window_id(),
+                        DockViewportPlatformFocusRestoreGate::from_app(cx),
+                        cx,
+                    );
                 }
             },
         ));
+    }
+
+    fn apply_confirmed_backend_window_focus(
+        &mut self,
+        window_id: WindowId,
+        platform_focus_restore_gate: DockViewportPlatformFocusRestoreGate,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let outcome = self
+            .viewport_runtime
+            .confirmed_backend_window_focus_outcome(
+                self.space(),
+                window_id,
+                platform_focus_restore_gate,
+                cx,
+            );
+        let changed = outcome.changed();
+        let focus_command_queued = outcome
+            .into_focus_command()
+            .is_some_and(|command| self.request_viewport_focus_command(command));
+        let applied = changed || focus_command_queued;
+        if applied {
+            cx.notify();
+        }
+        applied
     }
 
     pub(crate) fn ensure_viewport_bounds_subscription(
@@ -400,10 +414,4 @@ impl DockHost {
     pub(crate) fn debug_instrumentation_mut(&mut self) -> &mut DockDebugInstrumentation {
         &mut self.debug
     }
-}
-
-fn any_mouse_button_pressed(cx: &App) -> bool {
-    MouseButton::all()
-        .into_iter()
-        .any(|button| cx.mouse_button_is_pressed(button) == Some(true))
 }

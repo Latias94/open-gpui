@@ -686,6 +686,9 @@ impl DockHost {
                     passthrough_pointer_input,
                 );
                 *frame_slot.borrow_mut() = preparation.frame;
+                if preparation.changed {
+                    window.refresh();
+                }
                 if let Some(token) = preparation.render_token {
                     let runtime = runtime.clone();
                     window.request_animation_frame();

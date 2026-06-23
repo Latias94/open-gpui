@@ -868,7 +868,7 @@ mod tests {
                 host_position,
                 window_id: handle(7).window_id(),
                 facts_generation: 1,
-                authority: crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
+                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
             },
         );
 
@@ -908,7 +908,7 @@ mod tests {
                 host_position,
                 window_id: handle(7).window_id(),
                 facts_generation: 1,
-                authority: crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
+                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
             },
         );
 
@@ -1013,7 +1013,7 @@ mod tests {
                     target_window,
                     host_position,
                 ),
-                authority: crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
+                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
             },
         );
         status.record_drop_result(&Ok(DockViewportDropRouteOutcome::Action(

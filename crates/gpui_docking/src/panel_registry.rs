@@ -95,9 +95,9 @@ impl DockPanelRegistry {
     /// replaced but cannot be returned as a [`DockPanel`].
     pub fn register(&mut self, item: impl Into<DockItemId>, panel: DockPanel) -> Option<DockPanel> {
         let item = item.into();
-        let (descriptor, view) = panel.into_parts();
-        let previous_descriptor = self.catalog.register(item.clone(), descriptor);
-        let previous_view = self.views.register(item, view);
+        let parts = panel.into_parts();
+        let previous_descriptor = self.catalog.register(item.clone(), parts.descriptor);
+        let previous_view = self.views.register(item, parts.view);
         previous_descriptor
             .zip(previous_view)
             .map(|(descriptor, view)| DockPanel::from_parts(descriptor, view))

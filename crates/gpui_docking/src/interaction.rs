@@ -1042,7 +1042,7 @@ mod tests {
             runtime
                 .take_local_drop_delivery(&release, &DockPolicy::default(), None, None)
                 .is_none(),
-            "source-only releases must route through viewport authority instead of cached local delivery"
+            "source-only releases must route through current viewport route selection instead of cached local delivery"
         );
     }
 

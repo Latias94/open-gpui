@@ -10,6 +10,12 @@ pub(crate) type DockDropTargetValidator<'a> =
 pub(crate) type DockEdgePlanResolver<'a> =
     dyn Fn(DockNodeId, DropZone, DockEdgeDockSizing) -> Option<DockEdgeDockPlan> + 'a;
 
+struct DockEdgeDropMetadata {
+    drop_box: DockDropBox,
+    preview_bounds: Bounds<Pixels>,
+    edge_sizing: DockEdgeDockSizing,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockResolvedDropTarget {
     pub(crate) kind: DockResolvedDropTargetKind,
@@ -453,11 +459,10 @@ fn resolve_root_edge_drop(
         input.drop_guide_style,
     )?;
 
-    let (drop_box, preview_bounds, edge_sizing) =
-        edge_drop_metadata(root.bounds, geometry.drop_box, input.payload_size);
+    let metadata = edge_drop_metadata(root.bounds, geometry.drop_box, input.payload_size);
     let edge_plan = input
         .edge_plan_resolver
-        .and_then(|resolver| resolver(root.root, geometry.zone(), edge_sizing));
+        .and_then(|resolver| resolver(root.root, geometry.zone(), metadata.edge_sizing));
 
     Some(DockResolvedDropTarget {
         kind: DockResolvedDropTargetKind::RootEdge {
@@ -466,9 +471,9 @@ fn resolve_root_edge_drop(
             zone: geometry.zone(),
         },
         source: DockDropResolveSource::RootEdge,
-        drop_box: Some(drop_box),
-        preview_bounds: Some(preview_bounds),
-        edge_sizing: Some(edge_sizing),
+        drop_box: Some(metadata.drop_box),
+        preview_bounds: Some(metadata.preview_bounds),
+        edge_sizing: Some(metadata.edge_sizing),
         edge_plan,
         is_central_region: false,
     })
@@ -561,17 +566,16 @@ fn target_from_leaf_geometry(
         return None;
     }
 
-    let (drop_box, preview_bounds, edge_sizing) =
-        edge_drop_metadata(leaf.bounds, geometry.drop_box, payload_size);
+    let metadata = edge_drop_metadata(leaf.bounds, geometry.drop_box, payload_size);
     let edge_plan = edge_plan_resolver
-        .and_then(|resolver| resolver(leaf.target_tabs, geometry.zone(), edge_sizing));
+        .and_then(|resolver| resolver(leaf.target_tabs, geometry.zone(), metadata.edge_sizing));
 
     Some(DockResolvedDropTarget {
         kind,
         source,
-        drop_box: Some(drop_box),
-        preview_bounds: Some(preview_bounds),
-        edge_sizing: Some(edge_sizing),
+        drop_box: Some(metadata.drop_box),
+        preview_bounds: Some(metadata.preview_bounds),
+        edge_sizing: Some(metadata.edge_sizing),
         edge_plan,
         is_central_region: leaf.is_central,
     })
@@ -581,7 +585,7 @@ fn edge_drop_metadata(
     target_bounds: Bounds<Pixels>,
     mut drop_box: DockDropBox,
     payload_size: Option<Size<Pixels>>,
-) -> (DockDropBox, Bounds<Pixels>, DockEdgeDockSizing) {
+) -> DockEdgeDropMetadata {
     let zone = drop_box.kind.zone();
     let preview_bounds = edge_preview_bounds(zone, target_bounds, payload_size);
     drop_box.preview_bounds = preview_bounds;
@@ -590,7 +594,11 @@ fn edge_drop_metadata(
         split_extent(axis, preview_bounds),
         split_extent(axis, target_bounds),
     );
-    (drop_box, preview_bounds, sizing)
+    DockEdgeDropMetadata {
+        drop_box,
+        preview_bounds,
+        edge_sizing: sizing,
+    }
 }
 
 fn edge_preview_bounds(
