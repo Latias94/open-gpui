@@ -11,14 +11,14 @@ use open_gpui::{
     StatefulInteractiveElement, Styled, Window, div, point, px, rgb,
 };
 use open_gpui_ui_core::{
-    Role, Sizable, Size, TableCellValue, TableColumn, TableColumnFacets, TableColumnId,
-    TableColumnRegion, TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState,
-    TableColumnSizing, TableExpansionMode, TableExpansionState, TableResolvedColumnSizing,
-    TableResolvedRow, TableResolvedState, TableRowChildrenLoadState, TableRowId, TableRowRegion,
-    TableSort, TableSortDirection, TableStageMode, TableState, TableStateCacheKey, TableTreeRow,
-    UiPx, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
-    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState, drag_table_column_resize,
-    end_table_column_resize, ui_px,
+    GridViewport2D, Role, Sizable, Size, TableCellValue, TableColumn, TableColumnFacets,
+    TableColumnId, TableColumnRegion, TableColumnResizeDirection, TableColumnResizeMode,
+    TableColumnResizeState, TableColumnSizing, TableExpansionMode, TableExpansionState,
+    TableResolvedColumnSizing, TableResolvedRow, TableResolvedState, TableRowChildrenLoadState,
+    TableRowId, TableRowRegion, TableSort, TableSortDirection, TableStageMode, TableState,
+    TableStateCacheKey, TableTreeRow, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
+    VirtualizerRange, VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState,
+    drag_table_column_resize, end_table_column_resize, ui_px,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -1001,6 +1001,7 @@ pub struct TableRenderPlan {
     column_regions: Vec<TableColumnRegionRenderPlan>,
     pinned_layout: Option<TablePinnedLayoutPlan>,
     center_column_window: Option<TableCenterColumnWindowPlan>,
+    grid_viewport: Option<GridViewport2D>,
     total_column_width: UiPx,
     filtering_mode: TableStageMode,
     sorting_mode: TableStageMode,
@@ -1044,6 +1045,9 @@ impl TableRenderPlan {
             center_viewport_extent,
             metrics.overscan(),
         );
+        let grid_viewport = center_column_window.as_ref().map(|center_window| {
+            GridViewport2D::new(virtualizer.clone(), center_window.virtualizer().clone())
+        });
         let duplicate_row_ids = table
             .duplicate_row_ids()
             .iter()
@@ -1086,6 +1090,7 @@ impl TableRenderPlan {
             column_regions,
             pinned_layout,
             center_column_window,
+            grid_viewport,
             total_column_width,
             filtering_mode: state.filtering_mode(),
             sorting_mode: state.sorting_mode(),
@@ -1186,6 +1191,11 @@ impl TableRenderPlan {
     /// Returns center-column window metadata, when the center lane exists.
     pub fn center_column_window(&self) -> Option<&TableCenterColumnWindowPlan> {
         self.center_column_window.as_ref()
+    }
+
+    /// Returns the combined row and center-column viewport when both axes are available.
+    pub fn grid_viewport(&self) -> Option<&GridViewport2D> {
+        self.grid_viewport.as_ref()
     }
 
     /// Returns whether this render plan needs split pinned-column layout.

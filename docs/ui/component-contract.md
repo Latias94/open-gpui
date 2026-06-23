@@ -467,7 +467,10 @@ regions with neutral `TableRowRegion` metadata, while the vertical virtualizer c
 center region. The GPUI adapter renders top and bottom row bands outside the center body
 `ScrollArea`, keeps `table:{id}:body:{top|center|bottom}` debug selectors stable, and reuses the
 normal row renderer so focus, activation, expansion, pinned-column lanes, and accessibility row
-indexes keep the same payload shape across pinned and center rows.
+indexes keep the same payload shape across pinned and center rows. `TableRenderPlan` also exposes
+`GridViewport2D` when both a vertical row window and a horizontal center-column window are
+available, so the adapter can report the combined two-axis viewport without merging the row and
+column virtualizer contracts into a new standalone grid engine.
 
 An official Table entry must satisfy the normal component completion gate: `Table` and `TableState`
 exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
@@ -475,8 +478,8 @@ entry, at least one `gallery:component-table-sample:{id}` rendered selector, sta
 identity, grouping, source-tree expansion, row interaction payloads, and virtualizer behavior, and
 gallery runtime tests for nested scroll containment. Custom aggregation callbacks, sticky headers,
 autosize-by-content, data-source fetch/cache orchestration, global faceting, concrete faceted
-filter controls, checkbox/range selection, cell editing, and full two-axis grid
-virtualization beyond the pinned center-column window remain follow-up capabilities.
+filter controls, checkbox/range selection, cell editing, and deeper two-axis grid virtualization
+beyond the pinned center-column window remain follow-up capabilities.
 
 ## Splitter Constraints
 
@@ -636,7 +639,7 @@ counts without giving the component crate fetch/cache responsibility.
 overscan, total size, and snapshot/restore data in `ui_core`; the Table adapter restores snapshot
 measurements but not captured scroll offsets. Custom aggregate callbacks, sticky headers,
 autosize-by-content, data-source orchestration, global faceting, concrete faceted filter controls,
-checkbox/range selection, cell editing, synthetic summary rows, and full two-axis grid
+checkbox/range selection, cell editing, synthetic summary rows, and deeper two-axis grid
 virtualization remain follow-up work.
 `StatusCue` and `EmptyState` are official feedback components. They expose resolved feedback
 intent, size, role, metrics, and token intents, while the GPUI adapters own concrete styling and

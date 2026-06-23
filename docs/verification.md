@@ -223,7 +223,10 @@ lanes, exposes fourteen center metrics, and has a focused smoke that proves off-
 columns unmount/remount while horizontal wheel input remains inside the sample. `row-pinning` is
 the row-region sample: it pins top and bottom review rows around a paged center body, exposes
 top/center/bottom readouts, and proves center-body wheel input changes the center row window
-without moving the fixed row bands or outer sample. `dependency-tree` is the source-hierarchy
+without moving the fixed row bands or outer sample. The Table adapter also exposes a combined
+`GridViewport2D` contract for the current row window and center-column window, keeping the row and
+column virtualizers separate while still making the two-axis viewport inspectable. `dependency-tree`
+is the source-hierarchy
 sample: it proves nested `TableRow` children resolve to visible tree rows,
 keeps collapsed descendants addressable by stable id, exposes tree-depth and tree-branch summary
 metadata, and drives controlled expansion plus row activation through the gallery runtime log.

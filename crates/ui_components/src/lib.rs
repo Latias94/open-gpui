@@ -114,7 +114,7 @@ pub use menu::{
     MenuOpenMode, MenuSelection, MenuState, MenuSubmenuNavigation, menu_navigation_target,
 };
 pub use open_gpui_ui_core::{
-    TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
+    GridViewport2D, TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
     TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind, TableAggregation,
     TableCellValue, TableColumn, TableColumnFacets, TableColumnId, TableColumnPinning,
     TableColumnRegion, TableColumnRegions, TableColumnResizeDirection, TableColumnResizeMode,
@@ -126,7 +126,7 @@ pub use open_gpui_ui_core::{
     TableRowRegions, TableSort, TableSortDirection, TableStageMode, TableState, TableStateCacheKey,
     TableTreeRow, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
     VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
-    drag_table_column_resize, end_table_column_resize,
+    drag_table_column_resize, end_table_column_resize, resolve_grid_viewport_2d,
 };
 pub use overlay::OverlayResolvedState;
 pub use popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};

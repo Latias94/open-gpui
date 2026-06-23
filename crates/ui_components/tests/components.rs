@@ -4234,6 +4234,25 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .expect("exported center column window plan should resolve");
     let _prelude_center_window: prelude::TableCenterColumnWindowPlan = root_center_window.clone();
     assert_eq!(root_center_window.rendered_column_count(), 1);
+    let root_grid_viewport: root::GridViewport2D = root::resolve_grid_viewport_2d(
+        &root::VirtualizerState::new(2, ui_px(24.0))
+            .with_viewport_extent(ui_px(24.0))
+            .with_scroll_offset(ui_px(12.0)),
+        &root::VirtualizerState::new(2, ui_px(24.0))
+            .with_viewport_extent(ui_px(24.0))
+            .with_scroll_offset(ui_px(12.0)),
+    );
+    let _prelude_grid_viewport: prelude::GridViewport2D = root_grid_viewport.clone();
+    let _prelude_grid_viewport_via_prelude: prelude::GridViewport2D =
+        prelude::resolve_grid_viewport_2d(
+            &prelude::VirtualizerState::new(2, ui_px(24.0))
+                .with_viewport_extent(ui_px(24.0))
+                .with_scroll_offset(ui_px(12.0)),
+            &prelude::VirtualizerState::new(2, ui_px(24.0))
+                .with_viewport_extent(ui_px(24.0))
+                .with_scroll_offset(ui_px(12.0)),
+        );
+    assert_eq!(root_grid_viewport.row_overscan_range().start(), 0);
     let header_action: root::TableHeaderAction = root_plan.columns()[0]
         .sort_action()
         .expect("sortable exported table column should expose a header action")

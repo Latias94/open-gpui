@@ -6,6 +6,14 @@ status: active
 
 # Log
 
+- 2026-06-24: Started the Table two-axis viewport follow-up from
+  `docs/plans/2026-06-24-001-feat-ui-table-two-axis-virtualization-plan.md`. `ui_core` now has a
+  renderer-neutral `GridViewport2D` plus `resolve_grid_viewport_2d`, and `ui_components::Table`
+  exposes the combined row/center-column viewport when both axes are available without merging the
+  underlying row and column virtualizer contracts. Focused core tests cover empty axes, clamped
+  offsets, stable keys, and overscan behavior; focused gallery tests now prove the `row-pinning`
+  sample still keeps wheel containment while surfacing the combined viewport contract. Next action
+  is to finish the remaining docs / verification refresh and commit the slice.
 - 2026-06-23: Implemented the Table row-pinning slice from
   `docs/plans/2026-06-23-009-feat-ui-table-row-pinning-plan.md`. `ui_core::TableState` now carries
   `TableRowPinning`, keep-pinned/page-only policy, and resolved `TableRowRegions`; `ui_components`

@@ -240,6 +240,11 @@ verified_by:
   virtualization. Later Table follow-ups are custom aggregation callbacks, row selection variants,
   cell editing, global faceting, concrete faceted filter UI, and standalone headless extraction if
   cross-framework pressure appears.
+- In progress: Started the two-dimensional Table viewport follow-up. `ui_core` now has
+  `GridViewport2D` plus `resolve_grid_viewport_2d`, `ui_components::TableRenderPlan` exposes the
+  combined row/center-column viewport when both axes are available, and the focused gallery tests
+  now cover the row-pinning sample's combined two-axis contract alongside the existing
+  center-column and row-pinning smoke gates.
 - Blocked: None.
 - Next action: Validate the engineering wiki bundle, then stage and commit the row-pinning slice.
 

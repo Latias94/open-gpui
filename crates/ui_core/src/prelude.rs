@@ -11,6 +11,7 @@ pub use crate::{
     geometry::{
         UiEdges, UiPoint, UiPx, UiRect, UiSize, ui_edges, ui_point, ui_px, ui_rect, ui_size,
     },
+    grid_viewport::{GridViewport2D, resolve_grid_viewport_2d},
     overlay::{
         DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
         FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,
