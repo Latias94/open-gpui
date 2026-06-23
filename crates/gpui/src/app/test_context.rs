@@ -5,7 +5,8 @@ use crate::{
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
     TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
+    WindowHandle, WindowOptions, app::GpuiMode, platform::RequestFrameOptions,
+    window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -788,6 +789,13 @@ impl VisualTestContext {
     /// Wait until there are no more pending tasks.
     pub fn run_until_parked(&self) {
         self.cx.background_executor.run_until_parked();
+    }
+
+    /// Simulates the platform delivering a frame request.
+    pub fn simulate_frame(&mut self, options: RequestFrameOptions) -> bool {
+        let handled = self.test_window(self.window).simulate_frame(options);
+        self.background_executor.run_until_parked();
+        handled
     }
 
     /// Dispatch the action to the currently focused node.

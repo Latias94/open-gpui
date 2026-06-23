@@ -30,6 +30,7 @@ pub(crate) struct TestWindowState {
     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     hover_status_change_callback: Option<Box<dyn FnMut(bool)>>,
+    request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
@@ -84,6 +85,7 @@ impl TestWindow {
             input_callback: None,
             active_status_change_callback: None,
             hover_status_change_callback: None,
+            request_frame_callback: None,
             resize_callback: None,
             moved_callback: None,
             input_handler: None,
@@ -135,6 +137,18 @@ impl TestWindow {
         let result = callback(event);
         self.0.lock().input_callback = Some(callback);
         !result.propagate
+    }
+
+    /// Simulates the platform delivering a frame request.
+    pub fn simulate_frame(&self, options: RequestFrameOptions) -> bool {
+        let mut lock = self.0.lock();
+        let Some(mut callback) = lock.request_frame_callback.take() else {
+            return false;
+        };
+        drop(lock);
+        callback(options);
+        self.0.lock().request_frame_callback = Some(callback);
+        true
     }
 }
 
@@ -288,7 +302,9 @@ impl PlatformWindow for TestWindow {
         self.0.lock().is_fullscreen
     }
 
-    fn on_request_frame(&self, _callback: Box<dyn FnMut(RequestFrameOptions)>) {}
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
+        self.0.lock().request_frame_callback = Some(callback);
+    }
 
     fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>) {
         self.0.lock().input_callback = Some(callback)

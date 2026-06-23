@@ -2,8 +2,8 @@ use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockPolicyError, DockSpaceId,
     DockViewportActivationTransaction, DockViewportCloseOutcome, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportFocusRequest, DockViewportRouteSelectionSource, DockViewportShouldCloseOutcome,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    DockViewportFocusRequest, DockViewportRestoreReadiness, DockViewportRouteSelectionSource,
+    DockViewportShouldCloseOutcome, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
     viewport_registry::{
         DockViewportInputMask, DockViewportPlatformRequests, DockViewportRouteUnavailableReason,
         DockViewportSnapshot, DockViewportStaleReason,
@@ -19,6 +19,8 @@ use open_gpui::{
 pub struct DockViewportRuntimeStatus {
     /// Platform viewport capabilities sampled by the caller, when available.
     pub platform_capabilities: Option<DockViewportPlatformCapabilityRecord>,
+    /// Latest placement restore readiness check, when the caller requested one.
+    pub placement_restore: Option<DockViewportRestoreReadinessRecord>,
     /// Current lifecycle/readiness records for registered platform viewports.
     pub viewport_lifecycle: Vec<DockViewportLifecycleRecord>,
     /// Most recent viewport route resolved for a rendered drop.
@@ -455,6 +457,15 @@ pub enum DockViewportTearOffPlacementRecord {
     DragGeometry,
 }
 
+/// Read-only diagnostic snapshot for a saved-placement restore check.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DockViewportRestoreReadinessRecord {
+    /// Number of saved placement entries with a currently registered runtime window.
+    pub matched: usize,
+    /// Number of saved placement entries without a currently registered runtime window.
+    pub missing: usize,
+}
+
 impl DockViewportRuntimeStatus {
     /// Attaches the current platform viewport capability snapshot to this diagnostic status.
     pub fn with_platform_capabilities(
@@ -471,6 +482,22 @@ impl DockViewportRuntimeStatus {
     ) -> Self {
         self.viewport_lifecycle = viewport_lifecycle;
         self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_placement_restore(
+        mut self,
+        placement_restore: Option<DockViewportRestoreReadiness>,
+    ) -> Self {
+        self.placement_restore = placement_restore.map(DockViewportRestoreReadinessRecord::from);
+        self
+    }
+
+    pub(crate) fn record_placement_restore(
+        &mut self,
+        placement_restore: Option<DockViewportRestoreReadiness>,
+    ) {
+        self.placement_restore = placement_restore.map(DockViewportRestoreReadinessRecord::from);
     }
 
     pub(crate) fn record_route(
@@ -542,6 +569,15 @@ impl DockViewportRuntimeStatus {
             .is_some_and(|sync| sync.window_id == window_id)
         {
             self.last_platform_sync = None;
+        }
+    }
+}
+
+impl From<DockViewportRestoreReadiness> for DockViewportRestoreReadinessRecord {
+    fn from(readiness: DockViewportRestoreReadiness) -> Self {
+        Self {
+            matched: readiness.matched,
+            missing: readiness.missing,
         }
     }
 }
@@ -896,6 +932,41 @@ mod tests {
                 live_window_move: false,
                 no_input_windows: true,
                 hovered_window_ignores_no_input: true,
+            })
+        );
+    }
+
+    #[test]
+    fn runtime_status_attaches_placement_restore_snapshot() {
+        let status = DockViewportRuntimeStatus::default().with_placement_restore(Some(
+            DockViewportRestoreReadiness {
+                matched: 2,
+                missing: 1,
+            },
+        ));
+
+        assert_eq!(
+            status.placement_restore,
+            Some(DockViewportRestoreReadinessRecord {
+                matched: 2,
+                missing: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn placement_restore_record_is_copyable_from_runtime_check() {
+        let mut status = DockViewportRuntimeStatus::default();
+        status.record_placement_restore(Some(DockViewportRestoreReadiness {
+            matched: 3,
+            missing: 0,
+        }));
+
+        assert_eq!(
+            status.placement_restore,
+            Some(DockViewportRestoreReadinessRecord {
+                matched: 3,
+                missing: 0,
             })
         );
     }

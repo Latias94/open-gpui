@@ -6,7 +6,8 @@ use open_gpui::{
 use open_gpui_docking::{
     DockController, DockItemId, DockLayout, DockLayoutCentralRegion, DockLayoutSpace, DockPanel,
     DockPanelDescriptor, DockSpaceId, DockViewportClosePolicy, DockViewportPlacement,
-    DockViewportPlacementLayout, DockViewportPlatformCapabilityRecord, DockViewportRuntimeHandle,
+    DockViewportPlacementLayout, DockViewportPlatformCapabilityRecord,
+    DockViewportRestoreReadinessRecord, DockViewportRuntimeHandle,
     DockViewportTearOffPlacementRecord, DockViewportWindowBounds, EditorDockLayoutSpec,
 };
 use open_gpui_platform::application;
@@ -172,6 +173,10 @@ impl Render for RuntimeStatusPanel {
                 format!(
                     "placement facts: {}",
                     placement_capability_summary(status.platform_capabilities.as_ref())
+                ),
+                format!(
+                    "placement restore: {}",
+                    placement_restore_summary(status.placement_restore.as_ref())
                 ),
                 format!(
                     "last drop: {}",
@@ -526,6 +531,17 @@ fn tear_off_placement_summary(source: Option<&DockViewportTearOffPlacementRecord
         Some(DockViewportTearOffPlacementRecord::DragGeometry) => "drag-geometry",
         None => "unavailable",
     }
+}
+
+fn placement_restore_summary(readiness: Option<&DockViewportRestoreReadinessRecord>) -> String {
+    readiness
+        .map(|readiness| {
+            format!(
+                "matched={}, missing={}",
+                readiness.matched, readiness.missing
+            )
+        })
+        .unwrap_or_else(|| "unavailable".to_string())
 }
 
 impl DemoPanel {
@@ -1593,6 +1609,14 @@ mod tests {
         );
         assert_eq!(route_capability_summary(None), "unavailable");
         assert_eq!(placement_capability_summary(None), "unavailable");
+        assert_eq!(
+            placement_restore_summary(Some(&DockViewportRestoreReadinessRecord {
+                matched: 2,
+                missing: 1,
+            })),
+            "matched=2, missing=1"
+        );
+        assert_eq!(placement_restore_summary(None), "unavailable");
         assert_eq!(
             tear_off_placement_summary(Some(&DockViewportTearOffPlacementRecord::Suggested)),
             "suggested"

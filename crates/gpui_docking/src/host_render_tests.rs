@@ -5,8 +5,8 @@ use crate::{
     debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{
-    AppContext as _, Entity, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext,
-    px, size,
+    AppContext as _, Entity, Focusable, Modifiers, MouseButton, RequestFrameOptions,
+    TestAppContext, VisualTestContext, px, size,
 };
 use slotmap::Key;
 
@@ -100,6 +100,44 @@ fn drop_guides_render_while_tab_drag_is_active(cx: &mut TestAppContext) {
             "{zone:?} guide should have visible bounds"
         );
     }
+}
+
+#[open_gpui::test]
+fn host_scene_expiry_watch_survives_manual_frame_callbacks(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a", "b"]);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        open_gpui::point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert!(visual.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        ..Default::default()
+    }));
+    assert!(visual.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        ..Default::default()
+    }));
 }
 
 #[open_gpui::test]

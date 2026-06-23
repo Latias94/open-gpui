@@ -696,7 +696,7 @@ impl DockHost {
                     // so a normally repainted host can publish a newer token first.
                     window.on_next_frame(move |window, _| {
                         let runtime = runtime.clone();
-                        window.request_animation_frame();
+                        window.refresh();
                         window.on_next_frame(move |window, app| {
                             if runtime.expire_viewport_host_scene_if_not_rendered_after(token, app)
                             {
