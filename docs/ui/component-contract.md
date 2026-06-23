@@ -394,10 +394,11 @@ default path must preserve offset across reconstructed component values.
 
 `TableState` describes renderer-neutral table behavior: stable row ids, nested source rows, row
 lookup, row-model stage vocabulary, selection keyed by row id, column visibility and ordering,
-pinned column regions, sorting, filtering, grouping, built-in aggregation, expansion, and
-pagination. The official table contract now resolves the full pipeline core -> filtered ->
-grouped -> sorted -> expanded -> paginated -> final. Source tree rows remain distinct from
-synthetic group rows: `TableRow` may own child rows, resolved source rows expose depth, parent id,
+pinned column regions, row pinning, sorting, filtering, grouping, built-in aggregation, expansion,
+and pagination. The official table contract now resolves the full pipeline core -> filtered ->
+grouped -> sorted -> expanded -> paginated -> row-region split -> final. Source tree rows remain
+distinct from synthetic group rows: `TableRow` may own child rows, resolved source rows expose
+depth, parent id,
 branch/leaf state, descendant counts, and expansion metadata through `TableTreeRow`, and collapsed
 source descendants stay addressable by stable row id. `TableRow` can also be marked expandable
 before children are loaded, and `TableRowChildrenLoadState` carries caller-owned idle, loading, or
@@ -421,6 +422,13 @@ the caller-owned committed width map keyed by `TableColumnId`. `TableState::reso
 `TableResolvedColumnSizingRegions` after visibility, ordering, and pinning have resolved so
 renderers can read per-column width, min/max bounds, region, start/after offsets, resize
 capability, and region/all-column totals without owning adapter state.
+`TableRowPinning` is caller-owned state with ordered top and bottom row ids. The default
+`TableRowPinningPolicy::KeepPinnedRows` resolves pinned rows from the expanded pre-pagination row
+model so a pinned row can remain visible while the current page changes; `PageOnly` limits pinned
+rows to ids present in the current paginated model. Unknown ids, filtered-out rows, and collapsed
+descendants are ignored, and overlapping raw top/bottom inputs resolve without duplicate final
+rows. `TableResolvedState` exposes `TableRowRegions` plus top, center, and bottom row accessors;
+the final visual model is top + center + bottom while row lookup remains stable for resolved rows.
 
 `VirtualizerState` describes renderer-neutral viewport calculation inputs and outputs rather than a
 concrete scroll element. The neutral contract accepts item count, viewport extent, scroll offset,
@@ -454,6 +462,12 @@ per-column facet metadata so gallery readouts and consumers can distinguish loca
 transforms from app-owned server snapshots. Facet metadata covers deterministic unique value/count
 entries, numeric min/max ranges, and explicit manual/server payloads keyed by column id; concrete
 filter popovers, async option search, and fetching/cache lifecycles remain application-owned.
+For row-pinned tables, `TableRenderPlan` exposes top, center, and bottom `TableRowRenderPlan`
+regions with neutral `TableRowRegion` metadata, while the vertical virtualizer consumes only the
+center region. The GPUI adapter renders top and bottom row bands outside the center body
+`ScrollArea`, keeps `table:{id}:body:{top|center|bottom}` debug selectors stable, and reuses the
+normal row renderer so focus, activation, expansion, pinned-column lanes, and accessibility row
+indexes keep the same payload shape across pinned and center rows.
 
 An official Table entry must satisfy the normal component completion gate: `Table` and `TableState`
 exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
@@ -461,7 +475,7 @@ entry, at least one `gallery:component-table-sample:{id}` rendered selector, sta
 identity, grouping, source-tree expansion, row interaction payloads, and virtualizer behavior, and
 gallery runtime tests for nested scroll containment. Custom aggregation callbacks, sticky headers,
 autosize-by-content, data-source fetch/cache orchestration, global faceting, concrete faceted
-filter controls, row pinning, checkbox/range selection, cell editing, and full two-axis grid
+filter controls, checkbox/range selection, cell editing, and full two-axis grid
 virtualization beyond the pinned center-column window remain follow-up capabilities.
 
 ## Splitter Constraints
@@ -605,12 +619,15 @@ nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.
 aggregate cells, source-tree branches with manual expansion and child-load metadata, pinned
 left/center/right column regions, manual filtering/sorting/pagination modes with pagination
 totals, committed column sizing state, clamped width resolution with region totals/offsets,
-sortable header action payloads, crate-root/prelude exports, table/cell roles, and a vertically
-virtualized GPUI recipe whose body scroll stays inside the table viewport.
+row pinning with top/center/bottom regions, sortable header action payloads, crate-root/prelude
+exports, table/cell roles, and a vertically virtualized GPUI recipe whose body scroll stays inside
+the table viewport.
 For pinned samples, the adapter renders fixed left/right lanes plus a shared horizontal center lane
 backed by `TableCenterColumnWindowPlan`, so off-window center headers and cells are unmounted while
 spacer geometry preserves the full scrollable width. It also ships GPUI resize handles with
 controlled commit callbacks and on-end/on-change resize mode support.
+For row-pinned samples, top and bottom row bands render outside the center vertical scroll area,
+and the center virtualizer counts only center rows.
 Table faceting is a metadata sidecar over configured columns: client facets derive unique
 value/count entries and numeric ranges from the source snapshot while excluding the target column's
 own local filter, and manual facet payloads can replace client-derived summaries for server-owned
@@ -619,7 +636,8 @@ counts without giving the component crate fetch/cache responsibility.
 overscan, total size, and snapshot/restore data in `ui_core`; the Table adapter restores snapshot
 measurements but not captured scroll offsets. Custom aggregate callbacks, sticky headers,
 autosize-by-content, data-source orchestration, global faceting, concrete faceted filter controls,
-row pinning, and full two-axis grid virtualization remain follow-up work.
+checkbox/range selection, cell editing, synthetic summary rows, and full two-axis grid
+virtualization remain follow-up work.
 `StatusCue` and `EmptyState` are official feedback components. They expose resolved feedback
 intent, size, role, metrics, and token intents, while the GPUI adapters own concrete styling and
 rendered debug selectors. `Tree` is now an official rendered component backed by `TreeState`.

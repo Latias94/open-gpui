@@ -23,16 +23,16 @@ use open_gpui_ui_components::{
     TableCellValue, TableCenterColumnWindowPlan, TableColumn, TableColumnFacets, TableColumnId,
     TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
     TableColumnSizingChange, TableExpansionMode, TableFacetValueCount, TableFilter,
-    TableHeaderAction, TablePagination, TableRow, TableRowChildrenLoadState, TableSort,
-    TableSortDirection, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem,
-    TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver,
-    ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
-    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
-    TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList,
-    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRenderPlan,
-    VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
-    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
-    VirtualizerState, active_index_from_str_keys, first_enabled,
+    TableHeaderAction, TablePagination, TableRow, TableRowChildrenLoadState, TableRowPinning,
+    TableRowPinningPolicy, TableRowRegion, TableSort, TableSortDirection, TableStageMode,
+    TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState,
+    TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
+    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
+    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
+    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -457,6 +457,7 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             "facet_metadata",
             "pagination_mode",
             "pagination_totals",
+            "row_pinning_policy",
             "enable_column_resizing",
             "column_resize_mode",
             "column_resize_direction",
@@ -3482,6 +3483,116 @@ fn table_render_plan_exposes_pinned_column_regions() {
 }
 
 #[test]
+fn table_render_plan_exposes_row_pinning_regions() {
+    let state = sample_table_state(12)
+        .with_pagination(TablePagination::new(1, 4))
+        .with_row_pinning(
+            TableRowPinning::new()
+                .pinned_top(["row-0001"])
+                .pinned_bottom(["row-0005", "row-0010"]),
+        );
+    let plan = Table::new("row-pinning-table", "Row pinning table", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .overscan(0)
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    assert_eq!(
+        plan.top_rows()
+            .iter()
+            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .collect::<Vec<_>>(),
+        [("row-0001", TableRowRegion::Top, 0)]
+    );
+    assert_eq!(
+        plan.center_rows()
+            .iter()
+            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .collect::<Vec<_>>(),
+        [
+            ("row-0004", TableRowRegion::Center, 0),
+            ("row-0006", TableRowRegion::Center, 1),
+            ("row-0007", TableRowRegion::Center, 2),
+        ],
+        "the center region should be the current page with pinned duplicates removed"
+    );
+    assert_eq!(
+        plan.bottom_rows()
+            .iter()
+            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .collect::<Vec<_>>(),
+        [
+            ("row-0005", TableRowRegion::Bottom, 0),
+            ("row-0010", TableRowRegion::Bottom, 1),
+        ]
+    );
+    assert_eq!(
+        plan.rendered_rows()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "row-0001", "row-0004", "row-0006", "row-0007", "row-0005", "row-0010",
+        ]
+    );
+    assert_eq!(
+        plan.table()
+            .final_model()
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "row-0001", "row-0004", "row-0006", "row-0007", "row-0005", "row-0010",
+        ],
+        "final visual rows should match the top + center + bottom render order"
+    );
+    assert_eq!(plan.virtualizer().count(), 3);
+    assert_eq!(plan.rendered_row_count(), 6);
+    assert_eq!(plan.visible_row_count(), 6);
+    assert_eq!(plan.aria_row_count(), 7);
+}
+
+#[test]
+fn table_render_plan_respects_page_only_row_pinning_policy() {
+    let state = sample_table_state(12)
+        .with_pagination(TablePagination::new(1, 4))
+        .with_row_pinning(
+            TableRowPinning::new()
+                .pinned_top(["row-0001"])
+                .pinned_bottom(["row-0005", "row-0010"]),
+        )
+        .with_row_pinning_policy(TableRowPinningPolicy::PageOnly);
+    let plan = Table::new(
+        "row-pinning-page-only-table",
+        "Row pinning page-only table",
+        state,
+    )
+    .row_height(ui_px(24.0))
+    .viewport_extent(ui_px(96.0))
+    .overscan(0)
+    .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    assert!(plan.top_rows().is_empty());
+    assert_eq!(
+        plan.center_rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["row-0004", "row-0006", "row-0007"],
+        "outside-page pinned rows should be omitted under page-only policy"
+    );
+    assert_eq!(
+        plan.bottom_rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["row-0005"]
+    );
+    assert_eq!(plan.virtualizer().count(), 3);
+    assert_eq!(plan.aria_row_count(), 5);
+}
+
+#[test]
 fn table_render_plan_exposes_center_column_window_metadata() {
     let plan = Table::new(
         "center-window-table",
@@ -4083,6 +4194,31 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .clone();
     let _prelude_pinned_layout: prelude::TablePinnedLayoutPlan = root_pinned_layout.clone();
     assert_eq!(root_pinned_layout.table_id(), "root-pinned-table");
+    let root_row_pinning: root::TableRowPinning = root::TableRowPinning::new()
+        .pinned_top(["row-a"])
+        .pinned_bottom(["row-b"]);
+    let _prelude_row_pinning: prelude::TableRowPinning = root_row_pinning.clone();
+    let _root_row_pinning_policy: root::TableRowPinningPolicy =
+        root::TableRowPinningPolicy::PageOnly;
+    let _prelude_row_pinning_policy: prelude::TableRowPinningPolicy =
+        prelude::TableRowPinningPolicy::KeepPinnedRows;
+    let _root_row_region: root::TableRowRegion = root::TableRowRegion::Top;
+    let _prelude_row_region: prelude::TableRowRegion = prelude::TableRowRegion::Bottom;
+    let root_row_regions: root::TableRowRegions = root::Table::new(
+        "root-row-pinning-table",
+        "Root row pinning table",
+        root::TableState::new([
+            root::TableRow::new("row-a").with_cell("name", "Alpha"),
+            root::TableRow::new("row-b").with_cell("name", "Beta"),
+        ])
+        .with_columns([root::TableColumn::new("name", "Name")])
+        .with_row_pinning(root_row_pinning.clone()),
+    )
+    .state()
+    .table()
+    .row_regions()
+    .clone();
+    let _prelude_row_regions: prelude::TableRowRegions = root_row_regions;
     let root_center_window: root::TableCenterColumnWindowPlan =
         root::TableCenterColumnWindowPlan::resolve(
             root_pinned_render_plan
@@ -5289,6 +5425,242 @@ fn table_runtime_pinned_body_scrolls_without_moving_parent(cx: &mut open_gpui::T
     assert!(
         viewport.size.width > px(0.0) && first_row_before.top() <= parent_bottom_after.bottom(),
         "pinned body viewport should remain measurable during the test"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_row_pinning_keeps_bands_fixed_while_center_scrolls(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let state = sample_center_window_table_state_with_rows(80).with_row_pinning(
+                TableRowPinning::new()
+                    .pinned_top(["row-0000"])
+                    .pinned_bottom(["row-0079"]),
+            );
+            let table = Table::new(
+                "row-pinning-runtime-table",
+                "Row pinning runtime table",
+                state,
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(120.0))
+            .overscan(2);
+
+            div().size_full().child(
+                div().w(px(480.0)).h(px(240.0)).child(
+                    ScrollArea::new(
+                        "row-pinning-table-parent-scroll",
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .debug_selector(|| "row-pinning-parent-top".into())
+                                    .h(px(72.0))
+                                    .w_full()
+                                    .child("Parent top"),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "row-pinning-table-wrapper".into())
+                                    .h(px(164.0))
+                                    .min_h(px(0.0))
+                                    .overflow_hidden()
+                                    .child(table),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "row-pinning-parent-bottom".into())
+                                    .h(px(240.0))
+                                    .w_full()
+                                    .child("Parent bottom"),
+                            ),
+                    )
+                    .vertical(),
+                ),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("table:row-pinning-runtime-table:body:top")
+            .is_some(),
+        "top row-pinning band should expose a stable debug selector"
+    );
+    assert!(
+        cx.debug_bounds("table:row-pinning-runtime-table:body:center")
+            .is_some(),
+        "center row-pinning band should expose a stable debug selector"
+    );
+    assert!(
+        cx.debug_bounds("table:row-pinning-runtime-table:body:bottom")
+            .is_some(),
+        "bottom row-pinning band should expose a stable debug selector"
+    );
+    let top_row_before = cx
+        .debug_bounds("table:row-pinning-runtime-table:row:row-0000")
+        .expect("top pinned row should render before scrolling");
+    let bottom_row_before = cx
+        .debug_bounds("table:row-pinning-runtime-table:row:row-0079")
+        .expect("bottom pinned row should render before scrolling");
+    let parent_bottom_before = cx
+        .debug_bounds("row-pinning-parent-bottom")
+        .expect("parent bottom should render before table scrolling");
+    let top_name_before = cx
+        .debug_bounds("table:row-pinning-runtime-table:cell:row-0000:name")
+        .expect("top pinned row left-pinned cell should render before horizontal scrolling");
+    let top_center_viewport = cx
+        .debug_bounds("scroll-area:table:row-pinning-runtime-table:row-center-scroll:row-0000")
+        .expect("top pinned row should expose a horizontal center lane");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: top_center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-440.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let top_name_after_horizontal = cx
+        .debug_bounds("table:row-pinning-runtime-table:cell:row-0000:name")
+        .expect("top pinned row left-pinned cell should stay mounted after horizontal scrolling");
+    assert_eq!(
+        top_name_after_horizontal.left(),
+        top_name_before.left(),
+        "left-pinned cells inside pinned rows should not move with the center lane"
+    );
+    assert!(
+        cx.debug_bounds("table:row-pinning-runtime-table:cell:row-0000:metric_05")
+            .is_some(),
+        "horizontally scrolled pinned rows should reveal far-right center cells"
+    );
+    let _center_viewport = cx
+        .debug_bounds("scroll-area:table:row-pinning-runtime-table:body-scroll")
+        .expect("center body should expose the vertical scroll viewport");
+    let center_row_cell = cx
+        .debug_bounds("table:row-pinning-runtime-table:cell:row-0001:name")
+        .expect("first center row left-pinned cell should render before center scrolling");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: center_row_cell.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let top_row_after = cx
+        .debug_bounds("table:row-pinning-runtime-table:row:row-0000")
+        .expect("top pinned row should remain mounted after center scrolling");
+    let bottom_row_after = cx
+        .debug_bounds("table:row-pinning-runtime-table:row:row-0079")
+        .expect("bottom pinned row should remain mounted after center scrolling");
+    let parent_bottom_after = cx
+        .debug_bounds("row-pinning-parent-bottom")
+        .expect("parent bottom should remain mounted after center scrolling");
+    assert_eq!(
+        top_row_after.top(),
+        top_row_before.top(),
+        "top pinned rows should stay fixed while center rows scroll"
+    );
+    assert_eq!(
+        bottom_row_after.top(),
+        bottom_row_before.top(),
+        "bottom pinned rows should stay fixed while center rows scroll"
+    );
+    assert_eq!(
+        parent_bottom_after.top(),
+        parent_bottom_before.top(),
+        "vertical wheel input inside row-pinned Table should not move the outer page"
+    );
+    assert!(
+        cx.debug_bounds("table:row-pinning-runtime-table:row:row-0011")
+            .is_some(),
+        "center rows should advance independently between pinned bands"
+    );
+    assert!(
+        cx.debug_bounds("table:row-pinning-runtime-table:cell:row-0011:metric_05")
+            .is_some(),
+        "new center rows should consume the current horizontal center window"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_row_pinning_keyboard_navigation_scrolls_to_unrendered_center_row(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let state = sample_center_window_table_state_with_rows(80)
+                .with_row_pinning(TableRowPinning::new().pinned_top(["row-0000"]));
+            let table = Table::new(
+                "row-pinning-keyboard-table",
+                "Row pinning keyboard table",
+                state,
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(120.0))
+            .overscan(2);
+
+            div().size_full().child(
+                div()
+                    .w(px(480.0))
+                    .h(px(164.0))
+                    .min_h(px(0.0))
+                    .overflow_hidden()
+                    .child(table),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let top_row_before = cx
+        .debug_bounds("table:row-pinning-keyboard-table:row:row-0000")
+        .expect("top pinned row should render before keyboard navigation");
+    assert!(
+        cx.debug_bounds("table:row-pinning-keyboard-table:row:row-0079")
+            .is_none(),
+        "far center row should start outside the rendered virtual window"
+    );
+
+    cx.simulate_click(top_row_before.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.simulate_keystrokes("end");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let top_row_after = cx
+        .debug_bounds("table:row-pinning-keyboard-table:row:row-0000")
+        .expect("top pinned row should remain mounted after keyboard navigation");
+    assert_eq!(
+        top_row_after.top(),
+        top_row_before.top(),
+        "keyboard navigation into the center region should not move the top pinned band"
+    );
+    assert!(
+        cx.debug_bounds("table:row-pinning-keyboard-table:row:row-0079")
+            .is_some(),
+        "End should scroll an unrendered center row into the center virtual window"
     );
 }
 

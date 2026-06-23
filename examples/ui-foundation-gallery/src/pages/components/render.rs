@@ -2418,6 +2418,20 @@ pub(crate) fn component_table_state_row(
         ));
     }
 
+    if summary.pinned_top_rows > 0 || summary.pinned_bottom_rows > 0 {
+        row = row.child(format!(
+            "row pinning {}-{}-{} / {}",
+            summary.pinned_top_rows,
+            summary.pinned_center_rows,
+            summary.pinned_bottom_rows,
+            if summary.row_pinning_page_only {
+                "page-only"
+            } else {
+                "keep-pinned"
+            }
+        ));
+    }
+
     if summary.pinned_left_columns > 0 || summary.pinned_right_columns > 0 {
         row = row.child(format!(
             "pinned {}-{}-{} / widths {}-{}-{}px / {} resizable columns",

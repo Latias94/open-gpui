@@ -731,6 +731,210 @@ impl TableColumnRegions {
     }
 }
 
+/// Resolved table row lane for row-pinning-aware renderers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TableRowRegion {
+    /// Rows pinned to the top body band.
+    Top,
+    /// Unpinned center rows.
+    Center,
+    /// Rows pinned to the bottom body band.
+    Bottom,
+}
+
+impl TableRowRegion {
+    /// All row regions in render order.
+    pub const ALL: [Self; 3] = [Self::Top, Self::Center, Self::Bottom];
+
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Center => "center",
+            Self::Bottom => "bottom",
+        }
+    }
+}
+
+/// Policy for resolving pinned rows that are outside the current page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableRowPinningPolicy {
+    /// Pinned rows may resolve from the expanded pre-pagination model.
+    KeepPinnedRows,
+    /// Pinned rows resolve only when they are present in the current page.
+    PageOnly,
+}
+
+impl Default for TableRowPinningPolicy {
+    fn default() -> Self {
+        Self::KeepPinnedRows
+    }
+}
+
+/// Caller-owned pinned row state.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TableRowPinning {
+    top: Vec<TableRowId>,
+    bottom: Vec<TableRowId>,
+}
+
+impl TableRowPinning {
+    /// Creates an empty row pinning state.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Applies top-pinned row ids.
+    pub fn pinned_top(mut self, rows: impl IntoIterator<Item = impl Into<TableRowId>>) -> Self {
+        self.top = unique_row_ids(rows);
+        let top = self.top.iter().cloned().collect::<BTreeSet<_>>();
+        self.bottom.retain(|row| !top.contains(row));
+        self
+    }
+
+    /// Applies bottom-pinned row ids.
+    pub fn pinned_bottom(mut self, rows: impl IntoIterator<Item = impl Into<TableRowId>>) -> Self {
+        self.bottom = unique_row_ids(rows);
+        let bottom = self.bottom.iter().cloned().collect::<BTreeSet<_>>();
+        self.top.retain(|row| !bottom.contains(row));
+        self
+    }
+
+    /// Returns top-pinned row ids.
+    pub fn top(&self) -> &[TableRowId] {
+        &self.top
+    }
+
+    /// Returns bottom-pinned row ids.
+    pub fn bottom(&self) -> &[TableRowId] {
+        &self.bottom
+    }
+
+    /// Returns true when no rows are pinned.
+    pub fn is_empty(&self) -> bool {
+        self.top.is_empty() && self.bottom.is_empty()
+    }
+}
+
+/// Resolved visible rows split into row-pinning regions.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TableRowRegions {
+    top: Vec<TableResolvedRow>,
+    center: Vec<TableResolvedRow>,
+    bottom: Vec<TableResolvedRow>,
+}
+
+impl TableRowRegions {
+    fn from_models(
+        expanded_rows: &[TableResolvedRow],
+        paginated_rows: &[TableResolvedRow],
+        pinning: &TableRowPinning,
+        policy: TableRowPinningPolicy,
+    ) -> Self {
+        if pinning.is_empty() {
+            return Self {
+                top: Vec::new(),
+                center: paginated_rows.to_vec(),
+                bottom: Vec::new(),
+            };
+        }
+
+        let lookup_rows = match policy {
+            TableRowPinningPolicy::KeepPinnedRows => expanded_rows,
+            TableRowPinningPolicy::PageOnly => paginated_rows,
+        };
+        let mut top_seen = BTreeSet::new();
+        let top_ids = pinning
+            .top()
+            .iter()
+            .filter(|row_id| top_seen.insert((*row_id).clone()))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let top = lookup_rows
+            .iter()
+            .filter(|row| top_ids.contains(row.id()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let top_ids = top
+            .iter()
+            .map(|row| row.id().clone())
+            .collect::<BTreeSet<_>>();
+
+        let mut bottom_seen = BTreeSet::new();
+        let bottom_ids = pinning
+            .bottom()
+            .iter()
+            .filter(|row_id| !top_ids.contains(*row_id))
+            .filter(|row_id| bottom_seen.insert((*row_id).clone()))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let bottom = lookup_rows
+            .iter()
+            .filter(|row| bottom_ids.contains(row.id()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let pinned_ids = top
+            .iter()
+            .chain(bottom.iter())
+            .map(|row| row.id().clone())
+            .collect::<BTreeSet<_>>();
+        let center = paginated_rows
+            .iter()
+            .filter(|row| !pinned_ids.contains(row.id()))
+            .cloned()
+            .collect();
+
+        Self {
+            top,
+            center,
+            bottom,
+        }
+    }
+
+    /// Returns top-pinned rows.
+    pub fn top(&self) -> &[TableResolvedRow] {
+        &self.top
+    }
+
+    /// Returns unpinned center rows.
+    pub fn center(&self) -> &[TableResolvedRow] {
+        &self.center
+    }
+
+    /// Returns bottom-pinned rows.
+    pub fn bottom(&self) -> &[TableResolvedRow] {
+        &self.bottom
+    }
+
+    /// Returns rows for a region.
+    pub fn region(&self, region: TableRowRegion) -> &[TableResolvedRow] {
+        match region {
+            TableRowRegion::Top => self.top(),
+            TableRowRegion::Center => self.center(),
+            TableRowRegion::Bottom => self.bottom(),
+        }
+    }
+
+    /// Returns the total number of visual body rows across all regions.
+    pub fn len(&self) -> usize {
+        self.top.len() + self.center.len() + self.bottom.len()
+    }
+
+    /// Returns true when all row regions are empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn flattened(&self) -> Vec<TableResolvedRow> {
+        self.top
+            .iter()
+            .chain(self.center.iter())
+            .chain(self.bottom.iter())
+            .cloned()
+            .collect()
+    }
+}
+
 /// Resolved sizing metadata for one visible table column.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableResolvedColumnSizing {
@@ -1734,6 +1938,8 @@ pub struct TableState {
     column_order: Vec<TableColumnId>,
     column_pinning: TableColumnPinning,
     column_sizing: TableColumnSizing,
+    row_pinning: TableRowPinning,
+    row_pinning_policy: TableRowPinningPolicy,
     rows: Arc<[TableRow]>,
     rows_identity: u64,
     sorting: Vec<TableSort>,
@@ -1756,6 +1962,8 @@ impl PartialEq for TableState {
             && self.column_order == other.column_order
             && self.column_pinning == other.column_pinning
             && self.column_sizing == other.column_sizing
+            && self.row_pinning == other.row_pinning
+            && self.row_pinning_policy == other.row_pinning_policy
             && self.rows.as_ref() == other.rows.as_ref()
             && self.sorting == other.sorting
             && self.sorting_mode == other.sorting_mode
@@ -1782,6 +1990,8 @@ impl TableState {
             column_order: Vec::new(),
             column_pinning: TableColumnPinning::default(),
             column_sizing: TableColumnSizing::default(),
+            row_pinning: TableRowPinning::default(),
+            row_pinning_policy: TableRowPinningPolicy::default(),
             rows: rows.into(),
             rows_identity: next_table_rows_identity(),
             sorting: Vec::new(),
@@ -1817,6 +2027,21 @@ impl TableState {
     /// Applies pinned column state.
     pub fn with_column_pinning(mut self, column_pinning: TableColumnPinning) -> Self {
         self.column_pinning = column_pinning;
+        self
+    }
+
+    /// Applies pinned row state.
+    pub fn with_row_pinning(mut self, row_pinning: TableRowPinning) -> Self {
+        self.row_pinning = row_pinning;
+        self
+    }
+
+    /// Applies the pinned row visibility policy.
+    pub const fn with_row_pinning_policy(
+        mut self,
+        row_pinning_policy: TableRowPinningPolicy,
+    ) -> Self {
+        self.row_pinning_policy = row_pinning_policy;
         self
     }
 
@@ -2014,6 +2239,16 @@ impl TableState {
         &self.column_pinning
     }
 
+    /// Returns pinned row state.
+    pub const fn row_pinning(&self) -> &TableRowPinning {
+        &self.row_pinning
+    }
+
+    /// Returns the pinned row visibility policy.
+    pub const fn row_pinning_policy(&self) -> TableRowPinningPolicy {
+        self.row_pinning_policy
+    }
+
     /// Returns committed column sizing state.
     pub const fn column_sizing(&self) -> &TableColumnSizing {
         &self.column_sizing
@@ -2051,6 +2286,8 @@ impl TableState {
             column_order: self.column_order.clone(),
             column_pinning: self.column_pinning.clone(),
             column_sizing: self.column_sizing.clone(),
+            row_pinning: self.row_pinning.clone(),
+            row_pinning_policy: self.row_pinning_policy,
             sorting: self.sorting.clone(),
             sorting_mode: self.sorting_mode,
             filters: self.filters.clone(),
@@ -2159,9 +2396,15 @@ impl TableState {
             TableRowModelStage::Paginated,
             self.pagination.apply(expanded_model.rows()),
         );
+        let row_regions = TableRowRegions::from_models(
+            expanded_model.rows(),
+            paginated_model.rows(),
+            &self.row_pinning,
+            self.row_pinning_policy,
+        );
         let final_model = TableRowModel::new_with_lookup(
             TableRowModelStage::Final,
-            paginated_model.rows().to_vec(),
+            row_regions.flattened(),
             expanded_model.rows_by_id().values().cloned(),
         );
 
@@ -2178,6 +2421,8 @@ impl TableState {
             duplicate_row_ids: duplicate_row_ids.into_iter().collect(),
             faceting_mode: self.faceting_mode,
             column_facets,
+            row_pinning_policy: self.row_pinning_policy,
+            row_regions,
             core_model,
             filtered_model,
             grouped_model,
@@ -2282,6 +2527,8 @@ pub struct TableStateCacheKey {
     column_order: Vec<TableColumnId>,
     column_pinning: TableColumnPinning,
     column_sizing: TableColumnSizing,
+    row_pinning: TableRowPinning,
+    row_pinning_policy: TableRowPinningPolicy,
     sorting: Vec<TableSort>,
     sorting_mode: TableStageMode,
     filters: Vec<TableFilter>,
@@ -2339,6 +2586,14 @@ fn unique_column_ids(
         .into_iter()
         .map(Into::into)
         .filter(|column| seen.insert(column.clone()))
+        .collect()
+}
+
+fn unique_row_ids(rows: impl IntoIterator<Item = impl Into<TableRowId>>) -> Vec<TableRowId> {
+    let mut seen = BTreeSet::new();
+    rows.into_iter()
+        .map(Into::into)
+        .filter(|row| seen.insert(row.clone()))
         .collect()
 }
 
@@ -2844,6 +3099,8 @@ pub struct TableResolvedState {
     duplicate_row_ids: Vec<TableRowId>,
     faceting_mode: TableStageMode,
     column_facets: Vec<TableColumnFacets>,
+    row_pinning_policy: TableRowPinningPolicy,
+    row_regions: TableRowRegions,
     core_model: TableRowModel,
     filtered_model: TableRowModel,
     grouped_model: TableRowModel,
@@ -2884,6 +3141,31 @@ impl TableResolvedState {
         self.column_facets
             .iter()
             .find(|facet| facet.column() == column)
+    }
+
+    /// Returns the pinned row visibility policy.
+    pub const fn row_pinning_policy(&self) -> TableRowPinningPolicy {
+        self.row_pinning_policy
+    }
+
+    /// Returns resolved row metadata for pinned and center regions.
+    pub const fn row_regions(&self) -> &TableRowRegions {
+        &self.row_regions
+    }
+
+    /// Returns top-pinned rows.
+    pub fn top_rows(&self) -> &[TableResolvedRow] {
+        self.row_regions.top()
+    }
+
+    /// Returns center rows.
+    pub fn center_rows(&self) -> &[TableResolvedRow] {
+        self.row_regions.center()
+    }
+
+    /// Returns bottom-pinned rows.
+    pub fn bottom_rows(&self) -> &[TableResolvedRow] {
+        self.row_regions.bottom()
     }
 
     /// Returns duplicate source row ids detected during resolution.
@@ -3304,6 +3586,10 @@ mod tests {
             .collect()
     }
 
+    fn row_ids(rows: &[TableResolvedRow]) -> Vec<&str> {
+        rows.iter().map(|row| row.id().as_str()).collect()
+    }
+
     #[test]
     fn row_model_pipeline_names_full_and_v0_stages() {
         assert_eq!(
@@ -3704,6 +3990,190 @@ mod tests {
             state.cache_key(),
             state
                 .with_pagination(TablePagination::manual(0, 1, 30))
+                .cache_key()
+        );
+    }
+
+    #[test]
+    fn row_pinning_state_dedupes_and_moves_rows_between_regions() {
+        let pinning = TableRowPinning::new()
+            .pinned_top(["row-a", "row-b", "row-a"])
+            .pinned_bottom(["row-b", "row-c", "row-c"]);
+
+        assert_eq!(
+            pinning
+                .top()
+                .iter()
+                .map(|row| row.as_str())
+                .collect::<Vec<_>>(),
+            ["row-a"],
+            "bottom pins remove overlapping top pins"
+        );
+        assert_eq!(
+            pinning
+                .bottom()
+                .iter()
+                .map(|row| row.as_str())
+                .collect::<Vec<_>>(),
+            ["row-b", "row-c"]
+        );
+
+        let moved = pinning.pinned_top(["row-c"]);
+        assert_eq!(
+            moved
+                .top()
+                .iter()
+                .map(|row| row.as_str())
+                .collect::<Vec<_>>(),
+            ["row-c"]
+        );
+        assert_eq!(
+            moved
+                .bottom()
+                .iter()
+                .map(|row| row.as_str())
+                .collect::<Vec<_>>(),
+            ["row-b"]
+        );
+    }
+
+    #[test]
+    fn row_pinning_keep_pinned_rows_partitions_final_model_around_page() {
+        let resolved = TableState::new(sample_rows())
+            .with_pagination(TablePagination::new(1, 1))
+            .with_row_pinning(
+                TableRowPinning::new()
+                    .pinned_top(["row-b"])
+                    .pinned_bottom(["row-c"]),
+            )
+            .resolve();
+
+        assert_eq!(
+            resolved.row_pinning_policy(),
+            TableRowPinningPolicy::KeepPinnedRows
+        );
+        assert_eq!(row_ids(resolved.paginated_model().rows()), ["row-a"]);
+        assert_eq!(row_ids(resolved.row_regions().top()), ["row-b"]);
+        assert_eq!(row_ids(resolved.row_regions().center()), ["row-a"]);
+        assert_eq!(row_ids(resolved.row_regions().bottom()), ["row-c"]);
+        assert_eq!(
+            row_ids(resolved.final_model().rows()),
+            ["row-b", "row-a", "row-c"]
+        );
+    }
+
+    #[test]
+    fn row_pinning_page_only_policy_ignores_rows_outside_page() {
+        let resolved = TableState::new(sample_rows())
+            .with_pagination(TablePagination::new(1, 1))
+            .with_row_pinning(
+                TableRowPinning::new()
+                    .pinned_top(["row-b"])
+                    .pinned_bottom(["row-c"]),
+            )
+            .with_row_pinning_policy(TableRowPinningPolicy::PageOnly)
+            .resolve();
+
+        assert_eq!(
+            resolved.row_pinning_policy(),
+            TableRowPinningPolicy::PageOnly
+        );
+        assert!(resolved.row_regions().top().is_empty());
+        assert_eq!(row_ids(resolved.row_regions().center()), ["row-a"]);
+        assert!(resolved.row_regions().bottom().is_empty());
+        assert_eq!(row_ids(resolved.final_model().rows()), ["row-a"]);
+    }
+
+    #[test]
+    fn row_pinning_ignores_unknown_filtered_and_collapsed_rows() {
+        let filtered = TableState::new(sample_rows())
+            .with_filters([TableFilter::contains("team", "ops")])
+            .with_row_pinning(
+                TableRowPinning::new()
+                    .pinned_top(["missing", "row-a"])
+                    .pinned_bottom(["row-c"]),
+            )
+            .with_pagination(TablePagination::disabled())
+            .resolve();
+
+        assert!(filtered.row_regions().top().is_empty());
+        assert_eq!(row_ids(filtered.row_regions().center()), ["row-b"]);
+        assert_eq!(row_ids(filtered.row_regions().bottom()), ["row-c"]);
+        assert_eq!(row_ids(filtered.final_model().rows()), ["row-b", "row-c"]);
+
+        let collapsed = TableState::new(tree_rows())
+            .with_columns([TableColumn::new("name", "Name")])
+            .with_row_pinning(TableRowPinning::new().pinned_top(["pkg-core-test"]))
+            .resolve();
+
+        assert!(
+            collapsed.row_regions().top().is_empty(),
+            "collapsed descendants are not promoted into pinned bands"
+        );
+        assert_eq!(row_ids(collapsed.final_model().rows()), ["pkg", "docs"]);
+        assert!(
+            collapsed
+                .final_model()
+                .row(&TableRowId::new("pkg-core-test"))
+                .is_some(),
+            "collapsed descendants remain addressable through row lookup"
+        );
+    }
+
+    #[test]
+    fn row_pinning_preserves_duplicate_source_row_instances_in_visual_order() {
+        let resolved = TableState::new([
+            TableRow::new("duplicate").with_cell("name", "First"),
+            TableRow::new("unique").with_cell("name", "Middle"),
+            TableRow::new("duplicate").with_cell("name", "Second"),
+        ])
+        .with_row_pinning(TableRowPinning::new().pinned_top(["duplicate"]))
+        .resolve();
+
+        assert_eq!(
+            row_ids(resolved.row_regions().top()),
+            ["duplicate", "duplicate"]
+        );
+        assert_eq!(row_ids(resolved.row_regions().center()), ["unique"]);
+        assert!(resolved.row_regions().bottom().is_empty());
+        assert_eq!(
+            row_ids(resolved.final_model().rows()),
+            ["duplicate", "duplicate", "unique"]
+        );
+    }
+
+    #[test]
+    fn overlapping_raw_row_pinning_state_resolves_without_duplicates() {
+        let resolved = TableState::new(sample_rows())
+            .with_row_pinning(TableRowPinning {
+                top: vec![TableRowId::new("row-a"), TableRowId::new("row-a")],
+                bottom: vec![TableRowId::new("row-a"), TableRowId::new("row-c")],
+            })
+            .resolve();
+
+        assert_eq!(row_ids(resolved.row_regions().top()), ["row-a"]);
+        assert_eq!(row_ids(resolved.row_regions().bottom()), ["row-c"]);
+        assert_eq!(
+            row_ids(resolved.final_model().rows()),
+            ["row-a", "row-b", "row-c"]
+        );
+    }
+
+    #[test]
+    fn row_pinning_inputs_participate_in_cache_keys() {
+        let state = TableState::new(sample_rows());
+
+        assert_ne!(
+            state.cache_key(),
+            state
+                .clone()
+                .with_row_pinning(TableRowPinning::new().pinned_top(["row-a"]))
+                .cache_key()
+        );
+        assert_ne!(
+            state.cache_key(),
+            state
+                .with_row_pinning_policy(TableRowPinningPolicy::PageOnly)
                 .cache_key()
         );
     }

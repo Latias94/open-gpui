@@ -9,8 +9,8 @@ use open_gpui_ui_components::{
     OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
     SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableColumnFacets,
     TableColumnId, TableColumnRegion, TableExpansionMode, TableExpansionState,
-    TableRowChildrenLoadState, TableRowId, TableStageMode, ThemeMode, ToggleVariant,
-    TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
+    TableRowChildrenLoadState, TableRowId, TableRowRegion, TableStageMode, ThemeMode,
+    ToggleVariant, TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
     gpui_adapter::{DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state},
 };
 use open_gpui_ui_core::{
@@ -1690,7 +1690,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 
-    assert_eq!(tables.len(), 8);
+    assert_eq!(tables.len(), 9);
     let release_queue = table_sample(tables, "release-queue");
     assert_eq!(release_queue.state.rows().len(), 10_000);
     assert_eq!(
@@ -1931,6 +1931,66 @@ fn components_page_samples_expose_component_metadata() {
             .any(|column| column.id().as_str() == "metric_13")
     );
     assert_eq!(matrix_plan.table().final_model().selected_count(), 1);
+
+    let row_pinning = table_sample(tables, "row-pinning");
+    let row_pinning_plan = row_pinning.render_plan();
+    let row_pinning_summary = row_pinning.state_summary();
+    assert_eq!(row_pinning.state.rows().len(), 96);
+    assert_eq!(row_pinning_summary.core_rows, 96);
+    assert_eq!(row_pinning_summary.final_rows, 14);
+    assert_eq!(row_pinning_summary.pinned_top_rows, 1);
+    assert_eq!(row_pinning_summary.pinned_center_rows, 11);
+    assert_eq!(row_pinning_summary.pinned_bottom_rows, 2);
+    assert!(!row_pinning_summary.row_pinning_page_only);
+    assert_eq!(row_pinning_summary.pinned_left_columns, 1);
+    assert_eq!(row_pinning_summary.pinned_center_columns, 14);
+    assert_eq!(row_pinning_summary.pinned_right_columns, 1);
+    assert_eq!(row_pinning_summary.pinned_left_width_px, 172);
+    assert_eq!(row_pinning_summary.pinned_center_width_px, 1516);
+    assert_eq!(row_pinning_summary.pinned_right_width_px, 148);
+    assert_eq!(row_pinning_summary.total_column_width_px, 1836);
+    assert!(row_pinning_plan.uses_split_pinned_layout());
+    assert_eq!(row_pinning_plan.virtualizer().count(), 11);
+    assert_eq!(row_pinning_plan.aria_row_count(), 15);
+    assert_eq!(
+        row_pinning_plan
+            .table()
+            .top_rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["row-pinning-row-003"]
+    );
+    assert_eq!(
+        row_pinning_plan
+            .table()
+            .center_rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "row-pinning-row-024",
+            "row-pinning-row-025",
+            "row-pinning-row-026",
+            "row-pinning-row-027",
+            "row-pinning-row-028",
+            "row-pinning-row-029",
+            "row-pinning-row-031",
+            "row-pinning-row-032",
+            "row-pinning-row-033",
+            "row-pinning-row-034",
+            "row-pinning-row-035",
+        ]
+    );
+    assert_eq!(
+        row_pinning_plan
+            .table()
+            .bottom_rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["row-pinning-row-030", "row-pinning-row-070"]
+    );
 
     let dependency_tree = table_sample(tables, "dependency-tree");
     let tree_plan = dependency_tree.render_plan();
@@ -2603,6 +2663,71 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         ]
     );
 
+    let row_pinning = table_sample(samples, "row-pinning");
+    let row_pinning_plan = row_pinning.render_plan();
+    let row_pinning_summary = row_pinning.state_summary();
+
+    assert_eq!(row_pinning.id, "row-pinning");
+    assert_eq!(row_pinning.state.rows().len(), 96);
+    assert_eq!(row_pinning.state.pagination().page_index(), 2);
+    assert_eq!(row_pinning.state.pagination().page_size(), 12);
+    assert_eq!(row_pinning_summary.core_rows, 96);
+    assert_eq!(row_pinning_summary.final_rows, 14);
+    assert_eq!(row_pinning_summary.pinned_top_rows, 1);
+    assert_eq!(row_pinning_summary.pinned_center_rows, 11);
+    assert_eq!(row_pinning_summary.pinned_bottom_rows, 2);
+    assert!(!row_pinning_summary.row_pinning_page_only);
+    assert_eq!(
+        row_pinning_summary.visible_rows,
+        row_pinning_plan.visible_row_count()
+    );
+    assert_eq!(
+        row_pinning_summary.rendered_rows,
+        row_pinning_plan.rendered_row_count()
+    );
+    assert_eq!(row_pinning_plan.virtualizer().count(), 11);
+    assert_eq!(row_pinning_plan.aria_row_count(), 15);
+    assert!(row_pinning_plan.uses_split_pinned_layout());
+    assert_eq!(
+        row_pinning_plan
+            .top_rows()
+            .iter()
+            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .collect::<Vec<_>>(),
+        [("row-pinning-row-003", TableRowRegion::Top, 0)]
+    );
+    assert_eq!(
+        row_pinning_plan
+            .center_rows()
+            .iter()
+            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .collect::<Vec<_>>(),
+        [
+            ("row-pinning-row-024", TableRowRegion::Center, 0),
+            ("row-pinning-row-025", TableRowRegion::Center, 1),
+            ("row-pinning-row-026", TableRowRegion::Center, 2),
+            ("row-pinning-row-027", TableRowRegion::Center, 3),
+            ("row-pinning-row-028", TableRowRegion::Center, 4),
+            ("row-pinning-row-029", TableRowRegion::Center, 5),
+            ("row-pinning-row-031", TableRowRegion::Center, 6),
+            ("row-pinning-row-032", TableRowRegion::Center, 7),
+            ("row-pinning-row-033", TableRowRegion::Center, 8),
+            ("row-pinning-row-034", TableRowRegion::Center, 9),
+            ("row-pinning-row-035", TableRowRegion::Center, 10),
+        ]
+    );
+    assert_eq!(
+        row_pinning_plan
+            .bottom_rows()
+            .iter()
+            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .collect::<Vec<_>>(),
+        [
+            ("row-pinning-row-030", TableRowRegion::Bottom, 0),
+            ("row-pinning-row-070", TableRowRegion::Bottom, 1),
+        ]
+    );
+
     let dependency_tree = table_sample(samples, "dependency-tree");
     let tree_plan = dependency_tree.render_plan();
     let tree_summary = dependency_tree.state_summary();
@@ -3043,6 +3168,10 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"open_gpui_ui_components::TableColumnPinning"));
     assert!(signals.contains(&"open_gpui_ui_components::TableColumnRegion"));
     assert!(signals.contains(&"open_gpui_ui_components::TableExpansionState"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableRowPinning"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableRowPinningPolicy"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableRowRegion"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableRowRegions"));
     assert!(signals.contains(&"open_gpui_ui_components::Tree"));
     assert!(signals.contains(&"open_gpui_ui_components::TreeState"));
     assert!(signals.contains(&"open_gpui_ui_components::VirtualizedList"));
@@ -3569,6 +3698,11 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
         cx.debug_bounds("gallery:component-table-sample:release-matrix")
             .is_some(),
         "expected focused Table mode to render the wide matrix Table sample"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-table-sample:row-pinning")
+            .is_some(),
+        "expected focused Table mode to render the row-pinning Table sample"
     );
     assert!(
         cx.debug_bounds("gallery:component-button-sample:default")
@@ -4426,6 +4560,156 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
     assert!(
         cx.debug_bounds(&far_cell).is_some(),
         "expected the far metric cell to enter the rendered center window after horizontal scrolling"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let sample = pages::components::table_samples(ThemeTokens::default())
+        .iter()
+        .find(|sample| sample.id == "row-pinning")
+        .expect("row-pinning table sample should exist");
+    let plan = sample.render_plan();
+    assert_eq!(plan.top_rows().len(), 1);
+    assert_eq!(plan.center_rows().len(), 11);
+    assert_eq!(plan.bottom_rows().len(), 2);
+    assert!(
+        plan.uses_split_pinned_layout(),
+        "row-pinning should combine row-pinned bands with pinned column lanes"
+    );
+
+    let top_row_key = plan.top_rows()[0].render_key().to_owned();
+    let bottom_row_key = plan.bottom_rows()[1].render_key().to_owned();
+    let center_cell_selectors = plan
+        .center_rows()
+        .iter()
+        .map(|row| {
+            format!(
+                "table:component-table:row-pinning:cell:{}:name",
+                row.render_key()
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, "gallery:component-table-sample:row-pinning");
+
+    assert!(
+        cx.debug_bounds("table:component-table:row-pinning:body:top")
+            .is_some(),
+        "expected row-pinning top band to render"
+    );
+    assert!(
+        cx.debug_bounds("table:component-table:row-pinning:body:center")
+            .is_some(),
+        "expected row-pinning center band to render"
+    );
+    assert!(
+        cx.debug_bounds("table:component-table:row-pinning:body:bottom")
+            .is_some(),
+        "expected row-pinning bottom band to render"
+    );
+    let collect_center_cells = |cx: &mut VisualTestContext| {
+        center_cell_selectors
+            .iter()
+            .enumerate()
+            .filter_map(|(index, selector)| {
+                cx.debug_bounds(selector)
+                    .map(|bounds| (index, selector.clone(), bounds))
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let center_rows_before = collect_center_cells(cx);
+    assert!(
+        !center_rows_before.is_empty(),
+        "expected row-pinning center body to render at least one center row cell"
+    );
+    let interaction_target = scroll_page_selector_into_view(&shell, cx, &center_rows_before[0].1);
+
+    let sample_before = bounds(cx, "gallery:component-table-sample:row-pinning");
+    let top_row_before = bounds(
+        cx,
+        &format!("table:component-table:row-pinning:row:{top_row_key}"),
+    );
+    let bottom_row_before = bounds(
+        cx,
+        &format!("table:component-table:row-pinning:row:{bottom_row_key}"),
+    );
+    let top_name_before = bounds(
+        cx,
+        &format!("table:component-table:row-pinning:cell:{top_row_key}:name"),
+    );
+    let center_rows_before = collect_center_cells(cx);
+    cx.simulate_event(ScrollWheelEvent {
+        position: interaction_target.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after = bounds(cx, "gallery:component-table-sample:row-pinning");
+    let top_row_after = bounds(
+        cx,
+        &format!("table:component-table:row-pinning:row:{top_row_key}"),
+    );
+    let bottom_row_after = bounds(
+        cx,
+        &format!("table:component-table:row-pinning:row:{bottom_row_key}"),
+    );
+    let center_rows_after = collect_center_cells(cx);
+    assert!(
+        !center_rows_after.is_empty(),
+        "expected row-pinning center body to keep rendering center row cells after scrolling"
+    );
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected row-pinning Table wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert_eq!(
+        top_row_after.top(),
+        top_row_before.top(),
+        "top pinned row band should stay fixed while center rows scroll"
+    );
+    assert_eq!(
+        bottom_row_after.top(),
+        bottom_row_before.top(),
+        "bottom pinned row band should stay fixed while center rows scroll"
+    );
+    assert_eq!(
+        bounds(
+            cx,
+            &format!("table:component-table:row-pinning:cell:{top_row_key}:name"),
+        )
+        .left(),
+        top_name_before.left(),
+        "left-pinned cells inside pinned rows should stay fixed while center rows scroll"
+    );
+    let center_window_changed = center_rows_before
+        .iter()
+        .map(|(index, _, _)| *index)
+        .collect::<Vec<_>>()
+        != center_rows_after
+            .iter()
+            .map(|(index, _, _)| *index)
+            .collect::<Vec<_>>();
+    let center_row_moved = center_rows_before.iter().any(|(_, selector, before)| {
+        center_rows_after.iter().any(|(_, after_selector, after)| {
+            after_selector == selector && after.top() != before.top()
+        })
+    });
+    assert!(
+        center_window_changed || center_row_moved,
+        "center rows should move inside the center scroll body; before={center_rows_before:?} after={center_rows_after:?}"
     );
 }
 

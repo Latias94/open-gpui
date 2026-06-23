@@ -6,6 +6,17 @@ status: active
 
 # Log
 
+- 2026-06-23: Implemented the Table row-pinning slice from
+  `docs/plans/2026-06-23-009-feat-ui-table-row-pinning-plan.md`. `ui_core::TableState` now carries
+  `TableRowPinning`, keep-pinned/page-only policy, and resolved `TableRowRegions`; `ui_components`
+  exposes row-region render metadata, uses the center region as the only vertical virtualizer
+  input, and renders fixed top/bottom pinned bands around the center scroll body. The Components
+  gallery now has a `row-pinning` Table sample with row-region readouts and
+  `components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample`. Verified
+  `cargo nextest run -p open-gpui-ui-core table`,
+  `cargo nextest run -p open-gpui-ui-components table`, and
+  `cargo nextest run -p open-gpui-ui-foundation-gallery table`. Next action is docs/memory
+  validation and commit.
 - 2026-06-23: Wrote `docs/plans/2026-06-23-009-feat-ui-table-row-pinning-plan.md` as the next
   Table follow-up. The plan uses TanStack Table's `top` / `center` / `bottom` row pinning model and
   Fret's Rust row-pinning helpers as the main references. Scope is limited to core row pinning

@@ -14,11 +14,11 @@ use open_gpui_ui_core::{
     Role, Sizable, Size, TableCellValue, TableColumn, TableColumnFacets, TableColumnId,
     TableColumnRegion, TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState,
     TableColumnSizing, TableExpansionMode, TableExpansionState, TableResolvedColumnSizing,
-    TableResolvedRow, TableResolvedState, TableRowChildrenLoadState, TableRowId, TableSort,
-    TableSortDirection, TableStageMode, TableState, TableStateCacheKey, TableTreeRow, UiPx,
-    VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState,
-    VirtualizerSnapshot, VirtualizerState, drag_table_column_resize, end_table_column_resize,
-    ui_px,
+    TableResolvedRow, TableResolvedState, TableRowChildrenLoadState, TableRowId, TableRowRegion,
+    TableSort, TableSortDirection, TableStageMode, TableState, TableStateCacheKey, TableTreeRow,
+    UiPx, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
+    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState, drag_table_column_resize,
+    end_table_column_resize, ui_px,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -858,6 +858,7 @@ impl TableCellRenderPlan {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableRowRenderPlan {
     row: TableResolvedRow,
+    region: TableRowRegion,
     render_key: String,
     model_index: usize,
     aria_row_index: usize,
@@ -869,6 +870,7 @@ pub struct TableRowRenderPlan {
 impl TableRowRenderPlan {
     fn new(
         row: TableResolvedRow,
+        region: TableRowRegion,
         render_key: String,
         model_index: usize,
         measurement: VirtualizerItemMeasurement,
@@ -881,6 +883,7 @@ impl TableRowRenderPlan {
 
         Self {
             row,
+            region,
             render_key,
             model_index,
             aria_row_index: model_index + 2,
@@ -900,6 +903,11 @@ impl TableRowRenderPlan {
         self.row.id()
     }
 
+    /// Returns the row-pinning render region.
+    pub const fn region(&self) -> TableRowRegion {
+        self.region
+    }
+
     /// Returns the unique render key used by element ids and virtualizer items.
     pub fn render_key(&self) -> &str {
         &self.render_key
@@ -908,6 +916,11 @@ impl TableRowRenderPlan {
     /// Returns this row's index in the final row model.
     pub const fn model_index(&self) -> usize {
         self.model_index
+    }
+
+    /// Returns this row's index inside its row-pinning region.
+    pub const fn region_index(&self) -> usize {
+        self.measurement.index()
     }
 
     /// Returns the 1-based accessibility row index, including the header row.
@@ -995,7 +1008,9 @@ pub struct TableRenderPlan {
     pagination_row_count: Option<usize>,
     pagination_page_count: Option<usize>,
     faceting_mode: TableStageMode,
+    top_rows: Vec<TableRowRenderPlan>,
     rows: Vec<TableRowRenderPlan>,
+    bottom_rows: Vec<TableRowRenderPlan>,
     role: Role,
     header_row_role: Role,
     column_header_role: Role,
@@ -1029,28 +1044,36 @@ impl TableRenderPlan {
             center_viewport_extent,
             metrics.overscan(),
         );
-        let source_rows = table.final_model().rows();
         let duplicate_row_ids = table
             .duplicate_row_ids()
             .iter()
             .cloned()
             .collect::<BTreeSet<_>>();
-        let rows = virtualizer
-            .items()
-            .iter()
-            .filter_map(|measurement| {
-                source_rows.get(measurement.index()).cloned().map(|row| {
-                    let render_key = row_render_key(&row, &duplicate_row_ids);
-                    TableRowRenderPlan::new(
-                        row,
-                        render_key,
-                        measurement.index(),
-                        measurement.clone(),
-                        &columns,
-                    )
-                })
-            })
-            .collect();
+        let top_row_count = table.top_rows().len();
+        let center_total_row_count = table.center_rows().len();
+        let top_rows = static_row_render_plans(
+            table.top_rows(),
+            TableRowRegion::Top,
+            metrics.row_height(),
+            &columns,
+            &duplicate_row_ids,
+            0,
+        );
+        let rows = virtualized_center_row_render_plans(
+            table.center_rows(),
+            virtualizer.items(),
+            &columns,
+            &duplicate_row_ids,
+            top_row_count,
+        );
+        let bottom_rows = static_row_render_plans(
+            table.bottom_rows(),
+            TableRowRegion::Bottom,
+            metrics.row_height(),
+            &columns,
+            &duplicate_row_ids,
+            top_row_count + center_total_row_count,
+        );
         let pagination = state.pagination();
 
         Self {
@@ -1070,7 +1093,9 @@ impl TableRenderPlan {
             pagination_row_count: pagination.row_count(),
             pagination_page_count: pagination.page_count(),
             faceting_mode: state.faceting_mode(),
+            top_rows,
             rows,
+            bottom_rows,
             role: Role::Table,
             header_row_role: Role::Row,
             column_header_role: Role::ColumnHeader,
@@ -1182,9 +1207,32 @@ impl TableRenderPlan {
             .unwrap_or(UiPx::ZERO)
     }
 
-    /// Returns virtualized rows in render order.
+    /// Returns top-pinned rows in render order.
+    pub fn top_rows(&self) -> &[TableRowRenderPlan] {
+        &self.top_rows
+    }
+
+    /// Returns virtualized center rows in render order.
     pub fn rows(&self) -> &[TableRowRenderPlan] {
         &self.rows
+    }
+
+    /// Returns virtualized center rows in render order.
+    pub fn center_rows(&self) -> &[TableRowRenderPlan] {
+        &self.rows
+    }
+
+    /// Returns bottom-pinned rows in render order.
+    pub fn bottom_rows(&self) -> &[TableRowRenderPlan] {
+        &self.bottom_rows
+    }
+
+    /// Returns all currently rendered rows in visual order.
+    pub fn rendered_rows(&self) -> impl Iterator<Item = &TableRowRenderPlan> {
+        self.top_rows
+            .iter()
+            .chain(self.rows.iter())
+            .chain(self.bottom_rows.iter())
     }
 
     /// Returns the accessibility role for the table root.
@@ -1219,13 +1267,65 @@ impl TableRenderPlan {
 
     /// Returns the number of body rows rendered after overscan.
     pub fn rendered_row_count(&self) -> usize {
-        self.rows.len()
+        self.top_rows.len() + self.rows.len() + self.bottom_rows.len()
     }
 
     /// Returns the visible body row count before overscan.
     pub fn visible_row_count(&self) -> usize {
-        self.virtualizer.visible_items().len()
+        self.top_rows.len() + self.virtualizer.visible_items().len() + self.bottom_rows.len()
     }
+}
+
+fn static_row_render_plans(
+    rows: &[TableResolvedRow],
+    region: TableRowRegion,
+    row_height: UiPx,
+    columns: &[TableColumnRenderPlan],
+    duplicate_row_ids: &BTreeSet<TableRowId>,
+    model_index_start: usize,
+) -> Vec<TableRowRenderPlan> {
+    rows.iter()
+        .enumerate()
+        .map(|(region_index, row)| {
+            let row = row.clone();
+            let render_key = row_render_key(&row, duplicate_row_ids);
+            let model_index = model_index_start + region_index;
+            let measurement = VirtualizerItemMeasurement::new(
+                region_index,
+                VirtualizerItemKey::new(render_key.clone()),
+                row_height * region_index as f32,
+                row_height,
+                false,
+            );
+            TableRowRenderPlan::new(row, region, render_key, model_index, measurement, columns)
+        })
+        .collect()
+}
+
+fn virtualized_center_row_render_plans(
+    rows: &[TableResolvedRow],
+    measurements: &[VirtualizerItemMeasurement],
+    columns: &[TableColumnRenderPlan],
+    duplicate_row_ids: &BTreeSet<TableRowId>,
+    model_index_start: usize,
+) -> Vec<TableRowRenderPlan> {
+    measurements
+        .iter()
+        .filter_map(|measurement| {
+            rows.get(measurement.index()).cloned().map(|row| {
+                let render_key = row_render_key(&row, duplicate_row_ids);
+                let model_index = model_index_start + measurement.index();
+                TableRowRenderPlan::new(
+                    row,
+                    TableRowRegion::Center,
+                    render_key,
+                    model_index,
+                    measurement.clone(),
+                    columns,
+                )
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -1249,21 +1349,20 @@ struct TableRuntime {
 impl TableRuntime {
     fn sync_rows(&mut self, plan: &TableRenderPlan, cx: &mut Context<Self>) {
         let rendered_row_ids = plan
-            .rows()
-            .iter()
+            .rendered_rows()
             .map(|row| row.id().clone())
             .collect::<BTreeSet<_>>();
         self.focus_handles
             .retain(|row_id, _| rendered_row_ids.contains(row_id));
 
-        for row in plan.rows() {
+        for row in plan.rendered_rows() {
             self.focus_handles
                 .entry(row.id().clone())
                 .or_insert_with(|| cx.focus_handle());
         }
 
         if self.focused_row.is_none() {
-            self.focused_row = plan.rows().first().map(|row| row.id().clone());
+            self.focused_row = plan.rendered_rows().next().map(|row| row.id().clone());
         }
     }
 
@@ -1557,19 +1656,19 @@ impl Table {
         metrics: TableMetrics,
         scroll_offset: UiPx,
     ) -> VirtualizerResolvedState {
-        let final_rows = table.final_model().rows();
+        let center_rows = table.center_rows();
         let duplicate_row_ids = table
             .duplicate_row_ids()
             .iter()
             .cloned()
             .collect::<BTreeSet<_>>();
-        let virtualizer = VirtualizerState::new(final_rows.len(), metrics.row_height())
+        let virtualizer = VirtualizerState::new(center_rows.len(), metrics.row_height())
             .with_viewport_extent(metrics.viewport_extent())
             .with_overscan(metrics.overscan())
             .with_scroll_offset(nonnegative_px(scroll_offset));
 
         if let Some(snapshot) = self.snapshot.clone() {
-            let row_keys = final_rows
+            let row_keys = center_rows
                 .iter()
                 .map(|row| row_render_key(row, &duplicate_row_ids));
             return virtualizer
@@ -1580,7 +1679,7 @@ impl Table {
         }
 
         virtualizer.resolve_fixed_window(|index| {
-            let row = &final_rows[index];
+            let row = &center_rows[index];
             VirtualizerItemKey::new(row_render_key(row, &duplicate_row_ids))
         })
     }
@@ -1763,26 +1862,17 @@ impl RenderOnce for Table {
                 resize_config,
                 horizontal_scroll_handle.clone(),
             ))
-            .child(
-                div().flex_1().min_h(px(0.0)).overflow_hidden().child(
-                    ScrollArea::new(
-                        scroll_viewport_id,
-                        render_table_body(
-                            &plan,
-                            horizontal_scroll_handle,
-                            scroll_handle.clone(),
-                            runtime.clone(),
-                            runtime_snapshot,
-                            current_expansion,
-                            on_row_activate,
-                            on_row_expansion_request,
-                        ),
-                    )
-                    .vertical()
-                    .scroll_handle(&scroll_handle)
-                    .with_size(metrics.size()),
-                ),
-            )
+            .child(render_table_body(
+                &plan,
+                scroll_viewport_id,
+                horizontal_scroll_handle,
+                scroll_handle.clone(),
+                runtime.clone(),
+                runtime_snapshot,
+                current_expansion,
+                on_row_activate,
+                on_row_expansion_request,
+            ))
     }
 }
 
@@ -2202,6 +2292,7 @@ fn toggle_table_expansion(
 
 fn render_table_body(
     plan: &TableRenderPlan,
+    scroll_viewport_id: String,
     horizontal_scroll_handle: ScrollHandle,
     vertical_scroll_handle: ScrollHandle,
     runtime: Entity<TableRuntime>,
@@ -2212,25 +2303,132 @@ fn render_table_body(
 ) -> impl IntoElement {
     let table_id = plan.table_id().to_owned();
     let metrics = plan.metrics();
-    let total_size = plan.virtualizer().total_size();
-    let rows = plan.rows().to_vec();
-    let final_rows = Rc::new(plan.table().final_model().rows().to_vec());
     let pinned_layout = plan.pinned_layout().cloned();
     let center_window = if pinned_layout.is_some() {
         plan.center_column_window().cloned().map(Rc::new)
     } else {
         None
     };
+    let final_rows = Rc::new(plan.table().final_model().rows().to_vec());
+    let top_rows = plan.top_rows().to_vec();
+    let center_rows = plan.rows().to_vec();
+    let bottom_rows = plan.bottom_rows().to_vec();
+    let top_row_count = top_rows.len();
+    let center_total_row_count = plan.virtualizer().count();
+    let top_height = metrics.row_height() * top_rows.len() as f32;
+    let center_height = plan.virtualizer().total_size();
+    let bottom_height = metrics.row_height() * bottom_rows.len() as f32;
 
     div()
-        .id(format!("table:{table_id}:body"))
+        .flex_1()
+        .min_h(px(0.0))
+        .overflow_hidden()
+        .flex()
+        .flex_col()
+        .when(!top_rows.is_empty(), |this| {
+            this.child(render_table_row_band(
+                &table_id,
+                TableRowRegion::Top,
+                metrics,
+                top_rows.clone(),
+                top_height,
+                pinned_layout.clone(),
+                center_window.clone(),
+                horizontal_scroll_handle.clone(),
+                vertical_scroll_handle.clone(),
+                runtime.clone(),
+                runtime_snapshot.clone(),
+                final_rows.clone(),
+                top_row_count,
+                center_total_row_count,
+                current_expansion.clone(),
+                on_row_activate.clone(),
+                on_row_expansion_request.clone(),
+            ))
+        })
+        .child(
+            div().flex_1().min_h(px(0.0)).overflow_hidden().child(
+                ScrollArea::new(
+                    scroll_viewport_id,
+                    render_table_row_band(
+                        &table_id,
+                        TableRowRegion::Center,
+                        metrics,
+                        center_rows,
+                        center_height,
+                        pinned_layout.clone(),
+                        center_window.clone(),
+                        horizontal_scroll_handle.clone(),
+                        vertical_scroll_handle.clone(),
+                        runtime.clone(),
+                        runtime_snapshot.clone(),
+                        final_rows.clone(),
+                        top_row_count,
+                        center_total_row_count,
+                        current_expansion.clone(),
+                        on_row_activate.clone(),
+                        on_row_expansion_request.clone(),
+                    ),
+                )
+                .vertical()
+                .scroll_handle(&vertical_scroll_handle)
+                .with_size(metrics.size()),
+            ),
+        )
+        .when(!bottom_rows.is_empty(), |this| {
+            this.child(render_table_row_band(
+                &table_id,
+                TableRowRegion::Bottom,
+                metrics,
+                bottom_rows.clone(),
+                bottom_height,
+                pinned_layout,
+                center_window,
+                horizontal_scroll_handle,
+                vertical_scroll_handle,
+                runtime,
+                runtime_snapshot,
+                final_rows,
+                top_row_count,
+                center_total_row_count,
+                current_expansion,
+                on_row_activate,
+                on_row_expansion_request,
+            ))
+        })
+}
+
+fn render_table_row_band(
+    table_id: &str,
+    region: TableRowRegion,
+    metrics: TableMetrics,
+    rows: Vec<TableRowRenderPlan>,
+    height: UiPx,
+    pinned_layout: Option<TablePinnedLayoutPlan>,
+    center_window: Option<Rc<TableCenterColumnWindowPlan>>,
+    horizontal_scroll_handle: ScrollHandle,
+    vertical_scroll_handle: ScrollHandle,
+    runtime: Entity<TableRuntime>,
+    runtime_snapshot: TableRuntime,
+    final_rows: Rc<Vec<TableResolvedRow>>,
+    top_row_count: usize,
+    center_total_row_count: usize,
+    current_expansion: TableExpansionState,
+    on_row_activate: Option<TableRowActivationHandler>,
+    on_row_expansion_request: Option<TableRowExpansionHandler>,
+) -> AnyElement {
+    let table_id = table_id.to_owned();
+    let region_name = region.as_str();
+    div()
+        .id(format!("table:{table_id}:body:{region_name}"))
         .debug_selector({
             let table_id = table_id.clone();
-            move || format!("table:{table_id}:body")
+            move || format!("table:{table_id}:body:{region_name}")
         })
         .relative()
         .w_full()
-        .h(gpui_px_from_ui(total_size))
+        .h(gpui_px_from_ui(height))
+        .flex_none()
         .children(rows.into_iter().map(move |row| {
             let table_id = table_id.clone();
             let center_window = center_window.clone();
@@ -2248,11 +2446,14 @@ fn render_table_body(
                 focus_handle,
                 focused,
                 final_rows.clone(),
+                top_row_count,
+                center_total_row_count,
                 current_expansion.clone(),
                 on_row_activate.clone(),
                 on_row_expansion_request.clone(),
             )
         }))
+        .into_any_element()
 }
 
 fn render_table_row(
@@ -2267,6 +2468,8 @@ fn render_table_row(
     focus_handle: Option<FocusHandle>,
     focused: bool,
     final_rows: Rc<Vec<TableResolvedRow>>,
+    top_row_count: usize,
+    center_total_row_count: usize,
     current_expansion: TableExpansionState,
     on_row_activate: Option<TableRowActivationHandler>,
     on_row_expansion_request: Option<TableRowExpansionHandler>,
@@ -2401,6 +2604,8 @@ fn render_table_row(
                     &row_for_key,
                     final_rows.as_ref(),
                     vertical_scroll_handle.clone(),
+                    top_row_count,
+                    center_total_row_count,
                     &runtime,
                     current_expansion_for_key.clone(),
                     on_row_activate.clone(),
@@ -2770,6 +2975,8 @@ fn handle_table_row_key_down(
     row: &TableRowRenderPlan,
     final_rows: &[TableResolvedRow],
     vertical_scroll_handle: ScrollHandle,
+    top_row_count: usize,
+    center_total_row_count: usize,
     runtime: &Entity<TableRuntime>,
     current_expansion: TableExpansionState,
     on_row_activate: Option<TableRowActivationHandler>,
@@ -2793,12 +3000,16 @@ fn handle_table_row_key_down(
     match action {
         TableRowKeyboardAction::Focus { index, row_id } => {
             let focus_handle = runtime.update(cx, |runtime, cx| runtime.set_focused(row_id, cx));
-            scroll_table_row_into_view(
-                &vertical_scroll_handle,
-                row.virtual_size(),
-                final_rows.len(),
-                index,
-            );
+            if let Some(center_index) = index.checked_sub(top_row_count) {
+                if center_index < center_total_row_count {
+                    scroll_table_row_into_view(
+                        &vertical_scroll_handle,
+                        row.virtual_size(),
+                        center_total_row_count,
+                        center_index,
+                    );
+                }
+            }
             if let Some(focus_handle) = focus_handle {
                 focus_handle.focus(window, cx);
             }

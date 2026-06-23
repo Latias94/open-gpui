@@ -122,10 +122,11 @@ pub use open_gpui_ui_core::{
     TableExpansionState, TableFacetRange, TableFacetValueCount, TableFilter, TableGroupRow,
     TablePagination, TableResolvedColumnSizing, TableResolvedColumnSizingRegions, TableResolvedRow,
     TableResolvedRowKind, TableResolvedState, TableRow, TableRowChildrenLoadState, TableRowId,
-    TableRowModel, TableRowModelStage, TableSort, TableSortDirection, TableStageMode, TableState,
-    TableStateCacheKey, TableTreeRow, VirtualizerItemKey, VirtualizerItemMeasurement,
-    VirtualizerRange, VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem,
-    VirtualizerState, drag_table_column_resize, end_table_column_resize,
+    TableRowModel, TableRowModelStage, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
+    TableRowRegions, TableSort, TableSortDirection, TableStageMode, TableState, TableStateCacheKey,
+    TableTreeRow, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
+    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
+    drag_table_column_resize, end_table_column_resize,
 };
 pub use overlay::OverlayResolvedState;
 pub use popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};

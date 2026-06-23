@@ -73,19 +73,21 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_fo
 
 Table gallery gates now follow the same split: `open-gpui-ui-core` tests prove row-model,
 manual row-model stages, manual expansion, child-load metadata, virtualizer, column sizing,
-column-window, and resize-math contracts without rendering, including grouped row ids, expansion
-lookup behavior, expandable unloaded branches, built-in group-row aggregate cells, pinned-column
-region splitting, center-column virtual windows, manual filtering/sorting/pagination cache keys,
-pagination row/page totals, per-column facet metadata, manual facet payload cache keys, and
-on-end/on-change resize deltas. `open-gpui-ui-components` tests prove adapter exports, state
-metadata, manual row-model render-plan metadata, faceting render-plan metadata, expansion payload
-metadata, resize callback wiring, center-window header/body mounting, and scroll ownership;
-gallery smokes prove long table scroll input stays inside the table viewport, `release-resize`
-column dragging updates the controlled sample without moving the outer Components page, wide
-center lanes scroll independently from fixed left/right pinned lanes, `server-paged` renders an
-app-owned page snapshot with total counts plus caller-provided facet summaries, `filter-board`
-exposes client-derived status counts and score ranges, and `server-tree` renders app-owned manual
-child loading. The focused proofs are:
+column-window, row pinning, and resize-math contracts without rendering, including grouped row ids,
+expansion lookup behavior, expandable unloaded branches, built-in group-row aggregate cells,
+pinned-column region splitting, center-column virtual windows, top/center/bottom row regions,
+keep-pinned versus page-only policies, manual filtering/sorting/pagination cache keys, pagination
+row/page totals, per-column facet metadata, manual facet payload cache keys, and on-end/on-change
+resize deltas. `open-gpui-ui-components` tests prove adapter exports, state metadata, manual
+row-model render-plan metadata, faceting render-plan metadata, row-pinning render-plan metadata,
+expansion payload metadata, resize callback wiring, center-window header/body mounting, fixed
+row-pinned bands, and scroll ownership; gallery smokes prove long table scroll input stays inside
+the table viewport, `release-resize` column dragging updates the controlled sample without moving
+the outer Components page, wide center lanes scroll independently from fixed left/right pinned
+lanes, `row-pinning` keeps top/bottom row bands fixed while the center body scrolls, `server-paged`
+renders an app-owned page snapshot with total counts plus caller-provided facet summaries,
+`filter-board` exposes client-derived status counts and score ranges, and `server-tree` renders
+app-owned manual child loading. The focused proofs are:
 
 `components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample` is the focused
 sticky-pinned Table proof: it enters the Table family view, scrolls the `release-rollup` center
@@ -96,6 +98,11 @@ center-column virtualization proof: it enters the Table family view, scrolls the
 center lane horizontally, verifies far center metric cells are unmounted before scrolling and
 mounted after scrolling, and asserts left/right pinned lanes plus the outer Components page stay
 fixed.
+
+`components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample` is the focused row-pinning
+proof: it enters the Table family view, aligns the `row-pinning` sample to an interactive center
+cell, wheels inside the center body, and asserts the sample, top pinned band, bottom pinned band,
+and left-pinned cells stay fixed while the center row window changes.
 
 `components_gallery_smoke_table_server_tree_loads_children_from_expansion_request` is the focused
 manual-expansion proof: it enters the Table family view, starts with `server-api` absent from the
@@ -201,8 +208,9 @@ overscan, scroll input stays inside the table viewport, sortable header actions 
 payloads, controlled column resize callbacks carry stable sizing payloads, row activation and
 expansion request payloads stay controlled, source-tree row models keep nested descendants
 addressable by stable row id, manual source-tree snapshots expose unloaded/loading/failed child
-metadata, and grouped / expanded row models keep collapsed descendants
-addressable by stable row id. The Components gallery now carries `release-rollup`, a grouped Table
+metadata, row-pinning regions split top/center/bottom rows with keep-pinned and page-only
+policies, and grouped / expanded row models keep collapsed descendants addressable by stable row
+id. The Components gallery now carries `release-rollup`, a grouped Table
 sample that mixes expanded and collapsed team groups, exposes aggregate count and score cells,
 pins the identifier and status columns, and has its own inner-scroll smoke. It also carries
 `server-paged`, a manual filtering/sorting/pagination sample that renders only the current
@@ -212,8 +220,11 @@ column-sizing sample whose resize smoke drags the `name` handle, records the app
 width, and verifies header and first-row cell widths stay aligned.
 `release-matrix` is the wide center-column virtualization sample: it pins the identity and status
 lanes, exposes fourteen center metrics, and has a focused smoke that proves off-window center
-columns unmount/remount while horizontal wheel input remains inside the sample. `dependency-tree`
-is the source-hierarchy sample: it proves nested `TableRow` children resolve to visible tree rows,
+columns unmount/remount while horizontal wheel input remains inside the sample. `row-pinning` is
+the row-region sample: it pins top and bottom review rows around a paged center body, exposes
+top/center/bottom readouts, and proves center-body wheel input changes the center row window
+without moving the fixed row bands or outer sample. `dependency-tree` is the source-hierarchy
+sample: it proves nested `TableRow` children resolve to visible tree rows,
 keeps collapsed descendants addressable by stable id, exposes tree-depth and tree-branch summary
 metadata, and drives controlled expansion plus row activation through the gallery runtime log.
 `server-tree` is the manual-expansion sample: it preserves the app-supplied source snapshot,
@@ -225,7 +236,10 @@ resolves count, sum, min, max, and average cells for grouped rows without hiding
 column value. Core and component tests assert that `TableColumnPinning` splits visible columns into
 left, center, and right regions after visibility/order resolution, ignores unknown or invisible
 pinned ids, removes moved columns from their previous pinned side, and exposes matching
-header/body region metadata and debug selectors.
+header/body region metadata and debug selectors. They also assert `TableRowPinning` deduplicates
+ordered top/bottom ids, ignores unknown/filtered/collapsed rows, preserves pinned rows outside the
+current page by default, supports page-only behavior, feeds only center rows into the vertical
+virtualizer, and renders fixed row-pinned bands around the scrollable center body.
 The official Tree gate requires `Tree`, `TreeState`, `TreeMetrics`, tree/tree-item role signals,
 and at least one `gallery:component-tree-sample:{id}` selector. Component runtime tests verify
 expansion, reveal, and selection payloads; gallery smokes verify keyboard expansion/selection

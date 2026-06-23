@@ -31,8 +31,9 @@ pub use crate::{
         TableExpansionState, TableFacetRange, TableFacetValueCount, TableFilter, TableGroupRow,
         TablePagination, TableResolvedColumnSizing, TableResolvedColumnSizingRegions,
         TableResolvedRow, TableResolvedRowKind, TableResolvedState, TableRow, TableRowId,
-        TableRowModel, TableRowModelStage, TableSort, TableSortDirection, TableStageMode,
-        TableState, TableStateCacheKey, drag_table_column_resize, end_table_column_resize,
+        TableRowModel, TableRowModelStage, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
+        TableRowRegions, TableSort, TableSortDirection, TableStageMode, TableState,
+        TableStateCacheKey, drag_table_column_resize, end_table_column_resize,
     },
     tokens::{ThemeTokens, TokenKey, semantic},
     virtualizer::{

@@ -16,12 +16,12 @@ use open_gpui_ui_components::{
     TableColumnPinning, TableColumnRegion, TableColumnSizing, TableColumnSizingChange,
     TableExpansionMode, TableExpansionState, TableFacetValueCount, TableFilter, TablePagination,
     TableRenderPlan, TableRow, TableRowActivation, TableRowChildrenLoadState,
-    TableRowExpansionToggle, TableSort, TableStageMode, TableState, Tabs, TabsActivationMode,
-    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState,
-    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
-    Tree, TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListItemDescriptor,
-    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState,
+    TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy, TableSort, TableStageMode,
+    TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
+    TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
+    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
+    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -138,6 +138,10 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::TableColumnSizingChange",
     "open_gpui_ui_components::TableColumnResizeMode",
     "open_gpui_ui_components::TableExpansionState",
+    "open_gpui_ui_components::TableRowPinning",
+    "open_gpui_ui_components::TableRowPinningPolicy",
+    "open_gpui_ui_components::TableRowRegion",
+    "open_gpui_ui_components::TableRowRegions",
     "open_gpui_ui_components::VirtualizedList",
     "open_gpui_ui_components::VirtualizedListItemDescriptor",
     "open_gpui_ui_components::VirtualizedListRenderPlan",
@@ -895,15 +899,17 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
     ComponentConformanceGate {
         id: "table-virtualization",
         title: "Table row models and scroll ownership",
-        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate and pinned-column metadata, resize handles, and nested scroll ownership.",
+        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate metadata, pinned columns, pinned rows, resize handles, and nested scroll ownership.",
         evidence: &[
             "TableState::resolve",
             "Table::render_plan",
             "TableHeaderAction",
             "release-rollup",
             "release-resize",
+            "row-pinning",
             "components_gallery_smoke_table_scroll_stays_inside_sample",
             "components_gallery_smoke_grouped_table_scroll_stays_inside_sample",
+            "components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample",
             "components_gallery_smoke_resizable_table_resize_updates_sample",
         ],
     },
@@ -1783,6 +1789,14 @@ pub struct TableSampleStateSummary {
     pub filtered_rows: usize,
     /// Final row count after pagination.
     pub final_rows: usize,
+    /// Top-pinned row count in the final visual model.
+    pub pinned_top_rows: usize,
+    /// Center row count used by the row virtualizer.
+    pub pinned_center_rows: usize,
+    /// Bottom-pinned row count in the final visual model.
+    pub pinned_bottom_rows: usize,
+    /// Whether row pinning is limited to the current page.
+    pub row_pinning_page_only: bool,
     /// Rendered body row count after overscan.
     pub rendered_rows: usize,
     /// Visible body row count before overscan.
@@ -1882,6 +1896,7 @@ impl TableSampleStateSummary {
         let visible = plan.virtualizer().visible_range();
         let overscan = plan.virtualizer().overscan_range();
         let final_rows = plan.table().final_model().rows();
+        let row_regions = plan.table().row_regions();
         let group_rows = final_rows.iter().filter(|row| row.is_group()).count();
         let tree_rows = final_rows.iter().filter(|row| row.tree().is_some()).count();
         let tree_branch_rows = final_rows.iter().filter(|row| row.is_tree_branch()).count();
@@ -1961,6 +1976,11 @@ impl TableSampleStateSummary {
             core_rows: plan.table().core_model().rows().len(),
             filtered_rows: plan.table().filtered_model().rows().len(),
             final_rows: plan.table().final_model().rows().len(),
+            pinned_top_rows: row_regions.top().len(),
+            pinned_center_rows: row_regions.center().len(),
+            pinned_bottom_rows: row_regions.bottom().len(),
+            row_pinning_page_only: plan.table().row_pinning_policy()
+                == TableRowPinningPolicy::PageOnly,
             rendered_rows: plan.rendered_row_count(),
             visible_rows: plan.visible_row_count(),
             visible_start: visible.start(),
@@ -3355,6 +3375,7 @@ fn build_table_samples() -> Vec<TableSample> {
     let release_resize_rows = (0..160).map(release_resize_row).collect::<Vec<_>>();
     let grouped_release_rows = (0..320).map(grouped_release_row).collect::<Vec<_>>();
     let release_matrix_rows = (0..480).map(release_matrix_row).collect::<Vec<_>>();
+    let row_pinning_rows = (0..96).map(row_pinning_row).collect::<Vec<_>>();
     let dependency_tree_rows = dependency_tree_rows();
 
     let release_queue = TableSample {
@@ -3494,6 +3515,32 @@ fn build_table_samples() -> Vec<TableSample> {
         overscan: 4,
         state_summary: TableSampleStateSummary::default(),
     };
+    let row_pinning = TableSample {
+        id: "row-pinning",
+        title: "Pinned row review",
+        summary: "Top and bottom review rows stay visible while the paged center body scrolls.",
+        badge: "row pins",
+        state: TableState::new(row_pinning_rows)
+            .with_columns(release_matrix_table_columns())
+            .with_column_order(release_matrix_column_order())
+            .with_column_pinning(
+                TableColumnPinning::new()
+                    .pinned_left(["name"])
+                    .pinned_right(["status"]),
+            )
+            .with_row_pinning(
+                TableRowPinning::new()
+                    .pinned_top(["row-pinning-row-003"])
+                    .pinned_bottom(["row-pinning-row-030", "row-pinning-row-070"]),
+            )
+            .with_selected_rows(["row-pinning-row-030"])
+            .with_pagination(TablePagination::new(2, 12)),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
     let dependency_tree = TableSample {
         id: "dependency-tree",
         title: "Dependency tree",
@@ -3546,6 +3593,7 @@ fn build_table_samples() -> Vec<TableSample> {
         release_resize.with_state_summary(),
         grouped_release.with_state_summary(),
         release_matrix.with_state_summary(),
+        row_pinning.with_state_summary(),
         dependency_tree.with_state_summary(),
         server_tree.with_state_summary(),
     ]
@@ -3937,6 +3985,22 @@ fn release_matrix_row(index: usize) -> TableRow {
         row = row.with_cell(
             format!("metric_{metric:02}"),
             (index + 1) * (metric + 3) % 997,
+        );
+    }
+
+    row
+}
+
+fn row_pinning_row(index: usize) -> TableRow {
+    let statuses = ["Queued", "Ready", "Review", "Blocked"];
+    let mut row = TableRow::new(format!("row-pinning-row-{index:03}"))
+        .with_cell("name", format!("Review lane {index:03}"))
+        .with_cell("status", statuses[(index / 4) % statuses.len()]);
+
+    for metric in 0..RELEASE_MATRIX_METRIC_COUNT {
+        row = row.with_cell(
+            format!("metric_{metric:02}"),
+            (index + 11) * (metric + 5) % 991,
         );
     }
 
