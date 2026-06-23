@@ -4,8 +4,12 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 7f8b986
+git_commit: 94fdd59
 verified_by:
+  - cargo fmt -p open-gpui-ui-core
+  - cargo nextest run -p open-gpui-ui-core virtualizer table
+  - git diff --check
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
   - cargo nextest run -p open-gpui-ui-components table_runtime_pinned_body_scrolls_without_moving_parent
   - cargo nextest run -p open-gpui-ui-components table
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_grouped_table_scroll_stays_inside_sample
@@ -65,9 +69,9 @@ verified_by:
 
 # Current State
 
-- Goal: Start the next Table follow-up slice: center-column virtualization over sticky pinned lanes, with TanStack Table / TanStack Virtual and Fret as references.
+- Goal: Continue the Table column virtualization slice by wiring center-column window metadata into the adapter.
 - Branch: `main`
-- Last verified: 2026-06-23, the sticky pinned Table slice passed focused component and gallery gates: `cargo nextest run -p open-gpui-ui-components table_runtime_pinned_body_scrolls_without_moving_parent` passed 1/1, `cargo nextest run -p open-gpui-ui-components table` passed 28/28, `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_grouped_table_scroll_stays_inside_sample` passed 1/1, `cargo nextest run -p open-gpui-ui-foundation-gallery table` passed 7/7, `git diff --check` passed, and engineering wiki validation passed.
+- Last verified: 2026-06-23, `cargo nextest run -p open-gpui-ui-core virtualizer table` passed 40/40 after adding exact-size virtualizer windows, and `git diff --check` plus engineering wiki validation passed.
 - Done: Completed the sticky pinned Table slice on top of `3273c1a`: the GPUI Table adapter keeps vertical wheel input inside pinned table bodies, `release-rollup` exposes explicit left/center/right lane widths, and the focused gallery smoke proves horizontal center-lane scrolling leaves left/right pinned lanes plus the outer Components page fixed.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
@@ -126,10 +130,11 @@ verified_by:
 - Done: Created `docs/plans/2026-06-23-003-feat-ui-table-sticky-pinned-columns-plan.md` as the next Table slice. The new plan keeps the existing semantic pinned regions, turns the center lane into a shared horizontal scroll surface, and keeps vertical row virtualization one-dimensional.
 - Done: Completed the sticky pinned Table implementation as `f0b7e62` and recorded its contract / verification evidence as `7f8b986`.
 - Done: Created `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` for the next Table slice. The plan narrows two-dimensional virtualization to center-column virtualization first: pinned lanes stay fully rendered, center lanes render only the visible plus overscan column window, and row virtualization remains one-dimensional.
+- Done: Completed U1 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `94fdd59`. `VirtualizerState` now resolves exact-size windows for known item widths, materializes only visible plus overscan measurements, and keeps the fixed-size path unchanged.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Follow-up: The column sizing / resize and sticky pinned-column slices are complete; the next Table follow-ups are two-dimensional grid virtualization, tree-data tables, custom aggregation callbacks, server pagination/faceting/editing, and standalone headless extraction.
 - Blocked: None.
-- Next action: Start U1 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md`: add exact-size virtualizer window support for center columns.
+- Next action: Start U2 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md`: add Table center-column window metadata.
 
 # Citations
 
@@ -183,3 +188,4 @@ verified_by:
 [48] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_table_samples_expose_virtualized_row_model_contract components_gallery_smoke_focused_table_scroll_stays_inside_sample components_gallery_smoke_table_scroll_stays_inside_sample components_gallery_smoke_grouped_table_scroll_stays_inside_sample components_gallery_smoke_resizable_table_resize_updates_sample`
 [49] Verification evidence `docs/knowledge/engineering/verification/table-sticky-pinned-columns-20260623.md`
 [50] Plan `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md`
+[51] Verification evidence `docs/knowledge/engineering/verification/table-exact-size-virtualizer-window-20260623.md`
