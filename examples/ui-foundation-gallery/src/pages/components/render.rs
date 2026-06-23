@@ -1293,10 +1293,6 @@ pub(crate) fn render_components_page(
                                             .border_1()
                                             .border_color(rgb(0xd6d8ce))
                                             .bg(rgb(0xffffff))
-                                            .on_scroll_wheel(|_, window, cx| {
-                                                window.prevent_default();
-                                                cx.stop_propagation();
-                                            })
                                             .p_3()
                                             .child(
                                                 div()
@@ -1476,7 +1472,58 @@ pub(crate) fn render_components_page(
                                         let summary = sample.summary;
                                         let badge = sample.badge;
                                         let state_summary = sample.state_summary();
-                                        let table = sample.build_table();
+                                        let base_sizing = sample.state.column_sizing().clone();
+                                        let current_sizing =
+                                            pages::components::current_table_sample_sizing(
+                                                sample_id,
+                                                &base_sizing,
+                                                cx,
+                                            );
+                                        let base_expansion = sample.state.expansion().clone();
+                                        let current_expansion =
+                                            pages::components::current_table_sample_expansion(
+                                                sample_id,
+                                                &base_expansion,
+                                                cx,
+                                            );
+                                        let table_state =
+                                            pages::components::table_sample_state_with_runtime(
+                                                sample,
+                                                current_sizing,
+                                                current_expansion,
+                                                cx,
+                                            );
+                                        let mut table = sample.build_table_with_state(table_state);
+                                        if sample_id == "release-resize" {
+                                            let sample_id_for_resize = sample_id.to_owned();
+                                            table = table.on_column_sizing_change(
+                                                move |change, _, cx| {
+                                                    pages::components::record_table_sizing_change(
+                                                        sample_id_for_resize.clone(),
+                                                        &change,
+                                                        cx,
+                                                    );
+                                                },
+                                            );
+                                        }
+                                        let sample_id_for_activation = sample_id.to_owned();
+                                        table = table.on_row_activate(move |activation, _, cx| {
+                                            pages::components::record_table_row_activation(
+                                                sample_id_for_activation.clone(),
+                                                &activation,
+                                                cx,
+                                            );
+                                        });
+                                        let sample_id_for_expansion = sample_id.to_owned();
+                                        table =
+                                            table.on_row_expansion_request(move |toggle, _, cx| {
+                                                pages::components::record_table_expansion_request(
+                                                    sample_id_for_expansion.clone(),
+                                                    &base_expansion,
+                                                    &toggle,
+                                                    cx,
+                                                );
+                                            });
 
                                         div()
                                             .id(format!("component-table-sample:{sample_id}"))
@@ -2268,7 +2315,7 @@ pub(crate) fn component_tabs_state_row(state: &TabsState) -> impl IntoElement {
 pub(crate) fn component_table_state_row(
     summary: &super::TableSampleStateSummary,
 ) -> impl IntoElement {
-    div()
+    let mut row = div()
         .flex()
         .flex_col()
         .gap_1()
@@ -2288,25 +2335,108 @@ pub(crate) fn component_table_state_row(
         .child(format!(
             "{} columns / {} aria rows / {} selected",
             summary.aria_columns, summary.aria_rows, summary.selected_rows
-        ))
-        .child(format!(
-            "grouped {} / expanded {} / groups {} / leaves {}",
-            summary.grouped_rows, summary.expanded_rows, summary.group_rows, summary.leaf_rows
-        ))
-        .child(format!(
-            "grouping {} / aggregates {} / expanded inputs {}{} / pinned {}-{}-{}",
+        ));
+
+    if summary.grouping_columns > 0 || summary.aggregation_count > 0 || summary.group_rows > 0 {
+        row = row.child(format!(
+            "grouped {} / expanded {} / groups {} / leaves {} / grouping {} / aggregates {} / expanded inputs {}{}",
+            summary.grouped_rows,
+            summary.expanded_rows,
+            summary.group_rows,
+            summary.leaf_rows,
             summary.grouping_columns,
             summary.aggregation_count,
             summary.expanded_group_inputs,
+            if summary.all_rows_expanded { " all" } else { "" }
+        ));
+    }
+
+    if summary.tree_rows > 0 {
+        row = row.child(format!(
+            "tree {} / branches {} / depth {} / expanded inputs {}{}{}",
+            summary.tree_rows,
+            summary.tree_branch_rows,
+            summary.tree_depth,
+            summary.expanded_tree_inputs,
+            if summary.manual_expansion {
+                " / manual"
+            } else {
+                ""
+            },
             if summary.all_rows_expanded {
                 " all"
             } else {
                 ""
-            },
+            }
+        ));
+
+        if summary.unloaded_tree_branches > 0
+            || summary.loading_tree_rows > 0
+            || summary.failed_tree_rows > 0
+        {
+            row = row.child(format!(
+                "async branches unloaded {} / loading {} / failed {}",
+                summary.unloaded_tree_branches, summary.loading_tree_rows, summary.failed_tree_rows
+            ));
+        }
+    }
+
+    if summary.manual_filtering || summary.manual_sorting || summary.manual_pagination {
+        row = row.child(format!(
+            "manual filter {} / sort {} / page {} / page {} size {} / total {} / pages {}",
+            summary.manual_filtering,
+            summary.manual_sorting,
+            summary.manual_pagination,
+            summary.pagination_page_index,
+            summary.pagination_page_size,
+            summary
+                .pagination_row_count
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "unknown".to_owned()),
+            summary
+                .pagination_page_count
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "unknown".to_owned())
+        ));
+    }
+
+    if summary.facet_columns > 0 {
+        row = row.child(format!(
+            "facets {} columns / {} manual / status {} values total {} / score {}..{}",
+            summary.facet_columns,
+            summary.manual_facet_columns,
+            summary.status_facet_values,
+            summary.status_facet_total_count,
+            summary
+                .score_facet_min
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_owned()),
+            summary
+                .score_facet_max
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_owned())
+        ));
+    }
+
+    if summary.pinned_left_columns > 0 || summary.pinned_right_columns > 0 {
+        row = row.child(format!(
+            "pinned {}-{}-{} / widths {}-{}-{}px / {} resizable columns",
             summary.pinned_left_columns,
             summary.pinned_center_columns,
-            summary.pinned_right_columns
-        ))
+            summary.pinned_right_columns,
+            summary.pinned_left_width_px,
+            summary.pinned_center_width_px,
+            summary.pinned_right_width_px,
+            summary.resizable_columns
+        ));
+    } else {
+        row = row.child(format!(
+            "width {}px / {} resizable columns",
+            summary.total_column_width_px, summary.resizable_columns
+        ));
+    }
+
+    row
 }
 
 pub(crate) fn component_virtualized_list_state_row(

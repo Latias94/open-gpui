@@ -80,8 +80,10 @@ pub use crate::splitter::{
 };
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use crate::table::{
-    Table, TableCellRenderPlan, TableColumnRegionRenderPlan, TableColumnRenderPlan,
-    TableHeaderAction, TableMetrics, TableRenderPlan, TableRowRenderPlan,
+    Table, TableCellRenderPlan, TableCenterColumnWindowPlan, TableColumnRegionRenderPlan,
+    TableColumnRenderPlan, TableColumnSizingChange, TableHeaderAction, TableInputModifiers,
+    TableMetrics, TablePinnedLayoutPlan, TableRenderPlan, TableRowAction, TableRowActivation,
+    TableRowActivationKind, TableRowExpansionToggle, TableRowRenderPlan,
 };
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
@@ -111,11 +113,14 @@ pub use crate::virtualized_list::{
 pub use open_gpui_ui_core::{
     Sizable, Size, TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
     TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind, TableAggregation,
-    TableCellValue, TableColumn, TableColumnId, TableColumnPinning, TableColumnRegion,
-    TableColumnRegions, TableColumnSizing, TableExpansionState, TableFilter, TableGroupRow,
+    TableCellValue, TableColumn, TableColumnFacets, TableColumnId, TableColumnPinning,
+    TableColumnRegion, TableColumnRegions, TableColumnResizeDirection, TableColumnResizeMode,
+    TableColumnResizeState, TableColumnResizeUpdate, TableColumnSizing, TableExpansionMode,
+    TableExpansionState, TableFacetRange, TableFacetValueCount, TableFilter, TableGroupRow,
     TablePagination, TableResolvedColumnSizing, TableResolvedColumnSizingRegions, TableResolvedRow,
-    TableResolvedRowKind, TableResolvedState, TableRow, TableRowId, TableRowModel,
-    TableRowModelStage, TableSort, TableSortDirection, TableState, TableStateCacheKey, ThemeTokens,
-    VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState,
-    VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
+    TableResolvedRowKind, TableResolvedState, TableRow, TableRowChildrenLoadState, TableRowId,
+    TableRowModel, TableRowModelStage, TableSort, TableSortDirection, TableStageMode, TableState,
+    TableStateCacheKey, TableTreeRow, ThemeTokens, VirtualizerItemKey, VirtualizerItemMeasurement,
+    VirtualizerRange, VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem,
+    VirtualizerState, drag_table_column_resize, end_table_column_resize,
 };

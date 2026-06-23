@@ -671,7 +671,7 @@ fn render_handle(
                     group_id,
                     handle_index,
                 },
-                move |_, _, _, cx| {
+                move |_, _, _, _, cx| {
                     cx.stop_propagation();
                     drag_runtime.update(cx, |runtime, _| {
                         runtime.sync(&drag_state);

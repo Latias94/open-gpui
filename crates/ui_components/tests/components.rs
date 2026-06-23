@@ -20,16 +20,19 @@ use open_gpui_ui_components::{
     SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor,
     SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
     Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
-    TableColumn, TableColumnPinning, TableColumnRegion, TableColumnSizing, TableFilter,
-    TableHeaderAction, TablePagination, TableRow, TableSort, TableSortDirection, TableState, Tabs,
-    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput,
-    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
-    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
-    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
-    VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
+    TableCellValue, TableCenterColumnWindowPlan, TableColumn, TableColumnFacets, TableColumnId,
+    TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
+    TableColumnSizingChange, TableExpansionMode, TableFacetValueCount, TableFilter,
+    TableHeaderAction, TablePagination, TableRow, TableRowChildrenLoadState, TableSort,
+    TableSortDirection, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem,
+    TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver,
+    ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
+    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
+    TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList,
+    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRenderPlan,
+    VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
+    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
+    VirtualizerState, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -439,14 +442,43 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Table",
-        controlled_inputs: &["state"],
-        default_seeds: &[],
-        legacy_seed_inputs: &[],
-        policy_hints: &["virtualizer_snapshot"],
-        callbacks: &[CallbackApi {
-            name: "on_sort_requested",
-            payload: "TableHeaderAction",
+        controlled_inputs: &["state", "column_sizing"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_focused_row",
+            runtime_value: "focused_row",
         }],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "virtualizer_snapshot",
+            "expansion_mode",
+            "filtering_mode",
+            "sorting_mode",
+            "faceting_mode",
+            "facet_metadata",
+            "pagination_mode",
+            "pagination_totals",
+            "enable_column_resizing",
+            "column_resize_mode",
+            "column_resize_direction",
+        ],
+        callbacks: &[
+            CallbackApi {
+                name: "on_sort_requested",
+                payload: "TableHeaderAction",
+            },
+            CallbackApi {
+                name: "on_column_sizing_change",
+                payload: "TableColumnSizingChange",
+            },
+            CallbackApi {
+                name: "on_row_activate",
+                payload: "TableRowActivation",
+            },
+            CallbackApi {
+                name: "on_row_expansion_request",
+                payload: "TableRowExpansionToggle",
+            },
+        ],
         renderer_neutral_state: true,
         no_interaction_note: None,
     },
@@ -833,6 +865,10 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "header_height",
             "viewport_extent",
             "min_column_width",
+            "expansion_mode",
+            "enable_column_resizing",
+            "column_resize_mode",
+            "column_resize_direction",
         ],
         "VirtualizedList" => &["disabled", "viewport_item_count", "row_height", "overscan"],
         "StatusCue" => &["intent"],
@@ -1169,9 +1205,17 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "row_height",
             "header_height",
             "viewport_extent",
+            "expansion_mode",
             "min_column_width",
             "virtualizer_snapshot",
+            "default_focused_row",
             "on_sort_requested",
+            "enable_column_resizing",
+            "column_resize_mode",
+            "column_resize_direction",
+            "on_column_sizing_change",
+            "on_row_activate",
+            "on_row_expansion_request",
             "table_state",
             "state",
             "render_plan",
@@ -1446,6 +1490,146 @@ fn sample_table_state(row_count: usize) -> TableState {
         TableColumn::new("team", "Team"),
         TableColumn::new("score", "Score"),
     ])
+}
+
+fn text_facet_counts(facet: &TableColumnFacets) -> Vec<(String, usize)> {
+    facet
+        .unique_values()
+        .iter()
+        .map(|entry| match entry.value() {
+            TableCellValue::Text(value) => (value.clone(), entry.count()),
+            value => panic!("expected text facet value, got {value:?}"),
+        })
+        .collect()
+}
+
+fn sample_pinned_table_state() -> TableState {
+    TableState::new([TableRow::new("row-a")
+        .with_cell("name", "Alpha")
+        .with_cell("team", "Platform")
+        .with_cell("score", 42_usize)
+        .with_cell("status", "Ready")])
+    .with_columns([
+        TableColumn::new("name", "Name"),
+        TableColumn::new("team", "Team"),
+        TableColumn::new("score", "Score"),
+        TableColumn::new("status", "Status"),
+    ])
+    .with_column_order(["status", "score", "team", "name"])
+    .with_column_pinning(
+        TableColumnPinning::new()
+            .pinned_left(["name", "score"])
+            .pinned_right(["status"]),
+    )
+    .with_pagination(TablePagination::disabled())
+}
+
+fn sample_pinned_table_state_with_rows(row_count: usize) -> TableState {
+    let rows = (0..row_count).map(|index| {
+        TableRow::new(format!("row-{index:04}"))
+            .with_cell("name", format!("Alpha {index:04}"))
+            .with_cell(
+                "team",
+                if index.is_multiple_of(2) {
+                    "Platform"
+                } else {
+                    "UI"
+                },
+            )
+            .with_cell("score", index + 1)
+            .with_cell(
+                "status",
+                if index.is_multiple_of(3) {
+                    "Ready"
+                } else {
+                    "Queued"
+                },
+            )
+    });
+
+    TableState::new(rows)
+        .with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+            TableColumn::new("score", "Score"),
+            TableColumn::new("status", "Status"),
+        ])
+        .with_column_order(["status", "score", "team", "name"])
+        .with_column_pinning(
+            TableColumnPinning::new()
+                .pinned_left(["name", "score"])
+                .pinned_right(["status"]),
+        )
+        .with_pagination(TablePagination::disabled())
+}
+
+fn sample_center_window_table_state() -> TableState {
+    let row = TableRow::new("row-a")
+        .with_cell("name", "Alpha")
+        .with_cell("metric_00", 10_usize)
+        .with_cell("metric_01", 20_usize)
+        .with_cell("metric_02", 30_usize)
+        .with_cell("metric_03", 40_usize)
+        .with_cell("metric_04", 50_usize)
+        .with_cell("metric_05", 60_usize)
+        .with_cell("status", "Ready");
+
+    sample_center_window_table_state_from_rows([row])
+}
+
+fn sample_center_window_table_state_with_rows(row_count: usize) -> TableState {
+    let rows = (0..row_count).map(|index| {
+        TableRow::new(format!("row-{index:04}"))
+            .with_cell("name", format!("Package {index:04}"))
+            .with_cell("metric_00", index + 10)
+            .with_cell("metric_01", index + 20)
+            .with_cell("metric_02", index + 30)
+            .with_cell("metric_03", index + 40)
+            .with_cell("metric_04", index + 50)
+            .with_cell("metric_05", index + 60)
+            .with_cell(
+                "status",
+                if index.is_multiple_of(2) {
+                    "Ready"
+                } else {
+                    "Queued"
+                },
+            )
+    });
+
+    sample_center_window_table_state_from_rows(rows)
+}
+
+fn sample_center_window_table_state_from_rows(
+    rows: impl IntoIterator<Item = TableRow>,
+) -> TableState {
+    TableState::new(rows)
+        .with_columns([
+            TableColumn::new("name", "Name").with_width(ui_px(140.0)),
+            TableColumn::new("metric_00", "Metric 00").with_width(ui_px(60.0)),
+            TableColumn::new("metric_01", "Metric 01").with_width(ui_px(72.0)),
+            TableColumn::new("metric_02", "Metric 02").with_width(ui_px(84.0)),
+            TableColumn::new("metric_03", "Metric 03").with_width(ui_px(96.0)),
+            TableColumn::new("metric_04", "Metric 04").with_width(ui_px(108.0)),
+            TableColumn::new("metric_05", "Metric 05").with_width(ui_px(120.0)),
+            TableColumn::new("status", "Status").with_width(ui_px(132.0)),
+        ])
+        .with_column_order([
+            "name",
+            "metric_00",
+            "metric_01",
+            "metric_02",
+            "metric_03",
+            "metric_04",
+            "metric_05",
+            "status",
+        ])
+        .with_column_pinning(
+            TableColumnPinning::new()
+                .pinned_left(["name"])
+                .pinned_right(["status"]),
+        )
+        .with_pagination(TablePagination::disabled())
 }
 
 #[test]
@@ -2953,7 +3137,238 @@ fn table_render_plan_uses_core_state_and_virtualizer_contracts() {
 }
 
 #[test]
+fn table_render_plan_exposes_tree_row_metadata_for_adapter_rendering() {
+    let state = TableState::new([TableRow::new("root")
+        .with_cell("name", "Workspace")
+        .with_cell("status", "Ready")
+        .with_child(
+            TableRow::new("child")
+                .with_cell("name", "UI")
+                .with_cell("status", "Building"),
+        )])
+    .with_columns([
+        TableColumn::new("name", "Name").with_width(ui_px(160.0)),
+        TableColumn::new("status", "Status").with_width(ui_px(120.0)),
+    ])
+    .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
+    .with_expanded_rows(["root"])
+    .with_pagination(TablePagination::disabled());
+    let plan = Table::new("tree-table", "Tree table", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    assert_eq!(plan.rows().len(), 2);
+    assert_eq!(plan.rows()[0].id().as_str(), "root");
+    assert!(plan.rows()[0].is_tree_branch());
+    assert_eq!(plan.rows()[0].tree_expanded(), Some(true));
+    assert_eq!(plan.rows()[0].depth(), 0);
+    assert_eq!(plan.rows()[1].id().as_str(), "child");
+    assert!(!plan.rows()[1].is_tree_branch());
+    assert_eq!(plan.rows()[1].tree_expanded(), None);
+    assert_eq!(plan.rows()[1].depth(), 1);
+    assert_eq!(
+        plan.rows()[0]
+            .cells_for_region(TableColumnRegion::Left)
+            .map(|cell| cell.column_id().as_str())
+            .collect::<Vec<_>>(),
+        ["name"]
+    );
+}
+
+#[test]
+fn table_render_plan_exposes_manual_expansion_and_child_load_metadata() {
+    let manual_state = TableState::new([TableRow::new("root")
+        .with_cell("name", "Workspace")
+        .with_child(TableRow::new("child").with_cell("name", "Loaded child"))])
+    .with_columns([TableColumn::new("name", "Name").with_width(ui_px(160.0))])
+    .with_pagination(TablePagination::disabled());
+    let manual_plan = Table::new("manual-tree", "Manual tree", manual_state)
+        .expansion_mode(TableExpansionMode::Manual)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    assert_eq!(
+        manual_plan
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["root", "child"],
+        "manual expansion should render the caller-supplied visible tree snapshot"
+    );
+    assert_eq!(manual_plan.rows()[0].tree_expanded(), Some(false));
+    assert_eq!(manual_plan.rows()[0].loaded_child_count(), 1);
+    assert_eq!(
+        manual_plan.rows()[0].children_load_state(),
+        Some(&TableRowChildrenLoadState::Idle)
+    );
+
+    let loading_state = TableState::new([TableRow::new("remote")
+        .with_cell("name", "Remote branch")
+        .with_children_loading("Loading children")])
+    .with_columns([TableColumn::new("name", "Name").with_width(ui_px(160.0))])
+    .with_pagination(TablePagination::disabled());
+    let loading_plan = Table::new("loading-tree", "Loading tree", loading_state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+    let loading_row = &loading_plan.rows()[0];
+
+    assert!(loading_row.is_tree_branch());
+    assert_eq!(loading_row.loaded_child_count(), 0);
+    assert_eq!(
+        loading_row
+            .children_load_state()
+            .and_then(TableRowChildrenLoadState::message),
+        Some("Loading children")
+    );
+    assert!(
+        loading_row
+            .children_load_state()
+            .is_some_and(TableRowChildrenLoadState::is_loading)
+    );
+}
+
+#[test]
+fn table_render_plan_exposes_manual_row_model_metadata() {
+    let state = TableState::new([
+        TableRow::new("row-020")
+            .with_cell("name", "Delta")
+            .with_cell("team", "UI")
+            .with_cell("score", 20_usize),
+        TableRow::new("row-021")
+            .with_cell("name", "Echo")
+            .with_cell("team", "Platform")
+            .with_cell("score", 21_usize),
+    ])
+    .with_columns([
+        TableColumn::new("name", "Name").with_width(ui_px(160.0)),
+        TableColumn::new("team", "Team").with_width(ui_px(120.0)),
+        TableColumn::new("score", "Score").with_width(ui_px(96.0)),
+    ])
+    .with_filters([TableFilter::contains("team", "missing")])
+    .with_manual_filtering()
+    .with_sorting([TableSort::ascending("score")])
+    .with_manual_sorting()
+    .with_pagination(TablePagination::manual(10, 2, 42));
+
+    let plan = Table::new("manual-row-model", "Manual row model", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    assert_eq!(plan.filtering_mode(), TableStageMode::Manual);
+    assert_eq!(plan.sorting_mode(), TableStageMode::Manual);
+    assert_eq!(plan.pagination_mode(), TableStageMode::Manual);
+    assert_eq!(plan.pagination_row_count(), Some(42));
+    assert_eq!(plan.pagination_page_count(), Some(21));
+    assert_eq!(
+        plan.rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["row-020", "row-021"],
+        "manual row-model stages should render the caller-supplied page snapshot"
+    );
+}
+
+#[test]
+fn table_render_plan_exposes_faceting_metadata() {
+    let state = TableState::new([
+        TableRow::new("row-1")
+            .with_cell("team", "UI")
+            .with_cell("status", "Ready")
+            .with_cell("score", 10_usize),
+        TableRow::new("row-2")
+            .with_cell("team", "UI")
+            .with_cell("status", "Blocked")
+            .with_cell("score", 20_usize),
+        TableRow::new("row-3")
+            .with_cell("team", "API")
+            .with_cell("status", "Ready")
+            .with_cell("score", 30_usize),
+        TableRow::new("row-4")
+            .with_cell("team", "UI")
+            .with_cell("status", "Ready")
+            .with_cell("score", 40_usize),
+    ])
+    .with_columns([
+        TableColumn::new("team", "Team"),
+        TableColumn::new("status", "Status"),
+        TableColumn::new("score", "Score"),
+    ])
+    .with_filters([
+        TableFilter::contains("status", "Ready"),
+        TableFilter::contains("team", "UI"),
+    ])
+    .with_pagination(TablePagination::new(0, 1))
+    .with_manual_facets(
+        [TableColumnFacets::manual("status", 64).with_unique_values([
+            TableFacetValueCount::new("Blocked", 24),
+            TableFacetValueCount::new("Ready", 40),
+        ])],
+    );
+
+    let plan = Table::new("faceted-table", "Faceted table", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    assert_eq!(plan.faceting_mode(), TableStageMode::Client);
+    assert_eq!(plan.column_facets().len(), 3);
+    assert_eq!(
+        plan.rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["row-1"],
+        "pagination still limits the rendered row window"
+    );
+
+    let status = plan
+        .column_facet(&TableColumnId::new("status"))
+        .expect("status facet should resolve");
+    assert_eq!(status.mode(), TableStageMode::Manual);
+    assert_eq!(status.row_count(), 64);
+    assert_eq!(
+        text_facet_counts(status),
+        [("Blocked".to_string(), 24), ("Ready".to_string(), 40)],
+        "manual facet payloads should survive render-plan resolution"
+    );
+
+    let team = plan
+        .column_facet(&TableColumnId::new("team"))
+        .expect("team facet should resolve");
+    assert_eq!(team.mode(), TableStageMode::Client);
+    assert_eq!(team.row_count(), 3);
+    assert_eq!(
+        text_facet_counts(team),
+        [("API".to_string(), 1), ("UI".to_string(), 2)],
+        "client facets ignore their own column filter and honor the other filters"
+    );
+
+    let score = plan
+        .column_facet(&TableColumnId::new("score"))
+        .expect("score facet should resolve");
+    let range = score
+        .numeric_range()
+        .expect("score facet should expose a numeric range");
+    assert_eq!(range.min(), 10.0);
+    assert_eq!(range.max(), 40.0);
+}
+
+#[test]
 fn table_render_plan_exposes_pinned_column_regions() {
+    let flat_plan = Table::new("flat-table", "Flat table", sample_table_state(1))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+    assert!(!flat_plan.uses_split_pinned_layout());
+    assert!(
+        flat_plan.pinned_layout().is_none(),
+        "unpinned tables should keep the flat render topology"
+    );
+
     let state = TableState::new([TableRow::new("row-a")
         .with_cell("name", "Alpha")
         .with_cell("team", "UI")
@@ -2976,6 +3391,27 @@ fn table_render_plan_exposes_pinned_column_regions() {
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
         .render_plan(UiPx::ZERO, ui_px(96.0));
+    let layout = plan
+        .pinned_layout()
+        .expect("pinned columns should request split pinned layout metadata");
+    assert!(plan.uses_split_pinned_layout());
+    assert_eq!(layout.table_id(), "pinned-table");
+    assert_eq!(layout.left_width(), ui_px(256.0));
+    assert_eq!(layout.center_width(), ui_px(128.0));
+    assert_eq!(layout.right_width(), ui_px(128.0));
+    assert_eq!(layout.total_width(), ui_px(512.0));
+    assert_eq!(
+        layout.header_center_scroll_id(),
+        "table:pinned-table:header-center-scroll"
+    );
+    assert_eq!(
+        layout.header_center_scroll_selector(),
+        "scroll-area:table:pinned-table:header-center-scroll"
+    );
+    assert_eq!(
+        layout.header_region_selector(TableColumnRegion::Left),
+        "table:pinned-table:header-region:left"
+    );
 
     let region_columns = plan
         .column_regions()
@@ -3014,6 +3450,18 @@ fn table_render_plan_exposes_pinned_column_regions() {
 
     let row = &plan.rows()[0];
     assert_eq!(
+        layout.row_center_scroll_id(row.render_key()),
+        "table:pinned-table:row-center-scroll:row-a"
+    );
+    assert_eq!(
+        layout.row_center_scroll_selector(row.render_key()),
+        "scroll-area:table:pinned-table:row-center-scroll:row-a"
+    );
+    assert_eq!(
+        layout.row_region_selector(row.render_key(), TableColumnRegion::Right),
+        "table:pinned-table:row-region:row-a:right"
+    );
+    assert_eq!(
         row.cells_for_region(TableColumnRegion::Left)
             .map(|cell| cell.column_id().as_str())
             .collect::<Vec<_>>(),
@@ -3030,6 +3478,158 @@ fn table_render_plan_exposes_pinned_column_regions() {
             .map(|cell| cell.column_id().as_str())
             .collect::<Vec<_>>(),
         ["status"]
+    );
+}
+
+#[test]
+fn table_render_plan_exposes_center_column_window_metadata() {
+    let plan = Table::new(
+        "center-window-table",
+        "Center window table",
+        sample_center_window_table_state(),
+    )
+    .row_height(ui_px(24.0))
+    .viewport_extent(ui_px(96.0))
+    .overscan(4)
+    .render_plan(UiPx::ZERO, ui_px(96.0));
+    let window = plan
+        .center_column_window()
+        .expect("center columns should resolve window metadata");
+
+    assert_eq!(window.center_width(), ui_px(540.0));
+    assert!(!window.virtualized());
+    assert_eq!(*window.visible_range(), VirtualizerRange::new(0, 6));
+    assert_eq!(*window.overscan_range(), VirtualizerRange::new(0, 6));
+    assert_eq!(window.leading_spacer_width(), UiPx::ZERO);
+    assert_eq!(window.trailing_spacer_width(), UiPx::ZERO);
+    assert_eq!(window.rendered_column_count(), 6);
+    assert_eq!(
+        window
+            .rendered_columns()
+            .iter()
+            .map(|column| column.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "metric_00",
+            "metric_01",
+            "metric_02",
+            "metric_03",
+            "metric_04",
+            "metric_05",
+        ]
+    );
+    assert!(
+        window
+            .rendered_columns()
+            .iter()
+            .all(|column| column.region() == TableColumnRegion::Center),
+        "pinned left/right columns must stay outside the center window"
+    );
+}
+
+#[test]
+fn table_center_column_window_matches_exact_size_virtualizer() {
+    let plan = Table::new(
+        "wide-center-window-table",
+        "Wide center window table",
+        sample_center_window_table_state(),
+    )
+    .row_height(ui_px(24.0))
+    .viewport_extent(ui_px(96.0))
+    .overscan(4)
+    .render_plan(UiPx::ZERO, ui_px(96.0));
+    let center_columns = plan
+        .column_regions()
+        .iter()
+        .find(|region| region.region() == TableColumnRegion::Center)
+        .expect("center region should resolve")
+        .columns();
+    let window =
+        TableCenterColumnWindowPlan::resolve(center_columns, ui_px(170.0), ui_px(120.0), 2)
+            .expect("center column window should resolve");
+    let expected = VirtualizerState::new(center_columns.len(), center_columns[0].width())
+        .with_viewport_extent(ui_px(120.0))
+        .with_scroll_offset(ui_px(170.0))
+        .with_overscan(2)
+        .resolve_known_size_window(|index| {
+            let column = &center_columns[index];
+            (
+                VirtualizerItemKey::new(column.id().as_str().to_owned()),
+                column.width(),
+            )
+        });
+
+    assert!(window.virtualized());
+    assert!(window.rendered_column_count() < center_columns.len());
+    assert_eq!(window.center_width(), expected.total_size());
+    assert_eq!(window.visible_range(), expected.visible_range());
+    assert_eq!(window.overscan_range(), expected.overscan_range());
+    assert_eq!(window.rendered_column_count(), expected.items().len());
+    assert_eq!(
+        window.leading_spacer_width(),
+        expected
+            .items()
+            .first()
+            .map(|item| item.start())
+            .unwrap_or(UiPx::ZERO)
+    );
+    assert_eq!(
+        window.trailing_spacer_width(),
+        expected
+            .items()
+            .last()
+            .map(|item| expected.total_size() - item.end())
+            .unwrap_or(UiPx::ZERO)
+    );
+    assert_eq!(
+        window
+            .rendered_columns()
+            .iter()
+            .map(|column| column.id().as_str())
+            .collect::<Vec<_>>(),
+        expected
+            .items()
+            .iter()
+            .map(|item| item.key().as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        plan.column_region_width(TableColumnRegion::Left),
+        ui_px(140.0)
+    );
+    assert_eq!(
+        plan.column_region_width(TableColumnRegion::Right),
+        ui_px(132.0)
+    );
+}
+
+#[test]
+fn table_center_column_window_preserves_full_accessibility_indexes() {
+    let plan = Table::new(
+        "accessibility-center-window-table",
+        "Accessibility center window table",
+        sample_center_window_table_state(),
+    )
+    .row_height(ui_px(24.0))
+    .viewport_extent(ui_px(96.0))
+    .overscan(0)
+    .render_plan(UiPx::ZERO, ui_px(96.0));
+    let center_columns = plan
+        .column_regions()
+        .iter()
+        .find(|region| region.region() == TableColumnRegion::Center)
+        .expect("center region should resolve")
+        .columns();
+    let window = TableCenterColumnWindowPlan::resolve(center_columns, ui_px(420.0), ui_px(68.0), 0)
+        .expect("center column window should resolve");
+
+    assert_eq!(
+        window
+            .rendered_columns()
+            .iter()
+            .map(|column| (column.id().as_str(), column.aria_column_index()))
+            .collect::<Vec<_>>(),
+        [("metric_05", 7)]
     );
 }
 
@@ -3461,6 +4061,43 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         root::VirtualizerState::new(4, ui_px(24.0)).with_overscan(2);
     let root_plan: root::TableRenderPlan = table.state();
     let _root_region_plan: &root::TableColumnRegionRenderPlan = &root_plan.column_regions()[0];
+    let root_pinned_state = root::TableState::new([root::TableRow::new("row-a")
+        .with_cell("name", "Alpha")
+        .with_cell("team", "UI")
+        .with_cell("status", "Ready")])
+    .with_columns([
+        root::TableColumn::new("name", "Name"),
+        root::TableColumn::new("team", "Team"),
+        root::TableColumn::new("status", "Status"),
+    ])
+    .with_column_pinning(
+        root::TableColumnPinning::new()
+            .pinned_left(["name"])
+            .pinned_right(["status"]),
+    );
+    let root_pinned_render_plan =
+        root::Table::new("root-pinned-table", "Root pinned table", root_pinned_state).state();
+    let root_pinned_layout: root::TablePinnedLayoutPlan = root_pinned_render_plan
+        .pinned_layout()
+        .expect("exported pinned layout plan should resolve")
+        .clone();
+    let _prelude_pinned_layout: prelude::TablePinnedLayoutPlan = root_pinned_layout.clone();
+    assert_eq!(root_pinned_layout.table_id(), "root-pinned-table");
+    let root_center_window: root::TableCenterColumnWindowPlan =
+        root::TableCenterColumnWindowPlan::resolve(
+            root_pinned_render_plan
+                .column_regions()
+                .iter()
+                .find(|region| region.region() == root::TableColumnRegion::Center)
+                .expect("center region should resolve")
+                .columns(),
+            ui_px(0.0),
+            ui_px(128.0),
+            2,
+        )
+        .expect("exported center column window plan should resolve");
+    let _prelude_center_window: prelude::TableCenterColumnWindowPlan = root_center_window.clone();
+    assert_eq!(root_center_window.rendered_column_count(), 1);
     let header_action: root::TableHeaderAction = root_plan.columns()[0]
         .sort_action()
         .expect("sortable exported table column should expose a header action")
@@ -3475,15 +4112,83 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _root_expansion: root::TableExpansionState = root::TableExpansionState::all();
     let _prelude_expansion: prelude::TableExpansionState =
         prelude::TableExpansionState::rows([prelude::TableRowId::new("group:team=ui")]);
+    let _root_expansion_mode: root::TableExpansionMode = root::TableExpansionMode::Manual;
+    let _prelude_expansion_mode: prelude::TableExpansionMode = prelude::TableExpansionMode::Client;
+    let _root_stage_mode: root::TableStageMode = root::TableStageMode::Manual;
+    let _prelude_stage_mode: prelude::TableStageMode = prelude::TableStageMode::Client;
+    let root_facet_value = root::TableFacetValueCount::new("Ready", 2);
+    let root_facets: root::TableColumnFacets =
+        root::TableColumnFacets::manual("status", 2).with_unique_values([root_facet_value]);
+    let _prelude_facets: prelude::TableColumnFacets = root_facets.clone();
+    let _root_facet_range: Option<root::TableFacetRange> = root::TableFacetRange::new(1.0, 2.0);
+    let _prelude_facet_value: prelude::TableFacetValueCount =
+        prelude::TableFacetValueCount::new("Blocked", 1);
+    let _root_child_load_state: root::TableRowChildrenLoadState =
+        root::TableRowChildrenLoadState::loading("Loading children");
+    let _prelude_child_load_state: prelude::TableRowChildrenLoadState =
+        prelude::TableRowChildrenLoadState::failed("Load failed");
     let _prelude_row_kind: prelude::TableResolvedRowKind = prelude::TableResolvedRowKind::Leaf;
+    let root_tree_state = root::TableState::new([root::TableRow::new("root")
+        .with_cell("name", "Root")
+        .with_child(root::TableRow::new("child").with_cell("name", "Child"))])
+    .with_columns([root::TableColumn::new("name", "Name")])
+    .with_all_rows_expanded();
+    let root_tree_row: root::TableTreeRow = root_tree_state.resolve().final_model().rows()[0]
+        .tree()
+        .expect("tree source row should expose hierarchy metadata")
+        .clone();
+    let _prelude_tree_row: prelude::TableTreeRow = root_tree_row;
     let _resolved_kind: Option<&root::TableGroupRow> =
         table.table_state().resolve().final_model().rows()[0].group();
+    let _root_table_modifiers: root::TableInputModifiers = root::TableInputModifiers::default();
+    let _prelude_table_modifiers: prelude::TableInputModifiers =
+        prelude::TableInputModifiers::default();
+    let _root_row_action: Option<root::TableRowAction> = None;
+    let _prelude_row_action: Option<prelude::TableRowAction> = None;
+    let _root_row_activation: Option<root::TableRowActivation> = None;
+    let _prelude_row_activation: Option<prelude::TableRowActivation> = None;
+    let _root_row_expansion: Option<root::TableRowExpansionToggle> = None;
+    let _prelude_row_expansion: Option<prelude::TableRowExpansionToggle> = None;
+    let _root_activation_kind: root::TableRowActivationKind =
+        root::TableRowActivationKind::DoubleClick;
+    let _prelude_activation_kind: prelude::TableRowActivationKind =
+        prelude::TableRowActivationKind::Keyboard;
     let _root_pinning: root::TableColumnPinning =
         root::TableColumnPinning::new().pinned_left(["name"]);
     let root_sizing = root::TableColumnSizing::new().with_width("name", ui_px(180.0));
     let _root_sizing: root::TableColumnSizing = root_sizing.clone();
     let _prelude_sizing: prelude::TableColumnSizing =
         prelude::TableColumnSizing::new().with_width("name", ui_px(180.0));
+    let root_resize_state = root::TableColumnResizeState::begin(
+        "name",
+        ui_px(12.0),
+        ui_px(180.0),
+        [("name", ui_px(180.0))],
+    );
+    let root_resize_update: root::TableColumnResizeUpdate = root::drag_table_column_resize(
+        root::TableColumnResizeMode::OnChange,
+        root::TableColumnResizeDirection::Ltr,
+        &root_sizing,
+        &root_resize_state,
+        ui_px(24.0),
+    );
+    let _prelude_resize_state: prelude::TableColumnResizeState = root_resize_update.state().clone();
+    let _prelude_resize_update: prelude::TableColumnResizeUpdate = root::end_table_column_resize(
+        prelude::TableColumnResizeMode::OnEnd,
+        prelude::TableColumnResizeDirection::Ltr,
+        &prelude::TableColumnSizing::new().with_width("name", ui_px(180.0)),
+        &root_resize_state,
+        Some(ui_px(24.0)),
+    );
+    let root_resize_change = root::TableColumnSizingChange::new(
+        "name",
+        ui_px(204.0),
+        root_resize_update
+            .committed_sizing()
+            .cloned()
+            .expect("resize update should commit in on-change mode"),
+    );
+    let _prelude_resize_change: prelude::TableColumnSizingChange = root_resize_change;
     let _root_resolved_sizing: root::TableResolvedColumnSizing = table
         .table_state()
         .resolve()
@@ -3514,6 +4219,11 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .clone();
 
     assert_eq!(root_plan.role(), Role::Table);
+    assert!(!root_plan.column_facets().is_empty());
+    assert_eq!(
+        root::TableRowActivationKind::DoubleClick.as_str(),
+        "double-click"
+    );
     assert_eq!(virtualizer.resolve().overscan(), 2);
 }
 
@@ -3746,6 +4456,249 @@ fn table_runtime_header_click_emits_sort_action(cx: &mut open_gpui::TestAppConte
 }
 
 #[open_gpui::test]
+fn table_runtime_row_click_and_tree_toggle_emit_controlled_payloads(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    type ActivationLog = Vec<(String, String, usize, Option<bool>, bool)>;
+    type ToggleLog = Vec<(String, bool, usize, Option<bool>)>;
+
+    struct TestView {
+        activations: Rc<RefCell<ActivationLog>>,
+        toggles: Rc<RefCell<ToggleLog>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let activations = self.activations.clone();
+            let toggles = self.toggles.clone();
+            let state = TableState::new([TableRow::new("root")
+                .with_cell("name", "Workspace")
+                .with_cell("status", "Ready")
+                .with_child(
+                    TableRow::new("child")
+                        .with_cell("name", "UI")
+                        .with_cell("status", "Building"),
+                )])
+            .with_columns([
+                TableColumn::new("name", "Name").with_width(ui_px(180.0)),
+                TableColumn::new("status", "Status").with_width(ui_px(120.0)),
+            ])
+            .with_pagination(TablePagination::disabled());
+            let table = Table::new("tree-runtime-table", "Tree runtime", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .on_row_activate(move |activation, _, _| {
+                    activations.borrow_mut().push((
+                        activation.row_id().as_str().to_owned(),
+                        activation.kind().as_str().to_owned(),
+                        activation.action().depth(),
+                        activation.action().tree_expanded(),
+                        activation.action().modifiers().modified(),
+                    ));
+                })
+                .on_row_expansion_request(move |toggle, _, _| {
+                    toggles.borrow_mut().push((
+                        toggle.row_id().as_str().to_owned(),
+                        toggle.expanded(),
+                        toggle.action().depth(),
+                        toggle.action().tree_expanded(),
+                    ));
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let toggles = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        activations: activations.clone(),
+        toggles: toggles.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let row = cx
+        .debug_bounds("table:tree-runtime-table:row:root")
+        .expect("root row should render");
+    cx.simulate_click(row.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        activations.borrow().as_slice(),
+        &[("root".to_owned(), "click".to_owned(), 0, Some(false), false)]
+    );
+    assert!(toggles.borrow().is_empty());
+
+    let toggle = cx
+        .debug_bounds("table:tree-runtime-table:tree-toggle:root")
+        .expect("root tree toggle should render");
+    cx.simulate_click(toggle.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(activations.borrow().len(), 1);
+    assert_eq!(
+        toggles.borrow().as_slice(),
+        &[("root".to_owned(), true, 0, Some(false))]
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_unloaded_branch_toggle_emits_child_load_metadata(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    type ToggleLog = Vec<(String, bool, usize, Option<String>, bool, usize)>;
+
+    struct TestView {
+        toggles: Rc<RefCell<ToggleLog>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let toggles = self.toggles.clone();
+            let state = TableState::new([TableRow::new("remote")
+                .with_cell("name", "Remote workspace")
+                .with_cell("status", "Retry")
+                .with_children_load_failed("Network unavailable")])
+            .with_columns([
+                TableColumn::new("name", "Name").with_width(ui_px(180.0)),
+                TableColumn::new("status", "Status").with_width(ui_px(120.0)),
+            ])
+            .with_pagination(TablePagination::disabled());
+            let table = Table::new("remote-runtime-table", "Remote runtime", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .on_row_expansion_request(move |toggle, _, _| {
+                    let load_state = toggle
+                        .children_load_state()
+                        .and_then(TableRowChildrenLoadState::message)
+                        .map(str::to_owned);
+                    let failed = toggle
+                        .children_load_state()
+                        .is_some_and(TableRowChildrenLoadState::is_failed);
+                    toggles.borrow_mut().push((
+                        toggle.row_id().as_str().to_owned(),
+                        toggle.expanded(),
+                        toggle.action().depth(),
+                        load_state,
+                        failed,
+                        toggle.loaded_child_count(),
+                    ));
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let toggles = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        toggles: toggles.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let toggle = cx
+        .debug_bounds("table:remote-runtime-table:tree-toggle:remote")
+        .expect("remote branch tree toggle should render without loaded children");
+    cx.simulate_click(toggle.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        toggles.borrow().as_slice(),
+        &[(
+            "remote".to_owned(),
+            true,
+            0,
+            Some("Network unavailable".to_owned()),
+            true,
+            0,
+        )]
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_resize_emits_controlled_sizing_change(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        changes: Rc<RefCell<Vec<TableColumnSizingChange>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let changes = self.changes.clone();
+            let state = sample_table_state(12)
+                .with_column_sizing(TableColumnSizing::new().with_width("name", ui_px(160.0)));
+            let table = Table::new("resize-runtime-table", "Resize runtime", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .column_resize_mode(TableColumnResizeMode::OnEnd)
+                .on_column_sizing_change(move |change, _, _| {
+                    changes.borrow_mut().push(change);
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        changes: changes.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let handle = cx
+        .debug_bounds("table:resize-runtime-table:resize:name")
+        .expect("name resize handle should be rendered")
+        .center();
+
+    cx.simulate_mouse_down(handle, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(handle.x + px(18.0), handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    assert!(changes.borrow().is_empty());
+
+    cx.simulate_mouse_move(
+        point(handle.x + px(58.0), handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    assert!(changes.borrow().is_empty());
+
+    cx.simulate_mouse_up(
+        point(handle.x + px(58.0), handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let changes = changes.borrow();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].column_id().as_str(), "name");
+    assert!(changes[0].width() > ui_px(160.0));
+    assert_eq!(
+        changes[0]
+            .sizing()
+            .width(changes[0].column_id())
+            .expect("controlled sizing should include resized column"),
+        changes[0].width()
+    );
+}
+
+#[open_gpui::test]
 fn table_runtime_exposes_pinned_region_debug_selectors(cx: &mut open_gpui::TestAppContext) {
     struct TestView;
 
@@ -3800,6 +4753,737 @@ fn table_runtime_exposes_pinned_region_debug_selectors(cx: &mut open_gpui::TestA
             "expected body {region} region selector to render"
         );
     }
+
+    assert!(
+        cx.debug_bounds("scroll-area:table:pinned-runtime-table:header-center-scroll")
+            .is_some(),
+        "expected pinned header center region to render a horizontal scroll viewport"
+    );
+    assert!(
+        cx.debug_bounds("scroll-area:table:pinned-runtime-table:row-center-scroll:row-a")
+            .is_some(),
+        "expected pinned body center region to render a horizontal scroll viewport"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_pinned_center_scrolls_without_moving_fixed_lanes(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let table = Table::new(
+                "pinned-scroll-runtime-table",
+                "Pinned scroll table",
+                sample_pinned_table_state(),
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(96.0));
+
+            div()
+                .size_full()
+                .child(div().w(px(420.0)).h(px(140.0)).child(table))
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let header_center_before = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:header:team")
+        .expect("center header should render before horizontal scrolling");
+    let body_center_before = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:team")
+        .expect("center body cell should render before horizontal scrolling");
+    let left_before = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:score")
+        .expect("left pinned body cell should render before horizontal scrolling");
+    let right_before = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:status")
+        .expect("right pinned body cell should render before horizontal scrolling");
+    let body_center_viewport = cx
+        .debug_bounds("scroll-area:table:pinned-scroll-runtime-table:row-center-scroll:row-a")
+        .expect("body center lane should expose a horizontal scroll viewport");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: body_center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-64.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let header_center_after = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:header:team")
+        .expect("center header should remain rendered after horizontal scrolling");
+    let body_center_after = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:team")
+        .expect("center body cell should remain rendered after horizontal scrolling");
+    let left_after = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:score")
+        .expect("left pinned body cell should remain rendered after horizontal scrolling");
+    let right_after = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:status")
+        .expect("right pinned body cell should remain rendered after horizontal scrolling");
+
+    assert!(
+        header_center_after.left() < header_center_before.left(),
+        "expected shared horizontal handle to move center header left; before={header_center_before:?} after={header_center_after:?}"
+    );
+    assert!(
+        body_center_after.left() < body_center_before.left(),
+        "expected horizontal body center lane to move left; before={body_center_before:?} after={body_center_after:?}"
+    );
+    assert_eq!(
+        left_after.left(),
+        left_before.left(),
+        "expected left pinned lane to keep its screen-space x position"
+    );
+    assert_eq!(
+        right_after.left(),
+        right_before.left(),
+        "expected right pinned lane to keep its screen-space x position"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_center_column_window_mounts_only_rendered_center_cells(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let table = Table::new(
+                "center-window-runtime-table",
+                "Center window runtime table",
+                sample_center_window_table_state_with_rows(20),
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(96.0))
+            .overscan(0);
+
+            div()
+                .size_full()
+                .child(div().w(px(340.0)).h(px(160.0)).child(table))
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:header:metric_00")
+            .is_some(),
+        "expected the first center header to render before horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:cell:row-0000:metric_00")
+            .is_some(),
+        "expected the first center body cell to render before horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:header:metric_05")
+            .is_none(),
+        "far-right center headers should stay unmounted before horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:cell:row-0000:metric_05")
+            .is_none(),
+        "far-right center body cells should stay unmounted before horizontal scrolling"
+    );
+
+    let left_before = cx
+        .debug_bounds("table:center-window-runtime-table:cell:row-0000:name")
+        .expect("left pinned cell should render before horizontal scrolling");
+    let right_before = cx
+        .debug_bounds("table:center-window-runtime-table:cell:row-0000:status")
+        .expect("right pinned cell should render before horizontal scrolling");
+    let body_center_viewport = cx
+        .debug_bounds("scroll-area:table:center-window-runtime-table:row-center-scroll:row-0000")
+        .expect("body center lane should expose a horizontal scroll viewport");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: body_center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-440.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:header:metric_00")
+            .is_none(),
+        "leftmost center headers should unmount after the center window advances"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:cell:row-0000:metric_00")
+            .is_none(),
+        "leftmost center cells should unmount after the center window advances"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:header:metric_05")
+            .is_some(),
+        "far-right center headers should render after horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:cell:row-0000:metric_05")
+            .is_some(),
+        "far-right center cells should render after horizontal scrolling"
+    );
+
+    let left_after = cx
+        .debug_bounds("table:center-window-runtime-table:cell:row-0000:name")
+        .expect("left pinned cell should remain rendered after horizontal scrolling");
+    let right_after = cx
+        .debug_bounds("table:center-window-runtime-table:cell:row-0000:status")
+        .expect("right pinned cell should remain rendered after horizontal scrolling");
+    assert_eq!(
+        left_after.left(),
+        left_before.left(),
+        "left pinned lane should keep its screen-space x position"
+    );
+    assert_eq!(
+        right_after.left(),
+        right_before.left(),
+        "right pinned lane should keep its screen-space x position"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_center_column_window_still_emits_sort_for_rendered_center_header(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        actions: Rc<RefCell<Vec<TableHeaderAction>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let actions = self.actions.clone();
+            let table = Table::new(
+                "center-window-sort-runtime-table",
+                "Center window sort table",
+                sample_center_window_table_state_with_rows(20),
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(96.0))
+            .overscan(0)
+            .on_sort_requested(move |action, _, _| {
+                actions.borrow_mut().push(action);
+            });
+
+            div()
+                .size_full()
+                .child(div().w(px(340.0)).h(px(160.0)).child(table))
+        }
+    }
+
+    let actions = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        actions: actions.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let body_center_viewport = cx
+        .debug_bounds(
+            "scroll-area:table:center-window-sort-runtime-table:row-center-scroll:row-0000",
+        )
+        .expect("body center lane should expose a horizontal scroll viewport");
+    cx.simulate_event(ScrollWheelEvent {
+        position: body_center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-440.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let metric_05_header = cx
+        .debug_bounds("table:center-window-sort-runtime-table:header:metric_05")
+        .expect("virtualized center header should render after horizontal scrolling");
+    cx.simulate_click(metric_05_header.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let actions = actions.borrow();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].column_id().as_str(), "metric_05");
+    assert_eq!(actions[0].label(), "Metric 05");
+    assert_eq!(actions[0].current_direction(), None);
+    assert_eq!(
+        actions[0].next_direction(),
+        Some(TableSortDirection::Ascending)
+    );
+}
+
+#[test]
+fn table_center_column_window_recomputes_geometry_for_center_column_resize() {
+    let base_plan = Table::new(
+        "center-window-resize-plan-table",
+        "Center window resize plan table",
+        sample_center_window_table_state()
+            .with_column_sizing(TableColumnSizing::new().with_width("metric_05", ui_px(120.0))),
+    )
+    .row_height(ui_px(24.0))
+    .viewport_extent(ui_px(96.0))
+    .overscan(0)
+    .render_plan(UiPx::ZERO, ui_px(96.0));
+    let base_center_columns = base_plan
+        .column_regions()
+        .iter()
+        .find(|region| region.region() == TableColumnRegion::Center)
+        .expect("center region should resolve")
+        .columns();
+    let base_window =
+        TableCenterColumnWindowPlan::resolve(base_center_columns, ui_px(420.0), ui_px(68.0), 0)
+            .expect("center column window should resolve");
+
+    let resized_plan = Table::new(
+        "center-window-resize-plan-table",
+        "Center window resize plan table",
+        sample_center_window_table_state()
+            .with_column_sizing(TableColumnSizing::new().with_width("metric_05", ui_px(180.0))),
+    )
+    .row_height(ui_px(24.0))
+    .viewport_extent(ui_px(96.0))
+    .overscan(0)
+    .render_plan(UiPx::ZERO, ui_px(96.0));
+    let resized_center_columns = resized_plan
+        .column_regions()
+        .iter()
+        .find(|region| region.region() == TableColumnRegion::Center)
+        .expect("center region should resolve after resize")
+        .columns();
+    let resized_window =
+        TableCenterColumnWindowPlan::resolve(resized_center_columns, ui_px(420.0), ui_px(68.0), 0)
+            .expect("center column window should resolve after resize");
+
+    assert!(resized_window.center_width() > base_window.center_width());
+    assert_eq!(resized_window.visible_range(), base_window.visible_range());
+    assert_eq!(
+        resized_window.overscan_range(),
+        base_window.overscan_range()
+    );
+    assert_eq!(
+        resized_window
+            .rendered_columns()
+            .iter()
+            .map(|column| column.id().as_str())
+            .collect::<Vec<_>>(),
+        base_window
+            .rendered_columns()
+            .iter()
+            .map(|column| column.id().as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        resized_window.rendered_columns().last().unwrap().width()
+            > base_window.rendered_columns().last().unwrap().width(),
+        "expected the resized virtualized center header to widen"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_center_column_window_keeps_row_virtualizer_independent(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let table = Table::new(
+                "center-window-rows-runtime-table",
+                "Center window rows runtime table",
+                sample_center_window_table_state_with_rows(80),
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(120.0))
+            .overscan(0);
+
+            div()
+                .size_full()
+                .child(div().w(px(340.0)).h(px(160.0)).child(table))
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let body_center_viewport = cx
+        .debug_bounds(
+            "scroll-area:table:center-window-rows-runtime-table:row-center-scroll:row-0000",
+        )
+        .expect("body center lane should expose a horizontal scroll viewport");
+    cx.simulate_event(ScrollWheelEvent {
+        position: body_center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-440.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("table:center-window-rows-runtime-table:cell:row-0000:metric_05")
+            .is_some(),
+        "horizontal center window should reveal far-right cells before vertical scrolling"
+    );
+
+    let first_row_pinned_cell = cx
+        .debug_bounds("table:center-window-rows-runtime-table:cell:row-0000:name")
+        .expect("left pinned cell should remain reachable before vertical scrolling");
+    cx.simulate_event(ScrollWheelEvent {
+        position: first_row_pinned_cell.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("table:center-window-rows-runtime-table:row:row-0000")
+            .is_none(),
+        "vertical scrolling should still advance the row virtualizer"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-rows-runtime-table:row:row-0010")
+            .is_some(),
+        "row 10 should render after vertical scrolling"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-rows-runtime-table:cell:row-0010:metric_05")
+            .is_some(),
+        "newly rendered rows should consume the current center column window"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-rows-runtime-table:cell:row-0010:metric_00")
+            .is_none(),
+        "off-window center cells should remain unmounted on newly rendered rows"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_pinned_body_scrolls_without_moving_parent(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let table = Table::new(
+                "pinned-body-scroll-runtime-table",
+                "Pinned body scroll table",
+                sample_pinned_table_state_with_rows(80),
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(120.0))
+            .overscan(2);
+
+            div().size_full().child(
+                div().w(px(440.0)).h(px(220.0)).child(
+                    ScrollArea::new(
+                        "pinned-table-parent-scroll",
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .debug_selector(|| "table-parent-top".into())
+                                    .h(px(72.0))
+                                    .w_full()
+                                    .child("Parent top"),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "pinned-table-wrapper".into())
+                                    .h(px(140.0))
+                                    .min_h(px(0.0))
+                                    .overflow_hidden()
+                                    .child(table),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "table-parent-bottom".into())
+                                    .h(px(240.0))
+                                    .w_full()
+                                    .child("Parent bottom"),
+                            ),
+                    )
+                    .vertical(),
+                ),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let first_row_before = cx
+        .debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0000")
+        .expect("first pinned body row should render before vertical scrolling");
+    assert!(
+        cx.debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0010")
+            .is_none(),
+        "row 10 should start outside the initial pinned body window"
+    );
+    let parent_bottom_before = cx
+        .debug_bounds("table-parent-bottom")
+        .expect("parent bottom should be rendered before table scrolling");
+    let viewport = cx
+        .debug_bounds("scroll-area:table:pinned-body-scroll-runtime-table:body-scroll")
+        .expect("pinned table body viewport should expose a stable scroll selector");
+    let first_row_cell = cx
+        .debug_bounds("table:pinned-body-scroll-runtime-table:cell:row-0000:name")
+        .expect("first pinned body row cell should render before vertical scrolling");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: first_row_cell.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let parent_bottom_after = cx
+        .debug_bounds("table-parent-bottom")
+        .expect("parent bottom should still be rendered after table scrolling");
+    assert_eq!(
+        parent_bottom_after.top(),
+        parent_bottom_before.top(),
+        "expected wheel input inside pinned Table to stay inside the table body; before={parent_bottom_before:?} after={parent_bottom_after:?}"
+    );
+    assert!(
+        cx.debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0000")
+            .is_none(),
+        "expected first pinned row to unmount after the virtual window advances"
+    );
+    assert!(
+        cx.debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0010")
+            .is_some(),
+        "expected row 10 to render after scrolling the pinned table body"
+    );
+    assert!(
+        viewport.size.width > px(0.0) && first_row_before.top() <= parent_bottom_after.bottom(),
+        "pinned body viewport should remain measurable during the test"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_pinned_headers_still_sort_after_center_scroll(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        actions: Rc<RefCell<Vec<TableHeaderAction>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let actions = self.actions.clone();
+            let table = Table::new(
+                "pinned-sort-runtime-table",
+                "Pinned sort table",
+                sample_pinned_table_state(),
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(96.0))
+            .on_sort_requested(move |action, _, _| {
+                actions.borrow_mut().push(action);
+            });
+
+            div()
+                .size_full()
+                .child(div().w(px(420.0)).h(px(140.0)).child(table))
+        }
+    }
+
+    let actions = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        actions: actions.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let body_center_viewport = cx
+        .debug_bounds("scroll-area:table:pinned-sort-runtime-table:row-center-scroll:row-a")
+        .expect("body center lane should expose a horizontal scroll viewport");
+    let header_center_viewport = cx
+        .debug_bounds("scroll-area:table:pinned-sort-runtime-table:header-center-scroll")
+        .expect("header center lane should expose a horizontal scroll viewport");
+    cx.simulate_event(ScrollWheelEvent {
+        position: body_center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-160.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("table:pinned-sort-runtime-table:header:team")
+            .is_some(),
+        "center header should remain visible after scrolling"
+    );
+    let score_header = cx
+        .debug_bounds("table:pinned-sort-runtime-table:header:score")
+        .expect("left pinned header should remain visible after scrolling");
+    let status_header = cx
+        .debug_bounds("table:pinned-sort-runtime-table:header:status")
+        .expect("right pinned header should remain visible after scrolling");
+
+    cx.simulate_click(header_center_viewport.center(), Default::default());
+    cx.simulate_click(score_header.center(), Default::default());
+    cx.simulate_click(status_header.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let actions = actions.borrow();
+    assert_eq!(actions.len(), 3);
+    assert_eq!(actions[0].column_id().as_str(), "team");
+    assert_eq!(actions[1].column_id().as_str(), "score");
+    assert_eq!(actions[2].column_id().as_str(), "status");
+}
+
+#[open_gpui::test]
+fn table_runtime_pinned_resize_handles_emit_changes_for_center_and_pinned_columns(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        changes: Rc<RefCell<Vec<TableColumnSizingChange>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let changes = self.changes.clone();
+            let table = Table::new(
+                "pinned-resize-runtime-table",
+                "Pinned resize table",
+                sample_pinned_table_state()
+                    .with_column_sizing(TableColumnSizing::new().with_width("team", ui_px(160.0))),
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(96.0))
+            .column_resize_mode(TableColumnResizeMode::OnEnd)
+            .on_column_sizing_change(move |change, _, _| {
+                changes.borrow_mut().push(change);
+            });
+
+            div()
+                .size_full()
+                .child(div().w(px(620.0)).h(px(140.0)).child(table))
+        }
+    }
+
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        changes: changes.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let team_handle_bounds = cx
+        .debug_bounds("table:pinned-resize-runtime-table:resize:team")
+        .expect("center resize handle should remain reachable in split layout");
+    let team_handle = point(
+        team_handle_bounds.right() - px(1.0),
+        team_handle_bounds.center().y,
+    );
+    let score_handle_bounds = cx
+        .debug_bounds("table:pinned-resize-runtime-table:resize:score")
+        .expect("pinned resize handle should remain reachable");
+    let score_handle = point(
+        score_handle_bounds.right() - px(1.0),
+        score_handle_bounds.center().y,
+    );
+
+    cx.simulate_mouse_down(team_handle, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(team_handle.x + px(4.0), team_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    assert!(changes.borrow().is_empty());
+    cx.simulate_mouse_move(
+        point(team_handle.x + px(24.0), team_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    assert!(changes.borrow().is_empty());
+    cx.simulate_mouse_move(
+        point(team_handle.x + px(60.0), team_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_up(
+        point(team_handle.x + px(60.0), team_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(changes.borrow().len(), 1);
+    assert_eq!(changes.borrow()[0].column_id().as_str(), "team");
+
+    cx.simulate_mouse_down(score_handle, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(score_handle.x + px(4.0), score_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    assert_eq!(changes.borrow().len(), 1);
+    cx.simulate_mouse_move(
+        point(score_handle.x + px(24.0), score_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    assert_eq!(changes.borrow().len(), 1);
+    cx.simulate_mouse_move(
+        point(score_handle.x + px(60.0), score_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_up(
+        point(score_handle.x + px(60.0), score_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let changes = changes.borrow();
+    assert_eq!(changes.len(), 2);
+    assert_eq!(changes[0].column_id().as_str(), "team");
+    assert!(changes[0].width() > ui_px(160.0));
+    assert_eq!(changes[1].column_id().as_str(), "score");
+    assert!(changes[1].width() > ui_px(128.0));
 }
 
 #[open_gpui::test]
@@ -5495,8 +7179,11 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_change",
         "on_click",
         "on_close",
+        "on_column_sizing_change",
         "on_open_change",
         "on_query_change",
+        "on_row_activate",
+        "on_row_expansion_request",
         "on_select",
         "on_selected_values_change",
         "on_selection_change",
@@ -5617,6 +7304,13 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
     );
     assert_inventory_contains_default_seed("Menu", "default_focused_value", "focused_value");
     assert_inventory_contains_default_seed("ContextMenu", "default_focused_value", "focused_value");
+    assert_inventory_contains_default_seed("Table", "default_focused_row", "focused_row");
+    assert_inventory_contains_callback("Table", "on_row_activate", "TableRowActivation");
+    assert_inventory_contains_callback(
+        "Table",
+        "on_row_expansion_request",
+        "TableRowExpansionToggle",
+    );
 }
 
 #[test]

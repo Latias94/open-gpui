@@ -1,6 +1,6 @@
 //! Component consumer samples for the foundation gallery.
 
-use open_gpui::{App, BorrowAppContext, Global, ParentElement, Styled, div, rgb};
+use open_gpui::{App, AppContext, BorrowAppContext, Global, ParentElement, Styled, div, rgb};
 use open_gpui_ui_components::{
     Avatar, AvatarState, Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant,
     Checkbox, CheckboxState, ComboboxGroupDescriptor, ComboboxOptionDescriptor, ComboboxState,
@@ -12,18 +12,22 @@ use open_gpui_ui_components::{
     ScrollResetPolicy, SelectState, Separator, SeparatorState, SidebarCollapseMode,
     SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
     Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
-    Switch, SwitchState, Table, TableAggregation, TableColumn, TableColumnPinning,
-    TableExpansionState, TableFilter, TablePagination, TableRenderPlan, TableRow, TableSort,
-    TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
-    TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
-    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
-    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
+    Switch, SwitchState, Table, TableAggregation, TableColumn, TableColumnFacets, TableColumnId,
+    TableColumnPinning, TableColumnRegion, TableColumnSizing, TableColumnSizingChange,
+    TableExpansionMode, TableExpansionState, TableFacetValueCount, TableFilter, TablePagination,
+    TableRenderPlan, TableRow, TableRowActivation, TableRowChildrenLoadState,
+    TableRowExpansionToggle, TableSort, TableStageMode, TableState, Tabs, TabsActivationMode,
+    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState,
+    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
+    Tree, TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListItemDescriptor,
+    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
     OverlayPlacementAlignment, OverlayPlacementSide, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
+use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 
 #[path = "components/render.rs"]
@@ -125,8 +129,14 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::TableState",
     "open_gpui_ui_components::TableHeaderAction",
     "open_gpui_ui_components::TableAggregation",
+    "open_gpui_ui_components::TableColumnFacets",
+    "open_gpui_ui_components::TableFacetValueCount",
+    "open_gpui_ui_components::TableFacetRange",
     "open_gpui_ui_components::TableColumnPinning",
     "open_gpui_ui_components::TableColumnRegion",
+    "open_gpui_ui_components::TableColumnSizing",
+    "open_gpui_ui_components::TableColumnSizingChange",
+    "open_gpui_ui_components::TableColumnResizeMode",
     "open_gpui_ui_components::TableExpansionState",
     "open_gpui_ui_components::VirtualizedList",
     "open_gpui_ui_components::VirtualizedListItemDescriptor",
@@ -719,7 +729,7 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "Table",
         "data",
         "TableState",
-        "exports / gallery / virtualized scroll smoke",
+        "exports / gallery / virtualized scroll and resize smoke",
         "gallery:component-table-sample:release-queue",
     ),
     ComponentCatalogEntry::official(
@@ -885,14 +895,16 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
     ComponentConformanceGate {
         id: "table-virtualization",
         title: "Table row models and scroll ownership",
-        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate and pinned-column metadata, and nested scroll ownership.",
+        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate and pinned-column metadata, resize handles, and nested scroll ownership.",
         evidence: &[
             "TableState::resolve",
             "Table::render_plan",
             "TableHeaderAction",
             "release-rollup",
+            "release-resize",
             "components_gallery_smoke_table_scroll_stays_inside_sample",
             "components_gallery_smoke_grouped_table_scroll_stays_inside_sample",
+            "components_gallery_smoke_resizable_table_resize_updates_sample",
         ],
     },
     ComponentConformanceGate {
@@ -1158,6 +1170,268 @@ pub fn record_tree_toggle(
             value: value.into(),
             expanded,
         });
+    });
+}
+
+/// One committed column sizing change captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableSampleSizingChange {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Resized column id.
+    pub column_id: String,
+    /// Committed resolved width.
+    pub width: UiPx,
+}
+
+/// One row activation captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSampleRowActivation {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Activated row id.
+    pub row_id: String,
+    /// Concrete render key used by the adapter selectors.
+    pub render_key: String,
+    /// Stable activation kind label.
+    pub kind: String,
+    /// Final row-model index at activation time.
+    pub model_index: usize,
+    /// Resolved hierarchy depth at activation time.
+    pub depth: usize,
+    /// Whether the row is a source tree branch.
+    pub tree_branch: bool,
+    /// Resolved branch expansion state, when applicable.
+    pub tree_expanded: Option<bool>,
+    /// Whether the row was selected in caller-owned table state.
+    pub selected: bool,
+}
+
+/// One source-tree expansion request captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSampleExpansionToggle {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Toggled row id.
+    pub row_id: String,
+    /// Desired expanded state after the toggle.
+    pub expanded: bool,
+    /// Resolved hierarchy depth at toggle time.
+    pub depth: usize,
+    /// Number of directly loaded child rows at toggle time.
+    pub loaded_child_count: usize,
+    /// Stable child loading state label at toggle time.
+    pub children_load_state: String,
+    /// Optional loading or failure message at toggle time.
+    pub children_load_message: Option<String>,
+}
+
+/// Runtime interaction log used by gallery Table smoke tests.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct TableSampleRuntimeLog {
+    sizing_changes: Vec<TableSampleSizingChange>,
+    committed_sizing: BTreeMap<String, TableColumnSizing>,
+    row_activations: Vec<TableSampleRowActivation>,
+    expansion_toggles: Vec<TableSampleExpansionToggle>,
+    expansion_overrides: BTreeMap<String, TableExpansionState>,
+    server_tree_loaded: BTreeMap<String, bool>,
+}
+
+impl Global for TableSampleRuntimeLog {}
+
+impl TableSampleRuntimeLog {
+    /// Returns captured sizing changes in event order.
+    pub fn sizing_changes(&self) -> &[TableSampleSizingChange] {
+        &self.sizing_changes
+    }
+
+    /// Returns the latest committed sizing for a sample, if any.
+    pub fn committed_sizing(&self, sample_id: &str) -> Option<&TableColumnSizing> {
+        self.committed_sizing.get(sample_id)
+    }
+
+    /// Returns captured row activations in event order.
+    pub fn row_activations(&self) -> &[TableSampleRowActivation] {
+        &self.row_activations
+    }
+
+    /// Returns captured source-tree expansion requests in event order.
+    pub fn expansion_toggles(&self) -> &[TableSampleExpansionToggle] {
+        &self.expansion_toggles
+    }
+
+    /// Returns the current controlled expansion override for a sample, if any.
+    pub fn expansion_override(&self, sample_id: &str) -> Option<&TableExpansionState> {
+        self.expansion_overrides.get(sample_id)
+    }
+
+    /// Clears captured interactions.
+    pub fn clear(&mut self) {
+        self.sizing_changes.clear();
+        self.committed_sizing.clear();
+        self.row_activations.clear();
+        self.expansion_toggles.clear();
+        self.expansion_overrides.clear();
+        self.server_tree_loaded.clear();
+    }
+}
+
+/// Returns the current committed sizing for a gallery `Table` sample.
+pub fn current_table_sample_sizing(
+    sample_id: impl Into<String>,
+    fallback: &TableColumnSizing,
+    cx: &impl AppContext,
+) -> TableColumnSizing {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.committed_sizing
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    })
+}
+
+/// Returns the current controlled expansion state for a gallery `Table` sample.
+pub fn current_table_sample_expansion(
+    sample_id: impl Into<String>,
+    fallback: &TableExpansionState,
+    cx: &impl AppContext,
+) -> TableExpansionState {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.expansion_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    })
+}
+
+/// Applies a resolved expansion state to a sample table state.
+pub fn table_state_with_expansion(state: TableState, expansion: TableExpansionState) -> TableState {
+    match expansion {
+        TableExpansionState::All => state.with_all_rows_expanded(),
+        TableExpansionState::Rows(rows) => state.with_expanded_rows(rows),
+    }
+}
+
+/// Applies current gallery runtime overrides to a table sample state.
+pub fn table_sample_state_with_runtime(
+    sample: &TableSample,
+    sizing: TableColumnSizing,
+    expansion: TableExpansionState,
+    cx: &impl AppContext,
+) -> TableState {
+    let loaded_server_tree = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.server_tree_loaded
+            .get(sample.id)
+            .copied()
+            .unwrap_or(false)
+    });
+    let state = if sample.id == "server-tree" && loaded_server_tree {
+        server_tree_table_state(true)
+    } else {
+        sample.state.clone()
+    };
+
+    table_state_with_expansion(state.with_column_sizing(sizing), expansion)
+}
+
+/// Records a gallery `Table` sizing commit in app-global sample state.
+pub fn record_table_sizing_change(
+    sample_id: impl Into<String>,
+    change: &TableColumnSizingChange,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.sizing_changes.push(TableSampleSizingChange {
+            sample_id: sample_id.clone(),
+            column_id: change.column_id().as_str().to_owned(),
+            width: change.width(),
+        });
+        log.committed_sizing
+            .insert(sample_id, change.sizing().clone());
+    });
+}
+
+/// Records a gallery `Table` row activation in app-global sample state.
+pub fn record_table_row_activation(
+    sample_id: impl Into<String>,
+    activation: &TableRowActivation,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let action = activation.action();
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.row_activations.push(TableSampleRowActivation {
+            sample_id,
+            row_id: activation.row_id().as_str().to_owned(),
+            render_key: action.render_key().to_owned(),
+            kind: activation.kind().as_str().to_owned(),
+            model_index: action.model_index(),
+            depth: action.depth(),
+            tree_branch: action.tree_branch(),
+            tree_expanded: action.tree_expanded(),
+            selected: action.selected(),
+        });
+    });
+}
+
+/// Records and applies a controlled gallery `Table` source-tree expansion request.
+pub fn record_table_expansion_request(
+    sample_id: impl Into<String>,
+    fallback: &TableExpansionState,
+    toggle: &TableRowExpansionToggle,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = fallback.clone();
+    let row_id = toggle.row_id().clone();
+    let expanded = toggle.expanded();
+    let depth = toggle.action().depth();
+    let loaded_child_count = toggle.loaded_child_count();
+    let children_load_state = toggle
+        .children_load_state()
+        .map(TableRowChildrenLoadState::as_str)
+        .unwrap_or("none")
+        .to_owned();
+    let children_load_message = toggle
+        .children_load_state()
+        .and_then(TableRowChildrenLoadState::message)
+        .map(str::to_owned);
+
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.expansion_toggles.push(TableSampleExpansionToggle {
+            sample_id: sample_id.clone(),
+            row_id: row_id.as_str().to_owned(),
+            expanded,
+            depth,
+            loaded_child_count,
+            children_load_state,
+            children_load_message,
+        });
+        if sample_id == "server-tree" && row_id.as_str() == "server-workspace" && expanded {
+            log.server_tree_loaded.insert(sample_id.clone(), true);
+        }
+
+        let current = log
+            .expansion_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone());
+        let next = match current {
+            TableExpansionState::All if expanded => TableExpansionState::All,
+            TableExpansionState::All => TableExpansionState::default(),
+            TableExpansionState::Rows(mut rows) => {
+                if expanded {
+                    rows.insert(row_id);
+                } else {
+                    rows.remove(&row_id);
+                }
+                TableExpansionState::Rows(rows)
+            }
+        };
+        log.expansion_overrides.insert(sample_id, next);
     });
 }
 
@@ -1535,12 +1809,54 @@ pub struct TableSampleStateSummary {
     pub group_rows: usize,
     /// Visible leaf row count in the final model.
     pub leaf_rows: usize,
+    /// Visible tree row count in the final model.
+    pub tree_rows: usize,
+    /// Visible tree branch row count in the final model.
+    pub tree_branch_rows: usize,
+    /// Visible expandable tree rows without loaded children.
+    pub unloaded_tree_branches: usize,
+    /// Visible tree rows currently marked as loading children.
+    pub loading_tree_rows: usize,
+    /// Visible tree rows currently marked as failed child loads.
+    pub failed_tree_rows: usize,
+    /// Deepest visible tree depth in the final model.
+    pub tree_depth: usize,
+    /// Whether the sample keeps expansion pruning app-owned.
+    pub manual_expansion: bool,
+    /// Whether filtering is app-owned.
+    pub manual_filtering: bool,
+    /// Whether sorting is app-owned.
+    pub manual_sorting: bool,
+    /// Whether pagination is app-owned.
+    pub manual_pagination: bool,
+    /// Zero-based page index in the current snapshot.
+    pub pagination_page_index: usize,
+    /// Page size in the current snapshot.
+    pub pagination_page_size: usize,
+    /// Server-known total row count, if any.
+    pub pagination_row_count: Option<usize>,
+    /// Total page count, if any.
+    pub pagination_page_count: Option<usize>,
+    /// Resolved facet summary count.
+    pub facet_columns: usize,
+    /// Resolved caller-owned facet summary count.
+    pub manual_facet_columns: usize,
+    /// Unique status facet value count.
+    pub status_facet_values: usize,
+    /// Sum of status facet value counts.
+    pub status_facet_total_count: usize,
+    /// Rounded score facet minimum, if present.
+    pub score_facet_min: Option<usize>,
+    /// Rounded score facet maximum, if present.
+    pub score_facet_max: Option<usize>,
     /// Configured grouping column count.
     pub grouping_columns: usize,
     /// Configured aggregate column count.
     pub aggregation_count: usize,
     /// Explicit expanded group row ids, or all group rows when expansion is global.
     pub expanded_group_inputs: usize,
+    /// Explicit expanded tree row ids, or all tree branch rows when expansion is global.
+    pub expanded_tree_inputs: usize,
     /// Whether every group row is expanded.
     pub all_rows_expanded: bool,
     /// Visible left-pinned columns.
@@ -1549,6 +1865,16 @@ pub struct TableSampleStateSummary {
     pub pinned_center_columns: usize,
     /// Visible right-pinned columns.
     pub pinned_right_columns: usize,
+    /// Rounded visible left-pinned lane width.
+    pub pinned_left_width_px: usize,
+    /// Rounded visible center lane width.
+    pub pinned_center_width_px: usize,
+    /// Rounded visible right-pinned lane width.
+    pub pinned_right_width_px: usize,
+    /// Rounded total visible column width.
+    pub total_column_width_px: usize,
+    /// Visible resizable columns.
+    pub resizable_columns: usize,
 }
 
 impl TableSampleStateSummary {
@@ -1557,19 +1883,79 @@ impl TableSampleStateSummary {
         let overscan = plan.virtualizer().overscan_range();
         let final_rows = plan.table().final_model().rows();
         let group_rows = final_rows.iter().filter(|row| row.is_group()).count();
+        let tree_rows = final_rows.iter().filter(|row| row.tree().is_some()).count();
+        let tree_branch_rows = final_rows.iter().filter(|row| row.is_tree_branch()).count();
+        let unloaded_tree_branches = final_rows
+            .iter()
+            .filter(|row| {
+                row.is_tree_branch()
+                    && row.loaded_child_count() == 0
+                    && row
+                        .children_load_state()
+                        .is_some_and(|state| *state == TableRowChildrenLoadState::Idle)
+            })
+            .count();
+        let loading_tree_rows = final_rows
+            .iter()
+            .filter(|row| {
+                row.children_load_state()
+                    .is_some_and(TableRowChildrenLoadState::is_loading)
+            })
+            .count();
+        let failed_tree_rows = final_rows
+            .iter()
+            .filter(|row| {
+                row.children_load_state()
+                    .is_some_and(TableRowChildrenLoadState::is_failed)
+            })
+            .count();
+        let tree_depth = final_rows.iter().map(|row| row.depth()).max().unwrap_or(0);
         let regions = plan.table().visible_column_regions();
-        let (all_rows_expanded, expanded_group_inputs) = match state.expansion() {
-            TableExpansionState::All => (
-                true,
-                plan.table()
-                    .grouped_model()
-                    .rows()
-                    .iter()
-                    .filter(|row| row.is_group())
-                    .count(),
-            ),
-            TableExpansionState::Rows(rows) => (false, rows.len()),
-        };
+        let status_column = TableColumnId::new("status");
+        let score_column = TableColumnId::new("score");
+        let status_facet = plan.column_facet(&status_column);
+        let score_range = plan
+            .column_facet(&score_column)
+            .and_then(|facet| facet.numeric_range());
+        let score_facet_min = score_range.map(|range| range.min().round() as usize);
+        let score_facet_max = score_range.map(|range| range.max().round() as usize);
+        let (all_rows_expanded, expanded_group_inputs, expanded_tree_inputs) =
+            match state.expansion() {
+                TableExpansionState::All => (
+                    true,
+                    plan.table()
+                        .grouped_model()
+                        .rows()
+                        .iter()
+                        .filter(|row| row.is_group())
+                        .count(),
+                    plan.table()
+                        .core_model()
+                        .rows()
+                        .iter()
+                        .filter(|row| row.is_tree_branch())
+                        .count(),
+                ),
+                TableExpansionState::Rows(rows) => (
+                    false,
+                    rows.iter()
+                        .filter(|row_id| {
+                            plan.table()
+                                .grouped_model()
+                                .row(row_id)
+                                .is_some_and(|row| row.is_group())
+                        })
+                        .count(),
+                    rows.iter()
+                        .filter(|row_id| {
+                            plan.table()
+                                .core_model()
+                                .row(row_id)
+                                .is_some_and(|row| row.is_tree_branch())
+                        })
+                        .count(),
+                ),
+            };
 
         Self {
             core_rows: plan.table().core_model().rows().len(),
@@ -1588,13 +1974,66 @@ impl TableSampleStateSummary {
             expanded_rows: plan.table().expanded_model().rows().len(),
             group_rows,
             leaf_rows: final_rows.len().saturating_sub(group_rows),
+            tree_rows,
+            tree_branch_rows,
+            unloaded_tree_branches,
+            loading_tree_rows,
+            failed_tree_rows,
+            tree_depth,
+            manual_expansion: state.expansion_mode() == TableExpansionMode::Manual,
+            manual_filtering: plan.filtering_mode() == TableStageMode::Manual,
+            manual_sorting: plan.sorting_mode() == TableStageMode::Manual,
+            manual_pagination: plan.pagination_mode() == TableStageMode::Manual,
+            pagination_page_index: state.pagination().page_index(),
+            pagination_page_size: state.pagination().page_size(),
+            pagination_row_count: plan.pagination_row_count(),
+            pagination_page_count: plan.pagination_page_count(),
+            facet_columns: plan.column_facets().len(),
+            manual_facet_columns: plan
+                .column_facets()
+                .iter()
+                .filter(|facet| facet.mode() == TableStageMode::Manual)
+                .count(),
+            status_facet_values: status_facet
+                .map(|facet| facet.unique_values().len())
+                .unwrap_or(0),
+            status_facet_total_count: status_facet
+                .map(|facet| {
+                    facet
+                        .unique_values()
+                        .iter()
+                        .map(|entry| entry.count())
+                        .sum()
+                })
+                .unwrap_or(0),
+            score_facet_min,
+            score_facet_max,
             grouping_columns: state.grouping().len(),
             aggregation_count: state.aggregations().len(),
             expanded_group_inputs,
+            expanded_tree_inputs,
             all_rows_expanded,
             pinned_left_columns: regions.left().len(),
             pinned_center_columns: regions.center().len(),
             pinned_right_columns: regions.right().len(),
+            pinned_left_width_px: plan
+                .column_region_width(TableColumnRegion::Left)
+                .as_f32()
+                .round() as usize,
+            pinned_center_width_px: plan
+                .column_region_width(TableColumnRegion::Center)
+                .as_f32()
+                .round() as usize,
+            pinned_right_width_px: plan
+                .column_region_width(TableColumnRegion::Right)
+                .as_f32()
+                .round() as usize,
+            total_column_width_px: plan.total_column_width().as_f32().round() as usize,
+            resizable_columns: plan
+                .columns()
+                .iter()
+                .filter(|column| column.resizable())
+                .count(),
         }
     }
 }
@@ -1602,15 +2041,21 @@ impl TableSampleStateSummary {
 impl TableSample {
     /// Builds the concrete GPUI table for this sample.
     pub fn build_table(&self) -> Table {
-        Table::new(
-            format!("component-table:{}", self.id),
-            self.title,
-            self.state.clone(),
-        )
-        .with_size(self.size)
-        .viewport_extent(self.viewport_extent)
-        .row_height(self.row_height)
-        .overscan(self.overscan)
+        self.build_table_with_sizing(self.state.column_sizing().clone())
+    }
+
+    /// Builds the concrete GPUI table with caller-owned column sizing.
+    pub fn build_table_with_sizing(&self, column_sizing: TableColumnSizing) -> Table {
+        self.build_table_with_state(self.state.clone().with_column_sizing(column_sizing))
+    }
+
+    /// Builds the concrete GPUI table from a fully resolved sample state.
+    pub fn build_table_with_state(&self, state: TableState) -> Table {
+        Table::new(format!("component-table:{}", self.id), self.title, state)
+            .with_size(self.size)
+            .viewport_extent(self.viewport_extent)
+            .row_height(self.row_height)
+            .overscan(self.overscan)
     }
 
     /// Resolves the table plan used by gallery tests and state rows.
@@ -2894,17 +3339,23 @@ fn release_navigation_item(index: usize) -> VirtualizedListItemDescriptor {
     )
 }
 
-static TABLE_SAMPLES: LazyLock<[TableSample; 3]> = LazyLock::new(build_table_samples);
+const RELEASE_MATRIX_METRIC_COUNT: usize = 14;
+
+static TABLE_SAMPLES: LazyLock<Vec<TableSample>> = LazyLock::new(build_table_samples);
 
 /// Returns table samples backed by real table and virtualizer contracts.
 pub fn table_samples(_tokens: ThemeTokens) -> &'static [TableSample] {
     TABLE_SAMPLES.as_slice()
 }
 
-fn build_table_samples() -> [TableSample; 3] {
+fn build_table_samples() -> Vec<TableSample> {
     let release_queue_rows = (0..10_000).map(release_queue_row).collect::<Vec<_>>();
     let filter_board_rows = (0..180).map(filter_board_row).collect::<Vec<_>>();
+    let server_paged_rows = server_paged_rows();
+    let release_resize_rows = (0..160).map(release_resize_row).collect::<Vec<_>>();
     let grouped_release_rows = (0..320).map(grouped_release_row).collect::<Vec<_>>();
+    let release_matrix_rows = (0..480).map(release_matrix_row).collect::<Vec<_>>();
+    let dependency_tree_rows = dependency_tree_rows();
 
     let release_queue = TableSample {
         id: "release-queue",
@@ -2941,13 +3392,65 @@ fn build_table_samples() -> [TableSample; 3] {
         overscan: 4,
         state_summary: TableSampleStateSummary::default(),
     };
+    let server_paged = TableSample {
+        id: "server-paged",
+        title: "Server paged board",
+        summary: "Manual filtering, sorting, and pagination render a server-owned page snapshot with total counts.",
+        badge: "manual rows",
+        state: TableState::new(server_paged_rows)
+            .with_columns(table_columns())
+            .with_column_order(["name", "team", "status", "score"])
+            .with_filters([TableFilter::contains("team", "missing")])
+            .with_manual_filtering()
+            .with_sorting([TableSort::ascending("score")])
+            .with_manual_sorting()
+            .with_selected_rows(["server-paged-row-0018"])
+            .with_pagination(TablePagination::manual(2, 8, 64))
+            .with_manual_facets([
+                TableColumnFacets::manual("score", 64).with_numeric_range(1.0, 64.0),
+                TableColumnFacets::manual("status", 64).with_unique_values([
+                    TableFacetValueCount::new("Blocked", 16),
+                    TableFacetValueCount::new("Queued", 16),
+                    TableFacetValueCount::new("Ready", 16),
+                    TableFacetValueCount::new("Review", 16),
+                ]),
+            ]),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
+    let release_resize = TableSample {
+        id: "release-resize",
+        title: "Resizable release table",
+        summary: "Controlled column widths with live resize handles and a fixed score column.",
+        badge: "resizable",
+        state: TableState::new(release_resize_rows)
+            .with_columns(resizable_table_columns())
+            .with_column_order(["name", "team", "status", "score"])
+            .with_column_sizing(
+                TableColumnSizing::new()
+                    .with_width("name", ui_px(188.0))
+                    .with_width("team", ui_px(116.0))
+                    .with_width("status", ui_px(132.0))
+                    .with_width("score", ui_px(84.0)),
+            )
+            .with_sorting([TableSort::descending("score")])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
     let grouped_release = TableSample {
         id: "release-rollup",
         title: "Release rollup",
-        summary: "Grouped release rows mix expanded and collapsed teams with aggregate score cells and pinned lanes.",
-        badge: "grouped + pinned",
+        summary: "Grouped release rows keep left and right lanes fixed while the wide center lane scrolls horizontally.",
+        badge: "sticky pinned",
         state: TableState::new(grouped_release_rows)
-            .with_columns(table_columns())
+            .with_columns(sticky_pinned_table_columns())
             .with_column_order(["name", "team", "score", "status"])
             .with_column_pinning(
                 TableColumnPinning::new()
@@ -2969,11 +3472,82 @@ fn build_table_samples() -> [TableSample; 3] {
         overscan: 4,
         state_summary: TableSampleStateSummary::default(),
     };
+    let release_matrix = TableSample {
+        id: "release-matrix",
+        title: "Release matrix",
+        summary: "Pinned identity and status lanes frame a wide virtualized center metric window.",
+        badge: "column window",
+        state: TableState::new(release_matrix_rows)
+            .with_columns(release_matrix_table_columns())
+            .with_column_order(release_matrix_column_order())
+            .with_column_pinning(
+                TableColumnPinning::new()
+                    .pinned_left(["name"])
+                    .pinned_right(["status"]),
+            )
+            .with_sorting([TableSort::descending("metric_13")])
+            .with_selected_rows(["release-matrix-row-005"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
+    let dependency_tree = TableSample {
+        id: "dependency-tree",
+        title: "Dependency tree",
+        summary: "Nested source rows expose controlled expansion, row focus, and activation payloads.",
+        badge: "tree rows",
+        state: TableState::new(dependency_tree_rows)
+            .with_columns(dependency_tree_table_columns())
+            .with_column_order(dependency_tree_column_order())
+            .with_column_pinning(
+                TableColumnPinning::new()
+                    .pinned_left(["name"])
+                    .pinned_right(["status"]),
+            )
+            .with_column_sizing(
+                TableColumnSizing::new()
+                    .with_width("name", ui_px(220.0))
+                    .with_width("kind", ui_px(120.0))
+                    .with_width("owner", ui_px(132.0))
+                    .with_width("risk", ui_px(112.0))
+                    .with_width("change", ui_px(148.0))
+                    .with_width("score", ui_px(92.0))
+                    .with_width("status", ui_px(132.0)),
+            )
+            .with_expanded_rows(["dependency-workspace"])
+            .with_selected_rows(["dependency-ui"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
+    let server_tree = TableSample {
+        id: "server-tree",
+        title: "Server tree",
+        summary: "Manual expansion keeps async child loading app-owned while Table renders branch metadata.",
+        badge: "manual expansion",
+        state: server_tree_table_state(false),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
 
-    [
+    vec![
         release_queue.with_state_summary(),
         filter_board.with_state_summary(),
+        server_paged.with_state_summary(),
+        release_resize.with_state_summary(),
         grouped_release.with_state_summary(),
+        release_matrix.with_state_summary(),
+        dependency_tree.with_state_summary(),
+        server_tree.with_state_summary(),
     ]
 }
 
@@ -2998,6 +3572,308 @@ fn table_columns() -> [TableColumn; 4] {
     ]
 }
 
+fn sticky_pinned_table_columns() -> [TableColumn; 4] {
+    [
+        TableColumn::new("name", "Name")
+            .with_width(ui_px(188.0))
+            .with_min_width(ui_px(144.0))
+            .with_max_width(ui_px(280.0)),
+        TableColumn::new("team", "Team")
+            .with_width(ui_px(220.0))
+            .with_min_width(ui_px(128.0))
+            .with_max_width(ui_px(320.0)),
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(164.0))
+            .with_min_width(ui_px(120.0))
+            .with_max_width(ui_px(240.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(180.0))
+            .with_min_width(ui_px(96.0))
+            .with_max_width(ui_px(220.0)),
+    ]
+}
+
+fn resizable_table_columns() -> [TableColumn; 4] {
+    [
+        TableColumn::new("name", "Name")
+            .with_width(ui_px(188.0))
+            .with_min_width(ui_px(140.0))
+            .with_max_width(ui_px(280.0)),
+        TableColumn::new("team", "Team")
+            .with_width(ui_px(116.0))
+            .with_min_width(ui_px(92.0))
+            .with_max_width(ui_px(180.0)),
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(132.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(220.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(84.0))
+            .with_min_width(ui_px(72.0))
+            .with_max_width(ui_px(120.0))
+            .with_resizable(false),
+    ]
+}
+
+fn release_matrix_table_columns() -> Vec<TableColumn> {
+    let mut columns = Vec::with_capacity(RELEASE_MATRIX_METRIC_COUNT + 2);
+    columns.push(
+        TableColumn::new("name", "Release")
+            .with_width(ui_px(172.0))
+            .with_min_width(ui_px(140.0))
+            .with_max_width(ui_px(260.0)),
+    );
+    columns.extend((0..RELEASE_MATRIX_METRIC_COUNT).map(|index| {
+        let width = ui_px(92.0 + (index % 4) as f32 * 12.0);
+        TableColumn::new(format!("metric_{index:02}"), format!("Metric {index:02}"))
+            .with_width(width)
+            .with_min_width(ui_px(72.0))
+            .with_max_width(ui_px(180.0))
+    }));
+    columns.push(
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(148.0))
+            .with_min_width(ui_px(112.0))
+            .with_max_width(ui_px(220.0)),
+    );
+    columns
+}
+
+fn release_matrix_column_order() -> Vec<String> {
+    let mut order = Vec::with_capacity(RELEASE_MATRIX_METRIC_COUNT + 2);
+    order.push("name".to_owned());
+    order.extend((0..RELEASE_MATRIX_METRIC_COUNT).map(|index| format!("metric_{index:02}")));
+    order.push("status".to_owned());
+    order
+}
+
+fn dependency_tree_table_columns() -> [TableColumn; 7] {
+    [
+        TableColumn::new("name", "Package")
+            .with_width(ui_px(220.0))
+            .with_min_width(ui_px(172.0))
+            .with_max_width(ui_px(320.0)),
+        TableColumn::new("kind", "Kind")
+            .with_width(ui_px(120.0))
+            .with_min_width(ui_px(96.0))
+            .with_max_width(ui_px(180.0)),
+        TableColumn::new("owner", "Owner")
+            .with_width(ui_px(132.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(200.0)),
+        TableColumn::new("risk", "Risk")
+            .with_width(ui_px(112.0))
+            .with_min_width(ui_px(88.0))
+            .with_max_width(ui_px(160.0)),
+        TableColumn::new("change", "Change")
+            .with_width(ui_px(148.0))
+            .with_min_width(ui_px(112.0))
+            .with_max_width(ui_px(220.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(92.0))
+            .with_min_width(ui_px(72.0))
+            .with_max_width(ui_px(132.0)),
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(132.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(188.0)),
+    ]
+}
+
+fn dependency_tree_column_order() -> [&'static str; 7] {
+    ["name", "kind", "owner", "risk", "change", "score", "status"]
+}
+
+fn dependency_tree_rows() -> Vec<TableRow> {
+    vec![
+        dependency_tree_row(
+            "dependency-workspace",
+            "open-gpui",
+            "workspace",
+            "Foundation",
+            "medium",
+            "tree table slice",
+            91,
+            "active",
+        )
+        .with_children([
+            dependency_tree_row(
+                "dependency-ui",
+                "crates/ui_components",
+                "crate",
+                "Components",
+                "high",
+                "row interactions",
+                88,
+                "review",
+            )
+            .with_children([
+                dependency_tree_row(
+                    "dependency-ui-table",
+                    "table.rs",
+                    "module",
+                    "Components",
+                    "high",
+                    "tree affordance",
+                    94,
+                    "active",
+                ),
+                dependency_tree_row(
+                    "dependency-ui-tree",
+                    "tree.rs",
+                    "module",
+                    "Components",
+                    "medium",
+                    "navigation parity",
+                    77,
+                    "stable",
+                ),
+            ]),
+            dependency_tree_row(
+                "dependency-core",
+                "crates/ui_core",
+                "crate",
+                "Foundation",
+                "medium",
+                "row model",
+                84,
+                "active",
+            )
+            .with_child(dependency_tree_row(
+                "dependency-core-table",
+                "table.rs",
+                "module",
+                "Foundation",
+                "medium",
+                "source hierarchy",
+                90,
+                "ready",
+            )),
+            dependency_tree_row(
+                "dependency-docs",
+                "docs/ui",
+                "docs",
+                "Product",
+                "low",
+                "contract update",
+                71,
+                "queued",
+            ),
+        ]),
+    ]
+}
+
+fn server_tree_table_state(loaded: bool) -> TableState {
+    TableState::new(server_tree_rows(loaded))
+        .with_columns(dependency_tree_table_columns())
+        .with_column_order(dependency_tree_column_order())
+        .with_column_pinning(
+            TableColumnPinning::new()
+                .pinned_left(["name"])
+                .pinned_right(["status"]),
+        )
+        .with_column_sizing(
+            TableColumnSizing::new()
+                .with_width("name", ui_px(220.0))
+                .with_width("kind", ui_px(120.0))
+                .with_width("owner", ui_px(132.0))
+                .with_width("risk", ui_px(112.0))
+                .with_width("change", ui_px(148.0))
+                .with_width("score", ui_px(92.0))
+                .with_width("status", ui_px(132.0)),
+        )
+        .with_manual_expansion()
+        .with_selected_rows(["server-workspace"])
+        .with_pagination(TablePagination::disabled())
+}
+
+fn server_tree_rows(loaded: bool) -> Vec<TableRow> {
+    let workspace_status = if loaded { "loaded" } else { "unloaded" };
+    let mut workspace = dependency_tree_row(
+        "server-workspace",
+        "remote workspace",
+        "workspace",
+        "Platform",
+        "medium",
+        "server children",
+        86,
+        workspace_status,
+    )
+    .with_expandable(true);
+
+    if loaded {
+        workspace = workspace.with_children([
+            dependency_tree_row(
+                "server-api",
+                "api gateway",
+                "service",
+                "Platform",
+                "medium",
+                "loaded child",
+                82,
+                "ready",
+            ),
+            dependency_tree_row(
+                "server-workers",
+                "worker queue",
+                "service",
+                "Runtime",
+                "high",
+                "manual expansion",
+                79,
+                "active",
+            ),
+        ]);
+    }
+
+    vec![
+        workspace,
+        dependency_tree_row(
+            "server-cache",
+            "cache prefetch",
+            "remote",
+            "Runtime",
+            "medium",
+            "async children",
+            74,
+            "loading",
+        )
+        .with_children_loading("Loading cached modules"),
+        dependency_tree_row(
+            "server-failed",
+            "failed shard",
+            "remote",
+            "Platform",
+            "high",
+            "retry children",
+            61,
+            "retry",
+        )
+        .with_children_load_failed("Gateway timeout"),
+    ]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dependency_tree_row(
+    id: &'static str,
+    name: &'static str,
+    kind: &'static str,
+    owner: &'static str,
+    risk: &'static str,
+    change: &'static str,
+    score: usize,
+    status: &'static str,
+) -> TableRow {
+    TableRow::new(id)
+        .with_cell("name", name)
+        .with_cell("kind", kind)
+        .with_cell("owner", owner)
+        .with_cell("risk", risk)
+        .with_cell("change", change)
+        .with_cell("score", score)
+        .with_cell("status", status)
+}
+
 fn release_queue_row(index: usize) -> TableRow {
     let teams = ["UI", "Runtime", "Platform", "Docs", "QA"];
     let statuses = ["Ready", "Review", "Build", "Verify", "Blocked"];
@@ -3007,6 +3883,18 @@ fn release_queue_row(index: usize) -> TableRow {
         .with_cell("name", format!("Release #{index:04}"))
         .with_cell("team", teams[index % teams.len()])
         .with_cell("status", statuses[(index / 7) % statuses.len()])
+        .with_cell("score", score)
+}
+
+fn release_resize_row(index: usize) -> TableRow {
+    let teams = ["UI", "Runtime", "Platform", "QA"];
+    let statuses = ["Queued", "Running", "Ready", "Held"];
+    let score = 500_usize.saturating_sub(index % 500);
+
+    TableRow::new(format!("release-resize-row-{index:03}"))
+        .with_cell("name", format!("Resize candidate #{index:03}"))
+        .with_cell("team", teams[index % teams.len()])
+        .with_cell("status", statuses[(index / 5) % statuses.len()])
         .with_cell("score", score)
 }
 
@@ -3037,6 +3925,40 @@ fn grouped_release_row(index: usize) -> TableRow {
         .with_cell("team", teams[index % teams.len()])
         .with_cell("status", statuses[(index / 9) % statuses.len()])
         .with_cell("score", score)
+}
+
+fn release_matrix_row(index: usize) -> TableRow {
+    let statuses = ["Ready", "Review", "Build", "Verify", "Blocked"];
+    let mut row = TableRow::new(format!("release-matrix-row-{index:03}"))
+        .with_cell("name", format!("Train {index:03}"))
+        .with_cell("status", statuses[(index / 13) % statuses.len()]);
+
+    for metric in 0..RELEASE_MATRIX_METRIC_COUNT {
+        row = row.with_cell(
+            format!("metric_{metric:02}"),
+            (index + 1) * (metric + 3) % 997,
+        );
+    }
+
+    row
+}
+
+fn server_paged_rows() -> Vec<TableRow> {
+    let teams = ["UI", "Runtime", "Platform", "Docs"];
+    let statuses = ["Queued", "Ready", "Review", "Blocked"];
+    let mut rows = Vec::with_capacity(8);
+
+    for index in 16..24 {
+        rows.push(
+            TableRow::new(format!("server-paged-row-{index:04}"))
+                .with_cell("name", format!("Page row {index:04}"))
+                .with_cell("team", teams[index % teams.len()])
+                .with_cell("status", statuses[(index / 2) % statuses.len()])
+                .with_cell("score", 64 - index),
+        );
+    }
+
+    rows
 }
 
 /// Returns scroll area samples backed by real component state.

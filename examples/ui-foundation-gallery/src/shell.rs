@@ -3,8 +3,8 @@
 use open_gpui::prelude::*;
 
 use open_gpui::{
-    Anchor, App, AppContext, Bounds, Context, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Pixels, Render, ScrollAnchor, ScrollHandle,
+    Anchor, App, AppContext, BorrowAppContext, Bounds, Context, FocusHandle, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Pixels, Render, ScrollAnchor, ScrollHandle,
     StatefulInteractiveElement, Styled, Window, WindowBounds, WindowOptions, anchored, deferred,
     div, px, rgb, size,
 };
@@ -125,6 +125,8 @@ pub struct GalleryShell {
 
 impl GalleryShell {
     fn build(selected_page: GalleryPage, cx: &mut Context<Self>) -> Self {
+        cx.set_global(pages::components::TableSampleRuntimeLog::default());
+
         Self {
             selected_page,
 
