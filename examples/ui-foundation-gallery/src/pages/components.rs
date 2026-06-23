@@ -15,12 +15,12 @@ use open_gpui_ui_components::{
     Switch, SwitchState, Table, TableAggregation, TableColumn, TableColumnPinning,
     TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableExpansionMode,
     TableExpansionState, TableFilter, TablePagination, TableRenderPlan, TableRow,
-    TableRowActivation, TableRowChildrenLoadState, TableRowExpansionToggle, TableSort, TableState,
-    Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState,
-    Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
-    ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState, VirtualizedList,
-    VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRenderPlan,
-    VirtualizedListScrollStrategy, VirtualizedListState,
+    TableRowActivation, TableRowChildrenLoadState, TableRowExpansionToggle, TableSort,
+    TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState,
+    TextInput, TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
+    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
+    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -1819,6 +1819,20 @@ pub struct TableSampleStateSummary {
     pub tree_depth: usize,
     /// Whether the sample keeps expansion pruning app-owned.
     pub manual_expansion: bool,
+    /// Whether filtering is app-owned.
+    pub manual_filtering: bool,
+    /// Whether sorting is app-owned.
+    pub manual_sorting: bool,
+    /// Whether pagination is app-owned.
+    pub manual_pagination: bool,
+    /// Zero-based page index in the current snapshot.
+    pub pagination_page_index: usize,
+    /// Page size in the current snapshot.
+    pub pagination_page_size: usize,
+    /// Server-known total row count, if any.
+    pub pagination_row_count: Option<usize>,
+    /// Total page count, if any.
+    pub pagination_page_count: Option<usize>,
     /// Configured grouping column count.
     pub grouping_columns: usize,
     /// Configured aggregate column count.
@@ -1943,6 +1957,13 @@ impl TableSampleStateSummary {
             failed_tree_rows,
             tree_depth,
             manual_expansion: state.expansion_mode() == TableExpansionMode::Manual,
+            manual_filtering: plan.filtering_mode() == TableStageMode::Manual,
+            manual_sorting: plan.sorting_mode() == TableStageMode::Manual,
+            manual_pagination: plan.pagination_mode() == TableStageMode::Manual,
+            pagination_page_index: state.pagination().page_index(),
+            pagination_page_size: state.pagination().page_size(),
+            pagination_row_count: plan.pagination_row_count(),
+            pagination_page_count: plan.pagination_page_count(),
             grouping_columns: state.grouping().len(),
             aggregation_count: state.aggregations().len(),
             expanded_group_inputs,
@@ -3286,6 +3307,7 @@ pub fn table_samples(_tokens: ThemeTokens) -> &'static [TableSample] {
 fn build_table_samples() -> Vec<TableSample> {
     let release_queue_rows = (0..10_000).map(release_queue_row).collect::<Vec<_>>();
     let filter_board_rows = (0..180).map(filter_board_row).collect::<Vec<_>>();
+    let server_paged_rows = server_paged_rows();
     let release_resize_rows = (0..160).map(release_resize_row).collect::<Vec<_>>();
     let grouped_release_rows = (0..320).map(grouped_release_row).collect::<Vec<_>>();
     let release_matrix_rows = (0..480).map(release_matrix_row).collect::<Vec<_>>();
@@ -3320,6 +3342,26 @@ fn build_table_samples() -> Vec<TableSample> {
             .with_sorting([TableSort::descending("score")])
             .with_selected_rows(["filter-board-row-177"])
             .with_pagination(TablePagination::new(0, 24)),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
+    let server_paged = TableSample {
+        id: "server-paged",
+        title: "Server paged board",
+        summary: "Manual filtering, sorting, and pagination render a server-owned page snapshot with total counts.",
+        badge: "manual rows",
+        state: TableState::new(server_paged_rows)
+            .with_columns(table_columns())
+            .with_column_order(["name", "team", "status", "score"])
+            .with_filters([TableFilter::contains("team", "missing")])
+            .with_manual_filtering()
+            .with_sorting([TableSort::ascending("score")])
+            .with_manual_sorting()
+            .with_selected_rows(["server-paged-row-0018"])
+            .with_pagination(TablePagination::manual(2, 8, 64)),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
         row_height: ui_px(30.0),
@@ -3447,6 +3489,7 @@ fn build_table_samples() -> Vec<TableSample> {
     vec![
         release_queue.with_state_summary(),
         filter_board.with_state_summary(),
+        server_paged.with_state_summary(),
         release_resize.with_state_summary(),
         grouped_release.with_state_summary(),
         release_matrix.with_state_summary(),
@@ -3845,6 +3888,24 @@ fn release_matrix_row(index: usize) -> TableRow {
     }
 
     row
+}
+
+fn server_paged_rows() -> Vec<TableRow> {
+    let teams = ["UI", "Runtime", "Platform", "Docs"];
+    let statuses = ["Queued", "Ready", "Review", "Blocked"];
+    let mut rows = Vec::with_capacity(8);
+
+    for index in 16..24 {
+        rows.push(
+            TableRow::new(format!("server-paged-row-{index:04}"))
+                .with_cell("name", format!("Page row {index:04}"))
+                .with_cell("team", teams[index % teams.len()])
+                .with_cell("status", statuses[(index / 2) % statuses.len()])
+                .with_cell("score", 64 - index),
+        );
+    }
+
+    rows
 }
 
 /// Returns scroll area samples backed by real component state.

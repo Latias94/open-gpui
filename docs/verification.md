@@ -72,16 +72,18 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_fo
 ```
 
 Table gallery gates now follow the same split: `open-gpui-ui-core` tests prove row-model,
-manual expansion, child-load metadata, virtualizer, column sizing, column-window, and resize-math
-contracts without rendering, including grouped row ids, expansion lookup behavior, expandable
-unloaded branches, built-in group-row aggregate cells, pinned-column region splitting,
-center-column virtual windows, and on-end/on-change resize deltas. `open-gpui-ui-components` tests
-prove adapter exports, state metadata, expansion payload metadata, resize callback wiring,
-center-window header/body mounting, and scroll ownership; gallery smokes prove long table scroll
-input stays inside the table viewport, `release-resize` column dragging updates the controlled
-sample without moving the outer Components page, wide center lanes scroll independently from fixed
-left/right pinned lanes, and `server-tree` renders app-owned manual child loading. The focused
-proofs are:
+manual row-model stages, manual expansion, child-load metadata, virtualizer, column sizing,
+column-window, and resize-math contracts without rendering, including grouped row ids, expansion
+lookup behavior, expandable unloaded branches, built-in group-row aggregate cells, pinned-column
+region splitting, center-column virtual windows, manual filtering/sorting/pagination cache keys,
+pagination row/page totals, and on-end/on-change resize deltas. `open-gpui-ui-components` tests
+prove adapter exports, state metadata, manual row-model render-plan metadata, expansion payload
+metadata, resize callback wiring, center-window header/body mounting, and scroll ownership;
+gallery smokes prove long table scroll input stays inside the table viewport, `release-resize`
+column dragging updates the controlled sample without moving the outer Components page, wide
+center lanes scroll independently from fixed left/right pinned lanes, `server-paged` renders an
+app-owned page snapshot with total counts, and `server-tree` renders app-owned manual child
+loading. The focused proofs are:
 
 `components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample` is the focused
 sticky-pinned Table proof: it enters the Table family view, scrolls the `release-rollup` center
@@ -201,8 +203,11 @@ metadata, and grouped / expanded row models keep collapsed descendants
 addressable by stable row id. The Components gallery now carries `release-rollup`, a grouped Table
 sample that mixes expanded and collapsed team groups, exposes aggregate count and score cells,
 pins the identifier and status columns, and has its own inner-scroll smoke. It also carries
-`release-resize`, a controlled column-sizing sample whose resize smoke drags the `name` handle,
-records the app-owned committed width, and verifies header and first-row cell widths stay aligned.
+`server-paged`, a manual filtering/sorting/pagination sample that renders only the current
+app-supplied page snapshot while exposing server-known total row and page counts through the
+gallery summary and `TableRenderPlan`. It also carries `release-resize`, a controlled
+column-sizing sample whose resize smoke drags the `name` handle, records the app-owned committed
+width, and verifies header and first-row cell widths stay aligned.
 `release-matrix` is the wide center-column virtualization sample: it pins the identity and status
 lanes, exposes fourteen center metrics, and has a focused smoke that proves off-window center
 columns unmount/remount while horizontal wheel input remains inside the sample. `dependency-tree`

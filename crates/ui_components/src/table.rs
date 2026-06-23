@@ -15,7 +15,7 @@ use open_gpui_ui_core::{
     TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState, TableColumnSizing,
     TableExpansionMode, TableExpansionState, TableResolvedColumnSizing, TableResolvedRow,
     TableResolvedState, TableRowChildrenLoadState, TableRowId, TableSort, TableSortDirection,
-    TableState, TableStateCacheKey, TableTreeRow, UiPx, VirtualizerItemKey,
+    TableStageMode, TableState, TableStateCacheKey, TableTreeRow, UiPx, VirtualizerItemKey,
     VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState, VirtualizerSnapshot,
     VirtualizerState, drag_table_column_resize, end_table_column_resize, ui_px,
 };
@@ -988,6 +988,11 @@ pub struct TableRenderPlan {
     pinned_layout: Option<TablePinnedLayoutPlan>,
     center_column_window: Option<TableCenterColumnWindowPlan>,
     total_column_width: UiPx,
+    filtering_mode: TableStageMode,
+    sorting_mode: TableStageMode,
+    pagination_mode: TableStageMode,
+    pagination_row_count: Option<usize>,
+    pagination_page_count: Option<usize>,
     rows: Vec<TableRowRenderPlan>,
     role: Role,
     header_row_role: Role,
@@ -1000,6 +1005,7 @@ impl TableRenderPlan {
         table_id: String,
         label: String,
         metrics: TableMetrics,
+        state: &TableState,
         table: Rc<TableResolvedState>,
         virtualizer: VirtualizerResolvedState,
         columns: Vec<TableColumnRenderPlan>,
@@ -1043,6 +1049,7 @@ impl TableRenderPlan {
                 })
             })
             .collect();
+        let pagination = state.pagination();
 
         Self {
             table_id,
@@ -1055,6 +1062,11 @@ impl TableRenderPlan {
             pinned_layout,
             center_column_window,
             total_column_width,
+            filtering_mode: state.filtering_mode(),
+            sorting_mode: state.sorting_mode(),
+            pagination_mode: pagination.mode(),
+            pagination_row_count: pagination.row_count(),
+            pagination_page_count: pagination.page_count(),
             rows,
             role: Role::Table,
             header_row_role: Role::Row,
@@ -1081,6 +1093,31 @@ impl TableRenderPlan {
     /// Returns the resolved renderer-neutral table state.
     pub fn table(&self) -> &TableResolvedState {
         self.table.as_ref()
+    }
+
+    /// Returns whether filtering was resolved locally or supplied by the caller.
+    pub const fn filtering_mode(&self) -> TableStageMode {
+        self.filtering_mode
+    }
+
+    /// Returns whether sorting was resolved locally or supplied by the caller.
+    pub const fn sorting_mode(&self) -> TableStageMode {
+        self.sorting_mode
+    }
+
+    /// Returns whether pagination was resolved locally or supplied by the caller.
+    pub const fn pagination_mode(&self) -> TableStageMode {
+        self.pagination_mode
+    }
+
+    /// Returns the server-known total row count, when supplied.
+    pub const fn pagination_row_count(&self) -> Option<usize> {
+        self.pagination_row_count
+    }
+
+    /// Returns the explicit or derived total page count, when supplied.
+    pub const fn pagination_page_count(&self) -> Option<usize> {
+        self.pagination_page_count
     }
 
     /// Returns the resolved renderer-neutral virtualizer state.
@@ -1422,6 +1459,7 @@ impl Table {
             self.id.clone(),
             self.label.to_string(),
             metrics,
+            &self.state,
             table,
             virtualizer,
             columns,
@@ -1477,6 +1515,7 @@ impl Table {
             self.id.clone(),
             self.label.to_string(),
             metrics,
+            &state,
             cache.table.clone(),
             virtualizer,
             cache.columns.clone(),

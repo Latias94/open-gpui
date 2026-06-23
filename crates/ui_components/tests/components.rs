@@ -23,7 +23,7 @@ use open_gpui_ui_components::{
     TableCenterColumnWindowPlan, TableColumn, TableColumnPinning, TableColumnRegion,
     TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableExpansionMode,
     TableFilter, TableHeaderAction, TablePagination, TableRow, TableRowChildrenLoadState,
-    TableSort, TableSortDirection, TableState, Tabs, TabsActivationMode, TabsItem,
+    TableSort, TableSortDirection, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem,
     TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver,
     ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
     ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
@@ -450,6 +450,10 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         policy_hints: &[
             "virtualizer_snapshot",
             "expansion_mode",
+            "filtering_mode",
+            "sorting_mode",
+            "pagination_mode",
+            "pagination_totals",
             "enable_column_resizing",
             "column_resize_mode",
             "column_resize_direction",
@@ -3214,6 +3218,49 @@ fn table_render_plan_exposes_manual_expansion_and_child_load_metadata() {
 }
 
 #[test]
+fn table_render_plan_exposes_manual_row_model_metadata() {
+    let state = TableState::new([
+        TableRow::new("row-020")
+            .with_cell("name", "Delta")
+            .with_cell("team", "UI")
+            .with_cell("score", 20_usize),
+        TableRow::new("row-021")
+            .with_cell("name", "Echo")
+            .with_cell("team", "Platform")
+            .with_cell("score", 21_usize),
+    ])
+    .with_columns([
+        TableColumn::new("name", "Name").with_width(ui_px(160.0)),
+        TableColumn::new("team", "Team").with_width(ui_px(120.0)),
+        TableColumn::new("score", "Score").with_width(ui_px(96.0)),
+    ])
+    .with_filters([TableFilter::contains("team", "missing")])
+    .with_manual_filtering()
+    .with_sorting([TableSort::ascending("score")])
+    .with_manual_sorting()
+    .with_pagination(TablePagination::manual(10, 2, 42));
+
+    let plan = Table::new("manual-row-model", "Manual row model", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    assert_eq!(plan.filtering_mode(), TableStageMode::Manual);
+    assert_eq!(plan.sorting_mode(), TableStageMode::Manual);
+    assert_eq!(plan.pagination_mode(), TableStageMode::Manual);
+    assert_eq!(plan.pagination_row_count(), Some(42));
+    assert_eq!(plan.pagination_page_count(), Some(21));
+    assert_eq!(
+        plan.rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["row-020", "row-021"],
+        "manual row-model stages should render the caller-supplied page snapshot"
+    );
+}
+
+#[test]
 fn table_render_plan_exposes_pinned_column_regions() {
     let flat_plan = Table::new("flat-table", "Flat table", sample_table_state(1))
         .render_plan(UiPx::ZERO, ui_px(96.0));
@@ -3968,6 +4015,8 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         prelude::TableExpansionState::rows([prelude::TableRowId::new("group:team=ui")]);
     let _root_expansion_mode: root::TableExpansionMode = root::TableExpansionMode::Manual;
     let _prelude_expansion_mode: prelude::TableExpansionMode = prelude::TableExpansionMode::Client;
+    let _root_stage_mode: root::TableStageMode = root::TableStageMode::Manual;
+    let _prelude_stage_mode: prelude::TableStageMode = prelude::TableStageMode::Client;
     let _root_child_load_state: root::TableRowChildrenLoadState =
         root::TableRowChildrenLoadState::loading("Loading children");
     let _prelude_child_load_state: prelude::TableRowChildrenLoadState =

@@ -1216,11 +1216,36 @@ impl TableFilter {
     }
 }
 
+/// Per-stage row-model ownership for client or manual control.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableStageMode {
+    /// The table applies the stage locally.
+    Client,
+    /// The caller supplies the stage output snapshot.
+    Manual,
+}
+
+impl TableStageMode {
+    /// Returns whether the stage is caller-owned.
+    pub const fn is_manual(self) -> bool {
+        matches!(self, Self::Manual)
+    }
+}
+
+impl Default for TableStageMode {
+    fn default() -> Self {
+        Self::Client
+    }
+}
+
 /// Pagination state for a table row model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TablePagination {
     page_index: usize,
     page_size: usize,
+    mode: TableStageMode,
+    row_count: Option<usize>,
+    page_count: Option<usize>,
 }
 
 impl TablePagination {
@@ -1229,7 +1254,17 @@ impl TablePagination {
         Self {
             page_index,
             page_size,
+            mode: TableStageMode::Client,
+            row_count: None,
+            page_count: None,
         }
+    }
+
+    /// Creates manual pagination state from a page index, page size, and total row count.
+    pub const fn manual(page_index: usize, page_size: usize, row_count: usize) -> Self {
+        Self::new(page_index, page_size)
+            .with_mode(TableStageMode::Manual)
+            .with_row_count(row_count)
     }
 
     /// Returns pagination that keeps all rows.
@@ -1237,6 +1272,9 @@ impl TablePagination {
         Self {
             page_index: 0,
             page_size: usize::MAX,
+            mode: TableStageMode::Client,
+            row_count: None,
+            page_count: None,
         }
     }
 
@@ -1250,8 +1288,55 @@ impl TablePagination {
         self.page_size
     }
 
+    /// Returns the pagination ownership mode.
+    pub const fn mode(self) -> TableStageMode {
+        self.mode
+    }
+
+    /// Returns whether pagination is caller-owned.
+    pub const fn is_manual(self) -> bool {
+        self.mode.is_manual()
+    }
+
+    /// Returns the total row count when known.
+    pub const fn row_count(self) -> Option<usize> {
+        self.row_count
+    }
+
+    /// Returns the total page count when known or derivable.
+    pub fn page_count(self) -> Option<usize> {
+        if let Some(page_count) = self.page_count {
+            return Some(page_count);
+        }
+
+        let row_count = self.row_count?;
+        if self.page_size == 0 {
+            return Some(0);
+        }
+
+        Some(row_count.div_ceil(self.page_size))
+    }
+
+    /// Applies pagination ownership mode.
+    pub const fn with_mode(mut self, mode: TableStageMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Applies a total row count.
+    pub const fn with_row_count(mut self, row_count: usize) -> Self {
+        self.row_count = Some(row_count);
+        self
+    }
+
+    /// Applies a total page count.
+    pub const fn with_page_count(mut self, page_count: usize) -> Self {
+        self.page_count = Some(page_count);
+        self
+    }
+
     fn apply(self, rows: &[TableResolvedRow]) -> Vec<TableResolvedRow> {
-        if self.page_size == usize::MAX {
+        if self.is_manual() || self.page_size == usize::MAX {
             return rows.to_vec();
         }
         if self.page_size == 0 {
@@ -1482,7 +1567,9 @@ pub struct TableState {
     rows: Arc<[TableRow]>,
     rows_identity: u64,
     sorting: Vec<TableSort>,
+    sorting_mode: TableStageMode,
     filters: Vec<TableFilter>,
+    filtering_mode: TableStageMode,
     grouping: Vec<TableColumnId>,
     aggregations: Vec<TableAggregation>,
     expansion: TableExpansionState,
@@ -1499,7 +1586,9 @@ impl PartialEq for TableState {
             && self.column_sizing == other.column_sizing
             && self.rows.as_ref() == other.rows.as_ref()
             && self.sorting == other.sorting
+            && self.sorting_mode == other.sorting_mode
             && self.filters == other.filters
+            && self.filtering_mode == other.filtering_mode
             && self.grouping == other.grouping
             && self.aggregations == other.aggregations
             && self.expansion == other.expansion
@@ -1522,7 +1611,9 @@ impl TableState {
             rows: rows.into(),
             rows_identity: next_table_rows_identity(),
             sorting: Vec::new(),
+            sorting_mode: TableStageMode::default(),
             filters: Vec::new(),
+            filtering_mode: TableStageMode::default(),
             grouping: Vec::new(),
             aggregations: Vec::new(),
             expansion: TableExpansionState::default(),
@@ -1565,9 +1656,33 @@ impl TableState {
         self
     }
 
+    /// Applies sorting ownership mode.
+    pub const fn with_sorting_mode(mut self, sorting_mode: TableStageMode) -> Self {
+        self.sorting_mode = sorting_mode;
+        self
+    }
+
+    /// Marks sorting as caller-owned.
+    pub const fn with_manual_sorting(mut self) -> Self {
+        self.sorting_mode = TableStageMode::Manual;
+        self
+    }
+
     /// Applies filter specifications.
     pub fn with_filters(mut self, filters: impl IntoIterator<Item = TableFilter>) -> Self {
         self.filters = filters.into_iter().collect();
+        self
+    }
+
+    /// Applies filtering ownership mode.
+    pub const fn with_filtering_mode(mut self, filtering_mode: TableStageMode) -> Self {
+        self.filtering_mode = filtering_mode;
+        self
+    }
+
+    /// Marks filtering as caller-owned.
+    pub const fn with_manual_filtering(mut self) -> Self {
+        self.filtering_mode = TableStageMode::Manual;
         self
     }
 
@@ -1655,9 +1770,19 @@ impl TableState {
         &self.sorting
     }
 
+    /// Returns the sorting ownership mode.
+    pub const fn sorting_mode(&self) -> TableStageMode {
+        self.sorting_mode
+    }
+
     /// Returns filter specifications.
     pub fn filters(&self) -> &[TableFilter] {
         &self.filters
+    }
+
+    /// Returns the filtering ownership mode.
+    pub const fn filtering_mode(&self) -> TableStageMode {
+        self.filtering_mode
     }
 
     /// Returns grouping column ids in outer-to-inner order.
@@ -1713,7 +1838,9 @@ impl TableState {
             column_pinning: self.column_pinning.clone(),
             column_sizing: self.column_sizing.clone(),
             sorting: self.sorting.clone(),
+            sorting_mode: self.sorting_mode,
             filters: self.filters.clone(),
+            filtering_mode: self.filtering_mode,
             grouping: self.grouping.clone(),
             aggregations: self.aggregations.clone(),
             expansion: self.expansion.clone(),
@@ -1780,7 +1907,11 @@ impl TableState {
 
         let core_model = TableRowModel::new(TableRowModelStage::Core, core_rows);
 
-        let filtered_nodes = filter_source_row_nodes(&source_nodes, &self.filters);
+        let filtered_nodes = if self.filtering_mode.is_manual() {
+            source_nodes.clone()
+        } else {
+            filter_source_row_nodes(&source_nodes, &self.filters)
+        };
         let filtered_rows = flatten_nodes(&filtered_nodes);
         let filtered_model = TableRowModel::new(TableRowModelStage::Filtered, filtered_rows);
 
@@ -1792,7 +1923,11 @@ impl TableState {
         let grouped_rows = flatten_nodes(&grouped_nodes);
         let grouped_model = TableRowModel::new(TableRowModelStage::Grouped, grouped_rows);
 
-        let sorted_nodes = self.sort_nodes(grouped_nodes);
+        let sorted_nodes = if self.sorting_mode.is_manual() {
+            grouped_nodes.clone()
+        } else {
+            self.sort_nodes(grouped_nodes)
+        };
         let sorted_rows = flatten_nodes(&sorted_nodes);
         let sorted_model = TableRowModel::new(TableRowModelStage::Sorted, sorted_rows);
 
@@ -1903,7 +2038,9 @@ pub struct TableStateCacheKey {
     column_pinning: TableColumnPinning,
     column_sizing: TableColumnSizing,
     sorting: Vec<TableSort>,
+    sorting_mode: TableStageMode,
     filters: Vec<TableFilter>,
+    filtering_mode: TableStageMode,
     grouping: Vec<TableColumnId>,
     aggregations: Vec<TableAggregation>,
     expansion: TableExpansionState,
@@ -3079,6 +3216,84 @@ mod tests {
                 .core_model()
                 .row(&TableRowId::new("row-b"))
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn pagination_total_page_count_uses_row_count_or_explicit_page_count() {
+        let pagination = TablePagination::manual(2, 10, 42);
+
+        assert_eq!(pagination.mode(), TableStageMode::Manual);
+        assert!(pagination.is_manual());
+        assert_eq!(pagination.page_index(), 2);
+        assert_eq!(pagination.page_size(), 10);
+        assert_eq!(pagination.row_count(), Some(42));
+        assert_eq!(pagination.page_count(), Some(5));
+        assert_eq!(pagination.with_page_count(9).page_count(), Some(9));
+        assert_eq!(TablePagination::new(0, 10).page_count(), None);
+        assert_eq!(TablePagination::manual(0, 0, 42).page_count(), Some(0));
+    }
+
+    #[test]
+    fn manual_row_model_modes_preserve_supplied_snapshot() {
+        let resolved = TableState::new(sample_rows())
+            .with_filters([TableFilter::contains("team", "missing")])
+            .with_manual_filtering()
+            .with_sorting([TableSort::ascending("score")])
+            .with_manual_sorting()
+            .with_pagination(TablePagination::manual(2, 1, 30))
+            .resolve();
+
+        let expected = ["row-b", "row-a", "row-c"];
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            resolved
+                .sorted_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    #[test]
+    fn manual_stage_modes_participate_in_cache_keys() {
+        let state = TableState::new(sample_rows())
+            .with_filters([TableFilter::contains("team", "ops")])
+            .with_sorting([TableSort::descending("score")])
+            .with_pagination(TablePagination::new(0, 1));
+
+        assert_ne!(
+            state.cache_key(),
+            state.clone().with_manual_filtering().cache_key()
+        );
+        assert_ne!(
+            state.cache_key(),
+            state.clone().with_manual_sorting().cache_key()
+        );
+        assert_ne!(
+            state.cache_key(),
+            state
+                .with_pagination(TablePagination::manual(0, 1, 30))
+                .cache_key()
         );
     }
 

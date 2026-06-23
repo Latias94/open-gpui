@@ -404,8 +404,13 @@ before children are loaded, and `TableRowChildrenLoadState` carries caller-owned
 failed child-load metadata into resolved tree rows. `TableExpansionMode::Client` keeps the normal
 client-pruned source tree behavior, while `TableExpansionMode::Manual` preserves the
 caller-supplied source snapshot for ungrouped tree rows so applications can own server/manual
-expansion, child fetches, cancellation, and cache policy. Group rows may expose aggregate cells
-through `TableAggregation` using the built-in `count`, `sum`, `min`, `max`, and `average` kinds;
+expansion, child fetches, cancellation, and cache policy. `TableStageMode` lets filtering and
+sorting stay client-owned or become manual independently, and `TablePagination` supports the same
+manual ownership mode with server-known `row_count` / `page_count` metadata. Manual row-model
+stages preserve the caller-supplied snapshot while still keeping row lookup, selection, grouping,
+expansion, and stable row ids intact; the table cache key includes those ownership modes and
+pagination totals. Group rows may expose aggregate cells through `TableAggregation` using the
+built-in `count`, `sum`, `min`, `max`, and `average` kinds;
 the active grouping column still displays the grouping value instead of an aggregate payload.
 Grouping plus source-tree composition remains deferred until a later policy slice defines mixed
 filtering, sorting, and expansion semantics. `TableColumnPinning` is caller-owned state that splits
@@ -443,16 +448,18 @@ widths. For pinned tables, `TableCenterColumnWindowPlan` virtualizes the shared 
 lane from adapter-owned horizontal scroll input: it exposes visible and overscan ranges, rendered
 center columns, total center width, and leading/trailing spacer widths. The adapter keeps left/right
 pinned lanes fully mounted while mounting only the rendered center-column window, so the center can
-scroll without moving pinned columns or the outer page.
+scroll without moving pinned columns or the outer page. `TableRenderPlan` also exposes the current
+filtering, sorting, and pagination ownership modes plus pagination row/page totals so gallery
+readouts and consumers can distinguish local row-model transforms from app-owned server snapshots.
 
 An official Table entry must satisfy the normal component completion gate: `Table` and `TableState`
 exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
 entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests for row
 identity, grouping, source-tree expansion, row interaction payloads, and virtualizer behavior, and
 gallery runtime tests for nested scroll containment. Custom aggregation callbacks, sticky headers,
-autosize-by-content, data-source fetch/cache orchestration, row pinning, checkbox/range selection,
-cell editing, and full two-axis grid virtualization beyond the pinned center-column window remain
-follow-up capabilities.
+autosize-by-content, data-source fetch/cache orchestration, faceted value payloads, row pinning,
+checkbox/range selection, cell editing, and full two-axis grid virtualization beyond the pinned
+center-column window remain follow-up capabilities.
 
 ## Splitter Constraints
 
@@ -593,9 +600,10 @@ reset-on-key-change semantics. It intentionally does not yet expose custom scrol
 nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.
 `Table` covers stable row ids, row-model ordering, grouping, expansion, built-in group-row
 aggregate cells, source-tree branches with manual expansion and child-load metadata, pinned
-left/center/right column regions, committed column sizing state, clamped width resolution with
-region totals/offsets, sortable header action payloads, crate-root/prelude exports, table/cell
-roles, and a vertically virtualized GPUI recipe whose body scroll stays inside the table viewport.
+left/center/right column regions, manual filtering/sorting/pagination modes with pagination
+totals, committed column sizing state, clamped width resolution with region totals/offsets,
+sortable header action payloads, crate-root/prelude exports, table/cell roles, and a vertically
+virtualized GPUI recipe whose body scroll stays inside the table viewport.
 For pinned samples, the adapter renders fixed left/right lanes plus a shared horizontal center lane
 backed by `TableCenterColumnWindowPlan`, so off-window center headers and cells are unmounted while
 spacer geometry preserves the full scrollable width. It also ships GPUI resize handles with
@@ -603,8 +611,8 @@ controlled commit callbacks and on-end/on-change resize mode support.
 `VirtualizerState` covers one-dimensional range math, stable item keys, measurement idempotence,
 overscan, total size, and snapshot/restore data in `ui_core`; the Table adapter restores snapshot
 measurements but not captured scroll offsets. Custom aggregate callbacks, sticky headers,
-autosize-by-content, data-source orchestration, row pinning, and full two-axis grid virtualization
-remain follow-up work.
+autosize-by-content, data-source orchestration, faceted value payloads, row pinning, and full
+two-axis grid virtualization remain follow-up work.
 `StatusCue` and `EmptyState` are official feedback components. They expose resolved feedback
 intent, size, role, metrics, and token intents, while the GPUI adapters own concrete styling and
 rendered debug selectors. `Tree` is now an official rendered component backed by `TreeState`.

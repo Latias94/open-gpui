@@ -9,7 +9,7 @@ use open_gpui_ui_components::{
     OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
     SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableColumnId,
     TableColumnRegion, TableExpansionMode, TableExpansionState, TableRowChildrenLoadState,
-    TableRowId, ThemeMode, ToggleVariant, TooltipOpenIntent, TreeKeyboardAction,
+    TableRowId, TableStageMode, ThemeMode, ToggleVariant, TooltipOpenIntent, TreeKeyboardAction,
     VirtualizedListScrollStrategy,
     gpui_adapter::{DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state},
 };
@@ -1674,7 +1674,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 
-    assert_eq!(tables.len(), 7);
+    assert_eq!(tables.len(), 8);
     let release_queue = table_sample(tables, "release-queue");
     assert_eq!(release_queue.state.rows().len(), 10_000);
     assert_eq!(
@@ -1694,6 +1694,45 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(filter_plan.table().filtered_model().rows().len(), 60);
     assert_eq!(filter_plan.table().final_model().rows().len(), 24);
     assert_eq!(filter_plan.table().final_model().selected_count(), 1);
+
+    let server_paged = table_sample(tables, "server-paged");
+    let server_page_plan = server_paged.render_plan();
+    let server_page_summary = server_paged.state_summary();
+    assert_eq!(server_paged.state.rows().len(), 8);
+    assert_eq!(server_page_plan.filtering_mode(), TableStageMode::Manual);
+    assert_eq!(server_page_plan.sorting_mode(), TableStageMode::Manual);
+    assert_eq!(server_page_plan.pagination_mode(), TableStageMode::Manual);
+    assert_eq!(server_page_summary.core_rows, 8);
+    assert_eq!(server_page_summary.filtered_rows, 8);
+    assert_eq!(server_page_summary.final_rows, 8);
+    assert!(server_page_summary.manual_filtering);
+    assert!(server_page_summary.manual_sorting);
+    assert!(server_page_summary.manual_pagination);
+    assert_eq!(server_page_summary.pagination_page_index, 2);
+    assert_eq!(server_page_summary.pagination_page_size, 8);
+    assert_eq!(server_page_summary.pagination_row_count, Some(64));
+    assert_eq!(server_page_summary.pagination_page_count, Some(8));
+    assert_eq!(server_page_plan.pagination_row_count(), Some(64));
+    assert_eq!(server_page_plan.pagination_page_count(), Some(8));
+    assert_eq!(
+        server_page_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "server-paged-row-0016",
+            "server-paged-row-0017",
+            "server-paged-row-0018",
+            "server-paged-row-0019",
+            "server-paged-row-0020",
+            "server-paged-row-0021",
+            "server-paged-row-0022",
+            "server-paged-row-0023",
+        ]
+    );
 
     let release_resize = table_sample(tables, "release-resize");
     let resize_plan = release_resize.render_plan();
@@ -2227,6 +2266,58 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     );
     assert_eq!(filter_plan.table().final_model().selected_count(), 1);
     assert_eq!(filter_plan.aria_column_count(), 4);
+
+    let server_paged = table_sample(samples, "server-paged");
+    let server_page_plan = server_paged.render_plan();
+    let server_page_summary = server_paged.state_summary();
+
+    assert_eq!(server_paged.id, "server-paged");
+    assert_eq!(server_paged.state.rows().len(), 8);
+    assert_eq!(server_page_plan.filtering_mode(), TableStageMode::Manual);
+    assert_eq!(server_page_plan.sorting_mode(), TableStageMode::Manual);
+    assert_eq!(server_page_plan.pagination_mode(), TableStageMode::Manual);
+    assert_eq!(server_page_plan.pagination_row_count(), Some(64));
+    assert_eq!(server_page_plan.pagination_page_count(), Some(8));
+    assert_eq!(server_page_summary.core_rows, 8);
+    assert_eq!(server_page_summary.filtered_rows, 8);
+    assert_eq!(server_page_summary.final_rows, 8);
+    assert_eq!(server_page_summary.selected_rows, 1);
+    assert!(server_page_summary.manual_filtering);
+    assert!(server_page_summary.manual_sorting);
+    assert!(server_page_summary.manual_pagination);
+    assert_eq!(server_page_summary.pagination_page_index, 2);
+    assert_eq!(server_page_summary.pagination_page_size, 8);
+    assert_eq!(server_page_summary.pagination_row_count, Some(64));
+    assert_eq!(server_page_summary.pagination_page_count, Some(8));
+    assert_eq!(
+        server_page_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "server-paged-row-0016",
+            "server-paged-row-0017",
+            "server-paged-row-0018",
+            "server-paged-row-0019",
+            "server-paged-row-0020",
+            "server-paged-row-0021",
+            "server-paged-row-0022",
+            "server-paged-row-0023",
+        ],
+        "manual modes should preserve the supplied server page snapshot"
+    );
+    assert_eq!(server_page_plan.table().final_model().selected_count(), 1);
+    assert!(
+        server_page_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .any(|row| row.id().as_str() == "server-paged-row-0018" && row.selected())
+    );
 
     let release_resize = table_sample(samples, "release-resize");
     let resize_plan = release_resize.render_plan();

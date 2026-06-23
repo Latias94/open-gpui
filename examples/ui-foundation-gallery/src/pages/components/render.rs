@@ -2381,6 +2381,25 @@ pub(crate) fn component_table_state_row(
         }
     }
 
+    if summary.manual_filtering || summary.manual_sorting || summary.manual_pagination {
+        row = row.child(format!(
+            "manual filter {} / sort {} / page {} / page {} size {} / total {} / pages {}",
+            summary.manual_filtering,
+            summary.manual_sorting,
+            summary.manual_pagination,
+            summary.pagination_page_index,
+            summary.pagination_page_size,
+            summary
+                .pagination_row_count
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "unknown".to_owned()),
+            summary
+                .pagination_page_count
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "unknown".to_owned())
+        ));
+    }
+
     if summary.pinned_left_columns > 0 || summary.pinned_right_columns > 0 {
         row = row.child(format!(
             "pinned {}-{}-{} / widths {}-{}-{}px / {} resizable columns",
