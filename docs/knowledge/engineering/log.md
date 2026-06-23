@@ -6,6 +6,11 @@ status: active
 
 # Log
 
+- 2026-06-23: Wrote `docs/plans/2026-06-23-007-feat-ui-table-manual-row-model-controls-plan.md`
+  as the next Table follow-up after `bfa91df`. The plan narrows the server/data-source direction to
+  TanStack-style manual filtering, sorting, and pagination controls plus row-count/page-count
+  metadata, with real fetch/cache orchestration, full faceting payloads, row pinning, editing, and
+  headless extraction deferred.
 - 2026-06-23: Implemented the Table manual expansion / async children metadata slice in the working
   tree. `TableRowChildrenLoadState` now carries idle/loading/failed child metadata, source rows can
   be expandable before children load, `TableExpansionMode::Manual` preserves app-supplied

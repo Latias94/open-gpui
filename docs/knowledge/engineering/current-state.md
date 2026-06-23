@@ -81,8 +81,7 @@ verified_by:
 
 # Current State
 
-- Goal: Pick and plan the next Table follow-up after the manual expansion / async child metadata
-  slice.
+- Goal: Execute `docs/plans/2026-06-23-007-feat-ui-table-manual-row-model-controls-plan.md`.
 - Branch: `main`
 - Last verified: 2026-06-23, focused manual-expansion Table gates passed:
   `cargo nextest run -p open-gpui-ui-core table`,
@@ -117,7 +116,11 @@ verified_by:
   expandable unloaded branches, and child-load metadata are documented as shipped component
   behavior. Real fetch/cache/data-source orchestration remains app-owned follow-up work.
 - Done: Committed the manual expansion slice as `bfa91df`.
-- In progress: Choose the next Table follow-up plan boundary.
+- Done: Wrote `docs/plans/2026-06-23-007-feat-ui-table-manual-row-model-controls-plan.md` as the
+  next Table slice. The plan follows TanStack-style manual filtering/sorting/pagination controls,
+  keeps real fetching and cache ownership in the app, and scopes the first implementation proof to
+  server pagination totals plus app-supplied row snapshots.
+- In progress: Start U1 of the manual row-model controls plan in `crates/ui_core/src/table.rs`.
 - Done: Wrote `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` as the next Table slice. The plan keeps tree-data rows separate from synthetic grouping, reuses `TableExpansionState` for source hierarchy, adds row interaction payloads and focus semantics, and scopes the first gallery proof to a focused tree-data Table sample with runtime expansion and activation coverage.
 - Done: Completed U5/U6 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `25875d0`. The Components gallery now includes `release-matrix`, a wide pinned Table sample with fourteen center metrics, and a focused smoke that proves far center columns stay unmounted before scroll, mount after horizontal scroll, and keep the outer Components page plus fixed lanes stationary. The gallery state row is also less noisy for non-grouped tables, and the Table contract / verification docs now describe the center-column window as a first-class adapter behavior.
 - Done: Completed the sticky pinned Table slice on top of `3273c1a`: the GPUI Table adapter keeps vertical wheel input inside pinned table bodies, `release-rollup` exposes explicit left/center/right lane widths, and the focused gallery smoke proves horizontal center-lane scrolling leaves left/right pinned lanes plus the outer Components page fixed.
@@ -184,13 +187,13 @@ verified_by:
 - Done: Completed U4 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `5d67277`. Added plan-level accessibility coverage for virtualized center columns, runtime sort coverage for a rendered center header after horizontal scroll, and resize-geometry coverage proving the virtual center window recomputes from committed sizing while preserving the rendered column identity set.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Follow-up: The column sizing / resize, sticky pinned-column, center-column virtualization,
-  tree-data, row-interaction, and manual-expansion slices are complete. Remaining Table follow-ups
-  are two-dimensional grid virtualization, custom aggregation callbacks, data-source/server
-  pagination/faceting orchestration, row pinning, row selection variants, cell editing, and
-  standalone headless extraction if cross-framework pressure appears.
+  tree-data, row-interaction, and manual-expansion slices are complete. The next planned Table
+  slice is manual row-model controls. Remaining Table follow-ups after that are two-dimensional
+  grid virtualization, custom aggregation callbacks, faceting value payloads, row pinning, row
+  selection variants, cell editing, and standalone headless extraction if cross-framework pressure
+  appears.
 - Blocked: None.
-- Next action: Finish final verification and commit the Table manual expansion slice, then plan the
-  next Table follow-up.
+- Next action: Implement U1 core manual row-model policy and pagination totals.
 
 # Citations
 
