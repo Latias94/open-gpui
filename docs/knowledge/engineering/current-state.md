@@ -73,9 +73,10 @@ verified_by:
 
 # Current State
 
-- Goal: Continue the Table column virtualization slice by rendering virtualized center headers and body cells.
+- Goal: Continue the Table line by deciding the next follow-up boundary after center-column virtualization.
 - Branch: `main`
-- Last verified: 2026-06-23, `cargo fmt -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-components table component_api_inventory` passed 36/36 after adding virtualized center interaction coverage, and `git diff --check` passed.
+- Last verified: 2026-06-23, `cargo fmt -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_table_samples_expose_virtualized_row_model_contract components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample`, and `git diff --check` passed after adding the wide `release-matrix` gallery proof.
+- Done: Completed U5/U6 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `25875d0`. The Components gallery now includes `release-matrix`, a wide pinned Table sample with fourteen center metrics, and a focused smoke that proves far center columns stay unmounted before scroll, mount after horizontal scroll, and keep the outer Components page plus fixed lanes stationary. The gallery state row is also less noisy for non-grouped tables, and the Table contract / verification docs now describe the center-column window as a first-class adapter behavior.
 - Done: Completed the sticky pinned Table slice on top of `3273c1a`: the GPUI Table adapter keeps vertical wheel input inside pinned table bodies, `release-rollup` exposes explicit left/center/right lane widths, and the focused gallery smoke proves horizontal center-lane scrolling leaves left/right pinned lanes plus the outer Components page fixed.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
@@ -141,7 +142,7 @@ verified_by:
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Follow-up: The column sizing / resize and sticky pinned-column slices are complete; the next Table follow-ups are two-dimensional grid virtualization, tree-data tables, custom aggregation callbacks, server pagination/faceting/editing, and standalone headless extraction.
 - Blocked: None.
-- Next action: Start U5 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md`: add a wide Table gallery proof with inspectable center-window state and runtime scroll gates.
+- Next action: Pick the next Table follow-up boundary, most likely full two-axis grid virtualization, tree-data tables, or server-style table flows.
 
 # Citations
 
