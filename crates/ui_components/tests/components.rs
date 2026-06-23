@@ -20,16 +20,16 @@ use open_gpui_ui_components::{
     SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor,
     SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
     Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
-    TableColumn, TableColumnPinning, TableColumnRegion, TableColumnSizing, TableFilter,
-    TableHeaderAction, TablePagination, TableRow, TableSort, TableSortDirection, TableState, Tabs,
-    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput,
-    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
-    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
-    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
-    VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
+    TableColumn, TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
+    TableColumnSizingChange, TableFilter, TableHeaderAction, TablePagination, TableRow, TableSort,
+    TableSortDirection, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
+    TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot,
+    Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
+    ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy,
+    TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList, VirtualizedListActivation,
+    VirtualizedListItemDescriptor, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
+    VirtualizedListScrollStrategy, VirtualizedListState, VirtualizerItemKey, VirtualizerRange,
+    VirtualizerSnapshot, VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -439,14 +439,25 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Table",
-        controlled_inputs: &["state"],
+        controlled_inputs: &["state", "column_sizing"],
         default_seeds: &[],
         legacy_seed_inputs: &[],
-        policy_hints: &["virtualizer_snapshot"],
-        callbacks: &[CallbackApi {
-            name: "on_sort_requested",
-            payload: "TableHeaderAction",
-        }],
+        policy_hints: &[
+            "virtualizer_snapshot",
+            "enable_column_resizing",
+            "column_resize_mode",
+            "column_resize_direction",
+        ],
+        callbacks: &[
+            CallbackApi {
+                name: "on_sort_requested",
+                payload: "TableHeaderAction",
+            },
+            CallbackApi {
+                name: "on_column_sizing_change",
+                payload: "TableColumnSizingChange",
+            },
+        ],
         renderer_neutral_state: true,
         no_interaction_note: None,
     },
@@ -833,6 +844,9 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "header_height",
             "viewport_extent",
             "min_column_width",
+            "enable_column_resizing",
+            "column_resize_mode",
+            "column_resize_direction",
         ],
         "VirtualizedList" => &["disabled", "viewport_item_count", "row_height", "overscan"],
         "StatusCue" => &["intent"],
@@ -1172,6 +1186,10 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "min_column_width",
             "virtualizer_snapshot",
             "on_sort_requested",
+            "enable_column_resizing",
+            "column_resize_mode",
+            "column_resize_direction",
+            "on_column_sizing_change",
             "table_state",
             "state",
             "render_plan",
@@ -3484,6 +3502,36 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _root_sizing: root::TableColumnSizing = root_sizing.clone();
     let _prelude_sizing: prelude::TableColumnSizing =
         prelude::TableColumnSizing::new().with_width("name", ui_px(180.0));
+    let root_resize_state = root::TableColumnResizeState::begin(
+        "name",
+        ui_px(12.0),
+        ui_px(180.0),
+        [("name", ui_px(180.0))],
+    );
+    let root_resize_update: root::TableColumnResizeUpdate = root::drag_table_column_resize(
+        root::TableColumnResizeMode::OnChange,
+        root::TableColumnResizeDirection::Ltr,
+        &root_sizing,
+        &root_resize_state,
+        ui_px(24.0),
+    );
+    let _prelude_resize_state: prelude::TableColumnResizeState = root_resize_update.state().clone();
+    let _prelude_resize_update: prelude::TableColumnResizeUpdate = root::end_table_column_resize(
+        prelude::TableColumnResizeMode::OnEnd,
+        prelude::TableColumnResizeDirection::Ltr,
+        &prelude::TableColumnSizing::new().with_width("name", ui_px(180.0)),
+        &root_resize_state,
+        Some(ui_px(24.0)),
+    );
+    let root_resize_change = root::TableColumnSizingChange::new(
+        "name",
+        ui_px(204.0),
+        root_resize_update
+            .committed_sizing()
+            .cloned()
+            .expect("resize update should commit in on-change mode"),
+    );
+    let _prelude_resize_change: prelude::TableColumnSizingChange = root_resize_change;
     let _root_resolved_sizing: root::TableResolvedColumnSizing = table
         .table_state()
         .resolve()
@@ -3743,6 +3791,80 @@ fn table_runtime_header_click_emits_sort_action(cx: &mut open_gpui::TestAppConte
         Some(TableSortDirection::Ascending)
     );
     assert_eq!(actions[0].next_sorting()[0].column().as_str(), "score");
+}
+
+#[open_gpui::test]
+fn table_runtime_resize_emits_controlled_sizing_change(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        changes: Rc<RefCell<Vec<TableColumnSizingChange>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let changes = self.changes.clone();
+            let state = sample_table_state(12)
+                .with_column_sizing(TableColumnSizing::new().with_width("name", ui_px(160.0)));
+            let table = Table::new("resize-runtime-table", "Resize runtime", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .column_resize_mode(TableColumnResizeMode::OnEnd)
+                .on_column_sizing_change(move |change, _, _| {
+                    changes.borrow_mut().push(change);
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        changes: changes.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let handle = cx
+        .debug_bounds("table:resize-runtime-table:resize:name")
+        .expect("name resize handle should be rendered")
+        .center();
+
+    cx.simulate_mouse_down(handle, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(handle.x + px(18.0), handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    assert!(changes.borrow().is_empty());
+
+    cx.simulate_mouse_move(
+        point(handle.x + px(58.0), handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    assert!(changes.borrow().is_empty());
+
+    cx.simulate_mouse_up(
+        point(handle.x + px(58.0), handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let changes = changes.borrow();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].column_id().as_str(), "name");
+    assert!(changes[0].width() > ui_px(160.0));
+    assert_eq!(
+        changes[0]
+            .sizing()
+            .width(changes[0].column_id())
+            .expect("controlled sizing should include resized column"),
+        changes[0].width()
+    );
 }
 
 #[open_gpui::test]
@@ -5495,6 +5617,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_change",
         "on_click",
         "on_close",
+        "on_column_sizing_change",
         "on_open_change",
         "on_query_change",
         "on_select",

@@ -5,15 +5,17 @@ use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use crate::scroll_area::ScrollArea;
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, FontWeight, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
-    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
-    rgb,
+    App, ClickEvent, CursorStyle, DragMoveEvent, Empty, Entity, FontWeight, InteractiveElement,
+    IntoElement, KeyDownEvent, MouseButton, ParentElement, RenderOnce, ScrollHandle, SharedString,
+    StatefulInteractiveElement, Styled, Window, div, px, rgb,
 };
 use open_gpui_ui_core::{
     Role, Sizable, Size, TableCellValue, TableColumn, TableColumnId, TableColumnRegion,
+    TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState, TableColumnSizing,
     TableResolvedColumnSizing, TableResolvedRow, TableResolvedState, TableSort, TableSortDirection,
     TableState, TableStateCacheKey, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
-    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState, ui_px,
+    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState, drag_table_column_resize,
+    end_table_column_resize, ui_px,
 };
 use std::collections::BTreeSet;
 use std::rc::Rc;
@@ -309,6 +311,44 @@ impl TableHeaderAction {
     /// Applies this header action to a table state.
     pub fn apply_to(&self, state: TableState) -> TableState {
         state.with_sorting(self.next_sorting.clone())
+    }
+}
+
+/// Controlled payload emitted when a table column resize commits.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableColumnSizingChange {
+    column_id: TableColumnId,
+    width: UiPx,
+    sizing: TableColumnSizing,
+}
+
+impl TableColumnSizingChange {
+    /// Creates a committed resize payload.
+    pub fn new(
+        column_id: impl Into<TableColumnId>,
+        width: UiPx,
+        sizing: TableColumnSizing,
+    ) -> Self {
+        Self {
+            column_id: column_id.into(),
+            width,
+            sizing,
+        }
+    }
+
+    /// Returns the resized column id.
+    pub const fn column_id(&self) -> &TableColumnId {
+        &self.column_id
+    }
+
+    /// Returns the resolved column width for the resized column.
+    pub const fn width(&self) -> UiPx {
+        self.width
+    }
+
+    /// Returns the next committed sizing map.
+    pub const fn sizing(&self) -> &TableColumnSizing {
+        &self.sizing
     }
 }
 
@@ -640,6 +680,29 @@ struct TableResolvedCache {
 struct TableRuntime {
     scroll_handle: ScrollHandle,
     resolved: Option<TableResolvedCache>,
+    column_resize: TableColumnResizeState,
+}
+
+#[derive(Clone)]
+struct TableResizeRenderConfig {
+    table_id: String,
+    enabled: bool,
+    mode: TableColumnResizeMode,
+    direction: TableColumnResizeDirection,
+    base_sizing: TableColumnSizing,
+    runtime: Entity<TableRuntime>,
+    on_change: Option<Rc<dyn Fn(TableColumnSizingChange, &mut Window, &mut App)>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct TableColumnResizeDrag {
+    table_id: String,
+    column_id: TableColumnId,
+    start_width: UiPx,
+    column_widths_start: Vec<(TableColumnId, UiPx)>,
+    base_sizing: TableColumnSizing,
+    mode: TableColumnResizeMode,
+    direction: TableColumnResizeDirection,
 }
 
 /// A concrete GPUI table renderer using the Open GPUI row-model and virtualizer contracts.
@@ -651,6 +714,10 @@ pub struct Table {
     metrics: TableMetrics,
     snapshot: Option<VirtualizerSnapshot>,
     on_sort_requested: Option<Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>>,
+    enable_column_resizing: bool,
+    column_resize_mode: TableColumnResizeMode,
+    column_resize_direction: TableColumnResizeDirection,
+    on_column_sizing_change: Option<Rc<dyn Fn(TableColumnSizingChange, &mut Window, &mut App)>>,
 }
 
 impl Table {
@@ -663,6 +730,10 @@ impl Table {
             metrics: TableMetrics::from_size(Size::Medium),
             snapshot: None,
             on_sort_requested: None,
+            enable_column_resizing: true,
+            column_resize_mode: TableColumnResizeMode::default(),
+            column_resize_direction: TableColumnResizeDirection::default(),
+            on_column_sizing_change: None,
         }
     }
 
@@ -717,6 +788,33 @@ impl Table {
         handler: impl Fn(TableHeaderAction, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_sort_requested = Some(Rc::new(handler));
+        self
+    }
+
+    /// Enables or disables column resizing handles.
+    pub fn enable_column_resizing(mut self, enabled: bool) -> Self {
+        self.enable_column_resizing = enabled;
+        self
+    }
+
+    /// Applies the resize commit mode.
+    pub fn column_resize_mode(mut self, mode: TableColumnResizeMode) -> Self {
+        self.column_resize_mode = mode;
+        self
+    }
+
+    /// Applies the resize direction used for pointer deltas.
+    pub fn column_resize_direction(mut self, direction: TableColumnResizeDirection) -> Self {
+        self.column_resize_direction = direction;
+        self
+    }
+
+    /// Registers a handler for committed column sizing changes.
+    pub fn on_column_sizing_change(
+        mut self,
+        handler: impl Fn(TableColumnSizingChange, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_column_sizing_change = Some(Rc::new(handler));
         self
     }
 
@@ -893,11 +991,25 @@ impl RenderOnce for Table {
         let runtime = window.use_keyed_state(runtime_id, cx, |_, _| TableRuntime {
             scroll_handle: ScrollHandle::new(),
             resolved: None,
+            column_resize: TableColumnResizeState::default(),
         });
         let scroll_handle = runtime.read(cx).scroll_handle.clone();
         let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
         let scroll_offset = ui_px((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
         let on_sort_requested = self.on_sort_requested.clone();
+        let column_resizing_enabled =
+            self.enable_column_resizing && self.on_column_sizing_change.is_some();
+        let resize_config = TableResizeRenderConfig {
+            table_id: self.id.clone(),
+            enabled: column_resizing_enabled,
+            mode: self.column_resize_mode,
+            direction: self.column_resize_direction,
+            base_sizing: self.state.column_sizing().clone(),
+            runtime: runtime.clone(),
+            on_change: self.on_column_sizing_change.clone(),
+        };
+        let resize_drag_runtime = resize_config.runtime.clone();
+        let resize_drag_config = resize_config.clone();
         let plan = runtime.update(cx, |runtime, _| {
             self.render_plan_with_runtime(scroll_offset, viewport_extent, runtime)
         });
@@ -932,7 +1044,20 @@ impl RenderOnce for Table {
                 window.prevent_default();
                 cx.stop_propagation();
             })
-            .child(render_table_header(&plan, on_sort_requested))
+            .when(resize_config.enabled, |this| {
+                this.on_drag_move(
+                    move |event: &DragMoveEvent<TableColumnResizeDrag>, window, cx| {
+                        handle_table_column_resize_drag(
+                            &resize_drag_runtime,
+                            &resize_drag_config,
+                            event,
+                            window,
+                            cx,
+                        );
+                    },
+                )
+            })
+            .child(render_table_header(&plan, on_sort_requested, resize_config))
             .child(
                 div().flex_1().min_h(px(0.0)).overflow_hidden().child(
                     ScrollArea::new(scroll_viewport_id, render_table_body(&plan))
@@ -947,6 +1072,7 @@ impl RenderOnce for Table {
 fn render_table_header(
     plan: &TableRenderPlan,
     on_sort_requested: Option<Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>>,
+    resize_config: TableResizeRenderConfig,
 ) -> impl IntoElement {
     let table_id = plan.table_id().to_owned();
     let metrics = plan.metrics();
@@ -989,12 +1115,20 @@ fn render_table_header(
                 .children(columns.into_iter().map({
                     let table_id = table_id.clone();
                     let on_sort_requested = on_sort_requested.clone();
+                    let resize_config = resize_config.clone();
                     move |column| {
                         let table_id = table_id.clone();
                         let column_id = column.id().as_str().to_owned();
+                        let header_table_id = table_id.clone();
+                        let header_column_id = column_id.clone();
                         let accessible_label = column.accessible_label();
                         let sort_action = column.sort_action().cloned();
                         let interactive_sort = sort_action.zip(on_sort_requested.clone());
+                        let resize_config = resize_config.clone();
+                        let show_resize_handle = resize_config.enabled && column.resizable();
+                        let resize_handle_table_id = table_id.clone();
+                        let resize_handle_column = column.clone();
+                        let resize_handle_config = resize_config.clone();
                         let sort_suffix = column
                             .sort_direction()
                             .map(|direction| match direction {
@@ -1005,11 +1139,14 @@ fn render_table_header(
 
                         div()
                             .id(format!("table:{table_id}:header:{column_id}"))
-                            .debug_selector(move || format!("table:{table_id}:header:{column_id}"))
+                            .debug_selector(move || {
+                                format!("table:{header_table_id}:header:{header_column_id}")
+                            })
                             .w(gpui_px_from_ui(column.width()))
                             .min_w(gpui_px_from_ui(column.min_width()))
                             .max_w(gpui_px_from_ui(column.max_width()))
                             .flex_none()
+                            .relative()
                             .h_full()
                             .min_h(px(0.0))
                             .flex()
@@ -1053,9 +1190,207 @@ fn render_table_header(
                                     })
                             })
                             .child(format!("{}{}", column.label(), sort_suffix))
+                            .when(show_resize_handle, |this| {
+                                this.child(render_table_resize_handle(
+                                    resize_handle_table_id,
+                                    resize_handle_column,
+                                    resize_handle_config,
+                                ))
+                            })
                     }
                 }))
         }))
+}
+
+fn render_table_resize_handle(
+    table_id: String,
+    column: TableColumnRenderPlan,
+    config: TableResizeRenderConfig,
+) -> impl IntoElement {
+    let column_id = column.id().clone();
+    let column_key = column_id.as_str().to_owned();
+    let drag = TableColumnResizeDrag {
+        table_id: table_id.clone(),
+        column_id: column_id.clone(),
+        start_width: column.width(),
+        column_widths_start: vec![(column_id.clone(), column.width())],
+        base_sizing: config.base_sizing.clone(),
+        mode: config.mode,
+        direction: config.direction,
+    };
+    let drag_for_mouse_up = drag.clone();
+    let drag_for_mouse_up_out = drag.clone();
+    let drag_for_drag = drag.clone();
+    let drag_table_id = table_id.clone();
+    let drag_runtime = config.runtime.clone();
+    let mouse_up_runtime = config.runtime.clone();
+    let mouse_up_config = config.clone();
+    let mouse_up_out_runtime = config.runtime.clone();
+    let mouse_up_out_config = config;
+
+    div()
+        .id(format!("table:{table_id}:resize:{column_key}"))
+        .debug_selector(move || format!("table:{table_id}:resize:{column_key}"))
+        .absolute()
+        .top(px(0.0))
+        .right(px(0.0))
+        .h_full()
+        .w(px(10.0))
+        .cursor(CursorStyle::ResizeColumn)
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            window.prevent_default();
+            cx.stop_propagation();
+        })
+        .on_drag(
+            drag_for_drag,
+            move |drag, cursor_offset, bounds, window, cx| {
+                if drag.table_id != drag_table_id {
+                    return cx.new(|_| Empty);
+                }
+
+                let start_x = ui_px_from_gpui(bounds.origin.x + cursor_offset.x);
+                drag_runtime.update(cx, |runtime, _| {
+                    runtime.column_resize = TableColumnResizeState::begin(
+                        drag.column_id.clone(),
+                        start_x,
+                        drag.start_width,
+                        drag.column_widths_start.clone(),
+                    );
+                });
+                window.prevent_default();
+                cx.stop_propagation();
+                cx.new(|_| Empty)
+            },
+        )
+        .on_mouse_up(MouseButton::Left, move |event, window, cx| {
+            finish_table_column_resize(
+                &mouse_up_runtime,
+                &mouse_up_config,
+                &drag_for_mouse_up,
+                ui_px_from_gpui(event.position.x),
+                window,
+                cx,
+            );
+        })
+        .on_mouse_up_out(MouseButton::Left, move |event, window, cx| {
+            finish_table_column_resize(
+                &mouse_up_out_runtime,
+                &mouse_up_out_config,
+                &drag_for_mouse_up_out,
+                ui_px_from_gpui(event.position.x),
+                window,
+                cx,
+            );
+        })
+        .child(
+            div()
+                .absolute()
+                .right(px(0.0))
+                .top(px(4.0))
+                .bottom(px(4.0))
+                .w(px(1.0))
+                .bg(rgb(0xc8cdc2)),
+        )
+}
+
+fn handle_table_column_resize_drag(
+    runtime: &Entity<TableRuntime>,
+    config: &TableResizeRenderConfig,
+    event: &DragMoveEvent<TableColumnResizeDrag>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let drag = event.drag(cx).clone();
+    if drag.table_id != config.table_id {
+        return;
+    }
+
+    let client_x = ui_px_from_gpui(event.event.position.x);
+    let mut committed_change = None;
+    runtime.update(cx, |runtime, _| {
+        if runtime.column_resize.active_column().is_none() {
+            runtime.column_resize = TableColumnResizeState::begin(
+                drag.column_id.clone(),
+                client_x,
+                drag.start_width,
+                drag.column_widths_start.clone(),
+            );
+        }
+
+        let update = drag_table_column_resize(
+            drag.mode,
+            drag.direction,
+            &drag.base_sizing,
+            &runtime.column_resize,
+            client_x,
+        );
+        if let Some(sizing) = update.committed_sizing().cloned() {
+            committed_change = Some(table_column_sizing_change(&drag, sizing));
+        }
+        runtime.column_resize = update.state().clone();
+    });
+
+    if let (Some(handler), Some(change)) = (&config.on_change, committed_change) {
+        handler(change, window, cx);
+    }
+
+    window.prevent_default();
+    cx.stop_propagation();
+    window.refresh();
+}
+
+fn finish_table_column_resize(
+    runtime: &Entity<TableRuntime>,
+    config: &TableResizeRenderConfig,
+    drag: &TableColumnResizeDrag,
+    client_x: UiPx,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if drag.table_id != config.table_id {
+        window.prevent_default();
+        cx.stop_propagation();
+        return;
+    }
+
+    let mut committed_change = None;
+    runtime.update(cx, |runtime, _| {
+        if !runtime
+            .column_resize
+            .active_column()
+            .is_some_and(|column_id| column_id == &drag.column_id)
+        {
+            return;
+        }
+
+        let update = end_table_column_resize(
+            drag.mode,
+            drag.direction,
+            &drag.base_sizing,
+            &runtime.column_resize,
+            Some(client_x),
+        );
+        if let Some(sizing) = update.committed_sizing().cloned() {
+            committed_change = Some(table_column_sizing_change(drag, sizing));
+        }
+        runtime.column_resize = update.state().clone();
+    });
+
+    if let (Some(handler), Some(change)) = (&config.on_change, committed_change) {
+        handler(change, window, cx);
+    }
+
+    window.prevent_default();
+    cx.stop_propagation();
+    window.refresh();
+}
+
+fn table_column_sizing_change(
+    drag: &TableColumnResizeDrag,
+    sizing: TableColumnSizing,
+) -> TableColumnSizingChange {
+    let width = sizing.width(&drag.column_id).unwrap_or(drag.start_width);
+    TableColumnSizingChange::new(drag.column_id.clone(), width, sizing)
 }
 
 fn render_table_body(plan: &TableRenderPlan) -> impl IntoElement {

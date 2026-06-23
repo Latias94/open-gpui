@@ -117,12 +117,14 @@ pub use open_gpui_ui_core::{
     TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
     TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind, TableAggregation,
     TableCellValue, TableColumn, TableColumnId, TableColumnPinning, TableColumnRegion,
-    TableColumnRegions, TableColumnSizing, TableExpansionState, TableFilter, TableGroupRow,
+    TableColumnRegions, TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState,
+    TableColumnResizeUpdate, TableColumnSizing, TableExpansionState, TableFilter, TableGroupRow,
     TablePagination, TableResolvedColumnSizing, TableResolvedColumnSizingRegions, TableResolvedRow,
     TableResolvedRowKind, TableResolvedState, TableRow, TableRowId, TableRowModel,
     TableRowModelStage, TableSort, TableSortDirection, TableState, TableStateCacheKey,
     VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState,
-    VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
+    VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState, drag_table_column_resize,
+    end_table_column_resize,
 };
 pub use overlay::OverlayResolvedState;
 pub use popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
@@ -157,7 +159,7 @@ pub use splitter::{
 pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use table::{
     Table, TableCellRenderPlan, TableColumnRegionRenderPlan, TableColumnRenderPlan,
-    TableHeaderAction, TableMetrics, TableRenderPlan, TableRowRenderPlan,
+    TableColumnSizingChange, TableHeaderAction, TableMetrics, TableRenderPlan, TableRowRenderPlan,
 };
 pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
