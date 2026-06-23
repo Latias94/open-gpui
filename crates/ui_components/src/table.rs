@@ -1393,6 +1393,7 @@ fn render_table_resize_handle(
         .h_full()
         .w(px(10.0))
         .cursor(CursorStyle::ResizeColumn)
+        .occlude()
         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
             window.prevent_default();
             cx.stop_propagation();
@@ -1504,12 +1505,11 @@ fn finish_table_column_resize(
     cx: &mut App,
 ) {
     if drag.table_id != config.table_id {
-        window.prevent_default();
-        cx.stop_propagation();
         return;
     }
 
     let mut committed_change = None;
+    let mut handled = false;
     runtime.update(cx, |runtime, _| {
         if !runtime
             .column_resize
@@ -1518,6 +1518,7 @@ fn finish_table_column_resize(
         {
             return;
         }
+        handled = true;
 
         let update = end_table_column_resize(
             drag.mode,
@@ -1531,6 +1532,10 @@ fn finish_table_column_resize(
         }
         runtime.column_resize = update.state().clone();
     });
+
+    if !handled {
+        return;
+    }
 
     if let (Some(handler), Some(change)) = (&config.on_change, committed_change) {
         handler(change, window, cx);

@@ -1466,6 +1466,27 @@ fn sample_table_state(row_count: usize) -> TableState {
     ])
 }
 
+fn sample_pinned_table_state() -> TableState {
+    TableState::new([TableRow::new("row-a")
+        .with_cell("name", "Alpha")
+        .with_cell("team", "Platform")
+        .with_cell("score", 42_usize)
+        .with_cell("status", "Ready")])
+    .with_columns([
+        TableColumn::new("name", "Name"),
+        TableColumn::new("team", "Team"),
+        TableColumn::new("score", "Score"),
+        TableColumn::new("status", "Status"),
+    ])
+    .with_column_order(["status", "score", "team", "name"])
+    .with_column_pinning(
+        TableColumnPinning::new()
+            .pinned_left(["name", "score"])
+            .pinned_right(["status"]),
+    )
+    .with_pagination(TablePagination::disabled())
+}
+
 #[test]
 fn overlay_adapter_config_defaults_follow_overlay_kind_policy() {
     let tooltip =
@@ -4006,27 +4027,13 @@ fn table_runtime_pinned_center_scrolls_without_moving_fixed_lanes(
 
     impl Render for TestView {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            let state = TableState::new([TableRow::new("row-a")
-                .with_cell("name", "Alpha")
-                .with_cell("team", "Platform")
-                .with_cell("score", 42_usize)
-                .with_cell("status", "Ready")])
-            .with_columns([
-                TableColumn::new("name", "Name"),
-                TableColumn::new("team", "Team"),
-                TableColumn::new("score", "Score"),
-                TableColumn::new("status", "Status"),
-            ])
-            .with_column_order(["status", "score", "team", "name"])
-            .with_column_pinning(
-                TableColumnPinning::new()
-                    .pinned_left(["name", "score"])
-                    .pinned_right(["status"]),
+            let table = Table::new(
+                "pinned-scroll-runtime-table",
+                "Pinned scroll table",
+                sample_pinned_table_state(),
             )
-            .with_pagination(TablePagination::disabled());
-            let table = Table::new("pinned-scroll-runtime-table", "Pinned scroll table", state)
-                .row_height(ui_px(24.0))
-                .viewport_extent(ui_px(96.0));
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(96.0));
 
             div()
                 .size_full()
@@ -4095,6 +4102,200 @@ fn table_runtime_pinned_center_scrolls_without_moving_fixed_lanes(
         right_before.left(),
         "expected right pinned lane to keep its screen-space x position"
     );
+}
+
+#[open_gpui::test]
+fn table_runtime_pinned_headers_still_sort_after_center_scroll(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        actions: Rc<RefCell<Vec<TableHeaderAction>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let actions = self.actions.clone();
+            let table = Table::new(
+                "pinned-sort-runtime-table",
+                "Pinned sort table",
+                sample_pinned_table_state(),
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(96.0))
+            .on_sort_requested(move |action, _, _| {
+                actions.borrow_mut().push(action);
+            });
+
+            div()
+                .size_full()
+                .child(div().w(px(420.0)).h(px(140.0)).child(table))
+        }
+    }
+
+    let actions = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        actions: actions.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let body_center_viewport = cx
+        .debug_bounds("scroll-area:table:pinned-sort-runtime-table:row-center-scroll:row-a")
+        .expect("body center lane should expose a horizontal scroll viewport");
+    let header_center_viewport = cx
+        .debug_bounds("scroll-area:table:pinned-sort-runtime-table:header-center-scroll")
+        .expect("header center lane should expose a horizontal scroll viewport");
+    cx.simulate_event(ScrollWheelEvent {
+        position: body_center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-160.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("table:pinned-sort-runtime-table:header:team")
+            .is_some(),
+        "center header should remain visible after scrolling"
+    );
+    let score_header = cx
+        .debug_bounds("table:pinned-sort-runtime-table:header:score")
+        .expect("left pinned header should remain visible after scrolling");
+    let status_header = cx
+        .debug_bounds("table:pinned-sort-runtime-table:header:status")
+        .expect("right pinned header should remain visible after scrolling");
+
+    cx.simulate_click(header_center_viewport.center(), Default::default());
+    cx.simulate_click(score_header.center(), Default::default());
+    cx.simulate_click(status_header.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let actions = actions.borrow();
+    assert_eq!(actions.len(), 3);
+    assert_eq!(actions[0].column_id().as_str(), "team");
+    assert_eq!(actions[1].column_id().as_str(), "score");
+    assert_eq!(actions[2].column_id().as_str(), "status");
+}
+
+#[open_gpui::test]
+fn table_runtime_pinned_resize_handles_emit_changes_for_center_and_pinned_columns(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        changes: Rc<RefCell<Vec<TableColumnSizingChange>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let changes = self.changes.clone();
+            let table = Table::new(
+                "pinned-resize-runtime-table",
+                "Pinned resize table",
+                sample_pinned_table_state()
+                    .with_column_sizing(TableColumnSizing::new().with_width("team", ui_px(160.0))),
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(96.0))
+            .column_resize_mode(TableColumnResizeMode::OnEnd)
+            .on_column_sizing_change(move |change, _, _| {
+                changes.borrow_mut().push(change);
+            });
+
+            div()
+                .size_full()
+                .child(div().w(px(620.0)).h(px(140.0)).child(table))
+        }
+    }
+
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        changes: changes.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let team_handle_bounds = cx
+        .debug_bounds("table:pinned-resize-runtime-table:resize:team")
+        .expect("center resize handle should remain reachable in split layout");
+    let team_handle = point(
+        team_handle_bounds.right() - px(1.0),
+        team_handle_bounds.center().y,
+    );
+    let score_handle_bounds = cx
+        .debug_bounds("table:pinned-resize-runtime-table:resize:score")
+        .expect("pinned resize handle should remain reachable");
+    let score_handle = point(
+        score_handle_bounds.right() - px(1.0),
+        score_handle_bounds.center().y,
+    );
+
+    cx.simulate_mouse_down(team_handle, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(team_handle.x + px(4.0), team_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    assert!(changes.borrow().is_empty());
+    cx.simulate_mouse_move(
+        point(team_handle.x + px(24.0), team_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    assert!(changes.borrow().is_empty());
+    cx.simulate_mouse_move(
+        point(team_handle.x + px(60.0), team_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_up(
+        point(team_handle.x + px(60.0), team_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(changes.borrow().len(), 1);
+    assert_eq!(changes.borrow()[0].column_id().as_str(), "team");
+
+    cx.simulate_mouse_down(score_handle, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(score_handle.x + px(4.0), score_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    assert_eq!(changes.borrow().len(), 1);
+    cx.simulate_mouse_move(
+        point(score_handle.x + px(24.0), score_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    assert_eq!(changes.borrow().len(), 1);
+    cx.simulate_mouse_move(
+        point(score_handle.x + px(60.0), score_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_up(
+        point(score_handle.x + px(60.0), score_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let changes = changes.borrow();
+    assert_eq!(changes.len(), 2);
+    assert_eq!(changes[0].column_id().as_str(), "team");
+    assert!(changes[0].width() > ui_px(160.0));
+    assert_eq!(changes[1].column_id().as_str(), "score");
+    assert!(changes[1].width() > ui_px(128.0));
 }
 
 #[open_gpui::test]
