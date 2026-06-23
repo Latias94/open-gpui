@@ -1487,12 +1487,11 @@ pub(crate) fn render_components_page(
                                                 cx,
                                             );
                                         let table_state =
-                                            pages::components::table_state_with_expansion(
-                                                sample
-                                                    .state
-                                                    .clone()
-                                                    .with_column_sizing(current_sizing),
+                                            pages::components::table_sample_state_with_runtime(
+                                                sample,
+                                                current_sizing,
                                                 current_expansion,
+                                                cx,
                                             );
                                         let mut table = sample.build_table_with_state(table_state);
                                         if sample_id == "release-resize" {
@@ -2354,17 +2353,32 @@ pub(crate) fn component_table_state_row(
 
     if summary.tree_rows > 0 {
         row = row.child(format!(
-            "tree {} / branches {} / depth {} / expanded inputs {}{}",
+            "tree {} / branches {} / depth {} / expanded inputs {}{}{}",
             summary.tree_rows,
             summary.tree_branch_rows,
             summary.tree_depth,
             summary.expanded_tree_inputs,
+            if summary.manual_expansion {
+                " / manual"
+            } else {
+                ""
+            },
             if summary.all_rows_expanded {
                 " all"
             } else {
                 ""
             }
         ));
+
+        if summary.unloaded_tree_branches > 0
+            || summary.loading_tree_rows > 0
+            || summary.failed_tree_rows > 0
+        {
+            row = row.child(format!(
+                "async branches unloaded {} / loading {} / failed {}",
+                summary.unloaded_tree_branches, summary.loading_tree_rows, summary.failed_tree_rows
+            ));
+        }
     }
 
     if summary.pinned_left_columns > 0 || summary.pinned_right_columns > 0 {

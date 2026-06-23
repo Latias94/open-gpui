@@ -21,16 +21,17 @@ use open_gpui_ui_components::{
     SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
     Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
     TableCenterColumnWindowPlan, TableColumn, TableColumnPinning, TableColumnRegion,
-    TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableFilter,
-    TableHeaderAction, TablePagination, TableRow, TableSort, TableSortDirection, TableState, Tabs,
-    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput,
-    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
-    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
-    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
-    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, first_enabled,
+    TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableExpansionMode,
+    TableFilter, TableHeaderAction, TablePagination, TableRow, TableRowChildrenLoadState,
+    TableSort, TableSortDirection, TableState, Tabs, TabsActivationMode, TabsItem,
+    TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver,
+    ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
+    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
+    TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList,
+    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRenderPlan,
+    VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
+    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
+    VirtualizerState, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -448,6 +449,7 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         legacy_seed_inputs: &[],
         policy_hints: &[
             "virtualizer_snapshot",
+            "expansion_mode",
             "enable_column_resizing",
             "column_resize_mode",
             "column_resize_direction",
@@ -856,6 +858,7 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "header_height",
             "viewport_extent",
             "min_column_width",
+            "expansion_mode",
             "enable_column_resizing",
             "column_resize_mode",
             "column_resize_direction",
@@ -1195,6 +1198,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "row_height",
             "header_height",
             "viewport_extent",
+            "expansion_mode",
             "min_column_width",
             "virtualizer_snapshot",
             "default_focused_row",
@@ -3155,6 +3159,61 @@ fn table_render_plan_exposes_tree_row_metadata_for_adapter_rendering() {
 }
 
 #[test]
+fn table_render_plan_exposes_manual_expansion_and_child_load_metadata() {
+    let manual_state = TableState::new([TableRow::new("root")
+        .with_cell("name", "Workspace")
+        .with_child(TableRow::new("child").with_cell("name", "Loaded child"))])
+    .with_columns([TableColumn::new("name", "Name").with_width(ui_px(160.0))])
+    .with_pagination(TablePagination::disabled());
+    let manual_plan = Table::new("manual-tree", "Manual tree", manual_state)
+        .expansion_mode(TableExpansionMode::Manual)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    assert_eq!(
+        manual_plan
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["root", "child"],
+        "manual expansion should render the caller-supplied visible tree snapshot"
+    );
+    assert_eq!(manual_plan.rows()[0].tree_expanded(), Some(false));
+    assert_eq!(manual_plan.rows()[0].loaded_child_count(), 1);
+    assert_eq!(
+        manual_plan.rows()[0].children_load_state(),
+        Some(&TableRowChildrenLoadState::Idle)
+    );
+
+    let loading_state = TableState::new([TableRow::new("remote")
+        .with_cell("name", "Remote branch")
+        .with_children_loading("Loading children")])
+    .with_columns([TableColumn::new("name", "Name").with_width(ui_px(160.0))])
+    .with_pagination(TablePagination::disabled());
+    let loading_plan = Table::new("loading-tree", "Loading tree", loading_state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+    let loading_row = &loading_plan.rows()[0];
+
+    assert!(loading_row.is_tree_branch());
+    assert_eq!(loading_row.loaded_child_count(), 0);
+    assert_eq!(
+        loading_row
+            .children_load_state()
+            .and_then(TableRowChildrenLoadState::message),
+        Some("Loading children")
+    );
+    assert!(
+        loading_row
+            .children_load_state()
+            .is_some_and(TableRowChildrenLoadState::is_loading)
+    );
+}
+
+#[test]
 fn table_render_plan_exposes_pinned_column_regions() {
     let flat_plan = Table::new("flat-table", "Flat table", sample_table_state(1))
         .render_plan(UiPx::ZERO, ui_px(96.0));
@@ -3907,6 +3966,12 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _root_expansion: root::TableExpansionState = root::TableExpansionState::all();
     let _prelude_expansion: prelude::TableExpansionState =
         prelude::TableExpansionState::rows([prelude::TableRowId::new("group:team=ui")]);
+    let _root_expansion_mode: root::TableExpansionMode = root::TableExpansionMode::Manual;
+    let _prelude_expansion_mode: prelude::TableExpansionMode = prelude::TableExpansionMode::Client;
+    let _root_child_load_state: root::TableRowChildrenLoadState =
+        root::TableRowChildrenLoadState::loading("Loading children");
+    let _prelude_child_load_state: prelude::TableRowChildrenLoadState =
+        prelude::TableRowChildrenLoadState::failed("Load failed");
     let _prelude_row_kind: prelude::TableResolvedRowKind = prelude::TableResolvedRowKind::Leaf;
     let root_tree_state = root::TableState::new([root::TableRow::new("root")
         .with_cell("name", "Root")
@@ -4324,6 +4389,82 @@ fn table_runtime_row_click_and_tree_toggle_emit_controlled_payloads(
     assert_eq!(
         toggles.borrow().as_slice(),
         &[("root".to_owned(), true, 0, Some(false))]
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_unloaded_branch_toggle_emits_child_load_metadata(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    type ToggleLog = Vec<(String, bool, usize, Option<String>, bool, usize)>;
+
+    struct TestView {
+        toggles: Rc<RefCell<ToggleLog>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let toggles = self.toggles.clone();
+            let state = TableState::new([TableRow::new("remote")
+                .with_cell("name", "Remote workspace")
+                .with_cell("status", "Retry")
+                .with_children_load_failed("Network unavailable")])
+            .with_columns([
+                TableColumn::new("name", "Name").with_width(ui_px(180.0)),
+                TableColumn::new("status", "Status").with_width(ui_px(120.0)),
+            ])
+            .with_pagination(TablePagination::disabled());
+            let table = Table::new("remote-runtime-table", "Remote runtime", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .on_row_expansion_request(move |toggle, _, _| {
+                    let load_state = toggle
+                        .children_load_state()
+                        .and_then(TableRowChildrenLoadState::message)
+                        .map(str::to_owned);
+                    let failed = toggle
+                        .children_load_state()
+                        .is_some_and(TableRowChildrenLoadState::is_failed);
+                    toggles.borrow_mut().push((
+                        toggle.row_id().as_str().to_owned(),
+                        toggle.expanded(),
+                        toggle.action().depth(),
+                        load_state,
+                        failed,
+                        toggle.loaded_child_count(),
+                    ));
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let toggles = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        toggles: toggles.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let toggle = cx
+        .debug_bounds("table:remote-runtime-table:tree-toggle:remote")
+        .expect("remote branch tree toggle should render without loaded children");
+    cx.simulate_click(toggle.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        toggles.borrow().as_slice(),
+        &[(
+            "remote".to_owned(),
+            true,
+            0,
+            Some("Network unavailable".to_owned()),
+            true,
+            0,
+        )]
     );
 }
 

@@ -8,8 +8,9 @@ use open_gpui_ui_components::{
     FeedbackIntent, HoverCardOpenIntent, HoverCardOpenMode, MenuItemKind, MenuOpenMode,
     OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
     SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableColumnId,
-    TableColumnRegion, TableExpansionState, TableRowId, ThemeMode, ToggleVariant,
-    TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
+    TableColumnRegion, TableExpansionMode, TableExpansionState, TableRowChildrenLoadState,
+    TableRowId, ThemeMode, ToggleVariant, TooltipOpenIntent, TreeKeyboardAction,
+    VirtualizedListScrollStrategy,
     gpui_adapter::{DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state},
 };
 use open_gpui_ui_core::{
@@ -1673,7 +1674,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 
-    assert_eq!(tables.len(), 6);
+    assert_eq!(tables.len(), 7);
     let release_queue = table_sample(tables, "release-queue");
     assert_eq!(release_queue.state.rows().len(), 10_000);
     assert_eq!(
@@ -1855,6 +1856,40 @@ fn components_page_samples_expose_component_metadata() {
             .row(&TableRowId::new("dependency-ui"))
             .and_then(|row| row.tree_expanded()),
         Some(false)
+    );
+
+    let server_tree = table_sample(tables, "server-tree");
+    let server_plan = server_tree.render_plan();
+    let server_summary = server_tree.state_summary();
+    assert_eq!(
+        server_tree.state.expansion_mode(),
+        TableExpansionMode::Manual
+    );
+    assert_eq!(server_tree.state.rows().len(), 3);
+    assert_eq!(server_summary.core_rows, 3);
+    assert_eq!(server_summary.final_rows, 3);
+    assert_eq!(server_summary.tree_rows, 3);
+    assert_eq!(server_summary.tree_branch_rows, 3);
+    assert_eq!(server_summary.unloaded_tree_branches, 1);
+    assert_eq!(server_summary.loading_tree_rows, 1);
+    assert_eq!(server_summary.failed_tree_rows, 1);
+    assert!(server_summary.manual_expansion);
+    assert_eq!(server_summary.expanded_tree_inputs, 0);
+    assert_eq!(server_summary.pinned_left_columns, 1);
+    assert_eq!(server_summary.pinned_center_columns, 5);
+    assert_eq!(server_summary.pinned_right_columns, 1);
+    assert_eq!(server_summary.total_column_width_px, 956);
+    assert_eq!(server_plan.aria_column_count(), 7);
+    assert_eq!(server_plan.aria_row_count(), 4);
+    assert_eq!(
+        server_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["server-workspace", "server-cache", "server-failed"]
     );
 
     assert_eq!(virtualized_lists.len(), 1);
@@ -2412,6 +2447,95 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
             .is_some(),
         "collapsed source-tree descendants should stay addressable by stable row id"
     );
+
+    let server_tree = table_sample(samples, "server-tree");
+    let server_plan = server_tree.render_plan();
+    let server_summary = server_tree.state_summary();
+
+    assert_eq!(server_tree.state.rows().len(), 3);
+    assert_eq!(
+        server_tree.state.expansion_mode(),
+        TableExpansionMode::Manual
+    );
+    assert_eq!(server_summary.core_rows, 3);
+    assert_eq!(server_summary.final_rows, 3);
+    assert_eq!(server_summary.tree_rows, 3);
+    assert_eq!(server_summary.tree_branch_rows, 3);
+    assert_eq!(server_summary.tree_depth, 0);
+    assert_eq!(server_summary.unloaded_tree_branches, 1);
+    assert_eq!(server_summary.loading_tree_rows, 1);
+    assert_eq!(server_summary.failed_tree_rows, 1);
+    assert!(server_summary.manual_expansion);
+    assert_eq!(server_summary.expanded_tree_inputs, 0);
+    assert_eq!(server_summary.pinned_left_columns, 1);
+    assert_eq!(server_summary.pinned_center_columns, 5);
+    assert_eq!(server_summary.pinned_right_columns, 1);
+    assert_eq!(server_summary.total_column_width_px, 956);
+    assert!(server_plan.uses_split_pinned_layout());
+    assert_eq!(server_plan.aria_column_count(), 7);
+    assert_eq!(server_plan.aria_row_count(), 4);
+    assert_eq!(
+        server_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["server-workspace", "server-cache", "server-failed"]
+    );
+
+    let server_workspace = server_plan
+        .table()
+        .final_model()
+        .row(&TableRowId::new("server-workspace"))
+        .expect("server workspace row should resolve");
+    let server_cache = server_plan
+        .table()
+        .final_model()
+        .row(&TableRowId::new("server-cache"))
+        .expect("server cache row should resolve");
+    let server_failed = server_plan
+        .table()
+        .final_model()
+        .row(&TableRowId::new("server-failed"))
+        .expect("server failed row should resolve");
+
+    assert!(server_workspace.is_tree_branch());
+    assert_eq!(server_workspace.loaded_child_count(), 0);
+    assert_eq!(
+        server_workspace.children_load_state(),
+        Some(&TableRowChildrenLoadState::Idle)
+    );
+    assert_eq!(server_workspace.tree_expanded(), Some(false));
+    assert!(server_cache.is_tree_branch());
+    assert_eq!(server_cache.loaded_child_count(), 0);
+    assert_eq!(
+        server_cache
+            .children_load_state()
+            .and_then(TableRowChildrenLoadState::message),
+        Some("Loading cached modules")
+    );
+    assert!(
+        server_cache
+            .children_load_state()
+            .is_some_and(TableRowChildrenLoadState::is_loading)
+    );
+    assert_eq!(server_cache.tree_expanded(), Some(false));
+    assert!(server_failed.is_tree_branch());
+    assert_eq!(server_failed.loaded_child_count(), 0);
+    assert_eq!(
+        server_failed
+            .children_load_state()
+            .and_then(TableRowChildrenLoadState::message),
+        Some("Gateway timeout")
+    );
+    assert!(
+        server_failed
+            .children_load_state()
+            .is_some_and(TableRowChildrenLoadState::is_failed)
+    );
+    assert_eq!(server_failed.tree_expanded(), Some(false));
 }
 
 #[test]
@@ -4197,6 +4321,66 @@ fn components_gallery_smoke_tree_table_expands_and_activates(cx: &mut open_gpui:
     assert_eq!(activations[1].row_id, "dependency-ui-table");
     assert_eq!(activations[1].kind, "keyboard");
     assert_eq!(activations[1].depth, 2);
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_table_server_tree_loads_children_from_expansion_request(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE: &str = "gallery:component-table-sample:server-tree";
+    const WORKSPACE_TOGGLE: &str = "table:component-table:server-tree:tree-toggle:server-workspace";
+    const CACHE_TOGGLE: &str = "table:component-table:server-tree:tree-toggle:server-cache";
+    const FAILED_TOGGLE: &str = "table:component-table:server-tree:tree-toggle:server-failed";
+    const CHILD_ROW: &str = "table:component-table:server-tree:row:server-api";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    scroll_page_selector_into_view(&shell, cx, WORKSPACE_TOGGLE);
+
+    assert!(
+        cx.debug_bounds(CHILD_ROW).is_none(),
+        "expected server children to start app-unloaded"
+    );
+    assert!(
+        cx.debug_bounds(CACHE_TOGGLE).is_some(),
+        "expected loading server branch to render a disclosure affordance"
+    );
+    assert!(
+        cx.debug_bounds(FAILED_TOGGLE).is_some(),
+        "expected failed server branch to render a disclosure affordance"
+    );
+
+    click(cx, WORKSPACE_TOGGLE);
+    settle(cx);
+    let toggles = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.expansion_toggles().to_vec()
+    });
+    assert!(
+        cx.debug_bounds(CHILD_ROW).is_some(),
+        "expected server child row to render after the app supplies loaded children; toggles={toggles:?}"
+    );
+    assert_eq!(toggles.len(), 1);
+    assert_eq!(toggles[0].sample_id, "server-tree");
+    assert_eq!(toggles[0].row_id, "server-workspace");
+    assert!(toggles[0].expanded);
+    assert_eq!(toggles[0].depth, 0);
+    assert_eq!(toggles[0].loaded_child_count, 0);
+    assert_eq!(toggles[0].children_load_state, "idle");
+    assert_eq!(toggles[0].children_load_message, None);
+    let activations_after_toggle =
+        cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+            log.row_activations().to_vec()
+        });
+    assert!(
+        activations_after_toggle.is_empty(),
+        "expected manual expansion disclosure clicks to avoid row activation"
+    );
 }
 
 #[open_gpui::test]

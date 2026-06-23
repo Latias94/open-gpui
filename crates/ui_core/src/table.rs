@@ -940,12 +940,85 @@ fn resolve_column_sizing_region(
     (resolved, total_width)
 }
 
+/// Loading state for source row children.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TableRowChildrenLoadState {
+    /// No child load is currently pending or failed.
+    Idle,
+    /// Child rows are being loaded by the caller.
+    Loading {
+        /// Loading status text supplied by the caller.
+        message: String,
+    },
+    /// Child row loading failed.
+    Failed {
+        /// Failure status text supplied by the caller.
+        message: String,
+    },
+}
+
+impl TableRowChildrenLoadState {
+    /// Creates idle child loading metadata.
+    pub const fn idle() -> Self {
+        Self::Idle
+    }
+
+    /// Creates loading child metadata.
+    pub fn loading(message: impl Into<String>) -> Self {
+        Self::Loading {
+            message: message.into(),
+        }
+    }
+
+    /// Creates failed child loading metadata.
+    pub fn failed(message: impl Into<String>) -> Self {
+        Self::Failed {
+            message: message.into(),
+        }
+    }
+
+    /// Returns whether child rows are currently loading.
+    pub const fn is_loading(&self) -> bool {
+        matches!(self, Self::Loading { .. })
+    }
+
+    /// Returns whether child row loading failed.
+    pub const fn is_failed(&self) -> bool {
+        matches!(self, Self::Failed { .. })
+    }
+
+    /// Returns a stable loading-state label.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Loading { .. } => "loading",
+            Self::Failed { .. } => "failed",
+        }
+    }
+
+    /// Returns the loading or failure message, when present.
+    pub fn message(&self) -> Option<&str> {
+        match self {
+            Self::Idle => None,
+            Self::Loading { message } | Self::Failed { message } => Some(message.as_str()),
+        }
+    }
+}
+
+impl Default for TableRowChildrenLoadState {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
 /// Renderer-neutral row descriptor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableRow {
     id: TableRowId,
     cells: BTreeMap<TableColumnId, TableCellValue>,
     children: Vec<TableRow>,
+    expandable: bool,
+    children_load_state: TableRowChildrenLoadState,
 }
 
 impl TableRow {
@@ -955,6 +1028,8 @@ impl TableRow {
             id: id.into(),
             cells: BTreeMap::new(),
             children: Vec::new(),
+            expandable: false,
+            children_load_state: TableRowChildrenLoadState::Idle,
         }
     }
 
@@ -976,6 +1051,18 @@ impl TableRow {
     /// Returns whether this source row has nested children.
     pub fn has_children(&self) -> bool {
         !self.children.is_empty()
+    }
+
+    /// Returns whether this source row can be expanded by the caller.
+    pub fn can_expand(&self) -> bool {
+        self.expandable
+            || self.has_children()
+            || !matches!(self.children_load_state, TableRowChildrenLoadState::Idle)
+    }
+
+    /// Returns caller-owned child loading metadata.
+    pub const fn children_load_state(&self) -> &TableRowChildrenLoadState {
+        &self.children_load_state
     }
 
     /// Returns a cell value for the given column.
@@ -1003,6 +1090,31 @@ impl TableRow {
     pub fn with_children(mut self, children: impl IntoIterator<Item = TableRow>) -> Self {
         self.children.extend(children);
         self
+    }
+
+    /// Marks the row as expandable even when no child rows are currently loaded.
+    pub const fn with_expandable(mut self, expandable: bool) -> Self {
+        self.expandable = expandable;
+        self
+    }
+
+    /// Applies caller-owned child loading metadata.
+    pub fn with_children_load_state(mut self, state: TableRowChildrenLoadState) -> Self {
+        if !matches!(state, TableRowChildrenLoadState::Idle) {
+            self.expandable = true;
+        }
+        self.children_load_state = state;
+        self
+    }
+
+    /// Marks child rows as currently loading.
+    pub fn with_children_loading(self, message: impl Into<String>) -> Self {
+        self.with_children_load_state(TableRowChildrenLoadState::loading(message))
+    }
+
+    /// Marks child row loading as failed.
+    pub fn with_children_load_failed(self, message: impl Into<String>) -> Self {
+        self.with_children_load_state(TableRowChildrenLoadState::failed(message))
     }
 }
 
@@ -1276,6 +1388,28 @@ impl Default for TableExpansionState {
     }
 }
 
+/// Row expansion behavior for resolved table row models.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableExpansionMode {
+    /// The core row model hides descendants of collapsed rows.
+    Client,
+    /// The caller supplies the visible source-tree snapshot.
+    Manual,
+}
+
+impl TableExpansionMode {
+    /// Returns whether local row-model expansion pruning is enabled.
+    pub const fn prunes_collapsed_rows(self) -> bool {
+        matches!(self, Self::Client)
+    }
+}
+
+impl Default for TableExpansionMode {
+    fn default() -> Self {
+        Self::Client
+    }
+}
+
 /// Row-model stage vocabulary for Open GPUI tables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableRowModelStage {
@@ -1352,6 +1486,7 @@ pub struct TableState {
     grouping: Vec<TableColumnId>,
     aggregations: Vec<TableAggregation>,
     expansion: TableExpansionState,
+    expansion_mode: TableExpansionMode,
     selected_rows: BTreeSet<TableRowId>,
     pagination: TablePagination,
 }
@@ -1368,6 +1503,7 @@ impl PartialEq for TableState {
             && self.grouping == other.grouping
             && self.aggregations == other.aggregations
             && self.expansion == other.expansion
+            && self.expansion_mode == other.expansion_mode
             && self.selected_rows == other.selected_rows
             && self.pagination == other.pagination
     }
@@ -1390,6 +1526,7 @@ impl TableState {
             grouping: Vec::new(),
             aggregations: Vec::new(),
             expansion: TableExpansionState::default(),
+            expansion_mode: TableExpansionMode::default(),
             selected_rows: BTreeSet::new(),
             pagination: TablePagination::default(),
         }
@@ -1476,6 +1613,18 @@ impl TableState {
         self
     }
 
+    /// Applies expansion behavior for source-tree row models.
+    pub const fn with_expansion_mode(mut self, expansion_mode: TableExpansionMode) -> Self {
+        self.expansion_mode = expansion_mode;
+        self
+    }
+
+    /// Lets callers provide the visible source-tree snapshot directly.
+    pub const fn with_manual_expansion(mut self) -> Self {
+        self.expansion_mode = TableExpansionMode::Manual;
+        self
+    }
+
     /// Applies selected row ids.
     pub fn with_selected_rows(
         mut self,
@@ -1536,6 +1685,11 @@ impl TableState {
         &self.expansion
     }
 
+    /// Returns source-tree row expansion behavior.
+    pub const fn expansion_mode(&self) -> TableExpansionMode {
+        self.expansion_mode
+    }
+
     /// Returns selected row ids.
     pub const fn selected_rows(&self) -> &BTreeSet<TableRowId> {
         &self.selected_rows
@@ -1563,6 +1717,7 @@ impl TableState {
             grouping: self.grouping.clone(),
             aggregations: self.aggregations.clone(),
             expansion: self.expansion.clone(),
+            expansion_mode: self.expansion_mode,
             selected_rows: self.selected_rows.clone(),
             pagination: self.pagination,
         }
@@ -1726,6 +1881,10 @@ impl TableState {
     }
 
     fn expand_nodes(&self, nodes: &[TableRowNode]) -> Vec<TableResolvedRow> {
+        if self.grouping.is_empty() && !self.expansion_mode.prunes_collapsed_rows() {
+            return flatten_nodes(nodes);
+        }
+
         let mut rows = Vec::new();
         for node in nodes {
             push_expanded_rows(node, &self.expansion, &mut rows);
@@ -1748,6 +1907,7 @@ pub struct TableStateCacheKey {
     grouping: Vec<TableColumnId>,
     aggregations: Vec<TableAggregation>,
     expansion: TableExpansionState,
+    expansion_mode: TableExpansionMode,
     selected_rows: BTreeSet<TableRowId>,
     pagination: TablePagination,
 }
@@ -1865,8 +2025,11 @@ pub struct TableTreeRow {
     depth: usize,
     parent_id: Option<TableRowId>,
     has_children: bool,
+    can_expand: bool,
     expanded: bool,
     descendant_count: usize,
+    loaded_child_count: usize,
+    children_load_state: TableRowChildrenLoadState,
 }
 
 impl TableTreeRow {
@@ -1874,15 +2037,21 @@ impl TableTreeRow {
         depth: usize,
         parent_id: Option<TableRowId>,
         has_children: bool,
+        can_expand: bool,
         expanded: bool,
         descendant_count: usize,
+        loaded_child_count: usize,
+        children_load_state: TableRowChildrenLoadState,
     ) -> Self {
         Self {
             depth,
             parent_id,
             has_children,
+            can_expand,
             expanded,
             descendant_count,
+            loaded_child_count,
+            children_load_state,
         }
     }
 
@@ -1901,6 +2070,11 @@ impl TableTreeRow {
         self.has_children
     }
 
+    /// Returns whether this source row can be expanded.
+    pub const fn can_expand(&self) -> bool {
+        self.can_expand
+    }
+
     /// Returns whether this source branch is expanded in caller-owned state.
     pub const fn expanded(&self) -> bool {
         self.expanded
@@ -1909,6 +2083,16 @@ impl TableTreeRow {
     /// Returns the number of nested descendant source rows.
     pub const fn descendant_count(&self) -> usize {
         self.descendant_count
+    }
+
+    /// Returns the number of directly loaded child rows.
+    pub const fn loaded_child_count(&self) -> usize {
+        self.loaded_child_count
+    }
+
+    /// Returns caller-owned child loading metadata.
+    pub const fn children_load_state(&self) -> &TableRowChildrenLoadState {
+        &self.children_load_state
     }
 }
 
@@ -2020,21 +2204,33 @@ impl TableResolvedRow {
         self.tree.as_ref()
     }
 
-    /// Returns whether this row is a source row with nested children.
+    /// Returns whether this row is a source row that can expand.
     pub fn is_tree_branch(&self) -> bool {
-        self.tree().map(TableTreeRow::has_children).unwrap_or(false)
+        self.tree().map(TableTreeRow::can_expand).unwrap_or(false)
     }
 
     /// Returns whether this source branch is expanded in caller-owned state.
     pub fn tree_expanded(&self) -> Option<bool> {
         self.tree()
-            .filter(|tree| tree.has_children())
+            .filter(|tree| tree.can_expand())
             .map(TableTreeRow::expanded)
     }
 
     /// Returns the number of nested source descendants.
     pub fn descendant_count(&self) -> usize {
         self.tree().map(TableTreeRow::descendant_count).unwrap_or(0)
+    }
+
+    /// Returns the number of directly loaded child rows.
+    pub fn loaded_child_count(&self) -> usize {
+        self.tree()
+            .map(TableTreeRow::loaded_child_count)
+            .unwrap_or(0)
+    }
+
+    /// Returns caller-owned child loading metadata when this is a source-tree row.
+    pub fn children_load_state(&self) -> Option<&TableRowChildrenLoadState> {
+        self.tree().map(TableTreeRow::children_load_state)
     }
 
     /// Returns the original row descriptor for leaf rows.
@@ -2233,6 +2429,8 @@ fn build_source_row_nodes(
         .map(|row| {
             let current_source_index = *source_index;
             *source_index += 1;
+            let loaded_child_count = row.children().len();
+            let can_expand = row.can_expand();
 
             let children = if include_children {
                 build_source_row_nodes(
@@ -2247,16 +2445,18 @@ fn build_source_row_nodes(
             } else {
                 Vec::new()
             };
-            let tree =
-                (include_children && (parent_id.is_some() || !children.is_empty())).then(|| {
-                    TableTreeRow::new(
-                        depth,
-                        parent_id.clone(),
-                        !children.is_empty(),
-                        expansion.is_expanded(row.id()),
-                        count_table_rows(row.children()),
-                    )
-                });
+            let tree = (include_children && (parent_id.is_some() || can_expand)).then(|| {
+                TableTreeRow::new(
+                    depth,
+                    parent_id.clone(),
+                    loaded_child_count > 0,
+                    can_expand,
+                    expansion.is_expanded(row.id()),
+                    count_table_rows(row.children()),
+                    loaded_child_count,
+                    row.children_load_state().clone(),
+                )
+            });
             let resolved = TableResolvedRow::from_row(
                 row,
                 current_source_index,
@@ -3054,6 +3254,151 @@ mod tests {
                 .row(&TableRowId::new("pkg"))
                 .and_then(TableResolvedRow::tree_expanded),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn expandable_unloaded_source_rows_resolve_as_tree_branches() {
+        let resolved = TableState::new([TableRow::new("remote-root")
+            .with_cell("team", "remote")
+            .with_expandable(true)])
+        .resolve();
+
+        let remote = resolved
+            .final_model()
+            .row(&TableRowId::new("remote-root"))
+            .expect("expandable source row should resolve");
+        let tree = remote
+            .tree()
+            .expect("expandable source row should expose tree metadata");
+
+        assert!(remote.is_tree_branch());
+        assert_eq!(remote.tree_expanded(), Some(false));
+        assert!(!tree.has_children());
+        assert!(tree.can_expand());
+        assert_eq!(tree.loaded_child_count(), 0);
+        assert_eq!(tree.children_load_state(), &TableRowChildrenLoadState::Idle);
+        assert_eq!(remote.loaded_child_count(), 0);
+        assert_eq!(
+            remote.children_load_state(),
+            Some(&TableRowChildrenLoadState::Idle)
+        );
+    }
+
+    #[test]
+    fn child_loading_metadata_survives_row_lookup() {
+        let resolved = TableState::new([
+            TableRow::new("loading").with_children_loading("Loading packages"),
+            TableRow::new("failed").with_children_load_failed("Network unavailable"),
+        ])
+        .resolve();
+
+        let loading = resolved
+            .final_model()
+            .row(&TableRowId::new("loading"))
+            .expect("loading branch should resolve");
+        let failed = resolved
+            .final_model()
+            .row(&TableRowId::new("failed"))
+            .expect("failed branch should resolve");
+
+        assert!(loading.is_tree_branch());
+        assert_eq!(
+            loading
+                .children_load_state()
+                .and_then(|state| state.message()),
+            Some("Loading packages")
+        );
+        assert!(
+            loading
+                .children_load_state()
+                .is_some_and(TableRowChildrenLoadState::is_loading)
+        );
+        assert!(failed.is_tree_branch());
+        assert_eq!(
+            failed
+                .children_load_state()
+                .and_then(|state| state.message()),
+            Some("Network unavailable")
+        );
+        assert!(
+            failed
+                .children_load_state()
+                .is_some_and(TableRowChildrenLoadState::is_failed)
+        );
+    }
+
+    #[test]
+    fn manual_expansion_keeps_supplied_tree_descendants_visible() {
+        let resolved = TableState::new(tree_rows())
+            .with_manual_expansion()
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "pkg-ui", "pkg-core", "pkg-core-test", "docs"]
+        );
+        assert_eq!(
+            resolved
+                .final_model()
+                .row(&TableRowId::new("pkg"))
+                .and_then(TableResolvedRow::tree_expanded),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn manual_expansion_preserves_expanded_metadata_without_pruning() {
+        let resolved = TableState::new(tree_rows())
+            .with_manual_expansion()
+            .with_expanded_rows(["pkg"])
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "pkg-ui", "pkg-core", "pkg-core-test", "docs"]
+        );
+        assert_eq!(
+            resolved
+                .final_model()
+                .row(&TableRowId::new("pkg"))
+                .and_then(TableResolvedRow::tree_expanded),
+            Some(true)
+        );
+        assert_eq!(
+            resolved
+                .final_model()
+                .row(&TableRowId::new("pkg-core"))
+                .and_then(TableResolvedRow::tree_expanded),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn manual_expansion_does_not_bypass_grouped_row_expansion() {
+        let resolved = TableState::new(aggregate_rows())
+            .with_grouping(["team"])
+            .with_manual_expansion()
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["group:team=ops", "group:team=design"]
         );
     }
 

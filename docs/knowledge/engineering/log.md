@@ -6,6 +6,18 @@ status: active
 
 # Log
 
+- 2026-06-23: Implemented the Table manual expansion / async children metadata slice in the working
+  tree. `TableRowChildrenLoadState` now carries idle/loading/failed child metadata, source rows can
+  be expandable before children load, `TableExpansionMode::Manual` preserves app-supplied
+  ungrouped source snapshots, and the GPUI Table expansion payload includes loaded-child and
+  child-load metadata. The Components gallery now has `server-tree`, a focused sample that starts
+  with unloaded/loading/failed branches and simulates app-owned child loading after the
+  `server-workspace` disclosure request. Updated the Table contract and verification docs, then
+  verified `cargo nextest run -p open-gpui-ui-core table`,
+  `cargo nextest run -p open-gpui-ui-components table component_api_inventory`, and
+  `cargo nextest run -p open-gpui-ui-foundation-gallery table`. Next action is docs validation and
+  commit.
+- 2026-06-23: Wrote `docs/plans/2026-06-23-006-feat-ui-table-manual-expansion-plan.md` for the next Table slice. The plan narrows the follow-up to manual expansion and async child metadata: source rows can be expandable before children load, the core resolver keeps the current client-expanded path intact, and the gallery proof will simulate app-owned child loading instead of introducing a real fetch layer.
 - 2026-06-23: Completed U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the working tree. The Components gallery now includes `dependency-tree`, a nested source-tree Table sample with pinned identity/status lanes, controlled expansion, row activation logging, tree-depth summary metadata, and a focused smoke that proves disclosure expansion and keyboard activation work on the rendered sample. Focused Table tests now pass in `open-gpui-ui-components` and `open-gpui-ui-foundation-gallery`. Next action is U6: update the component contract, verification docs, and engineering memory, then run the final broad verification set and commit.
 - 2026-06-23: Wrote `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` for the next Table slice. The plan keeps source tree rows separate from synthetic grouped rows, reuses `TableExpansionState` for nested source hierarchy, adds row focus / activation / expansion payloads, and scopes the first gallery proof to a focused tree-data Table sample. Next action is U1: add source-row hierarchy to the core Table contract.
 - 2026-06-23: Completed U5/U6 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `25875d0`. The Components gallery now has `release-matrix`, a wide pinned Table sample with fourteen center metrics and a focused runtime smoke proving off-window center columns unmount/remount while left/right pinned lanes and the outer page stay fixed. The Table state row was reduced to capability-specific readouts so simple samples no longer show grouped/pinned zero-noise, and `docs/ui/component-contract.md` plus `docs/verification.md` now describe `TableCenterColumnWindowPlan` as shipped adapter behavior. Verified `cargo fmt -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_table_samples_expose_virtualized_row_model_contract components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample`, and `git diff --check`. Next action is to pick the next Table follow-up boundary: full two-axis grid virtualization, tree-data tables, or server-style table flows.

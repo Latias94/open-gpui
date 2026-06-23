@@ -72,14 +72,16 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_fo
 ```
 
 Table gallery gates now follow the same split: `open-gpui-ui-core` tests prove row-model,
-virtualizer, column sizing, column-window, and resize-math contracts without rendering, including
-grouped row ids, expansion lookup behavior, built-in group-row aggregate cells, pinned-column
-region splitting, center-column virtual windows, and on-end/on-change resize deltas.
-`open-gpui-ui-components` tests prove adapter exports, state metadata, resize callback wiring,
+manual expansion, child-load metadata, virtualizer, column sizing, column-window, and resize-math
+contracts without rendering, including grouped row ids, expansion lookup behavior, expandable
+unloaded branches, built-in group-row aggregate cells, pinned-column region splitting,
+center-column virtual windows, and on-end/on-change resize deltas. `open-gpui-ui-components` tests
+prove adapter exports, state metadata, expansion payload metadata, resize callback wiring,
 center-window header/body mounting, and scroll ownership; gallery smokes prove long table scroll
 input stays inside the table viewport, `release-resize` column dragging updates the controlled
-sample without moving the outer Components page, and wide center lanes scroll independently from
-fixed left/right pinned lanes. The focused proofs are:
+sample without moving the outer Components page, wide center lanes scroll independently from fixed
+left/right pinned lanes, and `server-tree` renders app-owned manual child loading. The focused
+proofs are:
 
 `components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample` is the focused
 sticky-pinned Table proof: it enters the Table family view, scrolls the `release-rollup` center
@@ -90,6 +92,12 @@ center-column virtualization proof: it enters the Table family view, scrolls the
 center lane horizontally, verifies far center metric cells are unmounted before scrolling and
 mounted after scrolling, and asserts left/right pinned lanes plus the outer Components page stay
 fixed.
+
+`components_gallery_smoke_table_server_tree_loads_children_from_expansion_request` is the focused
+manual-expansion proof: it enters the Table family view, starts with `server-api` absent from the
+app-supplied source snapshot, clicks the unloaded `server-workspace` disclosure, verifies the
+expansion payload carries zero loaded children plus idle child-load state, and then confirms the
+new child row renders after the gallery runtime supplies the loaded snapshot.
 
 ```powershell
 cargo nextest run -p open-gpui-ui-core table
@@ -188,7 +196,8 @@ state tests assert that rendered row selectors stay bounded by the virtualizer's
 overscan, scroll input stays inside the table viewport, sortable header actions emit state-update
 payloads, controlled column resize callbacks carry stable sizing payloads, row activation and
 expansion request payloads stay controlled, source-tree row models keep nested descendants
-addressable by stable row id, and grouped / expanded row models keep collapsed descendants
+addressable by stable row id, manual source-tree snapshots expose unloaded/loading/failed child
+metadata, and grouped / expanded row models keep collapsed descendants
 addressable by stable row id. The Components gallery now carries `release-rollup`, a grouped Table
 sample that mixes expanded and collapsed team groups, exposes aggregate count and score cells,
 pins the identifier and status columns, and has its own inner-scroll smoke. It also carries
@@ -200,6 +209,10 @@ columns unmount/remount while horizontal wheel input remains inside the sample. 
 is the source-hierarchy sample: it proves nested `TableRow` children resolve to visible tree rows,
 keeps collapsed descendants addressable by stable id, exposes tree-depth and tree-branch summary
 metadata, and drives controlled expansion plus row activation through the gallery runtime log.
+`server-tree` is the manual-expansion sample: it preserves the app-supplied source snapshot,
+renders unloaded, loading, and failed branch affordances, records loaded-child and load-state
+metadata in expansion payloads, and proves that child rows appear only after the gallery runtime
+supplies the loaded snapshot.
 Core table tests also assert that `TableAggregation` exposes stable built-in aggregate labels and
 resolves count, sum, min, max, and average cells for grouped rows without hiding the grouping
 column value. Core and component tests assert that `TableColumnPinning` splits visible columns into

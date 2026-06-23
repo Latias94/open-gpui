@@ -13,14 +13,14 @@ use open_gpui_ui_components::{
     SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
     Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
     Switch, SwitchState, Table, TableAggregation, TableColumn, TableColumnPinning,
-    TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableExpansionState,
-    TableFilter, TablePagination, TableRenderPlan, TableRow, TableRowActivation,
-    TableRowExpansionToggle, TableSort, TableState, Tabs, TabsActivationMode, TabsItem,
-    TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant,
-    Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree,
-    TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListItemDescriptor,
-    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState,
+    TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableExpansionMode,
+    TableExpansionState, TableFilter, TablePagination, TableRenderPlan, TableRow,
+    TableRowActivation, TableRowChildrenLoadState, TableRowExpansionToggle, TableSort, TableState,
+    Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState,
+    Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
+    ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState, VirtualizedList,
+    VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRenderPlan,
+    VirtualizedListScrollStrategy, VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -1214,6 +1214,12 @@ pub struct TableSampleExpansionToggle {
     pub expanded: bool,
     /// Resolved hierarchy depth at toggle time.
     pub depth: usize,
+    /// Number of directly loaded child rows at toggle time.
+    pub loaded_child_count: usize,
+    /// Stable child loading state label at toggle time.
+    pub children_load_state: String,
+    /// Optional loading or failure message at toggle time.
+    pub children_load_message: Option<String>,
 }
 
 /// Runtime interaction log used by gallery Table smoke tests.
@@ -1224,6 +1230,7 @@ pub struct TableSampleRuntimeLog {
     row_activations: Vec<TableSampleRowActivation>,
     expansion_toggles: Vec<TableSampleExpansionToggle>,
     expansion_overrides: BTreeMap<String, TableExpansionState>,
+    server_tree_loaded: BTreeMap<String, bool>,
 }
 
 impl Global for TableSampleRuntimeLog {}
@@ -1261,6 +1268,7 @@ impl TableSampleRuntimeLog {
         self.row_activations.clear();
         self.expansion_toggles.clear();
         self.expansion_overrides.clear();
+        self.server_tree_loaded.clear();
     }
 }
 
@@ -1300,6 +1308,28 @@ pub fn table_state_with_expansion(state: TableState, expansion: TableExpansionSt
         TableExpansionState::All => state.with_all_rows_expanded(),
         TableExpansionState::Rows(rows) => state.with_expanded_rows(rows),
     }
+}
+
+/// Applies current gallery runtime overrides to a table sample state.
+pub fn table_sample_state_with_runtime(
+    sample: &TableSample,
+    sizing: TableColumnSizing,
+    expansion: TableExpansionState,
+    cx: &impl AppContext,
+) -> TableState {
+    let loaded_server_tree = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.server_tree_loaded
+            .get(sample.id)
+            .copied()
+            .unwrap_or(false)
+    });
+    let state = if sample.id == "server-tree" && loaded_server_tree {
+        server_tree_table_state(true)
+    } else {
+        sample.state.clone()
+    };
+
+    table_state_with_expansion(state.with_column_sizing(sizing), expansion)
 }
 
 /// Records a gallery `Table` sizing commit in app-global sample state.
@@ -1355,6 +1385,16 @@ pub fn record_table_expansion_request(
     let row_id = toggle.row_id().clone();
     let expanded = toggle.expanded();
     let depth = toggle.action().depth();
+    let loaded_child_count = toggle.loaded_child_count();
+    let children_load_state = toggle
+        .children_load_state()
+        .map(TableRowChildrenLoadState::as_str)
+        .unwrap_or("none")
+        .to_owned();
+    let children_load_message = toggle
+        .children_load_state()
+        .and_then(TableRowChildrenLoadState::message)
+        .map(str::to_owned);
 
     cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
         log.expansion_toggles.push(TableSampleExpansionToggle {
@@ -1362,7 +1402,13 @@ pub fn record_table_expansion_request(
             row_id: row_id.as_str().to_owned(),
             expanded,
             depth,
+            loaded_child_count,
+            children_load_state,
+            children_load_message,
         });
+        if sample_id == "server-tree" && row_id.as_str() == "server-workspace" && expanded {
+            log.server_tree_loaded.insert(sample_id.clone(), true);
+        }
 
         let current = log
             .expansion_overrides
@@ -1763,8 +1809,16 @@ pub struct TableSampleStateSummary {
     pub tree_rows: usize,
     /// Visible tree branch row count in the final model.
     pub tree_branch_rows: usize,
+    /// Visible expandable tree rows without loaded children.
+    pub unloaded_tree_branches: usize,
+    /// Visible tree rows currently marked as loading children.
+    pub loading_tree_rows: usize,
+    /// Visible tree rows currently marked as failed child loads.
+    pub failed_tree_rows: usize,
     /// Deepest visible tree depth in the final model.
     pub tree_depth: usize,
+    /// Whether the sample keeps expansion pruning app-owned.
+    pub manual_expansion: bool,
     /// Configured grouping column count.
     pub grouping_columns: usize,
     /// Configured aggregate column count.
@@ -1801,6 +1855,30 @@ impl TableSampleStateSummary {
         let group_rows = final_rows.iter().filter(|row| row.is_group()).count();
         let tree_rows = final_rows.iter().filter(|row| row.tree().is_some()).count();
         let tree_branch_rows = final_rows.iter().filter(|row| row.is_tree_branch()).count();
+        let unloaded_tree_branches = final_rows
+            .iter()
+            .filter(|row| {
+                row.is_tree_branch()
+                    && row.loaded_child_count() == 0
+                    && row
+                        .children_load_state()
+                        .is_some_and(|state| *state == TableRowChildrenLoadState::Idle)
+            })
+            .count();
+        let loading_tree_rows = final_rows
+            .iter()
+            .filter(|row| {
+                row.children_load_state()
+                    .is_some_and(TableRowChildrenLoadState::is_loading)
+            })
+            .count();
+        let failed_tree_rows = final_rows
+            .iter()
+            .filter(|row| {
+                row.children_load_state()
+                    .is_some_and(TableRowChildrenLoadState::is_failed)
+            })
+            .count();
         let tree_depth = final_rows.iter().map(|row| row.depth()).max().unwrap_or(0);
         let regions = plan.table().visible_column_regions();
         let (all_rows_expanded, expanded_group_inputs, expanded_tree_inputs) =
@@ -1860,7 +1938,11 @@ impl TableSampleStateSummary {
             leaf_rows: final_rows.len().saturating_sub(group_rows),
             tree_rows,
             tree_branch_rows,
+            unloaded_tree_branches,
+            loading_tree_rows,
+            failed_tree_rows,
             tree_depth,
+            manual_expansion: state.expansion_mode() == TableExpansionMode::Manual,
             grouping_columns: state.grouping().len(),
             aggregation_count: state.aggregations().len(),
             expanded_group_inputs,
@@ -3349,6 +3431,18 @@ fn build_table_samples() -> Vec<TableSample> {
         overscan: 4,
         state_summary: TableSampleStateSummary::default(),
     };
+    let server_tree = TableSample {
+        id: "server-tree",
+        title: "Server tree",
+        summary: "Manual expansion keeps async child loading app-owned while Table renders branch metadata.",
+        badge: "manual expansion",
+        state: server_tree_table_state(false),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
 
     vec![
         release_queue.with_state_summary(),
@@ -3357,6 +3451,7 @@ fn build_table_samples() -> Vec<TableSample> {
         grouped_release.with_state_summary(),
         release_matrix.with_state_summary(),
         dependency_tree.with_state_summary(),
+        server_tree.with_state_summary(),
     ]
 }
 
@@ -3569,6 +3664,96 @@ fn dependency_tree_rows() -> Vec<TableRow> {
                 "queued",
             ),
         ]),
+    ]
+}
+
+fn server_tree_table_state(loaded: bool) -> TableState {
+    TableState::new(server_tree_rows(loaded))
+        .with_columns(dependency_tree_table_columns())
+        .with_column_order(dependency_tree_column_order())
+        .with_column_pinning(
+            TableColumnPinning::new()
+                .pinned_left(["name"])
+                .pinned_right(["status"]),
+        )
+        .with_column_sizing(
+            TableColumnSizing::new()
+                .with_width("name", ui_px(220.0))
+                .with_width("kind", ui_px(120.0))
+                .with_width("owner", ui_px(132.0))
+                .with_width("risk", ui_px(112.0))
+                .with_width("change", ui_px(148.0))
+                .with_width("score", ui_px(92.0))
+                .with_width("status", ui_px(132.0)),
+        )
+        .with_manual_expansion()
+        .with_selected_rows(["server-workspace"])
+        .with_pagination(TablePagination::disabled())
+}
+
+fn server_tree_rows(loaded: bool) -> Vec<TableRow> {
+    let workspace_status = if loaded { "loaded" } else { "unloaded" };
+    let mut workspace = dependency_tree_row(
+        "server-workspace",
+        "remote workspace",
+        "workspace",
+        "Platform",
+        "medium",
+        "server children",
+        86,
+        workspace_status,
+    )
+    .with_expandable(true);
+
+    if loaded {
+        workspace = workspace.with_children([
+            dependency_tree_row(
+                "server-api",
+                "api gateway",
+                "service",
+                "Platform",
+                "medium",
+                "loaded child",
+                82,
+                "ready",
+            ),
+            dependency_tree_row(
+                "server-workers",
+                "worker queue",
+                "service",
+                "Runtime",
+                "high",
+                "manual expansion",
+                79,
+                "active",
+            ),
+        ]);
+    }
+
+    vec![
+        workspace,
+        dependency_tree_row(
+            "server-cache",
+            "cache prefetch",
+            "remote",
+            "Runtime",
+            "medium",
+            "async children",
+            74,
+            "loading",
+        )
+        .with_children_loading("Loading cached modules"),
+        dependency_tree_row(
+            "server-failed",
+            "failed shard",
+            "remote",
+            "Platform",
+            "high",
+            "retry children",
+            61,
+            "retry",
+        )
+        .with_children_load_failed("Gateway timeout"),
     ]
 }
 

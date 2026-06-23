@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: c0a80f8
+git_commit: ce8413e
 verified_by:
   - cargo fmt -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-components table component_api_inventory
@@ -71,14 +71,22 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_table_samples_expose_virtualized_row_model_contract components_gallery_smoke_focused_table_scroll_stays_inside_sample components_gallery_smoke_table_scroll_stays_inside_sample components_gallery_smoke_grouped_table_scroll_stays_inside_sample components_gallery_smoke_resizable_table_resize_updates_sample
   - cargo nextest run -p open-gpui-ui-components table component_api_inventory
   - cargo nextest run -p open-gpui-ui-foundation-gallery table
+  - cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-core table
+  - cargo nextest run -p open-gpui-ui-components table component_api_inventory
+  - cargo nextest run -p open-gpui-ui-foundation-gallery table
+  - git diff --check
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
 ---
 
 # Current State
 
-- Goal: Execute the next Table slice after center-column virtualization: tree-data rows and row interaction.
+- Goal: Finish the Table manual expansion and async children metadata slice, then pick the next
+  Table follow-up.
 - Branch: `main`
-- Last verified: 2026-06-23, focused Table gates passed after the implementation and gallery proof:
-  `cargo nextest run -p open-gpui-ui-components table component_api_inventory` and
+- Last verified: 2026-06-23, focused manual-expansion Table gates passed:
+  `cargo nextest run -p open-gpui-ui-core table`,
+  `cargo nextest run -p open-gpui-ui-components table component_api_inventory`, and
   `cargo nextest run -p open-gpui-ui-foundation-gallery table`.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
@@ -90,7 +98,25 @@ verified_by:
 - Done: Added the focused Components gallery `dependency-tree` Table sample with pinned identity
   and status lanes, tree-depth state summary metadata, controlled expansion/activation runtime
   logging, and `components_gallery_smoke_tree_table_expands_and_activates`.
-- In progress: U6 contract, verification, engineering memory, final broad verification, and commit.
+- Done: Wrote `docs/plans/2026-06-23-006-feat-ui-table-manual-expansion-plan.md` for the next
+  Table slice. The plan keeps manual expansion separate from the client-expanded path, adds
+  expandable unloaded branches plus child-load metadata, and keeps real async fetching owned by the
+  application.
+- Done: Implemented the manual expansion / async child metadata slice in the working tree.
+  `TableRowChildrenLoadState` records idle/loading/failed child metadata, `TableRow` can be
+  expandable without loaded children, and `TableExpansionMode::Manual` preserves app-supplied
+  ungrouped source snapshots while the existing client-expanded path stays intact. The
+  `ui_components::Table` adapter exports the new contract types, renders loaded/unloaded/loading/
+  failed tree disclosure states, and includes loaded-child and child-load metadata in expansion
+  request payloads.
+- Done: Added the focused Components gallery `server-tree` Table sample. It uses manual expansion,
+  starts with unloaded/loading/failed top-level branches, records expansion payload metadata in the
+  runtime log, and simulates app-owned child loading by swapping in a loaded source snapshot after
+  the `server-workspace` disclosure request.
+- Done: Updated the Table contract and verification docs so manual source-tree expansion,
+  expandable unloaded branches, and child-load metadata are documented as shipped component
+  behavior. Real fetch/cache/data-source orchestration remains app-owned follow-up work.
+- In progress: Commit the manual expansion slice.
 - Done: Wrote `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` as the next Table slice. The plan keeps tree-data rows separate from synthetic grouping, reuses `TableExpansionState` for source hierarchy, adds row interaction payloads and focus semantics, and scopes the first gallery proof to a focused tree-data Table sample with runtime expansion and activation coverage.
 - Done: Completed U5/U6 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `25875d0`. The Components gallery now includes `release-matrix`, a wide pinned Table sample with fourteen center metrics, and a focused smoke that proves far center columns stay unmounted before scroll, mount after horizontal scroll, and keep the outer Components page plus fixed lanes stationary. The gallery state row is also less noisy for non-grouped tables, and the Table contract / verification docs now describe the center-column window as a first-class adapter behavior.
 - Done: Completed the sticky pinned Table slice on top of `3273c1a`: the GPUI Table adapter keeps vertical wheel input inside pinned table bodies, `release-rollup` exposes explicit left/center/right lane widths, and the focused gallery smoke proves horizontal center-lane scrolling leaves left/right pinned lanes plus the outer Components page fixed.
@@ -156,9 +182,14 @@ verified_by:
 - Done: Completed U3 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `3819ac6`. The GPUI `Table` adapter now renders center headers and body cells from the shared `TableCenterColumnWindowPlan`, inserts leading/trailing spacers to preserve full center-lane scroll geometry, keeps left/right pinned lanes fully mounted, and tests prove off-window center selectors unmount/remount while row virtualization remains independent after horizontal scroll.
 - Done: Completed U4 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `5d67277`. Added plan-level accessibility coverage for virtualized center columns, runtime sort coverage for a rendered center header after horizontal scroll, and resize-geometry coverage proving the virtual center window recomputes from committed sizing while preserving the rendered column identity set.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
-- Follow-up: The column sizing / resize, sticky pinned-column, and center-column virtualization slices are complete. After tree-data rows, the remaining Table follow-ups are two-dimensional grid virtualization, custom aggregation callbacks, server pagination/faceting/editing, row pinning, and standalone headless extraction.
+- Follow-up: The column sizing / resize, sticky pinned-column, center-column virtualization,
+  tree-data, row-interaction, and manual-expansion slices are complete. Remaining Table follow-ups
+  are two-dimensional grid virtualization, custom aggregation callbacks, data-source/server
+  pagination/faceting orchestration, row pinning, row selection variants, cell editing, and
+  standalone headless extraction if cross-framework pressure appears.
 - Blocked: None.
-- Next action: Finish U6, run the final verification set, and commit the Table tree-data slice.
+- Next action: Finish final verification and commit the Table manual expansion slice, then plan the
+  next Table follow-up.
 
 # Citations
 
@@ -216,3 +247,5 @@ verified_by:
 [52] Commit `df27aa4` - `feat(ui-components): add table center column window plan`
 [53] Commit `3819ac6` - `feat(ui-components): virtualize table center columns`
 [54] Commit `5d67277` - `test(ui-components): cover virtualized table center interactions`
+[55] Commit `234b0cc` - `feat(ui): add table tree rows and row interactions`
+[56] Plan `docs/plans/2026-06-23-006-feat-ui-table-manual-expansion-plan.md`

@@ -13,11 +13,11 @@ use open_gpui::{
 use open_gpui_ui_core::{
     Role, Sizable, Size, TableCellValue, TableColumn, TableColumnId, TableColumnRegion,
     TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState, TableColumnSizing,
-    TableExpansionState, TableResolvedColumnSizing, TableResolvedRow, TableResolvedState,
-    TableRowId, TableSort, TableSortDirection, TableState, TableStateCacheKey, TableTreeRow, UiPx,
-    VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState,
-    VirtualizerSnapshot, VirtualizerState, drag_table_column_resize, end_table_column_resize,
-    ui_px,
+    TableExpansionMode, TableExpansionState, TableResolvedColumnSizing, TableResolvedRow,
+    TableResolvedState, TableRowChildrenLoadState, TableRowId, TableSort, TableSortDirection,
+    TableState, TableStateCacheKey, TableTreeRow, UiPx, VirtualizerItemKey,
+    VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState, VirtualizerSnapshot,
+    VirtualizerState, drag_table_column_resize, end_table_column_resize, ui_px,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -655,6 +655,8 @@ pub struct TableRowAction {
     selected: bool,
     tree_branch: bool,
     tree_expanded: Option<bool>,
+    loaded_child_count: usize,
+    children_load_state: Option<TableRowChildrenLoadState>,
     modifiers: TableInputModifiers,
 }
 
@@ -669,6 +671,8 @@ impl TableRowAction {
             selected: row.selected(),
             tree_branch: row.row().is_tree_branch(),
             tree_expanded: row.row().tree_expanded(),
+            loaded_child_count: row.row().loaded_child_count(),
+            children_load_state: row.row().children_load_state().cloned(),
             modifiers,
         }
     }
@@ -711,6 +715,16 @@ impl TableRowAction {
     /// Returns the resolved expanded state for source tree branches.
     pub const fn tree_expanded(&self) -> Option<bool> {
         self.tree_expanded
+    }
+
+    /// Returns the number of directly loaded child rows.
+    pub const fn loaded_child_count(&self) -> usize {
+        self.loaded_child_count
+    }
+
+    /// Returns source-row child loading metadata.
+    pub fn children_load_state(&self) -> Option<&TableRowChildrenLoadState> {
+        self.children_load_state.as_ref()
     }
 
     /// Returns modifier keys captured from the triggering input event.
@@ -772,6 +786,16 @@ impl TableRowExpansionToggle {
     /// Returns the desired expanded state after the toggle.
     pub const fn expanded(&self) -> bool {
         self.expanded
+    }
+
+    /// Returns the number of directly loaded child rows.
+    pub const fn loaded_child_count(&self) -> usize {
+        self.action.loaded_child_count()
+    }
+
+    /// Returns source-row child loading metadata.
+    pub fn children_load_state(&self) -> Option<&TableRowChildrenLoadState> {
+        self.action.children_load_state()
     }
 }
 
@@ -908,6 +932,16 @@ impl TableRowRenderPlan {
     /// Returns the source tree expansion state for branch rows.
     pub fn tree_expanded(&self) -> Option<bool> {
         self.row.tree_expanded()
+    }
+
+    /// Returns the number of directly loaded child rows.
+    pub fn loaded_child_count(&self) -> usize {
+        self.row.loaded_child_count()
+    }
+
+    /// Returns source-row child loading metadata.
+    pub fn children_load_state(&self) -> Option<&TableRowChildrenLoadState> {
+        self.row.children_load_state()
     }
 
     /// Returns the virtual row start offset.
@@ -1283,6 +1317,12 @@ impl Table {
     /// Applies the fallback viewport extent used before layout metrics exist.
     pub fn viewport_extent(mut self, viewport_extent: UiPx) -> Self {
         self.metrics.viewport_extent = nonnegative_px(viewport_extent);
+        self
+    }
+
+    /// Applies the source-tree expansion mode.
+    pub fn expansion_mode(mut self, expansion_mode: TableExpansionMode) -> Self {
+        self.state = self.state.clone().with_expansion_mode(expansion_mode);
         self
     }
 
@@ -2524,11 +2564,27 @@ fn render_table_tree_toggle(
 
     let row_id = row.id().clone();
     let row_key = render_key.clone();
-    let glyph = if tree_expanded { "v" } else { ">" };
-    let aria_label = if tree_expanded {
-        format!("Collapse row {}", row.id().as_str())
-    } else {
-        format!("Expand row {}", row.id().as_str())
+    let children_load_state = row
+        .children_load_state()
+        .cloned()
+        .unwrap_or_else(TableRowChildrenLoadState::idle);
+    let glyph = match &children_load_state {
+        TableRowChildrenLoadState::Loading { .. } => "...",
+        TableRowChildrenLoadState::Failed { .. } => "!",
+        TableRowChildrenLoadState::Idle if tree_expanded => "v",
+        TableRowChildrenLoadState::Idle => ">",
+    };
+    let aria_label = match &children_load_state {
+        TableRowChildrenLoadState::Loading { .. } => {
+            format!("Loading children for row {}", row.id().as_str())
+        }
+        TableRowChildrenLoadState::Failed { .. } => {
+            format!("Retry loading row {}", row.id().as_str())
+        }
+        TableRowChildrenLoadState::Idle if tree_expanded => {
+            format!("Collapse row {}", row.id().as_str())
+        }
+        TableRowChildrenLoadState::Idle => format!("Expand row {}", row.id().as_str()),
     };
 
     div()
