@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 3e20de7
+git_commit: 1b4f482
 verified_by:
   - cargo check -p open-gpui-ui-core --tests
   - cargo check -p open-gpui-ui-components --tests
@@ -56,9 +56,9 @@ verified_by:
 
 # Current State
 
-- Goal: Execute the Table component-depth slice: grouped rows, expansion state, aggregate metadata, pinned-column semantics, and gallery proof.
+- Goal: Execute the next Table follow-up slice: column sizing and resize semantics, with TanStack Table and Fret as the main references.
 - Branch: `main`
-- Last verified: 2026-06-23, Table depth U6 gates passed on top of `3e20de7` plus the current U6 automation hardening diff: `cargo fmt --all`, `cargo fmt --all --check`, `cargo check -p open-gpui-ui-core --tests`, `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p open-gpui-ui-core table`, `cargo nextest run -p open-gpui-ui-components table`, `cargo nextest run -p open-gpui-ui-foundation-gallery table`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-foundation-gallery`, targeted gallery automation regression reruns, `git diff --check`, and engineering wiki validation.
+- Last verified: 2026-06-23, Table depth U6 gates passed on top of `1b4f482` plus the current docs-only planning diff. Previous verification remains green: `cargo fmt --all`, `cargo fmt --all --check`, `cargo check -p open-gpui-ui-core --tests`, `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p open-gpui-ui-core table`, `cargo nextest run -p open-gpui-ui-components table`, `cargo nextest run -p open-gpui-ui-foundation-gallery table`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-foundation-gallery`, targeted gallery automation regression reruns, `git diff --check`, and engineering wiki validation.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -109,10 +109,11 @@ verified_by:
 - Done: Added focused gallery proof for the new Table behavior: state tests assert aggregate cells, hidden collapsed descendants staying addressable by stable row id, pinned column region order, and focused Table mode rendering both `release-queue` and `release-rollup`; runtime smoke `components_gallery_smoke_grouped_table_scroll_stays_inside_sample` proves the grouped sample scrolls inside the table viewport without moving the outer Components page.
 - Done: Completed U6 of the Table depth plan with full focused and broad verification. The full `open-gpui-ui-components` suite passes 209/209 and the full `open-gpui-ui-foundation-gallery` suite passes 74/74 after stabilizing long Components-page automation.
 - Done: Hardened the Components gallery smokes discovered during U6: the Command catalog entry now points at the real `ranked-search` sample selector, and long-section smokes use catalog directory jumps plus the gallery page `ScrollHandle` to align concrete interactive targets before clicking, dragging, or scrolling nested controls.
+- Done: Created `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md` to start the next Table slice. The new plan uses TanStack Table's committed sizing / transient resizing split and Fret's parity fixtures as the main references, and it deliberately stops before sticky pinned-column layout or two-dimensional virtualization.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
-- Follow-up: Table depth deferred work remains sticky horizontal pinned-column layout, custom column resizing, two-dimensional grid virtualization, tree-data tables, custom aggregation callbacks, server pagination/faceting/editing, and standalone headless extraction.
+- Follow-up: Table column sizing / resize is now active in the new plan; remaining follow-ups after that are sticky horizontal pinned-column layout, two-dimensional grid virtualization, tree-data tables, custom aggregation callbacks, server pagination/faceting/editing, and standalone headless extraction.
 - Blocked: None.
-- Next action: Start a new plan for the next Table follow-up; the strongest candidate is column sizing / resize semantics before sticky pinned-column layout or two-dimensional virtualization.
+- Next action: Start U1 of `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md`.
 
 # Citations
 
@@ -156,3 +157,4 @@ verified_by:
 [38] Verification command `cargo nextest run -p open-gpui-ui-core table`
 [39] Verification command `cargo nextest run -p open-gpui-ui-components table`
 [40] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery table`
+[41] Plan `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md`
