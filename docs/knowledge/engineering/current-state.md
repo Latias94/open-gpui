@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 3273c1a
+git_commit: 7f8b986
 verified_by:
   - cargo nextest run -p open-gpui-ui-components table_runtime_pinned_body_scrolls_without_moving_parent
   - cargo nextest run -p open-gpui-ui-components table
@@ -65,7 +65,7 @@ verified_by:
 
 # Current State
 
-- Goal: Complete the sticky pinned Table slice, refresh contract and memory docs, and commit the verified changes.
+- Goal: Start the next Table follow-up slice: center-column virtualization over sticky pinned lanes, with TanStack Table / TanStack Virtual and Fret as references.
 - Branch: `main`
 - Last verified: 2026-06-23, the sticky pinned Table slice passed focused component and gallery gates: `cargo nextest run -p open-gpui-ui-components table_runtime_pinned_body_scrolls_without_moving_parent` passed 1/1, `cargo nextest run -p open-gpui-ui-components table` passed 28/28, `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_grouped_table_scroll_stays_inside_sample` passed 1/1, `cargo nextest run -p open-gpui-ui-foundation-gallery table` passed 7/7, `git diff --check` passed, and engineering wiki validation passed.
 - Done: Completed the sticky pinned Table slice on top of `3273c1a`: the GPUI Table adapter keeps vertical wheel input inside pinned table bodies, `release-rollup` exposes explicit left/center/right lane widths, and the focused gallery smoke proves horizontal center-lane scrolling leaves left/right pinned lanes plus the outer Components page fixed.
@@ -124,10 +124,12 @@ verified_by:
 - Done: Completed U3 of `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md` as `426742a`. `TableColumnResizeMode`, `TableColumnResizeDirection`, and resize state/update helpers now drive committed/transient resize behavior, the GPUI adapter exposes callback-backed drag handles with controlled sizing change events, and tests cover LTR/RTL drag semantics plus runtime header-click parity.
 - Done: Completed U4 of `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md` as `3273c1a`. The Components gallery now has a `release-resize` Table sample, a runtime sizing log, visible width / resizable-column summaries, selector-aligned resize smoke coverage, and docs / verification entries for the new gate.
 - Done: Created `docs/plans/2026-06-23-003-feat-ui-table-sticky-pinned-columns-plan.md` as the next Table slice. The new plan keeps the existing semantic pinned regions, turns the center lane into a shared horizontal scroll surface, and keeps vertical row virtualization one-dimensional.
+- Done: Completed the sticky pinned Table implementation as `f0b7e62` and recorded its contract / verification evidence as `7f8b986`.
+- Done: Created `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` for the next Table slice. The plan narrows two-dimensional virtualization to center-column virtualization first: pinned lanes stay fully rendered, center lanes render only the visible plus overscan column window, and row virtualization remains one-dimensional.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Follow-up: The column sizing / resize and sticky pinned-column slices are complete; the next Table follow-ups are two-dimensional grid virtualization, tree-data tables, custom aggregation callbacks, server pagination/faceting/editing, and standalone headless extraction.
 - Blocked: None.
-- Next action: Commit the sticky pinned Table slice, then choose the next Table boundary.
+- Next action: Start U1 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md`: add exact-size virtualizer window support for center columns.
 
 # Citations
 
@@ -180,3 +182,4 @@ verified_by:
 [47] Verification command `cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components`
 [48] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_table_samples_expose_virtualized_row_model_contract components_gallery_smoke_focused_table_scroll_stays_inside_sample components_gallery_smoke_table_scroll_stays_inside_sample components_gallery_smoke_grouped_table_scroll_stays_inside_sample components_gallery_smoke_resizable_table_resize_updates_sample`
 [49] Verification evidence `docs/knowledge/engineering/verification/table-sticky-pinned-columns-20260623.md`
+[50] Plan `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md`
