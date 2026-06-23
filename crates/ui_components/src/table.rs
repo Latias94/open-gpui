@@ -801,6 +801,7 @@ struct TableResolvedCache {
 #[derive(Debug, Clone, Default)]
 struct TableRuntime {
     scroll_handle: ScrollHandle,
+    horizontal_scroll_handle: ScrollHandle,
     resolved: Option<TableResolvedCache>,
     column_resize: TableColumnResizeState,
 }
@@ -1112,10 +1113,12 @@ impl RenderOnce for Table {
         let runtime_id = format!("table:{}:runtime", self.id);
         let runtime = window.use_keyed_state(runtime_id, cx, |_, _| TableRuntime {
             scroll_handle: ScrollHandle::new(),
+            horizontal_scroll_handle: ScrollHandle::new(),
             resolved: None,
             column_resize: TableColumnResizeState::default(),
         });
         let scroll_handle = runtime.read(cx).scroll_handle.clone();
+        let horizontal_scroll_handle = runtime.read(cx).horizontal_scroll_handle.clone();
         let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
         let scroll_offset = ui_px((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
         let on_sort_requested = self.on_sort_requested.clone();
@@ -1179,13 +1182,21 @@ impl RenderOnce for Table {
                     },
                 )
             })
-            .child(render_table_header(&plan, on_sort_requested, resize_config))
+            .child(render_table_header(
+                &plan,
+                on_sort_requested,
+                resize_config,
+                horizontal_scroll_handle.clone(),
+            ))
             .child(
                 div().flex_1().min_h(px(0.0)).overflow_hidden().child(
-                    ScrollArea::new(scroll_viewport_id, render_table_body(&plan))
-                        .vertical()
-                        .scroll_handle(&scroll_handle)
-                        .with_size(metrics.size()),
+                    ScrollArea::new(
+                        scroll_viewport_id,
+                        render_table_body(&plan, horizontal_scroll_handle),
+                    )
+                    .vertical()
+                    .scroll_handle(&scroll_handle)
+                    .with_size(metrics.size()),
                 ),
             )
     }
@@ -1195,10 +1206,12 @@ fn render_table_header(
     plan: &TableRenderPlan,
     on_sort_requested: Option<Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>>,
     resize_config: TableResizeRenderConfig,
+    horizontal_scroll_handle: ScrollHandle,
 ) -> impl IntoElement {
     let table_id = plan.table_id().to_owned();
     let metrics = plan.metrics();
     let regions = plan.column_regions().to_vec();
+    let pinned_layout = plan.pinned_layout().cloned();
 
     div()
         .id(format!("table:{table_id}:header-row"))
@@ -1221,8 +1234,12 @@ fn render_table_header(
             let region = region_plan.region();
             let region_name = region.as_str().to_owned();
             let columns = region_plan.columns().to_vec();
+            let center_scroll_id = pinned_layout.as_ref().and_then(|layout| {
+                (region == TableColumnRegion::Center && !columns.is_empty())
+                    .then(|| layout.header_center_scroll_id())
+            });
 
-            div()
+            let region_lane = div()
                 .id(format!("table:{table_id}:header-region:{region_name}"))
                 .debug_selector({
                     let table_id = table_id.clone();
@@ -1321,6 +1338,23 @@ fn render_table_header(
                             })
                     }
                 }))
+                .into_any_element();
+
+            if let Some(center_scroll_id) = center_scroll_id {
+                div()
+                    .h_full()
+                    .min_w(px(0.0))
+                    .flex_1()
+                    .child(
+                        ScrollArea::new(center_scroll_id, region_lane)
+                            .horizontal()
+                            .scroll_handle(&horizontal_scroll_handle)
+                            .with_size(metrics.size()),
+                    )
+                    .into_any_element()
+            } else {
+                region_lane
+            }
         }))
 }
 
@@ -1515,11 +1549,15 @@ fn table_column_sizing_change(
     TableColumnSizingChange::new(drag.column_id.clone(), width, sizing)
 }
 
-fn render_table_body(plan: &TableRenderPlan) -> impl IntoElement {
+fn render_table_body(
+    plan: &TableRenderPlan,
+    horizontal_scroll_handle: ScrollHandle,
+) -> impl IntoElement {
     let table_id = plan.table_id().to_owned();
     let metrics = plan.metrics();
     let total_size = plan.virtualizer().total_size();
     let rows = plan.rows().to_vec();
+    let pinned_layout = plan.pinned_layout().cloned();
 
     div()
         .id(format!("table:{table_id}:body"))
@@ -1532,7 +1570,13 @@ fn render_table_body(plan: &TableRenderPlan) -> impl IntoElement {
         .h(gpui_px_from_ui(total_size))
         .children(rows.into_iter().map(move |row| {
             let table_id = table_id.clone();
-            render_table_row(table_id, row, metrics)
+            render_table_row(
+                table_id,
+                row,
+                metrics,
+                pinned_layout.clone(),
+                horizontal_scroll_handle.clone(),
+            )
         }))
 }
 
@@ -1540,6 +1584,8 @@ fn render_table_row(
     table_id: String,
     row: TableRowRenderPlan,
     metrics: TableMetrics,
+    pinned_layout: Option<TablePinnedLayoutPlan>,
+    horizontal_scroll_handle: ScrollHandle,
 ) -> impl IntoElement {
     let render_key = row.render_key().to_owned();
     let row_background = if row.row().is_group() {
@@ -1592,8 +1638,12 @@ fn render_table_row(
                     let table_id = table_id.clone();
                     let render_key = render_key.clone();
                     let region_name = region.as_str().to_owned();
+                    let center_scroll_id = pinned_layout.as_ref().and_then(|layout| {
+                        (region == TableColumnRegion::Center && !cells.is_empty())
+                            .then(|| layout.row_center_scroll_id(&render_key))
+                    });
 
-                    div()
+                    let region_lane = div()
                         .h_full()
                         .min_w(px(0.0))
                         .flex()
@@ -1638,6 +1688,23 @@ fn render_table_row(
                                 .aria_column_index(cell.aria_column_index())
                                 .child(cell.text().to_owned())
                         }))
+                        .into_any_element();
+
+                    if let Some(center_scroll_id) = center_scroll_id {
+                        div()
+                            .h_full()
+                            .min_w(px(0.0))
+                            .flex_1()
+                            .child(
+                                ScrollArea::new(center_scroll_id, region_lane)
+                                    .horizontal()
+                                    .scroll_handle(&horizontal_scroll_handle)
+                                    .with_size(metrics.size()),
+                            )
+                            .into_any_element()
+                    } else {
+                        region_lane
+                    }
                 }),
         )
 }

@@ -3985,6 +3985,116 @@ fn table_runtime_exposes_pinned_region_debug_selectors(cx: &mut open_gpui::TestA
             "expected body {region} region selector to render"
         );
     }
+
+    assert!(
+        cx.debug_bounds("scroll-area:table:pinned-runtime-table:header-center-scroll")
+            .is_some(),
+        "expected pinned header center region to render a horizontal scroll viewport"
+    );
+    assert!(
+        cx.debug_bounds("scroll-area:table:pinned-runtime-table:row-center-scroll:row-a")
+            .is_some(),
+        "expected pinned body center region to render a horizontal scroll viewport"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_pinned_center_scrolls_without_moving_fixed_lanes(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let state = TableState::new([TableRow::new("row-a")
+                .with_cell("name", "Alpha")
+                .with_cell("team", "Platform")
+                .with_cell("score", 42_usize)
+                .with_cell("status", "Ready")])
+            .with_columns([
+                TableColumn::new("name", "Name"),
+                TableColumn::new("team", "Team"),
+                TableColumn::new("score", "Score"),
+                TableColumn::new("status", "Status"),
+            ])
+            .with_column_order(["status", "score", "team", "name"])
+            .with_column_pinning(
+                TableColumnPinning::new()
+                    .pinned_left(["name", "score"])
+                    .pinned_right(["status"]),
+            )
+            .with_pagination(TablePagination::disabled());
+            let table = Table::new("pinned-scroll-runtime-table", "Pinned scroll table", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0));
+
+            div()
+                .size_full()
+                .child(div().w(px(420.0)).h(px(140.0)).child(table))
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let header_center_before = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:header:team")
+        .expect("center header should render before horizontal scrolling");
+    let body_center_before = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:team")
+        .expect("center body cell should render before horizontal scrolling");
+    let left_before = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:score")
+        .expect("left pinned body cell should render before horizontal scrolling");
+    let right_before = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:status")
+        .expect("right pinned body cell should render before horizontal scrolling");
+    let body_center_viewport = cx
+        .debug_bounds("scroll-area:table:pinned-scroll-runtime-table:row-center-scroll:row-a")
+        .expect("body center lane should expose a horizontal scroll viewport");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: body_center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-64.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let header_center_after = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:header:team")
+        .expect("center header should remain rendered after horizontal scrolling");
+    let body_center_after = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:team")
+        .expect("center body cell should remain rendered after horizontal scrolling");
+    let left_after = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:score")
+        .expect("left pinned body cell should remain rendered after horizontal scrolling");
+    let right_after = cx
+        .debug_bounds("table:pinned-scroll-runtime-table:cell:row-a:status")
+        .expect("right pinned body cell should remain rendered after horizontal scrolling");
+
+    assert!(
+        header_center_after.left() < header_center_before.left(),
+        "expected shared horizontal handle to move center header left; before={header_center_before:?} after={header_center_after:?}"
+    );
+    assert!(
+        body_center_after.left() < body_center_before.left(),
+        "expected horizontal body center lane to move left; before={body_center_before:?} after={body_center_after:?}"
+    );
+    assert_eq!(
+        left_after.left(),
+        left_before.left(),
+        "expected left pinned lane to keep its screen-space x position"
+    );
+    assert_eq!(
+        right_after.left(),
+        right_before.left(),
+        "expected right pinned lane to keep its screen-space x position"
+    );
 }
 
 #[open_gpui::test]
