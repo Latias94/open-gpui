@@ -3345,6 +3345,36 @@ fn table_center_column_window_matches_exact_size_virtualizer() {
 }
 
 #[test]
+fn table_center_column_window_preserves_full_accessibility_indexes() {
+    let plan = Table::new(
+        "accessibility-center-window-table",
+        "Accessibility center window table",
+        sample_center_window_table_state(),
+    )
+    .row_height(ui_px(24.0))
+    .viewport_extent(ui_px(96.0))
+    .overscan(0)
+    .render_plan(UiPx::ZERO, ui_px(96.0));
+    let center_columns = plan
+        .column_regions()
+        .iter()
+        .find(|region| region.region() == TableColumnRegion::Center)
+        .expect("center region should resolve")
+        .columns();
+    let window = TableCenterColumnWindowPlan::resolve(center_columns, ui_px(420.0), ui_px(68.0), 0)
+        .expect("center column window should resolve");
+
+    assert_eq!(
+        window
+            .rendered_columns()
+            .iter()
+            .map(|column| (column.id().as_str(), column.aria_column_index()))
+            .collect::<Vec<_>>(),
+        [("metric_05", 7)]
+    );
+}
+
+#[test]
 fn table_virtualizer_snapshot_restores_measurements_without_overriding_live_scroll() {
     let snapshot = VirtualizerSnapshot::new(
         ui_px(0.0),
@@ -4457,6 +4487,146 @@ fn table_runtime_center_column_window_mounts_only_rendered_center_cells(
         right_after.left(),
         right_before.left(),
         "right pinned lane should keep its screen-space x position"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_center_column_window_still_emits_sort_for_rendered_center_header(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        actions: Rc<RefCell<Vec<TableHeaderAction>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let actions = self.actions.clone();
+            let table = Table::new(
+                "center-window-sort-runtime-table",
+                "Center window sort table",
+                sample_center_window_table_state_with_rows(20),
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(96.0))
+            .overscan(0)
+            .on_sort_requested(move |action, _, _| {
+                actions.borrow_mut().push(action);
+            });
+
+            div()
+                .size_full()
+                .child(div().w(px(340.0)).h(px(160.0)).child(table))
+        }
+    }
+
+    let actions = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        actions: actions.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let body_center_viewport = cx
+        .debug_bounds(
+            "scroll-area:table:center-window-sort-runtime-table:row-center-scroll:row-0000",
+        )
+        .expect("body center lane should expose a horizontal scroll viewport");
+    cx.simulate_event(ScrollWheelEvent {
+        position: body_center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-440.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let metric_05_header = cx
+        .debug_bounds("table:center-window-sort-runtime-table:header:metric_05")
+        .expect("virtualized center header should render after horizontal scrolling");
+    cx.simulate_click(metric_05_header.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let actions = actions.borrow();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].column_id().as_str(), "metric_05");
+    assert_eq!(actions[0].label(), "Metric 05");
+    assert_eq!(actions[0].current_direction(), None);
+    assert_eq!(
+        actions[0].next_direction(),
+        Some(TableSortDirection::Ascending)
+    );
+}
+
+#[test]
+fn table_center_column_window_recomputes_geometry_for_center_column_resize() {
+    let base_plan = Table::new(
+        "center-window-resize-plan-table",
+        "Center window resize plan table",
+        sample_center_window_table_state()
+            .with_column_sizing(TableColumnSizing::new().with_width("metric_05", ui_px(120.0))),
+    )
+    .row_height(ui_px(24.0))
+    .viewport_extent(ui_px(96.0))
+    .overscan(0)
+    .render_plan(UiPx::ZERO, ui_px(96.0));
+    let base_center_columns = base_plan
+        .column_regions()
+        .iter()
+        .find(|region| region.region() == TableColumnRegion::Center)
+        .expect("center region should resolve")
+        .columns();
+    let base_window =
+        TableCenterColumnWindowPlan::resolve(base_center_columns, ui_px(420.0), ui_px(68.0), 0)
+            .expect("center column window should resolve");
+
+    let resized_plan = Table::new(
+        "center-window-resize-plan-table",
+        "Center window resize plan table",
+        sample_center_window_table_state()
+            .with_column_sizing(TableColumnSizing::new().with_width("metric_05", ui_px(180.0))),
+    )
+    .row_height(ui_px(24.0))
+    .viewport_extent(ui_px(96.0))
+    .overscan(0)
+    .render_plan(UiPx::ZERO, ui_px(96.0));
+    let resized_center_columns = resized_plan
+        .column_regions()
+        .iter()
+        .find(|region| region.region() == TableColumnRegion::Center)
+        .expect("center region should resolve after resize")
+        .columns();
+    let resized_window =
+        TableCenterColumnWindowPlan::resolve(resized_center_columns, ui_px(420.0), ui_px(68.0), 0)
+            .expect("center column window should resolve after resize");
+
+    assert!(resized_window.center_width() > base_window.center_width());
+    assert_eq!(resized_window.visible_range(), base_window.visible_range());
+    assert_eq!(
+        resized_window.overscan_range(),
+        base_window.overscan_range()
+    );
+    assert_eq!(
+        resized_window
+            .rendered_columns()
+            .iter()
+            .map(|column| column.id().as_str())
+            .collect::<Vec<_>>(),
+        base_window
+            .rendered_columns()
+            .iter()
+            .map(|column| column.id().as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        resized_window.rendered_columns().last().unwrap().width()
+            > base_window.rendered_columns().last().unwrap().width(),
+        "expected the resized virtualized center header to widen"
     );
 }
 
