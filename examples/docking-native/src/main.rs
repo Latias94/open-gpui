@@ -6,8 +6,8 @@ use open_gpui::{
 use open_gpui_docking::{
     DockController, DockItemId, DockLayout, DockLayoutCentralRegion, DockLayoutSpace, DockPanel,
     DockPanelDescriptor, DockSpaceId, DockViewportClosePolicy, DockViewportPlacement,
-    DockViewportPlacementLayout, DockViewportRuntimeHandle, DockViewportWindowBounds,
-    EditorDockLayoutSpec,
+    DockViewportPlacementLayout, DockViewportPlatformCapabilityRecord, DockViewportRuntimeHandle,
+    DockViewportWindowBounds, EditorDockLayoutSpec,
 };
 use open_gpui_platform::application;
 
@@ -129,7 +129,10 @@ impl RuntimeStatusPanel {
 impl Render for RuntimeStatusPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let lines = {
-            let status = self.runtime.runtime_status();
+            let status = self
+                .runtime
+                .runtime_status()
+                .with_platform_capabilities(cx.viewport_capabilities());
             let spaces = self
                 .runtime
                 .registered_viewport_spaces()
@@ -161,6 +164,14 @@ impl Render for RuntimeStatusPanel {
                             .as_ref()
                             .and_then(|record| record.selection_source.as_ref())
                     )
+                ),
+                format!(
+                    "route facts: {}",
+                    route_capability_summary(status.platform_capabilities.as_ref())
+                ),
+                format!(
+                    "placement facts: {}",
+                    placement_capability_summary(status.platform_capabilities.as_ref())
                 ),
                 format!(
                     "last drop: {}",
@@ -465,6 +476,39 @@ fn debug_option<T: std::fmt::Debug>(value: Option<T>) -> String {
     value
         .map(|value| format!("{value:?}"))
         .unwrap_or_else(|| "none".to_string())
+}
+
+fn capability_flag(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
+}
+
+fn route_capability_summary(capabilities: Option<&DockViewportPlatformCapabilityRecord>) -> String {
+    capabilities
+        .map(|capabilities| {
+            format!(
+                "bounds={}, stack={}, hover-through-no-input={}",
+                capability_flag(capabilities.global_window_bounds),
+                capability_flag(capabilities.window_stack),
+                capability_flag(capabilities.hovered_window_ignores_no_input),
+            )
+        })
+        .unwrap_or_else(|| "unavailable".to_string())
+}
+
+fn placement_capability_summary(
+    capabilities: Option<&DockViewportPlatformCapabilityRecord>,
+) -> String {
+    capabilities
+        .map(|capabilities| {
+            format!(
+                "work-area={}, dpi={}, live-move={}, no-input={}",
+                capability_flag(capabilities.display_work_area),
+                capability_flag(capabilities.dpi_scale),
+                capability_flag(capabilities.live_window_move),
+                capability_flag(capabilities.no_input_windows),
+            )
+        })
+        .unwrap_or_else(|| "unavailable".to_string())
 }
 
 impl DemoPanel {
@@ -1508,6 +1552,32 @@ mod tests {
             central_bounds,
             "Empty central dogfood",
         );
+    }
+
+    #[test]
+    fn runtime_status_panel_formats_platform_capabilities() {
+        let capabilities = DockViewportPlatformCapabilityRecord {
+            global_window_bounds: true,
+            window_stack: false,
+            display_work_area: true,
+            dpi_scale: false,
+            live_window_move: true,
+            no_input_windows: false,
+            hovered_window_ignores_no_input: true,
+        };
+
+        assert_eq!(
+            route_capability_summary(Some(&capabilities)),
+            "bounds=yes, stack=no, hover-through-no-input=yes"
+        );
+        assert_eq!(
+            placement_capability_summary(Some(&capabilities)),
+            "work-area=yes, dpi=no, live-move=yes, no-input=no"
+        );
+        assert_eq!(route_capability_summary(None), "unavailable");
+        assert_eq!(placement_capability_summary(None), "unavailable");
+        assert_eq!(capability_flag(true), "yes");
+        assert_eq!(capability_flag(false), "no");
     }
 
     fn assert_viewport_title(

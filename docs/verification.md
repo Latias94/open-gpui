@@ -451,7 +451,8 @@ The docking native example exercises the public multi-window setup: applications
 controller-backed primary and secondary `DockHost` viewports. The runtime panel reports both the
 last route target and the route selection source, so dogfood runs can distinguish trusted hovered
 window routes, window-stack fallback routes, focus-stamp fallback routes, and accepted routed-preview
-replays.
+replays. It also reports the current platform viewport capability snapshot, splitting route facts
+from placement facts so platform-boundary regressions are visible during native dogfood.
 
 Manual native docking dogfood should use the same example after the automated checks pass:
 

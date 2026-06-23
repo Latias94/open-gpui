@@ -10,12 +10,15 @@ use crate::{
     },
 };
 use open_gpui::{
-    DisplayId, Pixels, Point, Size, WindowBackgroundAppearance, WindowDecorations, WindowId,
+    DisplayId, Pixels, PlatformViewportCapabilities, Point, Size, WindowBackgroundAppearance,
+    WindowDecorations, WindowId,
 };
 
 /// Read-only diagnostic snapshot for the viewport runtime.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DockViewportRuntimeStatus {
+    /// Platform viewport capabilities sampled by the caller, when available.
+    pub platform_capabilities: Option<DockViewportPlatformCapabilityRecord>,
     /// Current lifecycle/readiness records for registered platform viewports.
     pub viewport_lifecycle: Vec<DockViewportLifecycleRecord>,
     /// Most recent viewport route resolved for a rendered drop.
@@ -32,6 +35,25 @@ pub struct DockViewportRuntimeStatus {
     pub last_tear_off: Option<DockViewportTearOffRecord>,
     /// Most recent live platform-window sync attempted for a reused viewport.
     pub last_platform_sync: Option<DockViewportPlatformSyncRecord>,
+}
+
+/// Platform capability snapshot relevant to multi-viewport docking.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DockViewportPlatformCapabilityRecord {
+    /// Window bounds are reported in a shared desktop coordinate space.
+    pub global_window_bounds: bool,
+    /// The platform can report application windows in front-to-back order.
+    pub window_stack: bool,
+    /// Display visible bounds exclude system-reserved work areas.
+    pub display_work_area: bool,
+    /// Per-window DPI scale facts are reliable for placement decisions.
+    pub dpi_scale: bool,
+    /// Already-open windows can be moved or resized programmatically.
+    pub live_window_move: bool,
+    /// Native no-input/click-through windows are supported.
+    pub no_input_windows: bool,
+    /// Hovered-window queries pass through native no-input/click-through application windows.
+    pub hovered_window_ignores_no_input: bool,
 }
 
 /// Current route-facts and platform-request record for one registered viewport.
@@ -423,6 +445,15 @@ pub enum DockViewportTearOffOutcomeKind {
 }
 
 impl DockViewportRuntimeStatus {
+    /// Attaches the current platform viewport capability snapshot to this diagnostic status.
+    pub fn with_platform_capabilities(
+        mut self,
+        capabilities: PlatformViewportCapabilities,
+    ) -> Self {
+        self.platform_capabilities = Some(DockViewportPlatformCapabilityRecord::from(capabilities));
+        self
+    }
+
     pub(crate) fn with_viewport_lifecycle(
         mut self,
         viewport_lifecycle: Vec<DockViewportLifecycleRecord>,
@@ -500,6 +531,20 @@ impl DockViewportRuntimeStatus {
             .is_some_and(|sync| sync.window_id == window_id)
         {
             self.last_platform_sync = None;
+        }
+    }
+}
+
+impl From<PlatformViewportCapabilities> for DockViewportPlatformCapabilityRecord {
+    fn from(capabilities: PlatformViewportCapabilities) -> Self {
+        Self {
+            global_window_bounds: capabilities.global_window_bounds,
+            window_stack: capabilities.window_stack,
+            display_work_area: capabilities.display_work_area,
+            dpi_scale: capabilities.dpi_scale,
+            live_window_move: capabilities.live_window_move,
+            no_input_windows: capabilities.no_input_windows,
+            hovered_window_ignores_no_input: capabilities.hovered_window_ignores_no_input,
         }
     }
 }
@@ -797,8 +842,36 @@ mod tests {
         viewport_registry::DockViewportInputMask,
         viewport_test_support::{bounds, handle, space},
     };
-    use open_gpui::{WindowBounds, point, px};
+    use open_gpui::{PlatformViewportCapabilities, WindowBounds, point, px};
     use slotmap::Key;
+
+    #[test]
+    fn runtime_status_attaches_platform_capability_snapshot() {
+        let capabilities = PlatformViewportCapabilities {
+            global_window_bounds: true,
+            window_stack: true,
+            display_work_area: false,
+            dpi_scale: true,
+            live_window_move: false,
+            no_input_windows: true,
+            hovered_window_ignores_no_input: true,
+        };
+
+        let status = DockViewportRuntimeStatus::default().with_platform_capabilities(capabilities);
+
+        assert_eq!(
+            status.platform_capabilities,
+            Some(DockViewportPlatformCapabilityRecord {
+                global_window_bounds: true,
+                window_stack: true,
+                display_work_area: false,
+                dpi_scale: true,
+                live_window_move: false,
+                no_input_windows: true,
+                hovered_window_ignores_no_input: true,
+            })
+        );
+    }
 
     #[test]
     fn viewport_lifecycle_record_reports_route_status_from_snapshot() {
