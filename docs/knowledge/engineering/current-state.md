@@ -4,8 +4,15 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 697f762
+git_commit: 85a6edf
 verified_by:
+  - cargo check -p open-gpui-ui-core --tests
+  - cargo check -p open-gpui-ui-components --tests
+  - cargo nextest run -p open-gpui-ui-core table
+  - cargo nextest run -p open-gpui-ui-components table
+  - cargo nextest run -p open-gpui-ui-foundation-gallery table
+  - git diff --check
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
   - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-core virtualizer table
   - cargo nextest run -p open-gpui-ui-components table feedback tree virtualized_list
@@ -51,7 +58,7 @@ verified_by:
 
 - Goal: Execute the Table component-depth slice: grouped rows, expansion state, aggregate metadata, pinned-column semantics, and gallery proof.
 - Branch: `main`
-- Last verified: 2026-06-22, Menu / ContextMenu depth gates passed and shipped as `697f762`: `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, focused `cargo nextest run -p open-gpui-ui-components menu`, focused `cargo nextest run -p open-gpui-ui-components context_menu`, focused Overlay gallery menu/context gates, engineering wiki validation, and `git diff --check`.
+- Last verified: 2026-06-23, Table depth U1/U2 gates passed on top of `85a6edf`: `cargo check -p open-gpui-ui-core --tests`, `cargo check -p open-gpui-ui-components --tests`, `cargo nextest run -p open-gpui-ui-core table`, `cargo nextest run -p open-gpui-ui-components table`, `cargo nextest run -p open-gpui-ui-foundation-gallery table`, engineering wiki validation, and `git diff --check`.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -91,9 +98,12 @@ verified_by:
 - Done: Verified the new Menu / ContextMenu core gates with `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, focused `cargo nextest run -p open-gpui-ui-components menu`, `cargo nextest run -p open-gpui-ui-components context_menu`, focused submenu/runtime tests, focused Overlay gallery menu/context samples, engineering wiki validation, and `git diff --check`. Review follow-up fixed keyboard item-level selection handler parity and ContextMenu placement sizing for long visible menus. Hover corridor submenu opening, menubar, OS menu bridge, app-menu registry, and global command dispatch remain deferred.
 - Done: Committed and pushed the Menu / ContextMenu depth slice as `697f762`.
 - Done: Wrote `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md` for the next Table depth slice. The plan focuses on making grouped and expanded row-model stages real, adding built-in aggregate metadata, splitting visible columns into pinned left/center/right regions, and proving the behavior in focused Components gallery Table samples.
+- Done: Completed U1/U2 of the Table depth plan in `ui_core`: `TableResolvedRow` now represents leaf and group rows, `TableGroupRow` records grouping column/value, depth, parent, first leaf, and leaf count, and `TableState` resolves core -> filtered -> grouped -> sorted -> expanded -> paginated -> final. Expansion is caller-owned by stable row id and collapsed descendants remain addressable through row lookup metadata.
+- Done: Updated the GPUI Table adapter to render from resolved row cells instead of assuming every row has a source row. Group rows now share the existing one-axis virtualized row stream and get distinct row chrome without changing scroll ownership.
+- Done: Updated the Table contract and verification docs so grouped and expanded row-model behavior is no longer documented as deferred.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Blocked: None.
-- Next action: Start U1 of `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md` by extending the core resolved table row contract for leaf and group rows.
+- Next action: Start U3 of `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md` by adding built-in aggregate metadata for group rows.
 
 # Citations
 
@@ -131,3 +141,7 @@ verified_by:
 [32] Commit `d383026` - `feat(ui-gallery): deepen command samples`
 [33] Commit `697f762` - `feat(ui-components): deepen menu and context menu semantics`
 [34] Plan `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md`
+[35] Commit `85a6edf` - `docs(ui): add tanstack table references`
+[36] Verification command `cargo nextest run -p open-gpui-ui-core table`
+[37] Verification command `cargo nextest run -p open-gpui-ui-components table`
+[38] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery table`

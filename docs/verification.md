@@ -68,11 +68,14 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_fo
 ```
 
 Table gallery gates now follow the same split: `open-gpui-ui-core` tests prove row-model and
-virtualizer contracts without rendering, `open-gpui-ui-components` tests prove adapter exports,
-state metadata, and scroll ownership, and gallery smokes prove long table scroll input stays inside
-the table viewport when the surrounding Components page also overflows. The focused gallery proof is:
+virtualizer contracts without rendering, including grouped row ids and expansion lookup behavior;
+`open-gpui-ui-components` tests prove adapter exports, state metadata, and scroll ownership; and
+gallery smokes prove long table scroll input stays inside the table viewport when the surrounding
+Components page also overflows. The focused proofs are:
 
 ```powershell
+cargo nextest run -p open-gpui-ui-core table
+cargo nextest run -p open-gpui-ui-components table
 cargo nextest run -p open-gpui-ui-foundation-gallery table
 ```
 
@@ -165,7 +168,8 @@ The official Table gate requires `Table`, `TableState`, `VirtualizerState`, role
 rows and cells, and at least one `gallery:component-table-sample:{id}` selector. Table smokes and
 state tests assert that rendered row selectors stay bounded by the virtualizer's visible rows plus
 overscan, scroll input stays inside the table viewport, sortable header actions emit state-update
-payloads, and sort/filter state follows stable row ids rather than numeric positions.
+payloads, sort/filter state follows stable row ids rather than numeric positions, and grouped /
+expanded row models keep collapsed descendants addressable by stable row id.
 The official Tree gate requires `Tree`, `TreeState`, `TreeMetrics`, tree/tree-item role signals,
 and at least one `gallery:component-tree-sample:{id}` selector. Component runtime tests verify
 expansion, reveal, and selection payloads; gallery smokes verify keyboard expansion/selection

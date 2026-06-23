@@ -404,6 +404,41 @@ impl Default for TablePagination {
     }
 }
 
+/// Caller-owned expansion state for grouped table rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TableExpansionState {
+    /// Every group row is expanded.
+    All,
+    /// Only the listed stable row ids are expanded.
+    Rows(BTreeSet<TableRowId>),
+}
+
+impl TableExpansionState {
+    /// Returns an expansion state where every row is expanded.
+    pub const fn all() -> Self {
+        Self::All
+    }
+
+    /// Returns an expansion state for explicit row ids.
+    pub fn rows(rows: impl IntoIterator<Item = impl Into<TableRowId>>) -> Self {
+        Self::Rows(rows.into_iter().map(Into::into).collect())
+    }
+
+    /// Returns whether the given row id should be expanded.
+    pub fn is_expanded(&self, row_id: &TableRowId) -> bool {
+        match self {
+            Self::All => true,
+            Self::Rows(rows) => rows.contains(row_id),
+        }
+    }
+}
+
+impl Default for TableExpansionState {
+    fn default() -> Self {
+        Self::Rows(BTreeSet::new())
+    }
+}
+
 /// Row-model stage vocabulary for Open GPUI tables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableRowModelStage {
@@ -411,11 +446,11 @@ pub enum TableRowModelStage {
     Core,
     /// Filtered rows.
     Filtered,
-    /// Grouped rows. Deferred in v0.
+    /// Grouped rows.
     Grouped,
     /// Sorted rows.
     Sorted,
-    /// Expanded rows. Deferred in v0.
+    /// Expanded rows.
     Expanded,
     /// Paginated rows.
     Paginated,
@@ -437,7 +472,7 @@ impl TableRowModelStage {
         }
     }
 
-    /// Returns whether this stage is implemented by the v0 resolver.
+    /// Returns whether this stage belonged to the original v0 resolver subset.
     pub const fn implemented_in_v0(self) -> bool {
         matches!(
             self,
@@ -457,7 +492,7 @@ pub const TABLE_ROW_MODEL_PIPELINE: [TableRowModelStage; 7] = [
     TableRowModelStage::Final,
 ];
 
-/// First implemented row-model pipeline.
+/// Original v0 row-model subset.
 pub const TABLE_ROW_MODEL_V0_PIPELINE: [TableRowModelStage; 5] = [
     TableRowModelStage::Core,
     TableRowModelStage::Filtered,
@@ -475,6 +510,8 @@ pub struct TableState {
     rows_identity: u64,
     sorting: Vec<TableSort>,
     filters: Vec<TableFilter>,
+    grouping: Vec<TableColumnId>,
+    expansion: TableExpansionState,
     selected_rows: BTreeSet<TableRowId>,
     pagination: TablePagination,
 }
@@ -486,6 +523,8 @@ impl PartialEq for TableState {
             && self.rows.as_ref() == other.rows.as_ref()
             && self.sorting == other.sorting
             && self.filters == other.filters
+            && self.grouping == other.grouping
+            && self.expansion == other.expansion
             && self.selected_rows == other.selected_rows
             && self.pagination == other.pagination
     }
@@ -503,6 +542,8 @@ impl TableState {
             rows_identity: next_table_rows_identity(),
             sorting: Vec::new(),
             filters: Vec::new(),
+            grouping: Vec::new(),
+            expansion: TableExpansionState::default(),
             selected_rows: BTreeSet::new(),
             pagination: TablePagination::default(),
         }
@@ -532,6 +573,35 @@ impl TableState {
     /// Applies filter specifications.
     pub fn with_filters(mut self, filters: impl IntoIterator<Item = TableFilter>) -> Self {
         self.filters = filters.into_iter().collect();
+        self
+    }
+
+    /// Applies grouping column ids in outer-to-inner order.
+    pub fn with_grouping(
+        mut self,
+        grouping: impl IntoIterator<Item = impl Into<TableColumnId>>,
+    ) -> Self {
+        let mut seen = BTreeSet::new();
+        self.grouping = grouping
+            .into_iter()
+            .map(Into::into)
+            .filter(|column| seen.insert(column.clone()))
+            .collect();
+        self
+    }
+
+    /// Applies explicit expanded group row ids.
+    pub fn with_expanded_rows(
+        mut self,
+        expanded_rows: impl IntoIterator<Item = impl Into<TableRowId>>,
+    ) -> Self {
+        self.expansion = TableExpansionState::rows(expanded_rows);
+        self
+    }
+
+    /// Applies the expansion mode where every group row is expanded.
+    pub fn with_all_rows_expanded(mut self) -> Self {
+        self.expansion = TableExpansionState::All;
         self
     }
 
@@ -570,6 +640,16 @@ impl TableState {
         &self.filters
     }
 
+    /// Returns grouping column ids in outer-to-inner order.
+    pub fn grouping(&self) -> &[TableColumnId] {
+        &self.grouping
+    }
+
+    /// Returns caller-owned row expansion state.
+    pub const fn expansion(&self) -> &TableExpansionState {
+        &self.expansion
+    }
+
     /// Returns selected row ids.
     pub const fn selected_rows(&self) -> &BTreeSet<TableRowId> {
         &self.selected_rows
@@ -592,6 +672,8 @@ impl TableState {
             column_order: self.column_order.clone(),
             sorting: self.sorting.clone(),
             filters: self.filters.clone(),
+            grouping: self.grouping.clone(),
+            expansion: self.expansion.clone(),
             selected_rows: self.selected_rows.clone(),
             pagination: self.pagination,
         }
@@ -622,7 +704,7 @@ impl TableState {
             .collect()
     }
 
-    /// Resolves all v0 row models from the input state.
+    /// Resolves row models from the input state.
     pub fn resolve(&self) -> TableResolvedState {
         let mut duplicate_row_ids = BTreeSet::new();
         let mut seen_row_ids = BTreeSet::new();
@@ -644,47 +726,59 @@ impl TableState {
             .rows()
             .iter()
             .filter(|row| {
-                self.filters
-                    .iter()
-                    .all(|filter| filter.matches(row.source()))
+                row.source()
+                    .is_some_and(|source| self.filters.iter().all(|filter| filter.matches(source)))
             })
             .cloned()
             .collect();
         let filtered_model = TableRowModel::new(TableRowModelStage::Filtered, filtered_rows);
 
-        let mut sorted_rows = filtered_model.rows().to_vec();
-        sorted_rows.sort_by(|left, right| self.compare_rows(left, right));
+        let grouped_nodes = self.group_nodes(filtered_model.rows());
+        let grouped_rows = flatten_nodes(&grouped_nodes);
+        let grouped_model = TableRowModel::new(TableRowModelStage::Grouped, grouped_rows);
+
+        let sorted_nodes = self.sort_nodes(grouped_nodes);
+        let sorted_rows = flatten_nodes(&sorted_nodes);
         let sorted_model = TableRowModel::new(TableRowModelStage::Sorted, sorted_rows);
+
+        let expanded_rows = self.expand_nodes(&sorted_nodes);
+        let expanded_model = TableRowModel::new_with_lookup(
+            TableRowModelStage::Expanded,
+            expanded_rows,
+            sorted_model.rows().to_vec(),
+        );
 
         let paginated_model = TableRowModel::new(
             TableRowModelStage::Paginated,
-            self.pagination.apply(sorted_model.rows()),
+            self.pagination.apply(expanded_model.rows()),
         );
-        let final_model = TableRowModel::new(TableRowModelStage::Final, paginated_model.rows());
+        let final_model = TableRowModel::new_with_lookup(
+            TableRowModelStage::Final,
+            paginated_model.rows().to_vec(),
+            expanded_model.rows_by_id().values().cloned(),
+        );
 
         TableResolvedState {
             visible_columns: self.visible_columns(),
             duplicate_row_ids: duplicate_row_ids.into_iter().collect(),
             core_model,
             filtered_model,
+            grouped_model,
             sorted_model,
+            expanded_model,
             paginated_model,
             final_model,
         }
     }
 
     fn compare_rows(&self, left: &TableResolvedRow, right: &TableResolvedRow) -> Ordering {
+        if self.sorting.is_empty() {
+            return Ordering::Equal;
+        }
+
         for sort in &self.sorting {
-            let left_value = left
-                .source()
-                .cell(sort.column())
-                .cloned()
-                .unwrap_or_default();
-            let right_value = right
-                .source()
-                .cell(sort.column())
-                .cloned()
-                .unwrap_or_default();
+            let left_value = left.cell(sort.column()).cloned().unwrap_or_default();
+            let right_value = right.cell(sort.column()).cloned().unwrap_or_default();
             let ordering = left_value.cmp_for_sort(&right_value);
             let ordering = match sort.direction() {
                 TableSortDirection::Ascending => ordering,
@@ -698,6 +792,38 @@ impl TableState {
 
         left.id().cmp(right.id())
     }
+
+    fn group_nodes(&self, rows: &[TableResolvedRow]) -> Vec<TableRowNode> {
+        if self.grouping.is_empty() {
+            return rows
+                .iter()
+                .cloned()
+                .map(TableRowNode::leaf)
+                .collect::<Vec<_>>();
+        }
+
+        build_group_nodes(rows, &self.grouping, 0, None, None)
+    }
+
+    fn sort_nodes(&self, mut nodes: Vec<TableRowNode>) -> Vec<TableRowNode> {
+        for node in &mut nodes {
+            node.children = self.sort_nodes(std::mem::take(&mut node.children));
+        }
+
+        if !self.sorting.is_empty() {
+            nodes.sort_by(|left, right| self.compare_rows(&left.row, &right.row));
+        }
+
+        nodes
+    }
+
+    fn expand_nodes(&self, nodes: &[TableRowNode]) -> Vec<TableResolvedRow> {
+        let mut rows = Vec::new();
+        for node in nodes {
+            push_expanded_rows(node, &self.expansion, &mut rows);
+        }
+        rows
+    }
 }
 
 /// Cheap invalidation key for runtime caches of resolved table row models.
@@ -709,6 +835,8 @@ pub struct TableStateCacheKey {
     column_order: Vec<TableColumnId>,
     sorting: Vec<TableSort>,
     filters: Vec<TableFilter>,
+    grouping: Vec<TableColumnId>,
+    expansion: TableExpansionState,
     selected_rows: BTreeSet<TableRowId>,
     pagination: TablePagination,
 }
@@ -729,36 +857,184 @@ fn next_table_rows_identity() -> u64 {
     NEXT_TABLE_ROWS_IDENTITY.fetch_add(1, AtomicOrdering::Relaxed)
 }
 
+/// Metadata for a grouped table row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableGroupRow {
+    grouping_column: TableColumnId,
+    grouping_value: TableCellValue,
+    depth: usize,
+    parent_id: Option<TableRowId>,
+    first_leaf_row_id: TableRowId,
+    leaf_row_count: usize,
+}
+
+impl TableGroupRow {
+    fn new(
+        grouping_column: TableColumnId,
+        grouping_value: TableCellValue,
+        depth: usize,
+        parent_id: Option<TableRowId>,
+        first_leaf_row_id: TableRowId,
+        leaf_row_count: usize,
+    ) -> Self {
+        Self {
+            grouping_column,
+            grouping_value,
+            depth,
+            parent_id,
+            first_leaf_row_id,
+            leaf_row_count,
+        }
+    }
+
+    /// Returns the grouped column identity.
+    pub const fn grouping_column(&self) -> &TableColumnId {
+        &self.grouping_column
+    }
+
+    /// Returns the grouped value.
+    pub const fn grouping_value(&self) -> &TableCellValue {
+        &self.grouping_value
+    }
+
+    /// Returns this group row's depth in the grouped tree.
+    pub const fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// Returns the parent group row id, if present.
+    pub const fn parent_id(&self) -> Option<&TableRowId> {
+        self.parent_id.as_ref()
+    }
+
+    /// Returns the first descendant leaf row id.
+    pub const fn first_leaf_row_id(&self) -> &TableRowId {
+        &self.first_leaf_row_id
+    }
+
+    /// Returns the descendant leaf row count.
+    pub const fn leaf_row_count(&self) -> usize {
+        self.leaf_row_count
+    }
+}
+
+/// Resolved row kind for Open GPUI table row models.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TableResolvedRowKind {
+    /// A row backed by one source data row.
+    Leaf,
+    /// A synthetic grouped row.
+    Group(TableGroupRow),
+}
+
 /// A resolved row that carries source identity and derived metadata.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableResolvedRow {
-    source: TableRow,
-    source_index: usize,
+    id: TableRowId,
+    cells: BTreeMap<TableColumnId, TableCellValue>,
+    source: Option<TableRow>,
+    source_index: Option<usize>,
     selected: bool,
+    kind: TableResolvedRowKind,
+    depth: usize,
+    parent_id: Option<TableRowId>,
 }
 
 impl TableResolvedRow {
     fn from_row(row: &TableRow, source_index: usize, selected: bool) -> Self {
         Self {
-            source: row.clone(),
-            source_index,
+            id: row.id().clone(),
+            cells: row.cells().clone(),
+            source: Some(row.clone()),
+            source_index: Some(source_index),
             selected,
+            kind: TableResolvedRowKind::Leaf,
+            depth: 0,
+            parent_id: None,
         }
+    }
+
+    fn from_group(id: TableRowId, group: TableGroupRow) -> Self {
+        let mut cells = BTreeMap::new();
+        cells.insert(
+            group.grouping_column().clone(),
+            group.grouping_value().clone(),
+        );
+
+        Self {
+            id,
+            cells,
+            source: None,
+            source_index: None,
+            selected: false,
+            depth: group.depth(),
+            parent_id: group.parent_id().cloned(),
+            kind: TableResolvedRowKind::Group(group),
+        }
+    }
+
+    fn with_parent(mut self, parent_id: TableRowId, depth: usize) -> Self {
+        self.parent_id = Some(parent_id);
+        self.depth = depth;
+        self
     }
 
     /// Returns the stable row identity.
     pub const fn id(&self) -> &TableRowId {
-        self.source.id()
+        &self.id
     }
 
-    /// Returns the original row descriptor.
-    pub const fn source(&self) -> &TableRow {
-        &self.source
+    /// Returns the resolved row kind.
+    pub const fn kind(&self) -> &TableResolvedRowKind {
+        &self.kind
     }
 
-    /// Returns the original source index before row-model transforms.
-    pub const fn source_index(&self) -> usize {
+    /// Returns true when this is a grouped row.
+    pub const fn is_group(&self) -> bool {
+        matches!(self.kind, TableResolvedRowKind::Group(_))
+    }
+
+    /// Returns true when this is a leaf source row.
+    pub const fn is_leaf(&self) -> bool {
+        matches!(self.kind, TableResolvedRowKind::Leaf)
+    }
+
+    /// Returns grouped row metadata when this row is a group row.
+    pub const fn group(&self) -> Option<&TableGroupRow> {
+        match &self.kind {
+            TableResolvedRowKind::Group(group) => Some(group),
+            TableResolvedRowKind::Leaf => None,
+        }
+    }
+
+    /// Returns the original row descriptor for leaf rows.
+    pub const fn source(&self) -> Option<&TableRow> {
+        self.source.as_ref()
+    }
+
+    /// Returns all resolved cells keyed by column identity.
+    pub const fn cells(&self) -> &BTreeMap<TableColumnId, TableCellValue> {
+        &self.cells
+    }
+
+    /// Returns a resolved cell value for the given column.
+    pub fn cell(&self, column: &TableColumnId) -> Option<&TableCellValue> {
+        self.cells.get(column)
+    }
+
+    /// Returns the original source index before row-model transforms for leaf rows.
+    pub const fn source_index(&self) -> Option<usize> {
         self.source_index
+    }
+
+    /// Returns this row's depth in a grouped row model.
+    pub const fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// Returns the parent group row id, if present.
+    pub const fn parent_id(&self) -> Option<&TableRowId> {
+        self.parent_id.as_ref()
     }
 
     /// Returns whether this row id is selected.
@@ -779,9 +1055,18 @@ impl TableRowModel {
     /// Creates a row model from rows at one stage.
     pub fn new(stage: TableRowModelStage, rows: impl Into<Vec<TableResolvedRow>>) -> Self {
         let rows = rows.into();
-        let rows_by_id = rows
-            .iter()
-            .map(|row| (row.id().clone(), row.clone()))
+        Self::new_with_lookup(stage, rows.clone(), rows)
+    }
+
+    fn new_with_lookup(
+        stage: TableRowModelStage,
+        rows: impl Into<Vec<TableResolvedRow>>,
+        lookup_rows: impl IntoIterator<Item = TableResolvedRow>,
+    ) -> Self {
+        let rows = rows.into();
+        let rows_by_id = lookup_rows
+            .into_iter()
+            .map(|row| (row.id().clone(), row))
             .collect();
 
         Self {
@@ -824,7 +1109,9 @@ pub struct TableResolvedState {
     duplicate_row_ids: Vec<TableRowId>,
     core_model: TableRowModel,
     filtered_model: TableRowModel,
+    grouped_model: TableRowModel,
     sorted_model: TableRowModel,
+    expanded_model: TableRowModel,
     paginated_model: TableRowModel,
     final_model: TableRowModel,
 }
@@ -850,9 +1137,19 @@ impl TableResolvedState {
         &self.filtered_model
     }
 
+    /// Returns the grouped row model.
+    pub const fn grouped_model(&self) -> &TableRowModel {
+        &self.grouped_model
+    }
+
     /// Returns the sorted row model.
     pub const fn sorted_model(&self) -> &TableRowModel {
         &self.sorted_model
+    }
+
+    /// Returns the expanded row model.
+    pub const fn expanded_model(&self) -> &TableRowModel {
+        &self.expanded_model
     }
 
     /// Returns the paginated row model.
@@ -863,6 +1160,132 @@ impl TableResolvedState {
     /// Returns the final row model consumed by renderers.
     pub const fn final_model(&self) -> &TableRowModel {
         &self.final_model
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct TableRowNode {
+    row: TableResolvedRow,
+    children: Vec<TableRowNode>,
+}
+
+impl TableRowNode {
+    fn leaf(row: TableResolvedRow) -> Self {
+        Self {
+            row,
+            children: Vec::new(),
+        }
+    }
+}
+
+fn flatten_nodes(nodes: &[TableRowNode]) -> Vec<TableResolvedRow> {
+    let mut rows = Vec::new();
+    for node in nodes {
+        rows.push(node.row.clone());
+        rows.extend(flatten_nodes(&node.children));
+    }
+    rows
+}
+
+fn build_group_nodes(
+    rows: &[TableResolvedRow],
+    grouping: &[TableColumnId],
+    depth: usize,
+    parent_group_id: Option<TableRowId>,
+    inherited_parent_id: Option<TableRowId>,
+) -> Vec<TableRowNode> {
+    if grouping.is_empty() {
+        return rows
+            .iter()
+            .cloned()
+            .map(|row| {
+                let row = match inherited_parent_id.as_ref() {
+                    Some(parent_id) => row.with_parent(parent_id.clone(), depth),
+                    None => row,
+                };
+                TableRowNode::leaf(row)
+            })
+            .collect();
+    }
+
+    let grouping_column = grouping[0].clone();
+    let mut buckets: Vec<(String, TableCellValue, Vec<TableResolvedRow>)> = Vec::new();
+    let mut bucket_index_by_key = BTreeMap::new();
+
+    for row in rows {
+        let value = row.cell(&grouping_column).cloned().unwrap_or_default();
+        let key = value.filter_text();
+        let index = match bucket_index_by_key.get(&key).copied() {
+            Some(index) => index,
+            None => {
+                let index = buckets.len();
+                bucket_index_by_key.insert(key.clone(), index);
+                buckets.push((key.clone(), value.clone(), Vec::new()));
+                index
+            }
+        };
+        buckets[index].2.push(row.clone());
+    }
+
+    let mut nodes = Vec::new();
+    for (value_text, value, bucket_rows) in buckets {
+        let group_id = build_group_row_id(parent_group_id.as_ref(), &grouping_column, &value_text);
+        let first_leaf_row_id = bucket_rows
+            .first()
+            .map(|row| row.id().clone())
+            .unwrap_or_else(|| group_id.clone());
+        let leaf_row_count = bucket_rows.len();
+        let parent_id = inherited_parent_id.clone();
+        let group = TableGroupRow::new(
+            grouping_column.clone(),
+            value,
+            depth,
+            parent_id.clone(),
+            first_leaf_row_id,
+            leaf_row_count,
+        );
+        let children = build_group_nodes(
+            &bucket_rows,
+            &grouping[1..],
+            depth + 1,
+            Some(group_id.clone()),
+            Some(group_id.clone()),
+        );
+        let row = TableResolvedRow::from_group(group_id, group);
+        nodes.push(TableRowNode { row, children });
+    }
+
+    nodes
+}
+
+fn build_group_row_id(
+    parent_id: Option<&TableRowId>,
+    column: &TableColumnId,
+    value_text: &str,
+) -> TableRowId {
+    let segment = format!("{}={}", column.as_str(), value_text);
+    match parent_id {
+        Some(parent) => TableRowId::new(format!("{}>{segment}", parent.as_str())),
+        None => TableRowId::new(format!("group:{segment}")),
+    }
+}
+
+fn push_expanded_rows(
+    node: &TableRowNode,
+    expansion: &TableExpansionState,
+    rows: &mut Vec<TableResolvedRow>,
+) {
+    rows.push(node.row.clone());
+    if node.children.is_empty() {
+        return;
+    }
+
+    if node.row.is_group() && !expansion.is_expanded(node.row.id()) {
+        return;
+    }
+
+    for child in &node.children {
+        push_expanded_rows(child, expansion, rows);
     }
 }
 
@@ -964,7 +1387,7 @@ mod tests {
             .row(&TableRowId::new("row-c"))
             .expect("row-c should remain addressable by id");
 
-        assert_eq!(row_c.source_index(), 2);
+        assert_eq!(row_c.source_index(), Some(2));
         assert_eq!(
             resolved
                 .final_model()
@@ -991,6 +1414,147 @@ mod tests {
 
         assert!(selected.selected());
         assert_eq!(resolved.final_model().selected_count(), 1);
+    }
+
+    #[test]
+    fn grouped_row_model_creates_stable_group_rows() {
+        let resolved = TableState::new(sample_rows())
+            .with_grouping(["team"])
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .grouped_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            [
+                "group:team=ops",
+                "row-b",
+                "row-c",
+                "group:team=design",
+                "row-a"
+            ]
+        );
+
+        let ops = resolved
+            .grouped_model()
+            .row(&TableRowId::new("group:team=ops"))
+            .expect("ops group row should be addressable by id");
+        let ops_group = ops.group().expect("ops row should be a group row");
+
+        assert_eq!(ops_group.grouping_column().as_str(), "team");
+        assert_eq!(ops_group.grouping_value().filter_text(), "ops");
+        assert_eq!(ops_group.depth(), 0);
+        assert_eq!(ops_group.parent_id(), None);
+        assert_eq!(ops_group.first_leaf_row_id().as_str(), "row-b");
+        assert_eq!(ops_group.leaf_row_count(), 2);
+        assert!(ops.is_group());
+    }
+
+    #[test]
+    fn collapsed_groups_hide_descendants_but_preserve_lookup() {
+        let resolved = TableState::new(sample_rows())
+            .with_grouping(["team"])
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .expanded_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["group:team=ops", "group:team=design"]
+        );
+        assert!(
+            resolved
+                .expanded_model()
+                .row(&TableRowId::new("row-c"))
+                .is_some(),
+            "collapsed descendants should remain addressable in lookup metadata"
+        );
+    }
+
+    #[test]
+    fn expanded_groups_show_descendants_with_parent_depth_and_selection() {
+        let resolved = TableState::new(sample_rows())
+            .with_grouping(["team"])
+            .with_expanded_rows(["group:team=ops"])
+            .with_selected_rows(["row-c"])
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["group:team=ops", "row-b", "row-c", "group:team=design"]
+        );
+
+        let row_c = resolved
+            .final_model()
+            .rows()
+            .iter()
+            .find(|row| row.id().as_str() == "row-c")
+            .expect("expanded descendant should be visible");
+
+        assert_eq!(row_c.depth(), 1);
+        assert_eq!(
+            row_c.parent_id().map(TableRowId::as_str),
+            Some("group:team=ops")
+        );
+        assert!(row_c.selected());
+        assert_eq!(resolved.final_model().selected_count(), 1);
+    }
+
+    #[test]
+    fn multi_column_grouping_creates_nested_group_paths() {
+        let resolved = TableState::new(sample_rows())
+            .with_grouping(["team", "score"])
+            .resolve();
+
+        let nested = resolved
+            .grouped_model()
+            .row(&TableRowId::new("group:team=ops>score=20"))
+            .expect("nested score group should use the parent path");
+        let group = nested.group().expect("nested row should be grouped");
+
+        assert_eq!(group.depth(), 1);
+        assert_eq!(
+            group.parent_id().map(TableRowId::as_str),
+            Some("group:team=ops")
+        );
+        assert_eq!(group.leaf_row_count(), 1);
+    }
+
+    #[test]
+    fn pagination_applies_after_expansion() {
+        let resolved = TableState::new(sample_rows())
+            .with_grouping(["team"])
+            .with_all_rows_expanded()
+            .with_pagination(TablePagination::new(0, 2))
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["group:team=ops", "row-b"]
+        );
+        assert!(
+            resolved
+                .final_model()
+                .row(&TableRowId::new("row-c"))
+                .is_some(),
+            "final lookup keeps expanded-but-not-paginated rows addressable"
+        );
     }
 
     #[test]

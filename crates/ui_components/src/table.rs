@@ -285,7 +285,7 @@ impl TableRowRenderPlan {
     ) -> Self {
         let cells = columns
             .iter()
-            .map(|column| TableCellRenderPlan::new(column, row.source().cell(column.id())))
+            .map(|column| TableCellRenderPlan::new(column, row.cell(column.id())))
             .collect();
 
         Self {
@@ -885,7 +885,9 @@ fn render_table_row(
     metrics: TableMetrics,
 ) -> impl IntoElement {
     let render_key = row.render_key().to_owned();
-    let row_background = if row.selected() {
+    let row_background = if row.row().is_group() {
+        rgb(0xf1f4f8)
+    } else if row.selected() {
         rgb(0xe7f0ff)
     } else if row.model_index().is_multiple_of(2) {
         rgb(0xffffff)
@@ -947,8 +949,10 @@ fn row_render_key(
     row: &TableResolvedRow,
     duplicate_row_ids: &BTreeSet<open_gpui_ui_core::TableRowId>,
 ) -> String {
-    if duplicate_row_ids.contains(row.id()) {
-        format!("{}:{}", row.source_index(), row.id().as_str())
+    if duplicate_row_ids.contains(row.id())
+        && let Some(source_index) = row.source_index()
+    {
+        format!("{}:{}", source_index, row.id().as_str())
     } else {
         row.id().as_str().to_owned()
     }
