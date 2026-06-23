@@ -6,6 +6,17 @@ status: active
 
 # Log
 
+- 2026-06-23: Completed `docs/plans/2026-06-23-007-feat-ui-table-manual-row-model-controls-plan.md`
+  as `d6e5c0d`. `ui_core::TableState` now supports independent manual filtering and sorting via
+  `TableStageMode`, `TablePagination::manual` carries server row-count/page-count metadata, and
+  manual row-model stages preserve app-supplied snapshots while keeping row ids, selection, grouping,
+  expansion, lookup, and cache keys stable. `ui_components::TableRenderPlan` exposes the manual
+  stage modes and pagination totals, root/prelude exports include `TableStageMode`, and the
+  Components gallery adds `server-paged` to prove an app-owned page snapshot plus total counts.
+  Verified `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery -- --check`,
+  `cargo nextest run -p open-gpui-ui-core table`,
+  `cargo nextest run -p open-gpui-ui-components table component_api_inventory`,
+  `cargo nextest run -p open-gpui-ui-foundation-gallery table`, and `git diff --check`.
 - 2026-06-23: Wrote `docs/plans/2026-06-23-007-feat-ui-table-manual-row-model-controls-plan.md`
   as the next Table follow-up after `bfa91df`. The plan narrows the server/data-source direction to
   TanStack-style manual filtering, sorting, and pagination controls plus row-count/page-count

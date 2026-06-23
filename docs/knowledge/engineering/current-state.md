@@ -120,7 +120,17 @@ verified_by:
   next Table slice. The plan follows TanStack-style manual filtering/sorting/pagination controls,
   keeps real fetching and cache ownership in the app, and scopes the first implementation proof to
   server pagination totals plus app-supplied row snapshots.
-- In progress: Start U1 of the manual row-model controls plan in `crates/ui_core/src/table.rs`.
+- Done: Completed the manual row-model controls slice as `d6e5c0d`. `TableStageMode` now lets
+  filtering and sorting become manual independently, `TablePagination::manual` carries
+  row-count/page-count metadata, manual stages preserve caller-supplied snapshots, and the row-model
+  cache key includes the new stage ownership and pagination-total inputs.
+- Done: `ui_components::TableRenderPlan` now exposes filtering/sorting/pagination ownership modes
+  plus pagination row/page totals, and the core/components crate roots and preludes export
+  `TableStageMode`.
+- Done: The Components gallery now includes `server-paged`, a manual filter/sort/page Table sample
+  that renders only the app-supplied page snapshot while exposing total row and page counts in the
+  state readout. Contract docs and verification docs describe manual row-model controls as shipped
+  behavior.
 - Done: Wrote `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` as the next Table slice. The plan keeps tree-data rows separate from synthetic grouping, reuses `TableExpansionState` for source hierarchy, adds row interaction payloads and focus semantics, and scopes the first gallery proof to a focused tree-data Table sample with runtime expansion and activation coverage.
 - Done: Completed U5/U6 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `25875d0`. The Components gallery now includes `release-matrix`, a wide pinned Table sample with fourteen center metrics, and a focused smoke that proves far center columns stay unmounted before scroll, mount after horizontal scroll, and keep the outer Components page plus fixed lanes stationary. The gallery state row is also less noisy for non-grouped tables, and the Table contract / verification docs now describe the center-column window as a first-class adapter behavior.
 - Done: Completed the sticky pinned Table slice on top of `3273c1a`: the GPUI Table adapter keeps vertical wheel input inside pinned table bodies, `release-rollup` exposes explicit left/center/right lane widths, and the focused gallery smoke proves horizontal center-lane scrolling leaves left/right pinned lanes plus the outer Components page fixed.
@@ -187,13 +197,14 @@ verified_by:
 - Done: Completed U4 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `5d67277`. Added plan-level accessibility coverage for virtualized center columns, runtime sort coverage for a rendered center header after horizontal scroll, and resize-geometry coverage proving the virtual center window recomputes from committed sizing while preserving the rendered column identity set.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Follow-up: The column sizing / resize, sticky pinned-column, center-column virtualization,
-  tree-data, row-interaction, and manual-expansion slices are complete. The next planned Table
-  slice is manual row-model controls. Remaining Table follow-ups after that are two-dimensional
-  grid virtualization, custom aggregation callbacks, faceting value payloads, row pinning, row
-  selection variants, cell editing, and standalone headless extraction if cross-framework pressure
-  appears.
+  tree-data, row-interaction, manual-expansion, and manual row-model control slices are complete.
+  Remaining Table follow-ups are two-dimensional grid virtualization, custom aggregation callbacks,
+  faceting value payloads, row pinning, row selection variants, cell editing, and standalone
+  headless extraction if cross-framework pressure appears.
 - Blocked: None.
-- Next action: Implement U1 core manual row-model policy and pagination totals.
+- Next action: Pick the next Table follow-up boundary. The strongest product-shaped options are
+  faceting payloads, row pinning, row selection variants, or cell editing before attempting full
+  two-axis grid virtualization.
 
 # Citations
 
@@ -253,3 +264,10 @@ verified_by:
 [54] Commit `5d67277` - `test(ui-components): cover virtualized table center interactions`
 [55] Commit `234b0cc` - `feat(ui): add table tree rows and row interactions`
 [56] Plan `docs/plans/2026-06-23-006-feat-ui-table-manual-expansion-plan.md`
+[57] Commit `bfa91df` - `feat(ui): add table manual expansion state`
+[58] Plan `docs/plans/2026-06-23-007-feat-ui-table-manual-row-model-controls-plan.md`
+[59] Commit `d6e5c0d` - `feat(ui): add table manual row-model controls`
+[60] Verification command `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery -- --check`
+[61] Verification command `cargo nextest run -p open-gpui-ui-core table`
+[62] Verification command `cargo nextest run -p open-gpui-ui-components table component_api_inventory`
+[63] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery table`
