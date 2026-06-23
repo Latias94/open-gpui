@@ -115,10 +115,12 @@ verified_by:
 - Done: Completed U1/U2 of `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md` as commits `9264682` and `513f13c`. `TableColumnSizing` now resolves controlled widths and total size, the GPUI Table adapter consumes column sizing offsets, and the components crate exports the sizing contract through its public surface. Verified the focused core/components table gates before moving on to resize interaction work.
 - Done: Completed U3 of `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md` as `426742a`. `TableColumnResizeMode`, `TableColumnResizeDirection`, and resize state/update helpers now drive committed/transient resize behavior, the GPUI adapter exposes callback-backed drag handles with controlled sizing change events, and tests cover LTR/RTL drag semantics plus runtime header-click parity.
 - Done: Completed U4 of `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md` as `3273c1a`. The Components gallery now has a `release-resize` Table sample, a runtime sizing log, visible width / resizable-column summaries, selector-aligned resize smoke coverage, and docs / verification entries for the new gate.
+- Done: Created `docs/plans/2026-06-23-003-feat-ui-table-sticky-pinned-columns-plan.md` as the next Table slice. The new plan keeps the existing semantic pinned regions, turns the center lane into a shared horizontal scroll surface, and keeps vertical row virtualization one-dimensional.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Follow-up: The column sizing / resize slice is complete; the next Table follow-ups are sticky horizontal pinned-column layout, two-dimensional grid virtualization, tree-data tables, custom aggregation callbacks, server pagination/faceting/editing, and standalone headless extraction.
+- Follow-up: The sticky pinned-column slice is now the active next step after column sizing.
 - Blocked: None.
-- Next action: Validate the engineering wiki memory against the updated docs, commit the memory refresh, and then pick the next Table follow-up boundary.
+- Next action: Start U1 of `docs/plans/2026-06-23-003-feat-ui-table-sticky-pinned-columns-plan.md`.
 
 # Citations
 
@@ -167,5 +169,6 @@ verified_by:
 [43] Commit `513f13c` - `feat(ui-components): expose table column sizing contract`
 [44] Commit `426742a` - `feat(ui): add table column resizing interactions`
 [45] Commit `3273c1a` - `feat(gallery): add table column resize sample`
-[46] Verification command `cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components`
-[47] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_table_samples_expose_virtualized_row_model_contract components_gallery_smoke_focused_table_scroll_stays_inside_sample components_gallery_smoke_table_scroll_stays_inside_sample components_gallery_smoke_grouped_table_scroll_stays_inside_sample components_gallery_smoke_resizable_table_resize_updates_sample`
+[46] Plan `docs/plans/2026-06-23-003-feat-ui-table-sticky-pinned-columns-plan.md`
+[47] Verification command `cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components`
+[48] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_table_samples_expose_virtualized_row_model_contract components_gallery_smoke_focused_table_scroll_stays_inside_sample components_gallery_smoke_table_scroll_stays_inside_sample components_gallery_smoke_grouped_table_scroll_stays_inside_sample components_gallery_smoke_resizable_table_resize_updates_sample`
