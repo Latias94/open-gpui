@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 500045e
+git_commit: 751d165
 verified_by:
   - cargo fmt -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-components table component_api_inventory
@@ -81,12 +81,11 @@ verified_by:
 
 # Current State
 
-- Goal: Execute `docs/plans/2026-06-23-008-feat-ui-table-faceting-filter-metadata-plan.md`.
+- Goal: Execute `docs/plans/2026-06-23-009-feat-ui-table-row-pinning-plan.md`.
 - Branch: `main`
-- Last verified: 2026-06-23, focused Table faceting metadata gates passed:
-  `cargo nextest run -p open-gpui-ui-core table`,
-  `cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit`, and
-  `cargo nextest run -p open-gpui-ui-foundation-gallery table`.
+- Last verified: 2026-06-23, focused Table faceting metadata gates passed before this planning
+  update. The row-pinning plan is docs-only; engineering wiki validation passed and implementation
+  verification is pending.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
   with depth/parent/branch/descendant metadata, source-tree expansion reuses
@@ -154,6 +153,13 @@ verified_by:
   `TableFacetValueCount`, so manual facet payloads with NaN values no longer make cache-key
   comparisons non-reflexive. Final scoped gates, `git diff --check`, and engineering wiki
   validation passed.
+- Done: Wrote `docs/plans/2026-06-23-009-feat-ui-table-row-pinning-plan.md` as the next Table
+  slice. The plan follows TanStack Table's `top` / `center` / `bottom` row pinning model and
+  Fret's Rust visible-all plus paged-center precedent. Scope covers core row pinning state,
+  duplicate-free row-region resolution, keep-pinned and page-only policies, center-only vertical
+  virtualization, fixed pinned bands in the GPUI adapter, a focused gallery proof, and contract /
+  verification memory updates. Row-selection controls, cell editing, synthetic summary rows,
+  fetch/cache ownership, and full two-axis grid virtualization remain deferred.
 - Done: Wrote `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` as the next Table slice. The plan keeps tree-data rows separate from synthetic grouping, reuses `TableExpansionState` for source hierarchy, adds row interaction payloads and focus semantics, and scopes the first gallery proof to a focused tree-data Table sample with runtime expansion and activation coverage.
 - Done: Completed U5/U6 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `25875d0`. The Components gallery now includes `release-matrix`, a wide pinned Table sample with fourteen center metrics, and a focused smoke that proves far center columns stay unmounted before scroll, mount after horizontal scroll, and keep the outer Components page plus fixed lanes stationary. The gallery state row is also less noisy for non-grouped tables, and the Table contract / verification docs now describe the center-column window as a first-class adapter behavior.
 - Done: Completed the sticky pinned Table slice on top of `3273c1a`: the GPUI Table adapter keeps vertical wheel input inside pinned table bodies, `release-rollup` exposes explicit left/center/right lane widths, and the focused gallery smoke proves horizontal center-lane scrolling leaves left/right pinned lanes plus the outer Components page fixed.
@@ -221,14 +227,14 @@ verified_by:
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Follow-up: The column sizing / resize, sticky pinned-column, center-column virtualization,
   tree-data, row-interaction, manual-expansion, manual row-model control, and per-column faceting
-  metadata slices are complete. Remaining later Table follow-ups are two-dimensional grid
-  virtualization, custom aggregation callbacks, row pinning, row selection variants, cell editing,
-  global faceting, concrete faceted filter UI, and standalone headless extraction if cross-framework
-  pressure appears.
+  metadata slices are complete. The active follow-up is row pinning. Later Table follow-ups are
+  two-dimensional grid virtualization, custom aggregation callbacks, row selection variants, cell
+  editing, global faceting, concrete faceted filter UI, and standalone headless extraction if
+  cross-framework pressure appears.
 - Blocked: None.
-- Next action: Pick the next Table follow-up boundary. The clearest remaining options are row
-  pinning, row selection variants, cell editing, global/faceted filter UI, or the later full
-  two-axis grid virtualization path.
+- Next action: Start U1 of `docs/plans/2026-06-23-009-feat-ui-table-row-pinning-plan.md` by adding
+  core row-pinning state, pin positions, and the row-pinning visibility policy in
+  `crates/ui_core/src/table.rs`.
 
 # Citations
 
@@ -295,3 +301,4 @@ verified_by:
 [61] Verification command `cargo nextest run -p open-gpui-ui-core table`
 [62] Verification command `cargo nextest run -p open-gpui-ui-components table component_api_inventory`
 [63] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery table`
+[64] Plan `docs/plans/2026-06-23-009-feat-ui-table-row-pinning-plan.md`

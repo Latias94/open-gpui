@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-06-23: Wrote `docs/plans/2026-06-23-009-feat-ui-table-row-pinning-plan.md` as the next
+  Table follow-up. The plan uses TanStack Table's `top` / `center` / `bottom` row pinning model and
+  Fret's Rust row-pinning helpers as the main references. Scope is limited to core row pinning
+  state, duplicate-free pinned row regions, keep-pinned versus page-only policy, center-only
+  vertical virtualization, fixed top/bottom pinned bands in the GPUI adapter, focused Components
+  gallery proof, and contract / verification memory updates. Row-selection controls, cell editing,
+  synthetic summary rows, data fetching, standalone headless extraction, and full two-axis grid
+  virtualization remain deferred. Next action is U1: add the core row-pinning state and visibility
+  policy in `crates/ui_core/src/table.rs`.
 - 2026-06-23: Implemented `docs/plans/2026-06-23-008-feat-ui-table-faceting-filter-metadata-plan.md`
   in the working tree. `ui_core::TableState` now resolves per-column facet metadata, deterministic
   unique value counts, numeric ranges, and manual/server facet payloads with cache-key coverage.
