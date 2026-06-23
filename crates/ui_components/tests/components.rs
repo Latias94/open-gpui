@@ -3413,6 +3413,16 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         table.table_state().resolve().final_model().rows()[0].group();
     let _root_pinning: root::TableColumnPinning =
         root::TableColumnPinning::new().pinned_left(["name"]);
+    let root_sizing = root::TableColumnSizing::new().with_width("name", ui_px(180.0));
+    let _root_sizing: root::TableColumnSizing = root_sizing.clone();
+    let _prelude_sizing: prelude::TableColumnSizing =
+        prelude::TableColumnSizing::new().with_width("name", ui_px(180.0));
+    let _root_default_width = root::TABLE_DEFAULT_COLUMN_WIDTH;
+    let _root_min_width = root::TABLE_MIN_COLUMN_WIDTH;
+    let _root_max_width = root::TABLE_MAX_COLUMN_WIDTH;
+    let _prelude_default_width = prelude::TABLE_DEFAULT_COLUMN_WIDTH;
+    let _prelude_min_width = prelude::TABLE_MIN_COLUMN_WIDTH;
+    let _prelude_max_width = prelude::TABLE_MAX_COLUMN_WIDTH;
     let _prelude_region: prelude::TableColumnRegion = prelude::TableColumnRegion::Center;
     let _prelude_regions: prelude::TableColumnRegions = table
         .table_state()
