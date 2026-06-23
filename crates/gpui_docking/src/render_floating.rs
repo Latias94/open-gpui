@@ -7,9 +7,9 @@ use crate::{
     render::DockViewportHostSceneFrameSlot,
 };
 use open_gpui::{
-    AnyElement, AppContext, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, StatefulInteractiveElement,
-    Styled, Window, canvas, div, px, rgb, rgba, white,
+    AnyElement, AppContext, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+    StatefulInteractiveElement, Styled, Window, canvas, div, px, rgb, rgba, white,
 };
 
 impl DockHost {
@@ -161,31 +161,34 @@ impl DockHost {
                 .cursor_pointer()
                 // Fully transparent empty surfaces do not reliably initiate GPUI drag hit-tests.
                 .bg(rgba(0x00000001))
-                .on_drag(payload, move |payload, _, window, cx| {
-                    let start_position = window.mouse_position();
-                    let mut tear_off_geometry =
-                        DockDragTearOffGeometry::from_source_bounds(bounds, start_position)
-                            .with_preferred_size(bounds.size);
-                    if let Some(display) = window.display(cx) {
-                        tear_off_geometry =
-                            tear_off_geometry.with_display_work_area(display.visible_bounds());
-                    }
-                    drag_entity.update(cx, |host, cx| {
-                        host.begin_payload_drag_from_render(payload, cx);
-                        host.update_payload_drag_tear_off_geometry_from_render(
-                            payload,
-                            tear_off_geometry,
-                        );
-                        host.begin_floating_drag_from_render(
-                            drag_space.clone(),
-                            floating,
-                            start_position,
-                            bounds,
-                            cx,
-                        );
-                    });
-                    cx.new(|_| DockDragPreview::new(payload.title()))
-                })
+                .on_drag(
+                    payload,
+                    move |payload, _position, _source_bounds, window, cx| {
+                        let start_position = window.mouse_position();
+                        let mut tear_off_geometry =
+                            DockDragTearOffGeometry::from_source_bounds(bounds, start_position)
+                                .with_preferred_size(bounds.size);
+                        if let Some(display) = window.display(cx) {
+                            tear_off_geometry =
+                                tear_off_geometry.with_display_work_area(display.visible_bounds());
+                        }
+                        drag_entity.update(cx, |host, cx| {
+                            host.begin_payload_drag_from_render(payload, cx);
+                            host.update_payload_drag_tear_off_geometry_from_render(
+                                payload,
+                                tear_off_geometry,
+                            );
+                            host.begin_floating_drag_from_render(
+                                drag_space.clone(),
+                                floating,
+                                start_position,
+                                bounds,
+                                cx,
+                            );
+                        });
+                        cx.new(|_| DockDragPreview::new(payload.title()))
+                    },
+                )
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                         let payload = event.drag(cx).clone();
@@ -196,12 +199,16 @@ impl DockHost {
                                     if payload_floating == floating
                             )
                         {
+                            this.update_floating_drag_from_render(event.event.position, cx);
+                            let origin_delta = event.event.position - event.bounds.center();
+                            let floating_bounds =
+                                Bounds::new(bounds.origin + origin_delta, bounds.size);
                             let mut tear_off_geometry =
                                 DockDragTearOffGeometry::from_source_bounds(
-                                    bounds,
+                                    floating_bounds,
                                     event.event.position,
                                 )
-                                .with_preferred_size(bounds.size);
+                                .with_preferred_size(floating_bounds.size);
                             if let Some(display) = window.display(cx) {
                                 tear_off_geometry = tear_off_geometry
                                     .with_display_work_area(display.visible_bounds());
@@ -215,7 +222,10 @@ impl DockHost {
                             floating,
                             target_tabs,
                             event.bounds,
-                            bounds,
+                            Bounds::new(
+                                bounds.origin + (event.event.position - event.bounds.center()),
+                                bounds.size,
+                            ),
                         );
                         this.update_drop_scene_fact_from_render(
                             &payload,

@@ -5,7 +5,7 @@ use crate::viewport_target_resolver::choose_diagnostic_viewport_target;
 use crate::{
     DockSpaceId,
     viewport_registry::{
-        DockViewportPlatformRequests, DockViewportPointerRouting, DockViewportRegistry,
+        DockViewportInputMask, DockViewportPlatformRequests, DockViewportRegistry,
     },
 };
 use open_gpui::{AnyWindowHandle, WindowId};
@@ -70,10 +70,19 @@ impl DockViewportAdapter {
             .map(|snapshot| snapshot.is_route_ready())
     }
 
-    pub(crate) fn space_is_no_input_pass_through(&self, space: &DockSpaceId) -> bool {
-        self.snapshot(space).is_some_and(|snapshot| {
-            snapshot.pointer_routing == DockViewportPointerRouting::NoInputPassThrough
-        })
+    pub(crate) fn window_can_route_hover_hit(&self, window_id: WindowId) -> Option<bool> {
+        let space = self.space_for_window_id(window_id)?;
+        self.snapshot(space)
+            .map(|snapshot| snapshot.can_route_hover_hit())
+    }
+
+    pub(crate) fn space_input_mask(&self, space: &DockSpaceId) -> Option<DockViewportInputMask> {
+        self.snapshot(space).map(|snapshot| snapshot.input_mask)
+    }
+
+    pub(crate) fn window_input_mask(&self, window_id: WindowId) -> Option<DockViewportInputMask> {
+        let space = self.space_for_window_id(window_id)?;
+        self.space_input_mask(space)
     }
 
     pub(crate) fn window_close_requested(&self, window_id: WindowId) -> bool {
@@ -115,10 +124,6 @@ impl DockViewportAdapter {
         self.registry.window_for_space(space)
     }
 
-    pub(crate) fn record_recent_focus_window(&mut self, window_id: WindowId) -> bool {
-        self.registry.record_recent_focus_window(window_id)
-    }
-
     /// Returns the logical dock space rendered by a window id.
     pub(crate) fn space_for_window_id(&self, window_id: WindowId) -> Option<&DockSpaceId> {
         self.registry.space_for_window_id(window_id)
@@ -146,10 +151,6 @@ impl DockViewportAdapter {
     ) {
         self.registry
             .insert_stale_window_index_for_test(window_id, space);
-    }
-
-    pub(crate) fn spaces_by_recent_focus_order(&self) -> Vec<DockSpaceId> {
-        self.registry.spaces_by_recent_focus_order()
     }
 }
 
@@ -317,15 +318,13 @@ mod tests {
     }
 
     #[test]
-    fn viewport_target_empty_context_uses_stable_space_order_despite_recent_focus() {
+    fn viewport_target_empty_context_uses_stable_space_order() {
         let mut adapter = DockViewportAdapter::new();
         let alpha = space("alpha");
         let zeta = space("zeta");
-        let alpha_window = handle(1);
-        let zeta_window = handle(2);
 
-        register_viewport(&mut adapter, alpha.clone(), alpha_window);
-        register_viewport(&mut adapter, zeta.clone(), zeta_window);
+        register_viewport(&mut adapter, alpha.clone(), handle(1));
+        register_viewport(&mut adapter, zeta.clone(), handle(2));
         for space in [&alpha, &zeta] {
             adapter.update_snapshot(
                 space,
@@ -335,20 +334,13 @@ mod tests {
                 bounds(0.0, 0.0, 320.0, 240.0),
             );
         }
-        adapter.record_recent_focus_window(alpha_window.window_id());
-        adapter.record_recent_focus_window(zeta_window.window_id());
         let hits = adapter.global_screen_viewport_hits(point(px(120.0), px(140.0)));
 
         assert_eq!(
             choose_diagnostic_viewport_target(hits, &DockViewportTargetContext::new())
                 .map(|target| target.space().clone()),
             Some(alpha.clone()),
-            "default viewport hit testing must not infer target priority from recent focus"
-        );
-        assert_eq!(
-            adapter.spaces_by_recent_focus_order(),
-            vec![zeta, alpha],
-            "recent focus remains available only through the explicit diagnostic ordering interface"
+            "default viewport hit testing uses stable space order when no backend target selection exists"
         );
     }
 

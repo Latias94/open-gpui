@@ -1,29 +1,61 @@
 use crate::{
     DockSpaceId, DockViewportAdapter, DockViewportWindowFacts,
-    viewport_registry::{DockViewportPointerRouting, DockViewportStaleReason},
+    viewport_registry::{DockViewportInputMask, DockViewportStaleReason},
 };
 use open_gpui::{AnyWindowHandle, AppContext, Bounds, Pixels, Point, WindowId, point};
 
 impl DockViewportAdapter {
-    /// Collects all registered global-screen hits for a screen point.
-    pub(crate) fn global_screen_viewport_hits(
+    /// Collects all registered platform viewport windows containing a screen point.
+    ///
+    /// Input-eligible hits may provide a host target. Stale/not-ready hits are retained as
+    /// blockers so fallback route selection cannot pass through an opaque viewport window. Native
+    /// no-input and minimized windows are skipped like ImGui's viewport fallback.
+    pub(crate) fn global_screen_viewport_window_hits(
         &self,
         position: Point<Pixels>,
-    ) -> Vec<crate::DockViewportTargetHit> {
+    ) -> Vec<crate::DockViewportWindowHit> {
         self.spaces()
             .into_iter()
             .filter_map(|space| {
                 let snapshot = self.snapshot(&space)?;
+                let screen_bounds = snapshot.global_screen_bounds()?;
+                if !screen_bounds.contains(&position) {
+                    return None;
+                }
                 let window = snapshot.window;
+                if !snapshot.input_mask.participates_in_hover_hit_testing() {
+                    return None;
+                }
+                if let Some(reason) = snapshot.route_unavailable_reason() {
+                    return Some(crate::DockViewportWindowHit::blocking(
+                        space, window, reason,
+                    ));
+                }
                 let facts_generation = snapshot.facts_generation();
-                let host_position = self.global_screen_to_host(&space, position)?;
-                Some(crate::DockViewportTargetHit::with_facts_generation(
+                let window_position = point(
+                    position.x - screen_bounds.origin.x,
+                    position.y - screen_bounds.origin.y,
+                );
+                let host_position = self.window_to_host(&space, window_position);
+                Some(crate::DockViewportWindowHit::with_facts_generation(
                     space,
                     window,
                     host_position,
                     facts_generation,
                 ))
             })
+            .collect()
+    }
+
+    /// Collects all registered dock-host hits for a screen point.
+    #[cfg(test)]
+    pub(crate) fn global_screen_viewport_hits(
+        &self,
+        position: Point<Pixels>,
+    ) -> Vec<crate::DockViewportTargetHit> {
+        self.global_screen_viewport_window_hits(position)
+            .into_iter()
+            .filter_map(crate::DockViewportWindowHit::into_target_hit)
             .collect()
     }
 }
@@ -44,10 +76,12 @@ impl DockViewportAdapter {
         snapshot.update_route_facts(window_facts, host_bounds)
     }
 
-    /// Refreshes live pointer-routing facts without replacing rendered geometry snapshots.
-    pub(crate) fn refresh_registered_window_facts<C: AppContext>(
+    /// Refreshes live input-mask facts while avoiding a window that is already in the
+    /// current render/update callback.
+    pub(crate) fn refresh_registered_window_facts_except_window<C: AppContext>(
         &mut self,
         cx: &mut C,
+        skip_window_id: Option<WindowId>,
     ) -> Vec<AnyWindowHandle> {
         let viewports = self
             .registry
@@ -56,21 +90,27 @@ impl DockViewportAdapter {
             .collect::<Vec<_>>();
         let mut changed_windows = Vec::new();
         for (space, window) in viewports {
-            let Ok(pointer_routing) = window.update(cx, |_, window, _| {
+            if Some(window.window_id()) == skip_window_id {
+                continue;
+            }
+            let Ok(input_mask) = window.update(cx, |_, window, _| {
                 if window.is_minimized() {
-                    DockViewportPointerRouting::Minimized
+                    DockViewportInputMask::Minimized
                 } else if !window.accepts_pointer_input() {
-                    DockViewportPointerRouting::NoInputPassThrough
+                    DockViewportInputMask::NoInputPassThrough
                 } else {
-                    DockViewportPointerRouting::Routable
+                    DockViewportInputMask::ReceivesInput
                 }
             }) else {
+                if self.mark_window_snapshot_stale(window.window_id()) {
+                    changed_windows.push(window);
+                }
                 continue;
             };
             let Some(snapshot) = self.snapshot_mut(&space) else {
                 continue;
             };
-            if snapshot.refresh_pointer_routing(pointer_routing) {
+            if snapshot.refresh_input_mask(input_mask) {
                 changed_windows.push(window);
             }
         }
@@ -111,7 +151,7 @@ impl DockViewportAdapter {
     /// Marks a registered window as closing until the platform close callback unregisters it.
     ///
     /// This keeps the space/window mapping available for close attribution while removing the
-    /// route authority of a viewport whose contents were already merged back during should-close.
+    /// route selection for a viewport whose contents were already merged back during should-close.
     pub(crate) fn mark_window_close_requested(&mut self, window_id: WindowId) -> bool {
         let Some(space) = self.space_for_window_id(window_id).cloned() else {
             return false;
@@ -119,14 +159,13 @@ impl DockViewportAdapter {
         let Some(snapshot) = self.snapshot_mut(&space) else {
             return false;
         };
-        snapshot.mark_route_facts_stale(DockViewportStaleReason::PlatformCloseRequested)
+        snapshot.mark_platform_close_requested()
     }
 
-    /// Cancels a previously accepted platform close request without restoring stale route facts.
+    /// Cancels a previously accepted platform close request.
     ///
-    /// The next rendered host scene must publish fresh route facts before the window can route
-    /// drops again. This mirrors ImGui's per-frame request flags without guessing that a render
-    /// implies the platform close was aborted.
+    /// Close is a platform request flag, not a route-facts generation. Cancelling it restores
+    /// whatever route facts were otherwise current.
     pub(crate) fn cancel_window_close_requested(&mut self, window_id: WindowId) -> bool {
         let Some(space) = self.space_for_window_id(window_id).cloned() else {
             return false;
@@ -196,13 +235,16 @@ impl DockViewportAdapter {
 mod tests {
     use crate::{
         DockViewportAdapter, DockViewportHit, DockViewportTargetContext, DockViewportWindowFacts,
+        host_test_support::test_view,
         viewport_registry::{
             DockViewportLifecycleState, DockViewportRouteUnavailableReason, DockViewportStaleReason,
         },
         viewport_target_resolver::choose_diagnostic_viewport_target,
         viewport_test_support::{bounds, handle, register_viewport, space},
     };
-    use open_gpui::{DisplayId, WindowBounds, point, px};
+    use open_gpui::{
+        AnyWindowHandle, DisplayId, TestAppContext, WindowBounds, WindowOptions, point, px,
+    };
 
     #[test]
     fn coordinate_conversion_requires_current_bounds_snapshots() {
@@ -279,6 +321,64 @@ mod tests {
             choose_diagnostic_viewport_target(hits, &DockViewportTargetContext::new())
                 .map(|target| target.into_hit()),
             Some(DockViewportHit::new(main, point(px(5.0), px(5.0))))
+        );
+    }
+
+    #[open_gpui::test]
+    fn refresh_registered_window_facts_marks_unreachable_window_stale(cx: &mut TestAppContext) {
+        let root = test_view(cx, "A");
+        let window_bounds = WindowBounds::Windowed(bounds(100.0, 200.0, 320.0, 240.0));
+        let window: AnyWindowHandle = cx
+            .update(|app| {
+                app.open_window(
+                    WindowOptions {
+                        window_bounds: Some(window_bounds),
+                        focus: false,
+                        ..Default::default()
+                    },
+                    |_, _| root.clone(),
+                )
+            })
+            .expect("test window should open")
+            .into();
+        let mut adapter = DockViewportAdapter::new();
+        let main = space("main");
+        register_viewport(&mut adapter, main.clone(), window);
+        assert!(adapter.update_snapshot(
+            &main,
+            DockViewportWindowFacts::new(
+                Some(DisplayId::new(7)),
+                window_bounds,
+                window_bounds.get_bounds(),
+            ),
+            bounds(0.0, 0.0, 320.0, 240.0),
+        ));
+        assert_eq!(adapter.route_unavailable_reason(&main), None);
+
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .expect("test window should still be live");
+        cx.run_until_parked();
+
+        let changed_windows = adapter.refresh_registered_window_facts_except_window(cx, None);
+        assert_eq!(
+            changed_windows
+                .into_iter()
+                .map(|window| window.window_id())
+                .collect::<Vec<_>>(),
+            vec![window.window_id()],
+        );
+        assert_eq!(
+            adapter.route_unavailable_reason(&main),
+            Some(DockViewportRouteUnavailableReason::Stale(
+                DockViewportStaleReason::WindowFactsChanged
+            ))
+        );
+        let hits = adapter.global_screen_viewport_window_hits(point(px(110.0), px(210.0)));
+        assert_eq!(hits.len(), 1);
+        assert!(
+            hits[0].blocks_host_target(),
+            "stale live-window facts must block fallback instead of authorizing a stale host target"
         );
     }
 
@@ -493,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn cancel_window_close_request_requires_next_live_update_before_routing() {
+    fn cancel_window_close_request_restores_current_route_facts() {
         let mut adapter = DockViewportAdapter::new();
         let main = space("main");
         let window = handle(1);
@@ -509,18 +609,68 @@ mod tests {
 
         assert!(adapter.mark_window_close_requested(window.window_id()));
         assert!(!adapter.route_ready(&main));
-        assert!(adapter.cancel_window_close_requested(window.window_id()));
-        assert!(!adapter.route_ready(&main));
         assert_eq!(
             adapter.route_unavailable_reason(&main),
-            Some(DockViewportRouteUnavailableReason::Stale(
-                DockViewportStaleReason::WindowFactsChanged
-            ))
+            Some(DockViewportRouteUnavailableReason::PlatformCloseRequested)
+        );
+        assert!(adapter.cancel_window_close_requested(window.window_id()));
+        assert!(adapter.route_ready(&main));
+        assert_eq!(adapter.route_unavailable_reason(&main), None);
+        assert!(!adapter.update_snapshot(&main, window_facts, host_bounds));
+        assert!(!adapter.cancel_window_close_requested(window.window_id()));
+    }
+
+    #[test]
+    fn input_mask_refresh_to_no_input_preserves_route_facts_generation() {
+        let mut adapter = DockViewportAdapter::new();
+        let main = space("main");
+        let window = handle(1);
+        register_viewport(&mut adapter, main.clone(), window);
+        assert!(adapter.update_snapshot(
+            &main,
+            DockViewportWindowFacts::new(
+                Some(DisplayId::new(7)),
+                WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0)),
+                bounds(100.0, 200.0, 800.0, 600.0),
+            ),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        ));
+        let generation = adapter
+            .snapshot_facts_generation(&main, window.window_id())
+            .expect("fresh route facts should expose generation");
+
+        assert!(
+            adapter.apply_platform_window_facts(
+                window.window_id(),
+                DockViewportWindowFacts::new(
+                    Some(DisplayId::new(7)),
+                    WindowBounds::Windowed(bounds(120.0, 220.0, 800.0, 600.0)),
+                    bounds(120.0, 220.0, 800.0, 600.0),
+                )
+                .with_input_mask(
+                    crate::viewport_registry::DockViewportInputMask::NoInputPassThrough
+                ),
+            )
         );
 
-        assert!(adapter.update_snapshot(&main, window_facts, host_bounds));
         assert!(adapter.route_ready(&main));
-        assert!(!adapter.cancel_window_close_requested(window.window_id()));
+        assert_eq!(adapter.route_unavailable_reason(&main), None);
+        assert_eq!(
+            adapter.snapshot_facts_generation(&main, window.window_id()),
+            Some(generation),
+            "input-mask-only changes do not advance route facts generation"
+        );
+        assert_eq!(
+            adapter.global_screen_to_host(&main, point(px(135.0), px(245.0))),
+            Some(point(px(5.0), px(5.0))),
+            "coordinate conversion can still use current route facts"
+        );
+        assert!(
+            adapter
+                .global_screen_viewport_window_hits(point(px(135.0), px(245.0)))
+                .is_empty(),
+            "hover hit testing skips native no-input viewports"
+        );
     }
 
     #[test]

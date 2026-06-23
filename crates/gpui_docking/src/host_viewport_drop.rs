@@ -48,6 +48,8 @@ impl DockHost {
         let runtime = self.viewport_runtime().clone();
         let drag_session = self.active_payload_drag_session(payload);
         let tear_off_geometry = self.active_payload_drag_tear_off_geometry(drag_session.as_ref());
+        let event_receiver_local_scene_proof =
+            self.interaction().viewport_host_scene_frame().cloned();
         let request = viewport_drop_route_request_from_host(
             payload,
             position,
@@ -56,13 +58,18 @@ impl DockHost {
             DockPayloadDropReleaseOrigin::HoveredHost,
             drag_session,
             tear_off_geometry,
-        );
-        let resolution = runtime.resolve_payload_drop_delivery(&request, cx);
+        )
+        .with_event_receiver_local_scene_proof(event_receiver_local_scene_proof);
+        let resolution_outcome = runtime.resolve_payload_drop_delivery_outcome(&request, cx);
+        let route_resolution_changed = resolution_outcome.changed();
+        let resolution = resolution_outcome.resolution();
         let routed_preview_changed =
-            runtime.update_routed_drop_preview(&resolution, payload.title(), cx);
+            runtime.update_routed_drop_preview(resolution, payload.title(), cx);
         DockHostInteractionOutcome::from_session_changed(
-            self.interaction_mut()
-                .update_drop_route_preview(&resolution, position)
+            route_resolution_changed
+                || self
+                    .interaction_mut()
+                    .update_drop_route_preview(resolution, position)
                 || routed_preview_changed,
         )
     }
@@ -86,7 +93,7 @@ impl DockHost {
         cx: &Context<Self>,
     ) -> DockViewportDropRouteRequest {
         let drag_session = release.drag_session().cloned();
-        let tear_off_geometry = self.active_payload_drag_tear_off_geometry(drag_session.as_ref());
+        let tear_off_geometry = release.tear_off_geometry();
         viewport_drop_route_request_from_host(
             release.payload(),
             release.release_position(),
@@ -96,6 +103,7 @@ impl DockHost {
             drag_session,
             tear_off_geometry,
         )
+        .with_event_receiver_local_scene_proof(release.event_receiver_local_scene_proof().cloned())
     }
 }
 
@@ -114,6 +122,12 @@ fn viewport_drop_route_request_from_host(
         }
         DockPayloadDropReleaseOrigin::SourceOnly => DockViewportPlatformSignals::from_app(cx),
     };
+    let suggested_window_bounds = suggested_window_bounds_for_host_release(
+        window.window_bounds(),
+        host_position,
+        cx.viewport_capabilities().global_window_bounds,
+        tear_off_geometry,
+    );
     DockViewportDropRouteRequest::from_host_release(
         payload.source_space.clone(),
         payload.source_node,
@@ -126,7 +140,7 @@ fn viewport_drop_route_request_from_host(
                 DockViewportWindowBoundsFrame::WindowLocal(window.bounds())
             },
         ),
-        None,
+        suggested_window_bounds,
         platform_signals,
         origin,
     )
@@ -134,9 +148,96 @@ fn viewport_drop_route_request_from_host(
     .with_tear_off_geometry(tear_off_geometry)
 }
 
+fn suggested_window_bounds_for_host_release(
+    source_window_bounds: open_gpui::WindowBounds,
+    host_position: Point<Pixels>,
+    has_global_window_bounds: bool,
+    tear_off_geometry: Option<DockDragTearOffGeometry>,
+) -> Option<open_gpui::WindowBounds> {
+    if has_global_window_bounds {
+        return None;
+    }
+    tear_off_geometry.map(|geometry| {
+        crate::viewport_runtime::suggested_tear_off_window_bounds(
+            source_window_bounds,
+            host_position,
+            geometry,
+        )
+    })
+}
+
 fn host_local_point(host_bounds: Bounds<Pixels>, position: Point<Pixels>) -> Point<Pixels> {
     Point::new(
         position.x - host_bounds.origin.x,
         position.y - host_bounds.origin.y,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host_test_support::floating_bounds;
+    use open_gpui::{WindowBounds, point, px, size};
+
+    #[test]
+    fn host_release_suggests_tear_off_bounds_when_global_window_bounds_are_unavailable() {
+        let geometry = DockDragTearOffGeometry::from_source_bounds(
+            floating_bounds(20.0, 30.0, 480.0, 300.0),
+            point(px(70.0), px(90.0)),
+        )
+        .with_preferred_size(size(px(360.0), px(240.0)));
+
+        assert_eq!(
+            suggested_window_bounds_for_host_release(
+                WindowBounds::Windowed(floating_bounds(100.0, 200.0, 800.0, 600.0)),
+                point(px(460.0), px(330.0)),
+                false,
+                Some(geometry),
+            ),
+            Some(WindowBounds::Windowed(floating_bounds(
+                510.0, 470.0, 360.0, 240.0
+            )))
+        );
+    }
+
+    #[test]
+    fn host_release_keeps_global_tear_off_placement_on_drag_geometry_path() {
+        let geometry = DockDragTearOffGeometry::from_source_bounds(
+            floating_bounds(20.0, 30.0, 480.0, 300.0),
+            point(px(70.0), px(90.0)),
+        );
+
+        assert_eq!(
+            suggested_window_bounds_for_host_release(
+                WindowBounds::Windowed(floating_bounds(100.0, 200.0, 800.0, 600.0)),
+                point(px(460.0), px(330.0)),
+                true,
+                Some(geometry),
+            ),
+            None,
+            "global screen coordinates should continue to use exact drag geometry placement"
+        );
+    }
+
+    #[test]
+    fn host_release_suggests_undock_limited_bounds_for_large_geometry() {
+        let geometry = DockDragTearOffGeometry::from_source_bounds(
+            floating_bounds(0.0, 0.0, 1200.0, 900.0),
+            point(px(600.0), px(450.0)),
+        )
+        .with_preferred_size(size(px(1200.0), px(900.0)))
+        .with_display_work_area(floating_bounds(0.0, 0.0, 1000.0, 800.0));
+
+        assert_eq!(
+            suggested_window_bounds_for_host_release(
+                WindowBounds::Windowed(floating_bounds(100.0, 200.0, 1200.0, 900.0)),
+                point(px(1100.0), px(780.0)),
+                false,
+                Some(geometry),
+            ),
+            Some(WindowBounds::Windowed(floating_bounds(
+                100.0, 80.0, 900.0, 720.0
+            )))
+        );
+    }
 }

@@ -129,13 +129,15 @@ mod render_tabs;
 mod split_fraction;
 mod viewport;
 mod viewport_activation;
+mod viewport_backend_focus;
 mod viewport_close;
 mod viewport_close_plan;
 mod viewport_coordinates;
-mod viewport_drop_authority;
+mod viewport_drop_delivery;
 mod viewport_drop_route;
 mod viewport_drop_scene;
 mod viewport_focus;
+mod viewport_frame_coordinator;
 mod viewport_identity;
 mod viewport_open;
 mod viewport_placement;
@@ -153,7 +155,8 @@ mod viewport_runtime_status;
 mod viewport_target_context;
 mod viewport_target_resolver;
 mod viewport_tear_off;
-mod viewport_tear_off_authority;
+mod viewport_tear_off_move;
+mod viewport_window_ownership;
 mod workspace;
 mod workspace_action;
 mod workspace_floating_transaction;
@@ -213,14 +216,20 @@ pub use panel_catalog::*;
 pub use panel_registry::*;
 pub use policy::*;
 pub(crate) use viewport::*;
+#[cfg(test)]
+pub(crate) use viewport_activation::DockViewportWindowActivation;
 pub(crate) use viewport_activation::{
-    DockViewportActivationTransaction, DockViewportWindowActivation,
+    DockViewportActivationBackendFocusApply, DockViewportActivationBackendFocusObservation,
+    DockViewportActivationBackendFocusRecordEffect,
+    DockViewportActivationPendingBackendFocusEffect, DockViewportActivationTransaction,
 };
+pub(crate) use viewport_backend_focus::*;
 pub use viewport_close::*;
 pub(crate) use viewport_close_plan::*;
-pub(crate) use viewport_drop_authority::*;
+pub(crate) use viewport_drop_delivery::*;
 pub(crate) use viewport_drop_route::*;
 pub use viewport_focus::*;
+pub(crate) use viewport_frame_coordinator::*;
 pub(crate) use viewport_identity::*;
 pub use viewport_open::*;
 pub use viewport_placement::*;
@@ -237,10 +246,11 @@ pub(crate) use viewport_target_context::*;
 pub(crate) use viewport_target_resolver::*;
 pub use viewport_tear_off::DockViewportTearOffCancelReason;
 pub(crate) use viewport_tear_off::{
-    DockViewportDropActionOutcome, DockViewportDropPayload, DockViewportDropRouteOutcome,
-    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelled, DockViewportTearOffCompleted,
-    DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffTick,
+    DockViewportCommittedTearOffMove, DockViewportDropActionOutcome, DockViewportDropPayload,
+    DockViewportDropRouteOutcome, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelled,
+    DockViewportTearOffCompleted, DockViewportTearOffKey, DockViewportTearOffMachine,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
 };
-pub(crate) use viewport_tear_off_authority::*;
+pub(crate) use viewport_tear_off_move::*;
+pub(crate) use viewport_window_ownership::*;
 pub use workspace::*;

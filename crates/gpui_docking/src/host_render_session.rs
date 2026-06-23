@@ -239,6 +239,10 @@ impl DockHostRenderSession {
         self.has_empty_central_region() && self.central_passthrough_when_empty
     }
 
+    pub(crate) fn empty_central_requests_platform_pointer_passthrough(&self) -> bool {
+        self.empty_central_passthrough() && self.floating_containers.is_empty()
+    }
+
     pub(crate) fn panel_title(&self, item: &DockItemId) -> String {
         self.panel_titles
             .get(item)

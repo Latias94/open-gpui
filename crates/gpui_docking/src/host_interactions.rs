@@ -14,6 +14,16 @@ use crate::{
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
 
+pub(crate) struct DockHostTabDragBegin {
+    pub(crate) outcome: DockHostInteractionOutcome,
+    pub(crate) drag_session: DockRuntimeDragSession,
+}
+
+struct DockHostResolvedDropCommit {
+    outcome: DockHostInteractionOutcome,
+    focus_item: Option<DockItemId>,
+}
+
 impl DockHost {
     pub(crate) fn clear_drop_preview_interaction(&mut self) -> bool {
         let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
@@ -53,10 +63,13 @@ impl DockHost {
         item: DockItemId,
         payload: &DockDragPayload,
         cx: &mut Context<Self>,
-    ) -> (DockHostInteractionOutcome, DockRuntimeDragSession) {
+    ) -> DockHostTabDragBegin {
         let outcome = self.select_tab_interaction(tabs, item, cx);
         let drag_session = self.begin_payload_drag_interaction(payload, cx);
-        (outcome, drag_session)
+        DockHostTabDragBegin {
+            outcome,
+            drag_session,
+        }
     }
 
     pub(crate) fn begin_splitter_drag_interaction(
@@ -175,12 +188,12 @@ impl DockHost {
             Some(&edge_plan_resolver),
         );
         let outcome = if let Some(delivery) = local_delivery {
-            let (outcome, focus_item) = self.commit_resolved_payload_drop_interaction(
+            let commit = self.commit_resolved_payload_drop_interaction(
                 delivery.workspace_request(),
                 cx,
                 true,
             );
-            self.with_panel_focus_after_local_drop(outcome, focus_item, cx)
+            self.with_panel_focus_after_local_drop(commit.outcome, commit.focus_item, cx)
         } else if let Some(outcome) =
             self.commit_runtime_routed_payload_drop_interaction(&release, window, cx)
         {
@@ -249,7 +262,7 @@ impl DockHost {
         request: DockWorkspacePayloadDropRequest<'_>,
         cx: &mut Context<Self>,
         notify_on_unchanged: bool,
-    ) -> (DockHostInteractionOutcome, Option<DockItemId>) {
+    ) -> DockHostResolvedDropCommit {
         match self.mutate_controller_from_host_with(
             cx,
             |controller| {
@@ -259,17 +272,20 @@ impl DockHost {
             },
             |outcome| outcome.changed(),
         ) {
-            Ok(outcome) => (
-                DockHostInteractionOutcome::from_commit_result(
+            Ok(outcome) => DockHostResolvedDropCommit {
+                outcome: DockHostInteractionOutcome::from_commit_result(
                     Ok(outcome.action()),
                     notify_on_unchanged,
                 ),
-                outcome.focus_item().cloned(),
-            ),
-            Err(error) => (
-                DockHostInteractionOutcome::from_commit_result(Err(error), notify_on_unchanged),
-                None,
-            ),
+                focus_item: outcome.focus_item().cloned(),
+            },
+            Err(error) => DockHostResolvedDropCommit {
+                outcome: DockHostInteractionOutcome::from_commit_result(
+                    Err(error),
+                    notify_on_unchanged,
+                ),
+                focus_item: None,
+            },
         }
     }
 

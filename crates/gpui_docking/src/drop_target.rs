@@ -1,7 +1,7 @@
 use crate::{
     DockEdgeDockPlan, DockEdgeDockSizing, DockNodeId, DockPolicy, DockPolicyError, DockSpaceId,
     DropZone, SplitAxis,
-    geometry::{self, DockDropBox, DockDropGeometry, DockDropGuideStyle},
+    geometry::{self, DockDropBox, DockDropBoxKind, DockDropGeometry, DockDropGuideStyle},
 };
 use open_gpui::{Bounds, Pixels, Point, Size, px, size};
 
@@ -9,6 +9,12 @@ pub(crate) type DockDropTargetValidator<'a> =
     dyn Fn(&DockResolvedDropTarget) -> Result<(), DockPolicyError> + 'a;
 pub(crate) type DockEdgePlanResolver<'a> =
     dyn Fn(DockNodeId, DropZone, DockEdgeDockSizing) -> Option<DockEdgeDockPlan> + 'a;
+
+struct DockEdgeDropMetadata {
+    drop_box: DockDropBox,
+    preview_bounds: Bounds<Pixels>,
+    edge_sizing: DockEdgeDockSizing,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockResolvedDropTarget {
@@ -22,6 +28,16 @@ pub(crate) struct DockResolvedDropTarget {
 }
 
 impl DockResolvedDropTarget {
+    pub(crate) fn target_key(&self) -> DockDropTargetKey {
+        DockDropTargetKey {
+            kind: self.kind.clone(),
+            source: self.source,
+            drop_box_kind: self.drop_box.map(|drop_box| drop_box.kind),
+            edge_sizing: self.edge_sizing,
+            edge_plan: self.edge_plan,
+        }
+    }
+
     pub(crate) fn zone(&self) -> Option<DropZone> {
         match self.kind {
             DockResolvedDropTargetKind::TabBar { .. }
@@ -57,6 +73,15 @@ impl DockResolvedDropTarget {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockDropTargetKey {
+    kind: DockResolvedDropTargetKind,
+    source: DockDropResolveSource,
+    drop_box_kind: Option<DockDropBoxKind>,
+    edge_sizing: Option<DockEdgeDockSizing>,
+    edge_plan: Option<DockEdgeDockPlan>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockResolvedDropTargetKind {
     TabBar {
         target_tabs: DockNodeId,
@@ -82,7 +107,6 @@ pub(crate) enum DockResolvedDropTargetKind {
     },
     EmptyDockSpace {
         space: DockSpaceId,
-        is_central: bool,
     },
 }
 
@@ -202,50 +226,48 @@ pub(crate) struct DockDropRejection {
     pub(crate) reason: DockPolicyError,
 }
 
+#[derive(Debug)]
+struct DockDropCandidate {
+    target: DockResolvedDropTarget,
+    hit_bounds: Bounds<Pixels>,
+    order: usize,
+}
+
 pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<DockDropResolution> {
-    let mut rejection = None;
+    let candidates = collect_drop_candidates(&input);
+    choose_drop_candidate(candidates, input.policy, input.target_validator)
+}
 
-    if let Some(resolution) = resolve_floating_title_bar_drop(&input)
-        .map(|target| validate_resolved_drop_target(target, input.policy, input.target_validator))
-    {
-        if resolution.is_valid() {
-            return Some(resolution);
-        }
-        rejection.get_or_insert(resolution);
-    }
+fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCandidate> {
+    let mut candidates = Vec::new();
+    let mut order = 0;
 
-    if let Some(resolution) = resolve_tab_bar_drop(&input)
-        .map(|target| validate_resolved_drop_target(target, input.policy, input.target_validator))
+    for target in input
+        .empty_spaces
+        .iter()
+        .filter(|target| target.bounds.contains(&input.position))
     {
-        if resolution.is_valid() {
-            return Some(resolution);
-        }
-        rejection.get_or_insert(resolution);
-    }
-
-    if let Some(resolution) = resolve_tab_bar_empty_drop(&input)
-        .map(|target| validate_resolved_drop_target(target, input.policy, input.target_validator))
-    {
-        if resolution.is_valid() {
-            return Some(resolution);
-        }
-        rejection.get_or_insert(resolution);
-    }
-
-    let leaf = topmost_leaf_containing(input.leaves, input.position);
-    if let Some(resolution) = resolve_root_edge_drop(&input, leaf)
-        .map(|target| validate_resolved_drop_target(target, input.policy, input.target_validator))
-    {
-        if resolution.is_valid() {
-            return Some(resolution);
-        }
-        rejection.get_or_insert(resolution);
+        push_drop_candidate(
+            &mut candidates,
+            &mut order,
+            DockResolvedDropTarget {
+                kind: DockResolvedDropTargetKind::EmptyDockSpace {
+                    space: target.space.clone(),
+                },
+                source: DockDropResolveSource::EmptyDockSpace,
+                drop_box: None,
+                preview_bounds: Some(target.bounds),
+                edge_sizing: None,
+                edge_plan: None,
+                is_central_region: target.is_central,
+            },
+            target.bounds,
+        );
     }
 
     for leaf in input
         .leaves
         .iter()
-        .rev()
         .filter(|leaf| leaf.bounds.contains(&input.position))
     {
         let Some(target) = resolve_leaf_drop(
@@ -257,60 +279,49 @@ pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<Do
         ) else {
             continue;
         };
-        let resolution =
-            validate_resolved_drop_target(target, input.policy, input.target_validator);
-        if resolution.is_valid() {
-            return Some(resolution);
-        }
-        rejection.get_or_insert(resolution);
+        let hit_bounds = target
+            .drop_box
+            .map_or(leaf.bounds, |drop_box| drop_box.hit_bounds);
+        push_drop_candidate(&mut candidates, &mut order, target, hit_bounds);
     }
 
-    if let Some(resolution) = resolve_empty_space_drop(&input)
-        .map(|target| validate_resolved_drop_target(target, input.policy, input.target_validator))
-    {
-        if resolution.is_valid() {
-            return Some(resolution);
-        }
-        rejection.get_or_insert(resolution);
-    }
-
-    rejection
-}
-
-fn resolve_floating_title_bar_drop(
-    input: &DockDropResolverInput<'_>,
-) -> Option<DockResolvedDropTarget> {
-    input
-        .floating_title_bars
+    for target in input
+        .tab_bars
         .iter()
-        .rev()
-        .find(|target| target.title_bounds.contains(&input.position))
-        .map(|target| DockResolvedDropTarget {
-            kind: DockResolvedDropTargetKind::FloatingTitleBar {
-                floating: target.floating,
-                target_tabs: target.target_tabs,
+        .filter(|target| target.bounds.contains(&input.position))
+    {
+        push_drop_candidate(
+            &mut candidates,
+            &mut order,
+            DockResolvedDropTarget {
+                kind: DockResolvedDropTargetKind::TabBar {
+                    target_tabs: target.target_tabs,
+                    insert_index: target.insert_index,
+                },
+                source: DockDropResolveSource::TabBar,
+                drop_box: None,
+                preview_bounds: Some(target.bounds),
+                edge_sizing: None,
+                edge_plan: None,
+                is_central_region: target.is_central,
             },
-            source: DockDropResolveSource::FloatingTitleBar,
-            drop_box: None,
-            preview_bounds: Some(target.preview_bounds),
-            edge_sizing: None,
-            edge_plan: None,
-            is_central_region: false,
-        })
-}
+            target.bounds,
+        );
+    }
 
-fn resolve_tab_bar_drop(input: &DockDropResolverInput<'_>) -> Option<DockResolvedDropTarget> {
-    input
+    for target in input
         .tab_labels
         .iter()
-        .rev()
-        .find(|target| target.bounds.contains(&input.position))
-        .map(|target| {
-            let insert_index = if input.position.x < target.bounds.center().x {
-                target.target_index
-            } else {
-                target.target_index.saturating_add(1)
-            };
+        .filter(|target| target.bounds.contains(&input.position))
+    {
+        let insert_index = if input.position.x < target.bounds.center().x {
+            target.target_index
+        } else {
+            target.target_index.saturating_add(1)
+        };
+        push_drop_candidate(
+            &mut candidates,
+            &mut order,
             DockResolvedDropTarget {
                 kind: DockResolvedDropTargetKind::TabBar {
                     target_tabs: target.target_tabs,
@@ -322,28 +333,113 @@ fn resolve_tab_bar_drop(input: &DockDropResolverInput<'_>) -> Option<DockResolve
                 edge_sizing: None,
                 edge_plan: None,
                 is_central_region: target.is_central,
-            }
-        })
+            },
+            target.bounds,
+        );
+    }
+
+    for target in input
+        .floating_title_bars
+        .iter()
+        .filter(|target| target.title_bounds.contains(&input.position))
+    {
+        push_drop_candidate(
+            &mut candidates,
+            &mut order,
+            DockResolvedDropTarget {
+                kind: DockResolvedDropTargetKind::FloatingTitleBar {
+                    floating: target.floating,
+                    target_tabs: target.target_tabs,
+                },
+                source: DockDropResolveSource::FloatingTitleBar,
+                drop_box: None,
+                preview_bounds: Some(target.preview_bounds),
+                edge_sizing: None,
+                edge_plan: None,
+                is_central_region: false,
+            },
+            target.title_bounds,
+        );
+    }
+
+    let leaf = input
+        .root
+        .and_then(|root| best_leaf_for_root_containing(input.leaves, input.position, root.root));
+    if let Some(target) = resolve_root_edge_drop(input, leaf) {
+        let root_bounds = input.root.expect("root edge target requires root").bounds;
+        let hit_bounds = target
+            .drop_box
+            .map_or(root_bounds, |drop_box| drop_box.hit_bounds);
+        push_drop_candidate(&mut candidates, &mut order, target, hit_bounds);
+    }
+
+    candidates
 }
 
-fn resolve_tab_bar_empty_drop(input: &DockDropResolverInput<'_>) -> Option<DockResolvedDropTarget> {
-    input
-        .tab_bars
-        .iter()
-        .rev()
-        .find(|target| target.bounds.contains(&input.position))
-        .map(|target| DockResolvedDropTarget {
-            kind: DockResolvedDropTargetKind::TabBar {
-                target_tabs: target.target_tabs,
-                insert_index: target.insert_index,
-            },
-            source: DockDropResolveSource::TabBar,
-            drop_box: None,
-            preview_bounds: Some(target.bounds),
-            edge_sizing: None,
-            edge_plan: None,
-            is_central_region: target.is_central,
-        })
+fn push_drop_candidate(
+    candidates: &mut Vec<DockDropCandidate>,
+    order: &mut usize,
+    target: DockResolvedDropTarget,
+    hit_bounds: Bounds<Pixels>,
+) {
+    candidates.push(DockDropCandidate {
+        target,
+        hit_bounds,
+        order: *order,
+    });
+    *order += 1;
+}
+
+fn choose_drop_candidate(
+    candidates: Vec<DockDropCandidate>,
+    policy: &DockPolicy,
+    target_validator: Option<&DockDropTargetValidator<'_>>,
+) -> Option<DockDropResolution> {
+    let mut best_valid = None;
+    let mut best_rejection = None;
+
+    for candidate in candidates {
+        let hit_bounds = candidate.hit_bounds;
+        let order = candidate.order;
+        let resolution = validate_resolved_drop_target(candidate.target, policy, target_validator);
+        let slot = if resolution.is_valid() {
+            &mut best_valid
+        } else {
+            &mut best_rejection
+        };
+
+        if candidate_beats_current(hit_bounds, order, slot.as_ref()) {
+            *slot = Some((hit_bounds, order, resolution));
+        }
+    }
+
+    best_valid
+        .or(best_rejection)
+        .map(|(_, _, resolution)| resolution)
+}
+
+fn candidate_beats_current(
+    hit_bounds: Bounds<Pixels>,
+    order: usize,
+    current: Option<&(Bounds<Pixels>, usize, DockDropResolution)>,
+) -> bool {
+    let Some((current_bounds, current_order, _)) = current else {
+        return true;
+    };
+    let area = bounds_area(hit_bounds);
+    let current_area = bounds_area(*current_bounds);
+    area < current_area || (area == current_area && order > *current_order)
+}
+
+fn bounds_area(bounds: Bounds<Pixels>) -> f32 {
+    let width = f32::from(bounds.size.width).max(0.0);
+    let height = f32::from(bounds.size.height).max(0.0);
+    let area = width * height;
+    if area.is_finite() {
+        area
+    } else {
+        f32::INFINITY
+    }
 }
 
 fn resolve_root_edge_drop(
@@ -363,11 +459,10 @@ fn resolve_root_edge_drop(
         input.drop_guide_style,
     )?;
 
-    let (drop_box, preview_bounds, edge_sizing) =
-        edge_drop_metadata(root.bounds, geometry.drop_box, input.payload_size);
+    let metadata = edge_drop_metadata(root.bounds, geometry.drop_box, input.payload_size);
     let edge_plan = input
         .edge_plan_resolver
-        .and_then(|resolver| resolver(root.root, geometry.zone(), edge_sizing));
+        .and_then(|resolver| resolver(root.root, geometry.zone(), metadata.edge_sizing));
 
     Some(DockResolvedDropTarget {
         kind: DockResolvedDropTargetKind::RootEdge {
@@ -376,9 +471,9 @@ fn resolve_root_edge_drop(
             zone: geometry.zone(),
         },
         source: DockDropResolveSource::RootEdge,
-        drop_box: Some(drop_box),
-        preview_bounds: Some(preview_bounds),
-        edge_sizing: Some(edge_sizing),
+        drop_box: Some(metadata.drop_box),
+        preview_bounds: Some(metadata.preview_bounds),
+        edge_sizing: Some(metadata.edge_sizing),
         edge_plan,
         is_central_region: false,
     })
@@ -393,32 +488,7 @@ fn resolve_leaf_drop(
 ) -> Option<DockResolvedDropTarget> {
     let geometry =
         geometry::resolve_inner_drop_geometry_with_style(leaf.bounds, position, drop_guide_style)?;
-    Some(target_from_leaf_geometry(
-        leaf,
-        geometry,
-        payload_size,
-        edge_plan_resolver,
-    ))
-}
-
-fn resolve_empty_space_drop(input: &DockDropResolverInput<'_>) -> Option<DockResolvedDropTarget> {
-    input
-        .empty_spaces
-        .iter()
-        .rev()
-        .find(|target| target.bounds.contains(&input.position))
-        .map(|target| DockResolvedDropTarget {
-            kind: DockResolvedDropTargetKind::EmptyDockSpace {
-                space: target.space.clone(),
-                is_central: target.is_central,
-            },
-            source: DockDropResolveSource::EmptyDockSpace,
-            drop_box: None,
-            preview_bounds: Some(target.bounds),
-            edge_sizing: None,
-            edge_plan: None,
-            is_central_region: target.is_central,
-        })
+    target_from_leaf_geometry(leaf, geometry, payload_size, edge_plan_resolver)
 }
 
 pub(crate) fn validate_resolved_drop_target(
@@ -461,7 +531,7 @@ fn target_from_leaf_geometry(
     geometry: DockDropGeometry,
     payload_size: Option<Size<Pixels>>,
     edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
-) -> DockResolvedDropTarget {
+) -> Option<DockResolvedDropTarget> {
     let kind = if geometry.drop_box.kind.is_center() {
         DockResolvedDropTargetKind::LeafCenter {
             root: leaf.root,
@@ -481,7 +551,7 @@ fn target_from_leaf_geometry(
     };
 
     if geometry.drop_box.kind.is_center() {
-        return DockResolvedDropTarget {
+        return Some(DockResolvedDropTarget {
             kind,
             source,
             drop_box: Some(geometry.drop_box),
@@ -489,30 +559,33 @@ fn target_from_leaf_geometry(
             edge_sizing: None,
             edge_plan: None,
             is_central_region: leaf.is_central,
-        };
+        });
     }
 
-    let (drop_box, preview_bounds, edge_sizing) =
-        edge_drop_metadata(leaf.bounds, geometry.drop_box, payload_size);
-    let edge_plan = edge_plan_resolver
-        .and_then(|resolver| resolver(leaf.target_tabs, geometry.zone(), edge_sizing));
+    if leaf.is_central {
+        return None;
+    }
 
-    DockResolvedDropTarget {
+    let metadata = edge_drop_metadata(leaf.bounds, geometry.drop_box, payload_size);
+    let edge_plan = edge_plan_resolver
+        .and_then(|resolver| resolver(leaf.target_tabs, geometry.zone(), metadata.edge_sizing));
+
+    Some(DockResolvedDropTarget {
         kind,
         source,
-        drop_box: Some(drop_box),
-        preview_bounds: Some(preview_bounds),
-        edge_sizing: Some(edge_sizing),
+        drop_box: Some(metadata.drop_box),
+        preview_bounds: Some(metadata.preview_bounds),
+        edge_sizing: Some(metadata.edge_sizing),
         edge_plan,
         is_central_region: leaf.is_central,
-    }
+    })
 }
 
 fn edge_drop_metadata(
     target_bounds: Bounds<Pixels>,
     mut drop_box: DockDropBox,
     payload_size: Option<Size<Pixels>>,
-) -> (DockDropBox, Bounds<Pixels>, DockEdgeDockSizing) {
+) -> DockEdgeDropMetadata {
     let zone = drop_box.kind.zone();
     let preview_bounds = edge_preview_bounds(zone, target_bounds, payload_size);
     drop_box.preview_bounds = preview_bounds;
@@ -521,7 +594,11 @@ fn edge_drop_metadata(
         split_extent(axis, preview_bounds),
         split_extent(axis, target_bounds),
     );
-    (drop_box, preview_bounds, sizing)
+    DockEdgeDropMetadata {
+        drop_box,
+        preview_bounds,
+        edge_sizing: sizing,
+    }
 }
 
 fn edge_preview_bounds(
@@ -588,14 +665,28 @@ fn split_size_extent(axis: SplitAxis, size: Size<Pixels>) -> Pixels {
     }
 }
 
-fn topmost_leaf_containing(
+fn best_leaf_for_root_containing(
     leaves: &[DockLeafDropTarget],
     position: Point<Pixels>,
+    root: DockNodeId,
 ) -> Option<&DockLeafDropTarget> {
-    leaves
-        .iter()
-        .rev()
-        .find(|target| target.bounds.contains(&position))
+    let mut best: Option<(&DockLeafDropTarget, f32, usize)> = None;
+    for (index, leaf) in leaves.iter().enumerate() {
+        if leaf.root != root || !leaf.bounds.contains(&position) {
+            continue;
+        }
+        let area = bounds_area(leaf.bounds);
+        let is_better = match best {
+            None => true,
+            Some((_, best_area, best_index)) => {
+                area < best_area || (area == best_area && index > best_index)
+            }
+        };
+        if is_better {
+            best = Some((leaf, area, index));
+        }
+    }
+    best.map(|(leaf, _, _)| leaf)
 }
 
 #[cfg(test)]
@@ -1010,13 +1101,13 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_leaf_hits_follow_render_order_rather_than_area() {
+    fn overlapping_leaf_hits_choose_smallest_area_regardless_of_order() {
         let (background_tabs, foreground_tabs) = two_node_ids();
         let background_bounds = bounds(180.0, 180.0);
         let foreground_bounds = Bounds::new(point(px(50.0), px(60.0)), size(px(100.0), px(100.0)));
         let position = background_bounds.center();
-        let target = resolve_layout_drop(DockDropResolverInput {
-            leaves: &[
+        for leaves in [
+            [
                 DockLeafDropTarget {
                     root: background_tabs,
                     target_tabs: background_tabs,
@@ -1030,19 +1121,37 @@ mod tests {
                     is_central: false,
                 },
             ],
-            ..DockDropResolverInput::new(position, &policy())
-        })
-        .and_then(DockDropResolution::target)
-        .expect("overlapping leaves should resolve");
+            [
+                DockLeafDropTarget {
+                    root: foreground_tabs,
+                    target_tabs: foreground_tabs,
+                    bounds: foreground_bounds,
+                    is_central: false,
+                },
+                DockLeafDropTarget {
+                    root: background_tabs,
+                    target_tabs: background_tabs,
+                    bounds: background_bounds,
+                    is_central: false,
+                },
+            ],
+        ] {
+            let target = resolve_layout_drop(DockDropResolverInput {
+                leaves: &leaves,
+                ..DockDropResolverInput::new(position, &policy())
+            })
+            .and_then(DockDropResolution::target)
+            .expect("overlapping leaves should resolve");
 
-        assert_eq!(target.source, DockDropResolveSource::LeafBody);
-        assert_eq!(
-            target.kind,
-            DockResolvedDropTargetKind::LeafCenter {
-                root: foreground_tabs,
-                target_tabs: foreground_tabs,
-            }
-        );
+            assert_eq!(target.source, DockDropResolveSource::LeafBody);
+            assert_eq!(
+                target.kind,
+                DockResolvedDropTargetKind::LeafCenter {
+                    root: foreground_tabs,
+                    target_tabs: foreground_tabs,
+                }
+            );
+        }
     }
 
     #[test]
@@ -1100,7 +1209,7 @@ mod tests {
     }
 
     #[test]
-    fn all_rejected_candidates_preserve_first_rejection_for_preview() {
+    fn all_rejected_candidates_preserve_smallest_rejection_for_preview() {
         let (background_tabs, foreground_tabs) = two_node_ids();
         let background_bounds = bounds(180.0, 180.0);
         let foreground_bounds = bounds(100.0, 100.0);
@@ -1146,6 +1255,41 @@ mod tests {
                 target_tabs: foreground_tabs,
             }
         );
+    }
+
+    #[test]
+    fn overlapping_tab_labels_choose_smallest_area_regardless_of_order() {
+        let (wide_tabs, narrow_tabs) = two_node_ids();
+        let wide = DockTabLabelDropTarget {
+            target_tabs: wide_tabs,
+            target_index: 0,
+            bounds: bounds(160.0, 24.0),
+            is_central: false,
+        };
+        let narrow = DockTabLabelDropTarget {
+            target_tabs: narrow_tabs,
+            target_index: 0,
+            bounds: Bounds::new(point(px(30.0), px(20.0)), size(px(80.0), px(24.0))),
+            is_central: false,
+        };
+        let position = point(px(50.0), px(28.0));
+
+        for tab_labels in [[wide, narrow], [narrow, wide]] {
+            let target = resolve_layout_drop(DockDropResolverInput {
+                tab_labels: &tab_labels,
+                ..DockDropResolverInput::new(position, &policy())
+            })
+            .and_then(DockDropResolution::target)
+            .expect("overlapping tab labels should resolve");
+
+            assert_eq!(
+                target.kind,
+                DockResolvedDropTargetKind::TabBar {
+                    target_tabs: narrow_tabs,
+                    insert_index: 0,
+                }
+            );
+        }
     }
 
     #[test]
@@ -1197,16 +1341,6 @@ mod tests {
             point(position.x - px(60.0), position.y - px(60.0)),
             size(px(120.0), px(120.0)),
         )
-    }
-
-    fn expected_root_edge_preview_bounds(zone: DropZone) -> Bounds<Pixels> {
-        match zone {
-            DropZone::Left => Bounds::new(point(px(0.0), px(0.0)), size(px(300.0), px(400.0))),
-            DropZone::Right => Bounds::new(point(px(300.0), px(0.0)), size(px(300.0), px(400.0))),
-            DropZone::Top => Bounds::new(point(px(0.0), px(0.0)), size(px(600.0), px(200.0))),
-            DropZone::Bottom => Bounds::new(point(px(0.0), px(200.0)), size(px(600.0), px(200.0))),
-            DropZone::Center => unreachable!(),
-        }
     }
 
     #[test]
@@ -1284,7 +1418,7 @@ mod tests {
     }
 
     #[test]
-    fn root_outer_edges_resolve_before_leaf_inner_edges_when_root_and_leaf_differ() {
+    fn root_outer_edges_do_not_override_smaller_leaf_targets() {
         let mut graph = DockGraph::new();
         let leaf_tabs = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("a")],
@@ -1321,29 +1455,19 @@ mod tests {
                 ..DockDropResolverInput::new(position, &policy())
             })
             .and_then(DockDropResolution::target)
-            .unwrap_or_else(|| panic!("{zone:?} root edge should resolve"));
+            .unwrap_or_else(|| panic!("{zone:?} smaller leaf target should resolve"));
 
-            assert_eq!(target.source, DockDropResolveSource::RootEdge, "{zone:?}");
-            assert_eq!(
-                target.drop_box.map(|drop_box| drop_box.kind),
-                Some(DockDropBoxKind::OuterEdge(zone)),
-                "{zone:?}"
-            );
+            assert_eq!(target.source, DockDropResolveSource::LeafBody, "{zone:?}");
             assert_eq!(
                 target.kind,
-                DockResolvedDropTargetKind::RootEdge {
+                DockResolvedDropTargetKind::LeafCenter {
                     root,
-                    leaf_tabs: Some(leaf_tabs),
-                    zone,
+                    target_tabs: leaf_tabs,
                 },
                 "{zone:?}"
             );
-            assert_eq!(target.zone(), Some(zone), "{zone:?}");
-            assert_eq!(
-                target.preview_bounds,
-                Some(expected_root_edge_preview_bounds(zone)),
-                "{zone:?}"
-            );
+            assert_eq!(target.zone(), Some(DropZone::Center), "{zone:?}");
+            assert_eq!(target.preview_bounds, Some(leaf_bounds), "{zone:?}");
         }
     }
 
@@ -1506,6 +1630,123 @@ mod tests {
     }
 
     #[test]
+    fn smaller_foreign_leaf_hit_beats_root_edge_candidate() {
+        let mut graph = DockGraph::new();
+        let leaf_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("leaf")],
+            selected: Some(DockItemId::from("leaf")),
+        });
+        let sibling = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("sibling")],
+            selected: Some(DockItemId::from("sibling")),
+        });
+        let foreign_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("foreign")],
+            selected: Some(DockItemId::from("foreign")),
+        });
+        let root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![leaf_tabs, sibling],
+            fractions: vec![0.5, 0.5],
+        });
+        let position = root_edge_position(DropZone::Left);
+        let same_root_bounds = leaf_bounds_containing(position);
+        let foreign_bounds = Bounds::new(
+            point(position.x - px(20.0), position.y - px(20.0)),
+            size(px(40.0), px(40.0)),
+        );
+
+        let target = resolve_layout_drop(DockDropResolverInput {
+            root: Some(DockRootDropTarget {
+                root,
+                bounds: root_bounds(),
+            }),
+            leaves: &[
+                DockLeafDropTarget {
+                    root,
+                    target_tabs: leaf_tabs,
+                    bounds: same_root_bounds,
+                    is_central: false,
+                },
+                DockLeafDropTarget {
+                    root: foreign_tabs,
+                    target_tabs: foreign_tabs,
+                    bounds: foreign_bounds,
+                    is_central: false,
+                },
+            ],
+            ..DockDropResolverInput::new(position, &policy())
+        })
+        .and_then(DockDropResolution::target)
+        .expect("smaller foreign leaf should resolve");
+
+        assert_eq!(target.source, DockDropResolveSource::LeafBody);
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::LeafCenter {
+                root: foreign_tabs,
+                target_tabs: foreign_tabs,
+            }
+        );
+    }
+
+    #[test]
+    fn rejected_root_edge_falls_back_to_valid_leaf_candidate() {
+        let mut graph = DockGraph::new();
+        let leaf_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("leaf")],
+            selected: Some(DockItemId::from("leaf")),
+        });
+        let sibling = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("sibling")],
+            selected: Some(DockItemId::from("sibling")),
+        });
+        let root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![leaf_tabs, sibling],
+            fractions: vec![0.5, 0.5],
+        });
+        let position = root_edge_position(DropZone::Left);
+        let validator = |target: &DockResolvedDropTarget| {
+            if target.source == DockDropResolveSource::RootEdge {
+                Err(DockPolicyError::DockClassRejected {
+                    space: DockSpaceId::from("main"),
+                    item: DockItemId::from("a"),
+                    dock_class: None,
+                })
+            } else {
+                Ok(())
+            }
+        };
+
+        let target = resolve_layout_drop(DockDropResolverInput {
+            root: Some(DockRootDropTarget {
+                root,
+                bounds: root_bounds(),
+            }),
+            leaves: &[DockLeafDropTarget {
+                root,
+                target_tabs: leaf_tabs,
+                bounds: leaf_bounds_containing(position),
+                is_central: false,
+            }],
+            target_validator: Some(&validator),
+            ..DockDropResolverInput::new(position, &policy())
+        })
+        .and_then(DockDropResolution::target)
+        .expect("valid leaf fallback should resolve");
+
+        assert_eq!(target.source, DockDropResolveSource::LeafBody);
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::LeafCenter {
+                root,
+                target_tabs: leaf_tabs,
+            }
+        );
+    }
+
+    #[test]
     fn empty_dock_space_resolves_without_tabs_node() {
         let space = DockSpaceId::from("empty");
         let target = resolve_layout_drop(DockDropResolverInput {
@@ -1522,10 +1763,7 @@ mod tests {
         assert_eq!(target.source, DockDropResolveSource::EmptyDockSpace);
         assert_eq!(
             target.kind,
-            DockResolvedDropTargetKind::EmptyDockSpace {
-                space,
-                is_central: false,
-            }
+            DockResolvedDropTargetKind::EmptyDockSpace { space }
         );
         assert_eq!(
             target.preview_bounds,
@@ -1566,7 +1804,6 @@ mod tests {
             rejection.target.kind,
             DockResolvedDropTargetKind::EmptyDockSpace {
                 space: space.clone(),
-                is_central: false,
             }
         );
         assert_eq!(
@@ -1603,10 +1840,7 @@ mod tests {
         );
         assert_eq!(
             rejection.target.kind,
-            DockResolvedDropTargetKind::EmptyDockSpace {
-                space,
-                is_central: true,
-            }
+            DockResolvedDropTargetKind::EmptyDockSpace { space }
         );
         assert_eq!(
             rejection.reason,
@@ -1712,42 +1946,65 @@ mod tests {
     }
 
     #[test]
-    fn central_edge_splits_do_not_use_central_dock_over_policy() {
+    fn central_leaf_side_hit_does_not_create_inner_edge_target() {
         let root = tabs();
-        let mut policy = DockPolicy::default();
-        policy.set_allow_central_region_dock_over(false);
         let leaf_bounds = bounds(300.0, 200.0);
         let position = drop_box_center(
             leaf_bounds,
             DockDropBoxSet::Inner,
             DockDropBoxKind::InnerEdge(DropZone::Left),
         );
+
         let target = resolve_layout_drop(DockDropResolverInput {
             leaves: &[DockLeafDropTarget {
                 is_central: true,
                 bounds: leaf_bounds,
                 ..leaf(root, root)
             }],
-            ..DockDropResolverInput::new(position, &policy)
+            ..DockDropResolverInput::new(position, &policy())
+        })
+        .and_then(DockDropResolution::target);
+
+        assert_eq!(
+            target, None,
+            "central side hits should be represented by root outer docking, not hidden inner-edge targets"
+        );
+    }
+
+    #[test]
+    fn central_leaf_side_hit_prefers_smaller_leaf_body_over_root_outer_edge() {
+        let (central_tabs, sibling) = two_node_ids();
+        let mut graph = DockGraph::new();
+        let root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![central_tabs, sibling],
+            fractions: vec![0.5, 0.5],
+        });
+        let zone = DropZone::Left;
+        let position = root_edge_position(zone);
+        let target = resolve_layout_drop(DockDropResolverInput {
+            root: Some(DockRootDropTarget {
+                root,
+                bounds: root_bounds(),
+            }),
+            leaves: &[DockLeafDropTarget {
+                root,
+                target_tabs: central_tabs,
+                bounds: leaf_bounds_containing(position),
+                is_central: true,
+            }],
+            ..DockDropResolverInput::new(position, &policy())
         })
         .and_then(DockDropResolution::target)
-        .expect("central inner edge should still be accepted");
+        .expect("central side hit should resolve to the smaller leaf body");
 
-        assert_eq!(target.source, DockDropResolveSource::InnerEdge);
-        assert_eq!(target.zone(), Some(DropZone::Left));
-
-        policy.set_allow_edge_split(false);
-        let DockDropResolution::Rejected(rejection) = resolve_layout_drop(DockDropResolverInput {
-            leaves: &[DockLeafDropTarget {
-                is_central: true,
-                bounds: leaf_bounds,
-                ..leaf(root, root)
-            }],
-            ..DockDropResolverInput::new(position, &policy)
-        })
-        .expect("central inner edge should still resolve to edge policy") else {
-            panic!("disabled edge split should reject central inner edge");
-        };
-        assert_eq!(rejection.reason, DockPolicyError::EdgeSplitDisabled);
+        assert_eq!(target.source, DockDropResolveSource::LeafBody);
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::LeafCenter {
+                root,
+                target_tabs: central_tabs,
+            }
+        );
     }
 }

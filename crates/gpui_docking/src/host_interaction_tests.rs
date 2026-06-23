@@ -197,7 +197,14 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
     let start = debug_bounds(&mut visual, &source_tab).center();
     let end = debug_bounds(&mut visual, &target_tabs).center();
 
-    simulate_left_drag(&mut visual, start, end);
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let visual = VisualTestContext::from_window(window.into(), cx);
 
@@ -327,7 +334,7 @@ fn local_release_after_preview_miss_does_not_commit(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
-fn source_only_release_does_not_commit_cached_local_delivery_without_hover_authority(
+fn source_only_release_does_not_commit_cached_local_delivery_without_hover_signal(
     cx: &mut TestAppContext,
 ) {
     let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
@@ -1183,15 +1190,15 @@ fn runtime_secondary_single_tab_outside_release_creates_detached_viewport(cx: &m
             )
         })
         .expect("secondary viewport should open through runtime");
-    let secondary_window = opened
-        .window()
+    let secondary_any_window = opened.window();
+    let secondary_window = secondary_any_window
         .downcast::<crate::DockHost>()
         .expect("secondary viewport should render DockHost");
     let secondary_host = secondary_window
         .root(cx)
         .expect("secondary viewport should expose DockHost root");
     cx.run_until_parked();
-    let mut visual = VisualTestContext::from_window(opened.window(), cx);
+    let mut visual = VisualTestContext::from_window(secondary_any_window, cx);
 
     let source_tab = selector_for(
         &visual,
@@ -1211,6 +1218,7 @@ fn runtime_secondary_single_tab_outside_release_creates_detached_viewport(cx: &m
     cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
     visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
+    drop(visual);
 
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
@@ -1229,12 +1237,16 @@ fn runtime_secondary_single_tab_outside_release_creates_detached_viewport(cx: &m
         );
         assert_eq!(
             runtime.registered_viewport_spaces(),
-            vec![
-                primary_space.clone(),
-                secondary_space.clone(),
-                detached_space.clone()
-            ],
-            "outside release should create another viewport for the detached payload"
+            vec![primary_space.clone(), detached_space.clone()],
+            "outside release should create a detached viewport and vacate the empty source viewport"
+        );
+        assert_eq!(
+            runtime
+                .borrow()
+                .adapter()
+                .window_for_space(&secondary_space),
+            None,
+            "empty source viewport should be unregistered after its only tab tears off"
         );
         assert!(
             runtime
@@ -1244,6 +1256,11 @@ fn runtime_secondary_single_tab_outside_release_creates_detached_viewport(cx: &m
                 .is_some()
         );
     });
+    cx.update(|app| app.refresh_windows());
+    assert!(
+        secondary_any_window.update(cx, |_, _, _| ()).is_err(),
+        "empty source viewport should close after its only tab tears off"
+    );
     cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
 }
 
@@ -1627,7 +1644,13 @@ fn dragging_floating_title_bar_to_tabs_merges_floating_stack(cx: &mut TestAppCon
     let start = debug_bounds(&mut visual, &floating_handle).center();
     let end = debug_bounds(&mut visual, &target_tabs).center();
 
-    simulate_left_drag(&mut visual, start, end);
+    let threshold = point(start.x + px(24.0), start.y);
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let visual = VisualTestContext::from_window(window.into(), cx);
 
@@ -1718,7 +1741,7 @@ fn dragging_split_floating_title_bar_to_center_rejects_visible_split_payload(
 
     assert!(
         selector_for(&visual, &host, DockDebugRegion::DropPreview).is_none(),
-        "split floating title bar should not publish a commit-capable preview"
+        "split floating title bar should not publish a delivery-capable preview"
     );
     cx.read_entity(&host, |host, _| {
         assert!(

@@ -1,10 +1,12 @@
 use crate::{
-    DockCentralRegion, DockFloatingContainer, DockGraph, DockNode, DockNodeId,
-    DockViewportFocusCommand, DockViewportFocusRequest, DockWorkspace, SplitAxis,
+    DockCentralRegion, DockController, DockFloatingContainer, DockGraph, DockHost, DockNode,
+    DockNodeId, DockPanelDescriptor, DockViewportActivationTransaction, DockViewportFocusCommand,
+    DockViewportFocusRequest, DockViewportPlatformSyncAction, DockWorkspace, SplitAxis,
     debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{
-    AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, px, size,
+    AppContext as _, Entity, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext,
+    px, size,
 };
 use slotmap::Key;
 
@@ -192,6 +194,99 @@ fn drop_guides_are_scoped_to_each_target_tabs_node(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn drop_guides_hide_edge_zones_when_edge_split_policy_rejects(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a", "b"]);
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_edge_split(false);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    start_tab_drag(&mut visual, &host, root, "a");
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert_drop_guide_emitted(&visual, &host, Some(root), crate::DropZone::Center);
+    for zone in [
+        crate::DropZone::Left,
+        crate::DropZone::Right,
+        crate::DropZone::Top,
+        crate::DropZone::Bottom,
+    ] {
+        assert_drop_guide_not_emitted(&visual, &host, Some(root), zone);
+    }
+}
+
+#[open_gpui::test]
+fn central_region_drop_guides_hide_center_when_policy_rejects_dock_over(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let central_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![source_tabs, central_tabs],
+        fractions: vec![0.35, 0.65],
+    });
+    graph.set_root(space(), root);
+    graph.set_central_region(space(), DockCentralRegion::with_node(central_tabs));
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace
+        .policy_mut()
+        .set_allow_central_region_dock_over(false);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(500.0), px(240.0)));
+
+    start_tab_drag(&mut visual, &host, source_tabs, "a");
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert_drop_guide_not_emitted(&visual, &host, Some(central_tabs), crate::DropZone::Center);
+    for zone in [
+        crate::DropZone::Left,
+        crate::DropZone::Right,
+        crate::DropZone::Top,
+        crate::DropZone::Bottom,
+    ] {
+        assert_drop_guide_not_emitted(&visual, &host, Some(central_tabs), zone);
+    }
+    assert_drop_guide_emitted(&visual, &host, Some(source_tabs), crate::DropZone::Center);
+}
+
+#[open_gpui::test]
+fn drop_guides_hide_zones_rejected_by_dock_class_policy(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.register_panel_descriptor(
+        item("a"),
+        DockPanelDescriptor::new("Panel A").with_dock_class("editor"),
+    );
+    workspace
+        .policy_mut()
+        .allow_dock_class_in_space(space(), "inspector");
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(500.0), px(240.0)));
+
+    start_tab_drag(&mut visual, &host, left_tabs, "a");
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    for zone in [
+        crate::DropZone::Center,
+        crate::DropZone::Left,
+        crate::DropZone::Right,
+        crate::DropZone::Top,
+        crate::DropZone::Bottom,
+    ] {
+        assert_drop_guide_not_emitted(&visual, &host, Some(right_tabs), zone);
+    }
+}
+
+#[open_gpui::test]
 fn render_session_uses_default_title_for_split_floating_children(cx: &mut TestAppContext) {
     let mut graph = DockGraph::new();
     let left = graph.insert_node(DockNode::Tabs {
@@ -232,6 +327,54 @@ fn render_session_uses_default_title_for_split_floating_children(cx: &mut TestAp
     assert_eq!(
         chrome_target,
         Some(crate::host_render_session::DockFloatingChromeTarget::AmbiguousSplit)
+    );
+}
+
+fn start_tab_drag(
+    visual: &mut VisualTestContext,
+    host: &Entity<DockHost>,
+    tabs: DockNodeId,
+    item_id: &str,
+) {
+    let source_tab = selector_for(
+        visual,
+        host,
+        DockDebugRegion::Tab {
+            tabs,
+            item: item(item_id),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let start = debug_bounds(visual, &source_tab).center();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        open_gpui::point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+}
+
+fn assert_drop_guide_emitted(
+    visual: &VisualTestContext,
+    host: &Entity<DockHost>,
+    node: Option<DockNodeId>,
+    zone: crate::DropZone,
+) {
+    assert!(
+        selector_for(visual, host, DockDebugRegion::DropGuide { node, zone }).is_some(),
+        "{zone:?} drop guide selector should be emitted"
+    );
+}
+
+fn assert_drop_guide_not_emitted(
+    visual: &VisualTestContext,
+    host: &Entity<DockHost>,
+    node: Option<DockNodeId>,
+    zone: crate::DropZone,
+) {
+    assert!(
+        selector_for(visual, host, DockDebugRegion::DropGuide { node, zone }).is_none(),
+        "{zone:?} drop guide selector should not be emitted"
     );
 }
 
@@ -431,6 +574,19 @@ fn platform_activation_does_not_restore_panel_focus_while_mouse_is_pressed(
         assert_eq!(window.focused(cx), Some(focus_b.clone()));
     });
 
+    visual.deactivate_window();
+    window
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("window should activate for initial backend focus confirmation");
+    cx.run_until_parked();
+    visual.update(|window, cx| {
+        assert_eq!(
+            window.focused(cx),
+            Some(focus_b.clone()),
+            "initial backend focus suppression should not disturb already-focused dock panel"
+        );
+    });
+
     let stealer = visual.update(|_, cx| cx.focus_handle());
     visual.update(|window, cx| {
         window.focus(&stealer, cx);
@@ -483,6 +639,19 @@ fn platform_activation_restores_recorded_panel_after_non_docking_focus_owner(
         assert_eq!(window.focused(cx), Some(focus_b.clone()));
     });
 
+    visual.deactivate_window();
+    window
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("window should activate for initial backend focus confirmation");
+    cx.run_until_parked();
+    visual.update(|window, cx| {
+        assert_eq!(
+            window.focused(cx),
+            Some(focus_b.clone()),
+            "initial backend focus suppression should not disturb already-focused dock panel"
+        );
+    });
+
     let stealer = visual.update(|_, cx| cx.focus_handle());
     visual.update(|window, cx| {
         window.focus(&stealer, cx);
@@ -510,6 +679,136 @@ fn platform_activation_restores_recorded_panel_after_non_docking_focus_owner(
             window.focused(cx),
             Some(focus_b),
             "backend-confirmed platform activation should restore recorded dock focus"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn platform_activation_notifies_when_pending_activation_is_consumed_without_new_focus_command(
+    cx: &mut TestAppContext,
+) {
+    let (graph, root) = tabs_graph_with_selected(&["a", "b"], "a");
+    let panel_b = test_view(cx, "B");
+    let focus_b = cx.read_entity(&panel_b, |panel, cx| panel.focus_handle(cx));
+
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_focusable_panel_view(item("b"), "Panel B", panel_b);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+    let controller = host.update(cx, |host, _| host.controller().clone());
+    let activation = DockViewportActivationTransaction::new(
+        space(),
+        window,
+        DockViewportFocusRequest::panel("b"),
+    );
+
+    host.update(cx, |host, _| {
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item(
+                "b"
+            )))
+        ));
+        assert!(
+            host.viewport_runtime()
+                .record_pending_activation(activation.clone())
+        );
+    });
+
+    visual.deactivate_window();
+    window
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("window should activate");
+    cx.run_until_parked();
+
+    host.update(cx, |host, _| {
+        assert_eq!(
+            host.viewport_runtime().pending_activation(),
+            None,
+            "platform activation should consume the matching pending activation"
+        );
+        assert_eq!(
+            host.pending_focus_command(),
+            None,
+            "consuming pending activation is a runtime change and must notify even when the focus command was already queued"
+        );
+    });
+    visual.update(|window, cx| {
+        assert_eq!(window.focused(cx), Some(focus_b));
+    });
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { selected, .. } = controller
+            .graph()
+            .node(root)
+            .expect("root tabs should exist")
+        else {
+            panic!("root should remain tabs");
+        };
+        assert_eq!(selected.as_ref(), Some(&item("b")));
+    });
+}
+
+#[open_gpui::test]
+fn platform_activation_policy_can_leave_dock_focus_unchanged(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a", "b"]);
+    let panel_b = test_view(cx, "B");
+    let focus_b = cx.read_entity(&panel_b, |panel, cx| panel.focus_handle(cx));
+
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace
+        .policy_mut()
+        .set_platform_focus_sets_dock_focus(false);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_focusable_panel_view(item("b"), "Panel B", panel_b);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    let tab_b = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("b"),
+        },
+    )
+    .expect("tab B selector should be emitted");
+    let tab_b_bounds = debug_bounds(&mut visual, &tab_b);
+    visual.simulate_click(tab_b_bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+    visual.update(|window, cx| {
+        assert_eq!(window.focused(cx), Some(focus_b));
+    });
+
+    let stealer = visual.update(|_, cx| cx.focus_handle());
+    visual.update(|window, cx| {
+        window.focus(&stealer, cx);
+        assert_eq!(window.focused(cx), Some(stealer.clone()));
+    });
+    host.update(cx, |host, _| {
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            Some(true),
+            "the opt-out should not erase recorded dock focus history"
+        );
+    });
+
+    visual.deactivate_window();
+    window
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("window should activate");
+    cx.run_until_parked();
+
+    host.update(cx, |host, _| {
+        assert_eq!(host.pending_focus_command(), None);
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            Some(true),
+            "platform focus opt-out should skip restoration without rewriting focus history"
+        );
+    });
+    visual.update(|window, cx| {
+        assert_eq!(
+            window.focused(cx),
+            Some(stealer),
+            "policy-disabled platform activation should not restore recorded dock panel focus"
         );
     });
 }
@@ -644,7 +943,8 @@ fn close_recovery_does_not_reveal_hidden_recorded_panel(cx: &mut TestAppContext)
 
     host.update(cx, |host, cx| {
         assert!(
-            host.request_viewport_focus_command(DockViewportFocusCommand::close_recovery(
+            host.request_viewport_focus_command(DockViewportFocusCommand::new(
+                crate::DockViewportFocusCommandSource::CloseRecovery,
                 DockViewportFocusRequest::panel("b"),
             ),)
         );
@@ -961,7 +1261,9 @@ fn close_recovery_restore_failure_does_not_overwrite_had_panel_focus_fact(cx: &m
         host.viewport_runtime()
             .record_panel_focus(host.space().clone(), item("a"));
         assert!(host.request_viewport_focus_command(
-            crate::DockViewportFocusCommand::close_recovery(DockViewportFocusRequest::panel("b"))
+            crate::DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(
+                "b"
+            ))
         ));
         cx.notify();
     });
@@ -1119,6 +1421,67 @@ fn viewport_activation_for_gone_recorded_panel_preserves_current_focus(cx: &mut 
 }
 
 #[open_gpui::test]
+fn platform_activation_for_gone_recorded_panel_records_no_panel_focus(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph_with_selected(&["a", "b"], "a");
+    let panel_a = test_view(cx, "A");
+    let panel_b = test_view(cx, "B");
+
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_focusable_panel_view(item("a"), "Panel A", panel_a);
+    workspace.register_focusable_panel_view(item("b"), "Panel B", panel_b);
+    let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    let tab_b = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("b"),
+        },
+    )
+    .expect("tab B selector should be emitted");
+    let tab_b_bounds = debug_bounds(&mut visual, &tab_b);
+    visual.simulate_click(tab_b_bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+
+    let controller = host.update(cx, |host, _| host.controller().clone());
+    controller.update(cx, |controller, cx| {
+        let outcome = controller
+            .workspace_mut()
+            .close_item(space(), item("b"))
+            .expect("closing recorded panel should succeed");
+        if outcome.changed() {
+            cx.notify();
+        }
+    });
+    let focused_before_restore = visual.update(|window, cx| window.focused(cx));
+
+    host.update(cx, |host, cx| {
+        assert!(host.request_viewport_focus_command(
+            DockViewportFocusCommand::platform_activation(DockViewportFocusRequest::panel("b"))
+        ));
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    host.update(cx, |host, _| {
+        assert_eq!(host.pending_focus_command(), None);
+        assert_eq!(
+            host.recorded_had_panel_focus(),
+            Some(false),
+            "platform activation restore for a removed panel must clear stale panel-focus history"
+        );
+    });
+    visual.update(|window, cx| {
+        assert_eq!(
+            window.focused(cx),
+            focused_before_restore,
+            "platform activation restore failure must preserve the current GPUI focus fact"
+        );
+    });
+}
+
+#[open_gpui::test]
 fn missing_selected_panel_renders_placeholder(cx: &mut TestAppContext) {
     let (graph, _root) = tabs_graph_with_selected(&["a", "missing"], "missing");
     let (_window, host, mut visual) = open_host(
@@ -1171,6 +1534,148 @@ fn empty_central_passthrough_renders_full_host_drop_target(cx: &mut TestAppConte
 
     assert_close(width(bounds), 320.0);
     assert_close(height(bounds), 200.0);
+}
+
+#[open_gpui::test]
+fn empty_central_passthrough_syncs_window_pointer_input(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    graph.set_central_region(
+        space(),
+        DockCentralRegion::empty().with_passthrough_when_empty(true),
+    );
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, _visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(320.0), px(200.0)));
+
+    assert!(
+        !window
+            .update(cx, |_, window, _| window.accepts_pointer_input())
+            .expect("host window should remain live"),
+        "empty central passthrough should make the host window click-through"
+    );
+    let runtime = host.update(cx, |host, _| host.viewport_runtime().clone());
+    assert_eq!(
+        runtime
+            .runtime_status()
+            .last_platform_sync
+            .as_ref()
+            .map(|sync| sync.applied.as_slice()),
+        Some([DockViewportPlatformSyncAction::PointerInput { enabled: false }].as_slice())
+    );
+
+    controller.update(cx, |controller, cx| {
+        let mut graph = controller.graph().clone();
+        let tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        graph.set_root(space(), tabs);
+        graph.set_central_region(
+            space(),
+            DockCentralRegion::with_node(tabs).with_passthrough_when_empty(true),
+        );
+        controller.workspace_mut().set_graph(graph);
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    assert!(
+        window
+            .update(cx, |_, window, _| window.accepts_pointer_input())
+            .expect("host window should remain live"),
+        "repopulating the central region should restore the render-owned pointer input sync"
+    );
+    assert_eq!(
+        runtime
+            .runtime_status()
+            .last_platform_sync
+            .as_ref()
+            .map(|sync| sync.applied.as_slice()),
+        Some([DockViewportPlatformSyncAction::PointerInput { enabled: true }].as_slice())
+    );
+}
+
+#[open_gpui::test]
+fn empty_central_passthrough_with_floating_content_keeps_window_pointer_input(
+    cx: &mut TestAppContext,
+) {
+    let mut graph = DockGraph::new();
+    graph.set_central_region(
+        space(),
+        DockCentralRegion::empty().with_passthrough_when_empty(true),
+    );
+    let floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_tabs,
+    });
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(20.0, 20.0, 220.0, 140.0),
+        });
+    let (window, host, visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A")],
+        size(px(320.0), px(220.0)),
+    );
+
+    assert!(
+        window
+            .update(cx, |_, window, _| window.accepts_pointer_input())
+            .expect("host window should remain live"),
+        "window-level click-through would also pierce floating content"
+    );
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Floating { node: floating }).is_some(),
+        "floating overlay should still render above the empty central region"
+    );
+    let runtime = host.update(cx, |host, _| host.viewport_runtime().clone());
+    assert_eq!(
+        runtime.runtime_status().last_platform_sync,
+        None,
+        "empty central with floating content must not request whole-window pointer passthrough"
+    );
+}
+
+#[open_gpui::test]
+fn ordinary_render_does_not_restore_externally_owned_pointer_passthrough(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a"]);
+    let (window, _host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A")],
+        size(px(320.0), px(200.0)),
+    );
+    assert_ne!(root, DockNodeId::null(), "test graph should have a root");
+
+    assert!(
+        !window
+            .update(cx, |_, window, _| {
+                window.set_accepts_pointer_input(false);
+                window.accepts_pointer_input()
+            })
+            .expect("host window should remain live"),
+        "test setup should make the source viewport click-through outside render passthrough"
+    );
+
+    window
+        .update(cx, |_, window, _| window.refresh())
+        .expect("host window should remain live");
+    cx.run_until_parked();
+
+    assert!(
+        !window
+            .update(cx, |_, window, _| window.accepts_pointer_input())
+            .expect("host window should remain live"),
+        "ordinary render must not restore no-input owned by another runtime transaction"
+    );
 }
 
 #[open_gpui::test]

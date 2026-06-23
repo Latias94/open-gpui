@@ -129,72 +129,93 @@ pub(crate) fn preflight_tear_off_move(
     request: &DockViewportTearOffRequest,
     target_space: &DockSpaceId,
 ) -> Result<DockActionOutcome, DockActionApplyError> {
-    validate_tear_off_request(workspace.graph(), request)?;
-    workspace.policy().validate_platform_viewports()?;
+    let plan = DockViewportTearOffMovePlan::new(workspace, request, target_space)?;
+    plan.preflight(workspace)
+}
 
-    let op = match request.payload() {
-        DockViewportDropPayload::Item(item) => {
-            workspace
-                .move_validation()
-                .validate_item_target_space(target_space, item)?;
-            DockOp::MoveItem {
-                source_space: request.source_space().clone(),
-                item: item.clone(),
-                target_space: target_space.clone(),
-                target: DockGraphDropTarget::empty_space(),
-            }
-        }
-        DockViewportDropPayload::Tabs => {
-            workspace
-                .move_validation()
-                .validate_tabs_target_space(target_space, request.source_node())?;
-            DockOp::MoveTabs {
-                source_space: request.source_space().clone(),
-                source_tabs: request.source_node(),
-                target_space: target_space.clone(),
-                target: DockGraphDropTarget::empty_space(),
-            }
-        }
-        DockViewportDropPayload::Floating(floating) => {
-            workspace
-                .move_validation()
-                .validate_floating_target_space(target_space, *floating)?;
-            DockOp::MoveFloating {
-                source_space: request.source_space().clone(),
-                floating: *floating,
-                target_space: target_space.clone(),
-                target: DockGraphDropTarget::empty_space(),
-            }
-        }
-    };
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockViewportTearOffMovePlan {
+    op: DockOp,
+}
 
-    let mut next = workspace.graph().clone();
-    let changed = next.apply_op_checked(&op)?;
-    Ok(DockActionOutcome::from_changed(changed))
+impl DockViewportTearOffMovePlan {
+    fn new(
+        workspace: &DockWorkspace,
+        request: &DockViewportTearOffRequest,
+        target_space: &DockSpaceId,
+    ) -> Result<Self, DockActionApplyError> {
+        Ok(Self {
+            op: build_tear_off_move_op(workspace, request, target_space)?,
+        })
+    }
+
+    fn preflight(
+        &self,
+        workspace: &DockWorkspace,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        let mut next = workspace.graph().clone();
+        let changed = next.apply_op_checked(&self.op)?;
+        Ok(DockActionOutcome::from_changed(changed))
+    }
+
+    fn commit(
+        self,
+        workspace: &mut DockWorkspace,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        workspace.commit_graph_op(self.op)
+    }
 }
 
 pub(crate) fn commit_tear_off_move(
     workspace: &mut DockWorkspace,
     pending: &DockViewportTearOffPending,
 ) -> Result<DockActionOutcome, DockActionApplyError> {
-    let request = pending.request();
+    DockViewportTearOffMovePlan::new(workspace, pending.request(), pending.target_space())?
+        .commit(workspace)
+}
+
+fn build_tear_off_move_op(
+    workspace: &DockWorkspace,
+    request: &DockViewportTearOffRequest,
+    target_space: &DockSpaceId,
+) -> Result<DockOp, DockActionApplyError> {
+    validate_tear_off_request(workspace.graph(), request)?;
+    workspace.policy().validate_platform_viewports()?;
+
     match request.payload() {
-        DockViewportDropPayload::Item(item) => workspace.commit_item_to_empty_dock_space(
-            request.source_space(),
-            item,
-            pending.target_space(),
-        ),
-        DockViewportDropPayload::Tabs => workspace.commit_tabs_to_empty_dock_space(
-            request.source_space(),
-            request.source_node(),
-            pending.target_space(),
-        ),
-        DockViewportDropPayload::Floating(floating) => workspace
-            .commit_floating_to_empty_dock_space(
-                request.source_space(),
-                *floating,
-                pending.target_space(),
-            ),
+        DockViewportDropPayload::Item(item) => {
+            workspace
+                .move_validation()
+                .validate_item_target_space(target_space, item)?;
+            Ok(DockOp::MoveItem {
+                source_space: request.source_space().clone(),
+                item: item.clone(),
+                target_space: target_space.clone(),
+                target: DockGraphDropTarget::empty_space(),
+            })
+        }
+        DockViewportDropPayload::Tabs => {
+            workspace
+                .move_validation()
+                .validate_tabs_target_space(target_space, request.source_node())?;
+            Ok(DockOp::MoveTabs {
+                source_space: request.source_space().clone(),
+                source_tabs: request.source_node(),
+                target_space: target_space.clone(),
+                target: DockGraphDropTarget::empty_space(),
+            })
+        }
+        DockViewportDropPayload::Floating(floating) => {
+            workspace
+                .move_validation()
+                .validate_floating_target_space(target_space, *floating)?;
+            Ok(DockOp::MoveFloating {
+                source_space: request.source_space().clone(),
+                floating: *floating,
+                target_space: target_space.clone(),
+                target: DockGraphDropTarget::empty_space(),
+            })
+        }
     }
 }
 
@@ -211,7 +232,10 @@ fn tear_off_payload_mismatch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DockClassId, DockItemId, DockPanelDescriptor, DockPolicyError};
+    use crate::{
+        DockClassId, DockItemId, DockPanelDescriptor, DockPolicyError,
+        DockViewportTearOffBeginOutcome, DockViewportTearOffMachine,
+    };
     use open_gpui::{point, px};
 
     fn item(id: &str) -> DockItemId {
@@ -352,5 +376,69 @@ mod tests {
             vec![item("a"), item("b")]
         );
         assert_eq!(workspace.graph().root(&target_space), None);
+    }
+
+    #[test]
+    fn tear_off_move_plan_preflights_without_mutating_then_commits() {
+        let source_space = DockSpaceId::from("source");
+        let target_space = DockSpaceId::from("detached");
+        let (mut workspace, tabs) = item_workspace(vec![item("a"), item("b")]);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        let request = request(source_space.clone(), tabs, item("a"));
+        let plan = DockViewportTearOffMovePlan::new(&workspace, &request, &target_space)
+            .expect("valid tear-off should produce a plan");
+
+        assert_eq!(
+            plan.preflight(&workspace)
+                .expect("valid tear-off plan should preflight"),
+            DockActionOutcome::Changed
+        );
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&source_space),
+            vec![item("a"), item("b")],
+            "preflight should dry-run the planned graph op"
+        );
+        assert_eq!(
+            plan.commit(&mut workspace)
+                .expect("valid tear-off plan should commit"),
+            DockActionOutcome::Changed
+        );
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&source_space),
+            vec![item("b")]
+        );
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&target_space),
+            vec![item("a")]
+        );
+    }
+
+    #[test]
+    fn commit_tear_off_move_moves_item_to_empty_target_space() {
+        let source_space = DockSpaceId::from("source");
+        let target_space = DockSpaceId::from("detached");
+        let (mut workspace, tabs) = item_workspace(vec![item("a"), item("b")]);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        let request = request(source_space.clone(), tabs, item("a"));
+        let mut machine = DockViewportTearOffMachine::default();
+        let pending = match machine.begin(request, target_space.clone(), None, None) {
+            DockViewportTearOffBeginOutcome::Pending(pending) => pending,
+            DockViewportTearOffBeginOutcome::Duplicate(_) => {
+                panic!("fresh tear-off request should not be duplicate")
+            }
+        };
+
+        let outcome = commit_tear_off_move(&mut workspace, &pending)
+            .expect("valid tear-off commit should move the payload");
+
+        assert_eq!(outcome, DockActionOutcome::Changed);
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&source_space),
+            vec![item("b")]
+        );
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&target_space),
+            vec![item("a")]
+        );
     }
 }

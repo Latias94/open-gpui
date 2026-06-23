@@ -1,10 +1,15 @@
 use crate::{
-    DockHost, DockNode, DockNodeId, DockViewportWindowFacts, DropZone,
+    DockEdgeDockSizing, DockGraph, DockHost, DockNode, DockNodeId, DropZone,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::{DockDropPreview, DockDropRoutePreview},
     drop_runtime::DockHostDropSceneFact,
-    drop_scene_fact, geometry,
+    drop_scene_fact,
+    drop_target::{
+        DockDropResolution, DockDropResolveSource, DockResolvedDropTarget,
+        DockResolvedDropTargetKind, validate_resolved_drop_target,
+    },
+    geometry,
     host_render_session::{DockHostRenderSession, selected_index},
     interaction::{
         DockPayloadDropRelease, DockRenderedOutsideReleaseDecision,
@@ -12,6 +17,7 @@ use crate::{
     },
     render_split::DockRenderSplitInput,
     viewport_drop_scene::DockViewportHostSceneFrame,
+    workspace_move_validation::dock_target_validator,
 };
 use open_gpui::{
     AnyElement, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
@@ -21,6 +27,14 @@ use open_gpui::{
 use std::{cell::RefCell, rc::Rc};
 
 pub(crate) type DockViewportHostSceneFrameSlot = Rc<RefCell<Option<DockViewportHostSceneFrame>>>;
+
+const DROP_GUIDE_ZONES: [DropZone; 5] = [
+    DropZone::Center,
+    DropZone::Left,
+    DropZone::Right,
+    DropZone::Top,
+    DropZone::Bottom,
+];
 
 impl Render for DockHost {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -63,13 +77,16 @@ impl Render for DockHost {
             .on_drop(
                 cx.listener(move |this, payload: &DockDragPayload, window, cx| {
                     let drag_session = this.active_payload_drag_session(payload);
+                    let event_receiver_local_scene_proof =
+                        this.interaction().viewport_host_scene_frame().cloned();
                     this.drop_payload_release_from_render(
                         DockPayloadDropRelease::hovered_host_with_session(
                             payload.clone(),
                             drop_host_space.clone(),
                             window.mouse_position(),
                             drag_session,
-                        ),
+                        )
+                        .with_event_receiver_local_scene_proof(event_receiver_local_scene_proof),
                         window,
                         cx,
                     );
@@ -82,6 +99,9 @@ impl Render for DockHost {
                     let drag_session = payload
                         .as_ref()
                         .and_then(|payload| this.active_payload_drag_session(payload));
+                    let tear_off_geometry = drag_session.as_ref().and_then(|session| {
+                        this.active_payload_drag_tear_off_geometry(Some(session))
+                    });
                     let platform_viewports_allowed = this.with_workspace(cx, |workspace| {
                         workspace.policy().allows_platform_viewports()
                     });
@@ -92,7 +112,8 @@ impl Render for DockHost {
                         outside_release_host_space.clone(),
                         event.position,
                     )
-                    .with_drag_session(drag_session);
+                    .with_drag_session(drag_session)
+                    .with_tear_off_geometry(tear_off_geometry);
                     match this.interaction_mut().rendered_outside_release(request) {
                         DockRenderedOutsideReleaseDecision::Inactive => {}
                         DockRenderedOutsideReleaseDecision::StopDragSession(drag_session) => {
@@ -119,6 +140,7 @@ impl Render for DockHost {
         host = host.child(self.render_viewport_host_scene_probe(
             &viewport_host_scene_frame,
             session.drop_guide_style(),
+            session.empty_central_requests_platform_pointer_passthrough(),
         ));
 
         if let Some(root) = session.root() {
@@ -395,6 +417,10 @@ impl DockHost {
         }
 
         if let Some((preview, payload_title)) = routed_target_preview {
+            self.viewport_runtime().finish_routed_drop_acceptance_pass(
+                self.space(),
+                window.window_handle().window_id(),
+            );
             return Some(self.render_target_drop_preview(session, preview, payload_title));
         }
 
@@ -504,21 +530,45 @@ impl DockHost {
         node: Option<DockNodeId>,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        if cx.active_drag_value::<DockDragPayload>().is_none() {
+        let payload = cx.active_drag_value::<DockDragPayload>()?;
+        let zones = self.available_drop_guide_zones(session, node, payload, cx);
+        if zones.is_empty() {
             return None;
         }
 
         let mut overlay = div().absolute().top(px(0.0)).left(px(0.0)).size_full();
-        for zone in [
-            DropZone::Center,
-            DropZone::Left,
-            DropZone::Right,
-            DropZone::Top,
-            DropZone::Bottom,
-        ] {
+        for zone in zones {
             overlay = overlay.child(self.render_drop_guide(zone, session, node));
         }
         Some(overlay.into_any_element())
+    }
+
+    fn available_drop_guide_zones(
+        &self,
+        session: &DockHostRenderSession,
+        node: Option<DockNodeId>,
+        payload: &DockDragPayload,
+        cx: &Context<Self>,
+    ) -> Vec<DropZone> {
+        self.with_workspace(cx, |workspace| {
+            let policy = workspace.policy();
+            let payload_classes = workspace.payload_dock_classes_for_drag_payload(payload);
+            let target_validator = dock_target_validator(session.space(), &payload_classes, policy);
+            DROP_GUIDE_ZONES
+                .into_iter()
+                .filter(|zone| {
+                    let Some(target) =
+                        drop_guide_target_for_zone(session, node, *zone, workspace.graph())
+                    else {
+                        return false;
+                    };
+                    matches!(
+                        validate_resolved_drop_target(target, policy, Some(&target_validator)),
+                        DockDropResolution::Valid(_)
+                    )
+                })
+                .collect()
+        })
     }
 
     fn render_drop_guide(
@@ -614,6 +664,7 @@ impl DockHost {
         &self,
         frame_slot: &DockViewportHostSceneFrameSlot,
         drop_guide_style: geometry::DockDropGuideStyle,
+        passthrough_pointer_input: bool,
     ) -> AnyElement {
         let runtime = self.viewport_runtime().clone();
         let space = self.space().clone();
@@ -625,19 +676,35 @@ impl DockHost {
                     mouse_position.x - bounds.origin.x,
                     mouse_position.y - bounds.origin.y,
                 );
-                runtime.reconcile_backend_window_focus(app);
-                runtime.reconcile_viewport_frame(app);
-                let window_handle = window.window_handle();
-                runtime.register_rendered_host_viewport(space.clone(), window_handle);
-                let registration = runtime.begin_viewport_host_scene_frame(
-                    space,
-                    window_handle.window_id(),
-                    DockViewportWindowFacts::from_window(window, app),
+                let preparation = runtime.prepare_rendered_viewport_host_scene_frame(
+                    space.clone(),
+                    window,
+                    app,
                     bounds,
                     host_position,
                     drop_guide_style,
+                    passthrough_pointer_input,
                 );
-                *frame_slot.borrow_mut() = registration.map(|registration| registration.frame);
+                *frame_slot.borrow_mut() = preparation.frame;
+                if preparation.changed {
+                    window.refresh();
+                }
+                if let Some(token) = preparation.render_token {
+                    let runtime = runtime.clone();
+                    window.request_animation_frame();
+                    // The next-frame callback runs before that frame renders. Check one frame later
+                    // so a normally repainted host can publish a newer token first.
+                    window.on_next_frame(move |window, _| {
+                        let runtime = runtime.clone();
+                        window.request_animation_frame();
+                        window.on_next_frame(move |window, app| {
+                            if runtime.expire_viewport_host_scene_if_not_rendered_after(token, app)
+                            {
+                                window.refresh();
+                            }
+                        });
+                    });
+                }
             },
             |_, _, _, _| (),
         )
@@ -675,6 +742,114 @@ impl DockHost {
         .size_full()
         .into_any_element()
     }
+}
+
+fn drop_guide_target_for_zone(
+    session: &DockHostRenderSession,
+    node: Option<DockNodeId>,
+    zone: DropZone,
+    graph: &DockGraph,
+) -> Option<DockResolvedDropTarget> {
+    match node {
+        Some(tabs) => tabs_drop_guide_target(session, tabs, zone, graph),
+        None => host_drop_guide_target(session, zone, graph),
+    }
+}
+
+fn tabs_drop_guide_target(
+    session: &DockHostRenderSession,
+    tabs: DockNodeId,
+    zone: DropZone,
+    graph: &DockGraph,
+) -> Option<DockResolvedDropTarget> {
+    if !matches!(session.node(tabs), Some(DockNode::Tabs { .. })) {
+        return None;
+    }
+
+    let root = session.drop_root_for_tabs(tabs)?;
+    let is_central_region = session.is_central_tabs(tabs);
+
+    if zone == DropZone::Center {
+        return Some(DockResolvedDropTarget {
+            kind: DockResolvedDropTargetKind::LeafCenter {
+                root,
+                target_tabs: tabs,
+            },
+            source: DockDropResolveSource::LeafBody,
+            drop_box: None,
+            preview_bounds: None,
+            edge_sizing: None,
+            edge_plan: None,
+            is_central_region,
+        });
+    }
+
+    // Central-node side splits are represented by the host-level outer guides.
+    if is_central_region {
+        return None;
+    }
+
+    let edge_sizing = DockEdgeDockSizing::fallback();
+    let edge_plan = graph.edge_dock_plan_with_sizing(session.space(), tabs, zone, edge_sizing)?;
+    Some(DockResolvedDropTarget {
+        kind: DockResolvedDropTargetKind::InnerEdge {
+            root,
+            target_tabs: tabs,
+            zone,
+        },
+        source: DockDropResolveSource::InnerEdge,
+        drop_box: None,
+        preview_bounds: None,
+        edge_sizing: Some(edge_sizing),
+        edge_plan: Some(edge_plan),
+        is_central_region,
+    })
+}
+
+fn host_drop_guide_target(
+    session: &DockHostRenderSession,
+    zone: DropZone,
+    graph: &DockGraph,
+) -> Option<DockResolvedDropTarget> {
+    if let Some(root) = session.root() {
+        if zone == DropZone::Center {
+            return None;
+        }
+
+        let edge_sizing = DockEdgeDockSizing::fallback();
+        let edge_plan =
+            graph.edge_dock_plan_with_sizing(session.space(), root, zone, edge_sizing)?;
+        return Some(DockResolvedDropTarget {
+            kind: DockResolvedDropTargetKind::RootEdge {
+                root,
+                leaf_tabs: None,
+                zone,
+            },
+            source: DockDropResolveSource::RootEdge,
+            drop_box: None,
+            preview_bounds: None,
+            edge_sizing: Some(edge_sizing),
+            edge_plan: Some(edge_plan),
+            is_central_region: false,
+        });
+    }
+
+    if zone != DropZone::Center {
+        return None;
+    }
+
+    let is_central = session.has_empty_central_region();
+    Some(DockResolvedDropTarget {
+        kind: DockResolvedDropTargetKind::EmptyDockSpace {
+            space: session.space().clone(),
+        },
+        source: DockDropResolveSource::EmptyDockSpace,
+        drop_box: None,
+        preview_bounds: None,
+        edge_sizing: None,
+        edge_plan: None,
+        is_central_region: is_central,
+    })
 }
 
 fn drop_preview_colors(preview: &DockDropPreview) -> (Rgba, Rgba) {

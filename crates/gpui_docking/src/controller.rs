@@ -92,6 +92,15 @@ impl DockController {
         self.workspace.select_tab(tabs, item)
     }
 
+    /// Selects the tab containing one item within the controller's logical dock space.
+    pub fn select_item_in_space(
+        &mut self,
+        item: impl Into<DockItemId>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.workspace
+            .select_item_in_space(self.space().clone(), item)
+    }
+
     /// Closes one registered dock item through panel lifecycle policy.
     pub fn close_item(
         &mut self,
@@ -283,6 +292,12 @@ impl DockControllerBuilder {
     /// Enables or disables platform viewport interactions.
     pub fn allow_platform_viewports(mut self, allowed: bool) -> Self {
         self.policy.set_allow_platform_viewports(allowed);
+        self
+    }
+
+    /// Enables or disables restoring dock-panel focus when a platform window gains focus.
+    pub fn platform_focus_sets_dock_focus(mut self, enabled: bool) -> Self {
+        self.policy.set_platform_focus_sets_dock_focus(enabled);
         self
     }
 
