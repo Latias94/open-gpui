@@ -18,7 +18,8 @@ status: active
   `cargo nextest run -p open-gpui-ui-core table`,
   `cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit`,
   `cargo nextest run -p open-gpui-ui-foundation-gallery table`, `git diff --check`, and
-  engineering wiki validation. Next action is committing the completed slice.
+  engineering wiki validation. The slice is committed in the current change; next action is the
+  next Table follow-up boundary.
 - 2026-06-23: Wrote `docs/plans/2026-06-23-008-feat-ui-table-faceting-filter-metadata-plan.md`
   as the next Table follow-up. The plan uses TanStack Table's per-column faceted row model,
   unique-value count, and min/max references plus Fret's Rust-native faceting parity helpers. Scope

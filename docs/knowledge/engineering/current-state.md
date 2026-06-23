@@ -226,9 +226,9 @@ verified_by:
   global faceting, concrete faceted filter UI, and standalone headless extraction if cross-framework
   pressure appears.
 - Blocked: None.
-- Next action: Run final quality checks for
-  `docs/plans/2026-06-23-008-feat-ui-table-faceting-filter-metadata-plan.md`, validate engineering
-  memory, then commit the Table faceting metadata slice.
+- Next action: Pick the next Table follow-up boundary. The clearest remaining options are row
+  pinning, row selection variants, cell editing, global/faceted filter UI, or the later full
+  two-axis grid virtualization path.
 
 # Citations
 
