@@ -7,7 +7,7 @@ use open_gpui_docking::{
     DockController, DockItemId, DockLayout, DockLayoutCentralRegion, DockLayoutSpace, DockPanel,
     DockPanelDescriptor, DockSpaceId, DockViewportClosePolicy, DockViewportPlacement,
     DockViewportPlacementLayout, DockViewportPlatformCapabilityRecord, DockViewportRuntimeHandle,
-    DockViewportWindowBounds, EditorDockLayoutSpec,
+    DockViewportTearOffPlacementRecord, DockViewportWindowBounds, EditorDockLayoutSpec,
 };
 use open_gpui_platform::application;
 
@@ -189,6 +189,15 @@ impl Render for RuntimeStatusPanel {
                 format!(
                     "last tear-off: {}",
                     debug_option(status.last_tear_off.as_ref().map(|record| &record.kind))
+                ),
+                format!(
+                    "last tear-off placement: {}",
+                    tear_off_placement_summary(
+                        status
+                            .last_tear_off
+                            .as_ref()
+                            .and_then(|record| record.placement_source.as_ref())
+                    )
                 ),
             ]
         };
@@ -509,6 +518,14 @@ fn placement_capability_summary(
             )
         })
         .unwrap_or_else(|| "unavailable".to_string())
+}
+
+fn tear_off_placement_summary(source: Option<&DockViewportTearOffPlacementRecord>) -> &'static str {
+    match source {
+        Some(DockViewportTearOffPlacementRecord::Suggested) => "suggested",
+        Some(DockViewportTearOffPlacementRecord::DragGeometry) => "drag-geometry",
+        None => "unavailable",
+    }
 }
 
 impl DemoPanel {
@@ -1576,6 +1593,15 @@ mod tests {
         );
         assert_eq!(route_capability_summary(None), "unavailable");
         assert_eq!(placement_capability_summary(None), "unavailable");
+        assert_eq!(
+            tear_off_placement_summary(Some(&DockViewportTearOffPlacementRecord::Suggested)),
+            "suggested"
+        );
+        assert_eq!(
+            tear_off_placement_summary(Some(&DockViewportTearOffPlacementRecord::DragGeometry)),
+            "drag-geometry"
+        );
+        assert_eq!(tear_off_placement_summary(None), "unavailable");
         assert_eq!(capability_flag(true), "yes");
         assert_eq!(capability_flag(false), "no");
     }

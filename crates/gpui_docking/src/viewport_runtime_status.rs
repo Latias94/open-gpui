@@ -3,7 +3,7 @@ use crate::{
     DockViewportActivationTransaction, DockViewportCloseOutcome, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
     DockViewportFocusRequest, DockViewportRouteSelectionSource, DockViewportShouldCloseOutcome,
-    DockViewportTearOffOpenOutcome,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
     viewport_registry::{
         DockViewportInputMask, DockViewportPlatformRequests, DockViewportRouteUnavailableReason,
         DockViewportSnapshot, DockViewportStaleReason,
@@ -427,6 +427,8 @@ pub enum DockViewportPlatformSyncSkippedReason {
 pub struct DockViewportTearOffRecord {
     /// High-level tear-off outcome kind.
     pub kind: DockViewportTearOffOutcomeKind,
+    /// Placement input that chose the platform window bounds, when known.
+    pub placement_source: Option<DockViewportTearOffPlacementRecord>,
     /// Source dock space where the tear-off started.
     pub source_space: DockSpaceId,
     /// Target dock space opened for the tear-off.
@@ -442,6 +444,15 @@ pub enum DockViewportTearOffOutcomeKind {
     Completed,
     /// A duplicate request reused the existing pending tear-off.
     Duplicate,
+}
+
+/// Source of the platform-window placement used for a tear-off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportTearOffPlacementRecord {
+    /// The source host provided suggested platform-window bounds.
+    Suggested,
+    /// The runtime derived bounds from drag-source geometry and cursor offset.
+    DragGeometry,
 }
 
 impl DockViewportRuntimeStatus {
@@ -813,6 +824,7 @@ impl DockViewportTearOffRecord {
                 let request = pending.request();
                 Self {
                     kind: DockViewportTearOffOutcomeKind::Completed,
+                    placement_source: DockViewportTearOffPlacementRecord::from_request(request),
                     source_space: request.source_space().clone(),
                     target_space: pending.target_space().clone(),
                     payload: DockViewportPayloadRecord::from_payload(request.payload()),
@@ -822,6 +834,7 @@ impl DockViewportTearOffRecord {
                 let request = pending.request();
                 Self {
                     kind: DockViewportTearOffOutcomeKind::Duplicate,
+                    placement_source: DockViewportTearOffPlacementRecord::from_request(request),
                     source_space: request.source_space().clone(),
                     target_space: pending.target_space().clone(),
                     payload: DockViewportPayloadRecord::from_payload(request.payload()),
@@ -831,13 +844,27 @@ impl DockViewportTearOffRecord {
     }
 }
 
+impl DockViewportTearOffPlacementRecord {
+    fn from_request(request: &DockViewportTearOffRequest) -> Option<Self> {
+        if request.suggested_window_bounds().is_some() {
+            return Some(Self::Suggested);
+        }
+
+        if request.tear_off_geometry().is_some() && request.release_position().is_some() {
+            return Some(Self::DragGeometry);
+        }
+
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::DockViewportFocusRequest;
     use crate::{
         DockViewportInputStatus, DockViewportWindowFacts,
-        drag::DockDragPayload,
+        drag::{DockDragPayload, DockDragTearOffGeometry},
         interaction::DockRuntimeDragSession,
         viewport_registry::DockViewportInputMask,
         viewport_test_support::{bounds, handle, space},
@@ -870,6 +897,60 @@ mod tests {
                 no_input_windows: true,
                 hovered_window_ignores_no_input: true,
             })
+        );
+    }
+
+    #[test]
+    fn tear_off_record_exposes_suggested_placement_source() {
+        let request = DockViewportTearOffRequest::new(
+            space("source"),
+            DockNodeId::null(),
+            DockViewportDropPayload::Tabs,
+            point(px(900.0), px(600.0)),
+            Some(WindowBounds::Windowed(bounds(880.0, 560.0, 420.0, 260.0))),
+        )
+        .with_tear_off_geometry(Some(DockDragTearOffGeometry::from_source_bounds(
+            bounds(10.0, 20.0, 220.0, 80.0),
+            point(px(40.0), px(48.0)),
+        )));
+        let mut status = DockViewportRuntimeStatus::default();
+
+        status.record_tear_off(&duplicate_tear_off_outcome(request));
+
+        assert_eq!(
+            status
+                .last_tear_off
+                .as_ref()
+                .and_then(|record| record.placement_source),
+            Some(DockViewportTearOffPlacementRecord::Suggested),
+            "host-suggested platform bounds stay visible as the tear-off placement authority"
+        );
+    }
+
+    #[test]
+    fn tear_off_record_exposes_drag_geometry_placement_source() {
+        let request = DockViewportTearOffRequest::new(
+            space("source"),
+            DockNodeId::null(),
+            DockViewportDropPayload::Tabs,
+            point(px(900.0), px(600.0)),
+            None,
+        )
+        .with_tear_off_geometry(Some(DockDragTearOffGeometry::from_source_bounds(
+            bounds(10.0, 20.0, 220.0, 80.0),
+            point(px(40.0), px(48.0)),
+        )));
+        let mut status = DockViewportRuntimeStatus::default();
+
+        status.record_tear_off(&duplicate_tear_off_outcome(request));
+
+        assert_eq!(
+            status
+                .last_tear_off
+                .as_ref()
+                .and_then(|record| record.placement_source),
+            Some(DockViewportTearOffPlacementRecord::DragGeometry),
+            "runtime-derived source geometry stays visible as the tear-off placement authority"
         );
     }
 
@@ -1261,5 +1342,19 @@ mod tests {
             Some(DockViewportDropOutcomeKind::Action),
             "drop outcomes remain historical commit results rather than live window references"
         );
+    }
+
+    fn duplicate_tear_off_outcome(
+        request: DockViewportTearOffRequest,
+    ) -> DockViewportTearOffOpenOutcome {
+        let mut tear_off = crate::DockViewportTearOffMachine::default();
+        match tear_off.begin(request, space("detached"), None, None) {
+            crate::DockViewportTearOffBeginOutcome::Pending(pending) => {
+                DockViewportTearOffOpenOutcome::Duplicate(pending)
+            }
+            crate::DockViewportTearOffBeginOutcome::Duplicate(_) => {
+                unreachable!("fresh tear-off machine should not deduplicate the first request")
+            }
+        }
     }
 }
