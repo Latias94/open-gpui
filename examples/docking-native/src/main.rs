@@ -154,6 +154,15 @@ impl Render for RuntimeStatusPanel {
                     debug_option(status.last_route.as_ref().map(|record| &record.target))
                 ),
                 format!(
+                    "last route source: {}",
+                    debug_option(
+                        status
+                            .last_route
+                            .as_ref()
+                            .and_then(|record| record.selection_source.as_ref())
+                    )
+                ),
+                format!(
                     "last drop: {}",
                     debug_option(status.last_drop_outcome.as_ref().map(|record| &record.kind))
                 ),

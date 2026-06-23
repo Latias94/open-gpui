@@ -2,7 +2,8 @@ use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockPolicyError, DockSpaceId,
     DockViewportActivationTransaction, DockViewportCloseOutcome, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportFocusRequest, DockViewportShouldCloseOutcome, DockViewportTearOffOpenOutcome,
+    DockViewportFocusRequest, DockViewportRouteSelectionSource, DockViewportShouldCloseOutcome,
+    DockViewportTearOffOpenOutcome,
     viewport_registry::{
         DockViewportInputMask, DockViewportPlatformRequests, DockViewportRouteUnavailableReason,
         DockViewportSnapshot, DockViewportStaleReason,
@@ -123,8 +124,27 @@ pub struct DockViewportRouteRecord {
     pub payload: DockViewportPayloadRecord,
     /// Runtime drag session that produced this route, when known.
     pub drag_session_id: Option<u64>,
+    /// Platform or routed-preview signal that selected this route target, when applicable.
+    pub selection_source: Option<DockViewportRouteSelectionRecord>,
     /// Runtime route selected for the release point.
     pub target: DockViewportRouteTarget,
+}
+
+/// Diagnostic source that selected a viewport route target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportRouteSelectionRecord {
+    /// Current backend hovered-window signal selected the viewport.
+    TrustedHoveredWindow,
+    /// The receiving host supplied explicit local scene proof for the event receiver window.
+    EventReceiverLocalScene,
+    /// Platform front-to-back window stack selected the viewport as a fallback.
+    FrontToBackWindowStackFallback,
+    /// Focus-stamp order selected the viewport as an ImGui-style fallback.
+    FocusStampWindowStackFallback,
+    /// Active drag state reused the last hovered viewport as the mouse reference viewport.
+    DragLastHoveredViewportFallback,
+    /// A rendered routed preview accepted this target before delivery.
+    AcceptedRoutedPreview,
 }
 
 /// Runtime route selected for a rendered drop release.
@@ -421,6 +441,7 @@ impl DockViewportRuntimeStatus {
             source_node: request.source_node(),
             payload: DockViewportPayloadRecord::from_payload(request.payload()),
             drag_session_id: request.drag_session().map(|session| session.id()),
+            selection_source: DockViewportRouteSelectionRecord::from_route(route),
             target: DockViewportRouteTarget::from_route(request, route),
         });
     }
@@ -633,6 +654,39 @@ impl DockViewportRouteTarget {
                 ..
             } => route_space == space && *route_window == window_id,
             Self::TearOff { .. } | Self::Unavailable | Self::Rejected { .. } => false,
+        }
+    }
+}
+
+impl DockViewportRouteSelectionRecord {
+    fn from_route(route: &DockViewportDropRoute) -> Option<Self> {
+        match route {
+            DockViewportDropRoute::Local { source, .. }
+            | DockViewportDropRoute::KnownViewport { source, .. } => {
+                Some(Self::from_selection_source(*source))
+            }
+            DockViewportDropRoute::TearOff
+            | DockViewportDropRoute::Unavailable
+            | DockViewportDropRoute::Rejected(_) => None,
+        }
+    }
+
+    fn from_selection_source(source: DockViewportRouteSelectionSource) -> Self {
+        match source {
+            DockViewportRouteSelectionSource::TrustedHoveredWindow => Self::TrustedHoveredWindow,
+            DockViewportRouteSelectionSource::EventReceiverLocalScene => {
+                Self::EventReceiverLocalScene
+            }
+            DockViewportRouteSelectionSource::FrontToBackWindowStackFallback => {
+                Self::FrontToBackWindowStackFallback
+            }
+            DockViewportRouteSelectionSource::FocusStampWindowStackFallback => {
+                Self::FocusStampWindowStackFallback
+            }
+            DockViewportRouteSelectionSource::DragLastHoveredViewportFallback => {
+                Self::DragLastHoveredViewportFallback
+            }
+            DockViewportRouteSelectionSource::AcceptedRoutedPreview => Self::AcceptedRoutedPreview,
         }
     }
 }
@@ -878,9 +932,97 @@ mod tests {
             .expect("route record should be captured");
         assert_eq!(route.source_space, source);
         assert_eq!(route.drag_session_id, None);
+        assert_eq!(
+            route.selection_source,
+            Some(DockViewportRouteSelectionRecord::TrustedHoveredWindow)
+        );
         assert_eq!(route.target.space(), Some(&source));
         assert_eq!(route.target.host_position(), Some(host_position));
         assert_eq!(route.target.window_id(), Some(WindowId::from(7)));
+    }
+
+    #[test]
+    fn route_record_exposes_backend_fallback_selection_source() {
+        let source = DockSpaceId::from("source");
+        let target = DockSpaceId::from("target");
+        let source_tabs = DockNodeId::null();
+        let target_window = handle(8);
+        let host_position = point(px(12.0), px(34.0));
+        let mut status = DockViewportRuntimeStatus::default();
+
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source,
+            source_tabs,
+            DockViewportDropPayload::Tabs,
+            host_position,
+            None,
+            crate::DockViewportPlatformSignals::from_target_context(
+                crate::DockViewportTargetContext::new().with_window_stack([target_window]),
+            ),
+        );
+
+        status.record_route(
+            &request,
+            &DockViewportDropRoute::KnownViewport {
+                target: crate::DockViewportTargetHit::new(
+                    target.clone(),
+                    target_window,
+                    host_position,
+                ),
+                source: crate::DockViewportRouteSelectionSource::FrontToBackWindowStackFallback,
+            },
+        );
+
+        let route = status
+            .last_route
+            .as_ref()
+            .expect("route record should be captured");
+        assert_eq!(route.target.space(), Some(&target));
+        assert_eq!(
+            route.selection_source,
+            Some(DockViewportRouteSelectionRecord::FrontToBackWindowStackFallback)
+        );
+    }
+
+    #[test]
+    fn route_record_exposes_accepted_preview_selection_source() {
+        let source = DockSpaceId::from("source");
+        let target = DockSpaceId::from("target");
+        let source_tabs = DockNodeId::null();
+        let target_window = handle(9);
+        let host_position = point(px(14.0), px(36.0));
+        let mut status = DockViewportRuntimeStatus::default();
+
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source,
+            source_tabs,
+            DockViewportDropPayload::Tabs,
+            host_position,
+            None,
+            crate::DockViewportPlatformSignals::default(),
+        );
+
+        status.record_route(
+            &request,
+            &DockViewportDropRoute::KnownViewport {
+                target: crate::DockViewportTargetHit::new(
+                    target.clone(),
+                    target_window,
+                    host_position,
+                ),
+                source: crate::DockViewportRouteSelectionSource::AcceptedRoutedPreview,
+            },
+        );
+
+        let route = status
+            .last_route
+            .as_ref()
+            .expect("route record should be captured");
+        assert_eq!(route.target.space(), Some(&target));
+        assert_eq!(
+            route.selection_source,
+            Some(DockViewportRouteSelectionRecord::AcceptedRoutedPreview)
+        );
     }
 
     #[test]
