@@ -494,7 +494,13 @@ cargo run -p open-gpui-docking-native
 
 The docking native example exercises the public multi-window setup: applications build one
 `DockController`, wrap it in a `DockViewportRuntimeHandle`, register window-close cleanup, and open
-controller-backed primary and secondary `DockHost` viewports.
+controller-backed primary and secondary `DockHost` viewports. The runtime panel reports both the
+last route target and the route selection source, so dogfood runs can distinguish trusted hovered
+window routes, window-stack fallback routes, focus-stamp fallback routes, and accepted routed-preview
+replays. It also reports the current platform viewport capability snapshot, splitting route facts
+from placement facts so platform-boundary regressions are visible during native dogfood. The tear-off
+status line also reports whether a viewport opened from suggested bounds or drag-source geometry, so
+placement authority regressions are visible in the same panel.
 
 Manual native docking dogfood should use the same example after the automated checks pass:
 

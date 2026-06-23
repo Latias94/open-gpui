@@ -2,19 +2,23 @@ use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockPolicyError, DockSpaceId,
     DockViewportActivationTransaction, DockViewportCloseOutcome, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportFocusRequest, DockViewportShouldCloseOutcome, DockViewportTearOffOpenOutcome,
+    DockViewportFocusRequest, DockViewportRouteSelectionSource, DockViewportShouldCloseOutcome,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
     viewport_registry::{
         DockViewportInputMask, DockViewportPlatformRequests, DockViewportRouteUnavailableReason,
         DockViewportSnapshot, DockViewportStaleReason,
     },
 };
 use open_gpui::{
-    DisplayId, Pixels, Point, Size, WindowBackgroundAppearance, WindowDecorations, WindowId,
+    DisplayId, Pixels, PlatformViewportCapabilities, Point, Size, WindowBackgroundAppearance,
+    WindowDecorations, WindowId,
 };
 
 /// Read-only diagnostic snapshot for the viewport runtime.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DockViewportRuntimeStatus {
+    /// Platform viewport capabilities sampled by the caller, when available.
+    pub platform_capabilities: Option<DockViewportPlatformCapabilityRecord>,
     /// Current lifecycle/readiness records for registered platform viewports.
     pub viewport_lifecycle: Vec<DockViewportLifecycleRecord>,
     /// Most recent viewport route resolved for a rendered drop.
@@ -31,6 +35,25 @@ pub struct DockViewportRuntimeStatus {
     pub last_tear_off: Option<DockViewportTearOffRecord>,
     /// Most recent live platform-window sync attempted for a reused viewport.
     pub last_platform_sync: Option<DockViewportPlatformSyncRecord>,
+}
+
+/// Platform capability snapshot relevant to multi-viewport docking.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DockViewportPlatformCapabilityRecord {
+    /// Window bounds are reported in a shared desktop coordinate space.
+    pub global_window_bounds: bool,
+    /// The platform can report application windows in front-to-back order.
+    pub window_stack: bool,
+    /// Display visible bounds exclude system-reserved work areas.
+    pub display_work_area: bool,
+    /// Per-window DPI scale facts are reliable for placement decisions.
+    pub dpi_scale: bool,
+    /// Already-open windows can be moved or resized programmatically.
+    pub live_window_move: bool,
+    /// Native no-input/click-through windows are supported.
+    pub no_input_windows: bool,
+    /// Hovered-window queries pass through native no-input/click-through application windows.
+    pub hovered_window_ignores_no_input: bool,
 }
 
 /// Current route-facts and platform-request record for one registered viewport.
@@ -123,8 +146,27 @@ pub struct DockViewportRouteRecord {
     pub payload: DockViewportPayloadRecord,
     /// Runtime drag session that produced this route, when known.
     pub drag_session_id: Option<u64>,
+    /// Platform or routed-preview signal that selected this route target, when applicable.
+    pub selection_source: Option<DockViewportRouteSelectionRecord>,
     /// Runtime route selected for the release point.
     pub target: DockViewportRouteTarget,
+}
+
+/// Diagnostic source that selected a viewport route target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportRouteSelectionRecord {
+    /// Current backend hovered-window signal selected the viewport.
+    TrustedHoveredWindow,
+    /// The receiving host supplied explicit local scene proof for the event receiver window.
+    EventReceiverLocalScene,
+    /// Platform front-to-back window stack selected the viewport as a fallback.
+    FrontToBackWindowStackFallback,
+    /// Focus-stamp order selected the viewport as an ImGui-style fallback.
+    FocusStampWindowStackFallback,
+    /// Active drag state reused the last hovered viewport as the mouse reference viewport.
+    DragLastHoveredViewportFallback,
+    /// A rendered routed preview accepted this target before delivery.
+    AcceptedRoutedPreview,
 }
 
 /// Runtime route selected for a rendered drop release.
@@ -385,6 +427,8 @@ pub enum DockViewportPlatformSyncSkippedReason {
 pub struct DockViewportTearOffRecord {
     /// High-level tear-off outcome kind.
     pub kind: DockViewportTearOffOutcomeKind,
+    /// Placement input that chose the platform window bounds, when known.
+    pub placement_source: Option<DockViewportTearOffPlacementRecord>,
     /// Source dock space where the tear-off started.
     pub source_space: DockSpaceId,
     /// Target dock space opened for the tear-off.
@@ -402,7 +446,25 @@ pub enum DockViewportTearOffOutcomeKind {
     Duplicate,
 }
 
+/// Source of the platform-window placement used for a tear-off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportTearOffPlacementRecord {
+    /// The source host provided suggested platform-window bounds.
+    Suggested,
+    /// The runtime derived bounds from drag-source geometry and cursor offset.
+    DragGeometry,
+}
+
 impl DockViewportRuntimeStatus {
+    /// Attaches the current platform viewport capability snapshot to this diagnostic status.
+    pub fn with_platform_capabilities(
+        mut self,
+        capabilities: PlatformViewportCapabilities,
+    ) -> Self {
+        self.platform_capabilities = Some(DockViewportPlatformCapabilityRecord::from(capabilities));
+        self
+    }
+
     pub(crate) fn with_viewport_lifecycle(
         mut self,
         viewport_lifecycle: Vec<DockViewportLifecycleRecord>,
@@ -421,6 +483,7 @@ impl DockViewportRuntimeStatus {
             source_node: request.source_node(),
             payload: DockViewportPayloadRecord::from_payload(request.payload()),
             drag_session_id: request.drag_session().map(|session| session.id()),
+            selection_source: DockViewportRouteSelectionRecord::from_route(route),
             target: DockViewportRouteTarget::from_route(request, route),
         });
     }
@@ -479,6 +542,20 @@ impl DockViewportRuntimeStatus {
             .is_some_and(|sync| sync.window_id == window_id)
         {
             self.last_platform_sync = None;
+        }
+    }
+}
+
+impl From<PlatformViewportCapabilities> for DockViewportPlatformCapabilityRecord {
+    fn from(capabilities: PlatformViewportCapabilities) -> Self {
+        Self {
+            global_window_bounds: capabilities.global_window_bounds,
+            window_stack: capabilities.window_stack,
+            display_work_area: capabilities.display_work_area,
+            dpi_scale: capabilities.dpi_scale,
+            live_window_move: capabilities.live_window_move,
+            no_input_windows: capabilities.no_input_windows,
+            hovered_window_ignores_no_input: capabilities.hovered_window_ignores_no_input,
         }
     }
 }
@@ -637,6 +714,39 @@ impl DockViewportRouteTarget {
     }
 }
 
+impl DockViewportRouteSelectionRecord {
+    fn from_route(route: &DockViewportDropRoute) -> Option<Self> {
+        match route {
+            DockViewportDropRoute::Local { source, .. }
+            | DockViewportDropRoute::KnownViewport { source, .. } => {
+                Some(Self::from_selection_source(*source))
+            }
+            DockViewportDropRoute::TearOff
+            | DockViewportDropRoute::Unavailable
+            | DockViewportDropRoute::Rejected(_) => None,
+        }
+    }
+
+    fn from_selection_source(source: DockViewportRouteSelectionSource) -> Self {
+        match source {
+            DockViewportRouteSelectionSource::TrustedHoveredWindow => Self::TrustedHoveredWindow,
+            DockViewportRouteSelectionSource::EventReceiverLocalScene => {
+                Self::EventReceiverLocalScene
+            }
+            DockViewportRouteSelectionSource::FrontToBackWindowStackFallback => {
+                Self::FrontToBackWindowStackFallback
+            }
+            DockViewportRouteSelectionSource::FocusStampWindowStackFallback => {
+                Self::FocusStampWindowStackFallback
+            }
+            DockViewportRouteSelectionSource::DragLastHoveredViewportFallback => {
+                Self::DragLastHoveredViewportFallback
+            }
+            DockViewportRouteSelectionSource::AcceptedRoutedPreview => Self::AcceptedRoutedPreview,
+        }
+    }
+}
+
 impl DockViewportRouteRecord {
     fn references_window(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
         self.target.references_window(space, window_id)
@@ -714,6 +824,7 @@ impl DockViewportTearOffRecord {
                 let request = pending.request();
                 Self {
                     kind: DockViewportTearOffOutcomeKind::Completed,
+                    placement_source: DockViewportTearOffPlacementRecord::from_request(request),
                     source_space: request.source_space().clone(),
                     target_space: pending.target_space().clone(),
                     payload: DockViewportPayloadRecord::from_payload(request.payload()),
@@ -723,6 +834,7 @@ impl DockViewportTearOffRecord {
                 let request = pending.request();
                 Self {
                     kind: DockViewportTearOffOutcomeKind::Duplicate,
+                    placement_source: DockViewportTearOffPlacementRecord::from_request(request),
                     source_space: request.source_space().clone(),
                     target_space: pending.target_space().clone(),
                     payload: DockViewportPayloadRecord::from_payload(request.payload()),
@@ -732,19 +844,115 @@ impl DockViewportTearOffRecord {
     }
 }
 
+impl DockViewportTearOffPlacementRecord {
+    fn from_request(request: &DockViewportTearOffRequest) -> Option<Self> {
+        if request.suggested_window_bounds().is_some() {
+            return Some(Self::Suggested);
+        }
+
+        if request.tear_off_geometry().is_some() && request.release_position().is_some() {
+            return Some(Self::DragGeometry);
+        }
+
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::DockViewportFocusRequest;
     use crate::{
         DockViewportInputStatus, DockViewportWindowFacts,
-        drag::DockDragPayload,
+        drag::{DockDragPayload, DockDragTearOffGeometry},
         interaction::DockRuntimeDragSession,
         viewport_registry::DockViewportInputMask,
         viewport_test_support::{bounds, handle, space},
     };
-    use open_gpui::{WindowBounds, point, px};
+    use open_gpui::{PlatformViewportCapabilities, WindowBounds, point, px};
     use slotmap::Key;
+
+    #[test]
+    fn runtime_status_attaches_platform_capability_snapshot() {
+        let capabilities = PlatformViewportCapabilities {
+            global_window_bounds: true,
+            window_stack: true,
+            display_work_area: false,
+            dpi_scale: true,
+            live_window_move: false,
+            no_input_windows: true,
+            hovered_window_ignores_no_input: true,
+        };
+
+        let status = DockViewportRuntimeStatus::default().with_platform_capabilities(capabilities);
+
+        assert_eq!(
+            status.platform_capabilities,
+            Some(DockViewportPlatformCapabilityRecord {
+                global_window_bounds: true,
+                window_stack: true,
+                display_work_area: false,
+                dpi_scale: true,
+                live_window_move: false,
+                no_input_windows: true,
+                hovered_window_ignores_no_input: true,
+            })
+        );
+    }
+
+    #[test]
+    fn tear_off_record_exposes_suggested_placement_source() {
+        let request = DockViewportTearOffRequest::new(
+            space("source"),
+            DockNodeId::null(),
+            DockViewportDropPayload::Tabs,
+            point(px(900.0), px(600.0)),
+            Some(WindowBounds::Windowed(bounds(880.0, 560.0, 420.0, 260.0))),
+        )
+        .with_tear_off_geometry(Some(DockDragTearOffGeometry::from_source_bounds(
+            bounds(10.0, 20.0, 220.0, 80.0),
+            point(px(40.0), px(48.0)),
+        )));
+        let mut status = DockViewportRuntimeStatus::default();
+
+        status.record_tear_off(&duplicate_tear_off_outcome(request));
+
+        assert_eq!(
+            status
+                .last_tear_off
+                .as_ref()
+                .and_then(|record| record.placement_source),
+            Some(DockViewportTearOffPlacementRecord::Suggested),
+            "host-suggested platform bounds stay visible as the tear-off placement authority"
+        );
+    }
+
+    #[test]
+    fn tear_off_record_exposes_drag_geometry_placement_source() {
+        let request = DockViewportTearOffRequest::new(
+            space("source"),
+            DockNodeId::null(),
+            DockViewportDropPayload::Tabs,
+            point(px(900.0), px(600.0)),
+            None,
+        )
+        .with_tear_off_geometry(Some(DockDragTearOffGeometry::from_source_bounds(
+            bounds(10.0, 20.0, 220.0, 80.0),
+            point(px(40.0), px(48.0)),
+        )));
+        let mut status = DockViewportRuntimeStatus::default();
+
+        status.record_tear_off(&duplicate_tear_off_outcome(request));
+
+        assert_eq!(
+            status
+                .last_tear_off
+                .as_ref()
+                .and_then(|record| record.placement_source),
+            Some(DockViewportTearOffPlacementRecord::DragGeometry),
+            "runtime-derived source geometry stays visible as the tear-off placement authority"
+        );
+    }
 
     #[test]
     fn viewport_lifecycle_record_reports_route_status_from_snapshot() {
@@ -878,9 +1086,97 @@ mod tests {
             .expect("route record should be captured");
         assert_eq!(route.source_space, source);
         assert_eq!(route.drag_session_id, None);
+        assert_eq!(
+            route.selection_source,
+            Some(DockViewportRouteSelectionRecord::TrustedHoveredWindow)
+        );
         assert_eq!(route.target.space(), Some(&source));
         assert_eq!(route.target.host_position(), Some(host_position));
         assert_eq!(route.target.window_id(), Some(WindowId::from(7)));
+    }
+
+    #[test]
+    fn route_record_exposes_backend_fallback_selection_source() {
+        let source = DockSpaceId::from("source");
+        let target = DockSpaceId::from("target");
+        let source_tabs = DockNodeId::null();
+        let target_window = handle(8);
+        let host_position = point(px(12.0), px(34.0));
+        let mut status = DockViewportRuntimeStatus::default();
+
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source,
+            source_tabs,
+            DockViewportDropPayload::Tabs,
+            host_position,
+            None,
+            crate::DockViewportPlatformSignals::from_target_context(
+                crate::DockViewportTargetContext::new().with_window_stack([target_window]),
+            ),
+        );
+
+        status.record_route(
+            &request,
+            &DockViewportDropRoute::KnownViewport {
+                target: crate::DockViewportTargetHit::new(
+                    target.clone(),
+                    target_window,
+                    host_position,
+                ),
+                source: crate::DockViewportRouteSelectionSource::FrontToBackWindowStackFallback,
+            },
+        );
+
+        let route = status
+            .last_route
+            .as_ref()
+            .expect("route record should be captured");
+        assert_eq!(route.target.space(), Some(&target));
+        assert_eq!(
+            route.selection_source,
+            Some(DockViewportRouteSelectionRecord::FrontToBackWindowStackFallback)
+        );
+    }
+
+    #[test]
+    fn route_record_exposes_accepted_preview_selection_source() {
+        let source = DockSpaceId::from("source");
+        let target = DockSpaceId::from("target");
+        let source_tabs = DockNodeId::null();
+        let target_window = handle(9);
+        let host_position = point(px(14.0), px(36.0));
+        let mut status = DockViewportRuntimeStatus::default();
+
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source,
+            source_tabs,
+            DockViewportDropPayload::Tabs,
+            host_position,
+            None,
+            crate::DockViewportPlatformSignals::default(),
+        );
+
+        status.record_route(
+            &request,
+            &DockViewportDropRoute::KnownViewport {
+                target: crate::DockViewportTargetHit::new(
+                    target.clone(),
+                    target_window,
+                    host_position,
+                ),
+                source: crate::DockViewportRouteSelectionSource::AcceptedRoutedPreview,
+            },
+        );
+
+        let route = status
+            .last_route
+            .as_ref()
+            .expect("route record should be captured");
+        assert_eq!(route.target.space(), Some(&target));
+        assert_eq!(
+            route.selection_source,
+            Some(DockViewportRouteSelectionRecord::AcceptedRoutedPreview)
+        );
     }
 
     #[test]
@@ -1046,5 +1342,19 @@ mod tests {
             Some(DockViewportDropOutcomeKind::Action),
             "drop outcomes remain historical commit results rather than live window references"
         );
+    }
+
+    fn duplicate_tear_off_outcome(
+        request: DockViewportTearOffRequest,
+    ) -> DockViewportTearOffOpenOutcome {
+        let mut tear_off = crate::DockViewportTearOffMachine::default();
+        match tear_off.begin(request, space("detached"), None, None) {
+            crate::DockViewportTearOffBeginOutcome::Pending(pending) => {
+                DockViewportTearOffOpenOutcome::Duplicate(pending)
+            }
+            crate::DockViewportTearOffBeginOutcome::Duplicate(_) => {
+                unreachable!("fresh tear-off machine should not deduplicate the first request")
+            }
+        }
     }
 }
