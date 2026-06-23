@@ -73,9 +73,10 @@ verified_by:
 
 # Current State
 
-- Goal: Continue the Table line by deciding the next follow-up boundary after center-column virtualization.
+- Goal: Execute the next Table slice after center-column virtualization: tree-data rows and row interaction.
 - Branch: `main`
-- Last verified: 2026-06-23, `cargo fmt -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_table_samples_expose_virtualized_row_model_contract components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample`, and `git diff --check` passed after adding the wide `release-matrix` gallery proof.
+- Last verified: 2026-06-23, `git diff --check` passed after writing `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md`.
+- Done: Wrote `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` as the next Table slice. The plan keeps tree-data rows separate from synthetic grouping, reuses `TableExpansionState` for source hierarchy, adds row interaction payloads and focus semantics, and scopes the first gallery proof to a focused tree-data Table sample with runtime expansion and activation coverage.
 - Done: Completed U5/U6 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `25875d0`. The Components gallery now includes `release-matrix`, a wide pinned Table sample with fourteen center metrics, and a focused smoke that proves far center columns stay unmounted before scroll, mount after horizontal scroll, and keep the outer Components page plus fixed lanes stationary. The gallery state row is also less noisy for non-grouped tables, and the Table contract / verification docs now describe the center-column window as a first-class adapter behavior.
 - Done: Completed the sticky pinned Table slice on top of `3273c1a`: the GPUI Table adapter keeps vertical wheel input inside pinned table bodies, `release-rollup` exposes explicit left/center/right lane widths, and the focused gallery smoke proves horizontal center-lane scrolling leaves left/right pinned lanes plus the outer Components page fixed.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
@@ -140,9 +141,9 @@ verified_by:
 - Done: Completed U3 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `3819ac6`. The GPUI `Table` adapter now renders center headers and body cells from the shared `TableCenterColumnWindowPlan`, inserts leading/trailing spacers to preserve full center-lane scroll geometry, keeps left/right pinned lanes fully mounted, and tests prove off-window center selectors unmount/remount while row virtualization remains independent after horizontal scroll.
 - Done: Completed U4 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `5d67277`. Added plan-level accessibility coverage for virtualized center columns, runtime sort coverage for a rendered center header after horizontal scroll, and resize-geometry coverage proving the virtual center window recomputes from committed sizing while preserving the rendered column identity set.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
-- Follow-up: The column sizing / resize and sticky pinned-column slices are complete; the next Table follow-ups are two-dimensional grid virtualization, tree-data tables, custom aggregation callbacks, server pagination/faceting/editing, and standalone headless extraction.
+- Follow-up: The column sizing / resize, sticky pinned-column, and center-column virtualization slices are complete. After tree-data rows, the remaining Table follow-ups are two-dimensional grid virtualization, custom aggregation callbacks, server pagination/faceting/editing, row pinning, and standalone headless extraction.
 - Blocked: None.
-- Next action: Pick the next Table follow-up boundary, most likely full two-axis grid virtualization, tree-data tables, or server-style table flows.
+- Next action: Start U1 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md`: add source-row hierarchy to the core Table contract.
 
 # Citations
 
