@@ -419,7 +419,7 @@ remains a future adapter-runtime policy.
 
 The GPUI `Table` adapter resolves table state and virtualizer ranges before rendering. The adapter
 owns the element tree, concrete scroll viewport, wheel containment, header/body drawing, sortable
-header activation callbacks, focus handles, column resize handles, and AccessKit mapping. Table
+header activation callbacks, focus handles, callback-backed column resize handles, and AccessKit mapping. Table
 accessibility metadata includes table, row, column-header, and cell roles, row and column position
 metadata, sort metadata for sortable headers, grouped-row depth and parent metadata, and selection
 metadata keyed by stable row id. The render plan exposes `TableColumnRegionRenderPlan` entries and

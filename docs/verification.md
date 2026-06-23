@@ -49,8 +49,9 @@ cargo nextest run -p open-gpui-ui-foundation-gallery
 The gallery package includes Components-page runtime smoke coverage for regressions that state-only
 tests can miss: short-viewport page scrolling and navigation reset, navigation rail scrolling,
 Select popup outside dismissal, nested ScrollArea wheel scrolling, vertical Tabs rail scrolling,
-horizontal plus vertical Splitter pointer dragging, and long Sidebar internal navigation scrolling.
-Run the gallery package tests before relying on manual dogfood for those paths.
+horizontal plus vertical Splitter pointer dragging, Table column resize dragging, and long Sidebar
+internal navigation scrolling. Run the gallery package tests before relying on manual dogfood for
+those paths.
 The Components-page ScrollArea regressions also cover release-queue wheel isolation so scroll
 gestures on the sample card chrome do not leak to the page shell.
 Because the Components page now carries more depth samples, the longer-section smokes also rely on
@@ -70,12 +71,13 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_fo
 cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focused_mode_resets_page_on_family_change
 ```
 
-Table gallery gates now follow the same split: `open-gpui-ui-core` tests prove row-model and
-virtualizer contracts without rendering, including grouped row ids, expansion lookup behavior, and
-built-in group-row aggregate cells plus pinned-column region splitting;
-`open-gpui-ui-components` tests prove adapter exports, state metadata, and scroll ownership; and
-gallery smokes prove long table scroll input stays inside the table viewport when the surrounding
-Components page also overflows. The focused proofs are:
+Table gallery gates now follow the same split: `open-gpui-ui-core` tests prove row-model,
+virtualizer, column sizing, and resize-math contracts without rendering, including grouped row ids,
+expansion lookup behavior, built-in group-row aggregate cells, pinned-column region splitting, and
+on-end/on-change resize deltas. `open-gpui-ui-components` tests prove adapter exports, state
+metadata, resize callback wiring, and scroll ownership; gallery smokes prove long table scroll
+input stays inside the table viewport and `release-resize` column dragging updates the controlled
+sample without moving the outer Components page. The focused proofs are:
 
 ```powershell
 cargo nextest run -p open-gpui-ui-core table
@@ -172,11 +174,14 @@ The official Table gate requires `Table`, `TableState`, `VirtualizerState`, role
 rows and cells, and at least one `gallery:component-table-sample:{id}` selector. Table smokes and
 state tests assert that rendered row selectors stay bounded by the virtualizer's visible rows plus
 overscan, scroll input stays inside the table viewport, sortable header actions emit state-update
-payloads, sort/filter state follows stable row ids rather than numeric positions, and grouped /
-expanded row models keep collapsed descendants addressable by stable row id. The Components
-gallery now carries `release-rollup`, a grouped Table sample that mixes expanded and collapsed
-team groups, exposes aggregate count and score cells, pins the identifier and status columns, and
-has its own inner-scroll smoke. Core table tests also assert that `TableAggregation` exposes
+payloads, controlled column resize callbacks carry stable sizing payloads, sort/filter state
+follows stable row ids rather than numeric positions, and grouped / expanded row models keep
+collapsed descendants addressable by stable row id. The Components gallery now carries
+`release-rollup`, a grouped Table sample that mixes expanded and collapsed team groups, exposes
+aggregate count and score cells, pins the identifier and status columns, and has its own
+inner-scroll smoke. It also carries `release-resize`, a controlled column-sizing sample whose
+resize smoke drags the `name` handle, records the app-owned committed width, and verifies header
+and first-row cell widths stay aligned. Core table tests also assert that `TableAggregation` exposes
 stable built-in aggregate labels and resolves count, sum, min, max, and average cells for grouped
 rows without hiding the grouping column value. Core and component tests assert that
 `TableColumnPinning` splits visible columns into left, center, and right regions after
@@ -373,9 +378,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     sample should accept real text editing through the
     controller-backed path, while the gallery remains scrollable and keeps focus visible when the
     page overflows. The Table samples should expose the `release-queue` 10k-row virtualized window,
-    the filtered/sorted/paginated `filter-board` model, the grouped and pinned `release-rollup`
-    model, stable selected row ids, table/row/cell accessibility metadata, sortable header
-    metadata, and internal body viewports that scroll without moving the outer Components page.
+    the filtered/sorted/paginated `filter-board` model, the controlled `release-resize` sizing
+    sample, the grouped and pinned `release-rollup` model, stable selected row ids, table/row/cell
+    accessibility metadata, sortable header metadata, resize handle metadata, and internal body
+    viewports that scroll without moving the outer Components page.
     The Tree sample should expose `document-outline`,
     tree/tree-item accessibility metadata, expandable `Paper` children, a state readout, an inner
     viewport that scrolls without moving the outer Components page, and selection/toggle events

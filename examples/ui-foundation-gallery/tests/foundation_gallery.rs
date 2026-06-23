@@ -1663,7 +1663,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 
-    assert_eq!(tables.len(), 3);
+    assert_eq!(tables.len(), 4);
     assert_eq!(tables[0].id, "release-queue");
     assert_eq!(tables[0].state.rows().len(), 10_000);
     assert_eq!(
@@ -1684,13 +1684,30 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(filter_plan.table().final_model().rows().len(), 24);
     assert_eq!(filter_plan.table().final_model().selected_count(), 1);
 
-    let grouped_plan = tables[2].render_plan();
-    assert_eq!(tables[2].id, "release-rollup");
-    assert_eq!(tables[2].state.grouping()[0].as_str(), "team");
-    assert_eq!(tables[2].state.aggregations().len(), 2);
-    assert_eq!(tables[2].state.column_pinning().left()[0].as_str(), "name");
+    let resize_plan = tables[2].render_plan();
+    assert_eq!(tables[2].id, "release-resize");
+    assert_eq!(tables[2].state.rows().len(), 160);
     assert_eq!(
-        tables[2].state.column_pinning().right()[0].as_str(),
+        resize_plan.columns()[0].width(),
+        ui_px(188.0),
+        "release-resize should expose committed sizing metadata"
+    );
+    assert!(
+        resize_plan.columns()[0].resizable(),
+        "name column should expose a resize handle"
+    );
+    assert!(
+        !resize_plan.columns()[3].resizable(),
+        "score column should prove per-column resize disablement"
+    );
+
+    let grouped_plan = tables[3].render_plan();
+    assert_eq!(tables[3].id, "release-rollup");
+    assert_eq!(tables[3].state.grouping()[0].as_str(), "team");
+    assert_eq!(tables[3].state.aggregations().len(), 2);
+    assert_eq!(tables[3].state.column_pinning().left()[0].as_str(), "name");
+    assert_eq!(
+        tables[3].state.column_pinning().right()[0].as_str(),
         "status"
     );
     assert!(
@@ -1710,7 +1727,7 @@ fn components_page_samples_expose_component_metadata() {
             .any(|row| row.is_leaf())
     );
     assert!(
-        grouped_plan.rendered_row_count() <= grouped_plan.visible_row_count() + tables[2].overscan
+        grouped_plan.rendered_row_count() <= grouped_plan.visible_row_count() + tables[3].overscan
     );
 
     assert_eq!(virtualized_lists.len(), 1);
@@ -2049,7 +2066,26 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(filter_plan.table().final_model().selected_count(), 1);
     assert_eq!(filter_plan.aria_column_count(), 4);
 
-    let grouped_release = &samples[2];
+    let release_resize = &samples[2];
+    let resize_plan = release_resize.render_plan();
+    let resize_summary = release_resize.state_summary();
+
+    assert_eq!(release_resize.id, "release-resize");
+    assert_eq!(release_resize.state.rows().len(), 160);
+    assert_eq!(resize_plan.table().final_model().rows().len(), 160);
+    assert_eq!(resize_summary.core_rows, 160);
+    assert_eq!(resize_summary.total_column_width_px, 520);
+    assert_eq!(resize_summary.resizable_columns, 3);
+    assert_eq!(resize_plan.columns()[0].width(), ui_px(188.0));
+    assert_eq!(resize_plan.columns()[1].width(), ui_px(116.0));
+    assert_eq!(resize_plan.columns()[2].width(), ui_px(132.0));
+    assert_eq!(resize_plan.columns()[3].width(), ui_px(84.0));
+    assert!(resize_plan.columns()[0].resizable());
+    assert!(resize_plan.columns()[1].resizable());
+    assert!(resize_plan.columns()[2].resizable());
+    assert!(!resize_plan.columns()[3].resizable());
+
+    let grouped_release = &samples[3];
     let grouped_plan = grouped_release.render_plan();
     let grouped_summary = grouped_release.state_summary();
 
@@ -2966,6 +3002,11 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
         "expected focused Table mode to render the grouped Table sample"
     );
     assert!(
+        cx.debug_bounds("gallery:component-table-sample:release-resize")
+            .is_some(),
+        "expected focused Table mode to render the resizable Table sample"
+    );
+    assert!(
         cx.debug_bounds("gallery:component-button-sample:default")
             .is_none(),
         "expected focused Table mode to hide unrelated Button samples"
@@ -3055,12 +3096,16 @@ fn components_gallery_smoke_focuses_every_focusable_catalog_entry(
 fn components_gallery_smoke_focused_table_scroll_stays_inside_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
-    scroll_page_until_visible(cx, "component-catalog:Table");
+    scroll_page_selector_into_view(&shell, cx, "component-catalog:Table");
     click(cx, "component-catalog:Table");
     settle(cx);
-    scroll_page_until_visible(cx, "gallery:component-table-sample:release-queue");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:table:component-table:release-queue:body-scroll",
+    );
 
     let sample_before = bounds(cx, "gallery:component-table-sample:release-queue");
     let table_viewport = bounds(
@@ -3412,10 +3457,14 @@ fn components_gallery_smoke_release_queue_card_wheel_does_not_leak_to_page(
 
 #[open_gpui::test]
 fn components_gallery_smoke_table_scroll_stays_inside_sample(cx: &mut open_gpui::TestAppContext) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
     jump_components_directory_to(cx, "gallery:component-page-jump:table");
-    scroll_page_until_visible(cx, "gallery:component-table-sample:release-queue");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:table:component-table:release-queue:body-scroll",
+    );
     let sample_before = bounds(cx, "gallery:component-table-sample:release-queue");
     let table_viewport = bounds(
         cx,
@@ -3452,6 +3501,72 @@ fn components_gallery_smoke_table_scroll_stays_inside_sample(cx: &mut open_gpui:
             .is_some(),
         "expected virtualized Table row 0010 to enter the rendered window after internal scroll"
     );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_resizable_table_resize_updates_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+
+    jump_components_directory_to(cx, "gallery:component-page-jump:table");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "table:component-table:release-resize:resize:name",
+    );
+    let sample_before = bounds(cx, "gallery:component-table-sample:release-resize");
+    let header_before = bounds(cx, "table:component-table:release-resize:header:name");
+    let cell_before = bounds(
+        cx,
+        "table:component-table:release-resize:cell:release-resize-row-000:name",
+    );
+    let resize_handle = bounds(cx, "table:component-table:release-resize:resize:name");
+
+    assert_eq!(header_before.size.width, cell_before.size.width);
+    assert!(
+        cx.debug_bounds("table:component-table:release-resize:resize:score")
+            .is_none(),
+        "expected the score column to stay non-resizable"
+    );
+
+    drag(
+        cx,
+        resize_handle.center(),
+        point(
+            resize_handle.center().x + px(60.0),
+            resize_handle.center().y,
+        ),
+    );
+
+    let sample_after = bounds(cx, "gallery:component-table-sample:release-resize");
+    let header_after = bounds(cx, "table:component-table:release-resize:header:name");
+    let cell_after = bounds(
+        cx,
+        "table:component-table:release-resize:cell:release-resize-row-000:name",
+    );
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.sizing_changes().to_vec()
+    });
+    let committed_width =
+        cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+            log.committed_sizing("release-resize")
+                .and_then(|sizing| sizing.width(&TableColumnId::new("name")))
+        });
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected Table resize drag to keep the sample card anchored"
+    );
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].sample_id, "release-resize");
+    assert_eq!(changes[0].column_id, "name");
+    assert!(changes[0].width > ui_px(188.0));
+    assert_eq!(committed_width, Some(changes[0].width));
+    assert_eq!(header_after.size.width, cell_after.size.width);
+    assert!(header_after.size.width > header_before.size.width);
 }
 
 #[open_gpui::test]

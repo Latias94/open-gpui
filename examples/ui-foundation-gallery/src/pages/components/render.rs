@@ -1476,7 +1476,27 @@ pub(crate) fn render_components_page(
                                         let summary = sample.summary;
                                         let badge = sample.badge;
                                         let state_summary = sample.state_summary();
-                                        let table = sample.build_table();
+                                        let table = if sample_id == "release-resize" {
+                                            let base_sizing = sample.state.column_sizing().clone();
+                                            let current_sizing =
+                                                pages::components::current_table_sample_sizing(
+                                                    sample_id,
+                                                    &base_sizing,
+                                                    cx,
+                                                );
+                                            let sample_id_for_resize = sample_id.to_owned();
+                                            sample
+                                                .build_table_with_sizing(current_sizing)
+                                                .on_column_sizing_change(move |change, _, cx| {
+                                                    pages::components::record_table_sizing_change(
+                                                        sample_id_for_resize.clone(),
+                                                        &change,
+                                                        cx,
+                                                    );
+                                                })
+                                        } else {
+                                            sample.build_table()
+                                        };
 
                                         div()
                                             .id(format!("component-table-sample:{sample_id}"))
@@ -2306,6 +2326,10 @@ pub(crate) fn component_table_state_row(
             summary.pinned_left_columns,
             summary.pinned_center_columns,
             summary.pinned_right_columns
+        ))
+        .child(format!(
+            "width {}px / {} resizable columns",
+            summary.total_column_width_px, summary.resizable_columns
         ))
 }
 

@@ -1,6 +1,6 @@
 //! Component consumer samples for the foundation gallery.
 
-use open_gpui::{App, BorrowAppContext, Global, ParentElement, Styled, div, rgb};
+use open_gpui::{App, AppContext, BorrowAppContext, Global, ParentElement, Styled, div, rgb};
 use open_gpui_ui_components::{
     Avatar, AvatarState, Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant,
     Checkbox, CheckboxState, ComboboxGroupDescriptor, ComboboxOptionDescriptor, ComboboxState,
@@ -13,17 +13,19 @@ use open_gpui_ui_components::{
     SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
     Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
     Switch, SwitchState, Table, TableAggregation, TableColumn, TableColumnPinning,
-    TableExpansionState, TableFilter, TablePagination, TableRenderPlan, TableRow, TableSort,
-    TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
-    TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
-    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
-    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
+    TableColumnSizing, TableColumnSizingChange, TableExpansionState, TableFilter, TablePagination,
+    TableRenderPlan, TableRow, TableSort, TableState, Tabs, TabsActivationMode, TabsItem,
+    TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant,
+    Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree,
+    TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListItemDescriptor,
+    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
     OverlayPlacementAlignment, OverlayPlacementSide, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
+use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 
 #[path = "components/render.rs"]
@@ -127,6 +129,9 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::TableAggregation",
     "open_gpui_ui_components::TableColumnPinning",
     "open_gpui_ui_components::TableColumnRegion",
+    "open_gpui_ui_components::TableColumnSizing",
+    "open_gpui_ui_components::TableColumnSizingChange",
+    "open_gpui_ui_components::TableColumnResizeMode",
     "open_gpui_ui_components::TableExpansionState",
     "open_gpui_ui_components::VirtualizedList",
     "open_gpui_ui_components::VirtualizedListItemDescriptor",
@@ -719,7 +724,7 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "Table",
         "data",
         "TableState",
-        "exports / gallery / virtualized scroll smoke",
+        "exports / gallery / virtualized scroll and resize smoke",
         "gallery:component-table-sample:release-queue",
     ),
     ComponentCatalogEntry::official(
@@ -885,14 +890,16 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
     ComponentConformanceGate {
         id: "table-virtualization",
         title: "Table row models and scroll ownership",
-        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate and pinned-column metadata, and nested scroll ownership.",
+        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate and pinned-column metadata, resize handles, and nested scroll ownership.",
         evidence: &[
             "TableState::resolve",
             "Table::render_plan",
             "TableHeaderAction",
             "release-rollup",
+            "release-resize",
             "components_gallery_smoke_table_scroll_stays_inside_sample",
             "components_gallery_smoke_grouped_table_scroll_stays_inside_sample",
+            "components_gallery_smoke_resizable_table_resize_updates_sample",
         ],
     },
     ComponentConformanceGate {
@@ -1158,6 +1165,77 @@ pub fn record_tree_toggle(
             value: value.into(),
             expanded,
         });
+    });
+}
+
+/// One committed column sizing change captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableSampleSizingChange {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Resized column id.
+    pub column_id: String,
+    /// Committed resolved width.
+    pub width: UiPx,
+}
+
+/// Runtime sizing log used by gallery Table smoke tests.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct TableSampleRuntimeLog {
+    sizing_changes: Vec<TableSampleSizingChange>,
+    committed_sizing: BTreeMap<String, TableColumnSizing>,
+}
+
+impl Global for TableSampleRuntimeLog {}
+
+impl TableSampleRuntimeLog {
+    /// Returns captured sizing changes in event order.
+    pub fn sizing_changes(&self) -> &[TableSampleSizingChange] {
+        &self.sizing_changes
+    }
+
+    /// Returns the latest committed sizing for a sample, if any.
+    pub fn committed_sizing(&self, sample_id: &str) -> Option<&TableColumnSizing> {
+        self.committed_sizing.get(sample_id)
+    }
+
+    /// Clears captured interactions.
+    pub fn clear(&mut self) {
+        self.sizing_changes.clear();
+        self.committed_sizing.clear();
+    }
+}
+
+/// Returns the current committed sizing for a gallery `Table` sample.
+pub fn current_table_sample_sizing(
+    sample_id: impl Into<String>,
+    fallback: &TableColumnSizing,
+    cx: &impl AppContext,
+) -> TableColumnSizing {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.committed_sizing
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    })
+}
+
+/// Records a gallery `Table` sizing commit in app-global sample state.
+pub fn record_table_sizing_change(
+    sample_id: impl Into<String>,
+    change: &TableColumnSizingChange,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.sizing_changes.push(TableSampleSizingChange {
+            sample_id: sample_id.clone(),
+            column_id: change.column_id().as_str().to_owned(),
+            width: change.width(),
+        });
+        log.committed_sizing
+            .insert(sample_id, change.sizing().clone());
     });
 }
 
@@ -1549,6 +1627,10 @@ pub struct TableSampleStateSummary {
     pub pinned_center_columns: usize,
     /// Visible right-pinned columns.
     pub pinned_right_columns: usize,
+    /// Rounded total visible column width.
+    pub total_column_width_px: usize,
+    /// Visible resizable columns.
+    pub resizable_columns: usize,
 }
 
 impl TableSampleStateSummary {
@@ -1595,6 +1677,12 @@ impl TableSampleStateSummary {
             pinned_left_columns: regions.left().len(),
             pinned_center_columns: regions.center().len(),
             pinned_right_columns: regions.right().len(),
+            total_column_width_px: plan.total_column_width().as_f32().round() as usize,
+            resizable_columns: plan
+                .columns()
+                .iter()
+                .filter(|column| column.resizable())
+                .count(),
         }
     }
 }
@@ -1602,10 +1690,15 @@ impl TableSampleStateSummary {
 impl TableSample {
     /// Builds the concrete GPUI table for this sample.
     pub fn build_table(&self) -> Table {
+        self.build_table_with_sizing(self.state.column_sizing().clone())
+    }
+
+    /// Builds the concrete GPUI table with caller-owned column sizing.
+    pub fn build_table_with_sizing(&self, column_sizing: TableColumnSizing) -> Table {
         Table::new(
             format!("component-table:{}", self.id),
             self.title,
-            self.state.clone(),
+            self.state.clone().with_column_sizing(column_sizing),
         )
         .with_size(self.size)
         .viewport_extent(self.viewport_extent)
@@ -2894,16 +2987,17 @@ fn release_navigation_item(index: usize) -> VirtualizedListItemDescriptor {
     )
 }
 
-static TABLE_SAMPLES: LazyLock<[TableSample; 3]> = LazyLock::new(build_table_samples);
+static TABLE_SAMPLES: LazyLock<[TableSample; 4]> = LazyLock::new(build_table_samples);
 
 /// Returns table samples backed by real table and virtualizer contracts.
 pub fn table_samples(_tokens: ThemeTokens) -> &'static [TableSample] {
     TABLE_SAMPLES.as_slice()
 }
 
-fn build_table_samples() -> [TableSample; 3] {
+fn build_table_samples() -> [TableSample; 4] {
     let release_queue_rows = (0..10_000).map(release_queue_row).collect::<Vec<_>>();
     let filter_board_rows = (0..180).map(filter_board_row).collect::<Vec<_>>();
+    let release_resize_rows = (0..160).map(release_resize_row).collect::<Vec<_>>();
     let grouped_release_rows = (0..320).map(grouped_release_row).collect::<Vec<_>>();
 
     let release_queue = TableSample {
@@ -2935,6 +3029,29 @@ fn build_table_samples() -> [TableSample; 3] {
             .with_sorting([TableSort::descending("score")])
             .with_selected_rows(["filter-board-row-177"])
             .with_pagination(TablePagination::new(0, 24)),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
+    let release_resize = TableSample {
+        id: "release-resize",
+        title: "Resizable release table",
+        summary: "Controlled column widths with live resize handles and a fixed score column.",
+        badge: "resizable",
+        state: TableState::new(release_resize_rows)
+            .with_columns(resizable_table_columns())
+            .with_column_order(["name", "team", "status", "score"])
+            .with_column_sizing(
+                TableColumnSizing::new()
+                    .with_width("name", ui_px(188.0))
+                    .with_width("team", ui_px(116.0))
+                    .with_width("status", ui_px(132.0))
+                    .with_width("score", ui_px(84.0)),
+            )
+            .with_sorting([TableSort::descending("score")])
+            .with_pagination(TablePagination::disabled()),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
         row_height: ui_px(30.0),
@@ -2973,6 +3090,7 @@ fn build_table_samples() -> [TableSample; 3] {
     [
         release_queue.with_state_summary(),
         filter_board.with_state_summary(),
+        release_resize.with_state_summary(),
         grouped_release.with_state_summary(),
     ]
 }
@@ -2998,6 +3116,28 @@ fn table_columns() -> [TableColumn; 4] {
     ]
 }
 
+fn resizable_table_columns() -> [TableColumn; 4] {
+    [
+        TableColumn::new("name", "Name")
+            .with_width(ui_px(188.0))
+            .with_min_width(ui_px(140.0))
+            .with_max_width(ui_px(280.0)),
+        TableColumn::new("team", "Team")
+            .with_width(ui_px(116.0))
+            .with_min_width(ui_px(92.0))
+            .with_max_width(ui_px(180.0)),
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(132.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(220.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(84.0))
+            .with_min_width(ui_px(72.0))
+            .with_max_width(ui_px(120.0))
+            .with_resizable(false),
+    ]
+}
+
 fn release_queue_row(index: usize) -> TableRow {
     let teams = ["UI", "Runtime", "Platform", "Docs", "QA"];
     let statuses = ["Ready", "Review", "Build", "Verify", "Blocked"];
@@ -3007,6 +3147,18 @@ fn release_queue_row(index: usize) -> TableRow {
         .with_cell("name", format!("Release #{index:04}"))
         .with_cell("team", teams[index % teams.len()])
         .with_cell("status", statuses[(index / 7) % statuses.len()])
+        .with_cell("score", score)
+}
+
+fn release_resize_row(index: usize) -> TableRow {
+    let teams = ["UI", "Runtime", "Platform", "QA"];
+    let statuses = ["Queued", "Running", "Ready", "Held"];
+    let score = 500_usize.saturating_sub(index % 500);
+
+    TableRow::new(format!("release-resize-row-{index:03}"))
+        .with_cell("name", format!("Resize candidate #{index:03}"))
+        .with_cell("team", teams[index % teams.len()])
+        .with_cell("status", statuses[(index / 5) % statuses.len()])
         .with_cell("score", score)
 }
 
