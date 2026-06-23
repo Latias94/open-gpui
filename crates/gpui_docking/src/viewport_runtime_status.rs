@@ -4,7 +4,8 @@ use crate::{
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
     DockViewportFocusRequest, DockViewportShouldCloseOutcome, DockViewportTearOffOpenOutcome,
     viewport_registry::{
-        DockViewportRouteUnavailableReason, DockViewportSnapshot, DockViewportStaleReason,
+        DockViewportInputMask, DockViewportPlatformRequests, DockViewportRouteUnavailableReason,
+        DockViewportSnapshot, DockViewportStaleReason,
     },
 };
 use open_gpui::{
@@ -22,8 +23,6 @@ pub struct DockViewportRuntimeStatus {
     pub last_drop_outcome: Option<DockViewportDropOutcomeRecord>,
     /// Most recent viewport activation requested by a routed drop.
     pub last_activation: Option<DockViewportActivationRecord>,
-    /// Explicit viewport activation waiting for backend focused-window confirmation.
-    pub pending_activation: Option<DockViewportActivationRecord>,
     /// Most recent platform close cleanup outcome.
     pub last_close: Option<DockViewportCloseOutcome>,
     /// Most recent platform should-close query outcome.
@@ -34,20 +33,24 @@ pub struct DockViewportRuntimeStatus {
     pub last_platform_sync: Option<DockViewportPlatformSyncRecord>,
 }
 
-/// Current route-readiness record for one registered viewport.
+/// Current route-facts and platform-request record for one registered viewport.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DockViewportLifecycleRecord {
     /// Logical dock space rendered by the viewport window.
     pub space: DockSpaceId,
     /// GPUI window currently bound to the logical dock space.
     pub window_id: WindowId,
-    /// Route-readiness status derived from the viewport lifecycle machine.
+    /// Route-facts status derived from the viewport lifecycle machine.
     pub route_status: DockViewportRouteStatus,
+    /// Platform input-mask state observed for the viewport window.
+    pub input_status: DockViewportInputStatus,
+    /// Platform request flags pending for this viewport window.
+    pub platform_request_status: DockViewportPlatformRequestStatus,
     /// Generation of the latest platform/host route facts.
     pub facts_generation: u64,
 }
 
-/// Route-readiness status for a registered viewport.
+/// Route-facts status for a registered viewport.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DockViewportRouteStatus {
     /// The space/window binding exists, but no rendered host scene has published route facts yet.
@@ -61,10 +64,28 @@ pub enum DockViewportRouteStatus {
     },
     /// The latest platform facts say the window is minimized.
     Minimized,
-    /// The latest platform facts say the window is a native no-input/click-through viewport.
-    NoInputPassThrough,
     /// The lifecycle state was ready, but one of the required route fact snapshots is absent.
     MissingRouteFacts,
+}
+
+/// Platform request status for a registered viewport.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DockViewportPlatformRequestStatus {
+    /// The platform has requested that this viewport should close.
+    pub close_requested: bool,
+    /// The platform has requested or reported an authoritative resize.
+    pub resize_requested: bool,
+}
+
+/// Platform input-mask status for a registered viewport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportInputStatus {
+    /// The window receives pointer input.
+    ReceivesInput,
+    /// The window is minimized.
+    Minimized,
+    /// The window is native no-input/click-through.
+    NoInputPassThrough,
 }
 
 /// Public diagnostic reason for stale viewport route facts.
@@ -72,8 +93,6 @@ pub enum DockViewportRouteStatus {
 pub enum DockViewportStaleStatusReason {
     /// GPUI reported platform window facts changed after the last rendered host scene.
     WindowFactsChanged,
-    /// GPUI accepted a platform close request and the window is waiting for the close callback.
-    PlatformCloseRequested,
 }
 
 /// Payload shape recorded in viewport runtime diagnostics.
@@ -439,13 +458,6 @@ impl DockViewportRuntimeStatus {
         self.last_platform_sync = Some(record);
     }
 
-    pub(crate) fn set_pending_activation(
-        &mut self,
-        activation: Option<&DockViewportActivationTransaction>,
-    ) {
-        self.pending_activation = activation.map(DockViewportActivationRecord::from);
-    }
-
     pub(crate) fn clear_window_references(&mut self, space: &DockSpaceId, window_id: WindowId) {
         if self
             .last_route
@@ -460,13 +472,6 @@ impl DockViewportRuntimeStatus {
             .is_some_and(|activation| activation.references_window(space, window_id))
         {
             self.last_activation = None;
-        }
-        if self
-            .pending_activation
-            .as_ref()
-            .is_some_and(|activation| activation.references_window(space, window_id))
-        {
-            self.pending_activation = None;
         }
         if self
             .last_platform_sync
@@ -484,6 +489,10 @@ impl DockViewportLifecycleRecord {
             space,
             window_id: snapshot.window.window_id(),
             route_status: DockViewportRouteStatus::from_snapshot(snapshot),
+            input_status: DockViewportInputStatus::from(snapshot.input_mask),
+            platform_request_status: DockViewportPlatformRequestStatus::from(
+                snapshot.platform_requests(),
+            ),
             facts_generation: snapshot.facts_generation(),
         }
     }
@@ -491,8 +500,11 @@ impl DockViewportLifecycleRecord {
 
 impl DockViewportRouteStatus {
     fn from_snapshot(snapshot: &DockViewportSnapshot) -> Self {
-        match snapshot.route_unavailable_reason() {
+        match snapshot.route_facts_unavailable_reason() {
             None => Self::RouteReady,
+            Some(DockViewportRouteUnavailableReason::PlatformCloseRequested) => {
+                unreachable!("platform close requests are not route-facts lifecycle state")
+            }
             Some(DockViewportRouteUnavailableReason::RegisteredNotReady) => {
                 Self::RegisteredNotReady
             }
@@ -500,10 +512,26 @@ impl DockViewportRouteStatus {
                 reason: DockViewportStaleStatusReason::from(reason),
             },
             Some(DockViewportRouteUnavailableReason::Minimized) => Self::Minimized,
-            Some(DockViewportRouteUnavailableReason::NoInputPassThrough) => {
-                Self::NoInputPassThrough
-            }
             Some(DockViewportRouteUnavailableReason::MissingRouteFacts) => Self::MissingRouteFacts,
+        }
+    }
+}
+
+impl From<DockViewportInputMask> for DockViewportInputStatus {
+    fn from(input_mask: DockViewportInputMask) -> Self {
+        match input_mask {
+            DockViewportInputMask::ReceivesInput => Self::ReceivesInput,
+            DockViewportInputMask::Minimized => Self::Minimized,
+            DockViewportInputMask::NoInputPassThrough => Self::NoInputPassThrough,
+        }
+    }
+}
+
+impl From<DockViewportPlatformRequests> for DockViewportPlatformRequestStatus {
+    fn from(requests: DockViewportPlatformRequests) -> Self {
+        Self {
+            close_requested: requests.close_requested,
+            resize_requested: requests.resize_requested,
         }
     }
 }
@@ -512,7 +540,6 @@ impl From<DockViewportStaleReason> for DockViewportStaleStatusReason {
     fn from(reason: DockViewportStaleReason) -> Self {
         match reason {
             DockViewportStaleReason::WindowFactsChanged => Self::WindowFactsChanged,
-            DockViewportStaleReason::PlatformCloseRequested => Self::PlatformCloseRequested,
         }
     }
 }
@@ -710,10 +737,10 @@ mod tests {
     use super::*;
     use crate::DockViewportFocusRequest;
     use crate::{
-        DockViewportWindowFacts,
+        DockViewportInputStatus, DockViewportWindowFacts,
         drag::DockDragPayload,
         interaction::DockRuntimeDragSession,
-        viewport_registry::DockViewportPointerRouting,
+        viewport_registry::DockViewportInputMask,
         viewport_test_support::{bounds, handle, space},
     };
     use open_gpui::{WindowBounds, point, px};
@@ -732,6 +759,11 @@ mod tests {
             registered.route_status,
             DockViewportRouteStatus::RegisteredNotReady
         );
+        assert_eq!(registered.input_status, DockViewportInputStatus::Minimized);
+        assert_eq!(
+            registered.platform_request_status,
+            DockViewportPlatformRequestStatus::default()
+        );
         assert_eq!(registered.facts_generation, 0);
 
         assert!(snapshot.update_route_facts(
@@ -742,6 +774,11 @@ mod tests {
         ));
         let ready = DockViewportLifecycleRecord::from_snapshot(space.clone(), &snapshot);
         assert_eq!(ready.route_status, DockViewportRouteStatus::RouteReady);
+        assert_eq!(ready.input_status, DockViewportInputStatus::ReceivesInput);
+        assert_eq!(
+            ready.platform_request_status,
+            DockViewportPlatformRequestStatus::default()
+        );
         assert_eq!(ready.facts_generation, 1);
 
         assert!(
@@ -749,29 +786,37 @@ mod tests {
                 DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
                     100.0, 200.0, 320.0, 240.0
                 )))
-                .with_pointer_routing(DockViewportPointerRouting::Minimized),
+                .with_input_mask(DockViewportInputMask::Minimized),
                 bounds(0.0, 0.0, 320.0, 240.0)
             )
         );
         let minimized = DockViewportLifecycleRecord::from_snapshot(space.clone(), &snapshot);
         assert_eq!(minimized.route_status, DockViewportRouteStatus::Minimized);
-        assert_eq!(minimized.facts_generation, 2);
+        assert_eq!(minimized.input_status, DockViewportInputStatus::Minimized);
+        assert_eq!(
+            minimized.facts_generation, 1,
+            "input-mask-only changes do not advance route facts generation"
+        );
 
         assert!(
             snapshot.update_route_facts(
                 DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
                     100.0, 200.0, 320.0, 240.0
                 )))
-                .with_pointer_routing(DockViewportPointerRouting::NoInputPassThrough),
+                .with_input_mask(DockViewportInputMask::NoInputPassThrough),
                 bounds(0.0, 0.0, 320.0, 240.0)
             )
         );
         let no_input = DockViewportLifecycleRecord::from_snapshot(space.clone(), &snapshot);
+        assert_eq!(no_input.route_status, DockViewportRouteStatus::RouteReady);
         assert_eq!(
-            no_input.route_status,
-            DockViewportRouteStatus::NoInputPassThrough
+            no_input.input_status,
+            DockViewportInputStatus::NoInputPassThrough
         );
-        assert_eq!(no_input.facts_generation, 3);
+        assert_eq!(
+            no_input.facts_generation, 1,
+            "input-mask-only changes do not advance route facts generation"
+        );
 
         assert!(snapshot.mark_route_facts_stale(DockViewportStaleReason::WindowFactsChanged));
         let stale = DockViewportLifecycleRecord::from_snapshot(space.clone(), &snapshot);
@@ -781,17 +826,25 @@ mod tests {
                 reason: DockViewportStaleStatusReason::WindowFactsChanged
             }
         );
-        assert_eq!(stale.facts_generation, 4);
+        assert_eq!(stale.facts_generation, 2);
 
-        assert!(snapshot.mark_route_facts_stale(DockViewportStaleReason::PlatformCloseRequested));
+        assert!(snapshot.mark_platform_close_requested());
         let closing = DockViewportLifecycleRecord::from_snapshot(space, &snapshot);
         assert_eq!(
             closing.route_status,
             DockViewportRouteStatus::Stale {
-                reason: DockViewportStaleStatusReason::PlatformCloseRequested
+                reason: DockViewportStaleStatusReason::WindowFactsChanged
+            },
+            "close requests do not replace the current route-facts lifecycle"
+        );
+        assert_eq!(
+            closing.platform_request_status,
+            DockViewportPlatformRequestStatus {
+                close_requested: true,
+                resize_requested: false,
             }
         );
-        assert_eq!(closing.facts_generation, 5);
+        assert_eq!(closing.facts_generation, 2);
     }
 
     #[test]
@@ -815,7 +868,7 @@ mod tests {
                 host_position,
                 window_id: handle(7).window_id(),
                 facts_generation: 1,
-                authority: crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
+                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
             },
         );
 
@@ -855,7 +908,7 @@ mod tests {
                 host_position,
                 window_id: handle(7).window_id(),
                 facts_generation: 1,
-                authority: crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
+                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
             },
         );
 
@@ -960,7 +1013,7 @@ mod tests {
                     target_window,
                     host_position,
                 ),
-                authority: crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
+                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
             },
         );
         status.record_drop_result(&Ok(DockViewportDropRouteOutcome::Action(

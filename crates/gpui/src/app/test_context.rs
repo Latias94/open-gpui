@@ -496,6 +496,11 @@ impl TestAppContext {
         self.test_platform.set_focused_window_available(available);
     }
 
+    /// Overrides whether the test platform can report the hovered window.
+    pub fn set_platform_hovered_window_available(&self, available: bool) {
+        self.test_platform.set_hovered_window_available(available);
+    }
+
     /// Simulate dispatching an action to the currently focused node in the window.
     pub fn dispatch_action<A>(&mut self, window: AnyWindowHandle, action: A)
     where
@@ -1291,6 +1296,18 @@ mod tests {
         assert_eq!(
             cx.update(|app| app.hovered_window()),
             PlatformHoveredWindow::NoWindow
+        );
+
+        cx.set_platform_hovered_window(Some(first));
+        cx.set_platform_hovered_window_available(false);
+        let hovered = cx.update(|app| app.hovered_window());
+        assert_eq!(hovered, PlatformHoveredWindow::Unavailable);
+        assert!(!hovered.is_available());
+
+        cx.set_platform_hovered_window_available(true);
+        assert_eq!(
+            cx.update(|app| app.hovered_window()),
+            PlatformHoveredWindow::Window(first)
         );
     }
 

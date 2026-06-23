@@ -3,7 +3,7 @@ use x11rb::protocol::{
     xproto::{self, ModMask},
 };
 
-use open_gpui::{Modifiers, MouseButton, NavigationDirection};
+use open_gpui::{Modifiers, MouseButton, NavigationDirection, Pixels, Point, point, px};
 
 pub(crate) enum ButtonOrScroll {
     Button(MouseButton),
@@ -63,6 +63,17 @@ pub(crate) fn pressed_button_from_mask(button_mask: u32) -> Option<MouseButton> 
     } else {
         return None;
     })
+}
+
+pub(crate) fn point_from_x11_window_coords(
+    win_x: i16,
+    win_y: i16,
+    scale_factor: f32,
+) -> Point<Pixels> {
+    point(
+        px(win_x as f32 / scale_factor),
+        px(win_y as f32 / scale_factor),
+    )
 }
 
 pub(crate) fn get_valuator_axis_index(
@@ -150,5 +161,17 @@ mod tests {
         assert!(get_valuator_axis_index(&vec![0b1010, 0b1], 33) == None);
 
         assert!(get_valuator_axis_index(&vec![0b1010, 0b101], 34) == Some(3));
+    }
+
+    #[test]
+    fn point_from_x11_window_coords_returns_window_local_logical_pixels() {
+        assert_eq!(
+            point_from_x11_window_coords(60, 90, 2.0),
+            point(px(30.0), px(45.0)),
+        );
+        assert_eq!(
+            point_from_x11_window_coords(-20, -10, 2.0),
+            point(px(-10.0), px(-5.0)),
+        );
     }
 }

@@ -56,13 +56,19 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> bool {
         let payload = cx.active_drag_value::<DockDragPayload>().cloned();
+        let tear_off_geometry = payload.as_ref().and_then(|payload| {
+            self.active_payload_drag_session(payload)
+                .as_ref()
+                .and_then(|session| self.active_payload_drag_tear_off_geometry(Some(session)))
+        });
         let request = DockOutsideReleasePollRequest::new(
             session.clone(),
             payload,
             cx.mouse_button_is_pressed(MouseButton::Left),
             self.space().clone(),
             window.mouse_position(),
-        );
+        )
+        .with_tear_off_geometry(tear_off_geometry);
         let decision = self.interaction_mut().poll_outside_release(request);
 
         match decision {

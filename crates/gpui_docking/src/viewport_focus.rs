@@ -45,11 +45,7 @@ impl DockViewportFocusCoordinator {
     pub(crate) fn request_for_platform_activation(
         &self,
         space: &DockSpaceId,
-        mouse_down: bool,
     ) -> Option<DockViewportFocusRequest> {
-        if mouse_down {
-            return None;
-        }
         match self.focus_by_space.get(space) {
             Some(DockViewportRecordedFocus::Panel(item)) => {
                 Some(DockViewportFocusRequest::panel(item.clone()))
@@ -127,10 +123,6 @@ impl DockViewportFocusCommand {
 
     pub(crate) fn viewport_activation(request: DockViewportFocusRequest) -> Self {
         Self::new(DockViewportFocusCommandSource::ViewportActivation, request)
-    }
-
-    pub(crate) fn close_recovery(request: DockViewportFocusRequest) -> Self {
-        Self::new(DockViewportFocusCommandSource::CloseRecovery, request)
     }
 
     pub(crate) fn request(&self) -> &DockViewportFocusRequest {

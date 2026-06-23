@@ -27,6 +27,7 @@ impl DockHostInteractionOutcome {
                         .action_result()
                         .map(DockActionOutcome::changed)
                         .unwrap_or(false)
+                    || outcome.has_window_effects()
                     || outcome.activation_transaction().is_some()
             }
             Self::Idle | Self::Rejected(_) => false,
@@ -127,7 +128,7 @@ mod tests {
     use super::*;
     use crate::{
         DockItemId, DockViewportDropActionOutcome, DockViewportFocusRequest,
-        host_test_support::space, viewport_test_support::handle,
+        DockViewportWindowEffects, host_test_support::space, viewport_test_support::handle,
     };
 
     #[test]
@@ -173,5 +174,22 @@ mod tests {
         let outcome = DockHostInteractionOutcome::from_routed_drop_result(Ok(routed));
 
         assert!(outcome.changed());
+    }
+
+    #[test]
+    fn routed_drop_with_window_effects_counts_as_changed_without_activation() {
+        let window = handle(3);
+        let routed = DockViewportDropRouteOutcome::Action(
+            DockViewportDropActionOutcome::new(DockActionOutcome::Unchanged, None)
+                .with_window_effects(DockViewportWindowEffects::new(
+                    Vec::new(),
+                    [window],
+                    Vec::new(),
+                )),
+        );
+        let outcome = DockHostInteractionOutcome::from_routed_drop_result(Ok(routed.clone()));
+
+        assert!(outcome.changed());
+        assert_eq!(outcome.routed_drop_outcome(), Some(&routed));
     }
 }

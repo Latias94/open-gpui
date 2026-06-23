@@ -17,19 +17,36 @@ pub(crate) enum DockViewportClosePlanState {
     Discarded,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockViewportClosePlanEffect {
+    Unchanged,
+    DiscardedPending,
+    Cleared,
+}
+
+impl DockViewportClosePlanEffect {
+    pub(crate) fn changed(self) -> bool {
+        !matches!(self, Self::Unchanged)
+    }
+}
+
 impl DockViewportCloseCoordinator {
-    pub(crate) fn discard_window(&mut self, window_id: WindowId) -> bool {
+    pub(crate) fn discard_window(&mut self, window_id: WindowId) -> DockViewportClosePlanEffect {
         match self.window_close_plans.get_mut(&window_id) {
             Some(state @ DockViewportClosePlanState::Pending(_)) => {
                 *state = DockViewportClosePlanState::Discarded;
-                true
+                DockViewportClosePlanEffect::DiscardedPending
             }
-            _ => false,
+            _ => DockViewportClosePlanEffect::Unchanged,
         }
     }
 
-    pub(crate) fn cancel_window(&mut self, window_id: WindowId) -> bool {
-        self.window_close_plans.remove(&window_id).is_some()
+    pub(crate) fn cancel_window(&mut self, window_id: WindowId) -> DockViewportClosePlanEffect {
+        if self.window_close_plans.remove(&window_id).is_some() {
+            DockViewportClosePlanEffect::Cleared
+        } else {
+            DockViewportClosePlanEffect::Unchanged
+        }
     }
 
     pub(crate) fn take_window_close_state(
@@ -154,7 +171,10 @@ mod tests {
             window.window_id(),
             DockViewportClosePlanState::Pending(plan.clone()),
         );
-        assert!(coordinator.discard_window(window.window_id()));
+        assert_eq!(
+            coordinator.discard_window(window.window_id()),
+            DockViewportClosePlanEffect::DiscardedPending
+        );
         assert_eq!(
             coordinator.take_window_close_state(window.window_id()),
             Some(DockViewportClosePlanState::Discarded)
@@ -172,10 +192,27 @@ mod tests {
             coordinator.take_window_close_state(window.window_id()),
             Some(DockViewportClosePlanState::Pending(plan))
         );
-        assert!(!coordinator.discard_window(window.window_id()));
+        assert_eq!(
+            coordinator.discard_window(window.window_id()),
+            DockViewportClosePlanEffect::Unchanged
+        );
         assert_eq!(
             coordinator.take_window_close_state(window.window_id()),
             None
+        );
+
+        let plan = DockViewportMergeBackClosePlan::new(space("source"), space("target"), None);
+        coordinator.window_close_plans.insert(
+            window.window_id(),
+            DockViewportClosePlanState::Pending(plan),
+        );
+        assert_eq!(
+            coordinator.cancel_window(window.window_id()),
+            DockViewportClosePlanEffect::Cleared
+        );
+        assert_eq!(
+            coordinator.cancel_window(window.window_id()),
+            DockViewportClosePlanEffect::Unchanged
         );
     }
 

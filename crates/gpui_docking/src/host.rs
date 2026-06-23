@@ -1,17 +1,15 @@
 #[cfg(test)]
 use crate::debug::DockDebugInstrumentation;
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockNodeId, DockSpaceId,
-    DockViewportFocusCommand, DockViewportFocusCommandSource, DockViewportFocusRequest,
+    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockSpaceId,
+    DockViewportFocusCommand, DockViewportFocusRequest, DockViewportPlatformFocusRestoreGate,
     DockViewportRuntimeHandle, geometry::DockDropGuideStyle,
     host_render_session::DockHostRenderSession, interaction::DockInteractionRuntime,
     workspace::DockWorkspace,
 };
 use open_gpui::{
-    App, AppContext as _, Context, Entity, FocusHandle, MouseButton, Pixels, Subscription, Window,
-    px,
+    AppContext as _, Context, Entity, FocusHandle, Pixels, Subscription, Window, WindowId, px,
 };
-use slotmap::Key;
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -60,7 +58,6 @@ pub struct DockHost {
     viewport_activation_subscription: Option<Subscription>,
     viewport_bounds_subscription: Option<Subscription>,
     viewport_release_subscription: Option<Subscription>,
-    pending_focus_command: Option<DockViewportFocusCommand>,
     panel_focus_trackers: HashMap<DockItemId, DockPanelFocusTracker>,
     #[cfg(test)]
     debug: DockDebugInstrumentation,
@@ -83,7 +80,6 @@ impl DockHost {
             viewport_activation_subscription: None,
             viewport_bounds_subscription: None,
             viewport_release_subscription: None,
-            pending_focus_command: None,
             panel_focus_trackers: HashMap::new(),
             #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
@@ -155,29 +151,43 @@ impl DockHost {
             return;
         }
 
-        let runtime = self.viewport_runtime().clone();
-
-        let activation_runtime = runtime.clone();
         self.viewport_activation_subscription = Some(cx.observe_window_activation(
             window,
             move |host, window, cx| {
                 if window.is_window_active() {
-                    let window_id = window.window_handle().window_id();
-                    let mouse_down = any_mouse_button_pressed(cx);
-                    if let Some(command) = activation_runtime
-                        .focus_command_for_confirmed_backend_window_focus(
-                            host.space(),
-                            window_id,
-                            mouse_down,
-                            cx,
-                        )
-                        && host.request_viewport_focus_command(command)
-                    {
-                        cx.notify();
-                    }
+                    host.apply_confirmed_backend_window_focus(
+                        window.window_handle().window_id(),
+                        DockViewportPlatformFocusRestoreGate::from_app(cx),
+                        cx,
+                    );
                 }
             },
         ));
+    }
+
+    fn apply_confirmed_backend_window_focus(
+        &mut self,
+        window_id: WindowId,
+        platform_focus_restore_gate: DockViewportPlatformFocusRestoreGate,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let outcome = self
+            .viewport_runtime
+            .confirmed_backend_window_focus_outcome(
+                self.space(),
+                window_id,
+                platform_focus_restore_gate,
+                cx,
+            );
+        let changed = outcome.changed();
+        let focus_command_queued = outcome
+            .into_focus_command()
+            .is_some_and(|command| self.request_viewport_focus_command(command));
+        let applied = changed || focus_command_queued;
+        if applied {
+            cx.notify();
+        }
+        applied
     }
 
     pub(crate) fn ensure_viewport_bounds_subscription(
@@ -226,26 +236,7 @@ impl DockHost {
         &mut self,
         command: DockViewportFocusCommand,
     ) -> bool {
-        if self.pending_focus_command.as_ref() == Some(&command) {
-            return false;
-        }
-        if self.pending_focus_command.as_ref().is_some_and(|existing| {
-            matches!(
-                (command.source(), existing.source()),
-                (
-                    DockViewportFocusCommandSource::PlatformActivation,
-                    DockViewportFocusCommandSource::ViewportActivation
-                        | DockViewportFocusCommandSource::CloseRecovery,
-                ) | (
-                    DockViewportFocusCommandSource::ViewportActivation,
-                    DockViewportFocusCommandSource::CloseRecovery
-                )
-            )
-        }) {
-            return false;
-        }
-        self.pending_focus_command = Some(command);
-        true
+        self.interaction.request_viewport_focus_command(command)
     }
 
     pub(crate) fn apply_pending_focus_from_render(
@@ -254,7 +245,7 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(command) = self.pending_focus_command().cloned() else {
+        let Some(command) = self.interaction.pending_focus_command().cloned() else {
             return;
         };
         match command.request().clone() {
@@ -269,22 +260,15 @@ impl DockHost {
                         self.clear_pending_focus_command();
                         self.remember_panel_focus(item, cx);
                     }
-                    Some(false) => self.clear_pending_focus_command(),
+                    Some(false) => {
+                        self.record_no_panel_focus_for_gone_platform_panel(&command, &item, cx);
+                        self.clear_pending_focus_command();
+                    }
                     None if should_preselect => {
-                        let space = self.space().clone();
-                        let select_item = item.clone();
                         let focus_item = item;
                         let changed = self
                             .mutate_controller_from_host(cx, |controller| {
-                                let Some((tabs, _)) =
-                                    controller.graph().find_item_in_space(&space, &select_item)
-                                else {
-                                    return Err(DockActionApplyError::ItemNotInTabs {
-                                        tabs: DockNodeId::null(),
-                                        item: select_item.clone(),
-                                    });
-                                };
-                                controller.select_tab(tabs, select_item.clone())
+                                controller.select_item_in_space(focus_item.clone())
                             })
                             .is_ok_and(|outcome| outcome.changed());
                         if changed {
@@ -302,10 +286,18 @@ impl DockHost {
                             self.clear_pending_focus_command();
                             self.remember_panel_focus(focus_item, cx);
                         } else {
+                            self.record_no_panel_focus_for_gone_platform_panel(
+                                &command,
+                                &focus_item,
+                                cx,
+                            );
                             self.clear_pending_focus_command();
                         }
                     }
-                    None => self.clear_pending_focus_command(),
+                    None => {
+                        self.record_no_panel_focus_for_gone_platform_panel(&command, &item, cx);
+                        self.clear_pending_focus_command();
+                    }
                 }
             }
             DockViewportFocusRequest::NoPanelFocus => {
@@ -320,24 +312,50 @@ impl DockHost {
         let space = self.space().clone();
         self.viewport_runtime()
             .record_panel_focus(space, item.clone());
-        let space = self.space().clone();
         let _ = self.mutate_controller_from_host(cx, |controller| {
-            let Some((tabs, _)) = controller.graph().find_item_in_space(&space, &item) else {
-                return Err(DockActionApplyError::ItemNotInTabs {
-                    tabs: DockNodeId::null(),
-                    item: item.clone(),
-                });
-            };
-            controller.select_tab(tabs, item.clone())
+            controller.select_item_in_space(item.clone())
         });
     }
 
+    fn record_no_panel_focus_for_gone_platform_panel(
+        &self,
+        command: &DockViewportFocusCommand,
+        item: &DockItemId,
+        cx: &mut Context<Self>,
+    ) {
+        if command.source() != crate::DockViewportFocusCommandSource::PlatformActivation {
+            return;
+        }
+        if !self
+            .viewport_runtime()
+            .recorded_panel_focus_matches(self.space(), item)
+        {
+            return;
+        }
+        if self.panel_is_reachable_in_space(item, cx) {
+            return;
+        }
+        self.viewport_runtime().record_no_panel_focus(self.space());
+    }
+
+    fn panel_is_reachable_in_space(&self, item: &DockItemId, cx: &mut Context<Self>) -> bool {
+        let space = self.space().clone();
+        let controller = self.controller.clone();
+        cx.read_entity(&controller, |controller, _| {
+            controller
+                .graph()
+                .find_item_in_space(&space, item)
+                .is_some()
+        })
+    }
+
+    #[cfg(test)]
     pub(crate) fn pending_focus_command(&self) -> Option<&DockViewportFocusCommand> {
-        self.pending_focus_command.as_ref()
+        self.interaction.pending_focus_command()
     }
 
     pub(crate) fn clear_pending_focus_command(&mut self) {
-        self.pending_focus_command = None;
+        let _ = self.interaction.take_pending_focus_command();
     }
 
     #[cfg(test)]
@@ -396,10 +414,4 @@ impl DockHost {
     pub(crate) fn debug_instrumentation_mut(&mut self) -> &mut DockDebugInstrumentation {
         &mut self.debug
     }
-}
-
-fn any_mouse_button_pressed(cx: &App) -> bool {
-    MouseButton::all()
-        .into_iter()
-        .any(|button| cx.mouse_button_is_pressed(button) == Some(true))
 }

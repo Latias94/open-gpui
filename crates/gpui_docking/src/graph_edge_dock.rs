@@ -148,13 +148,12 @@ impl DockGraph {
                 zone,
                 sizing,
             } => {
-                let (first, second) = ordered_edge_children(zone, new_child, target);
-                let (first_fraction, second_fraction) =
-                    ordered_edge_fractions(zone, sizing.new_child_share());
+                let ordered_children = ordered_edge_children(zone, new_child, target);
+                let ordered_fractions = ordered_edge_fractions(zone, sizing.new_child_share());
                 let split = self.insert_node(DockNode::Split {
                     axis,
-                    children: vec![first, second],
-                    fractions: vec![first_fraction, second_fraction],
+                    children: vec![ordered_children.leading, ordered_children.trailing],
+                    fractions: vec![ordered_fractions.leading, ordered_fractions.trailing],
                 });
                 self.replace_node_in_space_tree(space, target, split)
             }
@@ -366,23 +365,45 @@ struct DockParentIndex {
     split_child_index: HashMap<DockNodeId, usize>,
 }
 
+struct DockOrderedEdgeChildren {
+    leading: DockNodeId,
+    trailing: DockNodeId,
+}
+
+struct DockOrderedEdgeFractions {
+    leading: f32,
+    trailing: f32,
+}
+
 fn ordered_edge_children(
     zone: DropZone,
     new_child: DockNodeId,
     target: DockNodeId,
-) -> (DockNodeId, DockNodeId) {
+) -> DockOrderedEdgeChildren {
     match zone {
-        DropZone::Left | DropZone::Top => (new_child, target),
-        DropZone::Right | DropZone::Bottom => (target, new_child),
+        DropZone::Left | DropZone::Top => DockOrderedEdgeChildren {
+            leading: new_child,
+            trailing: target,
+        },
+        DropZone::Right | DropZone::Bottom => DockOrderedEdgeChildren {
+            leading: target,
+            trailing: new_child,
+        },
         DropZone::Center => unreachable!(),
     }
 }
 
-fn ordered_edge_fractions(zone: DropZone, new_child_share: f32) -> (f32, f32) {
+fn ordered_edge_fractions(zone: DropZone, new_child_share: f32) -> DockOrderedEdgeFractions {
     let existing_share = 1.0 - new_child_share;
     match zone {
-        DropZone::Left | DropZone::Top => (new_child_share, existing_share),
-        DropZone::Right | DropZone::Bottom => (existing_share, new_child_share),
+        DropZone::Left | DropZone::Top => DockOrderedEdgeFractions {
+            leading: new_child_share,
+            trailing: existing_share,
+        },
+        DropZone::Right | DropZone::Bottom => DockOrderedEdgeFractions {
+            leading: existing_share,
+            trailing: new_child_share,
+        },
         DropZone::Center => unreachable!(),
     }
 }

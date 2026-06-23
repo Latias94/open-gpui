@@ -33,6 +33,26 @@ fn workspace_applies_actions_and_preserves_registered_panels(cx: &mut TestAppCon
 }
 
 #[open_gpui::test]
+fn workspace_select_item_in_space_selects_its_containing_tabs(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a", "b"]);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+
+    let outcome = workspace
+        .select_item_in_space(space(), item("b"))
+        .expect("selecting item b in its space should be valid");
+
+    let DockNode::Tabs { selected, .. } = workspace
+        .graph()
+        .node(root)
+        .expect("tabs should still exist")
+    else {
+        panic!("root should be tabs");
+    };
+    assert_eq!(outcome, DockActionOutcome::Changed);
+    assert_eq!(selected.as_ref(), Some(&item("b")));
+}
+
+#[open_gpui::test]
 fn workspace_selecting_selected_tab_is_noop(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph_with_selected(&["a", "b"], "b");
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);

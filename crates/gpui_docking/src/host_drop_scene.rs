@@ -10,7 +10,7 @@ use crate::{
 use open_gpui::{Bounds, Context, Pixels, Point, Size, Window};
 
 impl DockHost {
-    pub(crate) fn begin_host_drop_scene_interaction(
+    pub(crate) fn ensure_host_drop_scene_interaction(
         &mut self,
         payload: &DockDragPayload,
         position: Point<Pixels>,
@@ -27,6 +27,7 @@ impl DockHost {
             });
         let default_space = self.space().clone();
         let target_validator = dock_target_validator(&default_space, &payload_classes, &policy);
+        let excluded_nodes = payload.excluded_nodes_for_drop_scene(&graph);
         let edge_plan_space = default_space.clone();
         let edge_plan_resolver =
             move |target_node: DockNodeId, zone: DropZone, sizing: DockEdgeDockSizing| {
@@ -34,11 +35,11 @@ impl DockHost {
             };
         let payload_size = self.active_payload_drag_size(payload);
         DockHostInteractionOutcome::from_session_changed(
-            self.interaction_mut().begin_drop_scene_with_validator(
+            self.interaction_mut().ensure_drop_scene_with_validator(
                 DockHostDropScene::new(position)
                     .with_payload_size(payload_size)
                     .with_drop_guide_style(drop_guide_style)
-                    .excluding_node(payload.excluded_node_for_drop_scene()),
+                    .excluding_nodes(excluded_nodes),
                 &policy,
                 Some(&target_validator),
                 Some(&edge_plan_resolver),
@@ -65,6 +66,7 @@ impl DockHost {
             });
         let default_space = self.space().clone();
         let target_validator = dock_target_validator(&default_space, &payload_classes, &policy);
+        let excluded_nodes = payload.excluded_nodes_for_drop_scene(&graph);
         let edge_plan_space = default_space.clone();
         let edge_plan_resolver =
             move |target_node: DockNodeId, zone: DropZone, sizing: DockEdgeDockSizing| {
@@ -75,7 +77,7 @@ impl DockHost {
             position,
             payload_size,
             drop_guide_style,
-            payload.excluded_node_for_drop_scene(),
+            excluded_nodes,
             fact,
             window,
             &policy,
@@ -120,7 +122,7 @@ impl DockHost {
         position: Point<Pixels>,
         payload_size: Option<Size<Pixels>>,
         drop_guide_style: DockDropGuideStyle,
-        excluded_tabs: Option<DockNodeId>,
+        excluded_nodes: Vec<DockNodeId>,
         fact: DockHostDropSceneFact,
         window: &Window,
         policy: &DockPolicy,
@@ -141,7 +143,7 @@ impl DockHost {
             position,
             payload_size,
             drop_guide_style,
-            excluded_tabs,
+            excluded_nodes,
             fact,
             policy,
             target_validator,

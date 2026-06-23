@@ -24,6 +24,12 @@ impl DockGraph {
         out
     }
 
+    pub(crate) fn nodes_in_subtree(&self, root: DockNodeId) -> Vec<DockNodeId> {
+        let mut out = Vec::new();
+        self.collect_nodes_in_subtree_into(root, &mut out);
+        out
+    }
+
     /// Returns all tabs nodes reachable from a dock space in stable tree order.
     pub fn tabs_in_space(&self, space: &DockSpaceId) -> Vec<DockNodeId> {
         let mut out = Vec::new();
@@ -161,6 +167,22 @@ impl DockGraph {
             DockNode::Split { children, .. } => {
                 for child in children {
                     self.collect_tabs_in_subtree_into(*child, out);
+                }
+            }
+        }
+    }
+
+    fn collect_nodes_in_subtree_into(&self, root: DockNodeId, out: &mut Vec<DockNodeId>) {
+        let Some(node) = self.nodes.get(root) else {
+            return;
+        };
+        out.push(root);
+        match node {
+            DockNode::Tabs { .. } => {}
+            DockNode::Floating { child } => self.collect_nodes_in_subtree_into(*child, out),
+            DockNode::Split { children, .. } => {
+                for child in children {
+                    self.collect_nodes_in_subtree_into(*child, out);
                 }
             }
         }

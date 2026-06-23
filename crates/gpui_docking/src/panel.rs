@@ -13,6 +13,11 @@ pub struct DockPanel {
     view: DockPanelViewHandle,
 }
 
+pub(crate) struct DockPanelParts {
+    pub(crate) descriptor: DockPanelDescriptor,
+    pub(crate) view: DockPanelViewHandle,
+}
+
 impl fmt::Debug for DockPanel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DockPanel")
@@ -70,8 +75,11 @@ impl DockPanel {
         Self { descriptor, view }
     }
 
-    pub(crate) fn into_parts(self) -> (DockPanelDescriptor, DockPanelViewHandle) {
-        (self.descriptor, self.view)
+    pub(crate) fn into_parts(self) -> DockPanelParts {
+        DockPanelParts {
+            descriptor: self.descriptor,
+            view: self.view,
+        }
     }
 
     /// Sets whether the panel can be closed by future interaction layers.

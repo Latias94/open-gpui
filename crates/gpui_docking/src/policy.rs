@@ -11,6 +11,7 @@ pub struct DockPolicy {
     allow_splitter_resize: bool,
     allow_floating: bool,
     allow_platform_viewports: bool,
+    platform_focus_sets_dock_focus: bool,
     allow_central_region_dock_over: bool,
     allowed_dock_classes_by_space: BTreeMap<DockSpaceId, BTreeSet<DockClassId>>,
 }
@@ -79,6 +80,19 @@ impl DockPolicy {
     /// Enables or disables platform viewport tear-off interactions.
     pub fn set_allow_platform_viewports(&mut self, allowed: bool) {
         self.allow_platform_viewports = allowed;
+    }
+
+    /// Returns whether platform window focus restores the recorded dock-panel focus.
+    pub fn platform_focus_sets_dock_focus(&self) -> bool {
+        self.platform_focus_sets_dock_focus
+    }
+
+    /// Enables or disables restoring dock-panel focus when a platform window gains focus.
+    ///
+    /// This mirrors Dear ImGui's `ConfigViewportsPlatformFocusSetsImGuiFocus`: applications can
+    /// disable it for platforms or window managers that focus windows eagerly.
+    pub fn set_platform_focus_sets_dock_focus(&mut self, enabled: bool) {
+        self.platform_focus_sets_dock_focus = enabled;
     }
 
     /// Returns whether center/tab-bar docking over a central region is allowed.
@@ -224,6 +238,7 @@ impl Default for DockPolicy {
             allow_splitter_resize: true,
             allow_floating: false,
             allow_platform_viewports: false,
+            platform_focus_sets_dock_focus: true,
             allow_central_region_dock_over: true,
             allowed_dock_classes_by_space: BTreeMap::new(),
         }
@@ -289,6 +304,7 @@ mod tests {
             policy.validate_platform_viewports(),
             Err(DockPolicyError::PlatformViewportsDisabled)
         );
+        assert!(policy.platform_focus_sets_dock_focus());
         assert!(policy.validate_central_region_dock_over().is_ok());
     }
 
@@ -300,6 +316,7 @@ mod tests {
         policy.set_allow_same_stack_center_drop(false);
         policy.set_allow_splitter_resize(false);
         policy.set_allow_platform_viewports(false);
+        policy.set_platform_focus_sets_dock_focus(false);
         policy.set_allow_central_region_dock_over(false);
 
         assert_eq!(
@@ -322,9 +339,27 @@ mod tests {
             policy.validate_platform_viewports(),
             Err(DockPolicyError::PlatformViewportsDisabled)
         );
+        assert!(!policy.platform_focus_sets_dock_focus());
         assert_eq!(
             policy.validate_central_region_dock_over(),
             Err(DockPolicyError::CentralRegionDockOverDisabled)
+        );
+    }
+
+    #[test]
+    fn platform_focus_restore_policy_is_independent_from_platform_viewports() {
+        let mut policy = DockPolicy::default();
+
+        assert!(!policy.allows_platform_viewports());
+        assert!(policy.platform_focus_sets_dock_focus());
+
+        policy.set_platform_focus_sets_dock_focus(false);
+        policy.set_allow_platform_viewports(true);
+
+        assert!(policy.allows_platform_viewports());
+        assert!(
+            !policy.platform_focus_sets_dock_focus(),
+            "platform focus restoration mirrors ImGui's opt-out and is not the same as tear-off support"
         );
     }
 

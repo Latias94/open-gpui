@@ -295,7 +295,21 @@ impl DockGraph {
         target_space: Option<&DockSpaceId>,
         frozen_focus_item: Option<&DockItemId>,
     ) -> Option<DockItemId> {
-        self.resolve_payload_focus_item(payload, target_space, frozen_focus_item)
+        let item = match payload {
+            crate::workspace_transaction::DockWorkspaceDropPayload::Item { item, .. } => {
+                (*item).clone()
+            }
+            crate::workspace_transaction::DockWorkspaceDropPayload::Tabs { .. }
+            | crate::workspace_transaction::DockWorkspaceDropPayload::Floating { .. } => {
+                frozen_focus_item?.clone()
+            }
+        };
+
+        match target_space {
+            Some(space) if self.find_item_in_space(space, &item).is_some() => Some(item),
+            Some(_) => None,
+            None => Some(item),
+        }
     }
 
     pub(crate) fn activation_focus_item_for_viewport_payload(

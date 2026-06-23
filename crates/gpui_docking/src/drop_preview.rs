@@ -105,7 +105,7 @@ fn route_bounds(anchor: Point<Pixels>) -> Bounds<Pixels> {
 mod tests {
     use super::*;
     use crate::{
-        DockPolicyError, DockViewportAuthorizedRouteAuthority, DockViewportTargetHit,
+        DockPolicyError, DockViewportRouteSelectionSource, DockViewportTargetHit,
         viewport_test_support::{handle, space},
     };
     use open_gpui::{point, px};
@@ -119,7 +119,7 @@ mod tests {
                     handle(7),
                     point(px(300.0), px(20.0)),
                 ),
-                authority: DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
+                source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
             },
             point(px(40.0), px(50.0)),
         )

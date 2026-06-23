@@ -114,12 +114,23 @@ impl DockHost {
                     );
                 },
             ))
-            .on_drag(stack_payload, move |payload, _, _, cx| {
-                stack_drag_entity.update(cx, |host, cx| {
-                    host.begin_payload_drag_from_render(payload, cx);
-                });
-                cx.new(|_| DockDragPreview::new(payload.title()))
-            });
+            .on_drag(
+                stack_payload,
+                move |payload, position, source_bounds, _, cx| {
+                    stack_drag_entity.update(cx, |host, cx| {
+                        host.begin_payload_drag_from_render(payload, cx);
+                        host.update_payload_drag_tear_off_geometry_from_render(
+                            payload,
+                            DockDragTearOffGeometry::from_source_bounds(
+                                source_bounds,
+                                source_bounds.origin + position,
+                            )
+                            .with_preferred_size(source_bounds.size),
+                        );
+                    });
+                    cx.new(|_| DockDragPreview::new(payload.title()))
+                },
+            );
         tab_bar = tab_bar.child(
             self.render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
                 drop_scene_fact::tab_bar(node, tab_count, bounds, is_central)
@@ -214,9 +225,17 @@ impl DockHost {
                         );
                     },
                 ))
-                .on_drag(payload, move |payload, _, _, cx| {
+                .on_drag(payload, move |payload, position, source_bounds, _, cx| {
                     drag_entity.update(cx, |host, cx| {
                         host.begin_tab_item_drag_from_render(node, drag_item.clone(), payload, cx);
+                        host.update_payload_drag_tear_off_geometry_from_render(
+                            payload,
+                            DockDragTearOffGeometry::from_source_bounds(
+                                source_bounds,
+                                source_bounds.origin + position,
+                            )
+                            .with_preferred_size(source_bounds.size),
+                        );
                     });
                     cx.new(|_| DockDragPreview::new(payload.title()))
                 });

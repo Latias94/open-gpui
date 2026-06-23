@@ -2,7 +2,7 @@ use crate::DockSpaceId;
 use open_gpui::WindowId;
 
 /// Runtime identity for one logical viewport binding.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct DockViewportIdentity {
     space: DockSpaceId,
     window_id: WindowId,
