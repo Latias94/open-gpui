@@ -72,6 +72,16 @@ fn bounds(cx: &mut VisualTestContext, selector: &str) -> Bounds<Pixels> {
         .unwrap_or_else(|| panic!("expected debug selector `{selector}` to be rendered"))
 }
 
+fn table_sample<'a>(
+    samples: &'a [pages::components::TableSample],
+    id: &str,
+) -> &'a pages::components::TableSample {
+    samples
+        .iter()
+        .find(|sample| sample.id == id)
+        .unwrap_or_else(|| panic!("expected table sample `{id}`"))
+}
+
 fn scroll_until_visible(
     cx: &mut VisualTestContext,
     viewport_selector: &str,
@@ -1663,14 +1673,14 @@ fn components_page_samples_expose_component_metadata() {
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 
-    assert_eq!(tables.len(), 5);
-    assert_eq!(tables[0].id, "release-queue");
-    assert_eq!(tables[0].state.rows().len(), 10_000);
+    assert_eq!(tables.len(), 6);
+    let release_queue = table_sample(tables, "release-queue");
+    assert_eq!(release_queue.state.rows().len(), 10_000);
     assert_eq!(
-        tables[0].state.sorting()[0].direction().as_str(),
+        release_queue.state.sorting()[0].direction().as_str(),
         "descending"
     );
-    let release_plan = tables[0].render_plan();
+    let release_plan = release_queue.render_plan();
     assert_eq!(release_plan.role(), Role::Table);
     assert_eq!(release_plan.column_header_role(), Role::ColumnHeader);
     assert_eq!(release_plan.cell_role(), Role::Cell);
@@ -1678,15 +1688,15 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(release_plan.aria_column_count(), 4);
     assert!(release_plan.rendered_row_count() <= release_plan.visible_row_count() + 5);
 
-    let filter_plan = tables[1].render_plan();
-    assert_eq!(tables[1].id, "filter-board");
+    let filter_board = table_sample(tables, "filter-board");
+    let filter_plan = filter_board.render_plan();
     assert_eq!(filter_plan.table().filtered_model().rows().len(), 60);
     assert_eq!(filter_plan.table().final_model().rows().len(), 24);
     assert_eq!(filter_plan.table().final_model().selected_count(), 1);
 
-    let resize_plan = tables[2].render_plan();
-    assert_eq!(tables[2].id, "release-resize");
-    assert_eq!(tables[2].state.rows().len(), 160);
+    let release_resize = table_sample(tables, "release-resize");
+    let resize_plan = release_resize.render_plan();
+    assert_eq!(release_resize.state.rows().len(), 160);
     assert_eq!(
         resize_plan.columns()[0].width(),
         ui_px(188.0),
@@ -1701,13 +1711,16 @@ fn components_page_samples_expose_component_metadata() {
         "score column should prove per-column resize disablement"
     );
 
-    let grouped_plan = tables[3].render_plan();
-    assert_eq!(tables[3].id, "release-rollup");
-    assert_eq!(tables[3].state.grouping()[0].as_str(), "team");
-    assert_eq!(tables[3].state.aggregations().len(), 2);
-    assert_eq!(tables[3].state.column_pinning().left()[0].as_str(), "name");
+    let grouped_release = table_sample(tables, "release-rollup");
+    let grouped_plan = grouped_release.render_plan();
+    assert_eq!(grouped_release.state.grouping()[0].as_str(), "team");
+    assert_eq!(grouped_release.state.aggregations().len(), 2);
     assert_eq!(
-        tables[3].state.column_pinning().right()[0].as_str(),
+        grouped_release.state.column_pinning().left()[0].as_str(),
+        "name"
+    );
+    assert_eq!(
+        grouped_release.state.column_pinning().right()[0].as_str(),
         "status"
     );
     assert_eq!(
@@ -1747,18 +1760,25 @@ fn components_page_samples_expose_component_metadata() {
             .any(|row| row.is_leaf())
     );
     assert!(
-        grouped_plan.rendered_row_count() <= grouped_plan.visible_row_count() + tables[3].overscan
+        grouped_plan.rendered_row_count()
+            <= grouped_plan.visible_row_count() + grouped_release.overscan
     );
 
-    let matrix_plan = tables[4].render_plan();
-    assert_eq!(tables[4].id, "release-matrix");
-    assert_eq!(tables[4].state.rows().len(), 480);
-    assert_eq!(tables[4].state.column_pinning().left()[0].as_str(), "name");
+    let release_matrix = table_sample(tables, "release-matrix");
+    let matrix_plan = release_matrix.render_plan();
+    assert_eq!(release_matrix.state.rows().len(), 480);
     assert_eq!(
-        tables[4].state.column_pinning().right()[0].as_str(),
+        release_matrix.state.column_pinning().left()[0].as_str(),
+        "name"
+    );
+    assert_eq!(
+        release_matrix.state.column_pinning().right()[0].as_str(),
         "status"
     );
-    assert_eq!(tables[4].state.sorting()[0].column().as_str(), "metric_13");
+    assert_eq!(
+        release_matrix.state.sorting()[0].column().as_str(),
+        "metric_13"
+    );
     assert_eq!(
         matrix_plan.column_region_width(TableColumnRegion::Left),
         ui_px(172.0)
@@ -1788,6 +1808,54 @@ fn components_page_samples_expose_component_metadata() {
             .any(|column| column.id().as_str() == "metric_13")
     );
     assert_eq!(matrix_plan.table().final_model().selected_count(), 1);
+
+    let dependency_tree = table_sample(tables, "dependency-tree");
+    let tree_plan = dependency_tree.render_plan();
+    let tree_summary = dependency_tree.state_summary();
+    assert_eq!(dependency_tree.state.rows().len(), 1);
+    assert_eq!(tree_summary.core_rows, 7);
+    assert_eq!(tree_summary.final_rows, 4);
+    assert_eq!(tree_summary.tree_rows, 4);
+    assert_eq!(tree_summary.tree_branch_rows, 3);
+    assert_eq!(tree_summary.tree_depth, 1);
+    assert_eq!(tree_summary.expanded_tree_inputs, 1);
+    assert_eq!(tree_summary.pinned_left_columns, 1);
+    assert_eq!(tree_summary.pinned_center_columns, 5);
+    assert_eq!(tree_summary.pinned_right_columns, 1);
+    assert_eq!(tree_summary.total_column_width_px, 956);
+    assert_eq!(tree_plan.aria_column_count(), 7);
+    assert_eq!(tree_plan.aria_row_count(), 5);
+    assert_eq!(
+        tree_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "dependency-workspace",
+            "dependency-ui",
+            "dependency-core",
+            "dependency-docs"
+        ]
+    );
+    assert!(
+        tree_plan
+            .table()
+            .final_model()
+            .row(&TableRowId::new("dependency-ui-table"))
+            .is_some(),
+        "collapsed tree descendants should remain addressable by stable row id"
+    );
+    assert_eq!(
+        tree_plan
+            .table()
+            .final_model()
+            .row(&TableRowId::new("dependency-ui"))
+            .and_then(|row| row.tree_expanded()),
+        Some(false)
+    );
 
     assert_eq!(virtualized_lists.len(), 1);
     let release_navigation = &virtualized_lists[0];
@@ -2079,7 +2147,7 @@ fn components_page_tabs_samples_expose_roving_focus_contract() {
 #[test]
 fn components_page_table_samples_expose_virtualized_row_model_contract() {
     let samples = pages::components::table_samples(ThemeTokens::default());
-    let release_queue = &samples[0];
+    let release_queue = table_sample(samples, "release-queue");
     let release_plan = release_queue.render_plan();
     let release_summary = release_queue.state_summary();
 
@@ -2107,7 +2175,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(release_plan.column_header_role(), Role::ColumnHeader);
     assert_eq!(release_plan.cell_role(), Role::Cell);
 
-    let filter_board = &samples[1];
+    let filter_board = table_sample(samples, "filter-board");
     let filter_plan = filter_board.render_plan();
     let filter_summary = filter_board.state_summary();
 
@@ -2125,7 +2193,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(filter_plan.table().final_model().selected_count(), 1);
     assert_eq!(filter_plan.aria_column_count(), 4);
 
-    let release_resize = &samples[2];
+    let release_resize = table_sample(samples, "release-resize");
     let resize_plan = release_resize.render_plan();
     let resize_summary = release_resize.state_summary();
 
@@ -2144,7 +2212,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert!(resize_plan.columns()[2].resizable());
     assert!(!resize_plan.columns()[3].resizable());
 
-    let grouped_release = &samples[3];
+    let grouped_release = table_sample(samples, "release-rollup");
     let grouped_plan = grouped_release.render_plan();
     let grouped_summary = grouped_release.state_summary();
 
@@ -2246,7 +2314,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         ]
     );
 
-    let release_matrix = &samples[4];
+    let release_matrix = table_sample(samples, "release-matrix");
     let matrix_plan = release_matrix.render_plan();
     let matrix_summary = release_matrix.state_summary();
 
@@ -2294,6 +2362,55 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
             "metric_12",
             "metric_13",
         ]
+    );
+
+    let dependency_tree = table_sample(samples, "dependency-tree");
+    let tree_plan = dependency_tree.render_plan();
+    let tree_summary = dependency_tree.state_summary();
+
+    assert_eq!(dependency_tree.state.rows().len(), 1);
+    assert_eq!(tree_summary.core_rows, 7);
+    assert_eq!(tree_summary.final_rows, 4);
+    assert_eq!(tree_summary.tree_rows, 4);
+    assert_eq!(tree_summary.tree_branch_rows, 3);
+    assert_eq!(tree_summary.tree_depth, 1);
+    assert_eq!(tree_summary.expanded_tree_inputs, 1);
+    assert_eq!(tree_summary.pinned_left_columns, 1);
+    assert_eq!(tree_summary.pinned_center_columns, 5);
+    assert_eq!(tree_summary.pinned_right_columns, 1);
+    assert_eq!(tree_summary.pinned_left_width_px, 220);
+    assert_eq!(tree_summary.pinned_center_width_px, 604);
+    assert_eq!(tree_summary.pinned_right_width_px, 132);
+    assert_eq!(tree_summary.total_column_width_px, 956);
+    assert!(tree_plan.uses_split_pinned_layout());
+    assert_eq!(tree_plan.aria_column_count(), 7);
+    assert_eq!(
+        tree_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .map(|row| (
+                row.id().as_str(),
+                row.depth(),
+                row.tree_expanded(),
+                row.is_tree_branch()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("dependency-workspace", 0, Some(true), true),
+            ("dependency-ui", 1, Some(false), true),
+            ("dependency-core", 1, Some(false), true),
+            ("dependency-docs", 1, None, false),
+        ]
+    );
+    assert!(
+        tree_plan
+            .table()
+            .final_model()
+            .row(&TableRowId::new("dependency-ui-table"))
+            .is_some(),
+        "collapsed source-tree descendants should stay addressable by stable row id"
     );
 }
 
@@ -3982,6 +4099,104 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
         cx.debug_bounds(&far_cell).is_some(),
         "expected the far metric cell to enter the rendered center window after horizontal scrolling"
     );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_tree_table_expands_and_activates(cx: &mut open_gpui::TestAppContext) {
+    const SAMPLE: &str = "gallery:component-table-sample:dependency-tree";
+    const ROOT_TOGGLE: &str =
+        "table:component-table:dependency-tree:tree-toggle:dependency-workspace";
+    const UI_TOGGLE: &str = "table:component-table:dependency-tree:tree-toggle:dependency-ui";
+    const CHILD_ROW: &str = "table:component-table:dependency-tree:row:dependency-ui-table";
+    const CHILD_CELL: &str = "table:component-table:dependency-tree:cell:dependency-ui-table:name";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    scroll_page_selector_into_view(&shell, cx, UI_TOGGLE);
+
+    assert!(
+        cx.debug_bounds(CHILD_ROW).is_none(),
+        "expected dependency-ui children to start collapsed"
+    );
+    let root_toggle = bounds(cx, ROOT_TOGGLE);
+    let ui_toggle = bounds(cx, UI_TOGGLE);
+    assert!(
+        ui_toggle.left() > root_toggle.left(),
+        "expected nested tree table toggle to be indented; root={root_toggle:?} ui={ui_toggle:?}"
+    );
+
+    click(cx, UI_TOGGLE);
+    settle(cx);
+    let toggles = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.expansion_toggles()
+            .iter()
+            .map(|toggle| {
+                (
+                    toggle.sample_id.clone(),
+                    toggle.row_id.clone(),
+                    toggle.expanded,
+                    toggle.depth,
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    assert!(
+        cx.debug_bounds(CHILD_ROW).is_some(),
+        "expected dependency-ui child row to render after expansion; toggles={toggles:?}"
+    );
+    assert_eq!(
+        toggles,
+        vec![(
+            "dependency-tree".to_owned(),
+            "dependency-ui".to_owned(),
+            true,
+            1
+        )]
+    );
+    let activations_after_toggle =
+        cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+            log.row_activations().to_vec()
+        });
+    assert!(
+        activations_after_toggle.is_empty(),
+        "expected tree disclosure clicks to avoid row activation"
+    );
+
+    click(cx, CHILD_ROW);
+    assert!(
+        cx.debug_selector_is_focused(CHILD_ROW),
+        "expected clicking a tree table row to focus it for keyboard activation; focused={:?} child={:?}",
+        cx.focused_debug_selector(),
+        bounds(cx, CHILD_CELL)
+    );
+    let click_activations =
+        cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+            log.row_activations().to_vec()
+        });
+    assert_eq!(click_activations.len(), 1);
+    assert_eq!(click_activations[0].sample_id, "dependency-tree");
+    assert_eq!(click_activations[0].row_id, "dependency-ui-table");
+    assert_eq!(click_activations[0].kind, "click");
+    assert_eq!(click_activations[0].depth, 2);
+    assert!(!click_activations[0].tree_branch);
+    assert_eq!(click_activations[0].tree_expanded, None);
+
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    let activations = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.row_activations().to_vec()
+    });
+    assert_eq!(activations.len(), 2);
+    assert_eq!(activations[1].sample_id, "dependency-tree");
+    assert_eq!(activations[1].row_id, "dependency-ui-table");
+    assert_eq!(activations[1].kind, "keyboard");
+    assert_eq!(activations[1].depth, 2);
 }
 
 #[open_gpui::test]

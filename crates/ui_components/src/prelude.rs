@@ -81,8 +81,9 @@ pub use crate::splitter::{
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use crate::table::{
     Table, TableCellRenderPlan, TableCenterColumnWindowPlan, TableColumnRegionRenderPlan,
-    TableColumnRenderPlan, TableColumnSizingChange, TableHeaderAction, TableMetrics,
-    TablePinnedLayoutPlan, TableRenderPlan, TableRowRenderPlan,
+    TableColumnRenderPlan, TableColumnSizingChange, TableHeaderAction, TableInputModifiers,
+    TableMetrics, TablePinnedLayoutPlan, TableRenderPlan, TableRowAction, TableRowActivation,
+    TableRowActivationKind, TableRowExpansionToggle, TableRowRenderPlan,
 };
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
@@ -117,8 +118,8 @@ pub use open_gpui_ui_core::{
     TableColumnResizeUpdate, TableColumnSizing, TableExpansionState, TableFilter, TableGroupRow,
     TablePagination, TableResolvedColumnSizing, TableResolvedColumnSizingRegions, TableResolvedRow,
     TableResolvedRowKind, TableResolvedState, TableRow, TableRowId, TableRowModel,
-    TableRowModelStage, TableSort, TableSortDirection, TableState, TableStateCacheKey, ThemeTokens,
-    VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState,
-    VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState, drag_table_column_resize,
-    end_table_column_resize,
+    TableRowModelStage, TableSort, TableSortDirection, TableState, TableStateCacheKey,
+    TableTreeRow, ThemeTokens, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
+    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
+    drag_table_column_resize, end_table_column_resize,
 };

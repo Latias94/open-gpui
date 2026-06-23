@@ -441,7 +441,10 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     ComponentApiInventoryEntry {
         component: "Table",
         controlled_inputs: &["state", "column_sizing"],
-        default_seeds: &[],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_focused_row",
+            runtime_value: "focused_row",
+        }],
         legacy_seed_inputs: &[],
         policy_hints: &[
             "virtualizer_snapshot",
@@ -457,6 +460,14 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             CallbackApi {
                 name: "on_column_sizing_change",
                 payload: "TableColumnSizingChange",
+            },
+            CallbackApi {
+                name: "on_row_activate",
+                payload: "TableRowActivation",
+            },
+            CallbackApi {
+                name: "on_row_expansion_request",
+                payload: "TableRowExpansionToggle",
             },
         ],
         renderer_neutral_state: true,
@@ -1186,11 +1197,14 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "viewport_extent",
             "min_column_width",
             "virtualizer_snapshot",
+            "default_focused_row",
             "on_sort_requested",
             "enable_column_resizing",
             "column_resize_mode",
             "column_resize_direction",
             "on_column_sizing_change",
+            "on_row_activate",
+            "on_row_expansion_request",
             "table_state",
             "state",
             "render_plan",
@@ -3101,6 +3115,46 @@ fn table_render_plan_uses_core_state_and_virtualizer_contracts() {
 }
 
 #[test]
+fn table_render_plan_exposes_tree_row_metadata_for_adapter_rendering() {
+    let state = TableState::new([TableRow::new("root")
+        .with_cell("name", "Workspace")
+        .with_cell("status", "Ready")
+        .with_child(
+            TableRow::new("child")
+                .with_cell("name", "UI")
+                .with_cell("status", "Building"),
+        )])
+    .with_columns([
+        TableColumn::new("name", "Name").with_width(ui_px(160.0)),
+        TableColumn::new("status", "Status").with_width(ui_px(120.0)),
+    ])
+    .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
+    .with_expanded_rows(["root"])
+    .with_pagination(TablePagination::disabled());
+    let plan = Table::new("tree-table", "Tree table", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    assert_eq!(plan.rows().len(), 2);
+    assert_eq!(plan.rows()[0].id().as_str(), "root");
+    assert!(plan.rows()[0].is_tree_branch());
+    assert_eq!(plan.rows()[0].tree_expanded(), Some(true));
+    assert_eq!(plan.rows()[0].depth(), 0);
+    assert_eq!(plan.rows()[1].id().as_str(), "child");
+    assert!(!plan.rows()[1].is_tree_branch());
+    assert_eq!(plan.rows()[1].tree_expanded(), None);
+    assert_eq!(plan.rows()[1].depth(), 1);
+    assert_eq!(
+        plan.rows()[0]
+            .cells_for_region(TableColumnRegion::Left)
+            .map(|cell| cell.column_id().as_str())
+            .collect::<Vec<_>>(),
+        ["name"]
+    );
+}
+
+#[test]
 fn table_render_plan_exposes_pinned_column_regions() {
     let flat_plan = Table::new("flat-table", "Flat table", sample_table_state(1))
         .render_plan(UiPx::ZERO, ui_px(96.0));
@@ -3854,8 +3908,31 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _prelude_expansion: prelude::TableExpansionState =
         prelude::TableExpansionState::rows([prelude::TableRowId::new("group:team=ui")]);
     let _prelude_row_kind: prelude::TableResolvedRowKind = prelude::TableResolvedRowKind::Leaf;
+    let root_tree_state = root::TableState::new([root::TableRow::new("root")
+        .with_cell("name", "Root")
+        .with_child(root::TableRow::new("child").with_cell("name", "Child"))])
+    .with_columns([root::TableColumn::new("name", "Name")])
+    .with_all_rows_expanded();
+    let root_tree_row: root::TableTreeRow = root_tree_state.resolve().final_model().rows()[0]
+        .tree()
+        .expect("tree source row should expose hierarchy metadata")
+        .clone();
+    let _prelude_tree_row: prelude::TableTreeRow = root_tree_row;
     let _resolved_kind: Option<&root::TableGroupRow> =
         table.table_state().resolve().final_model().rows()[0].group();
+    let _root_table_modifiers: root::TableInputModifiers = root::TableInputModifiers::default();
+    let _prelude_table_modifiers: prelude::TableInputModifiers =
+        prelude::TableInputModifiers::default();
+    let _root_row_action: Option<root::TableRowAction> = None;
+    let _prelude_row_action: Option<prelude::TableRowAction> = None;
+    let _root_row_activation: Option<root::TableRowActivation> = None;
+    let _prelude_row_activation: Option<prelude::TableRowActivation> = None;
+    let _root_row_expansion: Option<root::TableRowExpansionToggle> = None;
+    let _prelude_row_expansion: Option<prelude::TableRowExpansionToggle> = None;
+    let _root_activation_kind: root::TableRowActivationKind =
+        root::TableRowActivationKind::DoubleClick;
+    let _prelude_activation_kind: prelude::TableRowActivationKind =
+        prelude::TableRowActivationKind::Keyboard;
     let _root_pinning: root::TableColumnPinning =
         root::TableColumnPinning::new().pinned_left(["name"]);
     let root_sizing = root::TableColumnSizing::new().with_width("name", ui_px(180.0));
@@ -3922,6 +3999,10 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .clone();
 
     assert_eq!(root_plan.role(), Role::Table);
+    assert_eq!(
+        root::TableRowActivationKind::DoubleClick.as_str(),
+        "double-click"
+    );
     assert_eq!(virtualizer.resolve().overscan(), 2);
 }
 
@@ -4151,6 +4232,99 @@ fn table_runtime_header_click_emits_sort_action(cx: &mut open_gpui::TestAppConte
         Some(TableSortDirection::Ascending)
     );
     assert_eq!(actions[0].next_sorting()[0].column().as_str(), "score");
+}
+
+#[open_gpui::test]
+fn table_runtime_row_click_and_tree_toggle_emit_controlled_payloads(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    type ActivationLog = Vec<(String, String, usize, Option<bool>, bool)>;
+    type ToggleLog = Vec<(String, bool, usize, Option<bool>)>;
+
+    struct TestView {
+        activations: Rc<RefCell<ActivationLog>>,
+        toggles: Rc<RefCell<ToggleLog>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let activations = self.activations.clone();
+            let toggles = self.toggles.clone();
+            let state = TableState::new([TableRow::new("root")
+                .with_cell("name", "Workspace")
+                .with_cell("status", "Ready")
+                .with_child(
+                    TableRow::new("child")
+                        .with_cell("name", "UI")
+                        .with_cell("status", "Building"),
+                )])
+            .with_columns([
+                TableColumn::new("name", "Name").with_width(ui_px(180.0)),
+                TableColumn::new("status", "Status").with_width(ui_px(120.0)),
+            ])
+            .with_pagination(TablePagination::disabled());
+            let table = Table::new("tree-runtime-table", "Tree runtime", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .on_row_activate(move |activation, _, _| {
+                    activations.borrow_mut().push((
+                        activation.row_id().as_str().to_owned(),
+                        activation.kind().as_str().to_owned(),
+                        activation.action().depth(),
+                        activation.action().tree_expanded(),
+                        activation.action().modifiers().modified(),
+                    ));
+                })
+                .on_row_expansion_request(move |toggle, _, _| {
+                    toggles.borrow_mut().push((
+                        toggle.row_id().as_str().to_owned(),
+                        toggle.expanded(),
+                        toggle.action().depth(),
+                        toggle.action().tree_expanded(),
+                    ));
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let toggles = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        activations: activations.clone(),
+        toggles: toggles.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let row = cx
+        .debug_bounds("table:tree-runtime-table:row:root")
+        .expect("root row should render");
+    cx.simulate_click(row.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        activations.borrow().as_slice(),
+        &[("root".to_owned(), "click".to_owned(), 0, Some(false), false)]
+    );
+    assert!(toggles.borrow().is_empty());
+
+    let toggle = cx
+        .debug_bounds("table:tree-runtime-table:tree-toggle:root")
+        .expect("root tree toggle should render");
+    cx.simulate_click(toggle.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(activations.borrow().len(), 1);
+    assert_eq!(
+        toggles.borrow().as_slice(),
+        &[("root".to_owned(), true, 0, Some(false))]
+    );
 }
 
 #[open_gpui::test]
@@ -6711,6 +6885,8 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_column_sizing_change",
         "on_open_change",
         "on_query_change",
+        "on_row_activate",
+        "on_row_expansion_request",
         "on_select",
         "on_selected_values_change",
         "on_selection_change",
@@ -6831,6 +7007,13 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
     );
     assert_inventory_contains_default_seed("Menu", "default_focused_value", "focused_value");
     assert_inventory_contains_default_seed("ContextMenu", "default_focused_value", "focused_value");
+    assert_inventory_contains_default_seed("Table", "default_focused_row", "focused_row");
+    assert_inventory_contains_callback("Table", "on_row_activate", "TableRowActivation");
+    assert_inventory_contains_callback(
+        "Table",
+        "on_row_expansion_request",
+        "TableRowExpansionToggle",
+    );
 }
 
 #[test]

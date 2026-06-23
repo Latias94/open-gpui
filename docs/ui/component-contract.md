@@ -392,21 +392,25 @@ default path must preserve offset across reconstructed component values.
 
 ## Table and Virtualizer Contracts
 
-`TableState` describes renderer-neutral table behavior: stable row ids, row lookup, row-model stage
-vocabulary, selection keyed by row id, column visibility and ordering, pinned column regions,
-sorting, filtering, grouping, built-in aggregation, expansion, and pagination. The official table
-contract now resolves the full pipeline core -> filtered -> grouped -> sorted -> expanded ->
-paginated -> final. Grouped rows and expanded rows are first-class resolved row kinds, not hidden
-adapter state. Group rows may expose aggregate cells through `TableAggregation` using the built-in
-`count`, `sum`, `min`, `max`, and `average` kinds; the active grouping column still displays the
-grouping value instead of an aggregate payload. `TableColumnPinning` is caller-owned state that
-splits resolved visible columns into `left`, `center`, and `right` `TableColumnRegions` after
-visibility and explicit ordering have been applied; unknown or invisible pinned ids are ignored.
-`TableColumn` also carries preferred width, min/max width, and resizable metadata, while
-`TableColumnSizing` is the caller-owned committed width map keyed by `TableColumnId`.
-`TableState::resolve` exposes `TableResolvedColumnSizingRegions` after visibility, ordering, and
-pinning have resolved so renderers can read per-column width, min/max bounds, region, start/after
-offsets, resize capability, and region/all-column totals without owning adapter state.
+`TableState` describes renderer-neutral table behavior: stable row ids, nested source rows, row
+lookup, row-model stage vocabulary, selection keyed by row id, column visibility and ordering,
+pinned column regions, sorting, filtering, grouping, built-in aggregation, expansion, and
+pagination. The official table contract now resolves the full pipeline core -> filtered ->
+grouped -> sorted -> expanded -> paginated -> final. Source tree rows remain distinct from
+synthetic group rows: `TableRow` may own child rows, resolved source rows expose depth, parent id,
+branch/leaf state, descendant counts, and expansion metadata through `TableTreeRow`, and collapsed
+source descendants stay addressable by stable row id. Group rows may expose aggregate cells through
+`TableAggregation` using the built-in `count`, `sum`, `min`, `max`, and `average` kinds; the active
+grouping column still displays the grouping value instead of an aggregate payload. Grouping plus
+source-tree composition remains deferred until a later policy slice defines mixed filtering,
+sorting, and expansion semantics. `TableColumnPinning` is caller-owned state that splits resolved
+visible columns into `left`, `center`, and `right` `TableColumnRegions` after visibility and
+explicit ordering have been applied; unknown or invisible pinned ids are ignored. `TableColumn`
+also carries preferred width, min/max width, and resizable metadata, while `TableColumnSizing` is
+the caller-owned committed width map keyed by `TableColumnId`. `TableState::resolve` exposes
+`TableResolvedColumnSizingRegions` after visibility, ordering, and pinning have resolved so
+renderers can read per-column width, min/max bounds, region, start/after offsets, resize
+capability, and region/all-column totals without owning adapter state.
 
 `VirtualizerState` describes renderer-neutral viewport calculation inputs and outputs rather than a
 concrete scroll element. The neutral contract accepts item count, viewport extent, scroll offset,
@@ -419,11 +423,15 @@ remains a future adapter-runtime policy.
 
 The GPUI `Table` adapter resolves table state and virtualizer ranges before rendering. The adapter
 owns the element tree, concrete scroll viewport, wheel containment, header/body drawing, sortable
-header activation callbacks, focus handles, callback-backed column resize handles, and AccessKit mapping. Table
-accessibility metadata includes table, row, column-header, and cell roles, row and column position
-metadata, sort metadata for sortable headers, grouped-row depth and parent metadata, and selection
-metadata keyed by stable row id. The render plan exposes `TableColumnRegionRenderPlan` entries and
-every rendered header/body row has stable `left`, `center`, and `right` region debug selectors.
+header activation callbacks, row focus handles, source-tree disclosure affordances, controlled row
+activation / expansion-request payloads, callback-backed column resize handles, and AccessKit
+mapping. Table accessibility metadata includes table, row, column-header, and cell roles, row and
+column position metadata, sort metadata for sortable headers, grouped-row and source-tree depth /
+parent metadata, selected state, and branch `aria-expanded` state keyed by stable row id. The
+adapter keeps row activation independent from selection and expansion; callers decide whether a
+click, double-click, Enter, Space, Left, or Right payload changes app-owned `TableState`. The
+render plan exposes `TableColumnRegionRenderPlan` entries and every rendered header/body row has
+stable `left`, `center`, and `right` region debug selectors.
 Region render plans expose summed widths, and header/body cells read the same resolved column
 widths. For pinned tables, `TableCenterColumnWindowPlan` virtualizes the shared horizontal center
 lane from adapter-owned horizontal scroll input: it exposes visible and overscan ranges, rendered
@@ -434,10 +442,11 @@ scroll without moving pinned columns or the outer page.
 An official Table entry must satisfy the normal component completion gate: `Table` and `TableState`
 exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
 entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests for row
-identity, grouping, expansion, and virtualizer behavior, and gallery runtime tests for nested
-scroll containment. Custom aggregation callbacks, sticky headers, autosize-by-content, and
-full two-axis grid virtualization beyond the pinned center-column window remain follow-up
-capabilities.
+identity, grouping, source-tree expansion, row interaction payloads, and virtualizer behavior, and
+gallery runtime tests for nested scroll containment. Custom aggregation callbacks, sticky headers,
+autosize-by-content, server/manual expansion, async child loading, row pinning, checkbox/range
+selection, cell editing, and full two-axis grid virtualization beyond the pinned center-column
+window remain follow-up capabilities.
 
 ## Splitter Constraints
 

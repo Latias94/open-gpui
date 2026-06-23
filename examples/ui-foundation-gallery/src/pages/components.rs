@@ -14,12 +14,13 @@ use open_gpui_ui_components::{
     Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
     Switch, SwitchState, Table, TableAggregation, TableColumn, TableColumnPinning,
     TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableExpansionState,
-    TableFilter, TablePagination, TableRenderPlan, TableRow, TableSort, TableState, Tabs,
-    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle,
-    ToggleState, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
-    ToolbarState, Tree, TreeItemDescriptor, TreeState, VirtualizedList,
-    VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRenderPlan,
-    VirtualizedListScrollStrategy, VirtualizedListState,
+    TableFilter, TablePagination, TableRenderPlan, TableRow, TableRowActivation,
+    TableRowExpansionToggle, TableSort, TableState, Tabs, TabsActivationMode, TabsItem,
+    TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant,
+    Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree,
+    TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListItemDescriptor,
+    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -1179,11 +1180,50 @@ pub struct TableSampleSizingChange {
     pub width: UiPx,
 }
 
-/// Runtime sizing log used by gallery Table smoke tests.
+/// One row activation captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSampleRowActivation {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Activated row id.
+    pub row_id: String,
+    /// Concrete render key used by the adapter selectors.
+    pub render_key: String,
+    /// Stable activation kind label.
+    pub kind: String,
+    /// Final row-model index at activation time.
+    pub model_index: usize,
+    /// Resolved hierarchy depth at activation time.
+    pub depth: usize,
+    /// Whether the row is a source tree branch.
+    pub tree_branch: bool,
+    /// Resolved branch expansion state, when applicable.
+    pub tree_expanded: Option<bool>,
+    /// Whether the row was selected in caller-owned table state.
+    pub selected: bool,
+}
+
+/// One source-tree expansion request captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSampleExpansionToggle {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Toggled row id.
+    pub row_id: String,
+    /// Desired expanded state after the toggle.
+    pub expanded: bool,
+    /// Resolved hierarchy depth at toggle time.
+    pub depth: usize,
+}
+
+/// Runtime interaction log used by gallery Table smoke tests.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct TableSampleRuntimeLog {
     sizing_changes: Vec<TableSampleSizingChange>,
     committed_sizing: BTreeMap<String, TableColumnSizing>,
+    row_activations: Vec<TableSampleRowActivation>,
+    expansion_toggles: Vec<TableSampleExpansionToggle>,
+    expansion_overrides: BTreeMap<String, TableExpansionState>,
 }
 
 impl Global for TableSampleRuntimeLog {}
@@ -1199,10 +1239,28 @@ impl TableSampleRuntimeLog {
         self.committed_sizing.get(sample_id)
     }
 
+    /// Returns captured row activations in event order.
+    pub fn row_activations(&self) -> &[TableSampleRowActivation] {
+        &self.row_activations
+    }
+
+    /// Returns captured source-tree expansion requests in event order.
+    pub fn expansion_toggles(&self) -> &[TableSampleExpansionToggle] {
+        &self.expansion_toggles
+    }
+
+    /// Returns the current controlled expansion override for a sample, if any.
+    pub fn expansion_override(&self, sample_id: &str) -> Option<&TableExpansionState> {
+        self.expansion_overrides.get(sample_id)
+    }
+
     /// Clears captured interactions.
     pub fn clear(&mut self) {
         self.sizing_changes.clear();
         self.committed_sizing.clear();
+        self.row_activations.clear();
+        self.expansion_toggles.clear();
+        self.expansion_overrides.clear();
     }
 }
 
@@ -1221,6 +1279,29 @@ pub fn current_table_sample_sizing(
     })
 }
 
+/// Returns the current controlled expansion state for a gallery `Table` sample.
+pub fn current_table_sample_expansion(
+    sample_id: impl Into<String>,
+    fallback: &TableExpansionState,
+    cx: &impl AppContext,
+) -> TableExpansionState {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.expansion_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    })
+}
+
+/// Applies a resolved expansion state to a sample table state.
+pub fn table_state_with_expansion(state: TableState, expansion: TableExpansionState) -> TableState {
+    match expansion {
+        TableExpansionState::All => state.with_all_rows_expanded(),
+        TableExpansionState::Rows(rows) => state.with_expanded_rows(rows),
+    }
+}
+
 /// Records a gallery `Table` sizing commit in app-global sample state.
 pub fn record_table_sizing_change(
     sample_id: impl Into<String>,
@@ -1236,6 +1317,71 @@ pub fn record_table_sizing_change(
         });
         log.committed_sizing
             .insert(sample_id, change.sizing().clone());
+    });
+}
+
+/// Records a gallery `Table` row activation in app-global sample state.
+pub fn record_table_row_activation(
+    sample_id: impl Into<String>,
+    activation: &TableRowActivation,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let action = activation.action();
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.row_activations.push(TableSampleRowActivation {
+            sample_id,
+            row_id: activation.row_id().as_str().to_owned(),
+            render_key: action.render_key().to_owned(),
+            kind: activation.kind().as_str().to_owned(),
+            model_index: action.model_index(),
+            depth: action.depth(),
+            tree_branch: action.tree_branch(),
+            tree_expanded: action.tree_expanded(),
+            selected: action.selected(),
+        });
+    });
+}
+
+/// Records and applies a controlled gallery `Table` source-tree expansion request.
+pub fn record_table_expansion_request(
+    sample_id: impl Into<String>,
+    fallback: &TableExpansionState,
+    toggle: &TableRowExpansionToggle,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = fallback.clone();
+    let row_id = toggle.row_id().clone();
+    let expanded = toggle.expanded();
+    let depth = toggle.action().depth();
+
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.expansion_toggles.push(TableSampleExpansionToggle {
+            sample_id: sample_id.clone(),
+            row_id: row_id.as_str().to_owned(),
+            expanded,
+            depth,
+        });
+
+        let current = log
+            .expansion_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone());
+        let next = match current {
+            TableExpansionState::All if expanded => TableExpansionState::All,
+            TableExpansionState::All => TableExpansionState::default(),
+            TableExpansionState::Rows(mut rows) => {
+                if expanded {
+                    rows.insert(row_id);
+                } else {
+                    rows.remove(&row_id);
+                }
+                TableExpansionState::Rows(rows)
+            }
+        };
+        log.expansion_overrides.insert(sample_id, next);
     });
 }
 
@@ -1613,12 +1759,20 @@ pub struct TableSampleStateSummary {
     pub group_rows: usize,
     /// Visible leaf row count in the final model.
     pub leaf_rows: usize,
+    /// Visible tree row count in the final model.
+    pub tree_rows: usize,
+    /// Visible tree branch row count in the final model.
+    pub tree_branch_rows: usize,
+    /// Deepest visible tree depth in the final model.
+    pub tree_depth: usize,
     /// Configured grouping column count.
     pub grouping_columns: usize,
     /// Configured aggregate column count.
     pub aggregation_count: usize,
     /// Explicit expanded group row ids, or all group rows when expansion is global.
     pub expanded_group_inputs: usize,
+    /// Explicit expanded tree row ids, or all tree branch rows when expansion is global.
+    pub expanded_tree_inputs: usize,
     /// Whether every group row is expanded.
     pub all_rows_expanded: bool,
     /// Visible left-pinned columns.
@@ -1645,19 +1799,47 @@ impl TableSampleStateSummary {
         let overscan = plan.virtualizer().overscan_range();
         let final_rows = plan.table().final_model().rows();
         let group_rows = final_rows.iter().filter(|row| row.is_group()).count();
+        let tree_rows = final_rows.iter().filter(|row| row.tree().is_some()).count();
+        let tree_branch_rows = final_rows.iter().filter(|row| row.is_tree_branch()).count();
+        let tree_depth = final_rows.iter().map(|row| row.depth()).max().unwrap_or(0);
         let regions = plan.table().visible_column_regions();
-        let (all_rows_expanded, expanded_group_inputs) = match state.expansion() {
-            TableExpansionState::All => (
-                true,
-                plan.table()
-                    .grouped_model()
-                    .rows()
-                    .iter()
-                    .filter(|row| row.is_group())
-                    .count(),
-            ),
-            TableExpansionState::Rows(rows) => (false, rows.len()),
-        };
+        let (all_rows_expanded, expanded_group_inputs, expanded_tree_inputs) =
+            match state.expansion() {
+                TableExpansionState::All => (
+                    true,
+                    plan.table()
+                        .grouped_model()
+                        .rows()
+                        .iter()
+                        .filter(|row| row.is_group())
+                        .count(),
+                    plan.table()
+                        .core_model()
+                        .rows()
+                        .iter()
+                        .filter(|row| row.is_tree_branch())
+                        .count(),
+                ),
+                TableExpansionState::Rows(rows) => (
+                    false,
+                    rows.iter()
+                        .filter(|row_id| {
+                            plan.table()
+                                .grouped_model()
+                                .row(row_id)
+                                .is_some_and(|row| row.is_group())
+                        })
+                        .count(),
+                    rows.iter()
+                        .filter(|row_id| {
+                            plan.table()
+                                .core_model()
+                                .row(row_id)
+                                .is_some_and(|row| row.is_tree_branch())
+                        })
+                        .count(),
+                ),
+            };
 
         Self {
             core_rows: plan.table().core_model().rows().len(),
@@ -1676,9 +1858,13 @@ impl TableSampleStateSummary {
             expanded_rows: plan.table().expanded_model().rows().len(),
             group_rows,
             leaf_rows: final_rows.len().saturating_sub(group_rows),
+            tree_rows,
+            tree_branch_rows,
+            tree_depth,
             grouping_columns: state.grouping().len(),
             aggregation_count: state.aggregations().len(),
             expanded_group_inputs,
+            expanded_tree_inputs,
             all_rows_expanded,
             pinned_left_columns: regions.left().len(),
             pinned_center_columns: regions.center().len(),
@@ -1713,15 +1899,16 @@ impl TableSample {
 
     /// Builds the concrete GPUI table with caller-owned column sizing.
     pub fn build_table_with_sizing(&self, column_sizing: TableColumnSizing) -> Table {
-        Table::new(
-            format!("component-table:{}", self.id),
-            self.title,
-            self.state.clone().with_column_sizing(column_sizing),
-        )
-        .with_size(self.size)
-        .viewport_extent(self.viewport_extent)
-        .row_height(self.row_height)
-        .overscan(self.overscan)
+        self.build_table_with_state(self.state.clone().with_column_sizing(column_sizing))
+    }
+
+    /// Builds the concrete GPUI table from a fully resolved sample state.
+    pub fn build_table_with_state(&self, state: TableState) -> Table {
+        Table::new(format!("component-table:{}", self.id), self.title, state)
+            .with_size(self.size)
+            .viewport_extent(self.viewport_extent)
+            .row_height(self.row_height)
+            .overscan(self.overscan)
     }
 
     /// Resolves the table plan used by gallery tests and state rows.
@@ -3007,19 +3194,20 @@ fn release_navigation_item(index: usize) -> VirtualizedListItemDescriptor {
 
 const RELEASE_MATRIX_METRIC_COUNT: usize = 14;
 
-static TABLE_SAMPLES: LazyLock<[TableSample; 5]> = LazyLock::new(build_table_samples);
+static TABLE_SAMPLES: LazyLock<Vec<TableSample>> = LazyLock::new(build_table_samples);
 
 /// Returns table samples backed by real table and virtualizer contracts.
 pub fn table_samples(_tokens: ThemeTokens) -> &'static [TableSample] {
     TABLE_SAMPLES.as_slice()
 }
 
-fn build_table_samples() -> [TableSample; 5] {
+fn build_table_samples() -> Vec<TableSample> {
     let release_queue_rows = (0..10_000).map(release_queue_row).collect::<Vec<_>>();
     let filter_board_rows = (0..180).map(filter_board_row).collect::<Vec<_>>();
     let release_resize_rows = (0..160).map(release_resize_row).collect::<Vec<_>>();
     let grouped_release_rows = (0..320).map(grouped_release_row).collect::<Vec<_>>();
     let release_matrix_rows = (0..480).map(release_matrix_row).collect::<Vec<_>>();
+    let dependency_tree_rows = dependency_tree_rows();
 
     let release_queue = TableSample {
         id: "release-queue",
@@ -3129,13 +3317,46 @@ fn build_table_samples() -> [TableSample; 5] {
         overscan: 4,
         state_summary: TableSampleStateSummary::default(),
     };
+    let dependency_tree = TableSample {
+        id: "dependency-tree",
+        title: "Dependency tree",
+        summary: "Nested source rows expose controlled expansion, row focus, and activation payloads.",
+        badge: "tree rows",
+        state: TableState::new(dependency_tree_rows)
+            .with_columns(dependency_tree_table_columns())
+            .with_column_order(dependency_tree_column_order())
+            .with_column_pinning(
+                TableColumnPinning::new()
+                    .pinned_left(["name"])
+                    .pinned_right(["status"]),
+            )
+            .with_column_sizing(
+                TableColumnSizing::new()
+                    .with_width("name", ui_px(220.0))
+                    .with_width("kind", ui_px(120.0))
+                    .with_width("owner", ui_px(132.0))
+                    .with_width("risk", ui_px(112.0))
+                    .with_width("change", ui_px(148.0))
+                    .with_width("score", ui_px(92.0))
+                    .with_width("status", ui_px(132.0)),
+            )
+            .with_expanded_rows(["dependency-workspace"])
+            .with_selected_rows(["dependency-ui"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
 
-    [
+    vec![
         release_queue.with_state_summary(),
         filter_board.with_state_summary(),
         release_resize.with_state_summary(),
         grouped_release.with_state_summary(),
         release_matrix.with_state_summary(),
+        dependency_tree.with_state_summary(),
     ]
 }
 
@@ -3233,6 +3454,143 @@ fn release_matrix_column_order() -> Vec<String> {
     order.extend((0..RELEASE_MATRIX_METRIC_COUNT).map(|index| format!("metric_{index:02}")));
     order.push("status".to_owned());
     order
+}
+
+fn dependency_tree_table_columns() -> [TableColumn; 7] {
+    [
+        TableColumn::new("name", "Package")
+            .with_width(ui_px(220.0))
+            .with_min_width(ui_px(172.0))
+            .with_max_width(ui_px(320.0)),
+        TableColumn::new("kind", "Kind")
+            .with_width(ui_px(120.0))
+            .with_min_width(ui_px(96.0))
+            .with_max_width(ui_px(180.0)),
+        TableColumn::new("owner", "Owner")
+            .with_width(ui_px(132.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(200.0)),
+        TableColumn::new("risk", "Risk")
+            .with_width(ui_px(112.0))
+            .with_min_width(ui_px(88.0))
+            .with_max_width(ui_px(160.0)),
+        TableColumn::new("change", "Change")
+            .with_width(ui_px(148.0))
+            .with_min_width(ui_px(112.0))
+            .with_max_width(ui_px(220.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(92.0))
+            .with_min_width(ui_px(72.0))
+            .with_max_width(ui_px(132.0)),
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(132.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(188.0)),
+    ]
+}
+
+fn dependency_tree_column_order() -> [&'static str; 7] {
+    ["name", "kind", "owner", "risk", "change", "score", "status"]
+}
+
+fn dependency_tree_rows() -> Vec<TableRow> {
+    vec![
+        dependency_tree_row(
+            "dependency-workspace",
+            "open-gpui",
+            "workspace",
+            "Foundation",
+            "medium",
+            "tree table slice",
+            91,
+            "active",
+        )
+        .with_children([
+            dependency_tree_row(
+                "dependency-ui",
+                "crates/ui_components",
+                "crate",
+                "Components",
+                "high",
+                "row interactions",
+                88,
+                "review",
+            )
+            .with_children([
+                dependency_tree_row(
+                    "dependency-ui-table",
+                    "table.rs",
+                    "module",
+                    "Components",
+                    "high",
+                    "tree affordance",
+                    94,
+                    "active",
+                ),
+                dependency_tree_row(
+                    "dependency-ui-tree",
+                    "tree.rs",
+                    "module",
+                    "Components",
+                    "medium",
+                    "navigation parity",
+                    77,
+                    "stable",
+                ),
+            ]),
+            dependency_tree_row(
+                "dependency-core",
+                "crates/ui_core",
+                "crate",
+                "Foundation",
+                "medium",
+                "row model",
+                84,
+                "active",
+            )
+            .with_child(dependency_tree_row(
+                "dependency-core-table",
+                "table.rs",
+                "module",
+                "Foundation",
+                "medium",
+                "source hierarchy",
+                90,
+                "ready",
+            )),
+            dependency_tree_row(
+                "dependency-docs",
+                "docs/ui",
+                "docs",
+                "Product",
+                "low",
+                "contract update",
+                71,
+                "queued",
+            ),
+        ]),
+    ]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dependency_tree_row(
+    id: &'static str,
+    name: &'static str,
+    kind: &'static str,
+    owner: &'static str,
+    risk: &'static str,
+    change: &'static str,
+    score: usize,
+    status: &'static str,
+) -> TableRow {
+    TableRow::new(id)
+        .with_cell("name", name)
+        .with_cell("kind", kind)
+        .with_cell("owner", owner)
+        .with_cell("risk", risk)
+        .with_cell("change", change)
+        .with_cell("score", score)
+        .with_cell("status", status)
 }
 
 fn release_queue_row(index: usize) -> TableRow {

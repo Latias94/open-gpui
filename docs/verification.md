@@ -186,22 +186,26 @@ The official Table gate requires `Table`, `TableState`, `VirtualizerState`, role
 rows and cells, and at least one `gallery:component-table-sample:{id}` selector. Table smokes and
 state tests assert that rendered row selectors stay bounded by the virtualizer's visible rows plus
 overscan, scroll input stays inside the table viewport, sortable header actions emit state-update
-payloads, controlled column resize callbacks carry stable sizing payloads, sort/filter state
-follows stable row ids rather than numeric positions, and grouped / expanded row models keep
-collapsed descendants addressable by stable row id. The Components gallery now carries
-`release-rollup`, a grouped Table sample that mixes expanded and collapsed team groups, exposes
-aggregate count and score cells, pins the identifier and status columns, and has its own
-inner-scroll smoke. It also carries `release-resize`, a controlled column-sizing sample whose
-resize smoke drags the `name` handle, records the app-owned committed width, and verifies header
-and first-row cell widths stay aligned. `release-matrix` is the wide center-column virtualization
-sample: it pins the identity and status lanes, exposes fourteen center metrics, and has a focused
-smoke that proves off-window center columns unmount/remount while horizontal wheel input remains
-inside the sample. Core table tests also assert that `TableAggregation` exposes
-stable built-in aggregate labels and resolves count, sum, min, max, and average cells for grouped
-rows without hiding the grouping column value. Core and component tests assert that
-`TableColumnPinning` splits visible columns into left, center, and right regions after
-visibility/order resolution, ignores unknown or invisible pinned ids, removes moved columns from
-their previous pinned side, and exposes matching header/body region metadata and debug selectors.
+payloads, controlled column resize callbacks carry stable sizing payloads, row activation and
+expansion request payloads stay controlled, source-tree row models keep nested descendants
+addressable by stable row id, and grouped / expanded row models keep collapsed descendants
+addressable by stable row id. The Components gallery now carries `release-rollup`, a grouped Table
+sample that mixes expanded and collapsed team groups, exposes aggregate count and score cells,
+pins the identifier and status columns, and has its own inner-scroll smoke. It also carries
+`release-resize`, a controlled column-sizing sample whose resize smoke drags the `name` handle,
+records the app-owned committed width, and verifies header and first-row cell widths stay aligned.
+`release-matrix` is the wide center-column virtualization sample: it pins the identity and status
+lanes, exposes fourteen center metrics, and has a focused smoke that proves off-window center
+columns unmount/remount while horizontal wheel input remains inside the sample. `dependency-tree`
+is the source-hierarchy sample: it proves nested `TableRow` children resolve to visible tree rows,
+keeps collapsed descendants addressable by stable id, exposes tree-depth and tree-branch summary
+metadata, and drives controlled expansion plus row activation through the gallery runtime log.
+Core table tests also assert that `TableAggregation` exposes stable built-in aggregate labels and
+resolves count, sum, min, max, and average cells for grouped rows without hiding the grouping
+column value. Core and component tests assert that `TableColumnPinning` splits visible columns into
+left, center, and right regions after visibility/order resolution, ignores unknown or invisible
+pinned ids, removes moved columns from their previous pinned side, and exposes matching
+header/body region metadata and debug selectors.
 The official Tree gate requires `Tree`, `TreeState`, `TreeMetrics`, tree/tree-item role signals,
 and at least one `gallery:component-tree-sample:{id}` selector. Component runtime tests verify
 expansion, reveal, and selection payloads; gallery smokes verify keyboard expansion/selection
@@ -395,10 +399,11 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     page overflows. The Table samples should expose the `release-queue` 10k-row virtualized window,
     the filtered/sorted/paginated `filter-board` model, the controlled `release-resize` sizing
     sample, the grouped and sticky pinned `release-rollup` model with left/right fixed lanes and a
-    horizontally scrollable center lane, the wide `release-matrix` center-column window, stable
-    selected row ids, table/row/cell accessibility metadata, sortable header metadata, resize
-    handle metadata, and internal body viewports that scroll without moving the outer Components
-    page.
+    horizontally scrollable center lane, the wide `release-matrix` center-column window, the
+    source-tree `dependency-tree` sample with nested rows and controlled expansion, stable selected
+    row ids, table/row/cell accessibility metadata, sortable header metadata, resize handle
+    metadata, row activation and expansion log entries, and internal body viewports that scroll
+    without moving the outer Components page.
     The Tree sample should expose `document-outline`,
     tree/tree-item accessibility metadata, expandable `Paper` children, a state readout, an inner
     viewport that scrolls without moving the outer Components page, and selection/toggle events

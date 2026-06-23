@@ -1472,27 +1472,59 @@ pub(crate) fn render_components_page(
                                         let summary = sample.summary;
                                         let badge = sample.badge;
                                         let state_summary = sample.state_summary();
-                                        let table = if sample_id == "release-resize" {
-                                            let base_sizing = sample.state.column_sizing().clone();
-                                            let current_sizing =
-                                                pages::components::current_table_sample_sizing(
-                                                    sample_id,
-                                                    &base_sizing,
-                                                    cx,
-                                                );
+                                        let base_sizing = sample.state.column_sizing().clone();
+                                        let current_sizing =
+                                            pages::components::current_table_sample_sizing(
+                                                sample_id,
+                                                &base_sizing,
+                                                cx,
+                                            );
+                                        let base_expansion = sample.state.expansion().clone();
+                                        let current_expansion =
+                                            pages::components::current_table_sample_expansion(
+                                                sample_id,
+                                                &base_expansion,
+                                                cx,
+                                            );
+                                        let table_state =
+                                            pages::components::table_state_with_expansion(
+                                                sample
+                                                    .state
+                                                    .clone()
+                                                    .with_column_sizing(current_sizing),
+                                                current_expansion,
+                                            );
+                                        let mut table = sample.build_table_with_state(table_state);
+                                        if sample_id == "release-resize" {
                                             let sample_id_for_resize = sample_id.to_owned();
-                                            sample
-                                                .build_table_with_sizing(current_sizing)
-                                                .on_column_sizing_change(move |change, _, cx| {
+                                            table = table.on_column_sizing_change(
+                                                move |change, _, cx| {
                                                     pages::components::record_table_sizing_change(
                                                         sample_id_for_resize.clone(),
                                                         &change,
                                                         cx,
                                                     );
-                                                })
-                                        } else {
-                                            sample.build_table()
-                                        };
+                                                },
+                                            );
+                                        }
+                                        let sample_id_for_activation = sample_id.to_owned();
+                                        table = table.on_row_activate(move |activation, _, cx| {
+                                            pages::components::record_table_row_activation(
+                                                sample_id_for_activation.clone(),
+                                                &activation,
+                                                cx,
+                                            );
+                                        });
+                                        let sample_id_for_expansion = sample_id.to_owned();
+                                        table =
+                                            table.on_row_expansion_request(move |toggle, _, cx| {
+                                                pages::components::record_table_expansion_request(
+                                                    sample_id_for_expansion.clone(),
+                                                    &base_expansion,
+                                                    &toggle,
+                                                    cx,
+                                                );
+                                            });
 
                                         div()
                                             .id(format!("component-table-sample:{sample_id}"))
@@ -2317,6 +2349,21 @@ pub(crate) fn component_table_state_row(
             summary.aggregation_count,
             summary.expanded_group_inputs,
             if summary.all_rows_expanded { " all" } else { "" }
+        ));
+    }
+
+    if summary.tree_rows > 0 {
+        row = row.child(format!(
+            "tree {} / branches {} / depth {} / expanded inputs {}{}",
+            summary.tree_rows,
+            summary.tree_branch_rows,
+            summary.tree_depth,
+            summary.expanded_tree_inputs,
+            if summary.all_rows_expanded {
+                " all"
+            } else {
+                ""
+            }
         ));
     }
 

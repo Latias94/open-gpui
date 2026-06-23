@@ -945,6 +945,7 @@ fn resolve_column_sizing_region(
 pub struct TableRow {
     id: TableRowId,
     cells: BTreeMap<TableColumnId, TableCellValue>,
+    children: Vec<TableRow>,
 }
 
 impl TableRow {
@@ -953,6 +954,7 @@ impl TableRow {
         Self {
             id: id.into(),
             cells: BTreeMap::new(),
+            children: Vec::new(),
         }
     }
 
@@ -964,6 +966,16 @@ impl TableRow {
     /// Returns all cells keyed by column identity.
     pub const fn cells(&self) -> &BTreeMap<TableColumnId, TableCellValue> {
         &self.cells
+    }
+
+    /// Returns nested source rows.
+    pub fn children(&self) -> &[TableRow] {
+        &self.children
+    }
+
+    /// Returns whether this source row has nested children.
+    pub fn has_children(&self) -> bool {
+        !self.children.is_empty()
     }
 
     /// Returns a cell value for the given column.
@@ -978,6 +990,18 @@ impl TableRow {
         value: impl Into<TableCellValue>,
     ) -> Self {
         self.cells.insert(column.into(), value.into());
+        self
+    }
+
+    /// Adds one nested source row.
+    pub fn with_child(mut self, child: TableRow) -> Self {
+        self.children.push(child);
+        self
+    }
+
+    /// Adds nested source rows.
+    pub fn with_children(mut self, children: impl IntoIterator<Item = TableRow>) -> Self {
+        self.children.extend(children);
         self
     }
 }
@@ -1529,7 +1553,7 @@ impl TableState {
     pub fn cache_key(&self) -> TableStateCacheKey {
         TableStateCacheKey {
             rows_identity: self.rows_identity,
-            row_count: self.rows.len(),
+            row_count: count_table_rows(&self.rows),
             columns: self.columns.clone(),
             column_order: self.column_order.clone(),
             column_pinning: self.column_pinning.clone(),
@@ -1585,32 +1609,31 @@ impl TableState {
     pub fn resolve(&self) -> TableResolvedState {
         let mut duplicate_row_ids = BTreeSet::new();
         let mut seen_row_ids = BTreeSet::new();
-        let core_rows: Vec<_> = self
-            .rows
-            .iter()
-            .enumerate()
-            .map(|(source_index, row)| {
-                if !seen_row_ids.insert(row.id().clone()) {
-                    duplicate_row_ids.insert(row.id().clone());
-                }
-                TableResolvedRow::from_row(row, source_index, self.selected_rows.contains(row.id()))
-            })
-            .collect();
+        record_source_row_ids(&self.rows, &mut seen_row_ids, &mut duplicate_row_ids);
+        let include_source_children = self.grouping.is_empty();
+        let mut source_index = 0;
+        let source_nodes = build_source_row_nodes(
+            &self.rows,
+            &self.selected_rows,
+            &self.expansion,
+            include_source_children,
+            None,
+            0,
+            &mut source_index,
+        );
+        let core_rows = flatten_nodes(&source_nodes);
 
         let core_model = TableRowModel::new(TableRowModelStage::Core, core_rows);
 
-        let filtered_rows: Vec<_> = core_model
-            .rows()
-            .iter()
-            .filter(|row| {
-                row.source()
-                    .is_some_and(|source| self.filters.iter().all(|filter| filter.matches(source)))
-            })
-            .cloned()
-            .collect();
+        let filtered_nodes = filter_source_row_nodes(&source_nodes, &self.filters);
+        let filtered_rows = flatten_nodes(&filtered_nodes);
         let filtered_model = TableRowModel::new(TableRowModelStage::Filtered, filtered_rows);
 
-        let grouped_nodes = self.group_nodes(filtered_model.rows());
+        let grouped_nodes = if self.grouping.is_empty() {
+            filtered_nodes
+        } else {
+            self.group_nodes(filtered_model.rows())
+        };
         let grouped_rows = flatten_nodes(&grouped_nodes);
         let grouped_model = TableRowModel::new(TableRowModelStage::Grouped, grouped_rows);
 
@@ -1745,6 +1768,25 @@ fn next_table_rows_identity() -> u64 {
     NEXT_TABLE_ROWS_IDENTITY.fetch_add(1, AtomicOrdering::Relaxed)
 }
 
+fn count_table_rows(rows: &[TableRow]) -> usize {
+    rows.iter()
+        .map(|row| 1 + count_table_rows(row.children()))
+        .sum()
+}
+
+fn record_source_row_ids(
+    rows: &[TableRow],
+    seen: &mut BTreeSet<TableRowId>,
+    duplicates: &mut BTreeSet<TableRowId>,
+) {
+    for row in rows {
+        if !seen.insert(row.id().clone()) {
+            duplicates.insert(row.id().clone());
+        }
+        record_source_row_ids(row.children(), seen, duplicates);
+    }
+}
+
 fn unique_column_ids(
     columns: impl IntoIterator<Item = impl Into<TableColumnId>>,
 ) -> Vec<TableColumnId> {
@@ -1817,6 +1859,59 @@ impl TableGroupRow {
     }
 }
 
+/// Source hierarchy metadata for a resolved table row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableTreeRow {
+    depth: usize,
+    parent_id: Option<TableRowId>,
+    has_children: bool,
+    expanded: bool,
+    descendant_count: usize,
+}
+
+impl TableTreeRow {
+    fn new(
+        depth: usize,
+        parent_id: Option<TableRowId>,
+        has_children: bool,
+        expanded: bool,
+        descendant_count: usize,
+    ) -> Self {
+        Self {
+            depth,
+            parent_id,
+            has_children,
+            expanded,
+            descendant_count,
+        }
+    }
+
+    /// Returns this source row's zero-based depth.
+    pub const fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// Returns the parent source row id, if present.
+    pub const fn parent_id(&self) -> Option<&TableRowId> {
+        self.parent_id.as_ref()
+    }
+
+    /// Returns whether this source row has nested children.
+    pub const fn has_children(&self) -> bool {
+        self.has_children
+    }
+
+    /// Returns whether this source branch is expanded in caller-owned state.
+    pub const fn expanded(&self) -> bool {
+        self.expanded
+    }
+
+    /// Returns the number of nested descendant source rows.
+    pub const fn descendant_count(&self) -> usize {
+        self.descendant_count
+    }
+}
+
 /// Resolved row kind for Open GPUI table row models.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TableResolvedRowKind {
@@ -1835,12 +1930,20 @@ pub struct TableResolvedRow {
     source_index: Option<usize>,
     selected: bool,
     kind: TableResolvedRowKind,
+    tree: Option<TableTreeRow>,
     depth: usize,
     parent_id: Option<TableRowId>,
 }
 
 impl TableResolvedRow {
-    fn from_row(row: &TableRow, source_index: usize, selected: bool) -> Self {
+    fn from_row(
+        row: &TableRow,
+        source_index: usize,
+        selected: bool,
+        tree: Option<TableTreeRow>,
+    ) -> Self {
+        let depth = tree.as_ref().map(TableTreeRow::depth).unwrap_or(0);
+        let parent_id = tree.as_ref().and_then(|tree| tree.parent_id().cloned());
         Self {
             id: row.id().clone(),
             cells: row.cells().clone(),
@@ -1848,8 +1951,9 @@ impl TableResolvedRow {
             source_index: Some(source_index),
             selected,
             kind: TableResolvedRowKind::Leaf,
-            depth: 0,
-            parent_id: None,
+            tree,
+            depth,
+            parent_id,
         }
     }
 
@@ -1873,6 +1977,7 @@ impl TableResolvedRow {
             depth: group.depth(),
             parent_id: group.parent_id().cloned(),
             kind: TableResolvedRowKind::Group(group),
+            tree: None,
         }
     }
 
@@ -1908,6 +2013,28 @@ impl TableResolvedRow {
             TableResolvedRowKind::Group(group) => Some(group),
             TableResolvedRowKind::Leaf => None,
         }
+    }
+
+    /// Returns source hierarchy metadata when this row came from source tree data.
+    pub const fn tree(&self) -> Option<&TableTreeRow> {
+        self.tree.as_ref()
+    }
+
+    /// Returns whether this row is a source row with nested children.
+    pub fn is_tree_branch(&self) -> bool {
+        self.tree().map(TableTreeRow::has_children).unwrap_or(false)
+    }
+
+    /// Returns whether this source branch is expanded in caller-owned state.
+    pub fn tree_expanded(&self) -> Option<bool> {
+        self.tree()
+            .filter(|tree| tree.has_children())
+            .map(TableTreeRow::expanded)
+    }
+
+    /// Returns the number of nested source descendants.
+    pub fn descendant_count(&self) -> usize {
+        self.tree().map(TableTreeRow::descendant_count).unwrap_or(0)
     }
 
     /// Returns the original row descriptor for leaf rows.
@@ -2093,6 +2220,79 @@ impl TableRowNode {
     }
 }
 
+fn build_source_row_nodes(
+    rows: &[TableRow],
+    selected_rows: &BTreeSet<TableRowId>,
+    expansion: &TableExpansionState,
+    include_children: bool,
+    parent_id: Option<TableRowId>,
+    depth: usize,
+    source_index: &mut usize,
+) -> Vec<TableRowNode> {
+    rows.iter()
+        .map(|row| {
+            let current_source_index = *source_index;
+            *source_index += 1;
+
+            let children = if include_children {
+                build_source_row_nodes(
+                    row.children(),
+                    selected_rows,
+                    expansion,
+                    include_children,
+                    Some(row.id().clone()),
+                    depth + 1,
+                    source_index,
+                )
+            } else {
+                Vec::new()
+            };
+            let tree =
+                (include_children && (parent_id.is_some() || !children.is_empty())).then(|| {
+                    TableTreeRow::new(
+                        depth,
+                        parent_id.clone(),
+                        !children.is_empty(),
+                        expansion.is_expanded(row.id()),
+                        count_table_rows(row.children()),
+                    )
+                });
+            let resolved = TableResolvedRow::from_row(
+                row,
+                current_source_index,
+                selected_rows.contains(row.id()),
+                tree,
+            );
+
+            TableRowNode {
+                row: resolved,
+                children,
+            }
+        })
+        .collect()
+}
+
+fn filter_source_row_nodes(nodes: &[TableRowNode], filters: &[TableFilter]) -> Vec<TableRowNode> {
+    if filters.is_empty() {
+        return nodes.to_vec();
+    }
+
+    nodes
+        .iter()
+        .filter_map(|node| {
+            let source = node.row.source()?;
+            if !filters.iter().all(|filter| filter.matches(source)) {
+                return None;
+            }
+
+            Some(TableRowNode {
+                row: node.row.clone(),
+                children: filter_source_row_nodes(&node.children, filters),
+            })
+        })
+        .collect()
+}
+
 fn flatten_nodes(nodes: &[TableRowNode]) -> Vec<TableResolvedRow> {
     let mut rows = Vec::new();
     for node in nodes {
@@ -2266,7 +2466,7 @@ fn push_expanded_rows(
         return;
     }
 
-    if node.row.is_group() && !expansion.is_expanded(node.row.id()) {
+    if !expansion.is_expanded(node.row.id()) {
         return;
     }
 
@@ -2322,6 +2522,37 @@ mod tests {
                 .with_cell("high", 7_usize)
                 .with_cell("duration", 10_usize)
                 .with_cell("noise", "unknown"),
+        ]
+    }
+
+    fn tree_rows() -> Vec<TableRow> {
+        vec![
+            TableRow::new("pkg")
+                .with_cell("name", "Workspace")
+                .with_cell("team", "core")
+                .with_cell("score", 100_usize)
+                .with_child(
+                    TableRow::new("pkg-ui")
+                        .with_cell("name", "UI")
+                        .with_cell("team", "ui")
+                        .with_cell("score", 30_usize),
+                )
+                .with_child(
+                    TableRow::new("pkg-core")
+                        .with_cell("name", "Core")
+                        .with_cell("team", "core")
+                        .with_cell("score", 70_usize)
+                        .with_child(
+                            TableRow::new("pkg-core-test")
+                                .with_cell("name", "Core Test")
+                                .with_cell("team", "core")
+                                .with_cell("score", 10_usize),
+                        ),
+                ),
+            TableRow::new("docs")
+                .with_cell("name", "Docs")
+                .with_cell("team", "docs")
+                .with_cell("score", 20_usize),
         ]
     }
 
@@ -2689,6 +2920,244 @@ mod tests {
 
         assert!(selected.selected());
         assert_eq!(resolved.final_model().selected_count(), 1);
+    }
+
+    #[test]
+    fn nested_source_rows_resolve_parent_depth_and_lookup_metadata() {
+        let resolved = TableState::new(tree_rows()).resolve();
+
+        assert_eq!(
+            resolved
+                .core_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "pkg-ui", "pkg-core", "pkg-core-test", "docs"]
+        );
+
+        let pkg = resolved
+            .core_model()
+            .row(&TableRowId::new("pkg"))
+            .expect("root source row should be addressable");
+        let pkg_tree = pkg.tree().expect("source row should expose tree metadata");
+        assert_eq!(pkg.source_index(), Some(0));
+        assert_eq!(pkg.depth(), 0);
+        assert_eq!(pkg.parent_id(), None);
+        assert!(pkg.is_tree_branch());
+        assert_eq!(pkg.tree_expanded(), Some(false));
+        assert_eq!(pkg_tree.descendant_count(), 3);
+
+        let nested = resolved
+            .core_model()
+            .row(&TableRowId::new("pkg-core-test"))
+            .expect("nested descendant should be addressable");
+        assert_eq!(nested.source_index(), Some(3));
+        assert_eq!(nested.depth(), 2);
+        assert_eq!(nested.parent_id().map(TableRowId::as_str), Some("pkg-core"));
+        assert!(!nested.is_tree_branch());
+        assert_eq!(nested.descendant_count(), 0);
+    }
+
+    #[test]
+    fn collapsed_tree_rows_hide_descendants_but_preserve_lookup() {
+        let resolved = TableState::new(tree_rows()).resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "docs"]
+        );
+        assert!(
+            resolved
+                .final_model()
+                .row(&TableRowId::new("pkg-core-test"))
+                .is_some(),
+            "collapsed tree descendants should remain addressable by stable row id"
+        );
+    }
+
+    #[test]
+    fn expanded_tree_rows_show_descendants_with_parent_depth_and_selection() {
+        let resolved = TableState::new(tree_rows())
+            .with_expanded_rows(["pkg", "pkg-core"])
+            .with_selected_rows(["pkg-core-test"])
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "pkg-ui", "pkg-core", "pkg-core-test", "docs"]
+        );
+
+        let pkg_core = resolved
+            .final_model()
+            .row(&TableRowId::new("pkg-core"))
+            .expect("expanded branch should be addressable");
+        assert_eq!(pkg_core.tree_expanded(), Some(true));
+        assert_eq!(pkg_core.depth(), 1);
+        assert_eq!(pkg_core.parent_id().map(TableRowId::as_str), Some("pkg"));
+
+        let nested = resolved
+            .final_model()
+            .rows()
+            .iter()
+            .find(|row| row.id().as_str() == "pkg-core-test")
+            .expect("expanded nested descendant should be visible");
+        assert!(nested.selected());
+        assert_eq!(resolved.final_model().selected_count(), 1);
+    }
+
+    #[test]
+    fn child_expansion_does_not_bypass_collapsed_parent() {
+        let resolved = TableState::new(tree_rows())
+            .with_expanded_rows(["pkg-core"])
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "docs"]
+        );
+    }
+
+    #[test]
+    fn all_rows_expanded_expands_source_tree_branches() {
+        let resolved = TableState::new(tree_rows())
+            .with_all_rows_expanded()
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "pkg-ui", "pkg-core", "pkg-core-test", "docs"]
+        );
+        assert_eq!(
+            resolved
+                .final_model()
+                .row(&TableRowId::new("pkg"))
+                .and_then(TableResolvedRow::tree_expanded),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn tree_filtering_uses_parent_to_child_policy() {
+        let resolved = TableState::new(tree_rows())
+            .with_filters([TableFilter::contains("team", "core")])
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "pkg-core", "pkg-core-test"]
+        );
+
+        let leaf_match_without_parent = TableState::new(tree_rows())
+            .with_filters([TableFilter::contains("team", "ui")])
+            .resolve();
+        assert!(
+            leaf_match_without_parent.filtered_model().rows().is_empty(),
+            "first slice keeps TanStack's default parent-to-child filtering policy"
+        );
+    }
+
+    #[test]
+    fn pagination_applies_after_tree_expansion() {
+        let resolved = TableState::new(tree_rows())
+            .with_all_rows_expanded()
+            .with_pagination(TablePagination::new(0, 3))
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "pkg-ui", "pkg-core"]
+        );
+        assert!(
+            resolved
+                .final_model()
+                .row(&TableRowId::new("pkg-core-test"))
+                .is_some(),
+            "expanded-but-not-paginated tree descendants should remain addressable"
+        );
+    }
+
+    #[test]
+    fn duplicate_row_ids_are_reported_across_nested_source_rows() {
+        let resolved = TableState::new([
+            TableRow::new("root").with_child(TableRow::new("duplicate")),
+            TableRow::new("duplicate"),
+        ])
+        .resolve();
+
+        assert_eq!(
+            resolved
+                .duplicate_row_ids()
+                .iter()
+                .map(TableRowId::as_str)
+                .collect::<Vec<_>>(),
+            ["duplicate"]
+        );
+    }
+
+    #[test]
+    fn cache_key_row_count_includes_child_topology() {
+        let flat = TableState::new([TableRow::new("root")]);
+        let nested = TableState::new([TableRow::new("root").with_child(TableRow::new("child"))]);
+
+        assert_eq!(flat.cache_key().row_count(), 1);
+        assert_eq!(nested.cache_key().row_count(), 2);
+        assert_ne!(flat.cache_key(), nested.cache_key());
+    }
+
+    #[test]
+    fn grouping_keeps_source_tree_rows_out_of_the_grouped_path() {
+        let resolved = TableState::new(tree_rows())
+            .with_grouping(["team"])
+            .with_all_rows_expanded()
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["group:team=core", "pkg", "group:team=docs", "docs"]
+        );
+        assert!(
+            resolved
+                .final_model()
+                .row(&TableRowId::new("pkg-ui"))
+                .is_none(),
+            "tree plus grouping composition is deferred for a later policy slice"
+        );
     }
 
     #[test]

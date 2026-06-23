@@ -5,21 +5,27 @@ use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use crate::scroll_area::ScrollArea;
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, CursorStyle, DragMoveEvent, Empty, Entity, FontWeight,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, RenderOnce,
-    ScrollHandle, ScrollWheelEvent, SharedString, StatefulInteractiveElement, Styled, Window, div,
-    point, px, rgb,
+    AnyElement, App, ClickEvent, Context, CursorStyle, DragMoveEvent, Empty, Entity, FocusHandle,
+    FontWeight, InteractiveElement, IntoElement, KeyDownEvent, Modifiers, MouseButton,
+    ParentElement, RenderOnce, ScrollHandle, ScrollWheelEvent, SharedString,
+    StatefulInteractiveElement, Styled, Window, div, point, px, rgb,
 };
 use open_gpui_ui_core::{
     Role, Sizable, Size, TableCellValue, TableColumn, TableColumnId, TableColumnRegion,
     TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState, TableColumnSizing,
-    TableResolvedColumnSizing, TableResolvedRow, TableResolvedState, TableSort, TableSortDirection,
-    TableState, TableStateCacheKey, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
-    VirtualizerRange, VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState,
-    drag_table_column_resize, end_table_column_resize, ui_px,
+    TableExpansionState, TableResolvedColumnSizing, TableResolvedRow, TableResolvedState,
+    TableRowId, TableSort, TableSortDirection, TableState, TableStateCacheKey, TableTreeRow, UiPx,
+    VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState,
+    VirtualizerSnapshot, VirtualizerState, drag_table_column_resize, end_table_column_resize,
+    ui_px,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
+
+type TableSortHandler = Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>;
+type TableColumnSizingHandler = Rc<dyn Fn(TableColumnSizingChange, &mut Window, &mut App)>;
+type TableRowActivationHandler = Rc<dyn Fn(TableRowActivation, &mut Window, &mut App)>;
+type TableRowExpansionHandler = Rc<dyn Fn(TableRowExpansionToggle, &mut Window, &mut App)>;
 
 /// Resolved table sizing and virtualization metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -564,6 +570,211 @@ impl TableColumnSizingChange {
     }
 }
 
+/// Renderer-neutral modifier-key snapshot carried by table row callbacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TableInputModifiers {
+    control: bool,
+    alt: bool,
+    shift: bool,
+    platform: bool,
+    function: bool,
+}
+
+impl TableInputModifiers {
+    fn from_gpui(modifiers: Modifiers) -> Self {
+        Self {
+            control: modifiers.control,
+            alt: modifiers.alt,
+            shift: modifiers.shift,
+            platform: modifiers.platform,
+            function: modifiers.function,
+        }
+    }
+
+    /// Returns whether the control key was pressed.
+    pub const fn control(self) -> bool {
+        self.control
+    }
+
+    /// Returns whether the alt key was pressed.
+    pub const fn alt(self) -> bool {
+        self.alt
+    }
+
+    /// Returns whether the shift key was pressed.
+    pub const fn shift(self) -> bool {
+        self.shift
+    }
+
+    /// Returns whether the platform command key was pressed.
+    pub const fn platform(self) -> bool {
+        self.platform
+    }
+
+    /// Returns whether the function key was pressed.
+    pub const fn function(self) -> bool {
+        self.function
+    }
+
+    /// Returns whether any modifier key was pressed.
+    pub const fn modified(self) -> bool {
+        self.control || self.alt || self.shift || self.platform || self.function
+    }
+}
+
+/// Row activation source for table row callbacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableRowActivationKind {
+    /// A standard pointer click activated the row.
+    Click,
+    /// A repeated pointer click activated the row.
+    DoubleClick,
+    /// Enter or Space activated the focused row.
+    Keyboard,
+}
+
+impl TableRowActivationKind {
+    /// Returns a stable label for logs and tests.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Click => "click",
+            Self::DoubleClick => "double-click",
+            Self::Keyboard => "keyboard",
+        }
+    }
+}
+
+/// Common row metadata carried by interactive table row callbacks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableRowAction {
+    row_id: TableRowId,
+    render_key: String,
+    model_index: usize,
+    source_index: Option<usize>,
+    depth: usize,
+    selected: bool,
+    tree_branch: bool,
+    tree_expanded: Option<bool>,
+    modifiers: TableInputModifiers,
+}
+
+impl TableRowAction {
+    fn from_render_plan(row: &TableRowRenderPlan, modifiers: TableInputModifiers) -> Self {
+        Self {
+            row_id: row.id().clone(),
+            render_key: row.render_key().to_owned(),
+            model_index: row.model_index(),
+            source_index: row.row().source_index(),
+            depth: row.row().depth(),
+            selected: row.selected(),
+            tree_branch: row.row().is_tree_branch(),
+            tree_expanded: row.row().tree_expanded(),
+            modifiers,
+        }
+    }
+
+    /// Returns the stable row id.
+    pub const fn row_id(&self) -> &TableRowId {
+        &self.row_id
+    }
+
+    /// Returns the unique render key used by element ids.
+    pub fn render_key(&self) -> &str {
+        &self.render_key
+    }
+
+    /// Returns this row's zero-based index in the final row model.
+    pub const fn model_index(&self) -> usize {
+        self.model_index
+    }
+
+    /// Returns the source-row preorder index, when this is a source row.
+    pub const fn source_index(&self) -> Option<usize> {
+        self.source_index
+    }
+
+    /// Returns the row depth in the resolved hierarchy.
+    pub const fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// Returns whether this row is selected by caller-owned table state.
+    pub const fn selected(&self) -> bool {
+        self.selected
+    }
+
+    /// Returns whether this row is a source tree branch.
+    pub const fn tree_branch(&self) -> bool {
+        self.tree_branch
+    }
+
+    /// Returns the resolved expanded state for source tree branches.
+    pub const fn tree_expanded(&self) -> Option<bool> {
+        self.tree_expanded
+    }
+
+    /// Returns modifier keys captured from the triggering input event.
+    pub const fn modifiers(&self) -> TableInputModifiers {
+        self.modifiers
+    }
+}
+
+/// Controlled payload emitted when a table row is activated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableRowActivation {
+    action: TableRowAction,
+    kind: TableRowActivationKind,
+}
+
+impl TableRowActivation {
+    fn new(action: TableRowAction, kind: TableRowActivationKind) -> Self {
+        Self { action, kind }
+    }
+
+    /// Returns common row metadata.
+    pub const fn action(&self) -> &TableRowAction {
+        &self.action
+    }
+
+    /// Returns the source of the activation.
+    pub const fn kind(&self) -> TableRowActivationKind {
+        self.kind
+    }
+
+    /// Returns the activated row id.
+    pub const fn row_id(&self) -> &TableRowId {
+        self.action.row_id()
+    }
+}
+
+/// Controlled payload emitted when a table row expansion toggle is requested.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableRowExpansionToggle {
+    action: TableRowAction,
+    expanded: bool,
+}
+
+impl TableRowExpansionToggle {
+    fn new(action: TableRowAction, expanded: bool) -> Self {
+        Self { action, expanded }
+    }
+
+    /// Returns common row metadata.
+    pub const fn action(&self) -> &TableRowAction {
+        &self.action
+    }
+
+    /// Returns the row id whose expansion should change.
+    pub const fn row_id(&self) -> &TableRowId {
+        self.action.row_id()
+    }
+
+    /// Returns the desired expanded state after the toggle.
+    pub const fn expanded(&self) -> bool {
+        self.expanded
+    }
+}
+
 /// One resolved table cell in render order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableCellRenderPlan {
@@ -682,6 +893,21 @@ impl TableRowRenderPlan {
     /// Returns whether the row is selected by stable row id.
     pub const fn selected(&self) -> bool {
         self.row.selected()
+    }
+
+    /// Returns this row's resolved hierarchy depth.
+    pub const fn depth(&self) -> usize {
+        self.row.depth()
+    }
+
+    /// Returns whether this rendered row is a source tree branch.
+    pub fn is_tree_branch(&self) -> bool {
+        self.row.is_tree_branch()
+    }
+
+    /// Returns the source tree expansion state for branch rows.
+    pub fn tree_expanded(&self) -> Option<bool> {
+        self.row.tree_expanded()
     }
 
     /// Returns the virtual row start offset.
@@ -926,6 +1152,48 @@ struct TableRuntime {
     horizontal_scroll_handle: ScrollHandle,
     resolved: Option<TableResolvedCache>,
     column_resize: TableColumnResizeState,
+    focused_row: Option<TableRowId>,
+    focus_handles: BTreeMap<TableRowId, FocusHandle>,
+    expansion_override: Option<TableExpansionState>,
+}
+
+impl TableRuntime {
+    fn sync_rows(&mut self, plan: &TableRenderPlan, cx: &mut Context<Self>) {
+        let rendered_row_ids = plan
+            .rows()
+            .iter()
+            .map(|row| row.id().clone())
+            .collect::<BTreeSet<_>>();
+        self.focus_handles
+            .retain(|row_id, _| rendered_row_ids.contains(row_id));
+
+        for row in plan.rows() {
+            self.focus_handles
+                .entry(row.id().clone())
+                .or_insert_with(|| cx.focus_handle());
+        }
+
+        if self.focused_row.is_none() {
+            self.focused_row = plan.rows().first().map(|row| row.id().clone());
+        }
+    }
+
+    fn set_focused(&mut self, row_id: TableRowId, cx: &mut Context<Self>) -> Option<FocusHandle> {
+        let changed = self.focused_row.as_ref() != Some(&row_id);
+        self.focused_row = Some(row_id.clone());
+        if changed {
+            cx.notify();
+        }
+        self.focus_handles.get(&row_id).cloned()
+    }
+
+    fn set_expansion_override(&mut self, expansion: TableExpansionState, cx: &mut Context<Self>) {
+        if self.expansion_override.as_ref() != Some(&expansion) {
+            self.expansion_override = Some(expansion);
+            self.resolved = None;
+            cx.notify();
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -936,7 +1204,7 @@ struct TableResizeRenderConfig {
     direction: TableColumnResizeDirection,
     base_sizing: TableColumnSizing,
     runtime: Entity<TableRuntime>,
-    on_change: Option<Rc<dyn Fn(TableColumnSizingChange, &mut Window, &mut App)>>,
+    on_change: Option<TableColumnSizingHandler>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -958,11 +1226,14 @@ pub struct Table {
     state: TableState,
     metrics: TableMetrics,
     snapshot: Option<VirtualizerSnapshot>,
-    on_sort_requested: Option<Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>>,
+    default_focused_row: Option<TableRowId>,
+    on_sort_requested: Option<TableSortHandler>,
     enable_column_resizing: bool,
     column_resize_mode: TableColumnResizeMode,
     column_resize_direction: TableColumnResizeDirection,
-    on_column_sizing_change: Option<Rc<dyn Fn(TableColumnSizingChange, &mut Window, &mut App)>>,
+    on_column_sizing_change: Option<TableColumnSizingHandler>,
+    on_row_activate: Option<TableRowActivationHandler>,
+    on_row_expansion_request: Option<TableRowExpansionHandler>,
 }
 
 impl Table {
@@ -974,11 +1245,14 @@ impl Table {
             state,
             metrics: TableMetrics::from_size(Size::Medium),
             snapshot: None,
+            default_focused_row: None,
             on_sort_requested: None,
             enable_column_resizing: true,
             column_resize_mode: TableColumnResizeMode::default(),
             column_resize_direction: TableColumnResizeDirection::default(),
             on_column_sizing_change: None,
+            on_row_activate: None,
+            on_row_expansion_request: None,
         }
     }
 
@@ -1027,6 +1301,12 @@ impl Table {
         self
     }
 
+    /// Seeds the adapter-owned focused row.
+    pub fn default_focused_row(mut self, row_id: impl Into<TableRowId>) -> Self {
+        self.default_focused_row = Some(row_id.into());
+        self
+    }
+
     /// Registers a handler for sortable column header activation.
     pub fn on_sort_requested(
         mut self,
@@ -1060,6 +1340,24 @@ impl Table {
         handler: impl Fn(TableColumnSizingChange, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_column_sizing_change = Some(Rc::new(handler));
+        self
+    }
+
+    /// Registers a handler for row activation gestures.
+    pub fn on_row_activate(
+        mut self,
+        handler: impl Fn(TableRowActivation, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_row_activate = Some(Rc::new(handler));
+        self
+    }
+
+    /// Registers a handler for controlled row expansion requests.
+    pub fn on_row_expansion_request(
+        mut self,
+        handler: impl Fn(TableRowExpansionToggle, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_row_expansion_request = Some(Rc::new(handler));
         self
     }
 
@@ -1100,7 +1398,13 @@ impl Table {
         runtime: &mut TableRuntime,
     ) -> TableRenderPlan {
         let metrics = self.metrics_for_viewport(viewport_extent);
-        let cache_key = self.state.cache_key();
+        let state = runtime
+            .expansion_override
+            .as_ref()
+            .cloned()
+            .map(|expansion| apply_table_expansion(self.state.clone(), expansion))
+            .unwrap_or_else(|| self.state.clone());
+        let cache_key = state.cache_key();
         let needs_resolve = runtime
             .resolved
             .as_ref()
@@ -1108,7 +1412,7 @@ impl Table {
             .unwrap_or(true);
 
         if needs_resolve {
-            let table = Rc::new(self.state.resolve());
+            let table = Rc::new(state.resolve());
             let columns = self.resolve_columns(&table);
             runtime.resolved = Some(TableResolvedCache {
                 key: cache_key,
@@ -1263,11 +1567,15 @@ impl Sizable for Table {
 impl RenderOnce for Table {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let runtime_id = format!("table:{}:runtime", self.id);
+        let default_focused_row = self.default_focused_row.clone();
         let runtime = window.use_keyed_state(runtime_id, cx, |_, _| TableRuntime {
             scroll_handle: ScrollHandle::new(),
             horizontal_scroll_handle: ScrollHandle::new(),
             resolved: None,
             column_resize: TableColumnResizeState::default(),
+            focused_row: default_focused_row,
+            focus_handles: BTreeMap::new(),
+            expansion_override: None,
         });
         let scroll_handle = runtime.read(cx).scroll_handle.clone();
         let horizontal_scroll_handle = runtime.read(cx).horizontal_scroll_handle.clone();
@@ -1287,18 +1595,27 @@ impl RenderOnce for Table {
         };
         let resize_drag_runtime = resize_config.runtime.clone();
         let resize_drag_config = resize_config.clone();
-        let plan = runtime.update(cx, |runtime, _| {
-            self.render_plan_with_runtime(
+        let plan = runtime.update(cx, |runtime, cx| {
+            let plan = self.render_plan_with_runtime(
                 scroll_offset,
                 viewport_extent,
                 horizontal_scroll_handle.clone(),
                 runtime,
-            )
+            );
+            runtime.sync_rows(&plan, cx);
+            plan
         });
+        let runtime_snapshot = runtime.read(cx).clone();
+        let current_expansion = runtime_snapshot
+            .expansion_override
+            .clone()
+            .unwrap_or_else(|| self.state.expansion().clone());
         let table_id = plan.table_id().to_owned();
         let label = plan.label().to_owned();
         let metrics = plan.metrics();
         let scroll_viewport_id = format!("table:{table_id}:body-scroll");
+        let on_row_activate = self.on_row_activate.clone();
+        let on_row_expansion_request = self.on_row_expansion_request.clone();
 
         div()
             .id(self.id)
@@ -1353,7 +1670,16 @@ impl RenderOnce for Table {
                 div().flex_1().min_h(px(0.0)).overflow_hidden().child(
                     ScrollArea::new(
                         scroll_viewport_id,
-                        render_table_body(&plan, horizontal_scroll_handle),
+                        render_table_body(
+                            &plan,
+                            horizontal_scroll_handle,
+                            scroll_handle.clone(),
+                            runtime.clone(),
+                            runtime_snapshot,
+                            current_expansion,
+                            on_row_activate,
+                            on_row_expansion_request,
+                        ),
                     )
                     .vertical()
                     .scroll_handle(&scroll_handle)
@@ -1365,7 +1691,7 @@ impl RenderOnce for Table {
 
 fn render_table_header(
     plan: &TableRenderPlan,
-    on_sort_requested: Option<Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>>,
+    on_sort_requested: Option<TableSortHandler>,
     resize_config: TableResizeRenderConfig,
     horizontal_scroll_handle: ScrollHandle,
 ) -> impl IntoElement {
@@ -1477,7 +1803,7 @@ fn render_table_header_cell(
     metrics: TableMetrics,
     column_header_role: Role,
     column: TableColumnRenderPlan,
-    on_sort_requested: Option<Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>>,
+    on_sort_requested: Option<TableSortHandler>,
     resize_config: TableResizeRenderConfig,
 ) -> impl IntoElement {
     let column_id = column.id().as_str().to_owned();
@@ -1751,14 +2077,47 @@ fn table_column_sizing_change(
     TableColumnSizingChange::new(drag.column_id.clone(), width, sizing)
 }
 
+fn apply_table_expansion(state: TableState, expansion: TableExpansionState) -> TableState {
+    match expansion {
+        TableExpansionState::All => state.with_all_rows_expanded(),
+        TableExpansionState::Rows(rows) => state.with_expanded_rows(rows),
+    }
+}
+
+fn toggle_table_expansion(
+    expansion: TableExpansionState,
+    row_id: TableRowId,
+    expanded: bool,
+) -> TableExpansionState {
+    match expansion {
+        TableExpansionState::All if expanded => TableExpansionState::All,
+        TableExpansionState::All => TableExpansionState::default(),
+        TableExpansionState::Rows(mut rows) => {
+            if expanded {
+                rows.insert(row_id);
+            } else {
+                rows.remove(&row_id);
+            }
+            TableExpansionState::Rows(rows)
+        }
+    }
+}
+
 fn render_table_body(
     plan: &TableRenderPlan,
     horizontal_scroll_handle: ScrollHandle,
+    vertical_scroll_handle: ScrollHandle,
+    runtime: Entity<TableRuntime>,
+    runtime_snapshot: TableRuntime,
+    current_expansion: TableExpansionState,
+    on_row_activate: Option<TableRowActivationHandler>,
+    on_row_expansion_request: Option<TableRowExpansionHandler>,
 ) -> impl IntoElement {
     let table_id = plan.table_id().to_owned();
     let metrics = plan.metrics();
     let total_size = plan.virtualizer().total_size();
     let rows = plan.rows().to_vec();
+    let final_rows = Rc::new(plan.table().final_model().rows().to_vec());
     let pinned_layout = plan.pinned_layout().cloned();
     let center_window = if pinned_layout.is_some() {
         plan.center_column_window().cloned().map(Rc::new)
@@ -1778,6 +2137,8 @@ fn render_table_body(
         .children(rows.into_iter().map(move |row| {
             let table_id = table_id.clone();
             let center_window = center_window.clone();
+            let focus_handle = runtime_snapshot.focus_handles.get(row.id()).cloned();
+            let focused = runtime_snapshot.focused_row.as_ref() == Some(row.id());
             render_table_row(
                 table_id,
                 row,
@@ -1785,6 +2146,14 @@ fn render_table_body(
                 pinned_layout.clone(),
                 center_window,
                 horizontal_scroll_handle.clone(),
+                vertical_scroll_handle.clone(),
+                runtime.clone(),
+                focus_handle,
+                focused,
+                final_rows.clone(),
+                current_expansion.clone(),
+                on_row_activate.clone(),
+                on_row_expansion_request.clone(),
             )
         }))
 }
@@ -1796,8 +2165,23 @@ fn render_table_row(
     pinned_layout: Option<TablePinnedLayoutPlan>,
     center_window: Option<Rc<TableCenterColumnWindowPlan>>,
     horizontal_scroll_handle: ScrollHandle,
+    vertical_scroll_handle: ScrollHandle,
+    runtime: Entity<TableRuntime>,
+    focus_handle: Option<FocusHandle>,
+    focused: bool,
+    final_rows: Rc<Vec<TableResolvedRow>>,
+    current_expansion: TableExpansionState,
+    on_row_activate: Option<TableRowActivationHandler>,
+    on_row_expansion_request: Option<TableRowExpansionHandler>,
 ) -> impl IntoElement {
     let render_key = row.render_key().to_owned();
+    let row_id = row.id().clone();
+    let row_for_click = row.clone();
+    let row_for_key = row.clone();
+    let tree = row.row().tree().cloned();
+    let tree_depth = tree.as_ref().map(TableTreeRow::depth).unwrap_or(0);
+    let tree_branch = row.row().is_tree_branch();
+    let tree_expanded = row.row().tree_expanded().unwrap_or(false);
     let row_background = if row.row().is_group() {
         rgb(0xf1f4f8)
     } else if row.selected() {
@@ -1839,6 +2223,11 @@ fn render_table_row(
             )
         })
         .collect::<Vec<_>>();
+    let tree_affordance_column_id = tree.as_ref().and_then(|_| {
+        region_cells.iter().find_map(|(_, _, cells, _, _, _, _)| {
+            cells.first().map(|cell| cell.column_id().clone())
+        })
+    });
 
     div()
         .id(format!("table:{table_id}:row:{render_key}"))
@@ -1863,6 +2252,68 @@ fn render_table_row(
         .ui_role(row.role())
         .aria_row_index(row.aria_row_index())
         .aria_selected(row.selected())
+        .when(tree_branch, |this| this.aria_expanded(tree_expanded))
+        .focusable()
+        .tab_stop(focused)
+        .when_some(focus_handle.clone(), |this, focus_handle| {
+            this.track_focus(&focus_handle)
+        })
+        .focus_visible(|style| style.border_color(rgb(0x2f80ed)))
+        .when(!tree_branch || on_row_activate.is_some(), |this| {
+            this.cursor_pointer()
+        })
+        .on_click({
+            let runtime = runtime.clone();
+            let focus_handle = focus_handle.clone();
+            let on_row_activate = on_row_activate.clone();
+            move |event: &ClickEvent, window, cx| {
+                if !event.standard_click() {
+                    return;
+                }
+
+                cx.stop_propagation();
+                window.prevent_default();
+
+                let activation_kind = if event.click_count() >= 2 {
+                    TableRowActivationKind::DoubleClick
+                } else {
+                    TableRowActivationKind::Click
+                };
+                let action = TableRowAction::from_render_plan(
+                    &row_for_click,
+                    TableInputModifiers::from_gpui(event.modifiers()),
+                );
+                runtime.update(cx, |runtime, cx| {
+                    runtime.set_focused(row_id.clone(), cx);
+                });
+                if let Some(focus_handle) = focus_handle.as_ref() {
+                    focus_handle.focus(window, cx);
+                }
+                if let Some(on_row_activate) = on_row_activate.as_ref() {
+                    on_row_activate(TableRowActivation::new(action, activation_kind), window, cx);
+                }
+            }
+        })
+        .on_key_down({
+            let runtime = runtime.clone();
+            let on_row_activate = on_row_activate.clone();
+            let on_row_expansion_request = on_row_expansion_request.clone();
+            let current_expansion_for_key = current_expansion.clone();
+            move |event: &KeyDownEvent, window, cx| {
+                handle_table_row_key_down(
+                    &row_for_key,
+                    final_rows.as_ref(),
+                    vertical_scroll_handle.clone(),
+                    &runtime,
+                    current_expansion_for_key.clone(),
+                    on_row_activate.clone(),
+                    on_row_expansion_request.clone(),
+                    event,
+                    window,
+                    cx,
+                );
+            }
+        })
         .children(region_cells.into_iter().map(
             move |(
                 region,
@@ -1885,12 +2336,37 @@ fn render_table_row(
                 if uses_center_window {
                     region_children.push(render_table_lane_spacer(leading_spacer_width));
                 }
+                let current_expansion_for_cells = current_expansion.clone();
                 region_children.extend(cells.into_iter().map({
                     let table_id = table_id.clone();
                     let render_key = render_key.clone();
+                    let row = row.clone();
+                    let runtime = runtime.clone();
+                    let focus_handle = focus_handle.clone();
+                    let on_row_expansion_request = on_row_expansion_request.clone();
+                    let tree = tree.clone();
+                    let tree_affordance_column_id = tree_affordance_column_id.clone();
                     move |cell| {
-                        render_table_body_cell(table_id.clone(), render_key.clone(), metrics, cell)
-                            .into_any_element()
+                        let tree_affordance = tree_affordance_column_id
+                            .as_ref()
+                            .is_some_and(|column_id| cell.column_id() == column_id);
+                        render_table_body_cell(
+                            table_id.clone(),
+                            render_key.clone(),
+                            metrics,
+                            cell,
+                            row.clone(),
+                            tree.clone(),
+                            tree_depth,
+                            tree_branch,
+                            tree_expanded,
+                            tree_affordance,
+                            runtime.clone(),
+                            focus_handle.clone(),
+                            current_expansion_for_cells.clone(),
+                            on_row_expansion_request.clone(),
+                        )
+                        .into_any_element()
                     }
                 }));
                 if uses_center_window {
@@ -1965,8 +2441,51 @@ fn render_table_body_cell(
     render_key: String,
     metrics: TableMetrics,
     cell: TableCellRenderPlan,
+    row: TableRowRenderPlan,
+    tree: Option<TableTreeRow>,
+    tree_depth: usize,
+    tree_branch: bool,
+    tree_expanded: bool,
+    tree_affordance: bool,
+    runtime: Entity<TableRuntime>,
+    focus_handle: Option<FocusHandle>,
+    current_expansion: TableExpansionState,
+    on_row_expansion_request: Option<TableRowExpansionHandler>,
 ) -> impl IntoElement {
     let column_id = cell.column_id().as_str().to_owned();
+    let show_tree_affordance = tree_affordance && tree.is_some();
+    let indent = ui_px(16.0) * tree_depth as f32;
+    let mut content = Vec::new();
+    if show_tree_affordance {
+        content.push(
+            div()
+                .w(gpui_px_from_ui(indent))
+                .h_full()
+                .flex_none()
+                .into_any_element(),
+        );
+        content.push(render_table_tree_toggle(
+            table_id.clone(),
+            render_key.clone(),
+            row.clone(),
+            tree_branch,
+            tree_expanded,
+            runtime,
+            focus_handle,
+            current_expansion,
+            on_row_expansion_request,
+        ));
+    }
+    content.push(
+        div()
+            .flex_1()
+            .min_w(px(0.0))
+            .overflow_hidden()
+            .truncate()
+            .whitespace_nowrap()
+            .child(cell.text().to_owned())
+            .into_any_element(),
+    );
 
     div()
         .id(format!("table:{table_id}:cell:{render_key}:{column_id}"))
@@ -1985,7 +2504,261 @@ fn render_table_body_cell(
         .text_color(rgb(0x2f3845))
         .ui_role(cell.role())
         .aria_column_index(cell.aria_column_index())
-        .child(cell.text().to_owned())
+        .children(content)
+}
+
+fn render_table_tree_toggle(
+    table_id: String,
+    render_key: String,
+    row: TableRowRenderPlan,
+    tree_branch: bool,
+    tree_expanded: bool,
+    runtime: Entity<TableRuntime>,
+    focus_handle: Option<FocusHandle>,
+    current_expansion: TableExpansionState,
+    on_row_expansion_request: Option<TableRowExpansionHandler>,
+) -> AnyElement {
+    if !tree_branch {
+        return div().w(px(18.0)).h(px(18.0)).flex_none().into_any_element();
+    }
+
+    let row_id = row.id().clone();
+    let row_key = render_key.clone();
+    let glyph = if tree_expanded { "v" } else { ">" };
+    let aria_label = if tree_expanded {
+        format!("Collapse row {}", row.id().as_str())
+    } else {
+        format!("Expand row {}", row.id().as_str())
+    };
+
+    div()
+        .id(format!("table:{table_id}:tree-toggle:{render_key}"))
+        .debug_selector({
+            let table_id = table_id.clone();
+            let row_key = row_key.clone();
+            move || format!("table:{table_id}:tree-toggle:{row_key}")
+        })
+        .w(px(18.0))
+        .h(px(18.0))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_sm()
+        .text_xs()
+        .ui_role(Role::Button)
+        .aria_label(aria_label)
+        .aria_expanded(tree_expanded)
+        .cursor_pointer()
+        .hover(|style| style.bg(rgb(0xe8ede6)))
+        .on_click(move |event: &ClickEvent, window, cx| {
+            if !event.standard_click() {
+                return;
+            }
+
+            cx.stop_propagation();
+            window.prevent_default();
+
+            let next_expansion =
+                toggle_table_expansion(current_expansion.clone(), row_id.clone(), !tree_expanded);
+            runtime.update(cx, |runtime, cx| {
+                runtime.set_focused(row_id.clone(), cx);
+                runtime.set_expansion_override(next_expansion.clone(), cx);
+            });
+            if let Some(focus_handle) = focus_handle.as_ref() {
+                focus_handle.focus(window, cx);
+            }
+            if let Some(on_row_expansion_request) = on_row_expansion_request.as_ref() {
+                let action = TableRowAction::from_render_plan(
+                    &row,
+                    TableInputModifiers::from_gpui(event.modifiers()),
+                );
+                on_row_expansion_request(
+                    TableRowExpansionToggle::new(action, !tree_expanded),
+                    window,
+                    cx,
+                );
+            }
+        })
+        .child(glyph)
+        .into_any_element()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TableRowKeyboardAction {
+    Focus { index: usize, row_id: TableRowId },
+    Toggle { expanded: bool },
+    Activate,
+}
+
+fn table_row_keyboard_action(
+    row: &TableRowRenderPlan,
+    final_rows: &[TableResolvedRow],
+    key: &str,
+) -> Option<TableRowKeyboardAction> {
+    let current_index = row.model_index();
+    match key {
+        "home" if !final_rows.is_empty() => Some(TableRowKeyboardAction::Focus {
+            index: 0,
+            row_id: final_rows[0].id().clone(),
+        }),
+        "end" if !final_rows.is_empty() => {
+            let index = final_rows.len() - 1;
+            Some(TableRowKeyboardAction::Focus {
+                index,
+                row_id: final_rows[index].id().clone(),
+            })
+        }
+        "up" => current_index.checked_sub(1).and_then(|index| {
+            final_rows
+                .get(index)
+                .map(|target| TableRowKeyboardAction::Focus {
+                    index,
+                    row_id: target.id().clone(),
+                })
+        }),
+        "down" => {
+            let index = current_index + 1;
+            final_rows
+                .get(index)
+                .map(|target| TableRowKeyboardAction::Focus {
+                    index,
+                    row_id: target.id().clone(),
+                })
+        }
+        "left" if row.row().is_tree_branch() && row.row().tree_expanded() == Some(true) => {
+            Some(TableRowKeyboardAction::Toggle { expanded: false })
+        }
+        "left" => row.row().parent_id().and_then(|parent_id| {
+            final_rows
+                .iter()
+                .position(|candidate| candidate.id() == parent_id)
+                .map(|index| TableRowKeyboardAction::Focus {
+                    index,
+                    row_id: parent_id.clone(),
+                })
+        }),
+        "right" if row.row().is_tree_branch() && row.row().tree_expanded() == Some(false) => {
+            Some(TableRowKeyboardAction::Toggle { expanded: true })
+        }
+        "right" => final_rows
+            .get(current_index + 1)
+            .filter(|candidate| candidate.parent_id() == Some(row.id()))
+            .map(|target| TableRowKeyboardAction::Focus {
+                index: current_index + 1,
+                row_id: target.id().clone(),
+            }),
+        "enter" | "space" => Some(TableRowKeyboardAction::Activate),
+        _ => None,
+    }
+}
+
+fn handle_table_row_key_down(
+    row: &TableRowRenderPlan,
+    final_rows: &[TableResolvedRow],
+    vertical_scroll_handle: ScrollHandle,
+    runtime: &Entity<TableRuntime>,
+    current_expansion: TableExpansionState,
+    on_row_activate: Option<TableRowActivationHandler>,
+    on_row_expansion_request: Option<TableRowExpansionHandler>,
+    event: &KeyDownEvent,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if event.keystroke.modifiers.modified() {
+        return;
+    }
+
+    let Some(action) = table_row_keyboard_action(row, final_rows, event.keystroke.key.as_str())
+    else {
+        return;
+    };
+
+    cx.stop_propagation();
+    window.prevent_default();
+
+    match action {
+        TableRowKeyboardAction::Focus { index, row_id } => {
+            let focus_handle = runtime.update(cx, |runtime, cx| runtime.set_focused(row_id, cx));
+            scroll_table_row_into_view(
+                &vertical_scroll_handle,
+                row.virtual_size(),
+                final_rows.len(),
+                index,
+            );
+            if let Some(focus_handle) = focus_handle {
+                focus_handle.focus(window, cx);
+            }
+            window.refresh();
+        }
+        TableRowKeyboardAction::Toggle { expanded } => {
+            let next_expansion =
+                toggle_table_expansion(current_expansion, row.id().clone(), expanded);
+            runtime.update(cx, |runtime, cx| {
+                runtime.set_focused(row.id().clone(), cx);
+                runtime.set_expansion_override(next_expansion.clone(), cx);
+            });
+            if let Some(on_row_expansion_request) = on_row_expansion_request.as_ref() {
+                let action = TableRowAction::from_render_plan(
+                    row,
+                    TableInputModifiers::from_gpui(event.keystroke.modifiers),
+                );
+                on_row_expansion_request(
+                    TableRowExpansionToggle::new(action, expanded),
+                    window,
+                    cx,
+                );
+            }
+            window.refresh();
+        }
+        TableRowKeyboardAction::Activate => {
+            runtime.update(cx, |runtime, cx| {
+                runtime.set_focused(row.id().clone(), cx);
+            });
+            if let Some(on_row_activate) = on_row_activate.as_ref() {
+                let action = TableRowAction::from_render_plan(
+                    row,
+                    TableInputModifiers::from_gpui(event.keystroke.modifiers),
+                );
+                on_row_activate(
+                    TableRowActivation::new(action, TableRowActivationKind::Keyboard),
+                    window,
+                    cx,
+                );
+            }
+            window.refresh();
+        }
+    }
+}
+
+fn scroll_table_row_into_view(
+    scroll_handle: &ScrollHandle,
+    row_height: UiPx,
+    row_count: usize,
+    index: usize,
+) {
+    let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
+    let row_height = nonnegative_px(row_height);
+    if viewport_extent.as_f32() <= 0.0 || row_height.as_f32() <= 0.0 {
+        return;
+    }
+
+    let total_extent = row_height * row_count as f32;
+    let current_scroll_offset =
+        UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
+    let row_start = row_height * index as f32;
+    let row_end = row_start + row_height;
+    let max_scroll = nonnegative_px(total_extent - viewport_extent);
+    let target = if row_start < current_scroll_offset {
+        row_start
+    } else if row_end > current_scroll_offset + viewport_extent {
+        row_end - viewport_extent
+    } else {
+        current_scroll_offset
+    };
+    let target = target.max(UiPx::ZERO).min(max_scroll);
+
+    scroll_handle.set_offset(point(px(0.0), -gpui_px_from_ui(target)));
 }
 
 fn render_table_lane_spacer(width: UiPx) -> AnyElement {
