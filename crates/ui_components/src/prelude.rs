@@ -109,12 +109,13 @@ pub use crate::virtualized_list::{
     virtualized_list_scroll_target,
 };
 pub use open_gpui_ui_core::{
-    Sizable, Size, TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind,
-    TableAggregation, TableCellValue, TableColumn, TableColumnId, TableColumnPinning,
-    TableColumnRegion, TableColumnRegions, TableExpansionState, TableFilter, TableGroupRow,
-    TablePagination, TableResolvedRow, TableResolvedRowKind, TableResolvedState, TableRow,
-    TableRowId, TableRowModel, TableRowModelStage, TableSort, TableSortDirection, TableState,
-    TableStateCacheKey, ThemeTokens, VirtualizerItemKey, VirtualizerItemMeasurement,
-    VirtualizerRange, VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem,
-    VirtualizerState,
+    Sizable, Size, TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
+    TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind, TableAggregation,
+    TableCellValue, TableColumn, TableColumnId, TableColumnPinning, TableColumnRegion,
+    TableColumnRegions, TableColumnSizing, TableExpansionState, TableFilter, TableGroupRow,
+    TablePagination, TableResolvedColumnSizing, TableResolvedColumnSizingRegions, TableResolvedRow,
+    TableResolvedRowKind, TableResolvedState, TableRow, TableRowId, TableRowModel,
+    TableRowModelStage, TableSort, TableSortDirection, TableState, TableStateCacheKey, ThemeTokens,
+    VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState,
+    VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
 };

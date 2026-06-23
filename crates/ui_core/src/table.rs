@@ -5,7 +5,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
+use crate::geometry::{UiPx, ui_px};
+
 static NEXT_TABLE_ROWS_IDENTITY: AtomicU64 = AtomicU64::new(1);
+
+/// Default preferred width for a table column.
+pub const TABLE_DEFAULT_COLUMN_WIDTH: UiPx = ui_px(128.0);
+
+/// Default minimum width for a table column.
+pub const TABLE_MIN_COLUMN_WIDTH: UiPx = ui_px(40.0);
+
+/// Default maximum width for a table column.
+pub const TABLE_MAX_COLUMN_WIDTH: UiPx = ui_px(1_000_000.0);
 
 /// Stable renderer-neutral identity for a table row.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -142,13 +153,17 @@ impl From<bool> for TableCellValue {
 }
 
 /// Renderer-neutral column descriptor.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TableColumn {
     id: TableColumnId,
     label: String,
     visible: bool,
     sortable: bool,
     filterable: bool,
+    width: UiPx,
+    min_width: UiPx,
+    max_width: UiPx,
+    resizable: bool,
 }
 
 impl TableColumn {
@@ -160,6 +175,10 @@ impl TableColumn {
             visible: true,
             sortable: true,
             filterable: true,
+            width: TABLE_DEFAULT_COLUMN_WIDTH,
+            min_width: TABLE_MIN_COLUMN_WIDTH,
+            max_width: TABLE_MAX_COLUMN_WIDTH,
+            resizable: true,
         }
     }
 
@@ -188,6 +207,26 @@ impl TableColumn {
         self.filterable
     }
 
+    /// Returns the preferred width before committed sizing is applied.
+    pub const fn width(&self) -> UiPx {
+        self.width
+    }
+
+    /// Returns the lower bound used when resolving this column's width.
+    pub const fn min_width(&self) -> UiPx {
+        self.min_width
+    }
+
+    /// Returns the upper bound used when resolving this column's width.
+    pub const fn max_width(&self) -> UiPx {
+        self.max_width
+    }
+
+    /// Returns whether the column can be resized.
+    pub const fn resizable(&self) -> bool {
+        self.resizable
+    }
+
     /// Applies column visibility.
     pub const fn with_visible(mut self, visible: bool) -> Self {
         self.visible = visible;
@@ -205,6 +244,104 @@ impl TableColumn {
         self.filterable = filterable;
         self
     }
+
+    /// Applies the preferred width.
+    pub fn with_width(mut self, width: UiPx) -> Self {
+        self.width = normalized_column_width(width);
+        self
+    }
+
+    /// Applies the minimum width.
+    pub fn with_min_width(mut self, min_width: UiPx) -> Self {
+        self.min_width = normalized_column_width(min_width);
+        if self.max_width < self.min_width {
+            self.max_width = self.min_width;
+        }
+        self
+    }
+
+    /// Applies the maximum width.
+    pub fn with_max_width(mut self, max_width: UiPx) -> Self {
+        self.max_width = normalized_column_width(max_width).max(self.min_width);
+        self
+    }
+
+    /// Applies resize enablement.
+    pub const fn with_resizable(mut self, resizable: bool) -> Self {
+        self.resizable = resizable;
+        self
+    }
+
+    /// Resolves this column's width against committed sizing state.
+    pub fn resolved_width(&self, sizing: &TableColumnSizing) -> UiPx {
+        let width = sizing.width(&self.id).unwrap_or(self.width);
+        clamp_column_width(width, self.min_width, self.max_width)
+    }
+}
+
+/// Caller-owned committed column sizing map.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TableColumnSizing {
+    widths: BTreeMap<TableColumnId, UiPx>,
+}
+
+impl TableColumnSizing {
+    /// Creates an empty sizing map.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a sizing map from explicit column widths.
+    pub fn from_widths(widths: impl IntoIterator<Item = (impl Into<TableColumnId>, UiPx)>) -> Self {
+        let mut sizing = Self::default();
+        for (column, width) in widths {
+            sizing = sizing.with_width(column, width);
+        }
+        sizing
+    }
+
+    /// Returns the committed width for a column, if present.
+    pub fn width(&self, column: &TableColumnId) -> Option<UiPx> {
+        self.widths.get(column).copied()
+    }
+
+    /// Returns the committed sizing map.
+    pub fn widths(&self) -> &BTreeMap<TableColumnId, UiPx> {
+        &self.widths
+    }
+
+    /// Returns whether no committed widths exist.
+    pub fn is_empty(&self) -> bool {
+        self.widths.is_empty()
+    }
+
+    /// Inserts or updates a committed column width.
+    pub fn with_width(mut self, column: impl Into<TableColumnId>, width: UiPx) -> Self {
+        self.widths
+            .insert(column.into(), normalized_column_width(width));
+        self
+    }
+
+    /// Removes a committed column width.
+    pub fn without_width(mut self, column: impl Into<TableColumnId>) -> Self {
+        self.widths.remove(&column.into());
+        self
+    }
+}
+
+fn normalized_column_width(width: UiPx) -> UiPx {
+    let raw = width.as_f32();
+    if raw.is_finite() {
+        ui_px(raw.max(0.0))
+    } else {
+        UiPx::ZERO
+    }
+}
+
+fn clamp_column_width(width: UiPx, min_width: UiPx, max_width: UiPx) -> UiPx {
+    let min_width = normalized_column_width(min_width);
+    let max_width = normalized_column_width(max_width).max(min_width);
+    normalized_column_width(width).max(min_width).min(max_width)
 }
 
 /// Resolved table column lane for pinning-aware renderers.
@@ -284,7 +421,7 @@ impl TableColumnPinning {
 }
 
 /// Resolved visible columns split into render regions.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct TableColumnRegions {
     left: Vec<TableColumn>,
     center: Vec<TableColumn>,
@@ -355,6 +492,215 @@ impl TableColumnRegions {
             .cloned()
             .collect()
     }
+}
+
+/// Resolved sizing metadata for one visible table column.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableResolvedColumnSizing {
+    column_id: TableColumnId,
+    region: TableColumnRegion,
+    width: UiPx,
+    min_width: UiPx,
+    max_width: UiPx,
+    start: UiPx,
+    after: UiPx,
+    resizable: bool,
+}
+
+impl TableResolvedColumnSizing {
+    fn new(
+        column: &TableColumn,
+        region: TableColumnRegion,
+        width: UiPx,
+        start: UiPx,
+        after: UiPx,
+    ) -> Self {
+        Self {
+            column_id: column.id().clone(),
+            region,
+            width,
+            min_width: column.min_width(),
+            max_width: column.max_width(),
+            start,
+            after,
+            resizable: column.resizable(),
+        }
+    }
+
+    /// Returns the stable column identity.
+    pub const fn column_id(&self) -> &TableColumnId {
+        &self.column_id
+    }
+
+    /// Returns the resolved pinning region for this column.
+    pub const fn region(&self) -> TableColumnRegion {
+        self.region
+    }
+
+    /// Returns the resolved column width.
+    pub const fn width(&self) -> UiPx {
+        self.width
+    }
+
+    /// Returns the lower width bound.
+    pub const fn min_width(&self) -> UiPx {
+        self.min_width
+    }
+
+    /// Returns the upper width bound.
+    pub const fn max_width(&self) -> UiPx {
+        self.max_width
+    }
+
+    /// Returns the offset from the start edge of this column's region.
+    pub const fn start(&self) -> UiPx {
+        self.start
+    }
+
+    /// Returns the offset from the end edge of this column to the region end.
+    pub const fn after(&self) -> UiPx {
+        self.after
+    }
+
+    /// Returns whether this column accepts resize interactions.
+    pub const fn resizable(&self) -> bool {
+        self.resizable
+    }
+}
+
+/// Resolved visible column sizing split into render regions.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TableResolvedColumnSizingRegions {
+    left: Vec<TableResolvedColumnSizing>,
+    center: Vec<TableResolvedColumnSizing>,
+    right: Vec<TableResolvedColumnSizing>,
+    left_width: UiPx,
+    center_width: UiPx,
+    right_width: UiPx,
+    total_width: UiPx,
+}
+
+impl TableResolvedColumnSizingRegions {
+    fn from_column_regions(regions: &TableColumnRegions, sizing: &TableColumnSizing) -> Self {
+        let (left, left_width) =
+            resolve_column_sizing_region(TableColumnRegion::Left, regions.left(), sizing);
+        let (center, center_width) =
+            resolve_column_sizing_region(TableColumnRegion::Center, regions.center(), sizing);
+        let (right, right_width) =
+            resolve_column_sizing_region(TableColumnRegion::Right, regions.right(), sizing);
+
+        Self {
+            left,
+            center,
+            right,
+            left_width,
+            center_width,
+            right_width,
+            total_width: left_width + center_width + right_width,
+        }
+    }
+
+    /// Returns visible left-pinned column sizing.
+    pub fn left(&self) -> &[TableResolvedColumnSizing] {
+        &self.left
+    }
+
+    /// Returns visible unpinned center column sizing.
+    pub fn center(&self) -> &[TableResolvedColumnSizing] {
+        &self.center
+    }
+
+    /// Returns visible right-pinned column sizing.
+    pub fn right(&self) -> &[TableResolvedColumnSizing] {
+        &self.right
+    }
+
+    /// Returns visible column sizing for a region.
+    pub fn region(&self, region: TableColumnRegion) -> &[TableResolvedColumnSizing] {
+        match region {
+            TableColumnRegion::Left => self.left(),
+            TableColumnRegion::Center => self.center(),
+            TableColumnRegion::Right => self.right(),
+        }
+    }
+
+    /// Returns all visible column sizing in render order.
+    pub fn all(&self) -> impl Iterator<Item = &TableResolvedColumnSizing> {
+        self.left
+            .iter()
+            .chain(self.center.iter())
+            .chain(self.right.iter())
+    }
+
+    /// Returns the sizing metadata for a visible column.
+    pub fn column(&self, column: &TableColumnId) -> Option<&TableResolvedColumnSizing> {
+        self.all().find(|sizing| sizing.column_id() == column)
+    }
+
+    /// Returns the total width across all visible columns.
+    pub const fn total_width(&self) -> UiPx {
+        self.total_width
+    }
+
+    /// Returns the total width for a specific region.
+    pub const fn region_width(&self, region: TableColumnRegion) -> UiPx {
+        match region {
+            TableColumnRegion::Left => self.left_width,
+            TableColumnRegion::Center => self.center_width,
+            TableColumnRegion::Right => self.right_width,
+        }
+    }
+
+    /// Returns the left-pinned region width.
+    pub const fn left_width(&self) -> UiPx {
+        self.left_width
+    }
+
+    /// Returns the unpinned center region width.
+    pub const fn center_width(&self) -> UiPx {
+        self.center_width
+    }
+
+    /// Returns the right-pinned region width.
+    pub const fn right_width(&self) -> UiPx {
+        self.right_width
+    }
+
+    /// Returns the number of visible columns across all regions.
+    pub fn len(&self) -> usize {
+        self.left.len() + self.center.len() + self.right.len()
+    }
+
+    /// Returns true when no visible column sizing exists.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+fn resolve_column_sizing_region(
+    region: TableColumnRegion,
+    columns: &[TableColumn],
+    sizing: &TableColumnSizing,
+) -> (Vec<TableResolvedColumnSizing>, UiPx) {
+    let widths = columns
+        .iter()
+        .map(|column| (column, column.resolved_width(sizing)))
+        .collect::<Vec<_>>();
+    let total_width = widths
+        .iter()
+        .fold(UiPx::ZERO, |total, (_, width)| total + *width);
+    let mut start = UiPx::ZERO;
+    let mut resolved = Vec::with_capacity(widths.len());
+
+    for (column, width) in widths {
+        let after = total_width - start - width;
+        resolved.push(TableResolvedColumnSizing::new(
+            column, region, width, start, after,
+        ));
+        start = start + width;
+    }
+
+    (resolved, total_width)
 }
 
 /// Renderer-neutral row descriptor.
@@ -737,6 +1083,7 @@ pub struct TableState {
     columns: Vec<TableColumn>,
     column_order: Vec<TableColumnId>,
     column_pinning: TableColumnPinning,
+    column_sizing: TableColumnSizing,
     rows: Arc<[TableRow]>,
     rows_identity: u64,
     sorting: Vec<TableSort>,
@@ -753,6 +1100,7 @@ impl PartialEq for TableState {
         self.columns == other.columns
             && self.column_order == other.column_order
             && self.column_pinning == other.column_pinning
+            && self.column_sizing == other.column_sizing
             && self.rows.as_ref() == other.rows.as_ref()
             && self.sorting == other.sorting
             && self.filters == other.filters
@@ -773,6 +1121,7 @@ impl TableState {
             columns: Vec::new(),
             column_order: Vec::new(),
             column_pinning: TableColumnPinning::default(),
+            column_sizing: TableColumnSizing::default(),
             rows: rows.into(),
             rows_identity: next_table_rows_identity(),
             sorting: Vec::new(),
@@ -803,6 +1152,12 @@ impl TableState {
     /// Applies pinned column state.
     pub fn with_column_pinning(mut self, column_pinning: TableColumnPinning) -> Self {
         self.column_pinning = column_pinning;
+        self
+    }
+
+    /// Applies committed column sizing state.
+    pub fn with_column_sizing(mut self, column_sizing: TableColumnSizing) -> Self {
+        self.column_sizing = column_sizing;
         self
     }
 
@@ -910,6 +1265,11 @@ impl TableState {
         &self.column_pinning
     }
 
+    /// Returns committed column sizing state.
+    pub const fn column_sizing(&self) -> &TableColumnSizing {
+        &self.column_sizing
+    }
+
     /// Returns caller-owned row expansion state.
     pub const fn expansion(&self) -> &TableExpansionState {
         &self.expansion
@@ -936,6 +1296,7 @@ impl TableState {
             columns: self.columns.clone(),
             column_order: self.column_order.clone(),
             column_pinning: self.column_pinning.clone(),
+            column_sizing: self.column_sizing.clone(),
             sorting: self.sorting.clone(),
             filters: self.filters.clone(),
             grouping: self.grouping.clone(),
@@ -1038,10 +1399,15 @@ impl TableState {
         );
 
         let visible_column_regions = self.visible_column_regions();
+        let visible_column_sizing = TableResolvedColumnSizingRegions::from_column_regions(
+            &visible_column_regions,
+            &self.column_sizing,
+        );
 
         TableResolvedState {
             visible_columns: visible_column_regions.flattened(),
             visible_column_regions,
+            visible_column_sizing,
             duplicate_row_ids: duplicate_row_ids.into_iter().collect(),
             core_model,
             filtered_model,
@@ -1109,13 +1475,14 @@ impl TableState {
 }
 
 /// Cheap invalidation key for runtime caches of resolved table row models.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TableStateCacheKey {
     rows_identity: u64,
     row_count: usize,
     columns: Vec<TableColumn>,
     column_order: Vec<TableColumnId>,
     column_pinning: TableColumnPinning,
+    column_sizing: TableColumnSizing,
     sorting: Vec<TableSort>,
     filters: Vec<TableFilter>,
     grouping: Vec<TableColumnId>,
@@ -1406,6 +1773,7 @@ impl TableRowModel {
 pub struct TableResolvedState {
     visible_columns: Vec<TableColumn>,
     visible_column_regions: TableColumnRegions,
+    visible_column_sizing: TableResolvedColumnSizingRegions,
     duplicate_row_ids: Vec<TableRowId>,
     core_model: TableRowModel,
     filtered_model: TableRowModel,
@@ -1425,6 +1793,11 @@ impl TableResolvedState {
     /// Returns visible columns split into pinned regions.
     pub const fn visible_column_regions(&self) -> &TableColumnRegions {
         &self.visible_column_regions
+    }
+
+    /// Returns resolved visible column sizing split into pinned regions.
+    pub const fn visible_column_sizing(&self) -> &TableResolvedColumnSizingRegions {
+        &self.visible_column_sizing
     }
 
     /// Returns duplicate source row ids detected during resolution.
@@ -1736,6 +2109,158 @@ mod tests {
         assert!(!TableRowModelStage::Grouped.implemented_in_v0());
         assert!(!TableRowModelStage::Expanded.implemented_in_v0());
         assert!(TableRowModelStage::Sorted.implemented_in_v0());
+    }
+
+    #[test]
+    fn column_widths_resolve_from_defaults_and_committed_sizing() {
+        let column = TableColumn::new("name", "Name")
+            .with_width(ui_px(120.0))
+            .with_min_width(ui_px(80.0))
+            .with_max_width(ui_px(160.0));
+
+        assert_eq!(column.width(), ui_px(120.0));
+        assert_eq!(column.min_width(), ui_px(80.0));
+        assert_eq!(column.max_width(), ui_px(160.0));
+        assert!(column.resizable());
+        assert_eq!(
+            column.resolved_width(&TableColumnSizing::new()),
+            ui_px(120.0),
+            "without committed sizing, the preferred width is used"
+        );
+
+        let undersized = TableColumnSizing::new().with_width("name", ui_px(40.0));
+        assert_eq!(
+            column.resolved_width(&undersized),
+            ui_px(80.0),
+            "committed widths are clamped to the column minimum"
+        );
+
+        let oversized = TableColumnSizing::new().with_width("name", ui_px(220.0));
+        assert_eq!(
+            column.resolved_width(&oversized),
+            ui_px(160.0),
+            "committed widths are clamped to the column maximum"
+        );
+
+        let unrelated = TableColumnSizing::new().with_width("team", ui_px(140.0));
+        assert_eq!(
+            column.resolved_width(&unrelated),
+            ui_px(120.0),
+            "unknown committed sizing ids do not affect this column"
+        );
+    }
+
+    #[test]
+    fn sizing_state_keeps_unknown_ids_without_changing_visible_columns() {
+        let state = TableState::new(sample_rows())
+            .with_columns([
+                TableColumn::new("name", "Name"),
+                TableColumn::new("team", "Team").with_visible(false),
+            ])
+            .with_column_sizing(TableColumnSizing::from_widths([
+                ("team", ui_px(320.0)),
+                ("missing", ui_px(480.0)),
+            ]));
+
+        let visible_columns = state.visible_columns();
+        assert_eq!(
+            visible_columns
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["name"]
+        );
+        assert_eq!(
+            visible_columns[0].resolved_width(state.column_sizing()),
+            TABLE_DEFAULT_COLUMN_WIDTH,
+            "hidden and unknown sizing entries do not contribute visible widths"
+        );
+        assert_eq!(
+            state.column_sizing().width(&TableColumnId::new("missing")),
+            Some(ui_px(480.0)),
+            "unknown ids remain caller-owned state instead of being silently pruned"
+        );
+    }
+
+    #[test]
+    fn resolved_column_sizing_tracks_region_offsets_and_totals() {
+        let resolved = TableState::new(sample_rows())
+            .with_columns([
+                TableColumn::new("name", "Name").with_width(ui_px(100.0)),
+                TableColumn::new("team", "Team").with_width(ui_px(120.0)),
+                TableColumn::new("score", "Score")
+                    .with_width(ui_px(80.0))
+                    .with_min_width(ui_px(70.0))
+                    .with_max_width(ui_px(90.0)),
+                TableColumn::new("status", "Status")
+                    .with_width(ui_px(60.0))
+                    .with_resizable(false),
+            ])
+            .with_column_order(["status", "score", "team", "name"])
+            .with_column_pinning(
+                TableColumnPinning::new()
+                    .pinned_left(["name", "score"])
+                    .pinned_right(["status"]),
+            )
+            .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(95.0)))
+            .resolve();
+        let sizing = resolved.visible_column_sizing();
+
+        assert_eq!(sizing.left_width(), ui_px(190.0));
+        assert_eq!(sizing.center_width(), ui_px(120.0));
+        assert_eq!(sizing.right_width(), ui_px(60.0));
+        assert_eq!(sizing.total_width(), ui_px(370.0));
+        assert_eq!(sizing.region_width(TableColumnRegion::Left), ui_px(190.0));
+        assert_eq!(
+            sizing
+                .left()
+                .iter()
+                .map(|column| {
+                    (
+                        column.column_id().as_str(),
+                        column.width(),
+                        column.start(),
+                        column.after(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            [
+                ("score", ui_px(90.0), ui_px(0.0), ui_px(100.0)),
+                ("name", ui_px(100.0), ui_px(90.0), ui_px(0.0)),
+            ],
+            "left region offsets follow resolved visible order and clamp committed widths"
+        );
+
+        let status = sizing
+            .column(&TableColumnId::new("status"))
+            .expect("status sizing should resolve");
+        assert_eq!(status.region(), TableColumnRegion::Right);
+        assert_eq!(status.width(), ui_px(60.0));
+        assert_eq!(status.start(), ui_px(0.0));
+        assert_eq!(status.after(), ui_px(0.0));
+        assert!(!status.resizable());
+    }
+
+    #[test]
+    fn resolved_column_sizing_is_stable_across_row_model_changes() {
+        let base = TableState::new(sample_rows())
+            .with_columns([
+                TableColumn::new("name", "Name").with_width(ui_px(100.0)),
+                TableColumn::new("team", "Team").with_width(ui_px(120.0)),
+                TableColumn::new("score", "Score").with_width(ui_px(80.0)),
+            ])
+            .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(96.0)));
+
+        let base_sizing = base.resolve().visible_column_sizing().clone();
+        let changed_rows = base
+            .with_sorting([TableSort::descending("score")])
+            .with_selected_rows(["row-a"])
+            .with_pagination(TablePagination::new(0, 1))
+            .resolve()
+            .visible_column_sizing()
+            .clone();
+
+        assert_eq!(base_sizing, changed_rows);
     }
 
     #[test]
@@ -2173,6 +2698,9 @@ mod tests {
                 .pinned_left(["name"])
                 .pinned_right(["score"]),
         );
+        let sized = base
+            .clone()
+            .with_column_sizing(TableColumnSizing::new().with_width("name", ui_px(180.0)));
         let rebuilt = TableState::new(sample_rows()).with_columns([
             TableColumn::new("name", "Name"),
             TableColumn::new("team", "Team"),
@@ -2189,6 +2717,7 @@ mod tests {
         assert_ne!(base.cache_key(), sorted.cache_key());
         assert_ne!(base.cache_key(), aggregated.cache_key());
         assert_ne!(base.cache_key(), pinned.cache_key());
+        assert_ne!(base.cache_key(), sized.cache_key());
         assert_eq!(base, rebuilt);
         assert_ne!(
             base.cache_key().rows_identity(),
