@@ -394,9 +394,12 @@ default path must preserve offset across reconstructed component values.
 
 `TableState` describes renderer-neutral table behavior: stable row ids, row lookup, row-model stage
 vocabulary, selection keyed by row id, column visibility and ordering, sorting, filtering,
-grouping, expansion, and pagination. The official table contract now resolves the full pipeline
-core -> filtered -> grouped -> sorted -> expanded -> paginated -> final. Grouped rows and
-expanded rows are first-class resolved row kinds, not hidden adapter state.
+grouping, built-in aggregation, expansion, and pagination. The official table contract now
+resolves the full pipeline core -> filtered -> grouped -> sorted -> expanded -> paginated ->
+final. Grouped rows and expanded rows are first-class resolved row kinds, not hidden adapter
+state. Group rows may expose aggregate cells through `TableAggregation` using the built-in
+`count`, `sum`, `min`, `max`, and `average` kinds; the active grouping column still displays the
+grouping value instead of an aggregate payload.
 
 `VirtualizerState` describes renderer-neutral viewport calculation inputs and outputs rather than a
 concrete scroll element. The neutral contract accepts item count, viewport extent, scroll offset,
@@ -418,9 +421,8 @@ An official Table entry must satisfy the normal component completion gate: `Tabl
 exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
 entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests for row
 identity, grouping, expansion, and virtualizer behavior, and gallery runtime tests for nested
-scroll containment. Pinned columns, aggregation metadata, custom column sizing, sticky headers,
-resolved row-model caching, fixed-height virtualizer fast paths, and two-dimensional grid
-virtualization remain follow-up capabilities.
+scroll containment. Pinned columns, custom aggregation callbacks, custom column sizing, sticky
+headers, and two-dimensional grid virtualization remain follow-up capabilities.
 
 ## Splitter Constraints
 
@@ -559,12 +561,12 @@ arrows, text-selection leases, and richer focus-scope traversal remain deferred.
 `ScrollArea` covers viewport overflow, axis metadata, scrollbar width metrics, and explicit
 reset-on-key-change semantics. It intentionally does not yet expose custom scrollbar anatomy,
 nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.
-`Table` covers stable row ids, row-model ordering, grouping, expansion, sortable header action
-payloads, crate-root/prelude exports, table/cell roles, and a vertically virtualized GPUI recipe
-whose body scroll stays inside the table viewport.
+`Table` covers stable row ids, row-model ordering, grouping, expansion, built-in group-row
+aggregate cells, sortable header action payloads, crate-root/prelude exports, table/cell roles,
+and a vertically virtualized GPUI recipe whose body scroll stays inside the table viewport.
 `VirtualizerState` covers one-dimensional range math, stable item keys, measurement idempotence,
 overscan, total size, and snapshot/restore data in `ui_core`; the Table adapter restores snapshot
-measurements but not captured scroll offsets. Pinned columns, aggregation metadata, sticky
+measurements but not captured scroll offsets. Pinned columns, custom aggregate callbacks, sticky
 headers, and two-dimensional grid virtualization remain follow-up work.
 `StatusCue` and `EmptyState` are official feedback components. They expose resolved feedback
 intent, size, role, metrics, and token intents, while the GPUI adapters own concrete styling and

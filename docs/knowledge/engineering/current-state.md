@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 85a6edf
+git_commit: 5280468
 verified_by:
   - cargo check -p open-gpui-ui-core --tests
   - cargo check -p open-gpui-ui-components --tests
@@ -58,7 +58,7 @@ verified_by:
 
 - Goal: Execute the Table component-depth slice: grouped rows, expansion state, aggregate metadata, pinned-column semantics, and gallery proof.
 - Branch: `main`
-- Last verified: 2026-06-23, Table depth U1/U2 gates passed on top of `85a6edf`: `cargo check -p open-gpui-ui-core --tests`, `cargo check -p open-gpui-ui-components --tests`, `cargo nextest run -p open-gpui-ui-core table`, `cargo nextest run -p open-gpui-ui-components table`, `cargo nextest run -p open-gpui-ui-foundation-gallery table`, engineering wiki validation, and `git diff --check`.
+- Last verified: 2026-06-23, Table depth U3 gates passed on top of `5280468`: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-core --tests`, `cargo check -p open-gpui-ui-components --tests`, `cargo nextest run -p open-gpui-ui-core table`, `cargo nextest run -p open-gpui-ui-components table`, and `cargo nextest run -p open-gpui-ui-foundation-gallery table`.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -101,9 +101,11 @@ verified_by:
 - Done: Completed U1/U2 of the Table depth plan in `ui_core`: `TableResolvedRow` now represents leaf and group rows, `TableGroupRow` records grouping column/value, depth, parent, first leaf, and leaf count, and `TableState` resolves core -> filtered -> grouped -> sorted -> expanded -> paginated -> final. Expansion is caller-owned by stable row id and collapsed descendants remain addressable through row lookup metadata.
 - Done: Updated the GPUI Table adapter to render from resolved row cells instead of assuming every row has a source row. Group rows now share the existing one-axis virtualized row stream and get distinct row chrome without changing scroll ownership.
 - Done: Updated the Table contract and verification docs so grouped and expanded row-model behavior is no longer documented as deferred.
+- Done: Completed U3 of the Table depth plan in `ui_core`: `TableAggregation` and `TableAggregateKind` now define built-in `count`, `sum`, `min`, `max`, and `average` aggregate cells for group rows. Aggregate specs are part of the `TableState` cache key, group row cells expose aggregate values, the grouping column still displays the grouping value, and `ui_components` crate-root/prelude exports cover the new contract types.
+- Done: Updated the Table contract and verification docs so built-in aggregation metadata is no longer documented as deferred; custom aggregate callbacks remain app/future work.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Blocked: None.
-- Next action: Start U3 of `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md` by adding built-in aggregate metadata for group rows.
+- Next action: Start U4 of `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md` by splitting visible columns into pinned left/center/right regions and proving the adapter rendering contract.
 
 # Citations
 
@@ -142,6 +144,7 @@ verified_by:
 [33] Commit `697f762` - `feat(ui-components): deepen menu and context menu semantics`
 [34] Plan `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md`
 [35] Commit `85a6edf` - `docs(ui): add tanstack table references`
-[36] Verification command `cargo nextest run -p open-gpui-ui-core table`
-[37] Verification command `cargo nextest run -p open-gpui-ui-components table`
-[38] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery table`
+[36] Commit `5280468` - `feat(ui-core): add grouped table row models`
+[37] Verification command `cargo nextest run -p open-gpui-ui-core table`
+[38] Verification command `cargo nextest run -p open-gpui-ui-components table`
+[39] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery table`

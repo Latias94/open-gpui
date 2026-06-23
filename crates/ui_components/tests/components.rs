@@ -3317,6 +3317,16 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _root_cache_key: root::TableStateCacheKey = table.table_state().cache_key();
     let _prelude_header_action: prelude::TableHeaderAction = header_action;
     let _prelude_cache_key: prelude::TableStateCacheKey = table.table_state().cache_key();
+    let _root_aggregation: root::TableAggregation =
+        root::TableAggregation::new("score", root::TableAggregateKind::Sum);
+    let _prelude_aggregation: prelude::TableAggregation =
+        prelude::TableAggregation::average("score");
+    let _root_expansion: root::TableExpansionState = root::TableExpansionState::all();
+    let _prelude_expansion: prelude::TableExpansionState =
+        prelude::TableExpansionState::rows([prelude::TableRowId::new("group:team=ui")]);
+    let _prelude_row_kind: prelude::TableResolvedRowKind = prelude::TableResolvedRowKind::Leaf;
+    let _resolved_kind: Option<&root::TableGroupRow> =
+        table.table_state().resolve().final_model().rows()[0].group();
 
     assert_eq!(table.state().role(), Role::Table);
     assert_eq!(virtualizer.resolve().overscan(), 2);
