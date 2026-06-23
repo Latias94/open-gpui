@@ -1710,6 +1710,26 @@ fn components_page_samples_expose_component_metadata() {
         tables[3].state.column_pinning().right()[0].as_str(),
         "status"
     );
+    assert_eq!(
+        grouped_plan.column_region_width(TableColumnRegion::Left),
+        ui_px(188.0)
+    );
+    assert_eq!(
+        grouped_plan.column_region_width(TableColumnRegion::Center),
+        ui_px(400.0)
+    );
+    assert_eq!(
+        grouped_plan.column_region_width(TableColumnRegion::Right),
+        ui_px(164.0)
+    );
+    assert!(grouped_plan.uses_split_pinned_layout());
+    let grouped_layout = grouped_plan
+        .pinned_layout()
+        .expect("release-rollup should render through the split sticky pinned layout");
+    assert_eq!(grouped_layout.left_width(), ui_px(188.0));
+    assert_eq!(grouped_layout.center_width(), ui_px(400.0));
+    assert_eq!(grouped_layout.right_width(), ui_px(164.0));
+    assert_eq!(grouped_layout.total_width(), ui_px(752.0));
     assert!(
         grouped_plan
             .table()
@@ -2113,6 +2133,11 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(grouped_summary.pinned_left_columns, 1);
     assert_eq!(grouped_summary.pinned_center_columns, 2);
     assert_eq!(grouped_summary.pinned_right_columns, 1);
+    assert_eq!(grouped_summary.pinned_left_width_px, 188);
+    assert_eq!(grouped_summary.pinned_center_width_px, 400);
+    assert_eq!(grouped_summary.pinned_right_width_px, 164);
+    assert_eq!(grouped_summary.total_column_width_px, 752);
+    assert!(grouped_plan.uses_split_pinned_layout());
     assert!(grouped_summary.group_rows >= 5);
     assert!(grouped_summary.leaf_rows > 0);
     assert!(grouped_summary.expanded_rows < grouped_summary.grouped_rows);
@@ -3590,28 +3615,36 @@ fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
     let first_row_selector = format!("table:component-table:release-rollup:row:{first_row_id}");
     let later_row_selector = format!("table:component-table:release-rollup:row:{later_row_id}");
 
-    let cx = open_components_gallery(cx);
-
-    jump_components_directory_to(cx, "gallery:component-page-jump:table");
-    scroll_page_until_visible(cx, "gallery:component-table-sample:release-rollup");
-    let sample_before = bounds(cx, "gallery:component-table-sample:release-rollup");
-    let table_viewport = bounds(
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(
+        &shell,
         cx,
         "scroll-area:table:component-table:release-rollup:body-scroll",
+    );
+    let sample_before = bounds(cx, "gallery:component-table-sample:release-rollup");
+    let scroll_target = bounds(
+        cx,
+        &format!("table:component-table:release-rollup:cell:{first_row_id}:name"),
     );
 
     assert!(
         cx.debug_bounds(&first_row_selector).is_some(),
         "expected grouped Table row `{first_row_id}` to render in the initial window"
     );
+    let first_row_before = bounds(cx, &first_row_selector);
     assert!(
         cx.debug_bounds(&later_row_selector).is_none(),
         "expected grouped Table row `{later_row_id}` to start outside the rendered window"
     );
 
     cx.simulate_event(ScrollWheelEvent {
-        position: table_viewport.center(),
-        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        position: scroll_target.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-520.0))),
         ..Default::default()
     });
     redraw(cx);
@@ -3623,13 +3656,126 @@ fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
         sample_before.top(),
         "expected grouped Table viewport wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
     );
-    assert!(
-        cx.debug_bounds(&first_row_selector).is_none(),
-        "expected grouped Table row `{first_row_id}` to leave the rendered window after internal scroll"
-    );
+    if let Some(first_row_after) = cx.debug_bounds(&first_row_selector) {
+        assert!(
+            first_row_after.top() < first_row_before.top(),
+            "expected grouped Table row `{first_row_id}` to move up after internal scroll; before={first_row_before:?} after={first_row_after:?}"
+        );
+    }
     assert!(
         cx.debug_bounds(&later_row_selector).is_some(),
         "expected grouped Table row `{later_row_id}` to enter the rendered window after internal scroll"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let sample = pages::components::table_samples(ThemeTokens::default())
+        .iter()
+        .find(|sample| sample.id == "release-rollup")
+        .expect("release-rollup table sample should exist");
+    let plan = sample.render_plan();
+    assert!(
+        plan.uses_split_pinned_layout(),
+        "release-rollup should exercise sticky pinned table lanes"
+    );
+    let first_rendered_row = plan
+        .rows()
+        .iter()
+        .find(|row| row.row().is_leaf())
+        .unwrap_or(&plan.rows()[0]);
+    let first_row_key = first_rendered_row.render_key().to_owned();
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:table:component-table:release-rollup:header-center-scroll",
+    );
+
+    let sample_before = bounds(cx, "gallery:component-table-sample:release-rollup");
+    let left_before = bounds(
+        cx,
+        &format!("table:component-table:release-rollup:cell:{first_row_key}:name"),
+    );
+    let center_header_before = bounds(cx, "table:component-table:release-rollup:header:team");
+    let center_cell_before = bounds(
+        cx,
+        &format!("table:component-table:release-rollup:cell:{first_row_key}:team"),
+    );
+    let right_before = bounds(
+        cx,
+        &format!("table:component-table:release-rollup:cell:{first_row_key}:status"),
+    );
+    assert!(
+        cx.debug_bounds(&format!(
+            "scroll-area:table:component-table:release-rollup:row-center-scroll:{first_row_key}"
+        ))
+        .is_some(),
+        "expected release-rollup body center lane to expose the shared horizontal viewport"
+    );
+    let center_viewport = bounds(
+        cx,
+        "scroll-area:table:component-table:release-rollup:header-center-scroll",
+    );
+
+    assert!(
+        cx.debug_bounds("scroll-area:table:component-table:release-rollup:header-center-scroll")
+            .is_some(),
+        "expected release-rollup header center lane to expose the shared horizontal viewport"
+    );
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-180.0), px(0.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after = bounds(cx, "gallery:component-table-sample:release-rollup");
+    let left_after = bounds(
+        cx,
+        &format!("table:component-table:release-rollup:cell:{first_row_key}:name"),
+    );
+    let center_header_after = bounds(cx, "table:component-table:release-rollup:header:team");
+    let center_cell_after = bounds(
+        cx,
+        &format!("table:component-table:release-rollup:cell:{first_row_key}:team"),
+    );
+    let right_after = bounds(
+        cx,
+        &format!("table:component-table:release-rollup:cell:{first_row_key}:status"),
+    );
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected sticky pinned Table horizontal wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert_eq!(
+        left_after.left(),
+        left_before.left(),
+        "expected left pinned lane to keep its screen-space x position"
+    );
+    assert_eq!(
+        right_after.left(),
+        right_before.left(),
+        "expected right pinned lane to keep its screen-space x position"
+    );
+    assert!(
+        center_header_after.left() < center_header_before.left(),
+        "expected shared horizontal handle to move center header left; before={center_header_before:?} after={center_header_after:?}"
+    );
+    assert!(
+        center_cell_after.left() < center_cell_before.left(),
+        "expected horizontal body center lane to move left; before={center_cell_before:?} after={center_cell_after:?}"
     );
 }
 

@@ -6,8 +6,9 @@ use crate::scroll_area::ScrollArea;
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, CursorStyle, DragMoveEvent, Empty, Entity, FontWeight, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseButton, ParentElement, RenderOnce, ScrollHandle, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px, rgb,
+    IntoElement, KeyDownEvent, MouseButton, ParentElement, RenderOnce, ScrollHandle,
+    ScrollWheelEvent, SharedString, StatefulInteractiveElement, Styled, Window, div, point, px,
+    rgb,
 };
 use open_gpui_ui_core::{
     Role, Sizable, Size, TableCellValue, TableColumn, TableColumnId, TableColumnRegion,
@@ -1165,9 +1166,13 @@ impl RenderOnce for Table {
             .when(plan.aria_column_count() > 0, |this| {
                 this.aria_column_count(plan.aria_column_count())
             })
-            .on_scroll_wheel(|_, window, cx| {
-                window.prevent_default();
-                cx.stop_propagation();
+            .on_scroll_wheel({
+                let scroll_handle = scroll_handle.clone();
+                move |event, window, cx| {
+                    handle_table_vertical_scroll_wheel(&scroll_handle, event, window);
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
             })
             .when(resize_config.enabled, |this| {
                 this.on_drag_move(
@@ -1724,6 +1729,26 @@ fn row_render_key(
         format!("{}:{}", source_index, row.id().as_str())
     } else {
         row.id().as_str().to_owned()
+    }
+}
+
+fn handle_table_vertical_scroll_wheel(
+    scroll_handle: &ScrollHandle,
+    event: &ScrollWheelEvent,
+    window: &mut Window,
+) {
+    let delta = event.delta.pixel_delta(px(16.0));
+    if delta.y.abs() <= delta.x.abs() {
+        return;
+    }
+
+    let current = scroll_handle.offset();
+    let max_offset_y = scroll_handle.max_offset().y;
+    let next_y = (current.y + delta.y).clamp(-max_offset_y, px(0.0));
+
+    if next_y != current.y {
+        scroll_handle.set_offset(point(current.x, next_y));
+        window.refresh();
     }
 }
 

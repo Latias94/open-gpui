@@ -1293,10 +1293,6 @@ pub(crate) fn render_components_page(
                                             .border_1()
                                             .border_color(rgb(0xd6d8ce))
                                             .bg(rgb(0xffffff))
-                                            .on_scroll_wheel(|_, window, cx| {
-                                                window.prevent_default();
-                                                cx.stop_propagation();
-                                            })
                                             .p_3()
                                             .child(
                                                 div()
@@ -2328,8 +2324,12 @@ pub(crate) fn component_table_state_row(
             summary.pinned_right_columns
         ))
         .child(format!(
-            "width {}px / {} resizable columns",
-            summary.total_column_width_px, summary.resizable_columns
+            "width {}px / lanes {}-{}-{}px / {} resizable columns",
+            summary.total_column_width_px,
+            summary.pinned_left_width_px,
+            summary.pinned_center_width_px,
+            summary.pinned_right_width_px,
+            summary.resizable_columns
         ))
 }
 

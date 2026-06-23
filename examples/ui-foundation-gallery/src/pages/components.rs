@@ -13,13 +13,13 @@ use open_gpui_ui_components::{
     SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
     Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
     Switch, SwitchState, Table, TableAggregation, TableColumn, TableColumnPinning,
-    TableColumnSizing, TableColumnSizingChange, TableExpansionState, TableFilter, TablePagination,
-    TableRenderPlan, TableRow, TableSort, TableState, Tabs, TabsActivationMode, TabsItem,
-    TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant,
-    Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree,
-    TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListItemDescriptor,
-    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState,
+    TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableExpansionState,
+    TableFilter, TablePagination, TableRenderPlan, TableRow, TableSort, TableState, Tabs,
+    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle,
+    ToggleState, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
+    ToolbarState, Tree, TreeItemDescriptor, TreeState, VirtualizedList,
+    VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRenderPlan,
+    VirtualizedListScrollStrategy, VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -1627,6 +1627,12 @@ pub struct TableSampleStateSummary {
     pub pinned_center_columns: usize,
     /// Visible right-pinned columns.
     pub pinned_right_columns: usize,
+    /// Rounded visible left-pinned lane width.
+    pub pinned_left_width_px: usize,
+    /// Rounded visible center lane width.
+    pub pinned_center_width_px: usize,
+    /// Rounded visible right-pinned lane width.
+    pub pinned_right_width_px: usize,
     /// Rounded total visible column width.
     pub total_column_width_px: usize,
     /// Visible resizable columns.
@@ -1677,6 +1683,18 @@ impl TableSampleStateSummary {
             pinned_left_columns: regions.left().len(),
             pinned_center_columns: regions.center().len(),
             pinned_right_columns: regions.right().len(),
+            pinned_left_width_px: plan
+                .column_region_width(TableColumnRegion::Left)
+                .as_f32()
+                .round() as usize,
+            pinned_center_width_px: plan
+                .column_region_width(TableColumnRegion::Center)
+                .as_f32()
+                .round() as usize,
+            pinned_right_width_px: plan
+                .column_region_width(TableColumnRegion::Right)
+                .as_f32()
+                .round() as usize,
             total_column_width_px: plan.total_column_width().as_f32().round() as usize,
             resizable_columns: plan
                 .columns()
@@ -3061,10 +3079,10 @@ fn build_table_samples() -> [TableSample; 4] {
     let grouped_release = TableSample {
         id: "release-rollup",
         title: "Release rollup",
-        summary: "Grouped release rows mix expanded and collapsed teams with aggregate score cells and pinned lanes.",
-        badge: "grouped + pinned",
+        summary: "Grouped release rows keep left and right lanes fixed while the wide center lane scrolls horizontally.",
+        badge: "sticky pinned",
         state: TableState::new(grouped_release_rows)
-            .with_columns(table_columns())
+            .with_columns(sticky_pinned_table_columns())
             .with_column_order(["name", "team", "score", "status"])
             .with_column_pinning(
                 TableColumnPinning::new()
@@ -3113,6 +3131,27 @@ fn table_columns() -> [TableColumn; 4] {
         TableColumn::new("team", "Team"),
         TableColumn::new("status", "Status"),
         TableColumn::new("score", "Score"),
+    ]
+}
+
+fn sticky_pinned_table_columns() -> [TableColumn; 4] {
+    [
+        TableColumn::new("name", "Name")
+            .with_width(ui_px(188.0))
+            .with_min_width(ui_px(144.0))
+            .with_max_width(ui_px(280.0)),
+        TableColumn::new("team", "Team")
+            .with_width(ui_px(220.0))
+            .with_min_width(ui_px(128.0))
+            .with_max_width(ui_px(320.0)),
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(164.0))
+            .with_min_width(ui_px(120.0))
+            .with_max_width(ui_px(240.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(180.0))
+            .with_min_width(ui_px(96.0))
+            .with_max_width(ui_px(220.0)),
     ]
 }
 

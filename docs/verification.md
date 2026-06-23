@@ -79,6 +79,10 @@ metadata, resize callback wiring, and scroll ownership; gallery smokes prove lon
 input stays inside the table viewport and `release-resize` column dragging updates the controlled
 sample without moving the outer Components page. The focused proofs are:
 
+`components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample` is the focused
+sticky-pinned Table proof: it enters the Table family view, scrolls the `release-rollup` center
+lane horizontally, and asserts left/right pinned lanes plus the outer Components page stay fixed.
+
 ```powershell
 cargo nextest run -p open-gpui-ui-core table
 cargo nextest run -p open-gpui-ui-components table
@@ -379,9 +383,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     controller-backed path, while the gallery remains scrollable and keeps focus visible when the
     page overflows. The Table samples should expose the `release-queue` 10k-row virtualized window,
     the filtered/sorted/paginated `filter-board` model, the controlled `release-resize` sizing
-    sample, the grouped and pinned `release-rollup` model, stable selected row ids, table/row/cell
-    accessibility metadata, sortable header metadata, resize handle metadata, and internal body
-    viewports that scroll without moving the outer Components page.
+    sample, the grouped and sticky pinned `release-rollup` model with left/right fixed lanes and a
+    horizontally scrollable center lane, stable selected row ids, table/row/cell accessibility
+    metadata, sortable header metadata, resize handle metadata, and internal body viewports that
+    scroll without moving the outer Components page.
     The Tree sample should expose `document-outline`,
     tree/tree-item accessibility metadata, expandable `Paper` children, a state readout, an inner
     viewport that scrolls without moving the outer Components page, and selection/toggle events

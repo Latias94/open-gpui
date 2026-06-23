@@ -1487,6 +1487,45 @@ fn sample_pinned_table_state() -> TableState {
     .with_pagination(TablePagination::disabled())
 }
 
+fn sample_pinned_table_state_with_rows(row_count: usize) -> TableState {
+    let rows = (0..row_count).map(|index| {
+        TableRow::new(format!("row-{index:04}"))
+            .with_cell("name", format!("Alpha {index:04}"))
+            .with_cell(
+                "team",
+                if index.is_multiple_of(2) {
+                    "Platform"
+                } else {
+                    "UI"
+                },
+            )
+            .with_cell("score", index + 1)
+            .with_cell(
+                "status",
+                if index.is_multiple_of(3) {
+                    "Ready"
+                } else {
+                    "Queued"
+                },
+            )
+    });
+
+    TableState::new(rows)
+        .with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+            TableColumn::new("score", "Score"),
+            TableColumn::new("status", "Status"),
+        ])
+        .with_column_order(["status", "score", "team", "name"])
+        .with_column_pinning(
+            TableColumnPinning::new()
+                .pinned_left(["name", "score"])
+                .pinned_right(["status"]),
+        )
+        .with_pagination(TablePagination::disabled())
+}
+
 #[test]
 fn overlay_adapter_config_defaults_follow_overlay_kind_policy() {
     let tooltip =
@@ -4101,6 +4140,113 @@ fn table_runtime_pinned_center_scrolls_without_moving_fixed_lanes(
         right_after.left(),
         right_before.left(),
         "expected right pinned lane to keep its screen-space x position"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_pinned_body_scrolls_without_moving_parent(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let table = Table::new(
+                "pinned-body-scroll-runtime-table",
+                "Pinned body scroll table",
+                sample_pinned_table_state_with_rows(80),
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(120.0))
+            .overscan(2);
+
+            div().size_full().child(
+                div().w(px(440.0)).h(px(220.0)).child(
+                    ScrollArea::new(
+                        "pinned-table-parent-scroll",
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .debug_selector(|| "table-parent-top".into())
+                                    .h(px(72.0))
+                                    .w_full()
+                                    .child("Parent top"),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "pinned-table-wrapper".into())
+                                    .h(px(140.0))
+                                    .min_h(px(0.0))
+                                    .overflow_hidden()
+                                    .child(table),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "table-parent-bottom".into())
+                                    .h(px(240.0))
+                                    .w_full()
+                                    .child("Parent bottom"),
+                            ),
+                    )
+                    .vertical(),
+                ),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let first_row_before = cx
+        .debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0000")
+        .expect("first pinned body row should render before vertical scrolling");
+    assert!(
+        cx.debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0010")
+            .is_none(),
+        "row 10 should start outside the initial pinned body window"
+    );
+    let parent_bottom_before = cx
+        .debug_bounds("table-parent-bottom")
+        .expect("parent bottom should be rendered before table scrolling");
+    let viewport = cx
+        .debug_bounds("scroll-area:table:pinned-body-scroll-runtime-table:body-scroll")
+        .expect("pinned table body viewport should expose a stable scroll selector");
+    let first_row_cell = cx
+        .debug_bounds("table:pinned-body-scroll-runtime-table:cell:row-0000:name")
+        .expect("first pinned body row cell should render before vertical scrolling");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: first_row_cell.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let parent_bottom_after = cx
+        .debug_bounds("table-parent-bottom")
+        .expect("parent bottom should still be rendered after table scrolling");
+    assert_eq!(
+        parent_bottom_after.top(),
+        parent_bottom_before.top(),
+        "expected wheel input inside pinned Table to stay inside the table body; before={parent_bottom_before:?} after={parent_bottom_after:?}"
+    );
+    assert!(
+        cx.debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0000")
+            .is_none(),
+        "expected first pinned row to unmount after the virtual window advances"
+    );
+    assert!(
+        cx.debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0010")
+            .is_some(),
+        "expected row 10 to render after scrolling the pinned table body"
+    );
+    assert!(
+        viewport.size.width > px(0.0) && first_row_before.top() <= parent_bottom_after.bottom(),
+        "pinned body viewport should remain measurable during the test"
     );
 }
 
