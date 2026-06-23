@@ -2934,7 +2934,9 @@ impl DockViewportRuntime {
         &mut self,
         placement: &DockViewportPlacementLayout,
     ) -> Result<DockViewportRestoreReadiness, DockViewportPlacementValidationError> {
-        self.adapter.check_placement_restore(placement)
+        let readiness = self.adapter.check_placement_restore(placement)?;
+        self.status.record_placement_restore(Some(readiness));
+        Ok(readiness)
     }
 }
 

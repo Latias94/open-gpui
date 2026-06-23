@@ -452,9 +452,10 @@ controller-backed primary and secondary `DockHost` viewports. The runtime panel 
 last route target and the route selection source, so dogfood runs can distinguish trusted hovered
 window routes, window-stack fallback routes, focus-stamp fallback routes, and accepted routed-preview
 replays. It also reports the current platform viewport capability snapshot, splitting route facts
-from placement facts so platform-boundary regressions are visible during native dogfood. The tear-off
-status line also reports whether a viewport opened from suggested bounds or drag-source geometry, so
-placement authority regressions are visible in the same panel.
+from placement facts so platform-boundary regressions are visible during native dogfood. The
+placement restore line reports matched and missing restored windows, and the tear-off status line
+reports whether a viewport opened from suggested bounds or drag-source geometry, so placement
+authority regressions are visible in the same panel.
 
 Manual native docking dogfood should use the same example after the automated checks pass:
 
