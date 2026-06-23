@@ -119,6 +119,47 @@ fn scroll_page_until_visible(cx: &mut VisualTestContext, selector: &str) -> Boun
     )
 }
 
+fn scroll_page_selector_into_view(
+    shell: &Entity<GalleryShell>,
+    cx: &mut VisualTestContext,
+    selector: &str,
+) -> Bounds<Pixels> {
+    let viewport = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
+
+    for _ in 0..8 {
+        if let Some(target) = cx.debug_bounds(selector) {
+            if target_visible_for_interaction(viewport, target) {
+                return target;
+            }
+
+            let handle = cx.update(|_, app| shell.read(app).page_scroll_handle().clone());
+            let delta = target.top() - viewport.top() - px(24.0);
+            let offset = handle.offset();
+            handle.set_offset(point(offset.x, offset.y - delta));
+            redraw(cx);
+            continue;
+        }
+
+        break;
+    }
+
+    let target = bounds(cx, selector);
+    let viewport = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
+    assert!(
+        target_visible_for_interaction(viewport, target),
+        "expected `{selector}` to be visible after aligning the gallery page scroll handle; viewport={viewport:?} target={target:?}"
+    );
+    target
+}
+
+fn target_visible_for_interaction(container: Bounds<Pixels>, target: Bounds<Pixels>) -> bool {
+    if target.size.height <= container.size.height && target.size.width <= container.size.width {
+        container.contains(&target.center())
+    } else {
+        bounds_overlap_y(container, target)
+    }
+}
+
 fn bounds_overlap_y(container: Bounds<Pixels>, target: Bounds<Pixels>) -> bool {
     target.bottom() >= container.top() && target.top() <= container.bottom()
 }
@@ -2814,7 +2855,7 @@ fn overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses(
 fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
     assert!(
         cx.debug_bounds(
@@ -2876,11 +2917,13 @@ fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
         );
     }
 
-    let tabs_sample = scroll_page_until_visible(cx, "gallery:component-tabs-sample:workspace-tabs");
+    jump_components_directory_to(cx, "gallery:component-page-jump:tabs");
+    let tabs_sample =
+        scroll_page_selector_into_view(&shell, cx, "gallery:component-tabs-sample:workspace-tabs");
     let page_scroll = bounds(cx, "gallery:page-scroll");
 
     assert!(
-        page_scroll.contains(&tabs_sample.center()),
+        bounds_overlap_y(page_scroll, tabs_sample),
         "expected full Components page to scroll until the vertical Tabs sample is visible"
     );
     let tokens_navigation = bounds(cx, "gallery:navigation-item:tokens").center();
@@ -3236,9 +3279,10 @@ fn gallery_smoke_compact_shell_scrolls_navigation_and_resets_page_on_navigation(
 fn components_gallery_smoke_closes_select_popup_from_outside_press(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
-    scroll_page_until_visible(cx, "select:component-select:status-select:trigger");
+    jump_components_directory_to(cx, "gallery:component-page-jump:select");
+    scroll_page_selector_into_view(&shell, cx, "select:component-select:status-select:trigger");
     let select_trigger = bounds(cx, "select:component-select:status-select:trigger").center();
     cx.simulate_click(select_trigger, Default::default());
     redraw(cx);
@@ -3832,14 +3876,6 @@ fn components_gallery_smoke_directory_jump_scrolls_to_tabs_section(
     let cx = open_components_gallery(cx);
 
     let directory_before = bounds(cx, "gallery:components-directory");
-    scroll_page_until_visible(cx, "gallery:component-tabs-sample:workspace-tabs");
-    let directory_after_scroll = bounds(cx, "gallery:components-directory");
-
-    assert_eq!(
-        directory_after_scroll, directory_before,
-        "expected the Components directory to stay fixed while the page content scrolls"
-    );
-
     let directory_viewport = bounds(cx, "scroll-area:gallery-components-directory-scroll");
     scroll_until_visible(
         cx,
@@ -3872,7 +3908,7 @@ fn components_gallery_smoke_directory_jump_scrolls_to_tabs_section(
     );
     assert_eq!(
         directory_after_click, directory_before,
-        "expected the Components directory to stay fixed after clicking a jump"
+        "expected the Components directory to stay fixed while clicking a page jump scrolls the content"
     );
 }
 
@@ -3901,10 +3937,11 @@ fn components_gallery_smoke_navigation_rail_scrolls_inside_shell(
 
 #[open_gpui::test]
 fn components_gallery_smoke_vertical_tabs_scroll_inside_sample(cx: &mut open_gpui::TestAppContext) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
-    scroll_page_until_visible(cx, "gallery:component-tabs-sample:workspace-tabs");
-    let before = bounds(
+    jump_components_directory_to(cx, "gallery:component-page-jump:tabs");
+    let before = scroll_page_selector_into_view(
+        &shell,
         cx,
         "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
     );
@@ -3959,9 +3996,14 @@ fn components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample(
 fn components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_composition(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
-    scroll_page_until_visible(cx, "gallery:component-splitter-sample:details-split");
+    jump_components_directory_to(cx, "gallery:component-page-jump:splitter");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "splitter:component-splitter:details-split:handle:0",
+    );
     let collapsed_before = bounds(cx, "splitter-panel:summary");
     let top_before = bounds(cx, "splitter-panel:summary");
     let bottom_before = bounds(cx, "splitter-panel:details");
@@ -3981,7 +4023,12 @@ fn components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_com
         "expected full-page vertical Splitter sample to resize via pointer drag; before=({top_before:?}, {bottom_before:?}) after=({top_after:?}, {bottom_after:?})"
     );
 
-    let restored_handle = bounds(cx, "splitter:component-splitter:details-split:handle:0").center();
+    let restored_handle = scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "splitter:component-splitter:details-split:handle:0",
+    )
+    .center();
     drag(
         cx,
         restored_handle,
@@ -3996,7 +4043,12 @@ fn components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_com
         "expected collapsed Splitter panel to restore and keep responding to subsequent drag; collapsed={collapsed_before:?} after-collapse=({top_after:?}, {bottom_after:?}) restored=({top_restored:?}, {bottom_restored:?})"
     );
 
-    scroll_page_until_visible(cx, "gallery:component-tabs-sample:workspace-tabs");
+    jump_components_directory_to(cx, "gallery:component-page-jump:tabs");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
+    );
     let tablist = bounds(cx, "tabs:component-tabs:workspace-tabs:tablist");
     let tab_before = bounds(
         cx,

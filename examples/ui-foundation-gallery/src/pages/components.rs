@@ -671,7 +671,7 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "choice-search",
         "CommandState",
         "exports / gallery / runtime smoke",
-        "gallery:component-command-sample:workspace-command",
+        "gallery:component-command-sample:ranked-search",
     ),
     ComponentCatalogEntry::official(
         "Label",

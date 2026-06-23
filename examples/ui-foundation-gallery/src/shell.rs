@@ -183,7 +183,8 @@ impl GalleryShell {
         &self.editable_text_input
     }
 
-    pub(crate) fn page_scroll_handle(&self) -> &ScrollHandle {
+    /// Returns the page scroll handle used by gallery smoke tests and anchored jumps.
+    pub fn page_scroll_handle(&self) -> &ScrollHandle {
         &self.page_scroll_handle
     }
 

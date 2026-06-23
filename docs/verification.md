@@ -53,6 +53,9 @@ horizontal plus vertical Splitter pointer dragging, and long Sidebar internal na
 Run the gallery package tests before relying on manual dogfood for those paths.
 The Components-page ScrollArea regressions also cover release-queue wheel isolation so scroll
 gestures on the sample card chrome do not leak to the page shell.
+Because the Components page now carries more depth samples, the longer-section smokes also rely on
+catalog directory jumps and page-scroll handle alignment instead of only raw page wheel motion;
+that keeps the focused inspection paths stable even as the page grows.
 The Components page has two inspection modes: the full all-components conformance page, and a
 catalog-driven focused component-family view. Directory chips remain pure anchor jumps. Focused
 mode is entered from catalog cards and restored through the explicit `All components` control. The
