@@ -253,6 +253,111 @@ impl TableColumnRegionRenderPlan {
     }
 }
 
+/// Adapter layout metadata for sticky pinned table column regions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TablePinnedLayoutPlan {
+    table_id: String,
+    left_width: UiPx,
+    center_width: UiPx,
+    right_width: UiPx,
+    total_width: UiPx,
+}
+
+impl TablePinnedLayoutPlan {
+    fn from_column_regions(
+        table_id: &str,
+        regions: &[TableColumnRegionRenderPlan],
+        total_width: UiPx,
+    ) -> Option<Self> {
+        let region_plan = |region| regions.iter().find(|plan| plan.region() == region);
+        let left = region_plan(TableColumnRegion::Left);
+        let center = region_plan(TableColumnRegion::Center);
+        let right = region_plan(TableColumnRegion::Right);
+        let has_pinned_columns = left
+            .map(|region| !region.columns().is_empty())
+            .unwrap_or(false)
+            || right
+                .map(|region| !region.columns().is_empty())
+                .unwrap_or(false);
+        if !has_pinned_columns {
+            return None;
+        }
+
+        Some(Self {
+            table_id: table_id.to_owned(),
+            left_width: left
+                .map(TableColumnRegionRenderPlan::total_width)
+                .unwrap_or(UiPx::ZERO),
+            center_width: center
+                .map(TableColumnRegionRenderPlan::total_width)
+                .unwrap_or(UiPx::ZERO),
+            right_width: right
+                .map(TableColumnRegionRenderPlan::total_width)
+                .unwrap_or(UiPx::ZERO),
+            total_width,
+        })
+    }
+
+    /// Returns the table identity this layout plan belongs to.
+    pub fn table_id(&self) -> &str {
+        &self.table_id
+    }
+
+    /// Returns the total width of the left pinned lane.
+    pub const fn left_width(&self) -> UiPx {
+        self.left_width
+    }
+
+    /// Returns the total width of the horizontally scrollable center lane.
+    pub const fn center_width(&self) -> UiPx {
+        self.center_width
+    }
+
+    /// Returns the total width of the right pinned lane.
+    pub const fn right_width(&self) -> UiPx {
+        self.right_width
+    }
+
+    /// Returns the total width across all visible lanes.
+    pub const fn total_width(&self) -> UiPx {
+        self.total_width
+    }
+
+    /// Returns the stable adapter id for the header center scroll viewport.
+    pub fn header_center_scroll_id(&self) -> String {
+        format!("table:{}:header-center-scroll", self.table_id)
+    }
+
+    /// Returns the stable debug selector for the header center scroll viewport.
+    pub fn header_center_scroll_selector(&self) -> String {
+        format!("scroll-area:{}", self.header_center_scroll_id())
+    }
+
+    /// Returns the stable debug selector for one header region lane.
+    pub fn header_region_selector(&self, region: TableColumnRegion) -> String {
+        format!("table:{}:header-region:{}", self.table_id, region.as_str())
+    }
+
+    /// Returns the stable adapter id for one body-row center scroll viewport.
+    pub fn row_center_scroll_id(&self, row_render_key: &str) -> String {
+        format!("table:{}:row-center-scroll:{row_render_key}", self.table_id)
+    }
+
+    /// Returns the stable debug selector for one body-row center scroll viewport.
+    pub fn row_center_scroll_selector(&self, row_render_key: &str) -> String {
+        format!("scroll-area:{}", self.row_center_scroll_id(row_render_key))
+    }
+
+    /// Returns the stable debug selector for one body-row region lane.
+    pub fn row_region_selector(&self, row_render_key: &str, region: TableColumnRegion) -> String {
+        format!(
+            "table:{}:row-region:{row_render_key}:{}",
+            self.table_id,
+            region.as_str()
+        )
+    }
+}
+
 /// Sort request emitted by an interactive table column header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableHeaderAction {
@@ -513,6 +618,7 @@ pub struct TableRenderPlan {
     virtualizer: VirtualizerResolvedState,
     columns: Vec<TableColumnRenderPlan>,
     column_regions: Vec<TableColumnRegionRenderPlan>,
+    pinned_layout: Option<TablePinnedLayoutPlan>,
     total_column_width: UiPx,
     rows: Vec<TableRowRenderPlan>,
     role: Role,
@@ -534,6 +640,11 @@ impl TableRenderPlan {
         let total_column_width = column_regions
             .iter()
             .fold(UiPx::ZERO, |total, region| total + region.total_width());
+        let pinned_layout = TablePinnedLayoutPlan::from_column_regions(
+            &table_id,
+            &column_regions,
+            total_column_width,
+        );
         let source_rows = table.final_model().rows();
         let duplicate_row_ids = table
             .duplicate_row_ids()
@@ -565,6 +676,7 @@ impl TableRenderPlan {
             virtualizer,
             columns,
             column_regions,
+            pinned_layout,
             total_column_width,
             rows,
             role: Role::Table,
@@ -607,6 +719,16 @@ impl TableRenderPlan {
     /// Returns visible columns split into render regions.
     pub fn column_regions(&self) -> &[TableColumnRegionRenderPlan] {
         &self.column_regions
+    }
+
+    /// Returns sticky pinned-column layout metadata, when a split layout is needed.
+    pub fn pinned_layout(&self) -> Option<&TablePinnedLayoutPlan> {
+        self.pinned_layout.as_ref()
+    }
+
+    /// Returns whether this render plan needs split pinned-column layout.
+    pub fn uses_split_pinned_layout(&self) -> bool {
+        self.pinned_layout.is_some()
     }
 
     /// Returns the summed resolved width of all visible columns.

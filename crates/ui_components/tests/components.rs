@@ -2972,6 +2972,14 @@ fn table_render_plan_uses_core_state_and_virtualizer_contracts() {
 
 #[test]
 fn table_render_plan_exposes_pinned_column_regions() {
+    let flat_plan = Table::new("flat-table", "Flat table", sample_table_state(1))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+    assert!(!flat_plan.uses_split_pinned_layout());
+    assert!(
+        flat_plan.pinned_layout().is_none(),
+        "unpinned tables should keep the flat render topology"
+    );
+
     let state = TableState::new([TableRow::new("row-a")
         .with_cell("name", "Alpha")
         .with_cell("team", "UI")
@@ -2994,6 +3002,27 @@ fn table_render_plan_exposes_pinned_column_regions() {
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
         .render_plan(UiPx::ZERO, ui_px(96.0));
+    let layout = plan
+        .pinned_layout()
+        .expect("pinned columns should request split pinned layout metadata");
+    assert!(plan.uses_split_pinned_layout());
+    assert_eq!(layout.table_id(), "pinned-table");
+    assert_eq!(layout.left_width(), ui_px(256.0));
+    assert_eq!(layout.center_width(), ui_px(128.0));
+    assert_eq!(layout.right_width(), ui_px(128.0));
+    assert_eq!(layout.total_width(), ui_px(512.0));
+    assert_eq!(
+        layout.header_center_scroll_id(),
+        "table:pinned-table:header-center-scroll"
+    );
+    assert_eq!(
+        layout.header_center_scroll_selector(),
+        "scroll-area:table:pinned-table:header-center-scroll"
+    );
+    assert_eq!(
+        layout.header_region_selector(TableColumnRegion::Left),
+        "table:pinned-table:header-region:left"
+    );
 
     let region_columns = plan
         .column_regions()
@@ -3031,6 +3060,18 @@ fn table_render_plan_exposes_pinned_column_regions() {
     );
 
     let row = &plan.rows()[0];
+    assert_eq!(
+        layout.row_center_scroll_id(row.render_key()),
+        "table:pinned-table:row-center-scroll:row-a"
+    );
+    assert_eq!(
+        layout.row_center_scroll_selector(row.render_key()),
+        "scroll-area:table:pinned-table:row-center-scroll:row-a"
+    );
+    assert_eq!(
+        layout.row_region_selector(row.render_key(), TableColumnRegion::Right),
+        "table:pinned-table:row-region:row-a:right"
+    );
     assert_eq!(
         row.cells_for_region(TableColumnRegion::Left)
             .map(|cell| cell.column_id().as_str())
@@ -3479,6 +3520,28 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         root::VirtualizerState::new(4, ui_px(24.0)).with_overscan(2);
     let root_plan: root::TableRenderPlan = table.state();
     let _root_region_plan: &root::TableColumnRegionRenderPlan = &root_plan.column_regions()[0];
+    let root_pinned_state = root::TableState::new([root::TableRow::new("row-a")
+        .with_cell("name", "Alpha")
+        .with_cell("team", "UI")
+        .with_cell("status", "Ready")])
+    .with_columns([
+        root::TableColumn::new("name", "Name"),
+        root::TableColumn::new("team", "Team"),
+        root::TableColumn::new("status", "Status"),
+    ])
+    .with_column_pinning(
+        root::TableColumnPinning::new()
+            .pinned_left(["name"])
+            .pinned_right(["status"]),
+    );
+    let root_pinned_render_plan =
+        root::Table::new("root-pinned-table", "Root pinned table", root_pinned_state).state();
+    let root_pinned_layout: root::TablePinnedLayoutPlan = root_pinned_render_plan
+        .pinned_layout()
+        .expect("exported pinned layout plan should resolve")
+        .clone();
+    let _prelude_pinned_layout: prelude::TablePinnedLayoutPlan = root_pinned_layout.clone();
+    assert_eq!(root_pinned_layout.table_id(), "root-pinned-table");
     let header_action: root::TableHeaderAction = root_plan.columns()[0]
         .sort_action()
         .expect("sortable exported table column should expose a header action")
