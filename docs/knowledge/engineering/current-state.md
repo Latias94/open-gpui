@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 3819ac6
+git_commit: 5d67277
 verified_by:
   - cargo fmt -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-components table component_api_inventory
@@ -75,7 +75,7 @@ verified_by:
 
 - Goal: Continue the Table column virtualization slice by rendering virtualized center headers and body cells.
 - Branch: `main`
-- Last verified: 2026-06-23, `cargo fmt -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-components table component_api_inventory` passed 33/33 after rendering Table center-column windows, and `git diff --check` passed.
+- Last verified: 2026-06-23, `cargo fmt -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-components table component_api_inventory` passed 36/36 after adding virtualized center interaction coverage, and `git diff --check` passed.
 - Done: Completed the sticky pinned Table slice on top of `3273c1a`: the GPUI Table adapter keeps vertical wheel input inside pinned table bodies, `release-rollup` exposes explicit left/center/right lane widths, and the focused gallery smoke proves horizontal center-lane scrolling leaves left/right pinned lanes plus the outer Components page fixed.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
@@ -137,10 +137,11 @@ verified_by:
 - Done: Completed U1 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `94fdd59`. `VirtualizerState` now resolves exact-size windows for known item widths, materializes only visible plus overscan measurements, and keeps the fixed-size path unchanged.
 - Done: Completed U2 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `df27aa4`. `ui_components::TableRenderPlan` now exposes `TableCenterColumnWindowPlan` metadata for the center lane, including total center width, visible and overscan ranges, leading/trailing spacer widths, rendered center columns, and virtualization activity from adapter-owned horizontal scroll input.
 - Done: Completed U3 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `3819ac6`. The GPUI `Table` adapter now renders center headers and body cells from the shared `TableCenterColumnWindowPlan`, inserts leading/trailing spacers to preserve full center-lane scroll geometry, keeps left/right pinned lanes fully mounted, and tests prove off-window center selectors unmount/remount while row virtualization remains independent after horizontal scroll.
+- Done: Completed U4 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `5d67277`. Added plan-level accessibility coverage for virtualized center columns, runtime sort coverage for a rendered center header after horizontal scroll, and resize-geometry coverage proving the virtual center window recomputes from committed sizing while preserving the rendered column identity set.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Follow-up: The column sizing / resize and sticky pinned-column slices are complete; the next Table follow-ups are two-dimensional grid virtualization, tree-data tables, custom aggregation callbacks, server pagination/faceting/editing, and standalone headless extraction.
 - Blocked: None.
-- Next action: Start U4 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md`: preserve sorting, resize handles, accessibility column indexes, and stable selectors across virtualized center columns.
+- Next action: Start U5 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md`: add a wide Table gallery proof with inspectable center-window state and runtime scroll gates.
 
 # Citations
 
@@ -197,3 +198,4 @@ verified_by:
 [51] Verification evidence `docs/knowledge/engineering/verification/table-exact-size-virtualizer-window-20260623.md`
 [52] Commit `df27aa4` - `feat(ui-components): add table center column window plan`
 [53] Commit `3819ac6` - `feat(ui-components): virtualize table center columns`
+[54] Commit `5d67277` - `test(ui-components): cover virtualized table center interactions`
