@@ -2284,7 +2284,7 @@ pub(crate) fn component_tabs_state_row(state: &TabsState) -> impl IntoElement {
 pub(crate) fn component_table_state_row(
     summary: &super::TableSampleStateSummary,
 ) -> impl IntoElement {
-    div()
+    let mut row = div()
         .flex()
         .flex_col()
         .gap_1()
@@ -2304,33 +2304,41 @@ pub(crate) fn component_table_state_row(
         .child(format!(
             "{} columns / {} aria rows / {} selected",
             summary.aria_columns, summary.aria_rows, summary.selected_rows
-        ))
-        .child(format!(
-            "grouped {} / expanded {} / groups {} / leaves {}",
-            summary.grouped_rows, summary.expanded_rows, summary.group_rows, summary.leaf_rows
-        ))
-        .child(format!(
-            "grouping {} / aggregates {} / expanded inputs {}{} / pinned {}-{}-{}",
+        ));
+
+    if summary.grouping_columns > 0 || summary.aggregation_count > 0 || summary.group_rows > 0 {
+        row = row.child(format!(
+            "grouped {} / expanded {} / groups {} / leaves {} / grouping {} / aggregates {} / expanded inputs {}{}",
+            summary.grouped_rows,
+            summary.expanded_rows,
+            summary.group_rows,
+            summary.leaf_rows,
             summary.grouping_columns,
             summary.aggregation_count,
             summary.expanded_group_inputs,
-            if summary.all_rows_expanded {
-                " all"
-            } else {
-                ""
-            },
+            if summary.all_rows_expanded { " all" } else { "" }
+        ));
+    }
+
+    if summary.pinned_left_columns > 0 || summary.pinned_right_columns > 0 {
+        row = row.child(format!(
+            "pinned {}-{}-{} / widths {}-{}-{}px / {} resizable columns",
             summary.pinned_left_columns,
             summary.pinned_center_columns,
-            summary.pinned_right_columns
-        ))
-        .child(format!(
-            "width {}px / lanes {}-{}-{}px / {} resizable columns",
-            summary.total_column_width_px,
+            summary.pinned_right_columns,
             summary.pinned_left_width_px,
             summary.pinned_center_width_px,
             summary.pinned_right_width_px,
             summary.resizable_columns
-        ))
+        ));
+    } else {
+        row = row.child(format!(
+            "width {}px / {} resizable columns",
+            summary.total_column_width_px, summary.resizable_columns
+        ));
+    }
+
+    row
 }
 
 pub(crate) fn component_virtualized_list_state_row(

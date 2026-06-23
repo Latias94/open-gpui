@@ -1663,7 +1663,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 
-    assert_eq!(tables.len(), 4);
+    assert_eq!(tables.len(), 5);
     assert_eq!(tables[0].id, "release-queue");
     assert_eq!(tables[0].state.rows().len(), 10_000);
     assert_eq!(
@@ -1749,6 +1749,45 @@ fn components_page_samples_expose_component_metadata() {
     assert!(
         grouped_plan.rendered_row_count() <= grouped_plan.visible_row_count() + tables[3].overscan
     );
+
+    let matrix_plan = tables[4].render_plan();
+    assert_eq!(tables[4].id, "release-matrix");
+    assert_eq!(tables[4].state.rows().len(), 480);
+    assert_eq!(tables[4].state.column_pinning().left()[0].as_str(), "name");
+    assert_eq!(
+        tables[4].state.column_pinning().right()[0].as_str(),
+        "status"
+    );
+    assert_eq!(tables[4].state.sorting()[0].column().as_str(), "metric_13");
+    assert_eq!(
+        matrix_plan.column_region_width(TableColumnRegion::Left),
+        ui_px(172.0)
+    );
+    assert_eq!(
+        matrix_plan.column_region_width(TableColumnRegion::Center),
+        ui_px(1516.0)
+    );
+    assert_eq!(
+        matrix_plan.column_region_width(TableColumnRegion::Right),
+        ui_px(148.0)
+    );
+    assert!(matrix_plan.uses_split_pinned_layout());
+    let matrix_layout = matrix_plan
+        .pinned_layout()
+        .expect("release-matrix should render through the split sticky pinned layout");
+    assert_eq!(matrix_layout.left_width(), ui_px(172.0));
+    assert_eq!(matrix_layout.center_width(), ui_px(1516.0));
+    assert_eq!(matrix_layout.right_width(), ui_px(148.0));
+    assert_eq!(matrix_layout.total_width(), ui_px(1836.0));
+    assert_eq!(matrix_plan.aria_column_count(), 16);
+    assert_eq!(matrix_plan.columns().len(), 16);
+    assert!(
+        matrix_plan
+            .columns()
+            .iter()
+            .any(|column| column.id().as_str() == "metric_13")
+    );
+    assert_eq!(matrix_plan.table().final_model().selected_count(), 1);
 
     assert_eq!(virtualized_lists.len(), 1);
     let release_navigation = &virtualized_lists[0];
@@ -2204,6 +2243,56 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
             (TableColumnRegion::Left, vec!["name"]),
             (TableColumnRegion::Center, vec!["team", "score"]),
             (TableColumnRegion::Right, vec!["status"]),
+        ]
+    );
+
+    let release_matrix = &samples[4];
+    let matrix_plan = release_matrix.render_plan();
+    let matrix_summary = release_matrix.state_summary();
+
+    assert_eq!(release_matrix.id, "release-matrix");
+    assert_eq!(release_matrix.state.rows().len(), 480);
+    assert_eq!(
+        release_matrix.state.sorting()[0].column().as_str(),
+        "metric_13"
+    );
+    assert_eq!(matrix_summary.core_rows, 480);
+    assert_eq!(matrix_summary.final_rows, 480);
+    assert_eq!(matrix_summary.selected_rows, 1);
+    assert_eq!(matrix_summary.pinned_left_columns, 1);
+    assert_eq!(matrix_summary.pinned_center_columns, 14);
+    assert_eq!(matrix_summary.pinned_right_columns, 1);
+    assert_eq!(matrix_summary.pinned_left_width_px, 172);
+    assert_eq!(matrix_summary.pinned_center_width_px, 1516);
+    assert_eq!(matrix_summary.pinned_right_width_px, 148);
+    assert_eq!(matrix_summary.total_column_width_px, 1836);
+    assert!(matrix_plan.uses_split_pinned_layout());
+    assert_eq!(matrix_plan.aria_column_count(), 16);
+    assert_eq!(
+        matrix_plan
+            .column_regions()
+            .iter()
+            .find(|region| region.region() == TableColumnRegion::Center)
+            .expect("release-matrix should expose a center column region")
+            .columns()
+            .iter()
+            .map(|column| column.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "metric_00",
+            "metric_01",
+            "metric_02",
+            "metric_03",
+            "metric_04",
+            "metric_05",
+            "metric_06",
+            "metric_07",
+            "metric_08",
+            "metric_09",
+            "metric_10",
+            "metric_11",
+            "metric_12",
+            "metric_13",
         ]
     );
 }
@@ -3032,6 +3121,11 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
         "expected focused Table mode to render the resizable Table sample"
     );
     assert!(
+        cx.debug_bounds("gallery:component-table-sample:release-matrix")
+            .is_some(),
+        "expected focused Table mode to render the wide matrix Table sample"
+    );
+    assert!(
         cx.debug_bounds("gallery:component-button-sample:default")
             .is_none(),
         "expected focused Table mode to hide unrelated Button samples"
@@ -3776,6 +3870,117 @@ fn components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_samp
     assert!(
         center_cell_after.left() < center_cell_before.left(),
         "expected horizontal body center lane to move left; before={center_cell_before:?} after={center_cell_after:?}"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let sample = pages::components::table_samples(ThemeTokens::default())
+        .iter()
+        .find(|sample| sample.id == "release-matrix")
+        .expect("release-matrix table sample should exist");
+    let plan = sample.render_plan();
+    assert!(
+        plan.uses_split_pinned_layout(),
+        "release-matrix should exercise sticky pinned table lanes"
+    );
+    let first_row_key = plan.rows()[0].render_key().to_owned();
+    let far_header = "table:component-table:release-matrix:header:metric_13";
+    let far_cell = format!("table:component-table:release-matrix:cell:{first_row_key}:metric_13");
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:table:component-table:release-matrix:header-center-scroll",
+    );
+
+    let sample_before = bounds(cx, "gallery:component-table-sample:release-matrix");
+    let left_before = bounds(
+        cx,
+        &format!("table:component-table:release-matrix:cell:{first_row_key}:name"),
+    );
+    let right_before = bounds(
+        cx,
+        &format!("table:component-table:release-matrix:cell:{first_row_key}:status"),
+    );
+    assert!(
+        cx.debug_bounds("table:component-table:release-matrix:header:metric_00")
+            .is_some(),
+        "expected the initial center column window to mount the first metric"
+    );
+    assert!(
+        cx.debug_bounds(far_header).is_none(),
+        "expected the far metric header to stay unmounted before horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds(&far_cell).is_none(),
+        "expected the far metric cell to stay unmounted before horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds(&format!(
+            "scroll-area:table:component-table:release-matrix:row-center-scroll:{first_row_key}"
+        ))
+        .is_some(),
+        "expected release-matrix body center lane to expose the shared horizontal viewport"
+    );
+    let center_viewport = bounds(
+        cx,
+        "scroll-area:table:component-table:release-matrix:header-center-scroll",
+    );
+
+    for _ in 0..6 {
+        if cx.debug_bounds(far_header).is_some() && cx.debug_bounds(&far_cell).is_some() {
+            break;
+        }
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: center_viewport.center(),
+            delta: ScrollDelta::Pixels(point(px(-360.0), px(0.0))),
+            ..Default::default()
+        });
+        redraw(cx);
+    }
+
+    let sample_after = bounds(cx, "gallery:component-table-sample:release-matrix");
+    let left_after = bounds(
+        cx,
+        &format!("table:component-table:release-matrix:cell:{first_row_key}:name"),
+    );
+    let right_after = bounds(
+        cx,
+        &format!("table:component-table:release-matrix:cell:{first_row_key}:status"),
+    );
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected matrix Table horizontal wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert_eq!(
+        left_after.left(),
+        left_before.left(),
+        "expected matrix Table left pinned lane to keep its screen-space x position"
+    );
+    assert_eq!(
+        right_after.left(),
+        right_before.left(),
+        "expected matrix Table right pinned lane to keep its screen-space x position"
+    );
+    assert!(
+        cx.debug_bounds(far_header).is_some(),
+        "expected the far metric header to enter the rendered center window after horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds(&far_cell).is_some(),
+        "expected the far metric cell to enter the rendered center window after horizontal scrolling"
     );
 }
 

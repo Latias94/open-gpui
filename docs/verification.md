@@ -72,16 +72,24 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_fo
 ```
 
 Table gallery gates now follow the same split: `open-gpui-ui-core` tests prove row-model,
-virtualizer, column sizing, and resize-math contracts without rendering, including grouped row ids,
-expansion lookup behavior, built-in group-row aggregate cells, pinned-column region splitting, and
-on-end/on-change resize deltas. `open-gpui-ui-components` tests prove adapter exports, state
-metadata, resize callback wiring, and scroll ownership; gallery smokes prove long table scroll
-input stays inside the table viewport and `release-resize` column dragging updates the controlled
-sample without moving the outer Components page. The focused proofs are:
+virtualizer, column sizing, column-window, and resize-math contracts without rendering, including
+grouped row ids, expansion lookup behavior, built-in group-row aggregate cells, pinned-column
+region splitting, center-column virtual windows, and on-end/on-change resize deltas.
+`open-gpui-ui-components` tests prove adapter exports, state metadata, resize callback wiring,
+center-window header/body mounting, and scroll ownership; gallery smokes prove long table scroll
+input stays inside the table viewport, `release-resize` column dragging updates the controlled
+sample without moving the outer Components page, and wide center lanes scroll independently from
+fixed left/right pinned lanes. The focused proofs are:
 
 `components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample` is the focused
 sticky-pinned Table proof: it enters the Table family view, scrolls the `release-rollup` center
 lane horizontally, and asserts left/right pinned lanes plus the outer Components page stay fixed.
+
+`components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample` is the focused
+center-column virtualization proof: it enters the Table family view, scrolls the `release-matrix`
+center lane horizontally, verifies far center metric cells are unmounted before scrolling and
+mounted after scrolling, and asserts left/right pinned lanes plus the outer Components page stay
+fixed.
 
 ```powershell
 cargo nextest run -p open-gpui-ui-core table
@@ -185,7 +193,10 @@ collapsed descendants addressable by stable row id. The Components gallery now c
 aggregate count and score cells, pins the identifier and status columns, and has its own
 inner-scroll smoke. It also carries `release-resize`, a controlled column-sizing sample whose
 resize smoke drags the `name` handle, records the app-owned committed width, and verifies header
-and first-row cell widths stay aligned. Core table tests also assert that `TableAggregation` exposes
+and first-row cell widths stay aligned. `release-matrix` is the wide center-column virtualization
+sample: it pins the identity and status lanes, exposes fourteen center metrics, and has a focused
+smoke that proves off-window center columns unmount/remount while horizontal wheel input remains
+inside the sample. Core table tests also assert that `TableAggregation` exposes
 stable built-in aggregate labels and resolves count, sum, min, max, and average cells for grouped
 rows without hiding the grouping column value. Core and component tests assert that
 `TableColumnPinning` splits visible columns into left, center, and right regions after
@@ -384,9 +395,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     page overflows. The Table samples should expose the `release-queue` 10k-row virtualized window,
     the filtered/sorted/paginated `filter-board` model, the controlled `release-resize` sizing
     sample, the grouped and sticky pinned `release-rollup` model with left/right fixed lanes and a
-    horizontally scrollable center lane, stable selected row ids, table/row/cell accessibility
-    metadata, sortable header metadata, resize handle metadata, and internal body viewports that
-    scroll without moving the outer Components page.
+    horizontally scrollable center lane, the wide `release-matrix` center-column window, stable
+    selected row ids, table/row/cell accessibility metadata, sortable header metadata, resize
+    handle metadata, and internal body viewports that scroll without moving the outer Components
+    page.
     The Tree sample should expose `document-outline`,
     tree/tree-item accessibility metadata, expandable `Paper` children, a state readout, an inner
     viewport that scrolls without moving the outer Components page, and selection/toggle events

@@ -425,15 +425,19 @@ metadata, sort metadata for sortable headers, grouped-row depth and parent metad
 metadata keyed by stable row id. The render plan exposes `TableColumnRegionRenderPlan` entries and
 every rendered header/body row has stable `left`, `center`, and `right` region debug selectors.
 Region render plans expose summed widths, and header/body cells read the same resolved column
-widths. For pinned tables, the adapter renders fixed left/right lanes plus a shared horizontal
-center lane so the center can scroll without moving the pinned columns or the outer page.
+widths. For pinned tables, `TableCenterColumnWindowPlan` virtualizes the shared horizontal center
+lane from adapter-owned horizontal scroll input: it exposes visible and overscan ranges, rendered
+center columns, total center width, and leading/trailing spacer widths. The adapter keeps left/right
+pinned lanes fully mounted while mounting only the rendered center-column window, so the center can
+scroll without moving pinned columns or the outer page.
 
 An official Table entry must satisfy the normal component completion gate: `Table` and `TableState`
 exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
 entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests for row
 identity, grouping, expansion, and virtualizer behavior, and gallery runtime tests for nested
 scroll containment. Custom aggregation callbacks, sticky headers, autosize-by-content, and
-two-dimensional grid virtualization remain follow-up capabilities.
+full two-axis grid virtualization beyond the pinned center-column window remain follow-up
+capabilities.
 
 ## Splitter Constraints
 
@@ -577,12 +581,13 @@ aggregate cells, pinned left/center/right column regions, committed column sizin
 width resolution with region totals/offsets, sortable header action payloads, crate-root/prelude
 exports, table/cell roles, and a vertically virtualized GPUI recipe whose body scroll stays inside
 the table viewport. For pinned samples, the adapter renders fixed left/right lanes plus a shared
-horizontal center lane. It also ships GPUI resize handles with controlled commit callbacks and
-on-end/on-change resize mode support.
+horizontal center lane backed by `TableCenterColumnWindowPlan`, so off-window center headers and
+cells are unmounted while spacer geometry preserves the full scrollable width. It also ships GPUI
+resize handles with controlled commit callbacks and on-end/on-change resize mode support.
 `VirtualizerState` covers one-dimensional range math, stable item keys, measurement idempotence,
 overscan, total size, and snapshot/restore data in `ui_core`; the Table adapter restores snapshot
 measurements but not captured scroll offsets. Custom aggregate callbacks, sticky headers,
-autosize-by-content, and two-dimensional grid virtualization remain follow-up work.
+autosize-by-content, and full two-axis grid virtualization remain follow-up work.
 `StatusCue` and `EmptyState` are official feedback components. They expose resolved feedback
 intent, size, role, metrics, and token intents, while the GPUI adapters own concrete styling and
 rendered debug selectors. `Tree` is now an official rendered component backed by `TreeState`.

@@ -3005,18 +3005,21 @@ fn release_navigation_item(index: usize) -> VirtualizedListItemDescriptor {
     )
 }
 
-static TABLE_SAMPLES: LazyLock<[TableSample; 4]> = LazyLock::new(build_table_samples);
+const RELEASE_MATRIX_METRIC_COUNT: usize = 14;
+
+static TABLE_SAMPLES: LazyLock<[TableSample; 5]> = LazyLock::new(build_table_samples);
 
 /// Returns table samples backed by real table and virtualizer contracts.
 pub fn table_samples(_tokens: ThemeTokens) -> &'static [TableSample] {
     TABLE_SAMPLES.as_slice()
 }
 
-fn build_table_samples() -> [TableSample; 4] {
+fn build_table_samples() -> [TableSample; 5] {
     let release_queue_rows = (0..10_000).map(release_queue_row).collect::<Vec<_>>();
     let filter_board_rows = (0..180).map(filter_board_row).collect::<Vec<_>>();
     let release_resize_rows = (0..160).map(release_resize_row).collect::<Vec<_>>();
     let grouped_release_rows = (0..320).map(grouped_release_row).collect::<Vec<_>>();
+    let release_matrix_rows = (0..480).map(release_matrix_row).collect::<Vec<_>>();
 
     let release_queue = TableSample {
         id: "release-queue",
@@ -3104,12 +3107,35 @@ fn build_table_samples() -> [TableSample; 4] {
         overscan: 4,
         state_summary: TableSampleStateSummary::default(),
     };
+    let release_matrix = TableSample {
+        id: "release-matrix",
+        title: "Release matrix",
+        summary: "Pinned identity and status lanes frame a wide virtualized center metric window.",
+        badge: "column window",
+        state: TableState::new(release_matrix_rows)
+            .with_columns(release_matrix_table_columns())
+            .with_column_order(release_matrix_column_order())
+            .with_column_pinning(
+                TableColumnPinning::new()
+                    .pinned_left(["name"])
+                    .pinned_right(["status"]),
+            )
+            .with_sorting([TableSort::descending("metric_13")])
+            .with_selected_rows(["release-matrix-row-005"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
 
     [
         release_queue.with_state_summary(),
         filter_board.with_state_summary(),
         release_resize.with_state_summary(),
         grouped_release.with_state_summary(),
+        release_matrix.with_state_summary(),
     ]
 }
 
@@ -3177,6 +3203,38 @@ fn resizable_table_columns() -> [TableColumn; 4] {
     ]
 }
 
+fn release_matrix_table_columns() -> Vec<TableColumn> {
+    let mut columns = Vec::with_capacity(RELEASE_MATRIX_METRIC_COUNT + 2);
+    columns.push(
+        TableColumn::new("name", "Release")
+            .with_width(ui_px(172.0))
+            .with_min_width(ui_px(140.0))
+            .with_max_width(ui_px(260.0)),
+    );
+    columns.extend((0..RELEASE_MATRIX_METRIC_COUNT).map(|index| {
+        let width = ui_px(92.0 + (index % 4) as f32 * 12.0);
+        TableColumn::new(format!("metric_{index:02}"), format!("Metric {index:02}"))
+            .with_width(width)
+            .with_min_width(ui_px(72.0))
+            .with_max_width(ui_px(180.0))
+    }));
+    columns.push(
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(148.0))
+            .with_min_width(ui_px(112.0))
+            .with_max_width(ui_px(220.0)),
+    );
+    columns
+}
+
+fn release_matrix_column_order() -> Vec<String> {
+    let mut order = Vec::with_capacity(RELEASE_MATRIX_METRIC_COUNT + 2);
+    order.push("name".to_owned());
+    order.extend((0..RELEASE_MATRIX_METRIC_COUNT).map(|index| format!("metric_{index:02}")));
+    order.push("status".to_owned());
+    order
+}
+
 fn release_queue_row(index: usize) -> TableRow {
     let teams = ["UI", "Runtime", "Platform", "Docs", "QA"];
     let statuses = ["Ready", "Review", "Build", "Verify", "Blocked"];
@@ -3228,6 +3286,22 @@ fn grouped_release_row(index: usize) -> TableRow {
         .with_cell("team", teams[index % teams.len()])
         .with_cell("status", statuses[(index / 9) % statuses.len()])
         .with_cell("score", score)
+}
+
+fn release_matrix_row(index: usize) -> TableRow {
+    let statuses = ["Ready", "Review", "Build", "Verify", "Blocked"];
+    let mut row = TableRow::new(format!("release-matrix-row-{index:03}"))
+        .with_cell("name", format!("Train {index:03}"))
+        .with_cell("status", statuses[(index / 13) % statuses.len()]);
+
+    for metric in 0..RELEASE_MATRIX_METRIC_COUNT {
+        row = row.with_cell(
+            format!("metric_{metric:02}"),
+            (index + 1) * (metric + 3) % 997,
+        );
+    }
+
+    row
 }
 
 /// Returns scroll area samples backed by real component state.
