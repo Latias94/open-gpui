@@ -20,11 +20,11 @@ use open_gpui_ui_components::{
     SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor,
     SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
     Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
-    TableColumn, TableColumnPinning, TableColumnRegion, TableFilter, TableHeaderAction,
-    TablePagination, TableRow, TableSort, TableSortDirection, TableState, Tabs, TabsActivationMode,
-    TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode,
-    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TableColumn, TableColumnPinning, TableColumnRegion, TableColumnSizing, TableFilter,
+    TableHeaderAction, TablePagination, TableRow, TableSort, TableSortDirection, TableState, Tabs,
+    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput,
+    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
+    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
     TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
     VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
     VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
@@ -3091,6 +3091,73 @@ fn table_render_plan_disambiguates_duplicate_row_ids_for_rendering() {
 }
 
 #[test]
+fn table_render_plan_exposes_column_sizing_metadata_and_matching_cell_widths() {
+    let state = TableState::new([TableRow::new("row-a")
+        .with_cell("name", "Alpha")
+        .with_cell("team", "UI")
+        .with_cell("score", 42_usize)
+        .with_cell("status", "Ready")])
+    .with_columns([
+        TableColumn::new("name", "Name").with_width(ui_px(100.0)),
+        TableColumn::new("team", "Team").with_width(ui_px(120.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(80.0))
+            .with_min_width(ui_px(70.0))
+            .with_max_width(ui_px(90.0)),
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(60.0))
+            .with_resizable(false),
+    ])
+    .with_column_order(["status", "score", "team", "name"])
+    .with_column_pinning(
+        TableColumnPinning::new()
+            .pinned_left(["name", "score"])
+            .pinned_right(["status"]),
+    )
+    .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(95.0)))
+    .with_pagination(TablePagination::disabled());
+    let plan = Table::new("sized-table", "Sized table", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    assert_eq!(plan.total_column_width(), ui_px(370.0));
+    assert_eq!(
+        plan.column_region_width(TableColumnRegion::Left),
+        ui_px(190.0)
+    );
+    assert_eq!(
+        plan.column_region_width(TableColumnRegion::Center),
+        ui_px(120.0)
+    );
+    assert_eq!(
+        plan.column_region_width(TableColumnRegion::Right),
+        ui_px(60.0)
+    );
+    assert_eq!(plan.column_regions()[0].total_width(), ui_px(190.0));
+    assert_eq!(plan.column_regions()[1].total_width(), ui_px(120.0));
+    assert_eq!(plan.column_regions()[2].total_width(), ui_px(60.0));
+
+    let score_column = plan
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "score")
+        .expect("score column should be present");
+    assert_eq!(score_column.width(), ui_px(90.0));
+    assert_eq!(score_column.min_width(), ui_px(70.0));
+    assert_eq!(score_column.max_width(), ui_px(90.0));
+    assert_eq!(score_column.start(), ui_px(0.0));
+    assert_eq!(score_column.after(), ui_px(100.0));
+    assert!(score_column.resizable());
+
+    let score_cell = plan.rows()[0]
+        .cells_for_region(TableColumnRegion::Left)
+        .find(|cell| cell.column_id().as_str() == "score")
+        .expect("score cell should be present");
+    assert_eq!(score_cell.width(), score_column.width());
+}
+
+#[test]
 fn virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts() {
     let items = (0..10_000)
         .map(|index| {
@@ -3417,6 +3484,22 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _root_sizing: root::TableColumnSizing = root_sizing.clone();
     let _prelude_sizing: prelude::TableColumnSizing =
         prelude::TableColumnSizing::new().with_width("name", ui_px(180.0));
+    let _root_resolved_sizing: root::TableResolvedColumnSizing = table
+        .table_state()
+        .resolve()
+        .visible_column_sizing()
+        .column(&root::TableColumnId::new("name"))
+        .expect("resolved column sizing should be available")
+        .clone();
+    let _prelude_resolved_sizing: prelude::TableResolvedColumnSizing =
+        _root_resolved_sizing.clone();
+    let _root_resolved_sizing_regions: root::TableResolvedColumnSizingRegions = table
+        .table_state()
+        .resolve()
+        .visible_column_sizing()
+        .clone();
+    let _prelude_resolved_sizing_regions: prelude::TableResolvedColumnSizingRegions =
+        _root_resolved_sizing_regions.clone();
     let _root_default_width = root::TABLE_DEFAULT_COLUMN_WIDTH;
     let _root_min_width = root::TABLE_MIN_COLUMN_WIDTH;
     let _root_max_width = root::TABLE_MAX_COLUMN_WIDTH;

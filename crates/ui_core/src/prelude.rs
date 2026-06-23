@@ -27,9 +27,10 @@ pub use crate::{
         TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind,
         TableAggregation, TableCellValue, TableColumn, TableColumnId, TableColumnPinning,
         TableColumnRegion, TableColumnRegions, TableColumnSizing, TableExpansionState, TableFilter,
-        TableGroupRow, TablePagination, TableResolvedRow, TableResolvedRowKind, TableResolvedState,
-        TableRow, TableRowId, TableRowModel, TableRowModelStage, TableSort, TableSortDirection,
-        TableState, TableStateCacheKey,
+        TableGroupRow, TablePagination, TableResolvedColumnSizing,
+        TableResolvedColumnSizingRegions, TableResolvedRow, TableResolvedRowKind,
+        TableResolvedState, TableRow, TableRowId, TableRowModel, TableRowModelStage, TableSort,
+        TableSortDirection, TableState, TableStateCacheKey,
     },
     tokens::{ThemeTokens, TokenKey, semantic},
     virtualizer::{

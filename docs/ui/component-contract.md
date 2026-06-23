@@ -402,6 +402,11 @@ adapter state. Group rows may expose aggregate cells through `TableAggregation` 
 grouping value instead of an aggregate payload. `TableColumnPinning` is caller-owned state that
 splits resolved visible columns into `left`, `center`, and `right` `TableColumnRegions` after
 visibility and explicit ordering have been applied; unknown or invisible pinned ids are ignored.
+`TableColumn` also carries preferred width, min/max width, and resizable metadata, while
+`TableColumnSizing` is the caller-owned committed width map keyed by `TableColumnId`.
+`TableState::resolve` exposes `TableResolvedColumnSizingRegions` after visibility, ordering, and
+pinning have resolved so renderers can read per-column width, min/max bounds, region, start/after
+offsets, resize capability, and region/all-column totals without owning adapter state.
 
 `VirtualizerState` describes renderer-neutral viewport calculation inputs and outputs rather than a
 concrete scroll element. The neutral contract accepts item count, viewport extent, scroll offset,
@@ -418,16 +423,17 @@ header activation callbacks, focus handles, and AccessKit mapping. Table accessi
 includes table, row, column-header, and cell roles, row and column position metadata, sort
 metadata for sortable headers, grouped-row depth and parent metadata, and selection metadata keyed
 by stable row id. The render plan exposes `TableColumnRegionRenderPlan` entries and every rendered
-header/body row has stable `left`, `center`, and `right` region debug selectors. These regions are
-semantic render lanes, not a full sticky-grid implementation.
+header/body row has stable `left`, `center`, and `right` region debug selectors. Region render
+plans expose summed widths, and header/body cells read the same resolved column widths. These
+regions are semantic render lanes, not a full sticky-grid implementation.
 
 An official Table entry must satisfy the normal component completion gate: `Table` and `TableState`
 exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
 entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests for row
 identity, grouping, expansion, and virtualizer behavior, and gallery runtime tests for nested
-scroll containment. Custom aggregation callbacks, custom column sizing, sticky pinned-column
-scroll behavior, sticky headers, and two-dimensional grid virtualization remain follow-up
-capabilities.
+scroll containment. Custom aggregation callbacks, interactive column resize handles/callbacks,
+sticky pinned-column scroll behavior, sticky headers, and two-dimensional grid virtualization
+remain follow-up capabilities.
 
 ## Splitter Constraints
 
@@ -567,14 +573,15 @@ arrows, text-selection leases, and richer focus-scope traversal remain deferred.
 reset-on-key-change semantics. It intentionally does not yet expose custom scrollbar anatomy,
 nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.
 `Table` covers stable row ids, row-model ordering, grouping, expansion, built-in group-row
-aggregate cells, pinned left/center/right column regions, sortable header action payloads,
-crate-root/prelude exports, table/cell roles, and a vertically virtualized GPUI recipe whose body
-scroll stays inside the table viewport.
+aggregate cells, pinned left/center/right column regions, committed column sizing state, clamped
+width resolution with region totals/offsets, sortable header action payloads, crate-root/prelude
+exports, table/cell roles, and a vertically virtualized GPUI recipe whose body scroll stays inside
+the table viewport.
 `VirtualizerState` covers one-dimensional range math, stable item keys, measurement idempotence,
 overscan, total size, and snapshot/restore data in `ui_core`; the Table adapter restores snapshot
-measurements but not captured scroll offsets. Sticky pinned-column scroll behavior, custom
-aggregate callbacks, sticky headers, and two-dimensional grid virtualization remain follow-up
-work.
+measurements but not captured scroll offsets. Sticky pinned-column scroll behavior, interactive
+column resizing, custom aggregate callbacks, sticky headers, and two-dimensional grid
+virtualization remain follow-up work.
 `StatusCue` and `EmptyState` are official feedback components. They expose resolved feedback
 intent, size, role, metrics, and token intents, while the GPUI adapters own concrete styling and
 rendered debug selectors. `Tree` is now an official rendered component backed by `TreeState`.

@@ -11,8 +11,8 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{
     Role, Sizable, Size, TableCellValue, TableColumn, TableColumnId, TableColumnRegion,
-    TableResolvedRow, TableResolvedState, TableSort, TableSortDirection, TableState,
-    TableStateCacheKey, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
+    TableResolvedColumnSizing, TableResolvedRow, TableResolvedState, TableSort, TableSortDirection,
+    TableState, TableStateCacheKey, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
     VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState, ui_px,
 };
 use std::collections::BTreeSet;
@@ -104,15 +104,24 @@ pub struct TableColumnRenderPlan {
     sortable: bool,
     sort_direction: Option<TableSortDirection>,
     sort_action: Option<TableHeaderAction>,
+    width: UiPx,
+    min_width: UiPx,
+    max_width: UiPx,
+    start: UiPx,
+    after: UiPx,
+    resizable: bool,
 }
 
 impl TableColumnRenderPlan {
     fn new(
         column: &TableColumn,
+        sizing: &TableResolvedColumnSizing,
         region: TableColumnRegion,
         aria_column_index: usize,
         sort_direction: Option<TableSortDirection>,
     ) -> Self {
+        debug_assert_eq!(sizing.region(), region);
+
         Self {
             id: column.id().clone(),
             label: column.label().to_owned(),
@@ -123,6 +132,12 @@ impl TableColumnRenderPlan {
             sort_action: column
                 .sortable()
                 .then(|| TableHeaderAction::for_column(column, sort_direction)),
+            width: sizing.width(),
+            min_width: sizing.min_width(),
+            max_width: sizing.max_width(),
+            start: sizing.start(),
+            after: sizing.after(),
+            resizable: sizing.resizable(),
         }
     }
 
@@ -161,6 +176,36 @@ impl TableColumnRenderPlan {
         self.sort_action.as_ref()
     }
 
+    /// Returns the resolved column width.
+    pub const fn width(&self) -> UiPx {
+        self.width
+    }
+
+    /// Returns the lower width bound.
+    pub const fn min_width(&self) -> UiPx {
+        self.min_width
+    }
+
+    /// Returns the upper width bound.
+    pub const fn max_width(&self) -> UiPx {
+        self.max_width
+    }
+
+    /// Returns the offset from the start edge of this column's region.
+    pub const fn start(&self) -> UiPx {
+        self.start
+    }
+
+    /// Returns the offset from the end edge of this column's region.
+    pub const fn after(&self) -> UiPx {
+        self.after
+    }
+
+    /// Returns whether the column can be resized.
+    pub const fn resizable(&self) -> bool {
+        self.resizable
+    }
+
     /// Returns the label exposed to assistive technology.
     pub fn accessible_label(&self) -> String {
         match self.sort_direction {
@@ -175,11 +220,19 @@ impl TableColumnRenderPlan {
 pub struct TableColumnRegionRenderPlan {
     region: TableColumnRegion,
     columns: Vec<TableColumnRenderPlan>,
+    total_width: UiPx,
 }
 
 impl TableColumnRegionRenderPlan {
     fn new(region: TableColumnRegion, columns: Vec<TableColumnRenderPlan>) -> Self {
-        Self { region, columns }
+        let total_width = columns
+            .iter()
+            .fold(UiPx::ZERO, |total, column| total + column.width());
+        Self {
+            region,
+            columns,
+            total_width,
+        }
     }
 
     /// Returns the represented column region.
@@ -190,6 +243,11 @@ impl TableColumnRegionRenderPlan {
     /// Returns columns in this region.
     pub fn columns(&self) -> &[TableColumnRenderPlan] {
         &self.columns
+    }
+
+    /// Returns the summed resolved width of columns in this region.
+    pub const fn total_width(&self) -> UiPx {
+        self.total_width
     }
 }
 
@@ -262,6 +320,7 @@ pub struct TableCellRenderPlan {
     region: TableColumnRegion,
     aria_column_index: usize,
     role: Role,
+    width: UiPx,
 }
 
 impl TableCellRenderPlan {
@@ -272,6 +331,7 @@ impl TableCellRenderPlan {
             region: column.region(),
             aria_column_index: column.aria_column_index(),
             role: Role::Cell,
+            width: column.width(),
         }
     }
 
@@ -298,6 +358,11 @@ impl TableCellRenderPlan {
     /// Returns the accessibility role for this cell.
     pub const fn role(&self) -> Role {
         self.role
+    }
+
+    /// Returns the resolved width for this body cell.
+    pub const fn width(&self) -> UiPx {
+        self.width
     }
 }
 
@@ -408,6 +473,7 @@ pub struct TableRenderPlan {
     virtualizer: VirtualizerResolvedState,
     columns: Vec<TableColumnRenderPlan>,
     column_regions: Vec<TableColumnRegionRenderPlan>,
+    total_column_width: UiPx,
     rows: Vec<TableRowRenderPlan>,
     role: Role,
     header_row_role: Role,
@@ -425,6 +491,9 @@ impl TableRenderPlan {
         columns: Vec<TableColumnRenderPlan>,
     ) -> Self {
         let column_regions = resolve_column_region_render_plans(&columns);
+        let total_column_width = column_regions
+            .iter()
+            .fold(UiPx::ZERO, |total, region| total + region.total_width());
         let source_rows = table.final_model().rows();
         let duplicate_row_ids = table
             .duplicate_row_ids()
@@ -456,6 +525,7 @@ impl TableRenderPlan {
             virtualizer,
             columns,
             column_regions,
+            total_column_width,
             rows,
             role: Role::Table,
             header_row_role: Role::Row,
@@ -497,6 +567,20 @@ impl TableRenderPlan {
     /// Returns visible columns split into render regions.
     pub fn column_regions(&self) -> &[TableColumnRegionRenderPlan] {
         &self.column_regions
+    }
+
+    /// Returns the summed resolved width of all visible columns.
+    pub const fn total_column_width(&self) -> UiPx {
+        self.total_column_width
+    }
+
+    /// Returns the summed resolved width of one visible column region.
+    pub fn column_region_width(&self, region: TableColumnRegion) -> UiPx {
+        self.column_regions
+            .iter()
+            .find(|plan| plan.region() == region)
+            .map(TableColumnRegionRenderPlan::total_width)
+            .unwrap_or(UiPx::ZERO)
     }
 
     /// Returns virtualized rows in render order.
@@ -749,9 +833,14 @@ impl Table {
     fn resolve_columns(&self, table: &TableResolvedState) -> Vec<TableColumnRenderPlan> {
         let mut aria_column_index = 1;
         let mut columns = Vec::new();
+        let visible_regions = table.visible_column_regions();
+        let visible_sizing = table.visible_column_sizing();
 
         for region in TableColumnRegion::ALL {
-            for column in table.visible_column_regions().region(region) {
+            for column in visible_regions.region(region) {
+                let sizing = visible_sizing
+                    .column(column.id())
+                    .expect("visible column sizing should resolve for visible columns");
                 let sort_direction = self
                     .state
                     .sorting()
@@ -760,6 +849,7 @@ impl Table {
                     .map(|sort| sort.direction());
                 columns.push(TableColumnRenderPlan::new(
                     column,
+                    sizing,
                     region,
                     aria_column_index,
                     sort_direction,
@@ -892,12 +982,10 @@ fn render_table_header(
                     move || format!("table:{table_id}:header-region:{region_name}")
                 })
                 .h_full()
-                .min_w(px(0.0))
+                .w(gpui_px_from_ui(region_plan.total_width()))
                 .flex()
                 .items_center()
                 .overflow_hidden()
-                .when(region == TableColumnRegion::Center, |this| this.flex_1())
-                .when(region != TableColumnRegion::Center, |this| this.flex_none())
                 .children(columns.into_iter().map({
                     let table_id = table_id.clone();
                     let on_sort_requested = on_sort_requested.clone();
@@ -918,14 +1006,10 @@ fn render_table_header(
                         div()
                             .id(format!("table:{table_id}:header:{column_id}"))
                             .debug_selector(move || format!("table:{table_id}:header:{column_id}"))
-                            .when(column.region() == TableColumnRegion::Center, |this| {
-                                this.min_w(gpui_px_from_ui(metrics.min_column_width()))
-                                    .flex_1()
-                            })
-                            .when(column.region() != TableColumnRegion::Center, |this| {
-                                this.w(gpui_px_from_ui(metrics.min_column_width()))
-                                    .flex_none()
-                            })
+                            .w(gpui_px_from_ui(column.width()))
+                            .min_w(gpui_px_from_ui(column.min_width()))
+                            .max_w(gpui_px_from_ui(column.max_width()))
+                            .flex_none()
                             .h_full()
                             .min_h(px(0.0))
                             .flex()
@@ -1013,10 +1097,11 @@ fn render_table_row(
     let region_cells = TableColumnRegion::ALL
         .into_iter()
         .map(|region| {
-            (
-                region,
-                row.cells_for_region(region).cloned().collect::<Vec<_>>(),
-            )
+            let cells = row.cells_for_region(region).cloned().collect::<Vec<_>>();
+            let region_width = cells
+                .iter()
+                .fold(UiPx::ZERO, |total, cell| total + cell.width());
+            (region, region_width, cells)
         })
         .collect::<Vec<_>>();
 
@@ -1043,61 +1128,61 @@ fn render_table_row(
         .ui_role(row.role())
         .aria_row_index(row.aria_row_index())
         .aria_selected(row.selected())
-        .children(region_cells.into_iter().map(move |(region, cells)| {
-            let table_id = table_id.clone();
-            let render_key = render_key.clone();
-            let region_name = region.as_str().to_owned();
-
-            div()
-                .h_full()
-                .min_w(px(0.0))
-                .flex()
-                .items_center()
-                .overflow_hidden()
-                .id(format!(
-                    "table:{table_id}:row-region:{render_key}:{region_name}"
-                ))
-                .debug_selector({
+        .children(
+            region_cells
+                .into_iter()
+                .map(move |(region, region_width, cells)| {
                     let table_id = table_id.clone();
                     let render_key = render_key.clone();
-                    let region_name = region_name.clone();
-                    move || format!("table:{table_id}:row-region:{render_key}:{region_name}")
-                })
-                .when(region == TableColumnRegion::Center, |this| this.flex_1())
-                .when(region != TableColumnRegion::Center, |this| this.flex_none())
-                .children(cells.into_iter().map(move |cell| {
-                    let table_id = table_id.clone();
-                    let render_key = render_key.clone();
-                    let column_id = cell.column_id().as_str().to_owned();
+                    let region_name = region.as_str().to_owned();
 
                     div()
-                        .id(format!("table:{table_id}:cell:{render_key}:{column_id}"))
-                        .debug_selector(move || {
-                            format!("table:{table_id}:cell:{render_key}:{column_id}")
-                        })
-                        .when(cell.region() == TableColumnRegion::Center, |this| {
-                            this.min_w(gpui_px_from_ui(metrics.min_column_width()))
-                                .flex_1()
-                        })
-                        .when(cell.region() != TableColumnRegion::Center, |this| {
-                            this.w(gpui_px_from_ui(metrics.min_column_width()))
-                                .flex_none()
-                        })
                         .h_full()
+                        .min_w(px(0.0))
                         .flex()
                         .items_center()
-                        .px(gpui_px_from_ui(metrics.cell_padding_x()))
-                        .border_r_1()
-                        .border_color(rgb(0xe7e9e1))
-                        .truncate()
-                        .whitespace_nowrap()
-                        .text_xs()
-                        .text_color(rgb(0x2f3845))
-                        .ui_role(cell.role())
-                        .aria_column_index(cell.aria_column_index())
-                        .child(cell.text().to_owned())
-                }))
-        }))
+                        .overflow_hidden()
+                        .id(format!(
+                            "table:{table_id}:row-region:{render_key}:{region_name}"
+                        ))
+                        .debug_selector({
+                            let table_id = table_id.clone();
+                            let render_key = render_key.clone();
+                            let region_name = region_name.clone();
+                            move || {
+                                format!("table:{table_id}:row-region:{render_key}:{region_name}")
+                            }
+                        })
+                        .w(gpui_px_from_ui(region_width))
+                        .flex_none()
+                        .children(cells.into_iter().map(move |cell| {
+                            let table_id = table_id.clone();
+                            let render_key = render_key.clone();
+                            let column_id = cell.column_id().as_str().to_owned();
+
+                            div()
+                                .id(format!("table:{table_id}:cell:{render_key}:{column_id}"))
+                                .debug_selector(move || {
+                                    format!("table:{table_id}:cell:{render_key}:{column_id}")
+                                })
+                                .w(gpui_px_from_ui(cell.width()))
+                                .flex_none()
+                                .h_full()
+                                .flex()
+                                .items_center()
+                                .px(gpui_px_from_ui(metrics.cell_padding_x()))
+                                .border_r_1()
+                                .border_color(rgb(0xe7e9e1))
+                                .truncate()
+                                .whitespace_nowrap()
+                                .text_xs()
+                                .text_color(rgb(0x2f3845))
+                                .ui_role(cell.role())
+                                .aria_column_index(cell.aria_column_index())
+                                .child(cell.text().to_owned())
+                        }))
+                }),
+        )
 }
 
 fn row_render_key(
