@@ -5,10 +5,10 @@ use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use crate::scroll_area::ScrollArea;
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, CursorStyle, DragMoveEvent, Empty, Entity, FontWeight, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseButton, ParentElement, RenderOnce, ScrollHandle,
-    ScrollWheelEvent, SharedString, StatefulInteractiveElement, Styled, Window, div, point, px,
-    rgb,
+    AnyElement, App, ClickEvent, CursorStyle, DragMoveEvent, Empty, Entity, FontWeight,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, RenderOnce,
+    ScrollHandle, ScrollWheelEvent, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    point, px, rgb,
 };
 use open_gpui_ui_core::{
     Role, Sizable, Size, TableCellValue, TableColumn, TableColumnId, TableColumnRegion,
@@ -1371,8 +1371,14 @@ fn render_table_header(
 ) -> impl IntoElement {
     let table_id = plan.table_id().to_owned();
     let metrics = plan.metrics();
+    let column_header_role = plan.column_header_role();
     let regions = plan.column_regions().to_vec();
     let pinned_layout = plan.pinned_layout().cloned();
+    let center_window = if pinned_layout.is_some() {
+        plan.center_column_window().cloned().map(Rc::new)
+    } else {
+        None
+    };
 
     div()
         .id(format!("table:{table_id}:header-row"))
@@ -1392,11 +1398,44 @@ fn render_table_header(
         .aria_row_index(1)
         .children(regions.into_iter().map(move |region_plan| {
             let table_id = table_id.clone();
+            let center_window = center_window.clone();
             let region = region_plan.region();
             let region_name = region.as_str().to_owned();
-            let columns = region_plan.columns().to_vec();
+            let active_center_window = (region == TableColumnRegion::Center)
+                .then_some(center_window.as_deref())
+                .flatten();
+            let region_width = active_center_window
+                .map(TableCenterColumnWindowPlan::center_width)
+                .unwrap_or_else(|| region_plan.total_width());
+            let columns = active_center_window
+                .map(|window| window.rendered_columns().to_vec())
+                .unwrap_or_else(|| region_plan.columns().to_vec());
+            let mut header_children =
+                Vec::with_capacity(columns.len() + usize::from(active_center_window.is_some()) * 2);
+            if let Some(window) = active_center_window {
+                header_children.push(render_table_lane_spacer(window.leading_spacer_width()));
+            }
+            header_children.extend(columns.into_iter().map({
+                let table_id = table_id.clone();
+                let on_sort_requested = on_sort_requested.clone();
+                let resize_config = resize_config.clone();
+                move |column| {
+                    render_table_header_cell(
+                        table_id.clone(),
+                        metrics,
+                        column_header_role,
+                        column,
+                        on_sort_requested.clone(),
+                        resize_config.clone(),
+                    )
+                    .into_any_element()
+                }
+            }));
+            if let Some(window) = active_center_window {
+                header_children.push(render_table_lane_spacer(window.trailing_spacer_width()));
+            }
             let center_scroll_id = pinned_layout.as_ref().and_then(|layout| {
-                (region == TableColumnRegion::Center && !columns.is_empty())
+                (region == TableColumnRegion::Center && !region_plan.columns().is_empty())
                     .then(|| layout.header_center_scroll_id())
             });
 
@@ -1408,97 +1447,11 @@ fn render_table_header(
                     move || format!("table:{table_id}:header-region:{region_name}")
                 })
                 .h_full()
-                .w(gpui_px_from_ui(region_plan.total_width()))
+                .w(gpui_px_from_ui(region_width))
                 .flex()
                 .items_center()
                 .overflow_hidden()
-                .children(columns.into_iter().map({
-                    let table_id = table_id.clone();
-                    let on_sort_requested = on_sort_requested.clone();
-                    let resize_config = resize_config.clone();
-                    move |column| {
-                        let table_id = table_id.clone();
-                        let column_id = column.id().as_str().to_owned();
-                        let header_table_id = table_id.clone();
-                        let header_column_id = column_id.clone();
-                        let accessible_label = column.accessible_label();
-                        let sort_action = column.sort_action().cloned();
-                        let interactive_sort = sort_action.zip(on_sort_requested.clone());
-                        let resize_config = resize_config.clone();
-                        let show_resize_handle = resize_config.enabled && column.resizable();
-                        let resize_handle_table_id = table_id.clone();
-                        let resize_handle_column = column.clone();
-                        let resize_handle_config = resize_config.clone();
-                        let sort_suffix = column
-                            .sort_direction()
-                            .map(|direction| match direction {
-                                TableSortDirection::Ascending => " ↑",
-                                TableSortDirection::Descending => " ↓",
-                            })
-                            .unwrap_or("");
-
-                        div()
-                            .id(format!("table:{table_id}:header:{column_id}"))
-                            .debug_selector(move || {
-                                format!("table:{header_table_id}:header:{header_column_id}")
-                            })
-                            .w(gpui_px_from_ui(column.width()))
-                            .min_w(gpui_px_from_ui(column.min_width()))
-                            .max_w(gpui_px_from_ui(column.max_width()))
-                            .flex_none()
-                            .relative()
-                            .h_full()
-                            .min_h(px(0.0))
-                            .flex()
-                            .items_center()
-                            .px(gpui_px_from_ui(metrics.cell_padding_x()))
-                            .border_r_1()
-                            .border_color(rgb(0xd6d8ce))
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0x3f4a57))
-                            .truncate()
-                            .whitespace_nowrap()
-                            .ui_role(plan.column_header_role())
-                            .aria_label(accessible_label)
-                            .aria_column_index(column.aria_column_index())
-                            .when_some(interactive_sort, |this, (action, handler)| {
-                                let key_action = action.clone();
-                                let key_handler = handler.clone();
-
-                                this.focusable()
-                                    .tab_stop(true)
-                                    .cursor_pointer()
-                                    .hover(|style| style.bg(rgb(0xe9ece3)))
-                                    .on_click(move |_event: &ClickEvent, window, cx| {
-                                        cx.stop_propagation();
-                                        handler(action.clone(), window, cx);
-                                    })
-                                    .on_key_down(move |event: &KeyDownEvent, window, cx| {
-                                        if event.keystroke.modifiers.modified() {
-                                            return;
-                                        }
-                                        if !matches!(
-                                            event.keystroke.key.as_str(),
-                                            "space" | "enter"
-                                        ) {
-                                            return;
-                                        }
-
-                                        cx.stop_propagation();
-                                        key_handler(key_action.clone(), window, cx);
-                                    })
-                            })
-                            .child(format!("{}{}", column.label(), sort_suffix))
-                            .when(show_resize_handle, |this| {
-                                this.child(render_table_resize_handle(
-                                    resize_handle_table_id,
-                                    resize_handle_column,
-                                    resize_handle_config,
-                                ))
-                            })
-                    }
-                }))
+                .children(header_children)
                 .into_any_element();
 
             if let Some(center_scroll_id) = center_scroll_id {
@@ -1517,6 +1470,89 @@ fn render_table_header(
                 region_lane
             }
         }))
+}
+
+fn render_table_header_cell(
+    table_id: String,
+    metrics: TableMetrics,
+    column_header_role: Role,
+    column: TableColumnRenderPlan,
+    on_sort_requested: Option<Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>>,
+    resize_config: TableResizeRenderConfig,
+) -> impl IntoElement {
+    let column_id = column.id().as_str().to_owned();
+    let header_table_id = table_id.clone();
+    let header_column_id = column_id.clone();
+    let accessible_label = column.accessible_label();
+    let sort_action = column.sort_action().cloned();
+    let interactive_sort = sort_action.zip(on_sort_requested);
+    let show_resize_handle = resize_config.enabled && column.resizable();
+    let resize_handle_table_id = table_id.clone();
+    let resize_handle_column = column.clone();
+    let resize_handle_config = resize_config;
+    let sort_suffix = column
+        .sort_direction()
+        .map(|direction| match direction {
+            TableSortDirection::Ascending => " ↑",
+            TableSortDirection::Descending => " ↓",
+        })
+        .unwrap_or("");
+
+    div()
+        .id(format!("table:{table_id}:header:{column_id}"))
+        .debug_selector(move || format!("table:{header_table_id}:header:{header_column_id}"))
+        .w(gpui_px_from_ui(column.width()))
+        .min_w(gpui_px_from_ui(column.min_width()))
+        .max_w(gpui_px_from_ui(column.max_width()))
+        .flex_none()
+        .relative()
+        .h_full()
+        .min_h(px(0.0))
+        .flex()
+        .items_center()
+        .px(gpui_px_from_ui(metrics.cell_padding_x()))
+        .border_r_1()
+        .border_color(rgb(0xd6d8ce))
+        .text_xs()
+        .font_weight(FontWeight::BOLD)
+        .text_color(rgb(0x3f4a57))
+        .truncate()
+        .whitespace_nowrap()
+        .ui_role(column_header_role)
+        .aria_label(accessible_label)
+        .aria_column_index(column.aria_column_index())
+        .when_some(interactive_sort, |this, (action, handler)| {
+            let key_action = action.clone();
+            let key_handler = handler.clone();
+
+            this.focusable()
+                .tab_stop(true)
+                .cursor_pointer()
+                .hover(|style| style.bg(rgb(0xe9ece3)))
+                .on_click(move |_event: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    handler(action.clone(), window, cx);
+                })
+                .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                    if event.keystroke.modifiers.modified() {
+                        return;
+                    }
+                    if !matches!(event.keystroke.key.as_str(), "space" | "enter") {
+                        return;
+                    }
+
+                    cx.stop_propagation();
+                    key_handler(key_action.clone(), window, cx);
+                })
+        })
+        .child(format!("{}{}", column.label(), sort_suffix))
+        .when(show_resize_handle, |this| {
+            this.child(render_table_resize_handle(
+                resize_handle_table_id,
+                resize_handle_column,
+                resize_handle_config,
+            ))
+        })
 }
 
 fn render_table_resize_handle(
@@ -1724,6 +1760,11 @@ fn render_table_body(
     let total_size = plan.virtualizer().total_size();
     let rows = plan.rows().to_vec();
     let pinned_layout = plan.pinned_layout().cloned();
+    let center_window = if pinned_layout.is_some() {
+        plan.center_column_window().cloned().map(Rc::new)
+    } else {
+        None
+    };
 
     div()
         .id(format!("table:{table_id}:body"))
@@ -1736,11 +1777,13 @@ fn render_table_body(
         .h(gpui_px_from_ui(total_size))
         .children(rows.into_iter().map(move |row| {
             let table_id = table_id.clone();
+            let center_window = center_window.clone();
             render_table_row(
                 table_id,
                 row,
                 metrics,
                 pinned_layout.clone(),
+                center_window,
                 horizontal_scroll_handle.clone(),
             )
         }))
@@ -1751,6 +1794,7 @@ fn render_table_row(
     row: TableRowRenderPlan,
     metrics: TableMetrics,
     pinned_layout: Option<TablePinnedLayoutPlan>,
+    center_window: Option<Rc<TableCenterColumnWindowPlan>>,
     horizontal_scroll_handle: ScrollHandle,
 ) -> impl IntoElement {
     let render_key = row.render_key().to_owned();
@@ -1766,11 +1810,33 @@ fn render_table_row(
     let region_cells = TableColumnRegion::ALL
         .into_iter()
         .map(|region| {
-            let cells = row.cells_for_region(region).cloned().collect::<Vec<_>>();
-            let region_width = cells
-                .iter()
-                .fold(UiPx::ZERO, |total, cell| total + cell.width());
-            (region, region_width, cells)
+            let source_cells = row.cells_for_region(region).cloned().collect::<Vec<_>>();
+            let active_center_window = (region == TableColumnRegion::Center)
+                .then_some(center_window.as_deref())
+                .flatten();
+            let cells = table_row_region_cells_for_window(&source_cells, active_center_window);
+            let region_width = active_center_window
+                .map(TableCenterColumnWindowPlan::center_width)
+                .unwrap_or_else(|| {
+                    source_cells
+                        .iter()
+                        .fold(UiPx::ZERO, |total, cell| total + cell.width())
+                });
+            let leading_spacer_width = active_center_window
+                .map(TableCenterColumnWindowPlan::leading_spacer_width)
+                .unwrap_or(UiPx::ZERO);
+            let trailing_spacer_width = active_center_window
+                .map(TableCenterColumnWindowPlan::trailing_spacer_width)
+                .unwrap_or(UiPx::ZERO);
+            (
+                region,
+                region_width,
+                cells,
+                !source_cells.is_empty(),
+                leading_spacer_width,
+                trailing_spacer_width,
+                active_center_window.is_some(),
+            )
         })
         .collect::<Vec<_>>();
 
@@ -1797,82 +1863,139 @@ fn render_table_row(
         .ui_role(row.role())
         .aria_row_index(row.aria_row_index())
         .aria_selected(row.selected())
-        .children(
-            region_cells
-                .into_iter()
-                .map(move |(region, region_width, cells)| {
+        .children(region_cells.into_iter().map(
+            move |(
+                region,
+                region_width,
+                cells,
+                has_source_cells,
+                leading_spacer_width,
+                trailing_spacer_width,
+                uses_center_window,
+            )| {
+                let table_id = table_id.clone();
+                let render_key = render_key.clone();
+                let region_name = region.as_str().to_owned();
+                let center_scroll_id = pinned_layout.as_ref().and_then(|layout| {
+                    (region == TableColumnRegion::Center && has_source_cells)
+                        .then(|| layout.row_center_scroll_id(&render_key))
+                });
+                let mut region_children =
+                    Vec::with_capacity(cells.len() + usize::from(uses_center_window) * 2);
+                if uses_center_window {
+                    region_children.push(render_table_lane_spacer(leading_spacer_width));
+                }
+                region_children.extend(cells.into_iter().map({
                     let table_id = table_id.clone();
                     let render_key = render_key.clone();
-                    let region_name = region.as_str().to_owned();
-                    let center_scroll_id = pinned_layout.as_ref().and_then(|layout| {
-                        (region == TableColumnRegion::Center && !cells.is_empty())
-                            .then(|| layout.row_center_scroll_id(&render_key))
-                    });
+                    move |cell| {
+                        render_table_body_cell(table_id.clone(), render_key.clone(), metrics, cell)
+                            .into_any_element()
+                    }
+                }));
+                if uses_center_window {
+                    region_children.push(render_table_lane_spacer(trailing_spacer_width));
+                }
 
-                    let region_lane = div()
+                let region_lane = div()
+                    .h_full()
+                    .min_w(px(0.0))
+                    .flex()
+                    .items_center()
+                    .overflow_hidden()
+                    .id(format!(
+                        "table:{table_id}:row-region:{render_key}:{region_name}"
+                    ))
+                    .debug_selector({
+                        let table_id = table_id.clone();
+                        let render_key = render_key.clone();
+                        let region_name = region_name.clone();
+                        move || format!("table:{table_id}:row-region:{render_key}:{region_name}")
+                    })
+                    .w(gpui_px_from_ui(region_width))
+                    .flex_none()
+                    .children(region_children)
+                    .into_any_element();
+
+                if let Some(center_scroll_id) = center_scroll_id {
+                    div()
                         .h_full()
                         .min_w(px(0.0))
-                        .flex()
-                        .items_center()
-                        .overflow_hidden()
-                        .id(format!(
-                            "table:{table_id}:row-region:{render_key}:{region_name}"
-                        ))
-                        .debug_selector({
-                            let table_id = table_id.clone();
-                            let render_key = render_key.clone();
-                            let region_name = region_name.clone();
-                            move || {
-                                format!("table:{table_id}:row-region:{render_key}:{region_name}")
-                            }
-                        })
-                        .w(gpui_px_from_ui(region_width))
-                        .flex_none()
-                        .children(cells.into_iter().map(move |cell| {
-                            let table_id = table_id.clone();
-                            let render_key = render_key.clone();
-                            let column_id = cell.column_id().as_str().to_owned();
+                        .flex_1()
+                        .child(
+                            ScrollArea::new(center_scroll_id, region_lane)
+                                .horizontal()
+                                .scroll_handle(&horizontal_scroll_handle)
+                                .with_size(metrics.size()),
+                        )
+                        .into_any_element()
+                } else {
+                    region_lane
+                }
+            },
+        ))
+}
 
-                            div()
-                                .id(format!("table:{table_id}:cell:{render_key}:{column_id}"))
-                                .debug_selector(move || {
-                                    format!("table:{table_id}:cell:{render_key}:{column_id}")
-                                })
-                                .w(gpui_px_from_ui(cell.width()))
-                                .flex_none()
-                                .h_full()
-                                .flex()
-                                .items_center()
-                                .px(gpui_px_from_ui(metrics.cell_padding_x()))
-                                .border_r_1()
-                                .border_color(rgb(0xe7e9e1))
-                                .truncate()
-                                .whitespace_nowrap()
-                                .text_xs()
-                                .text_color(rgb(0x2f3845))
-                                .ui_role(cell.role())
-                                .aria_column_index(cell.aria_column_index())
-                                .child(cell.text().to_owned())
-                        }))
-                        .into_any_element();
+fn table_row_region_cells_for_window(
+    source_cells: &[TableCellRenderPlan],
+    center_window: Option<&TableCenterColumnWindowPlan>,
+) -> Vec<TableCellRenderPlan> {
+    let Some(center_window) = center_window else {
+        return source_cells.to_vec();
+    };
 
-                    if let Some(center_scroll_id) = center_scroll_id {
-                        div()
-                            .h_full()
-                            .min_w(px(0.0))
-                            .flex_1()
-                            .child(
-                                ScrollArea::new(center_scroll_id, region_lane)
-                                    .horizontal()
-                                    .scroll_handle(&horizontal_scroll_handle)
-                                    .with_size(metrics.size()),
-                            )
-                            .into_any_element()
-                    } else {
-                        region_lane
-                    }
-                }),
-        )
+    let cells_by_column = source_cells
+        .iter()
+        .map(|cell| (cell.column_id(), cell))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    center_window
+        .rendered_columns()
+        .iter()
+        .filter_map(|column| {
+            cells_by_column
+                .get(column.id())
+                .map(|cell| (**cell).clone())
+        })
+        .collect()
+}
+
+fn render_table_body_cell(
+    table_id: String,
+    render_key: String,
+    metrics: TableMetrics,
+    cell: TableCellRenderPlan,
+) -> impl IntoElement {
+    let column_id = cell.column_id().as_str().to_owned();
+
+    div()
+        .id(format!("table:{table_id}:cell:{render_key}:{column_id}"))
+        .debug_selector(move || format!("table:{table_id}:cell:{render_key}:{column_id}"))
+        .w(gpui_px_from_ui(cell.width()))
+        .flex_none()
+        .h_full()
+        .flex()
+        .items_center()
+        .px(gpui_px_from_ui(metrics.cell_padding_x()))
+        .border_r_1()
+        .border_color(rgb(0xe7e9e1))
+        .truncate()
+        .whitespace_nowrap()
+        .text_xs()
+        .text_color(rgb(0x2f3845))
+        .ui_role(cell.role())
+        .aria_column_index(cell.aria_column_index())
+        .child(cell.text().to_owned())
+}
+
+fn render_table_lane_spacer(width: UiPx) -> AnyElement {
+    div()
+        .w(gpui_px_from_ui(width))
+        .min_w(px(0.0))
+        .flex_none()
+        .h_full()
+        .min_h(px(0.0))
+        .into_any_element()
 }
 
 fn row_render_key(

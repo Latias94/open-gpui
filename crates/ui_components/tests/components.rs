@@ -1538,7 +1538,36 @@ fn sample_center_window_table_state() -> TableState {
         .with_cell("metric_05", 60_usize)
         .with_cell("status", "Ready");
 
-    TableState::new([row])
+    sample_center_window_table_state_from_rows([row])
+}
+
+fn sample_center_window_table_state_with_rows(row_count: usize) -> TableState {
+    let rows = (0..row_count).map(|index| {
+        TableRow::new(format!("row-{index:04}"))
+            .with_cell("name", format!("Package {index:04}"))
+            .with_cell("metric_00", index + 10)
+            .with_cell("metric_01", index + 20)
+            .with_cell("metric_02", index + 30)
+            .with_cell("metric_03", index + 40)
+            .with_cell("metric_04", index + 50)
+            .with_cell("metric_05", index + 60)
+            .with_cell(
+                "status",
+                if index.is_multiple_of(2) {
+                    "Ready"
+                } else {
+                    "Queued"
+                },
+            )
+    });
+
+    sample_center_window_table_state_from_rows(rows)
+}
+
+fn sample_center_window_table_state_from_rows(
+    rows: impl IntoIterator<Item = TableRow>,
+) -> TableState {
+    TableState::new(rows)
         .with_columns([
             TableColumn::new("name", "Name").with_width(ui_px(140.0)),
             TableColumn::new("metric_00", "Metric 00").with_width(ui_px(60.0)),
@@ -4318,6 +4347,200 @@ fn table_runtime_pinned_center_scrolls_without_moving_fixed_lanes(
         right_after.left(),
         right_before.left(),
         "expected right pinned lane to keep its screen-space x position"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_center_column_window_mounts_only_rendered_center_cells(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let table = Table::new(
+                "center-window-runtime-table",
+                "Center window runtime table",
+                sample_center_window_table_state_with_rows(20),
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(96.0))
+            .overscan(0);
+
+            div()
+                .size_full()
+                .child(div().w(px(340.0)).h(px(160.0)).child(table))
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:header:metric_00")
+            .is_some(),
+        "expected the first center header to render before horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:cell:row-0000:metric_00")
+            .is_some(),
+        "expected the first center body cell to render before horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:header:metric_05")
+            .is_none(),
+        "far-right center headers should stay unmounted before horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:cell:row-0000:metric_05")
+            .is_none(),
+        "far-right center body cells should stay unmounted before horizontal scrolling"
+    );
+
+    let left_before = cx
+        .debug_bounds("table:center-window-runtime-table:cell:row-0000:name")
+        .expect("left pinned cell should render before horizontal scrolling");
+    let right_before = cx
+        .debug_bounds("table:center-window-runtime-table:cell:row-0000:status")
+        .expect("right pinned cell should render before horizontal scrolling");
+    let body_center_viewport = cx
+        .debug_bounds("scroll-area:table:center-window-runtime-table:row-center-scroll:row-0000")
+        .expect("body center lane should expose a horizontal scroll viewport");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: body_center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-440.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:header:metric_00")
+            .is_none(),
+        "leftmost center headers should unmount after the center window advances"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:cell:row-0000:metric_00")
+            .is_none(),
+        "leftmost center cells should unmount after the center window advances"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:header:metric_05")
+            .is_some(),
+        "far-right center headers should render after horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-runtime-table:cell:row-0000:metric_05")
+            .is_some(),
+        "far-right center cells should render after horizontal scrolling"
+    );
+
+    let left_after = cx
+        .debug_bounds("table:center-window-runtime-table:cell:row-0000:name")
+        .expect("left pinned cell should remain rendered after horizontal scrolling");
+    let right_after = cx
+        .debug_bounds("table:center-window-runtime-table:cell:row-0000:status")
+        .expect("right pinned cell should remain rendered after horizontal scrolling");
+    assert_eq!(
+        left_after.left(),
+        left_before.left(),
+        "left pinned lane should keep its screen-space x position"
+    );
+    assert_eq!(
+        right_after.left(),
+        right_before.left(),
+        "right pinned lane should keep its screen-space x position"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_center_column_window_keeps_row_virtualizer_independent(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let table = Table::new(
+                "center-window-rows-runtime-table",
+                "Center window rows runtime table",
+                sample_center_window_table_state_with_rows(80),
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(120.0))
+            .overscan(0);
+
+            div()
+                .size_full()
+                .child(div().w(px(340.0)).h(px(160.0)).child(table))
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let body_center_viewport = cx
+        .debug_bounds(
+            "scroll-area:table:center-window-rows-runtime-table:row-center-scroll:row-0000",
+        )
+        .expect("body center lane should expose a horizontal scroll viewport");
+    cx.simulate_event(ScrollWheelEvent {
+        position: body_center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-440.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("table:center-window-rows-runtime-table:cell:row-0000:metric_05")
+            .is_some(),
+        "horizontal center window should reveal far-right cells before vertical scrolling"
+    );
+
+    let first_row_pinned_cell = cx
+        .debug_bounds("table:center-window-rows-runtime-table:cell:row-0000:name")
+        .expect("left pinned cell should remain reachable before vertical scrolling");
+    cx.simulate_event(ScrollWheelEvent {
+        position: first_row_pinned_cell.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("table:center-window-rows-runtime-table:row:row-0000")
+            .is_none(),
+        "vertical scrolling should still advance the row virtualizer"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-rows-runtime-table:row:row-0010")
+            .is_some(),
+        "row 10 should render after vertical scrolling"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-rows-runtime-table:cell:row-0010:metric_05")
+            .is_some(),
+        "newly rendered rows should consume the current center column window"
+    );
+    assert!(
+        cx.debug_bounds("table:center-window-rows-runtime-table:cell:row-0010:metric_00")
+            .is_none(),
+        "off-window center cells should remain unmounted on newly rendered rows"
     );
 }
 
