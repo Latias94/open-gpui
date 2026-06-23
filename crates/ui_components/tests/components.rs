@@ -20,16 +20,17 @@ use open_gpui_ui_components::{
     SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor,
     SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
     Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
-    TableColumn, TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
-    TableColumnSizingChange, TableFilter, TableHeaderAction, TablePagination, TableRow, TableSort,
-    TableSortDirection, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
-    TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot,
-    Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
-    ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy,
-    TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList, VirtualizedListActivation,
-    VirtualizedListItemDescriptor, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
-    VirtualizedListScrollStrategy, VirtualizedListState, VirtualizerItemKey, VirtualizerRange,
-    VirtualizerSnapshot, VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
+    TableCenterColumnWindowPlan, TableColumn, TableColumnPinning, TableColumnRegion,
+    TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableFilter,
+    TableHeaderAction, TablePagination, TableRow, TableSort, TableSortDirection, TableState, Tabs,
+    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput,
+    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
+    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
+    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
+    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -1521,6 +1522,46 @@ fn sample_pinned_table_state_with_rows(row_count: usize) -> TableState {
         .with_column_pinning(
             TableColumnPinning::new()
                 .pinned_left(["name", "score"])
+                .pinned_right(["status"]),
+        )
+        .with_pagination(TablePagination::disabled())
+}
+
+fn sample_center_window_table_state() -> TableState {
+    let row = TableRow::new("row-a")
+        .with_cell("name", "Alpha")
+        .with_cell("metric_00", 10_usize)
+        .with_cell("metric_01", 20_usize)
+        .with_cell("metric_02", 30_usize)
+        .with_cell("metric_03", 40_usize)
+        .with_cell("metric_04", 50_usize)
+        .with_cell("metric_05", 60_usize)
+        .with_cell("status", "Ready");
+
+    TableState::new([row])
+        .with_columns([
+            TableColumn::new("name", "Name").with_width(ui_px(140.0)),
+            TableColumn::new("metric_00", "Metric 00").with_width(ui_px(60.0)),
+            TableColumn::new("metric_01", "Metric 01").with_width(ui_px(72.0)),
+            TableColumn::new("metric_02", "Metric 02").with_width(ui_px(84.0)),
+            TableColumn::new("metric_03", "Metric 03").with_width(ui_px(96.0)),
+            TableColumn::new("metric_04", "Metric 04").with_width(ui_px(108.0)),
+            TableColumn::new("metric_05", "Metric 05").with_width(ui_px(120.0)),
+            TableColumn::new("status", "Status").with_width(ui_px(132.0)),
+        ])
+        .with_column_order([
+            "name",
+            "metric_00",
+            "metric_01",
+            "metric_02",
+            "metric_03",
+            "metric_04",
+            "metric_05",
+            "status",
+        ])
+        .with_column_pinning(
+            TableColumnPinning::new()
+                .pinned_left(["name"])
                 .pinned_right(["status"]),
         )
         .with_pagination(TablePagination::disabled())
@@ -3153,6 +3194,128 @@ fn table_render_plan_exposes_pinned_column_regions() {
 }
 
 #[test]
+fn table_render_plan_exposes_center_column_window_metadata() {
+    let plan = Table::new(
+        "center-window-table",
+        "Center window table",
+        sample_center_window_table_state(),
+    )
+    .row_height(ui_px(24.0))
+    .viewport_extent(ui_px(96.0))
+    .overscan(4)
+    .render_plan(UiPx::ZERO, ui_px(96.0));
+    let window = plan
+        .center_column_window()
+        .expect("center columns should resolve window metadata");
+
+    assert_eq!(window.center_width(), ui_px(540.0));
+    assert!(!window.virtualized());
+    assert_eq!(*window.visible_range(), VirtualizerRange::new(0, 6));
+    assert_eq!(*window.overscan_range(), VirtualizerRange::new(0, 6));
+    assert_eq!(window.leading_spacer_width(), UiPx::ZERO);
+    assert_eq!(window.trailing_spacer_width(), UiPx::ZERO);
+    assert_eq!(window.rendered_column_count(), 6);
+    assert_eq!(
+        window
+            .rendered_columns()
+            .iter()
+            .map(|column| column.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "metric_00",
+            "metric_01",
+            "metric_02",
+            "metric_03",
+            "metric_04",
+            "metric_05",
+        ]
+    );
+    assert!(
+        window
+            .rendered_columns()
+            .iter()
+            .all(|column| column.region() == TableColumnRegion::Center),
+        "pinned left/right columns must stay outside the center window"
+    );
+}
+
+#[test]
+fn table_center_column_window_matches_exact_size_virtualizer() {
+    let plan = Table::new(
+        "wide-center-window-table",
+        "Wide center window table",
+        sample_center_window_table_state(),
+    )
+    .row_height(ui_px(24.0))
+    .viewport_extent(ui_px(96.0))
+    .overscan(4)
+    .render_plan(UiPx::ZERO, ui_px(96.0));
+    let center_columns = plan
+        .column_regions()
+        .iter()
+        .find(|region| region.region() == TableColumnRegion::Center)
+        .expect("center region should resolve")
+        .columns();
+    let window =
+        TableCenterColumnWindowPlan::resolve(center_columns, ui_px(170.0), ui_px(120.0), 2)
+            .expect("center column window should resolve");
+    let expected = VirtualizerState::new(center_columns.len(), center_columns[0].width())
+        .with_viewport_extent(ui_px(120.0))
+        .with_scroll_offset(ui_px(170.0))
+        .with_overscan(2)
+        .resolve_known_size_window(|index| {
+            let column = &center_columns[index];
+            (
+                VirtualizerItemKey::new(column.id().as_str().to_owned()),
+                column.width(),
+            )
+        });
+
+    assert!(window.virtualized());
+    assert!(window.rendered_column_count() < center_columns.len());
+    assert_eq!(window.center_width(), expected.total_size());
+    assert_eq!(window.visible_range(), expected.visible_range());
+    assert_eq!(window.overscan_range(), expected.overscan_range());
+    assert_eq!(window.rendered_column_count(), expected.items().len());
+    assert_eq!(
+        window.leading_spacer_width(),
+        expected
+            .items()
+            .first()
+            .map(|item| item.start())
+            .unwrap_or(UiPx::ZERO)
+    );
+    assert_eq!(
+        window.trailing_spacer_width(),
+        expected
+            .items()
+            .last()
+            .map(|item| expected.total_size() - item.end())
+            .unwrap_or(UiPx::ZERO)
+    );
+    assert_eq!(
+        window
+            .rendered_columns()
+            .iter()
+            .map(|column| column.id().as_str())
+            .collect::<Vec<_>>(),
+        expected
+            .items()
+            .iter()
+            .map(|item| item.key().as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        plan.column_region_width(TableColumnRegion::Left),
+        ui_px(140.0)
+    );
+    assert_eq!(
+        plan.column_region_width(TableColumnRegion::Right),
+        ui_px(132.0)
+    );
+}
+
+#[test]
 fn table_virtualizer_snapshot_restores_measurements_without_overriding_live_scroll() {
     let snapshot = VirtualizerSnapshot::new(
         ui_px(0.0),
@@ -3602,6 +3765,21 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .clone();
     let _prelude_pinned_layout: prelude::TablePinnedLayoutPlan = root_pinned_layout.clone();
     assert_eq!(root_pinned_layout.table_id(), "root-pinned-table");
+    let root_center_window: root::TableCenterColumnWindowPlan =
+        root::TableCenterColumnWindowPlan::resolve(
+            root_pinned_render_plan
+                .column_regions()
+                .iter()
+                .find(|region| region.region() == root::TableColumnRegion::Center)
+                .expect("center region should resolve")
+                .columns(),
+            ui_px(0.0),
+            ui_px(128.0),
+            2,
+        )
+        .expect("exported center column window plan should resolve");
+    let _prelude_center_window: prelude::TableCenterColumnWindowPlan = root_center_window.clone();
+    assert_eq!(root_center_window.rendered_column_count(), 1);
     let header_action: root::TableHeaderAction = root_plan.columns()[0]
         .sort_action()
         .expect("sortable exported table column should expose a header action")

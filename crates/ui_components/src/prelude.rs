@@ -80,9 +80,9 @@ pub use crate::splitter::{
 };
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use crate::table::{
-    Table, TableCellRenderPlan, TableColumnRegionRenderPlan, TableColumnRenderPlan,
-    TableColumnSizingChange, TableHeaderAction, TableMetrics, TablePinnedLayoutPlan,
-    TableRenderPlan, TableRowRenderPlan,
+    Table, TableCellRenderPlan, TableCenterColumnWindowPlan, TableColumnRegionRenderPlan,
+    TableColumnRenderPlan, TableColumnSizingChange, TableHeaderAction, TableMetrics,
+    TablePinnedLayoutPlan, TableRenderPlan, TableRowRenderPlan,
 };
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

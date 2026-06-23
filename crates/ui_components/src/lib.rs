@@ -158,9 +158,9 @@ pub use splitter::{
 };
 pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use table::{
-    Table, TableCellRenderPlan, TableColumnRegionRenderPlan, TableColumnRenderPlan,
-    TableColumnSizingChange, TableHeaderAction, TableMetrics, TablePinnedLayoutPlan,
-    TableRenderPlan, TableRowRenderPlan,
+    Table, TableCellRenderPlan, TableCenterColumnWindowPlan, TableColumnRegionRenderPlan,
+    TableColumnRenderPlan, TableColumnSizingChange, TableHeaderAction, TableMetrics,
+    TablePinnedLayoutPlan, TableRenderPlan, TableRowRenderPlan,
 };
 pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

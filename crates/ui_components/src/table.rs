@@ -15,8 +15,8 @@ use open_gpui_ui_core::{
     TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState, TableColumnSizing,
     TableResolvedColumnSizing, TableResolvedRow, TableResolvedState, TableSort, TableSortDirection,
     TableState, TableStateCacheKey, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
-    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState, drag_table_column_resize,
-    end_table_column_resize, ui_px,
+    VirtualizerRange, VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState,
+    drag_table_column_resize, end_table_column_resize, ui_px,
 };
 use std::collections::BTreeSet;
 use std::rc::Rc;
@@ -359,6 +359,112 @@ impl TablePinnedLayoutPlan {
     }
 }
 
+/// Resolved render metadata for the virtualized center column lane.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableCenterColumnWindowPlan {
+    virtualizer: VirtualizerResolvedState,
+    rendered_columns: Vec<TableColumnRenderPlan>,
+    leading_spacer_width: UiPx,
+    trailing_spacer_width: UiPx,
+}
+
+impl TableCenterColumnWindowPlan {
+    /// Resolves a center-column virtual window from resolved center columns.
+    pub fn resolve(
+        columns: &[TableColumnRenderPlan],
+        scroll_offset: UiPx,
+        viewport_extent: UiPx,
+        overscan: usize,
+    ) -> Option<Self> {
+        if columns.is_empty() {
+            return None;
+        }
+
+        let estimated_size = columns
+            .first()
+            .map(TableColumnRenderPlan::width)
+            .unwrap_or(UiPx::ZERO);
+        let virtualizer = VirtualizerState::new(columns.len(), estimated_size)
+            .with_viewport_extent(nonnegative_px(viewport_extent))
+            .with_scroll_offset(nonnegative_px(scroll_offset))
+            .with_overscan(overscan)
+            .resolve_known_size_window(|index| {
+                let column = &columns[index];
+                (
+                    VirtualizerItemKey::new(column.id().as_str().to_owned()),
+                    column.width(),
+                )
+            });
+        let rendered_columns = virtualizer
+            .items()
+            .iter()
+            .filter_map(|measurement| columns.get(measurement.index()).cloned())
+            .collect::<Vec<_>>();
+        let leading_spacer_width = virtualizer
+            .items()
+            .first()
+            .map(VirtualizerItemMeasurement::start)
+            .unwrap_or(UiPx::ZERO);
+        let trailing_spacer_width = virtualizer
+            .items()
+            .last()
+            .map(|item| nonnegative_px(virtualizer.total_size() - item.end()))
+            .unwrap_or(UiPx::ZERO);
+
+        Some(Self {
+            virtualizer,
+            rendered_columns,
+            leading_spacer_width,
+            trailing_spacer_width,
+        })
+    }
+
+    /// Returns the total width of the center lane.
+    pub const fn center_width(&self) -> UiPx {
+        self.virtualizer.total_size()
+    }
+
+    /// Returns the visible center-column range before overscan.
+    pub const fn visible_range(&self) -> &VirtualizerRange {
+        self.virtualizer.visible_range()
+    }
+
+    /// Returns the rendered center-column range after overscan.
+    pub const fn overscan_range(&self) -> &VirtualizerRange {
+        self.virtualizer.overscan_range()
+    }
+
+    /// Returns the rendered center columns in window order.
+    pub fn rendered_columns(&self) -> &[TableColumnRenderPlan] {
+        &self.rendered_columns
+    }
+
+    /// Returns the rendered center column count.
+    pub fn rendered_column_count(&self) -> usize {
+        self.rendered_columns.len()
+    }
+
+    /// Returns the leading spacer width before the first rendered center column.
+    pub const fn leading_spacer_width(&self) -> UiPx {
+        self.leading_spacer_width
+    }
+
+    /// Returns the trailing spacer width after the last rendered center column.
+    pub const fn trailing_spacer_width(&self) -> UiPx {
+        self.trailing_spacer_width
+    }
+
+    /// Returns whether the center lane is currently virtualized.
+    pub fn virtualized(&self) -> bool {
+        self.rendered_columns.len() < self.virtualizer.count()
+    }
+
+    /// Returns the resolved virtualizer state.
+    pub const fn virtualizer(&self) -> &VirtualizerResolvedState {
+        &self.virtualizer
+    }
+}
+
 /// Sort request emitted by an interactive table column header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableHeaderAction {
@@ -620,6 +726,7 @@ pub struct TableRenderPlan {
     columns: Vec<TableColumnRenderPlan>,
     column_regions: Vec<TableColumnRegionRenderPlan>,
     pinned_layout: Option<TablePinnedLayoutPlan>,
+    center_column_window: Option<TableCenterColumnWindowPlan>,
     total_column_width: UiPx,
     rows: Vec<TableRowRenderPlan>,
     role: Role,
@@ -636,6 +743,8 @@ impl TableRenderPlan {
         table: Rc<TableResolvedState>,
         virtualizer: VirtualizerResolvedState,
         columns: Vec<TableColumnRenderPlan>,
+        center_scroll_offset: Option<UiPx>,
+        center_viewport_extent: Option<UiPx>,
     ) -> Self {
         let column_regions = resolve_column_region_render_plans(&columns);
         let total_column_width = column_regions
@@ -645,6 +754,12 @@ impl TableRenderPlan {
             &table_id,
             &column_regions,
             total_column_width,
+        );
+        let center_column_window = resolve_center_column_window(
+            &column_regions,
+            center_scroll_offset,
+            center_viewport_extent,
+            metrics.overscan(),
         );
         let source_rows = table.final_model().rows();
         let duplicate_row_ids = table
@@ -678,6 +793,7 @@ impl TableRenderPlan {
             columns,
             column_regions,
             pinned_layout,
+            center_column_window,
             total_column_width,
             rows,
             role: Role::Table,
@@ -725,6 +841,11 @@ impl TableRenderPlan {
     /// Returns sticky pinned-column layout metadata, when a split layout is needed.
     pub fn pinned_layout(&self) -> Option<&TablePinnedLayoutPlan> {
         self.pinned_layout.as_ref()
+    }
+
+    /// Returns center-column window metadata, when the center lane exists.
+    pub fn center_column_window(&self) -> Option<&TableCenterColumnWindowPlan> {
+        self.center_column_window.as_ref()
     }
 
     /// Returns whether this render plan needs split pinned-column layout.
@@ -966,6 +1087,8 @@ impl Table {
             table,
             virtualizer,
             columns,
+            None,
+            None,
         )
     }
 
@@ -973,6 +1096,7 @@ impl Table {
         &self,
         scroll_offset: UiPx,
         viewport_extent: UiPx,
+        horizontal_scroll_handle: ScrollHandle,
         runtime: &mut TableRuntime,
     ) -> TableRenderPlan {
         let metrics = self.metrics_for_viewport(viewport_extent);
@@ -998,6 +1122,12 @@ impl Table {
             .as_ref()
             .expect("table runtime cache should be initialized");
         let virtualizer = self.resolve_virtualizer(&cache.table, metrics, scroll_offset);
+        let center_scroll_offset =
+            ui_px((-ui_px_from_gpui(horizontal_scroll_handle.offset().x).as_f32()).max(0.0));
+        let center_viewport_extent = ui_px_from_gpui(horizontal_scroll_handle.bounds().size.width);
+        let center_viewport_extent =
+            (center_viewport_extent.as_f32() > 0.0).then_some(center_viewport_extent);
+        let center_scroll_offset = center_viewport_extent.map(|_| center_scroll_offset);
 
         TableRenderPlan::resolve(
             self.id.clone(),
@@ -1006,6 +1136,8 @@ impl Table {
             cache.table.clone(),
             virtualizer,
             cache.columns.clone(),
+            center_scroll_offset,
+            center_viewport_extent,
         )
     }
 
@@ -1102,6 +1234,25 @@ fn resolve_column_region_render_plans(
         .collect()
 }
 
+fn resolve_center_column_window(
+    regions: &[TableColumnRegionRenderPlan],
+    scroll_offset: Option<UiPx>,
+    viewport_extent: Option<UiPx>,
+    overscan: usize,
+) -> Option<TableCenterColumnWindowPlan> {
+    let center = regions
+        .iter()
+        .find(|plan| plan.region() == TableColumnRegion::Center)?;
+    let viewport_extent = viewport_extent.unwrap_or_else(|| center.total_width());
+
+    TableCenterColumnWindowPlan::resolve(
+        center.columns(),
+        scroll_offset.unwrap_or(UiPx::ZERO),
+        viewport_extent,
+        overscan,
+    )
+}
+
 impl Sizable for Table {
     fn with_size(mut self, size: Size) -> Self {
         self.metrics = TableMetrics::from_size(size);
@@ -1137,7 +1288,12 @@ impl RenderOnce for Table {
         let resize_drag_runtime = resize_config.runtime.clone();
         let resize_drag_config = resize_config.clone();
         let plan = runtime.update(cx, |runtime, _| {
-            self.render_plan_with_runtime(scroll_offset, viewport_extent, runtime)
+            self.render_plan_with_runtime(
+                scroll_offset,
+                viewport_extent,
+                horizontal_scroll_handle.clone(),
+                runtime,
+            )
         });
         let table_id = plan.table_id().to_owned();
         let label = plan.label().to_owned();
