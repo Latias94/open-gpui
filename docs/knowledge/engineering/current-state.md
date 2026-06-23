@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 5280468
+git_commit: 3773d5c
 verified_by:
   - cargo check -p open-gpui-ui-core --tests
   - cargo check -p open-gpui-ui-components --tests
@@ -58,7 +58,7 @@ verified_by:
 
 - Goal: Execute the Table component-depth slice: grouped rows, expansion state, aggregate metadata, pinned-column semantics, and gallery proof.
 - Branch: `main`
-- Last verified: 2026-06-23, Table depth U4 gates passed on top of `dd525ab`: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-core --tests`, `cargo check -p open-gpui-ui-components --tests`, `cargo nextest run -p open-gpui-ui-core table`, `cargo nextest run -p open-gpui-ui-components table`, `cargo nextest run -p open-gpui-ui-foundation-gallery table`, `git diff --check`, and engineering wiki validation.
+- Last verified: 2026-06-23, Table depth U5 focused gates passed on top of `3773d5c`: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p open-gpui-ui-foundation-gallery table`, `cargo nextest run -p open-gpui-ui-components table`, focused foundation-gallery metadata/conformance/catalog smoke tests, `git diff --check`, and engineering wiki validation.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -105,9 +105,11 @@ verified_by:
 - Done: Updated the Table contract and verification docs so built-in aggregation metadata is no longer documented as deferred; custom aggregate callbacks remain app/future work.
 - Done: Completed U4 of the Table depth plan in `ui_core` and `ui_components`: `TableColumnPinning` now splits resolved visible columns into left, center, and right `TableColumnRegions` after visibility and ordering; unknown/invisible pinned ids are ignored; moving a column between sides removes duplicates; pinning participates in the `TableState` cache key; and the GPUI `TableRenderPlan` exposes matching `TableColumnRegionRenderPlan` metadata plus header/body region debug selectors.
 - Done: Updated the Table contract and verification docs so pinned semantic render lanes are no longer documented as deferred. Sticky pinned-column scrolling, column resizing, and two-dimensional grid virtualization remain follow-up work.
+- Done: Completed U5 of the Table depth plan in the Components gallery. `table_samples()` now includes `release-rollup`, a grouped and pinned Table sample with 320 release rows grouped by `team`, explicit expansion for `group:team=UI` and `group:team=Platform`, aggregate count and score cells, left-pinned `name`, right-pinned `status`, and precomputed readout metadata for grouped/expanded rows, aggregate count, and pinned column regions.
+- Done: Added focused gallery proof for the new Table behavior: state tests assert aggregate cells, hidden collapsed descendants staying addressable by stable row id, pinned column region order, and focused Table mode rendering both `release-queue` and `release-rollup`; runtime smoke `components_gallery_smoke_grouped_table_scroll_stays_inside_sample` proves the grouped sample scrolls inside the table viewport without moving the outer Components page.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Blocked: None.
-- Next action: Start U5 of `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md` by adding grouped/aggregated/pinned Table gallery samples and focused gallery proofs.
+- Next action: Complete U6 of `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md` by running engineering wiki validation, committing and pushing U5, then deciding whether the next Table slice is sticky horizontal/pinned-column layout, column sizing, or two-dimensional virtualization.
 
 # Citations
 

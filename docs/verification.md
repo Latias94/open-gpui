@@ -170,13 +170,15 @@ rows and cells, and at least one `gallery:component-table-sample:{id}` selector.
 state tests assert that rendered row selectors stay bounded by the virtualizer's visible rows plus
 overscan, scroll input stays inside the table viewport, sortable header actions emit state-update
 payloads, sort/filter state follows stable row ids rather than numeric positions, and grouped /
-expanded row models keep collapsed descendants addressable by stable row id. Core table tests also
-assert that `TableAggregation` exposes stable built-in aggregate labels and resolves count, sum,
-min, max, and average cells for grouped rows without hiding the grouping column value. Core and
-component tests assert that `TableColumnPinning` splits visible columns into left, center, and
-right regions after visibility/order resolution, ignores unknown or invisible pinned ids, removes
-moved columns from their previous pinned side, and exposes matching header/body region metadata
-and debug selectors.
+expanded row models keep collapsed descendants addressable by stable row id. The Components
+gallery now carries `release-rollup`, a grouped Table sample that mixes expanded and collapsed
+team groups, exposes aggregate count and score cells, pins the identifier and status columns, and
+has its own inner-scroll smoke. Core table tests also assert that `TableAggregation` exposes
+stable built-in aggregate labels and resolves count, sum, min, max, and average cells for grouped
+rows without hiding the grouping column value. Core and component tests assert that
+`TableColumnPinning` splits visible columns into left, center, and right regions after
+visibility/order resolution, ignores unknown or invisible pinned ids, removes moved columns from
+their previous pinned side, and exposes matching header/body region metadata and debug selectors.
 The official Tree gate requires `Tree`, `TreeState`, `TreeMetrics`, tree/tree-item role signals,
 and at least one `gallery:component-tree-sample:{id}` selector. Component runtime tests verify
 expansion, reveal, and selection payloads; gallery smokes verify keyboard expansion/selection
@@ -368,9 +370,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     sample should accept real text editing through the
     controller-backed path, while the gallery remains scrollable and keeps focus visible when the
     page overflows. The Table samples should expose the `release-queue` 10k-row virtualized window,
-    the filtered/sorted/paginated `filter-board` model, stable selected row ids, table/row/cell
-    accessibility metadata, sortable header metadata, and an internal body viewport that scrolls
-    without moving the outer Components page. The Tree sample should expose `document-outline`,
+    the filtered/sorted/paginated `filter-board` model, the grouped and pinned `release-rollup`
+    model, stable selected row ids, table/row/cell accessibility metadata, sortable header
+    metadata, and internal body viewports that scroll without moving the outer Components page.
+    The Tree sample should expose `document-outline`,
     tree/tree-item accessibility metadata, expandable `Paper` children, a state readout, an inner
     viewport that scrolls without moving the outer Components page, and selection/toggle events
     through the gallery sample runtime log. The VirtualizedList sample should expose the

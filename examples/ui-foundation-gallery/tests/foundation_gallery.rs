@@ -7,7 +7,8 @@ use open_gpui_ui_components::{
     CommandIndexSnapshotMode, CommandOpenMode, CommandSelectionMode, DialogOpenMode,
     FeedbackIntent, HoverCardOpenIntent, HoverCardOpenMode, MenuItemKind, MenuOpenMode,
     OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, ThemeMode, ToggleVariant,
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableColumnId,
+    TableColumnRegion, TableExpansionState, TableRowId, ThemeMode, ToggleVariant,
     TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
     gpui_adapter::{DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state},
 };
@@ -1621,7 +1622,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 
-    assert_eq!(tables.len(), 2);
+    assert_eq!(tables.len(), 3);
     assert_eq!(tables[0].id, "release-queue");
     assert_eq!(tables[0].state.rows().len(), 10_000);
     assert_eq!(
@@ -1641,6 +1642,35 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(filter_plan.table().filtered_model().rows().len(), 60);
     assert_eq!(filter_plan.table().final_model().rows().len(), 24);
     assert_eq!(filter_plan.table().final_model().selected_count(), 1);
+
+    let grouped_plan = tables[2].render_plan();
+    assert_eq!(tables[2].id, "release-rollup");
+    assert_eq!(tables[2].state.grouping()[0].as_str(), "team");
+    assert_eq!(tables[2].state.aggregations().len(), 2);
+    assert_eq!(tables[2].state.column_pinning().left()[0].as_str(), "name");
+    assert_eq!(
+        tables[2].state.column_pinning().right()[0].as_str(),
+        "status"
+    );
+    assert!(
+        grouped_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .any(|row| row.is_group())
+    );
+    assert!(
+        grouped_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .any(|row| row.is_leaf())
+    );
+    assert!(
+        grouped_plan.rendered_row_count() <= grouped_plan.visible_row_count() + tables[2].overscan
+    );
 
     assert_eq!(virtualized_lists.len(), 1);
     let release_navigation = &virtualized_lists[0];
@@ -1977,6 +2007,103 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     );
     assert_eq!(filter_plan.table().final_model().selected_count(), 1);
     assert_eq!(filter_plan.aria_column_count(), 4);
+
+    let grouped_release = &samples[2];
+    let grouped_plan = grouped_release.render_plan();
+    let grouped_summary = grouped_release.state_summary();
+
+    assert_eq!(grouped_release.id, "release-rollup");
+    assert_eq!(grouped_release.state.rows().len(), 320);
+    assert_eq!(grouped_release.state.grouping()[0].as_str(), "team");
+    assert_eq!(grouped_release.state.aggregations().len(), 2);
+    assert!(matches!(
+        grouped_release.state.expansion(),
+        TableExpansionState::Rows(rows) if rows.len() == 2
+    ));
+    assert_eq!(
+        grouped_release.state.column_pinning().left()[0].as_str(),
+        "name"
+    );
+    assert_eq!(
+        grouped_release.state.column_pinning().right()[0].as_str(),
+        "status"
+    );
+    assert_eq!(grouped_summary.core_rows, 320);
+    assert_eq!(grouped_summary.grouping_columns, 1);
+    assert_eq!(grouped_summary.aggregation_count, 2);
+    assert_eq!(grouped_summary.expanded_group_inputs, 2);
+    assert!(!grouped_summary.all_rows_expanded);
+    assert_eq!(grouped_summary.pinned_left_columns, 1);
+    assert_eq!(grouped_summary.pinned_center_columns, 2);
+    assert_eq!(grouped_summary.pinned_right_columns, 1);
+    assert!(grouped_summary.group_rows >= 5);
+    assert!(grouped_summary.leaf_rows > 0);
+    assert!(grouped_summary.expanded_rows < grouped_summary.grouped_rows);
+
+    let ui_group = grouped_plan
+        .table()
+        .final_model()
+        .row(&TableRowId::new("group:team=UI"))
+        .expect("expanded UI group should be visible and addressable");
+    assert!(ui_group.is_group());
+    assert_eq!(
+        ui_group
+            .cell(&TableColumnId::new("name"))
+            .expect("group count aggregate should be present")
+            .filter_text(),
+        "64"
+    );
+    assert!(
+        !ui_group
+            .cell(&TableColumnId::new("score"))
+            .expect("group score aggregate should be present")
+            .filter_text()
+            .is_empty()
+    );
+    assert!(
+        grouped_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .any(|row| row.id().as_str() == "grouped-release-row-000" && row.is_leaf())
+    );
+    assert!(
+        grouped_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .all(|row| row.id().as_str() != "grouped-release-row-001"),
+        "Runtime leaf row should stay hidden because that group starts collapsed"
+    );
+    assert!(
+        grouped_plan
+            .table()
+            .final_model()
+            .row(&TableRowId::new("grouped-release-row-001"))
+            .is_some(),
+        "collapsed descendants should stay addressable by stable row id"
+    );
+    assert_eq!(
+        grouped_plan
+            .column_regions()
+            .iter()
+            .map(|region| (
+                region.region(),
+                region
+                    .columns()
+                    .iter()
+                    .map(|column| column.id().as_str())
+                    .collect::<Vec<_>>()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (TableColumnRegion::Left, vec!["name"]),
+            (TableColumnRegion::Center, vec!["team", "score"]),
+            (TableColumnRegion::Right, vec!["status"]),
+        ]
+    );
 }
 
 #[test]
@@ -2276,6 +2403,10 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"open_gpui_ui_components::CommandState"));
     assert!(signals.contains(&"open_gpui_ui_components::Table"));
     assert!(signals.contains(&"open_gpui_ui_components::TableState"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableAggregation"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableColumnPinning"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableColumnRegion"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableExpansionState"));
     assert!(signals.contains(&"open_gpui_ui_components::Tree"));
     assert!(signals.contains(&"open_gpui_ui_components::TreeState"));
     assert!(signals.contains(&"open_gpui_ui_components::VirtualizedList"));
@@ -2787,6 +2918,11 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
         "expected focused Table mode to render the Table sample"
     );
     assert!(
+        cx.debug_bounds("gallery:component-table-sample:release-rollup")
+            .is_some(),
+        "expected focused Table mode to render the grouped Table sample"
+    );
+    assert!(
         cx.debug_bounds("gallery:component-button-sample:default")
             .is_none(),
         "expected focused Table mode to hide unrelated Button samples"
@@ -3271,6 +3407,70 @@ fn components_gallery_smoke_table_scroll_stays_inside_sample(cx: &mut open_gpui:
         cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0010")
             .is_some(),
         "expected virtualized Table row 0010 to enter the rendered window after internal scroll"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let sample = pages::components::table_samples(ThemeTokens::default())
+        .iter()
+        .find(|sample| sample.id == "release-rollup")
+        .expect("release-rollup table sample should exist");
+    let plan = sample.render_plan();
+    let later_row_index = plan.visible_row_count() + sample.overscan + 5;
+    let first_row_id = plan.table().final_model().rows()[0]
+        .id()
+        .as_str()
+        .to_owned();
+    let later_row_id = plan.table().final_model().rows()[later_row_index]
+        .id()
+        .as_str()
+        .to_owned();
+    let first_row_selector = format!("table:component-table:release-rollup:row:{first_row_id}");
+    let later_row_selector = format!("table:component-table:release-rollup:row:{later_row_id}");
+
+    let cx = open_components_gallery(cx);
+
+    jump_components_directory_to(cx, "gallery:component-page-jump:table");
+    scroll_page_until_visible(cx, "gallery:component-table-sample:release-rollup");
+    let sample_before = bounds(cx, "gallery:component-table-sample:release-rollup");
+    let table_viewport = bounds(
+        cx,
+        "scroll-area:table:component-table:release-rollup:body-scroll",
+    );
+
+    assert!(
+        cx.debug_bounds(&first_row_selector).is_some(),
+        "expected grouped Table row `{first_row_id}` to render in the initial window"
+    );
+    assert!(
+        cx.debug_bounds(&later_row_selector).is_none(),
+        "expected grouped Table row `{later_row_id}` to start outside the rendered window"
+    );
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: table_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after = bounds(cx, "gallery:component-table-sample:release-rollup");
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected grouped Table viewport wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert!(
+        cx.debug_bounds(&first_row_selector).is_none(),
+        "expected grouped Table row `{first_row_id}` to leave the rendered window after internal scroll"
+    );
+    assert!(
+        cx.debug_bounds(&later_row_selector).is_some(),
+        "expected grouped Table row `{later_row_id}` to enter the rendered window after internal scroll"
     );
 }
 

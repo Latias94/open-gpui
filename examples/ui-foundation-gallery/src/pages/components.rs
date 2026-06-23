@@ -12,9 +12,10 @@ use open_gpui_ui_components::{
     ScrollResetPolicy, SelectState, Separator, SeparatorState, SidebarCollapseMode,
     SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
     Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
-    Switch, SwitchState, Table, TableColumn, TableFilter, TablePagination, TableRenderPlan,
-    TableRow, TableSort, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
-    TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
+    Switch, SwitchState, Table, TableAggregation, TableColumn, TableColumnPinning,
+    TableExpansionState, TableFilter, TablePagination, TableRenderPlan, TableRow, TableSort,
+    TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
+    TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
     ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
     VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
     VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
@@ -123,6 +124,10 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Table",
     "open_gpui_ui_components::TableState",
     "open_gpui_ui_components::TableHeaderAction",
+    "open_gpui_ui_components::TableAggregation",
+    "open_gpui_ui_components::TableColumnPinning",
+    "open_gpui_ui_components::TableColumnRegion",
+    "open_gpui_ui_components::TableExpansionState",
     "open_gpui_ui_components::VirtualizedList",
     "open_gpui_ui_components::VirtualizedListItemDescriptor",
     "open_gpui_ui_components::VirtualizedListRenderPlan",
@@ -879,13 +884,15 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
     },
     ComponentConformanceGate {
         id: "table-virtualization",
-        title: "Table virtualization and row identity",
-        summary: "Table keeps stable row ids, header action metadata, row-model metadata, and nested scroll ownership.",
+        title: "Table row models and scroll ownership",
+        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate and pinned-column metadata, and nested scroll ownership.",
         evidence: &[
             "TableState::resolve",
             "Table::render_plan",
             "TableHeaderAction",
+            "release-rollup",
             "components_gallery_smoke_table_scroll_stays_inside_sample",
+            "components_gallery_smoke_grouped_table_scroll_stays_inside_sample",
         ],
     },
     ComponentConformanceGate {
@@ -1520,12 +1527,49 @@ pub struct TableSampleStateSummary {
     pub aria_rows: usize,
     /// Selected row count in the final model.
     pub selected_rows: usize,
+    /// Row count before expansion flattens the grouped tree.
+    pub grouped_rows: usize,
+    /// Row count after expansion applies.
+    pub expanded_rows: usize,
+    /// Visible group row count in the final model.
+    pub group_rows: usize,
+    /// Visible leaf row count in the final model.
+    pub leaf_rows: usize,
+    /// Configured grouping column count.
+    pub grouping_columns: usize,
+    /// Configured aggregate column count.
+    pub aggregation_count: usize,
+    /// Explicit expanded group row ids, or all group rows when expansion is global.
+    pub expanded_group_inputs: usize,
+    /// Whether every group row is expanded.
+    pub all_rows_expanded: bool,
+    /// Visible left-pinned columns.
+    pub pinned_left_columns: usize,
+    /// Visible unpinned center columns.
+    pub pinned_center_columns: usize,
+    /// Visible right-pinned columns.
+    pub pinned_right_columns: usize,
 }
 
 impl TableSampleStateSummary {
-    fn from_plan(plan: &TableRenderPlan) -> Self {
+    fn from_plan(plan: &TableRenderPlan, state: &TableState) -> Self {
         let visible = plan.virtualizer().visible_range();
         let overscan = plan.virtualizer().overscan_range();
+        let final_rows = plan.table().final_model().rows();
+        let group_rows = final_rows.iter().filter(|row| row.is_group()).count();
+        let regions = plan.table().visible_column_regions();
+        let (all_rows_expanded, expanded_group_inputs) = match state.expansion() {
+            TableExpansionState::All => (
+                true,
+                plan.table()
+                    .grouped_model()
+                    .rows()
+                    .iter()
+                    .filter(|row| row.is_group())
+                    .count(),
+            ),
+            TableExpansionState::Rows(rows) => (false, rows.len()),
+        };
 
         Self {
             core_rows: plan.table().core_model().rows().len(),
@@ -1540,6 +1584,17 @@ impl TableSampleStateSummary {
             aria_columns: plan.aria_column_count(),
             aria_rows: plan.aria_row_count(),
             selected_rows: plan.table().final_model().selected_count(),
+            grouped_rows: plan.table().grouped_model().rows().len(),
+            expanded_rows: plan.table().expanded_model().rows().len(),
+            group_rows,
+            leaf_rows: final_rows.len().saturating_sub(group_rows),
+            grouping_columns: state.grouping().len(),
+            aggregation_count: state.aggregations().len(),
+            expanded_group_inputs,
+            all_rows_expanded,
+            pinned_left_columns: regions.left().len(),
+            pinned_center_columns: regions.center().len(),
+            pinned_right_columns: regions.right().len(),
         }
     }
 }
@@ -2839,16 +2894,17 @@ fn release_navigation_item(index: usize) -> VirtualizedListItemDescriptor {
     )
 }
 
-static TABLE_SAMPLES: LazyLock<[TableSample; 2]> = LazyLock::new(build_table_samples);
+static TABLE_SAMPLES: LazyLock<[TableSample; 3]> = LazyLock::new(build_table_samples);
 
 /// Returns table samples backed by real table and virtualizer contracts.
 pub fn table_samples(_tokens: ThemeTokens) -> &'static [TableSample] {
     TABLE_SAMPLES.as_slice()
 }
 
-fn build_table_samples() -> [TableSample; 2] {
+fn build_table_samples() -> [TableSample; 3] {
     let release_queue_rows = (0..10_000).map(release_queue_row).collect::<Vec<_>>();
     let filter_board_rows = (0..180).map(filter_board_row).collect::<Vec<_>>();
+    let grouped_release_rows = (0..320).map(grouped_release_row).collect::<Vec<_>>();
 
     let release_queue = TableSample {
         id: "release-queue",
@@ -2885,10 +2941,39 @@ fn build_table_samples() -> [TableSample; 2] {
         overscan: 4,
         state_summary: TableSampleStateSummary::default(),
     };
+    let grouped_release = TableSample {
+        id: "release-rollup",
+        title: "Release rollup",
+        summary: "Grouped release rows mix expanded and collapsed teams with aggregate score cells and pinned lanes.",
+        badge: "grouped + pinned",
+        state: TableState::new(grouped_release_rows)
+            .with_columns(table_columns())
+            .with_column_order(["name", "team", "score", "status"])
+            .with_column_pinning(
+                TableColumnPinning::new()
+                    .pinned_left(["name"])
+                    .pinned_right(["status"]),
+            )
+            .with_grouping(["team"])
+            .with_expanded_rows(["group:team=UI", "group:team=Platform"])
+            .with_aggregations([
+                TableAggregation::count("name"),
+                TableAggregation::sum("score"),
+            ])
+            .with_sorting([TableSort::descending("score")])
+            .with_selected_rows(["grouped-release-row-000"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
 
     [
         release_queue.with_state_summary(),
         filter_board.with_state_summary(),
+        grouped_release.with_state_summary(),
     ]
 }
 
@@ -2898,7 +2983,7 @@ impl TableSample {
             .build_table()
             .render_plan(UiPx::ZERO, self.viewport_extent);
         Self {
-            state_summary: TableSampleStateSummary::from_plan(&plan),
+            state_summary: TableSampleStateSummary::from_plan(&plan, &self.state),
             ..self
         }
     }
@@ -2940,6 +3025,18 @@ fn filter_board_row(index: usize) -> TableRow {
         .with_cell("team", team)
         .with_cell("status", statuses[index % statuses.len()])
         .with_cell("score", index)
+}
+
+fn grouped_release_row(index: usize) -> TableRow {
+    let teams = ["UI", "Runtime", "Platform", "Docs", "QA"];
+    let statuses = ["Ready", "Review", "Build", "Verify", "Blocked"];
+    let score = 500_usize.saturating_sub(index);
+
+    TableRow::new(format!("grouped-release-row-{index:03}"))
+        .with_cell("name", format!("Release rollup {index:03}"))
+        .with_cell("team", teams[index % teams.len()])
+        .with_cell("status", statuses[(index / 9) % statuses.len()])
+        .with_cell("score", score)
 }
 
 /// Returns scroll area samples backed by real component state.

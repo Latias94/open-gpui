@@ -2289,6 +2289,24 @@ pub(crate) fn component_table_state_row(
             "{} columns / {} aria rows / {} selected",
             summary.aria_columns, summary.aria_rows, summary.selected_rows
         ))
+        .child(format!(
+            "grouped {} / expanded {} / groups {} / leaves {}",
+            summary.grouped_rows, summary.expanded_rows, summary.group_rows, summary.leaf_rows
+        ))
+        .child(format!(
+            "grouping {} / aggregates {} / expanded inputs {}{} / pinned {}-{}-{}",
+            summary.grouping_columns,
+            summary.aggregation_count,
+            summary.expanded_group_inputs,
+            if summary.all_rows_expanded {
+                " all"
+            } else {
+                ""
+            },
+            summary.pinned_left_columns,
+            summary.pinned_center_columns,
+            summary.pinned_right_columns
+        ))
 }
 
 pub(crate) fn component_virtualized_list_state_row(
