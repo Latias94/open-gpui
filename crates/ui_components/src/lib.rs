@@ -115,9 +115,10 @@ pub use menu::{
 };
 pub use open_gpui_ui_core::{
     TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind, TableAggregation,
-    TableCellValue, TableColumn, TableColumnId, TableExpansionState, TableFilter, TableGroupRow,
-    TablePagination, TableResolvedRow, TableResolvedRowKind, TableResolvedState, TableRow,
-    TableRowId, TableRowModel, TableRowModelStage, TableSort, TableSortDirection, TableState,
+    TableCellValue, TableColumn, TableColumnId, TableColumnPinning, TableColumnRegion,
+    TableColumnRegions, TableExpansionState, TableFilter, TableGroupRow, TablePagination,
+    TableResolvedRow, TableResolvedRowKind, TableResolvedState, TableRow, TableRowId,
+    TableRowModel, TableRowModelStage, TableSort, TableSortDirection, TableState,
     TableStateCacheKey, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
     VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
 };
@@ -153,8 +154,8 @@ pub use splitter::{
 };
 pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use table::{
-    Table, TableCellRenderPlan, TableColumnRenderPlan, TableHeaderAction, TableMetrics,
-    TableRenderPlan, TableRowRenderPlan,
+    Table, TableCellRenderPlan, TableColumnRegionRenderPlan, TableColumnRenderPlan,
+    TableHeaderAction, TableMetrics, TableRenderPlan, TableRowRenderPlan,
 };
 pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

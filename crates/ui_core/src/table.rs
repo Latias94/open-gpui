@@ -207,6 +207,156 @@ impl TableColumn {
     }
 }
 
+/// Resolved table column lane for pinning-aware renderers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TableColumnRegion {
+    /// Columns pinned to the left side.
+    Left,
+    /// Unpinned center columns.
+    Center,
+    /// Columns pinned to the right side.
+    Right,
+}
+
+impl TableColumnRegion {
+    /// All column regions in render order.
+    pub const ALL: [Self; 3] = [Self::Left, Self::Center, Self::Right];
+
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Center => "center",
+            Self::Right => "right",
+        }
+    }
+}
+
+/// Caller-owned pinned column state.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TableColumnPinning {
+    left: Vec<TableColumnId>,
+    right: Vec<TableColumnId>,
+}
+
+impl TableColumnPinning {
+    /// Creates an empty pinning state.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Applies left-pinned column ids.
+    pub fn pinned_left(
+        mut self,
+        columns: impl IntoIterator<Item = impl Into<TableColumnId>>,
+    ) -> Self {
+        self.left = unique_column_ids(columns);
+        let left = self.left.iter().cloned().collect::<BTreeSet<_>>();
+        self.right.retain(|column| !left.contains(column));
+        self
+    }
+
+    /// Applies right-pinned column ids.
+    pub fn pinned_right(
+        mut self,
+        columns: impl IntoIterator<Item = impl Into<TableColumnId>>,
+    ) -> Self {
+        self.right = unique_column_ids(columns);
+        let right = self.right.iter().cloned().collect::<BTreeSet<_>>();
+        self.left.retain(|column| !right.contains(column));
+        self
+    }
+
+    /// Returns left-pinned column ids.
+    pub fn left(&self) -> &[TableColumnId] {
+        &self.left
+    }
+
+    /// Returns right-pinned column ids.
+    pub fn right(&self) -> &[TableColumnId] {
+        &self.right
+    }
+
+    /// Returns true when no columns are pinned.
+    pub fn is_empty(&self) -> bool {
+        self.left.is_empty() && self.right.is_empty()
+    }
+}
+
+/// Resolved visible columns split into render regions.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TableColumnRegions {
+    left: Vec<TableColumn>,
+    center: Vec<TableColumn>,
+    right: Vec<TableColumn>,
+}
+
+impl TableColumnRegions {
+    fn from_visible_columns(
+        visible_columns: impl IntoIterator<Item = TableColumn>,
+        pinning: &TableColumnPinning,
+    ) -> Self {
+        let left = pinning.left().iter().cloned().collect::<BTreeSet<_>>();
+        let right = pinning.right().iter().cloned().collect::<BTreeSet<_>>();
+        let mut regions = Self::default();
+
+        for column in visible_columns {
+            if left.contains(column.id()) {
+                regions.left.push(column);
+            } else if right.contains(column.id()) {
+                regions.right.push(column);
+            } else {
+                regions.center.push(column);
+            }
+        }
+
+        regions
+    }
+
+    /// Returns visible left-pinned columns.
+    pub fn left(&self) -> &[TableColumn] {
+        &self.left
+    }
+
+    /// Returns visible unpinned center columns.
+    pub fn center(&self) -> &[TableColumn] {
+        &self.center
+    }
+
+    /// Returns visible right-pinned columns.
+    pub fn right(&self) -> &[TableColumn] {
+        &self.right
+    }
+
+    /// Returns visible columns for a region.
+    pub fn region(&self, region: TableColumnRegion) -> &[TableColumn] {
+        match region {
+            TableColumnRegion::Left => self.left(),
+            TableColumnRegion::Center => self.center(),
+            TableColumnRegion::Right => self.right(),
+        }
+    }
+
+    /// Returns the total number of visible columns across all regions.
+    pub fn len(&self) -> usize {
+        self.left.len() + self.center.len() + self.right.len()
+    }
+
+    /// Returns true when all regions are empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn flattened(&self) -> Vec<TableColumn> {
+        self.left
+            .iter()
+            .chain(self.center.iter())
+            .chain(self.right.iter())
+            .cloned()
+            .collect()
+    }
+}
+
 /// Renderer-neutral row descriptor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableRow {
@@ -586,6 +736,7 @@ pub const TABLE_ROW_MODEL_V0_PIPELINE: [TableRowModelStage; 5] = [
 pub struct TableState {
     columns: Vec<TableColumn>,
     column_order: Vec<TableColumnId>,
+    column_pinning: TableColumnPinning,
     rows: Arc<[TableRow]>,
     rows_identity: u64,
     sorting: Vec<TableSort>,
@@ -601,6 +752,7 @@ impl PartialEq for TableState {
     fn eq(&self, other: &Self) -> bool {
         self.columns == other.columns
             && self.column_order == other.column_order
+            && self.column_pinning == other.column_pinning
             && self.rows.as_ref() == other.rows.as_ref()
             && self.sorting == other.sorting
             && self.filters == other.filters
@@ -620,6 +772,7 @@ impl TableState {
         Self {
             columns: Vec::new(),
             column_order: Vec::new(),
+            column_pinning: TableColumnPinning::default(),
             rows: rows.into(),
             rows_identity: next_table_rows_identity(),
             sorting: Vec::new(),
@@ -644,6 +797,12 @@ impl TableState {
         column_order: impl IntoIterator<Item = impl Into<TableColumnId>>,
     ) -> Self {
         self.column_order = column_order.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Applies pinned column state.
+    pub fn with_column_pinning(mut self, column_pinning: TableColumnPinning) -> Self {
+        self.column_pinning = column_pinning;
         self
     }
 
@@ -746,6 +905,11 @@ impl TableState {
         &self.aggregations
     }
 
+    /// Returns pinned column state.
+    pub const fn column_pinning(&self) -> &TableColumnPinning {
+        &self.column_pinning
+    }
+
     /// Returns caller-owned row expansion state.
     pub const fn expansion(&self) -> &TableExpansionState {
         &self.expansion
@@ -771,6 +935,7 @@ impl TableState {
             row_count: self.rows.len(),
             columns: self.columns.clone(),
             column_order: self.column_order.clone(),
+            column_pinning: self.column_pinning.clone(),
             sorting: self.sorting.clone(),
             filters: self.filters.clone(),
             grouping: self.grouping.clone(),
@@ -783,6 +948,18 @@ impl TableState {
 
     /// Returns visible columns in resolved order.
     pub fn visible_columns(&self) -> Vec<TableColumn> {
+        self.visible_column_regions().flattened()
+    }
+
+    /// Returns visible columns split into pinned regions.
+    pub fn visible_column_regions(&self) -> TableColumnRegions {
+        TableColumnRegions::from_visible_columns(
+            self.ordered_visible_columns(),
+            &self.column_pinning,
+        )
+    }
+
+    fn ordered_visible_columns(&self) -> Vec<TableColumn> {
         if self.column_order.is_empty() {
             return self
                 .columns
@@ -860,8 +1037,11 @@ impl TableState {
             expanded_model.rows_by_id().values().cloned(),
         );
 
+        let visible_column_regions = self.visible_column_regions();
+
         TableResolvedState {
-            visible_columns: self.visible_columns(),
+            visible_columns: visible_column_regions.flattened(),
+            visible_column_regions,
             duplicate_row_ids: duplicate_row_ids.into_iter().collect(),
             core_model,
             filtered_model,
@@ -935,6 +1115,7 @@ pub struct TableStateCacheKey {
     row_count: usize,
     columns: Vec<TableColumn>,
     column_order: Vec<TableColumnId>,
+    column_pinning: TableColumnPinning,
     sorting: Vec<TableSort>,
     filters: Vec<TableFilter>,
     grouping: Vec<TableColumnId>,
@@ -958,6 +1139,17 @@ impl TableStateCacheKey {
 
 fn next_table_rows_identity() -> u64 {
     NEXT_TABLE_ROWS_IDENTITY.fetch_add(1, AtomicOrdering::Relaxed)
+}
+
+fn unique_column_ids(
+    columns: impl IntoIterator<Item = impl Into<TableColumnId>>,
+) -> Vec<TableColumnId> {
+    let mut seen = BTreeSet::new();
+    columns
+        .into_iter()
+        .map(Into::into)
+        .filter(|column| seen.insert(column.clone()))
+        .collect()
 }
 
 /// Metadata for a grouped table row.
@@ -1213,6 +1405,7 @@ impl TableRowModel {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableResolvedState {
     visible_columns: Vec<TableColumn>,
+    visible_column_regions: TableColumnRegions,
     duplicate_row_ids: Vec<TableRowId>,
     core_model: TableRowModel,
     filtered_model: TableRowModel,
@@ -1227,6 +1420,11 @@ impl TableResolvedState {
     /// Returns visible columns in resolved order.
     pub fn visible_columns(&self) -> &[TableColumn] {
         &self.visible_columns
+    }
+
+    /// Returns visible columns split into pinned regions.
+    pub const fn visible_column_regions(&self) -> &TableColumnRegions {
+        &self.visible_column_regions
     }
 
     /// Returns duplicate source row ids detected during resolution.
@@ -1858,6 +2056,89 @@ mod tests {
     }
 
     #[test]
+    fn pinned_columns_split_visible_regions_after_order_and_visibility() {
+        let resolved = TableState::new(sample_rows())
+            .with_columns([
+                TableColumn::new("name", "Name"),
+                TableColumn::new("team", "Team").with_visible(false),
+                TableColumn::new("score", "Score"),
+                TableColumn::new("owner", "Owner"),
+                TableColumn::new("status", "Status"),
+            ])
+            .with_column_order(["status", "score", "owner", "team", "name"])
+            .with_column_pinning(
+                TableColumnPinning::new()
+                    .pinned_left(["name", "score", "missing"])
+                    .pinned_right(["status"]),
+            )
+            .resolve();
+        let regions = resolved.visible_column_regions();
+
+        assert_eq!(TableColumnRegion::Left.as_str(), "left");
+        assert_eq!(TableColumnRegion::Center.as_str(), "center");
+        assert_eq!(TableColumnRegion::Right.as_str(), "right");
+        assert_eq!(
+            regions
+                .left()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["score", "name"],
+            "pinned left columns preserve resolved visible order"
+        );
+        assert_eq!(
+            regions
+                .center()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["owner"],
+            "unknown and invisible pinned ids are ignored"
+        );
+        assert_eq!(
+            regions
+                .right()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["status"]
+        );
+        assert_eq!(
+            resolved
+                .visible_columns()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["score", "name", "owner", "status"]
+        );
+    }
+
+    #[test]
+    fn column_pinning_moves_columns_between_regions_without_duplicates() {
+        let pinning = TableColumnPinning::new()
+            .pinned_left(["name", "score", "name"])
+            .pinned_right(["score", "status", "score"]);
+
+        assert_eq!(
+            pinning
+                .left()
+                .iter()
+                .map(TableColumnId::as_str)
+                .collect::<Vec<_>>(),
+            ["name"]
+        );
+        assert_eq!(
+            pinning
+                .right()
+                .iter()
+                .map(TableColumnId::as_str)
+                .collect::<Vec<_>>(),
+            ["score", "status"]
+        );
+        assert!(!pinning.is_empty());
+    }
+
+    #[test]
     fn duplicate_row_ids_are_reported_without_panicking() {
         let resolved = TableState::new([
             TableRow::new("row-a").with_cell("name", "A"),
@@ -1887,6 +2168,11 @@ mod tests {
         let aggregated = base
             .clone()
             .with_aggregations([TableAggregation::sum("score")]);
+        let pinned = base.clone().with_column_pinning(
+            TableColumnPinning::new()
+                .pinned_left(["name"])
+                .pinned_right(["score"]),
+        );
         let rebuilt = TableState::new(sample_rows()).with_columns([
             TableColumn::new("name", "Name"),
             TableColumn::new("team", "Team"),
@@ -1902,6 +2188,7 @@ mod tests {
 
         assert_ne!(base.cache_key(), sorted.cache_key());
         assert_ne!(base.cache_key(), aggregated.cache_key());
+        assert_ne!(base.cache_key(), pinned.cache_key());
         assert_eq!(base, rebuilt);
         assert_ne!(
             base.cache_key().rows_identity(),

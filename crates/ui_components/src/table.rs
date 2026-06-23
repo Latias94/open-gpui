@@ -10,10 +10,10 @@ use open_gpui::{
     rgb,
 };
 use open_gpui_ui_core::{
-    Role, Sizable, Size, TableCellValue, TableColumn, TableColumnId, TableResolvedRow,
-    TableResolvedState, TableSort, TableSortDirection, TableState, TableStateCacheKey, UiPx,
-    VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerResolvedState, VirtualizerSnapshot,
-    VirtualizerState, ui_px,
+    Role, Sizable, Size, TableCellValue, TableColumn, TableColumnId, TableColumnRegion,
+    TableResolvedRow, TableResolvedState, TableSort, TableSortDirection, TableState,
+    TableStateCacheKey, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
+    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState, ui_px,
 };
 use std::collections::BTreeSet;
 use std::rc::Rc;
@@ -99,6 +99,7 @@ impl TableMetrics {
 pub struct TableColumnRenderPlan {
     id: TableColumnId,
     label: String,
+    region: TableColumnRegion,
     aria_column_index: usize,
     sortable: bool,
     sort_direction: Option<TableSortDirection>,
@@ -108,12 +109,14 @@ pub struct TableColumnRenderPlan {
 impl TableColumnRenderPlan {
     fn new(
         column: &TableColumn,
+        region: TableColumnRegion,
         aria_column_index: usize,
         sort_direction: Option<TableSortDirection>,
     ) -> Self {
         Self {
             id: column.id().clone(),
             label: column.label().to_owned(),
+            region,
             aria_column_index,
             sortable: column.sortable(),
             sort_direction,
@@ -131,6 +134,11 @@ impl TableColumnRenderPlan {
     /// Returns the visible header label.
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// Returns the resolved pinning region for this column.
+    pub const fn region(&self) -> TableColumnRegion {
+        self.region
     }
 
     /// Returns the 1-based accessibility column index.
@@ -159,6 +167,29 @@ impl TableColumnRenderPlan {
             Some(direction) => format!("{}, sorted {}", self.label, direction.as_str()),
             None => self.label.clone(),
         }
+    }
+}
+
+/// Resolved table columns for one render lane.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableColumnRegionRenderPlan {
+    region: TableColumnRegion,
+    columns: Vec<TableColumnRenderPlan>,
+}
+
+impl TableColumnRegionRenderPlan {
+    fn new(region: TableColumnRegion, columns: Vec<TableColumnRenderPlan>) -> Self {
+        Self { region, columns }
+    }
+
+    /// Returns the represented column region.
+    pub const fn region(&self) -> TableColumnRegion {
+        self.region
+    }
+
+    /// Returns columns in this region.
+    pub fn columns(&self) -> &[TableColumnRenderPlan] {
+        &self.columns
     }
 }
 
@@ -228,6 +259,7 @@ impl TableHeaderAction {
 pub struct TableCellRenderPlan {
     column_id: TableColumnId,
     text: String,
+    region: TableColumnRegion,
     aria_column_index: usize,
     role: Role,
 }
@@ -237,6 +269,7 @@ impl TableCellRenderPlan {
         Self {
             column_id: column.id().clone(),
             text: value.map(TableCellValue::filter_text).unwrap_or_default(),
+            region: column.region(),
             aria_column_index: column.aria_column_index(),
             role: Role::Cell,
         }
@@ -250,6 +283,11 @@ impl TableCellRenderPlan {
     /// Returns the display text resolved from the core cell value.
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// Returns the resolved pinning region for this cell.
+    pub const fn region(&self) -> TableColumnRegion {
+        self.region
     }
 
     /// Returns the 1-based accessibility column index.
@@ -344,6 +382,16 @@ impl TableRowRenderPlan {
         &self.cells
     }
 
+    /// Returns cells for one column region.
+    pub fn cells_for_region(
+        &self,
+        region: TableColumnRegion,
+    ) -> impl Iterator<Item = &TableCellRenderPlan> {
+        self.cells
+            .iter()
+            .filter(move |cell| cell.region() == region)
+    }
+
     /// Returns the accessibility role for this row.
     pub const fn role(&self) -> Role {
         self.role
@@ -359,6 +407,7 @@ pub struct TableRenderPlan {
     table: Rc<TableResolvedState>,
     virtualizer: VirtualizerResolvedState,
     columns: Vec<TableColumnRenderPlan>,
+    column_regions: Vec<TableColumnRegionRenderPlan>,
     rows: Vec<TableRowRenderPlan>,
     role: Role,
     header_row_role: Role,
@@ -375,6 +424,7 @@ impl TableRenderPlan {
         virtualizer: VirtualizerResolvedState,
         columns: Vec<TableColumnRenderPlan>,
     ) -> Self {
+        let column_regions = resolve_column_region_render_plans(&columns);
         let source_rows = table.final_model().rows();
         let duplicate_row_ids = table
             .duplicate_row_ids()
@@ -405,6 +455,7 @@ impl TableRenderPlan {
             table,
             virtualizer,
             columns,
+            column_regions,
             rows,
             role: Role::Table,
             header_row_role: Role::Row,
@@ -441,6 +492,11 @@ impl TableRenderPlan {
     /// Returns visible columns in render order.
     pub fn columns(&self) -> &[TableColumnRenderPlan] {
         &self.columns
+    }
+
+    /// Returns visible columns split into render regions.
+    pub fn column_regions(&self) -> &[TableColumnRegionRenderPlan] {
+        &self.column_regions
     }
 
     /// Returns virtualized rows in render order.
@@ -691,21 +747,47 @@ impl Table {
     }
 
     fn resolve_columns(&self, table: &TableResolvedState) -> Vec<TableColumnRenderPlan> {
-        table
-            .visible_columns()
-            .iter()
-            .enumerate()
-            .map(|(index, column)| {
+        let mut aria_column_index = 1;
+        let mut columns = Vec::new();
+
+        for region in TableColumnRegion::ALL {
+            for column in table.visible_column_regions().region(region) {
                 let sort_direction = self
                     .state
                     .sorting()
                     .iter()
                     .find(|sort| sort.column() == column.id())
                     .map(|sort| sort.direction());
-                TableColumnRenderPlan::new(column, index + 1, sort_direction)
-            })
-            .collect()
+                columns.push(TableColumnRenderPlan::new(
+                    column,
+                    region,
+                    aria_column_index,
+                    sort_direction,
+                ));
+                aria_column_index += 1;
+            }
+        }
+
+        columns
     }
+}
+
+fn resolve_column_region_render_plans(
+    columns: &[TableColumnRenderPlan],
+) -> Vec<TableColumnRegionRenderPlan> {
+    TableColumnRegion::ALL
+        .into_iter()
+        .map(|region| {
+            TableColumnRegionRenderPlan::new(
+                region,
+                columns
+                    .iter()
+                    .filter(|column| column.region() == region)
+                    .cloned()
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 impl Sizable for Table {
@@ -778,7 +860,7 @@ fn render_table_header(
 ) -> impl IntoElement {
     let table_id = plan.table_id().to_owned();
     let metrics = plan.metrics();
-    let columns = plan.columns().to_vec();
+    let regions = plan.column_regions().to_vec();
 
     div()
         .id(format!("table:{table_id}:header-row"))
@@ -796,65 +878,99 @@ fn render_table_header(
         .bg(rgb(0xf3f4ef))
         .ui_role(plan.row_role())
         .aria_row_index(1)
-        .children(columns.into_iter().map(move |column| {
+        .children(regions.into_iter().map(move |region_plan| {
             let table_id = table_id.clone();
-            let column_id = column.id().as_str().to_owned();
-            let accessible_label = column.accessible_label();
-            let sort_action = column.sort_action().cloned();
-            let interactive_sort = sort_action.zip(on_sort_requested.clone());
-            let sort_suffix = column
-                .sort_direction()
-                .map(|direction| match direction {
-                    TableSortDirection::Ascending => " ↑",
-                    TableSortDirection::Descending => " ↓",
-                })
-                .unwrap_or("");
+            let region = region_plan.region();
+            let region_name = region.as_str().to_owned();
+            let columns = region_plan.columns().to_vec();
 
             div()
-                .id(format!("table:{table_id}:header:{column_id}"))
-                .debug_selector(move || format!("table:{table_id}:header:{column_id}"))
-                .min_w(gpui_px_from_ui(metrics.min_column_width()))
-                .flex_1()
+                .id(format!("table:{table_id}:header-region:{region_name}"))
+                .debug_selector({
+                    let table_id = table_id.clone();
+                    let region_name = region_name.clone();
+                    move || format!("table:{table_id}:header-region:{region_name}")
+                })
                 .h_full()
-                .min_h(px(0.0))
+                .min_w(px(0.0))
                 .flex()
                 .items_center()
-                .px(gpui_px_from_ui(metrics.cell_padding_x()))
-                .border_r_1()
-                .border_color(rgb(0xd6d8ce))
-                .text_xs()
-                .font_weight(FontWeight::BOLD)
-                .text_color(rgb(0x3f4a57))
-                .truncate()
-                .whitespace_nowrap()
-                .ui_role(plan.column_header_role())
-                .aria_label(accessible_label)
-                .aria_column_index(column.aria_column_index())
-                .when_some(interactive_sort, |this, (action, handler)| {
-                    let key_action = action.clone();
-                    let key_handler = handler.clone();
+                .overflow_hidden()
+                .when(region == TableColumnRegion::Center, |this| this.flex_1())
+                .when(region != TableColumnRegion::Center, |this| this.flex_none())
+                .children(columns.into_iter().map({
+                    let table_id = table_id.clone();
+                    let on_sort_requested = on_sort_requested.clone();
+                    move |column| {
+                        let table_id = table_id.clone();
+                        let column_id = column.id().as_str().to_owned();
+                        let accessible_label = column.accessible_label();
+                        let sort_action = column.sort_action().cloned();
+                        let interactive_sort = sort_action.zip(on_sort_requested.clone());
+                        let sort_suffix = column
+                            .sort_direction()
+                            .map(|direction| match direction {
+                                TableSortDirection::Ascending => " ↑",
+                                TableSortDirection::Descending => " ↓",
+                            })
+                            .unwrap_or("");
 
-                    this.focusable()
-                        .tab_stop(true)
-                        .cursor_pointer()
-                        .hover(|style| style.bg(rgb(0xe9ece3)))
-                        .on_click(move |_event: &ClickEvent, window, cx| {
-                            cx.stop_propagation();
-                            handler(action.clone(), window, cx);
-                        })
-                        .on_key_down(move |event: &KeyDownEvent, window, cx| {
-                            if event.keystroke.modifiers.modified() {
-                                return;
-                            }
-                            if !matches!(event.keystroke.key.as_str(), "space" | "enter") {
-                                return;
-                            }
+                        div()
+                            .id(format!("table:{table_id}:header:{column_id}"))
+                            .debug_selector(move || format!("table:{table_id}:header:{column_id}"))
+                            .when(column.region() == TableColumnRegion::Center, |this| {
+                                this.min_w(gpui_px_from_ui(metrics.min_column_width()))
+                                    .flex_1()
+                            })
+                            .when(column.region() != TableColumnRegion::Center, |this| {
+                                this.w(gpui_px_from_ui(metrics.min_column_width()))
+                                    .flex_none()
+                            })
+                            .h_full()
+                            .min_h(px(0.0))
+                            .flex()
+                            .items_center()
+                            .px(gpui_px_from_ui(metrics.cell_padding_x()))
+                            .border_r_1()
+                            .border_color(rgb(0xd6d8ce))
+                            .text_xs()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(0x3f4a57))
+                            .truncate()
+                            .whitespace_nowrap()
+                            .ui_role(plan.column_header_role())
+                            .aria_label(accessible_label)
+                            .aria_column_index(column.aria_column_index())
+                            .when_some(interactive_sort, |this, (action, handler)| {
+                                let key_action = action.clone();
+                                let key_handler = handler.clone();
 
-                            cx.stop_propagation();
-                            key_handler(key_action.clone(), window, cx);
-                        })
-                })
-                .child(format!("{}{}", column.label(), sort_suffix))
+                                this.focusable()
+                                    .tab_stop(true)
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(rgb(0xe9ece3)))
+                                    .on_click(move |_event: &ClickEvent, window, cx| {
+                                        cx.stop_propagation();
+                                        handler(action.clone(), window, cx);
+                                    })
+                                    .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                                        if event.keystroke.modifiers.modified() {
+                                            return;
+                                        }
+                                        if !matches!(
+                                            event.keystroke.key.as_str(),
+                                            "space" | "enter"
+                                        ) {
+                                            return;
+                                        }
+
+                                        cx.stop_propagation();
+                                        key_handler(key_action.clone(), window, cx);
+                                    })
+                            })
+                            .child(format!("{}{}", column.label(), sort_suffix))
+                    }
+                }))
         }))
 }
 
@@ -894,7 +1010,15 @@ fn render_table_row(
     } else {
         rgb(0xf8f9f3)
     };
-    let cells = row.cells().to_vec();
+    let region_cells = TableColumnRegion::ALL
+        .into_iter()
+        .map(|region| {
+            (
+                region,
+                row.cells_for_region(region).cloned().collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
 
     div()
         .id(format!("table:{table_id}:row:{render_key}"))
@@ -919,29 +1043,60 @@ fn render_table_row(
         .ui_role(row.role())
         .aria_row_index(row.aria_row_index())
         .aria_selected(row.selected())
-        .children(cells.into_iter().map(move |cell| {
+        .children(region_cells.into_iter().map(move |(region, cells)| {
             let table_id = table_id.clone();
             let render_key = render_key.clone();
-            let column_id = cell.column_id().as_str().to_owned();
+            let region_name = region.as_str().to_owned();
 
             div()
-                .id(format!("table:{table_id}:cell:{render_key}:{column_id}"))
-                .debug_selector(move || format!("table:{table_id}:cell:{render_key}:{column_id}"))
-                .min_w(gpui_px_from_ui(metrics.min_column_width()))
-                .flex_1()
                 .h_full()
+                .min_w(px(0.0))
                 .flex()
                 .items_center()
-                .px(gpui_px_from_ui(metrics.cell_padding_x()))
-                .border_r_1()
-                .border_color(rgb(0xe7e9e1))
-                .truncate()
-                .whitespace_nowrap()
-                .text_xs()
-                .text_color(rgb(0x2f3845))
-                .ui_role(cell.role())
-                .aria_column_index(cell.aria_column_index())
-                .child(cell.text().to_owned())
+                .overflow_hidden()
+                .id(format!(
+                    "table:{table_id}:row-region:{render_key}:{region_name}"
+                ))
+                .debug_selector({
+                    let table_id = table_id.clone();
+                    let render_key = render_key.clone();
+                    let region_name = region_name.clone();
+                    move || format!("table:{table_id}:row-region:{render_key}:{region_name}")
+                })
+                .when(region == TableColumnRegion::Center, |this| this.flex_1())
+                .when(region != TableColumnRegion::Center, |this| this.flex_none())
+                .children(cells.into_iter().map(move |cell| {
+                    let table_id = table_id.clone();
+                    let render_key = render_key.clone();
+                    let column_id = cell.column_id().as_str().to_owned();
+
+                    div()
+                        .id(format!("table:{table_id}:cell:{render_key}:{column_id}"))
+                        .debug_selector(move || {
+                            format!("table:{table_id}:cell:{render_key}:{column_id}")
+                        })
+                        .when(cell.region() == TableColumnRegion::Center, |this| {
+                            this.min_w(gpui_px_from_ui(metrics.min_column_width()))
+                                .flex_1()
+                        })
+                        .when(cell.region() != TableColumnRegion::Center, |this| {
+                            this.w(gpui_px_from_ui(metrics.min_column_width()))
+                                .flex_none()
+                        })
+                        .h_full()
+                        .flex()
+                        .items_center()
+                        .px(gpui_px_from_ui(metrics.cell_padding_x()))
+                        .border_r_1()
+                        .border_color(rgb(0xe7e9e1))
+                        .truncate()
+                        .whitespace_nowrap()
+                        .text_xs()
+                        .text_color(rgb(0x2f3845))
+                        .ui_role(cell.role())
+                        .aria_column_index(cell.aria_column_index())
+                        .child(cell.text().to_owned())
+                }))
         }))
 }
 

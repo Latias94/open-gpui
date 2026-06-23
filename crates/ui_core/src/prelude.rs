@@ -24,10 +24,11 @@ pub use crate::{
     sizing::{Density, Sizable, Size},
     table::{
         TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind,
-        TableAggregation, TableCellValue, TableColumn, TableColumnId, TableExpansionState,
-        TableFilter, TableGroupRow, TablePagination, TableResolvedRow, TableResolvedRowKind,
-        TableResolvedState, TableRow, TableRowId, TableRowModel, TableRowModelStage, TableSort,
-        TableSortDirection, TableState, TableStateCacheKey,
+        TableAggregation, TableCellValue, TableColumn, TableColumnId, TableColumnPinning,
+        TableColumnRegion, TableColumnRegions, TableExpansionState, TableFilter, TableGroupRow,
+        TablePagination, TableResolvedRow, TableResolvedRowKind, TableResolvedState, TableRow,
+        TableRowId, TableRowModel, TableRowModelStage, TableSort, TableSortDirection, TableState,
+        TableStateCacheKey,
     },
     tokens::{ThemeTokens, TokenKey, semantic},
     virtualizer::{

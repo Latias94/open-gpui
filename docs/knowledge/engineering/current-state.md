@@ -58,7 +58,7 @@ verified_by:
 
 - Goal: Execute the Table component-depth slice: grouped rows, expansion state, aggregate metadata, pinned-column semantics, and gallery proof.
 - Branch: `main`
-- Last verified: 2026-06-23, Table depth U3 gates passed on top of `5280468`: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-core --tests`, `cargo check -p open-gpui-ui-components --tests`, `cargo nextest run -p open-gpui-ui-core table`, `cargo nextest run -p open-gpui-ui-components table`, and `cargo nextest run -p open-gpui-ui-foundation-gallery table`.
+- Last verified: 2026-06-23, Table depth U4 gates passed on top of `dd525ab`: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-core --tests`, `cargo check -p open-gpui-ui-components --tests`, `cargo nextest run -p open-gpui-ui-core table`, `cargo nextest run -p open-gpui-ui-components table`, `cargo nextest run -p open-gpui-ui-foundation-gallery table`, `git diff --check`, and engineering wiki validation.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -103,9 +103,11 @@ verified_by:
 - Done: Updated the Table contract and verification docs so grouped and expanded row-model behavior is no longer documented as deferred.
 - Done: Completed U3 of the Table depth plan in `ui_core`: `TableAggregation` and `TableAggregateKind` now define built-in `count`, `sum`, `min`, `max`, and `average` aggregate cells for group rows. Aggregate specs are part of the `TableState` cache key, group row cells expose aggregate values, the grouping column still displays the grouping value, and `ui_components` crate-root/prelude exports cover the new contract types.
 - Done: Updated the Table contract and verification docs so built-in aggregation metadata is no longer documented as deferred; custom aggregate callbacks remain app/future work.
+- Done: Completed U4 of the Table depth plan in `ui_core` and `ui_components`: `TableColumnPinning` now splits resolved visible columns into left, center, and right `TableColumnRegions` after visibility and ordering; unknown/invisible pinned ids are ignored; moving a column between sides removes duplicates; pinning participates in the `TableState` cache key; and the GPUI `TableRenderPlan` exposes matching `TableColumnRegionRenderPlan` metadata plus header/body region debug selectors.
+- Done: Updated the Table contract and verification docs so pinned semantic render lanes are no longer documented as deferred. Sticky pinned-column scrolling, column resizing, and two-dimensional grid virtualization remain follow-up work.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Blocked: None.
-- Next action: Start U4 of `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md` by splitting visible columns into pinned left/center/right regions and proving the adapter rendering contract.
+- Next action: Start U5 of `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md` by adding grouped/aggregated/pinned Table gallery samples and focused gallery proofs.
 
 # Citations
 
@@ -145,6 +147,7 @@ verified_by:
 [34] Plan `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md`
 [35] Commit `85a6edf` - `docs(ui): add tanstack table references`
 [36] Commit `5280468` - `feat(ui-core): add grouped table row models`
-[37] Verification command `cargo nextest run -p open-gpui-ui-core table`
-[38] Verification command `cargo nextest run -p open-gpui-ui-components table`
-[39] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery table`
+[37] Commit `dd525ab` - `feat(ui-core): add table group aggregations`
+[38] Verification command `cargo nextest run -p open-gpui-ui-core table`
+[39] Verification command `cargo nextest run -p open-gpui-ui-components table`
+[40] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery table`

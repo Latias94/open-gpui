@@ -20,15 +20,16 @@ use open_gpui_ui_components::{
     SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor,
     SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
     Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
-    TableColumn, TableFilter, TableHeaderAction, TablePagination, TableRow, TableSort,
-    TableSortDirection, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
-    TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot,
-    Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
-    ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy,
-    TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList, VirtualizedListActivation,
-    VirtualizedListItemDescriptor, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
-    VirtualizedListScrollStrategy, VirtualizedListState, VirtualizerItemKey, VirtualizerRange,
-    VirtualizerSnapshot, VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
+    TableColumn, TableColumnPinning, TableColumnRegion, TableFilter, TableHeaderAction,
+    TablePagination, TableRow, TableSort, TableSortDirection, TableState, Tabs, TabsActivationMode,
+    TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode,
+    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
+    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
+    VirtualizerSnapshotItem, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -2952,6 +2953,87 @@ fn table_render_plan_uses_core_state_and_virtualizer_contracts() {
 }
 
 #[test]
+fn table_render_plan_exposes_pinned_column_regions() {
+    let state = TableState::new([TableRow::new("row-a")
+        .with_cell("name", "Alpha")
+        .with_cell("team", "UI")
+        .with_cell("score", 42_usize)
+        .with_cell("status", "Ready")])
+    .with_columns([
+        TableColumn::new("name", "Name"),
+        TableColumn::new("team", "Team"),
+        TableColumn::new("score", "Score"),
+        TableColumn::new("status", "Status"),
+    ])
+    .with_column_order(["status", "score", "team", "name"])
+    .with_column_pinning(
+        TableColumnPinning::new()
+            .pinned_left(["name", "score"])
+            .pinned_right(["status"]),
+    )
+    .with_pagination(TablePagination::disabled());
+    let plan = Table::new("pinned-table", "Pinned table", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    let region_columns = plan
+        .column_regions()
+        .iter()
+        .map(|region| {
+            (
+                region.region(),
+                region
+                    .columns()
+                    .iter()
+                    .map(|column| column.id().as_str())
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        region_columns,
+        [
+            (TableColumnRegion::Left, vec!["score", "name"]),
+            (TableColumnRegion::Center, vec!["team"]),
+            (TableColumnRegion::Right, vec!["status"]),
+        ]
+    );
+    assert_eq!(
+        plan.columns()
+            .iter()
+            .map(|column| (column.id().as_str(), column.region()))
+            .collect::<Vec<_>>(),
+        [
+            ("score", TableColumnRegion::Left),
+            ("name", TableColumnRegion::Left),
+            ("team", TableColumnRegion::Center),
+            ("status", TableColumnRegion::Right),
+        ]
+    );
+
+    let row = &plan.rows()[0];
+    assert_eq!(
+        row.cells_for_region(TableColumnRegion::Left)
+            .map(|cell| cell.column_id().as_str())
+            .collect::<Vec<_>>(),
+        ["score", "name"]
+    );
+    assert_eq!(
+        row.cells_for_region(TableColumnRegion::Center)
+            .map(|cell| cell.column_id().as_str())
+            .collect::<Vec<_>>(),
+        ["team"]
+    );
+    assert_eq!(
+        row.cells_for_region(TableColumnRegion::Right)
+            .map(|cell| cell.column_id().as_str())
+            .collect::<Vec<_>>(),
+        ["status"]
+    );
+}
+
+#[test]
 fn table_virtualizer_snapshot_restores_measurements_without_overriding_live_scroll() {
     let snapshot = VirtualizerSnapshot::new(
         ui_px(0.0),
@@ -3310,7 +3392,9 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     );
     let virtualizer: root::VirtualizerState =
         root::VirtualizerState::new(4, ui_px(24.0)).with_overscan(2);
-    let header_action: root::TableHeaderAction = table.state().columns()[0]
+    let root_plan: root::TableRenderPlan = table.state();
+    let _root_region_plan: &root::TableColumnRegionRenderPlan = &root_plan.column_regions()[0];
+    let header_action: root::TableHeaderAction = root_plan.columns()[0]
         .sort_action()
         .expect("sortable exported table column should expose a header action")
         .clone();
@@ -3327,8 +3411,16 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _prelude_row_kind: prelude::TableResolvedRowKind = prelude::TableResolvedRowKind::Leaf;
     let _resolved_kind: Option<&root::TableGroupRow> =
         table.table_state().resolve().final_model().rows()[0].group();
+    let _root_pinning: root::TableColumnPinning =
+        root::TableColumnPinning::new().pinned_left(["name"]);
+    let _prelude_region: prelude::TableColumnRegion = prelude::TableColumnRegion::Center;
+    let _prelude_regions: prelude::TableColumnRegions = table
+        .table_state()
+        .resolve()
+        .visible_column_regions()
+        .clone();
 
-    assert_eq!(table.state().role(), Role::Table);
+    assert_eq!(root_plan.role(), Role::Table);
     assert_eq!(virtualizer.resolve().overscan(), 2);
 }
 
@@ -3558,6 +3650,63 @@ fn table_runtime_header_click_emits_sort_action(cx: &mut open_gpui::TestAppConte
         Some(TableSortDirection::Ascending)
     );
     assert_eq!(actions[0].next_sorting()[0].column().as_str(), "score");
+}
+
+#[open_gpui::test]
+fn table_runtime_exposes_pinned_region_debug_selectors(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let state = TableState::new([TableRow::new("row-a")
+                .with_cell("name", "Alpha")
+                .with_cell("team", "UI")
+                .with_cell("score", 42_usize)
+                .with_cell("status", "Ready")])
+            .with_columns([
+                TableColumn::new("name", "Name"),
+                TableColumn::new("team", "Team"),
+                TableColumn::new("score", "Score"),
+                TableColumn::new("status", "Status"),
+            ])
+            .with_column_order(["status", "score", "team", "name"])
+            .with_column_pinning(
+                TableColumnPinning::new()
+                    .pinned_left(["name", "score"])
+                    .pinned_right(["status"]),
+            )
+            .with_pagination(TablePagination::disabled());
+            let table = Table::new("pinned-runtime-table", "Pinned runtime table", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0));
+
+            div()
+                .size_full()
+                .child(div().w(px(520.0)).h(px(140.0)).child(table))
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    for region in ["left", "center", "right"] {
+        assert!(
+            cx.debug_bounds(&format!(
+                "table:pinned-runtime-table:header-region:{region}"
+            ))
+            .is_some(),
+            "expected header {region} region selector to render"
+        );
+        assert!(
+            cx.debug_bounds(&format!(
+                "table:pinned-runtime-table:row-region:row-a:{region}"
+            ))
+            .is_some(),
+            "expected body {region} region selector to render"
+        );
+    }
 }
 
 #[open_gpui::test]
