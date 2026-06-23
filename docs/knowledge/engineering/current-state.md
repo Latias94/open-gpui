@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 751d165
+git_commit: d55f2d1
 verified_by:
   - cargo fmt -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-components table component_api_inventory
@@ -81,13 +81,17 @@ verified_by:
 
 # Current State
 
+- 2026-06-24: Merged the Table row-pinning / two-axis viewport slice back to `main` as `d55f2d1`
+  and pushed it to `origin/main`. The working tree is clean and `git diff --check` passed; the next
+  Table follow-up can start from the updated `main` line.
+
 - Goal: Execute `docs/plans/2026-06-23-009-feat-ui-table-row-pinning-plan.md`.
 - Branch: `main`
-- Last verified: 2026-06-23, `cargo nextest run -p open-gpui-ui-core table`,
-  `cargo nextest run -p open-gpui-ui-components table`, and
-  `cargo nextest run -p open-gpui-ui-foundation-gallery table` passed after the row-pinning slice
-  landed in the working tree.
-- In progress: Final docs / memory validation and commit for the row-pinning slice.
+- Last verified: 2026-06-24, `git diff --check` passed after merging the row-pinning slice into
+  `main` and pushing the result to `origin/main`.
+- In progress: None.
+- Blocked: None.
+- Next action: Start the next Table follow-up when a new plan is ready.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
   with depth/parent/branch/descendant metadata, source-tree expansion reuses

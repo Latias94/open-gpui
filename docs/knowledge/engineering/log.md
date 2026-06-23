@@ -6,6 +6,9 @@ status: active
 
 # Log
 
+- 2026-06-24: Merged the Table row-pinning / two-axis viewport slice back to `main` as `d55f2d1`
+  and pushed it to `origin/main`. The working tree is clean, `git diff --check` passed, and the
+  next Table follow-up can start from the updated `main` line.
 - 2026-06-24: Started the Table two-axis viewport follow-up from
   `docs/plans/2026-06-24-001-feat-ui-table-two-axis-virtualization-plan.md`. `ui_core` now has a
   renderer-neutral `GridViewport2D` plus `resolve_grid_viewport_2d`, and `ui_components::Table`
