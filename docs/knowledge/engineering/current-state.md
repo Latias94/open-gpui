@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 1b4f482
+git_commit: 3273c1a
 verified_by:
   - cargo check -p open-gpui-ui-core --tests
   - cargo check -p open-gpui-ui-components --tests
@@ -52,13 +52,15 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-foundation-gallery
   - git diff --check
   - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
+  - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_table_samples_expose_virtualized_row_model_contract components_gallery_smoke_focused_table_scroll_stays_inside_sample components_gallery_smoke_table_scroll_stays_inside_sample components_gallery_smoke_grouped_table_scroll_stays_inside_sample components_gallery_smoke_resizable_table_resize_updates_sample
 ---
 
 # Current State
 
 - Goal: Execute the next Table follow-up slice: column sizing and resize semantics, with TanStack Table and Fret as the main references.
 - Branch: `main`
-- Last verified: 2026-06-23, Table depth U6 gates passed on top of `1b4f482` plus the current docs-only planning diff. Previous verification remains green: `cargo fmt --all`, `cargo fmt --all --check`, `cargo check -p open-gpui-ui-core --tests`, `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p open-gpui-ui-core table`, `cargo nextest run -p open-gpui-ui-components table`, `cargo nextest run -p open-gpui-ui-foundation-gallery table`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-foundation-gallery`, targeted gallery automation regression reruns, `git diff --check`, and engineering wiki validation.
+- Last verified: 2026-06-23, the Table sizing / resize slice passed on top of `3273c1a`: `cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components` passed 271/271, the focused gallery gate `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_table_samples_expose_virtualized_row_model_contract components_gallery_smoke_focused_table_scroll_stays_inside_sample components_gallery_smoke_table_scroll_stays_inside_sample components_gallery_smoke_grouped_table_scroll_stays_inside_sample components_gallery_smoke_resizable_table_resize_updates_sample` passed 5/5, and `git diff --check` plus engineering wiki validation passed.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -110,10 +112,13 @@ verified_by:
 - Done: Completed U6 of the Table depth plan with full focused and broad verification. The full `open-gpui-ui-components` suite passes 209/209 and the full `open-gpui-ui-foundation-gallery` suite passes 74/74 after stabilizing long Components-page automation.
 - Done: Hardened the Components gallery smokes discovered during U6: the Command catalog entry now points at the real `ranked-search` sample selector, and long-section smokes use catalog directory jumps plus the gallery page `ScrollHandle` to align concrete interactive targets before clicking, dragging, or scrolling nested controls.
 - Done: Created `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md` to start the next Table slice. The new plan uses TanStack Table's committed sizing / transient resizing split and Fret's parity fixtures as the main references, and it deliberately stops before sticky pinned-column layout or two-dimensional virtualization.
+- Done: Completed U1/U2 of `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md` as commits `9264682` and `513f13c`. `TableColumnSizing` now resolves controlled widths and total size, the GPUI Table adapter consumes column sizing offsets, and the components crate exports the sizing contract through its public surface. Verified the focused core/components table gates before moving on to resize interaction work.
+- Done: Completed U3 of `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md` as `426742a`. `TableColumnResizeMode`, `TableColumnResizeDirection`, and resize state/update helpers now drive committed/transient resize behavior, the GPUI adapter exposes callback-backed drag handles with controlled sizing change events, and tests cover LTR/RTL drag semantics plus runtime header-click parity.
+- Done: Completed U4 of `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md` as `3273c1a`. The Components gallery now has a `release-resize` Table sample, a runtime sizing log, visible width / resizable-column summaries, selector-aligned resize smoke coverage, and docs / verification entries for the new gate.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
-- Follow-up: Table column sizing / resize is now active in the new plan; remaining follow-ups after that are sticky horizontal pinned-column layout, two-dimensional grid virtualization, tree-data tables, custom aggregation callbacks, server pagination/faceting/editing, and standalone headless extraction.
+- Follow-up: The column sizing / resize slice is complete; the next Table follow-ups are sticky horizontal pinned-column layout, two-dimensional grid virtualization, tree-data tables, custom aggregation callbacks, server pagination/faceting/editing, and standalone headless extraction.
 - Blocked: None.
-- Next action: Start U1 of `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md`.
+- Next action: Validate the engineering wiki memory against the updated docs, commit the memory refresh, and then pick the next Table follow-up boundary.
 
 # Citations
 
@@ -158,3 +163,9 @@ verified_by:
 [39] Verification command `cargo nextest run -p open-gpui-ui-components table`
 [40] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery table`
 [41] Plan `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md`
+[42] Commit `9264682` - `feat(ui-core): add table column sizing state`
+[43] Commit `513f13c` - `feat(ui-components): expose table column sizing contract`
+[44] Commit `426742a` - `feat(ui): add table column resizing interactions`
+[45] Commit `3273c1a` - `feat(gallery): add table column resize sample`
+[46] Verification command `cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components`
+[47] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_table_samples_expose_virtualized_row_model_contract components_gallery_smoke_focused_table_scroll_stays_inside_sample components_gallery_smoke_table_scroll_stays_inside_sample components_gallery_smoke_grouped_table_scroll_stays_inside_sample components_gallery_smoke_resizable_table_resize_updates_sample`
