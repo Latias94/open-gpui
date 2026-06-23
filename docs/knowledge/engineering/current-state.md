@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: ce8413e
+git_commit: bfa91df
 verified_by:
   - cargo fmt -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-components table component_api_inventory
@@ -81,8 +81,8 @@ verified_by:
 
 # Current State
 
-- Goal: Finish the Table manual expansion and async children metadata slice, then pick the next
-  Table follow-up.
+- Goal: Pick and plan the next Table follow-up after the manual expansion / async child metadata
+  slice.
 - Branch: `main`
 - Last verified: 2026-06-23, focused manual-expansion Table gates passed:
   `cargo nextest run -p open-gpui-ui-core table`,
@@ -116,7 +116,8 @@ verified_by:
 - Done: Updated the Table contract and verification docs so manual source-tree expansion,
   expandable unloaded branches, and child-load metadata are documented as shipped component
   behavior. Real fetch/cache/data-source orchestration remains app-owned follow-up work.
-- In progress: Commit the manual expansion slice.
+- Done: Committed the manual expansion slice as `bfa91df`.
+- In progress: Choose the next Table follow-up plan boundary.
 - Done: Wrote `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` as the next Table slice. The plan keeps tree-data rows separate from synthetic grouping, reuses `TableExpansionState` for source hierarchy, adds row interaction payloads and focus semantics, and scopes the first gallery proof to a focused tree-data Table sample with runtime expansion and activation coverage.
 - Done: Completed U5/U6 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `25875d0`. The Components gallery now includes `release-matrix`, a wide pinned Table sample with fourteen center metrics, and a focused smoke that proves far center columns stay unmounted before scroll, mount after horizontal scroll, and keep the outer Components page plus fixed lanes stationary. The gallery state row is also less noisy for non-grouped tables, and the Table contract / verification docs now describe the center-column window as a first-class adapter behavior.
 - Done: Completed the sticky pinned Table slice on top of `3273c1a`: the GPUI Table adapter keeps vertical wheel input inside pinned table bodies, `release-rollup` exposes explicit left/center/right lane widths, and the focused gallery smoke proves horizontal center-lane scrolling leaves left/right pinned lanes plus the outer Components page fixed.
