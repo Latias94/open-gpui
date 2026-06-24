@@ -97,6 +97,14 @@ verified_by:
   fearless refactoring, implementation, verification, memory updates, and commits going until the
   Table API, interaction behavior, performance / virtualization, gallery proof, and docs contract
   are mature enough to serve as the official component-library baseline.
+- 2026-06-24: The global filtering and faceting slice is already shipped on the current main
+  history as `88749ce`, `fd66b20`, and `947daa2`. The next active Table boundary is richer filter
+  operators, and the new plan `docs/plans/2026-06-24-009-feat-ui-table-filter-operators-plan.md`
+  is already committed as `f4a0af7`.
+- 2026-06-24: Completed U1/U2 of the filter operators plan and committed the core slice as
+  `ae798e7`. `TableFilterKind` now carries explicit text and numeric comparison operators, text
+  case-sensitivity metadata, and stable accessors; `ui_core`, `ui_components`, and the focused
+  tests now export and verify the new built-in operator family.
 - 2026-06-24: Wrote `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md`
   as the next Table boundary and committed it as `55c7970`. The plan follows TanStack's sparse
   `columnVisibility` state and Fret's caller-owned view-options menu pattern: keep
@@ -360,10 +368,10 @@ verified_by:
   tree-data, row-interaction, manual-expansion, manual row-model control, per-column faceting
   metadata, single-column categorical faceted filter controls, single-column numeric range filter
   controls, row selection variants, row pinning, custom aggregation callbacks, two-axis viewport,
-  and text cell editing slices are
-  complete in the current working tree.
-  Remaining Table follow-ups are global faceting, richer predicate/filter families, richer editor
-  families, and standalone headless extraction if cross-framework pressure appears.
+  text cell editing, global filtering, column visibility, and richer filter-operator core slices
+  are complete in the current working tree.
+  Remaining Table follow-ups are richer editor families, column-group / nested-header polish, and
+  standalone headless extraction if cross-framework pressure appears.
 - Done: Completed `docs/plans/2026-06-24-005-feat-ui-table-cell-editing-plan.md` in the working
   tree. Table columns can opt into `TableCellEditor::Text`, editable leaf cells render controlled
   `TextInput` editors through the GPUI adapter, `TableCellEditChange` targets stable row and column
@@ -372,7 +380,7 @@ verified_by:
   gallery `cargo nextest run` commands, engineering wiki validation, and `git diff --check`.
 - Done: The two-dimensional Table viewport contract is shipped on `main` as `725f859`.
 - Blocked: None.
-- Next action: Decide whether to deepen the global filtering plan or start `ce-work` on it.
+- Next action: Continue the new filter-operators plan with U3: component recipe and payload.
 
 # Citations
 

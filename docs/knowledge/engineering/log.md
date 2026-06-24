@@ -6,6 +6,14 @@ status: active
 
 # Log
 
+- 2026-06-24: Created `docs/plans/2026-06-24-009-feat-ui-table-filter-operators-plan.md` as the
+  next Table boundary and committed it as `f4a0af7`. The plan uses TanStack filter-function
+  references and Fret parity tests to shape a closed built-in predicate family instead of a
+  callback registry.
+- 2026-06-24: Completed U1/U2 of the filter-operators plan and committed the core slice as
+  `ae798e7`. `TableFilterKind` now carries explicit text and numeric comparison operators,
+  case-sensitivity metadata, cache-key participation, and focused tests proving richer predicates
+  compose with facets and the global filter.
 - 2026-06-24: Completed U3/U4 of
   `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md` and committed the
   slice as `d8abeaa`. `release-matrix` now renders a `TableColumnVisibility` toolbar control over the wide
