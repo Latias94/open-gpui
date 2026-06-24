@@ -4277,6 +4277,11 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _prelude_expansion_mode: prelude::TableExpansionMode = prelude::TableExpansionMode::Client;
     let _root_stage_mode: root::TableStageMode = root::TableStageMode::Manual;
     let _prelude_stage_mode: prelude::TableStageMode = prelude::TableStageMode::Client;
+    let root_filter = root::TableFilter::one_of("status", ["Ready", "Blocked"]);
+    let _prelude_filter: prelude::TableFilter = prelude::TableFilter::contains("team", "UI");
+    let _root_filter_kind: root::TableFilterKind = root_filter.kind().clone();
+    let _prelude_filter_kind: prelude::TableFilterKind =
+        prelude::TableFilterKind::Contains { query: "UI".into() };
     let root_facet_value = root::TableFacetValueCount::new("Ready", 2);
     let root_facets: root::TableColumnFacets =
         root::TableColumnFacets::manual("status", 2).with_unique_values([root_facet_value]);

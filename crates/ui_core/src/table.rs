@@ -1379,11 +1379,26 @@ impl TableSort {
     }
 }
 
-/// Contains-filter specification for one column.
+/// Column filter kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TableFilterKind {
+    /// Case-insensitive contains filter.
+    Contains {
+        /// Case-insensitive query text.
+        query: String,
+    },
+    /// Exact categorical filter over stable facet tokens.
+    OneOf {
+        /// Exact stable facet tokens.
+        values: BTreeSet<String>,
+    },
+}
+
+/// Column filter specification for one column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableFilter {
     column: TableColumnId,
-    query: String,
+    kind: TableFilterKind,
 }
 
 impl TableFilter {
@@ -1391,7 +1406,27 @@ impl TableFilter {
     pub fn contains(column: impl Into<TableColumnId>, query: impl Into<String>) -> Self {
         Self {
             column: column.into(),
-            query: query.into(),
+            kind: TableFilterKind::Contains {
+                query: query.into(),
+            },
+        }
+    }
+
+    /// Creates an exact categorical filter over stable facet tokens.
+    pub fn exact(column: impl Into<TableColumnId>, value: impl Into<String>) -> Self {
+        Self::one_of(column, [value.into()])
+    }
+
+    /// Creates an exact categorical filter over multiple stable facet tokens.
+    pub fn one_of(
+        column: impl Into<TableColumnId>,
+        values: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            column: column.into(),
+            kind: TableFilterKind::OneOf {
+                values: values.into_iter().map(Into::into).collect(),
+            },
         }
     }
 
@@ -1400,24 +1435,53 @@ impl TableFilter {
         &self.column
     }
 
-    /// Returns the filter query.
+    /// Returns the filter kind.
+    pub const fn kind(&self) -> &TableFilterKind {
+        &self.kind
+    }
+
+    /// Returns the contains query when this is a contains filter.
     pub fn query(&self) -> &str {
-        &self.query
+        match &self.kind {
+            TableFilterKind::Contains { query } => query,
+            TableFilterKind::OneOf { .. } => "",
+        }
+    }
+
+    /// Returns the selected categorical tokens when this is an exact filter.
+    pub fn selected_values(&self) -> Option<&BTreeSet<String>> {
+        match &self.kind {
+            TableFilterKind::Contains { .. } => None,
+            TableFilterKind::OneOf { values } => Some(values),
+        }
     }
 
     fn matches(&self, row: &TableRow) -> bool {
-        if self.query.is_empty() {
-            return true;
-        }
+        match &self.kind {
+            TableFilterKind::Contains { query } => {
+                if query.is_empty() {
+                    return true;
+                }
 
-        row.cell(&self.column)
-            .map(|value| {
-                value
-                    .filter_text()
-                    .to_lowercase()
-                    .contains(&self.query.to_lowercase())
-            })
-            .unwrap_or(false)
+                row.cell(&self.column)
+                    .map(|value| {
+                        value
+                            .filter_text()
+                            .to_lowercase()
+                            .contains(&query.to_lowercase())
+                    })
+                    .unwrap_or(false)
+            }
+            TableFilterKind::OneOf { values } => {
+                if values.is_empty() {
+                    return true;
+                }
+
+                row.cell(&self.column)
+                    .map(|value| values.contains(&value.filter_text()))
+                    .unwrap_or(false)
+            }
+        }
     }
 }
 
@@ -4441,6 +4505,97 @@ mod tests {
                 .core_model()
                 .row(&TableRowId::new("row-b"))
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn categorical_filters_match_exact_tokens_and_multiple_values() {
+        let resolved = TableState::new([
+            TableRow::new("row-ready")
+                .with_cell("status", "Ready")
+                .with_cell("score", 20_usize)
+                .with_cell("enabled", true),
+            TableRow::new("row-review")
+                .with_cell("status", "Review")
+                .with_cell("score", 30_usize)
+                .with_cell("enabled", false),
+            TableRow::new("row-blocked")
+                .with_cell("status", "Blocked")
+                .with_cell("score", 40_usize)
+                .with_cell("enabled", true),
+        ])
+        .with_columns([
+            TableColumn::new("status", "Status"),
+            TableColumn::new("score", "Score"),
+            TableColumn::new("enabled", "Enabled"),
+        ])
+        .with_filters([
+            TableFilter::one_of("status", ["Ready", "Blocked"]),
+            TableFilter::exact("enabled", "true"),
+        ])
+        .resolve();
+
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-ready", "row-blocked"],
+            "categorical filters use exact facet tokens and compose with other filters"
+        );
+    }
+
+    #[test]
+    fn categorical_filter_values_are_order_independent_cache_keys() {
+        let left = TableFilter::one_of("status", ["Ready", "Blocked", "Ready"]);
+        let right = TableFilter::one_of("status", ["Blocked", "Ready"]);
+
+        assert_eq!(
+            left, right,
+            "selected categorical tokens are a deterministic set, not click order"
+        );
+        assert_eq!(
+            left.selected_values()
+                .expect("categorical filter should expose selected values")
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            ["Blocked".to_string(), "Ready".to_string()]
+        );
+
+        let base = TableState::new(sample_rows()).with_columns([TableColumn::new("team", "Team")]);
+        assert_eq!(
+            base.clone().with_filters([left]).cache_key(),
+            base.clone().with_filters([right]).cache_key(),
+            "cache keys should not depend on selection order"
+        );
+        assert_ne!(
+            base.clone()
+                .with_filters([TableFilter::one_of("team", ["ops"])])
+                .cache_key(),
+            base.with_filters([TableFilter::one_of("team", ["design"])])
+                .cache_key(),
+            "changing the selected categorical token should invalidate caches"
+        );
+    }
+
+    #[test]
+    fn empty_categorical_filters_are_noops() {
+        let resolved = TableState::new(sample_rows())
+            .with_filters([TableFilter::one_of("team", std::iter::empty::<&str>())])
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-b", "row-a", "row-c"],
+            "an empty categorical filter should behave like no filter"
         );
     }
 
