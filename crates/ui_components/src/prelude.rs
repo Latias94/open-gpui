@@ -81,7 +81,8 @@ pub use crate::splitter::{
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use crate::table::{
     Table, TableCellRenderPlan, TableCenterColumnWindowPlan, TableColumnRegionRenderPlan,
-    TableColumnRenderPlan, TableColumnSizingChange, TableHeaderAction, TableInputModifiers,
+    TableColumnRenderPlan, TableColumnSizingChange, TableFacetedFilter, TableFacetedFilterChange,
+    TableFacetedFilterOptionState, TableFacetedFilterState, TableHeaderAction, TableInputModifiers,
     TableMetrics, TablePinnedLayoutPlan, TableRenderPlan, TableRowAction, TableRowActivation,
     TableRowActivationKind, TableRowExpansionToggle, TableRowRenderPlan, TableRowSelectionChange,
     TableSelectionScope,

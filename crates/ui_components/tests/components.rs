@@ -22,18 +22,19 @@ use open_gpui_ui_components::{
     Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
     TableCellValue, TableCenterColumnWindowPlan, TableColumn, TableColumnFacets, TableColumnId,
     TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
-    TableColumnSizingChange, TableExpansionMode, TableFacetValueCount, TableFilter,
-    TableHeaderAction, TablePagination, TableRow, TableRowChildrenLoadState, TableRowPinning,
-    TableRowPinningPolicy, TableRowRegion, TableSelectionActivationMode, TableSelectionMode,
-    TableSelectionScope, TableSort, TableSortDirection, TableStageMode, TableState, Tabs,
-    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput,
-    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
-    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
-    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
-    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, first_enabled,
+    TableColumnSizingChange, TableExpansionMode, TableFacetValueCount, TableFacetedFilter,
+    TableFacetedFilterChange, TableFacetedFilterState, TableFilter, TableHeaderAction,
+    TablePagination, TableRow, TableRowChildrenLoadState, TableRowPinning, TableRowPinningPolicy,
+    TableRowRegion, TableSelectionActivationMode, TableSelectionMode, TableSelectionScope,
+    TableSort, TableSortDirection, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem,
+    TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver,
+    ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
+    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
+    TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList,
+    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRenderPlan,
+    VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
+    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
+    VirtualizerState, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -489,6 +490,49 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         no_interaction_note: None,
     },
     ComponentApiInventoryEntry {
+        component: "TableFacetedFilter",
+        controlled_inputs: &["open", "query", "selected_values"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_open",
+                runtime_value: "open",
+            },
+            DefaultSeedApi {
+                builder: "default_query",
+                runtime_value: "query",
+            },
+        ],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "facets",
+            "placeholder",
+            "empty_label",
+            "clear_label",
+            "viewport_item_count",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+        ],
+        callbacks: &[
+            CallbackApi {
+                name: "on_open_change",
+                payload: "bool",
+            },
+            CallbackApi {
+                name: "on_query_change",
+                payload: "String",
+            },
+            CallbackApi {
+                name: "on_change",
+                payload: "TableFacetedFilterChange",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
         component: "VirtualizedList",
         controlled_inputs: &[],
         default_seeds: &[
@@ -876,6 +920,28 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "column_resize_mode",
             "column_resize_direction",
         ],
+        "TableFacetedFilter" => &[
+            "facets",
+            "selected_values",
+            "open",
+            "default_open",
+            "query",
+            "default_query",
+            "placeholder",
+            "empty_label",
+            "clear_label",
+            "disabled",
+            "viewport_item_count",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
+            "on_query_change",
+            "on_change",
+        ],
         "VirtualizedList" => &["disabled", "viewport_item_count", "row_height", "overscan"],
         "StatusCue" => &["intent"],
         "EmptyState" => &["description", "intent"],
@@ -924,6 +990,7 @@ fn component_source_file(component: &str) -> &'static str {
         "ScrollArea" => "scroll_area.rs",
         "Splitter" => "splitter.rs",
         "Table" => "table.rs",
+        "TableFacetedFilter" => "table.rs",
         "VirtualizedList" => "virtualized_list.rs",
         "StatusCue" => "feedback.rs",
         "EmptyState" => "feedback.rs",
@@ -1226,6 +1293,30 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "table_state",
             "state",
             "render_plan",
+        ],
+        "TableFacetedFilter" => &[
+            "new",
+            "facets",
+            "selected_values",
+            "open",
+            "default_open",
+            "query",
+            "default_query",
+            "placeholder",
+            "empty_label",
+            "clear_label",
+            "disabled",
+            "viewport_item_count",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
+            "on_query_change",
+            "on_change",
+            "state",
         ],
         "VirtualizedList" => &[
             "new",
@@ -3367,6 +3458,158 @@ fn table_render_plan_exposes_faceting_metadata() {
 }
 
 #[test]
+fn table_faceted_filter_state_resolves_query_selection_and_popover_contract() {
+    let facets = TableColumnFacets::manual("status", 4).with_unique_values([
+        TableFacetValueCount::new("Ready", 2),
+        TableFacetValueCount::new("Blocked", 1),
+        TableFacetValueCount::new("Review", 1),
+    ]);
+
+    let state: TableFacetedFilterState =
+        TableFacetedFilter::new("status-filter", "Status", "status")
+            .facets(facets)
+            .selected_values(["Ready", "Blocked"])
+            .query("rea")
+            .open(true)
+            .placeholder("Find status")
+            .empty_label("No statuses")
+            .clear_label("Reset")
+            .small()
+            .placement_side(OverlayPlacementSide::Top)
+            .placement_alignment(OverlayPlacementAlignment::End)
+            .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
+            .state();
+
+    assert_eq!(state.id(), "status-filter");
+    assert_eq!(state.label(), "Status");
+    assert_eq!(state.column_id().as_str(), "status");
+    assert_eq!(state.query(), "rea");
+    assert_eq!(state.trigger_label(), "Status: Ready, Blocked");
+    assert_eq!(
+        state.selected_values(),
+        &["Blocked".to_string(), "Ready".to_string()]
+    );
+    assert_eq!(
+        state.selected_labels(),
+        &["Ready".to_string(), "Blocked".to_string()]
+    );
+    assert_eq!(state.total_option_count(), 3);
+    assert!(state.clear_enabled());
+    assert_eq!(state.empty_label(), "No statuses");
+    assert_eq!(state.clear_label(), "Reset");
+    assert_eq!(state.popover().open_mode(), PopoverOpenMode::Controlled);
+    assert!(state.popover().open());
+    assert_eq!(state.popover().placement_side(), OverlayPlacementSide::Top);
+    assert_eq!(
+        state.popover().placement_alignment(),
+        OverlayPlacementAlignment::End
+    );
+    assert_eq!(
+        state.popover().outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert_eq!(state.search_input().value(), "rea");
+    assert_eq!(state.search_input().placeholder(), Some("Find status"));
+    assert_eq!(state.search_input().size(), Size::Small);
+    assert!(state.search_input().controller_driven());
+
+    let options = state
+        .options()
+        .iter()
+        .map(|option| {
+            (
+                option.value().to_owned(),
+                option.label().to_owned(),
+                option.count(),
+                option.selected(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        options,
+        vec![("Ready".to_string(), "Ready".to_string(), 2, true)]
+    );
+}
+
+#[test]
+fn table_faceted_filter_state_reports_empty_query_result() {
+    let state = TableFacetedFilter::new("status-filter", "Status", "status")
+        .facets(TableColumnFacets::manual("status", 2).with_unique_values([
+            TableFacetValueCount::new("Ready", 1),
+            TableFacetValueCount::new("Blocked", 1),
+        ]))
+        .query("missing")
+        .empty_label("No matching statuses")
+        .state();
+
+    assert!(state.empty());
+    assert!(!state.clear_enabled());
+    assert_eq!(state.total_option_count(), 2);
+    assert_eq!(state.empty_label(), "No matching statuses");
+    assert!(state.options().is_empty());
+}
+
+#[test]
+fn table_faceted_filter_change_updates_filters_and_resets_pagination() {
+    let state = TableState::new([
+        TableRow::new("row-a")
+            .with_cell("team", "UI")
+            .with_cell("status", "Ready"),
+        TableRow::new("row-b")
+            .with_cell("team", "Platform")
+            .with_cell("status", "Blocked"),
+    ])
+    .with_columns([
+        TableColumn::new("team", "Team"),
+        TableColumn::new("status", "Status"),
+    ])
+    .with_filters([
+        TableFilter::contains("team", "UI"),
+        TableFilter::one_of("status", ["Ready"]),
+    ])
+    .with_pagination(TablePagination::new(3, 25));
+
+    let change =
+        TableFacetedFilterChange::new("status", ["Blocked", "Ready"], Some("Blocked"), true);
+    assert_eq!(change.column_id().as_str(), "status");
+    assert_eq!(change.toggled_value(), Some("Blocked"));
+    assert!(change.selected());
+    assert!(!change.cleared());
+
+    let next = change.apply_to(state);
+    assert_eq!(next.pagination().page_index(), 0);
+    assert_eq!(next.pagination().page_size(), 25);
+    assert_eq!(next.filters().len(), 2);
+    let team_filter = next
+        .filters()
+        .iter()
+        .find(|filter| filter.column().as_str() == "team")
+        .expect("unrelated team filter should be preserved");
+    assert_eq!(team_filter.query(), "UI");
+    let status_filter = next
+        .filters()
+        .iter()
+        .find(|filter| filter.column().as_str() == "status")
+        .expect("status filter should be replaced by the faceted selection");
+    assert_eq!(
+        status_filter
+            .selected_values()
+            .expect("status filter should be categorical")
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec!["Blocked".to_string(), "Ready".to_string()]
+    );
+
+    let cleared = TableFacetedFilterChange::clear("status");
+    assert!(cleared.cleared());
+    let cleared_state = cleared.apply_to(next);
+    assert_eq!(cleared_state.pagination().page_index(), 0);
+    assert_eq!(cleared_state.filters().len(), 1);
+    assert_eq!(cleared_state.filters()[0].column().as_str(), "team");
+}
+
+#[test]
 fn table_render_plan_exposes_pinned_column_regions() {
     let flat_plan = Table::new("flat-table", "Flat table", sample_table_state(1))
         .render_plan(UiPx::ZERO, ui_px(96.0));
@@ -4286,6 +4529,25 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let root_facets: root::TableColumnFacets =
         root::TableColumnFacets::manual("status", 2).with_unique_values([root_facet_value]);
     let _prelude_facets: prelude::TableColumnFacets = root_facets.clone();
+    let root_faceted_filter: root::TableFacetedFilter =
+        root::TableFacetedFilter::new("root-status-filter", "Status", "status")
+            .facets(root_facets.clone())
+            .selected_values(["Ready"]);
+    let root_faceted_filter_state: root::TableFacetedFilterState = root_faceted_filter.state();
+    let _root_faceted_option: Option<&root::TableFacetedFilterOptionState> =
+        root_faceted_filter_state.options().first();
+    let _root_faceted_change: root::TableFacetedFilterChange =
+        root::TableFacetedFilterChange::new("status", ["Ready"], Some("Ready"), true);
+    let prelude_faceted_filter: prelude::TableFacetedFilter =
+        prelude::TableFacetedFilter::new("prelude-status-filter", "Status", "status")
+            .facets(root_facets.clone())
+            .selected_values(["Ready"]);
+    let prelude_faceted_filter_state: prelude::TableFacetedFilterState =
+        prelude_faceted_filter.state();
+    let _prelude_faceted_option: Option<&prelude::TableFacetedFilterOptionState> =
+        prelude_faceted_filter_state.options().first();
+    let _prelude_faceted_change: prelude::TableFacetedFilterChange =
+        prelude::TableFacetedFilterChange::clear("status");
     let _root_facet_range: Option<root::TableFacetRange> = root::TableFacetRange::new(1.0, 2.0);
     let _prelude_facet_value: prelude::TableFacetValueCount =
         prelude::TableFacetValueCount::new("Blocked", 1);
@@ -7486,6 +7748,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_scroll = root::ScrollArea::new("scroll", div());
     let root_splitter = root::Splitter::new("split");
     let root_tabs = root::Tabs::new("tabs");
+    let root_faceted_filter = root::TableFacetedFilter::new("status-filter", "Status", "status");
     let root_avatar = root::Avatar::new("avatar", "Ada Lovelace");
     let root_separator = root::Separator::new("separator");
     let root_kbd = root::Kbd::new("kbd", "Ctrl+K");
@@ -7535,6 +7798,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_scroll = prelude::ScrollArea::new("scroll", div());
     let prelude_splitter = prelude::Splitter::new("split");
     let prelude_tabs = prelude::Tabs::new("tabs");
+    let prelude_faceted_filter =
+        prelude::TableFacetedFilter::new("status-filter", "Status", "status");
     let prelude_avatar = prelude::Avatar::new("avatar", "Ada Lovelace");
     let prelude_separator = prelude::Separator::new("separator");
     let prelude_kbd = prelude::Kbd::new("kbd", "Ctrl+K");
@@ -7559,6 +7824,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_scroll.state(),
         root_splitter.state(),
         root_tabs.state(),
+        root_faceted_filter.state(),
         root_avatar.state(),
         root_separator.state(),
         root_kbd.state(),
@@ -7581,6 +7847,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_scroll.state(),
         prelude_splitter.state(),
         prelude_tabs.state(),
+        prelude_faceted_filter.state(),
         prelude_avatar.state(),
         prelude_separator.state(),
         prelude_kbd.state(),

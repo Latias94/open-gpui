@@ -1798,6 +1798,12 @@ impl TablePagination {
         self.page_index
     }
 
+    /// Returns the same pagination state with the page index reset.
+    pub const fn with_page_index(mut self, page_index: usize) -> Self {
+        self.page_index = page_index;
+        self
+    }
+
     /// Returns the maximum number of rows per page.
     pub const fn page_size(self) -> usize {
         self.page_size
