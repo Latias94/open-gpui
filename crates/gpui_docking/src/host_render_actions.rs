@@ -114,6 +114,7 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        let _ = self.record_payload_drag_hovered_viewport_from_render(payload, window);
         self.update_drop_scene_fact_interaction(payload, fact, position, window, cx)
             .merge(
                 self.update_viewport_drop_route_preview_interaction(payload, position, window, cx),
@@ -129,6 +130,7 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        let _ = self.record_payload_drag_hovered_viewport_from_render(payload, window);
         self.schedule_outside_release_poll_from_host(payload, window, cx);
         self.publish_viewport_host_scene_interaction(host_bounds, position, window, cx);
         self.update_floating_drag_interaction(position, cx)
@@ -148,6 +150,7 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        let _ = self.record_payload_drag_hovered_viewport_from_render(payload, window);
         self.update_root_drop_scene_interaction(payload, root, bounds, position, window, cx)
             .merge(
                 self.update_viewport_drop_route_preview_interaction(payload, position, window, cx),
@@ -164,6 +167,7 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        let _ = self.record_payload_drag_hovered_viewport_from_render(payload, window);
         self.update_empty_space_drop_scene_interaction(
             payload, position, bounds, is_central, window, cx,
         )
@@ -226,5 +230,21 @@ impl DockHost {
 
     pub(crate) fn finish_splitter_drag_from_render(&mut self, cx: &mut Context<Self>) -> bool {
         self.finish_splitter_drag_interaction().finish(cx)
+    }
+
+    fn record_payload_drag_hovered_viewport_from_render(
+        &self,
+        payload: &DockDragPayload,
+        window: &Window,
+    ) -> bool {
+        let Some(session) = self.active_payload_drag_session(payload) else {
+            return false;
+        };
+        self.viewport_runtime()
+            .record_payload_drag_hovered_viewport(
+                &session,
+                self.space().clone(),
+                window.window_handle().window_id(),
+            )
     }
 }

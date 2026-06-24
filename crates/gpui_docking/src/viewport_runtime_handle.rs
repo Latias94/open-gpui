@@ -84,6 +84,36 @@ fn refresh_runtime_update<C: open_gpui::AppContext>(
     changed
 }
 
+fn clear_dockhost_drop_preview_for_window(window: AnyWindowHandle, cx: &mut App) -> bool {
+    window
+        .update(cx, |view, _window, cx| {
+            let Ok(host) = view.downcast::<DockHost>() else {
+                return false;
+            };
+            host.update(cx, |host, _cx| host.clear_drop_preview_interaction())
+        })
+        .unwrap_or(false)
+}
+
+fn clear_dockhost_drop_previews(
+    windows: impl IntoIterator<Item = AnyWindowHandle>,
+    cx: &mut App,
+) -> bool {
+    let mut changed = false;
+    let mut cleared_window_ids = Vec::new();
+    for window in windows {
+        if cleared_window_ids
+            .iter()
+            .any(|window_id| *window_id == window.window_id())
+        {
+            continue;
+        }
+        cleared_window_ids.push(window.window_id());
+        changed |= clear_dockhost_drop_preview_for_window(window, cx);
+    }
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::unique_windows;
@@ -248,7 +278,9 @@ fn apply_close_recovery_activation_for_runtime(
     let recovery = runtime
         .borrow_mut()
         .activation_transaction_after_close_with_cleanup(outcome, cx);
-    apply_viewport_window_effects(recovery.window_effects(), cx);
+    let recovery_effects = recovery.window_effects();
+    let _ = clear_dockhost_drop_previews(recovery_effects.refresh().iter().cloned(), cx);
+    apply_viewport_window_effects(recovery_effects.clone(), cx);
     apply_viewport_activation_transaction(recovery.activation, cx)
 }
 
@@ -501,6 +533,17 @@ impl DockViewportRuntimeHandle {
         payload: &DockDragPayload,
     ) -> Option<DockRuntimeDragSession> {
         self.runtime.borrow().active_payload_drag_session(payload)
+    }
+
+    pub(crate) fn record_payload_drag_hovered_viewport(
+        &self,
+        session: &DockRuntimeDragSession,
+        space: DockSpaceId,
+        window_id: WindowId,
+    ) -> bool {
+        self.runtime
+            .borrow_mut()
+            .record_payload_drag_hovered_viewport(session, space, window_id)
     }
 
     pub(crate) fn has_active_payload_drag(&self) -> bool {
@@ -1102,6 +1145,21 @@ impl DockViewportRuntimeHandle {
         refresh_runtime_update(update, cx)
     }
 
+    pub(crate) fn vacate_empty_payload_drop_source_viewport(
+        &self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        cx: &mut App,
+    ) -> bool {
+        let effects = self
+            .runtime
+            .borrow_mut()
+            .vacate_empty_payload_drop_source_viewport_with_cleanup(source_space, target_space, cx);
+        let changed = effects.has_effects();
+        apply_viewport_window_effects(effects, cx);
+        changed
+    }
+
     pub(crate) fn finish_routed_drop_acceptance_pass(
         &self,
         space: &DockSpaceId,
@@ -1159,6 +1217,16 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow()
             .last_routed_viewport_identity_for_drag_session(session)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_hovered_viewport_identity_for_drag_session(
+        &self,
+        session: Option<&DockRuntimeDragSession>,
+    ) -> Option<crate::DockViewportIdentity> {
+        self.runtime
+            .borrow()
+            .last_hovered_viewport_identity_for_drag_session(session)
     }
 
     #[cfg(test)]
@@ -1226,7 +1294,9 @@ impl DockViewportRuntimeHandle {
             .runtime
             .borrow_mut()
             .handle_window_closed_with_app_and_refresh(window_id, cx);
-        apply_viewport_window_effects(closed.window_effects(), cx);
+        let closed_effects = closed.window_effects();
+        let _ = clear_dockhost_drop_previews(closed_effects.refresh().iter().cloned(), cx);
+        apply_viewport_window_effects(closed_effects.clone(), cx);
         let _ = self.apply_close_recovery_activation(&closed.outcome, cx);
         closed.outcome
     }
@@ -1284,7 +1354,9 @@ impl DockViewportRuntimeHandle {
             let closed = runtime
                 .borrow_mut()
                 .handle_window_closed_with_app_and_refresh(window_id, cx);
-            apply_viewport_window_effects(closed.window_effects(), cx);
+            let closed_effects = closed.window_effects();
+            let _ = clear_dockhost_drop_previews(closed_effects.refresh().iter().cloned(), cx);
+            apply_viewport_window_effects(closed_effects.clone(), cx);
             let _ = apply_close_recovery_activation_for_runtime(&runtime, &closed.outcome, cx);
         })
         .detach();

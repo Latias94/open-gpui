@@ -75,13 +75,19 @@ impl DockViewportPayloadDragState {
             }
             _ => None,
         };
+        let last_routed_viewport_identity = active.last_routed_viewport_identity.clone();
+        let last_hovered_viewport_identity = active.last_hovered_viewport_identity.clone();
         if self
             .tear_off_geometry
             .is_some_and(|geometry| geometry.matches_drag_session(session))
         {
             self.tear_off_geometry = None;
         }
-        Some(DockViewportPayloadDragFinish { pointer_input_sync })
+        Some(DockViewportPayloadDragFinish {
+            pointer_input_sync,
+            last_routed_viewport_identity,
+            last_hovered_viewport_identity,
+        })
     }
 
     pub(crate) fn update_tear_off_geometry(
@@ -231,11 +237,21 @@ impl DockViewportPayloadDragState {
 
 pub(crate) struct DockViewportPayloadDragFinish {
     pointer_input_sync: Option<DockViewportPointerInputSyncRequest>,
+    last_routed_viewport_identity: Option<DockViewportIdentity>,
+    last_hovered_viewport_identity: Option<DockViewportIdentity>,
 }
 
 impl DockViewportPayloadDragFinish {
     pub(crate) fn pointer_input_sync(&self) -> Option<DockViewportPointerInputSyncRequest> {
         self.pointer_input_sync
+    }
+
+    pub(crate) fn last_routed_viewport_identity(&self) -> Option<&DockViewportIdentity> {
+        self.last_routed_viewport_identity.as_ref()
+    }
+
+    pub(crate) fn last_hovered_viewport_identity(&self) -> Option<&DockViewportIdentity> {
+        self.last_hovered_viewport_identity.as_ref()
     }
 }
 

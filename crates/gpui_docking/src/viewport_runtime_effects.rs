@@ -28,6 +28,16 @@ impl DockViewportWindowEffects {
         Self::new(Vec::new(), refresh, Vec::new())
     }
 
+    pub(crate) fn merge(mut self, other: Self) -> Self {
+        extend_unique_windows(&mut self.close_now, other.close_now);
+        extend_unique_windows(&mut self.refresh, other.refresh);
+        extend_unique_windows(
+            &mut self.close_after_current_effect,
+            other.close_after_current_effect,
+        );
+        self
+    }
+
     pub(crate) fn close_now(&self) -> &[AnyWindowHandle] {
         &self.close_now
     }

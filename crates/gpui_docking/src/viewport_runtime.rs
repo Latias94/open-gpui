@@ -94,6 +94,12 @@ struct DockViewportDropRouteSnapshotRefresh {
     window_effects: DockViewportWindowEffects,
 }
 
+#[derive(Debug, Default)]
+struct DockViewportVacatedPayloadDropSource {
+    windows: Vec<AnyWindowHandle>,
+    affected_windows: Vec<AnyWindowHandle>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct DockViewportResolvedDropRouteOutcome {
     resolution: DockViewportResolvedDropRoute,
@@ -487,6 +493,32 @@ impl DockViewportRuntime {
         Some(snapshot.input_mask.drag_restore_accepts_pointer_input())
     }
 
+    fn window_for_viewport_identity(
+        &self,
+        identity: &DockViewportIdentity,
+    ) -> Option<AnyWindowHandle> {
+        let window = self.adapter.window_for_space(identity.space())?;
+        (window.window_id() == identity.window_id()).then_some(window)
+    }
+
+    pub(crate) fn record_payload_drag_hovered_viewport(
+        &mut self,
+        session: &DockRuntimeDragSession,
+        space: DockSpaceId,
+        window_id: WindowId,
+    ) -> bool {
+        if !self.payload_drag.matches_session(Some(session)) {
+            return false;
+        }
+        if !self.adapter.is_live_window_for_space(&space, window_id) {
+            return false;
+        }
+        self.payload_drag
+            .record_last_hovered_viewport_identity(Some(DockViewportIdentity::new(
+                space, window_id,
+            )))
+    }
+
     #[cfg(test)]
     pub(crate) fn finish_payload_drag(
         &mut self,
@@ -502,7 +534,15 @@ impl DockViewportRuntime {
         let Some(finish) = self.payload_drag.finish(session) else {
             return DockViewportRuntimeUpdate::default();
         };
+        let last_routed_window = finish
+            .last_routed_viewport_identity()
+            .and_then(|identity| self.window_for_viewport_identity(identity));
+        let last_hovered_window = finish
+            .last_hovered_viewport_identity()
+            .and_then(|identity| self.window_for_viewport_identity(identity));
         let mut update = self.clear_routed_drop_preview_for_drag_session(Some(session));
+        update.extend_windows(last_routed_window);
+        update.extend_windows(last_hovered_window);
         update.mark_changed(true);
         update.set_pointer_input_sync(finish.pointer_input_sync());
         update
@@ -1525,10 +1565,68 @@ impl DockViewportRuntime {
             target_space.clone(),
             focus_request,
         );
+        let vacated_source =
+            self.vacate_empty_payload_drop_source_viewport(&source_space, &target_space, cx);
+        let window_effects = reusable_effects.merge(DockViewportWindowEffects::new(
+            Vec::new(),
+            vacated_source.affected_windows,
+            vacated_source.windows,
+        ));
         Ok(DockViewportDropRouteOutcome::Action(
             DockViewportDropActionOutcome::new(drop_outcome.action(), activation)
-                .with_window_effects(reusable_effects),
+                .with_window_effects(window_effects),
         ))
+    }
+
+    pub(crate) fn vacate_empty_payload_drop_source_viewport_with_cleanup(
+        &mut self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        cx: &App,
+    ) -> DockViewportWindowEffects {
+        let vacated_source =
+            self.vacate_empty_payload_drop_source_viewport(source_space, target_space, cx);
+        DockViewportWindowEffects::new(
+            Vec::new(),
+            vacated_source.affected_windows,
+            vacated_source.windows,
+        )
+    }
+
+    fn vacate_empty_payload_drop_source_viewport(
+        &mut self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        cx: &App,
+    ) -> DockViewportVacatedPayloadDropSource {
+        if source_space == target_space {
+            return DockViewportVacatedPayloadDropSource::default();
+        }
+        let source_is_empty = {
+            let controller = self.controller.read(cx);
+            controller
+                .graph()
+                .collect_items_in_space(source_space)
+                .is_empty()
+        };
+        if !source_is_empty {
+            return DockViewportVacatedPayloadDropSource::default();
+        }
+        let Some(unregistered) = self.unregister_space_runtime_state(source_space) else {
+            return DockViewportVacatedPayloadDropSource::default();
+        };
+        let windows = if self
+            .retire_runtime_window_for_close(unregistered.window)
+            .should_close_window()
+        {
+            vec![unregistered.window]
+        } else {
+            Vec::new()
+        };
+        DockViewportVacatedPayloadDropSource {
+            windows,
+            affected_windows: unregistered.affected_windows,
+        }
     }
 
     pub(crate) fn prepare_tear_off_drop_delivery(
@@ -2022,6 +2120,16 @@ impl DockViewportRuntime {
         let session = session?;
         self.payload_drag
             .last_routed_viewport_identity(Some(session))
+            .cloned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_hovered_viewport_identity_for_drag_session(
+        &self,
+        session: Option<&DockRuntimeDragSession>,
+    ) -> Option<DockViewportIdentity> {
+        self.payload_drag
+            .last_hovered_viewport_identity(session)
             .cloned()
     }
 

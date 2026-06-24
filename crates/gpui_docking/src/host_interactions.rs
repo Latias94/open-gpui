@@ -260,6 +260,8 @@ impl DockHost {
         cx: &mut Context<Self>,
         notify_on_unchanged: bool,
     ) -> DockHostResolvedDropCommit {
+        let source_space = request.source_space.clone();
+        let target_space = request.target.target_space().clone();
         match self.mutate_controller_from_host_with(
             cx,
             |controller| {
@@ -269,13 +271,24 @@ impl DockHost {
             },
             |outcome| outcome.changed(),
         ) {
-            Ok(outcome) => DockHostResolvedDropCommit {
-                outcome: DockHostInteractionOutcome::from_commit_result(
-                    Ok(outcome.action()),
-                    notify_on_unchanged,
-                ),
-                focus_item: outcome.focus_item().cloned(),
-            },
+            Ok(outcome) => {
+                let vacated_source_changed = if outcome.changed() {
+                    self.viewport_runtime()
+                        .vacate_empty_payload_drop_source_viewport(&source_space, &target_space, cx)
+                } else {
+                    false
+                };
+                DockHostResolvedDropCommit {
+                    outcome: DockHostInteractionOutcome::from_commit_result(
+                        Ok(outcome.action()),
+                        notify_on_unchanged,
+                    )
+                    .merge(DockHostInteractionOutcome::from_session_changed(
+                        vacated_source_changed,
+                    )),
+                    focus_item: outcome.focus_item().cloned(),
+                }
+            }
             Err(error) => DockHostResolvedDropCommit {
                 outcome: DockHostInteractionOutcome::from_commit_result(
                     Err(error),
