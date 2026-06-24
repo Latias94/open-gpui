@@ -5363,12 +5363,20 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _root_filter_kind: root::TableFilterKind = root_filter.kind().clone();
     let _prelude_filter_kind: prelude::TableFilterKind =
         prelude::TableFilterKind::Contains { query: "UI".into() };
+    let _root_text_filter_operator: root::TableTextFilterOperator =
+        root::TableTextFilterOperator::StartsWith;
+    let _prelude_text_filter_operator: prelude::TableTextFilterOperator =
+        prelude::TableTextFilterOperator::NotContains;
     let _root_numeric_bound: root::TableNumericFilterBound =
         root::TableNumericFilterBound::new(10.0)
             .expect("finite numeric bounds should be constructible");
     let _prelude_numeric_bound: prelude::TableNumericFilterBound =
         prelude::TableNumericFilterBound::new(20.0)
             .expect("finite numeric bounds should be constructible");
+    let _root_numeric_filter_operator: root::TableNumericFilterOperator =
+        root::TableNumericFilterOperator::GreaterThanOrEqual;
+    let _prelude_numeric_filter_operator: prelude::TableNumericFilterOperator =
+        prelude::TableNumericFilterOperator::LessThan;
     let root_range_filter = root::TableFilter::number_range("score", Some(10.0), Some(20.0))
         .expect("exported numeric range filter should construct");
     assert_eq!(

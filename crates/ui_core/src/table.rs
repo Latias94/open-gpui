@@ -1558,6 +1558,78 @@ pub enum TableFilterKind {
         /// Inclusive upper bound.
         max: Option<TableNumericFilterBound>,
     },
+    /// Text predicate filter.
+    Text {
+        /// Text operator.
+        operator: TableTextFilterOperator,
+        /// Query text.
+        query: String,
+        /// Whether matching should preserve case.
+        case_sensitive: bool,
+    },
+    /// Single-bound numeric comparison filter.
+    NumberComparison {
+        /// Numeric comparison operator.
+        operator: TableNumericFilterOperator,
+        /// Finite comparison value.
+        value: TableNumericFilterBound,
+    },
+}
+
+/// Built-in text predicate operators for table column filters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableTextFilterOperator {
+    /// Cell text contains the query.
+    Contains,
+    /// Cell text does not contain the query.
+    NotContains,
+    /// Cell text equals the query.
+    Equals,
+    /// Cell text does not equal the query.
+    NotEquals,
+    /// Cell text starts with the query.
+    StartsWith,
+    /// Cell text ends with the query.
+    EndsWith,
+}
+
+impl TableTextFilterOperator {
+    /// Returns a stable operator label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Contains => "contains",
+            Self::NotContains => "not_contains",
+            Self::Equals => "equals",
+            Self::NotEquals => "not_equals",
+            Self::StartsWith => "starts_with",
+            Self::EndsWith => "ends_with",
+        }
+    }
+}
+
+/// Built-in numeric comparison operators for table column filters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableNumericFilterOperator {
+    /// Cell number is greater than the value.
+    GreaterThan,
+    /// Cell number is greater than or equal to the value.
+    GreaterThanOrEqual,
+    /// Cell number is less than the value.
+    LessThan,
+    /// Cell number is less than or equal to the value.
+    LessThanOrEqual,
+}
+
+impl TableNumericFilterOperator {
+    /// Returns a stable operator label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GreaterThan => "greater_than",
+            Self::GreaterThanOrEqual => "greater_than_or_equal",
+            Self::LessThan => "less_than",
+            Self::LessThanOrEqual => "less_than_or_equal",
+        }
+    }
 }
 
 /// Finite numeric endpoint for table range filters.
@@ -1619,6 +1691,57 @@ impl TableFilter {
         }
     }
 
+    /// Creates a text predicate filter.
+    pub fn text(
+        column: impl Into<TableColumnId>,
+        operator: TableTextFilterOperator,
+        query: impl Into<String>,
+    ) -> Self {
+        Self::text_with_case(column, operator, query, false)
+    }
+
+    /// Creates a text predicate filter with explicit case sensitivity.
+    pub fn text_with_case(
+        column: impl Into<TableColumnId>,
+        operator: TableTextFilterOperator,
+        query: impl Into<String>,
+        case_sensitive: bool,
+    ) -> Self {
+        Self {
+            column: column.into(),
+            kind: TableFilterKind::Text {
+                operator,
+                query: query.into(),
+                case_sensitive,
+            },
+        }
+    }
+
+    /// Creates a case-insensitive not-contains text filter.
+    pub fn not_contains(column: impl Into<TableColumnId>, query: impl Into<String>) -> Self {
+        Self::text(column, TableTextFilterOperator::NotContains, query)
+    }
+
+    /// Creates a case-insensitive exact text filter.
+    pub fn text_equals(column: impl Into<TableColumnId>, query: impl Into<String>) -> Self {
+        Self::text(column, TableTextFilterOperator::Equals, query)
+    }
+
+    /// Creates a case-insensitive not-equals text filter.
+    pub fn text_not_equals(column: impl Into<TableColumnId>, query: impl Into<String>) -> Self {
+        Self::text(column, TableTextFilterOperator::NotEquals, query)
+    }
+
+    /// Creates a case-insensitive starts-with text filter.
+    pub fn starts_with(column: impl Into<TableColumnId>, query: impl Into<String>) -> Self {
+        Self::text(column, TableTextFilterOperator::StartsWith, query)
+    }
+
+    /// Creates a case-insensitive ends-with text filter.
+    pub fn ends_with(column: impl Into<TableColumnId>, query: impl Into<String>) -> Self {
+        Self::text(column, TableTextFilterOperator::EndsWith, query)
+    }
+
     /// Creates an inclusive numeric range filter.
     pub fn number_range(
         column: impl Into<TableColumnId>,
@@ -1639,6 +1762,48 @@ impl TableFilter {
         })
     }
 
+    /// Creates a single-bound numeric comparison filter.
+    pub fn number_comparison(
+        column: impl Into<TableColumnId>,
+        operator: TableNumericFilterOperator,
+        value: f64,
+    ) -> Option<Self> {
+        Some(Self {
+            column: column.into(),
+            kind: TableFilterKind::NumberComparison {
+                operator,
+                value: TableNumericFilterBound::new(value)?,
+            },
+        })
+    }
+
+    /// Creates a greater-than numeric comparison filter.
+    pub fn number_greater_than(column: impl Into<TableColumnId>, value: f64) -> Option<Self> {
+        Self::number_comparison(column, TableNumericFilterOperator::GreaterThan, value)
+    }
+
+    /// Creates a greater-than-or-equal numeric comparison filter.
+    pub fn number_greater_than_or_equal(
+        column: impl Into<TableColumnId>,
+        value: f64,
+    ) -> Option<Self> {
+        Self::number_comparison(
+            column,
+            TableNumericFilterOperator::GreaterThanOrEqual,
+            value,
+        )
+    }
+
+    /// Creates a less-than numeric comparison filter.
+    pub fn number_less_than(column: impl Into<TableColumnId>, value: f64) -> Option<Self> {
+        Self::number_comparison(column, TableNumericFilterOperator::LessThan, value)
+    }
+
+    /// Creates a less-than-or-equal numeric comparison filter.
+    pub fn number_less_than_or_equal(column: impl Into<TableColumnId>, value: f64) -> Option<Self> {
+        Self::number_comparison(column, TableNumericFilterOperator::LessThanOrEqual, value)
+    }
+
     /// Returns the filtered column identity.
     pub const fn column(&self) -> &TableColumnId {
         &self.column
@@ -1653,8 +1818,27 @@ impl TableFilter {
     pub fn query(&self) -> &str {
         match &self.kind {
             TableFilterKind::Contains { query } => query,
+            TableFilterKind::Text { query, .. } => query,
             TableFilterKind::OneOf { .. } => "",
             TableFilterKind::NumberRange { .. } => "",
+            TableFilterKind::NumberComparison { .. } => "",
+        }
+    }
+
+    /// Returns text predicate metadata when this is a text filter.
+    pub fn text_predicate(&self) -> Option<(TableTextFilterOperator, &str, bool)> {
+        match &self.kind {
+            TableFilterKind::Contains { query } => {
+                Some((TableTextFilterOperator::Contains, query.as_str(), false))
+            }
+            TableFilterKind::Text {
+                operator,
+                query,
+                case_sensitive,
+            } => Some((*operator, query.as_str(), *case_sensitive)),
+            TableFilterKind::OneOf { .. }
+            | TableFilterKind::NumberRange { .. }
+            | TableFilterKind::NumberComparison { .. } => None,
         }
     }
 
@@ -1662,8 +1846,10 @@ impl TableFilter {
     pub fn selected_values(&self) -> Option<&BTreeSet<String>> {
         match &self.kind {
             TableFilterKind::Contains { .. } => None,
+            TableFilterKind::Text { .. } => None,
             TableFilterKind::OneOf { values } => Some(values),
             TableFilterKind::NumberRange { .. } => None,
+            TableFilterKind::NumberComparison { .. } => None,
         }
     }
 
@@ -1674,7 +1860,23 @@ impl TableFilter {
                 min.map(|bound| bound.value()),
                 max.map(|bound| bound.value()),
             )),
-            TableFilterKind::Contains { .. } | TableFilterKind::OneOf { .. } => None,
+            TableFilterKind::Contains { .. }
+            | TableFilterKind::Text { .. }
+            | TableFilterKind::OneOf { .. }
+            | TableFilterKind::NumberComparison { .. } => None,
+        }
+    }
+
+    /// Returns numeric comparison metadata when this is a single-bound comparison filter.
+    pub fn number_comparison_value(&self) -> Option<(TableNumericFilterOperator, f64)> {
+        match &self.kind {
+            TableFilterKind::NumberComparison { operator, value } => {
+                Some((*operator, value.value()))
+            }
+            TableFilterKind::Contains { .. }
+            | TableFilterKind::Text { .. }
+            | TableFilterKind::OneOf { .. }
+            | TableFilterKind::NumberRange { .. } => None,
         }
     }
 
@@ -1691,6 +1893,26 @@ impl TableFilter {
                             .filter_text()
                             .to_lowercase()
                             .contains(&query.to_lowercase())
+                    })
+                    .unwrap_or(false)
+            }
+            TableFilterKind::Text {
+                operator,
+                query,
+                case_sensitive,
+            } => {
+                if query.is_empty() {
+                    return true;
+                }
+
+                row.cell(&self.column)
+                    .map(|value| {
+                        table_text_filter_matches(
+                            &value.filter_text(),
+                            query,
+                            *operator,
+                            *case_sensitive,
+                        )
                     })
                     .unwrap_or(false)
             }
@@ -1723,7 +1945,44 @@ impl TableFilter {
 
                 true
             }
+            TableFilterKind::NumberComparison { operator, value } => {
+                let Some(TableCellValue::Number(number)) = row.cell(&self.column) else {
+                    return false;
+                };
+                if !number.is_finite() {
+                    return false;
+                }
+
+                match operator {
+                    TableNumericFilterOperator::GreaterThan => *number > value.value(),
+                    TableNumericFilterOperator::GreaterThanOrEqual => *number >= value.value(),
+                    TableNumericFilterOperator::LessThan => *number < value.value(),
+                    TableNumericFilterOperator::LessThanOrEqual => *number <= value.value(),
+                }
+            }
         }
+    }
+}
+
+fn table_text_filter_matches(
+    value: &str,
+    query: &str,
+    operator: TableTextFilterOperator,
+    case_sensitive: bool,
+) -> bool {
+    let (value, query) = if case_sensitive {
+        (value.to_string(), query.to_string())
+    } else {
+        (value.to_lowercase(), query.to_lowercase())
+    };
+
+    match operator {
+        TableTextFilterOperator::Contains => value.contains(&query),
+        TableTextFilterOperator::NotContains => !value.contains(&query),
+        TableTextFilterOperator::Equals => value == query,
+        TableTextFilterOperator::NotEquals => value != query,
+        TableTextFilterOperator::StartsWith => value.starts_with(&query),
+        TableTextFilterOperator::EndsWith => value.ends_with(&query),
     }
 }
 
@@ -5266,6 +5525,223 @@ mod tests {
     }
 
     #[test]
+    fn text_predicate_filters_match_contains_equals_and_boundaries() {
+        let state = TableState::new([
+            TableRow::new("row-alpha")
+                .with_cell("name", "Alpha Release")
+                .with_cell("team", "UI"),
+            TableRow::new("row-beta")
+                .with_cell("name", "beta release")
+                .with_cell("team", "Platform"),
+            TableRow::new("row-gamma")
+                .with_cell("name", "Gamma")
+                .with_cell("team", "UI"),
+        ])
+        .with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+        ]);
+
+        let contains = state
+            .clone()
+            .with_filters([TableFilter::contains("name", "release")]);
+        assert_eq!(
+            contains
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-alpha", "row-beta"],
+            "contains should keep rows whose text includes the query"
+        );
+
+        let starts_with = state
+            .clone()
+            .with_filters([TableFilter::starts_with("name", "Al")]);
+        assert_eq!(
+            starts_with
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-alpha"],
+            "starts_with should match the leading text"
+        );
+
+        let ends_with = state
+            .clone()
+            .with_filters([TableFilter::ends_with("name", "lease")]);
+        assert_eq!(
+            ends_with
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-alpha", "row-beta"],
+            "ends_with should match trailing text"
+        );
+
+        let equals = state
+            .clone()
+            .with_filters([TableFilter::text_equals("name", "alpha release")]);
+        assert_eq!(
+            equals
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-alpha"],
+            "case-insensitive equals should match exact text"
+        );
+
+        let case_sensitive = state.clone().with_filters([TableFilter::text_with_case(
+            "name",
+            TableTextFilterOperator::Equals,
+            "Alpha Release",
+            true,
+        )]);
+        assert_eq!(
+            case_sensitive
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-alpha"],
+            "case-sensitive equals should respect the original case"
+        );
+
+        let not_contains = state
+            .clone()
+            .with_filters([TableFilter::not_contains("name", "alpha")]);
+        assert_eq!(
+            not_contains
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-beta", "row-gamma"],
+            "not_contains should remove matching rows"
+        );
+
+        assert_eq!(
+            state
+                .clone()
+                .with_filters([TableFilter::text_with_case(
+                    "name",
+                    TableTextFilterOperator::NotEquals,
+                    "Alpha Release",
+                    true,
+                )])
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-beta", "row-gamma"],
+            "not_equals should exclude the exact match"
+        );
+    }
+
+    #[test]
+    fn numeric_comparison_filters_match_single_bounds_and_reject_invalid_bounds() {
+        let state = TableState::new([
+            TableRow::new("row-low").with_cell("score", 10_usize),
+            TableRow::new("row-mid").with_cell("score", 20_usize),
+            TableRow::new("row-high").with_cell("score", 30_usize),
+            TableRow::new("row-text").with_cell("score", "30"),
+            TableRow::new("row-missing").with_cell("team", "UI"),
+        ])
+        .with_columns([TableColumn::new("score", "Score")]);
+
+        let greater = state
+            .clone()
+            .with_filters([TableFilter::number_greater_than("score", 10.0).expect("finite bound")]);
+        assert_eq!(
+            greater
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-mid", "row-high"],
+            "greater-than should exclude the threshold value"
+        );
+
+        let greater_or_equal = state.clone().with_filters([
+            TableFilter::number_greater_than_or_equal("score", 20.0).expect("finite bound"),
+        ]);
+        assert_eq!(
+            greater_or_equal
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-mid", "row-high"],
+            "greater-than-or-equal should keep the threshold value"
+        );
+
+        let less = state
+            .clone()
+            .with_filters([TableFilter::number_less_than("score", 30.0).expect("finite bound")]);
+        assert_eq!(
+            less.resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-low", "row-mid"],
+            "less-than should exclude the threshold value"
+        );
+
+        let less_or_equal =
+            state.clone().with_filters([
+                TableFilter::number_less_than_or_equal("score", 20.0).expect("finite bound")
+            ]);
+        assert_eq!(
+            less_or_equal
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-low", "row-mid"],
+            "less-than-or-equal should keep the threshold value"
+        );
+
+        assert!(
+            TableFilter::number_greater_than("score", f64::NAN).is_none(),
+            "invalid numeric bounds should not create a filter"
+        );
+        assert!(
+            TableFilter::number_comparison(
+                "score",
+                TableNumericFilterOperator::LessThan,
+                f64::INFINITY,
+            )
+            .is_none(),
+            "infinite numeric bounds should not create a filter"
+        );
+    }
+
+    #[test]
     fn manual_filtering_preserves_snapshot_and_global_filter_state() {
         let state = TableState::new([
             TableRow::new("row-1").with_cell("name", "Alpha"),
@@ -5866,6 +6342,107 @@ mod tests {
             text_facet_counts(team),
             [("API".to_string(), 1), ("UI".to_string(), 2)],
             "team facet ignores its own filter and honors the status filter"
+        );
+    }
+
+    #[test]
+    fn richer_text_filters_compose_with_facets_and_global_query() {
+        let resolved = TableState::new([
+            TableRow::new("row-1")
+                .with_cell("team", "UI")
+                .with_cell("status", "Ready")
+                .with_cell("name", "Done Alpha"),
+            TableRow::new("row-2")
+                .with_cell("team", "UI")
+                .with_cell("status", "Blocked")
+                .with_cell("name", "Done Beta"),
+            TableRow::new("row-3")
+                .with_cell("team", "API")
+                .with_cell("status", "Ready")
+                .with_cell("name", "Done Gamma"),
+            TableRow::new("row-4")
+                .with_cell("team", "UX")
+                .with_cell("status", "Review")
+                .with_cell("name", "Later"),
+        ])
+        .with_columns([
+            TableColumn::new("team", "Team"),
+            TableColumn::new("status", "Status"),
+            TableColumn::new("name", "Name"),
+        ])
+        .with_filters([
+            TableFilter::starts_with("team", "u"),
+            TableFilter::text_with_case(
+                "status",
+                TableTextFilterOperator::NotEquals,
+                "Blocked",
+                true,
+            ),
+        ])
+        .with_global_filter("done")
+        .resolve();
+
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-1"],
+            "rich text predicates should compose with the global filter"
+        );
+
+        let status = resolved
+            .column_facet(&TableColumnId::new("status"))
+            .expect("status facet should resolve");
+        assert_eq!(status.row_count(), 2);
+        assert_eq!(
+            text_facet_counts(status),
+            [("Blocked".to_string(), 1), ("Ready".to_string(), 1)],
+            "status facets should ignore their own richer predicate while honoring other filters"
+        );
+
+        let team = resolved
+            .column_facet(&TableColumnId::new("team"))
+            .expect("team facet should resolve");
+        assert_eq!(team.row_count(), 2);
+        assert_eq!(
+            text_facet_counts(team),
+            [("API".to_string(), 1), ("UI".to_string(), 1)],
+            "team facets should ignore their own richer predicate while honoring the status filter"
+        );
+    }
+
+    #[test]
+    fn richer_text_predicates_participate_in_cache_keys() {
+        let base = TableState::new(sample_rows()).with_columns([TableColumn::new("team", "Team")]);
+        let contains = base.clone().with_filters([TableFilter::text(
+            "team",
+            TableTextFilterOperator::Contains,
+            "ops",
+        )]);
+        let starts = base.clone().with_filters([TableFilter::text(
+            "team",
+            TableTextFilterOperator::StartsWith,
+            "ops",
+        )]);
+        let case_sensitive = base.clone().with_filters([TableFilter::text_with_case(
+            "team",
+            TableTextFilterOperator::Contains,
+            "ops",
+            true,
+        )]);
+
+        assert_ne!(
+            contains.cache_key(),
+            starts.cache_key(),
+            "different text operators should invalidate caches"
+        );
+        assert_ne!(
+            contains.cache_key(),
+            case_sensitive.cache_key(),
+            "case-sensitivity should participate in cache keys"
         );
     }
 
