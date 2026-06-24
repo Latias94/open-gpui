@@ -33,11 +33,11 @@ use crate::{
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_registry::DockViewportPlatformRequests,
     viewport_window_lifecycle::{
-        DockViewportCloseRecoveryActivation, DockViewportCloseRecoveryRequest,
-        DockViewportClosedWindowRefresh, DockViewportReplacementCleanup,
-        DockViewportReusableWindowOutcome, DockViewportRuntimeWindowStateCleanup,
-        DockViewportShouldCloseRefresh, DockViewportSpaceFocusCleanup,
-        DockViewportUnregisteredSpace, DockViewportVacatedTearOffSource,
+        DockViewportCloseRecoveryActivation, DockViewportClosedWindowRefresh,
+        DockViewportReplacementCleanup, DockViewportReusableWindowOutcome,
+        DockViewportRuntimeWindowStateCleanup, DockViewportShouldCloseRefresh,
+        DockViewportSpaceFocusCleanup, DockViewportUnregisteredSpace,
+        DockViewportVacatedTearOffSource, DockViewportWindowLifecycleController,
     },
     workspace_drop_transaction::DockWorkspacePayloadDropRequest,
 };
@@ -1520,9 +1520,11 @@ impl DockViewportRuntime {
         let focus_request = focus_item
             .map(DockViewportFocusRequest::panel)
             .unwrap_or_else(DockViewportFocusRequest::no_panel_focus);
-        let (activation, reusable_effects) = self
-            .reusable_window_for_space_with_cleanup(&target_space, cx)
-            .into_drop_activation(target_space.clone(), focus_request);
+        let (activation, reusable_effects) = DockViewportWindowLifecycleController::drop_activation(
+            self.reusable_window_for_space_with_cleanup(&target_space, cx),
+            target_space.clone(),
+            focus_request,
+        );
         Ok(DockViewportDropRouteOutcome::Action(
             DockViewportDropActionOutcome::new(drop_outcome.action(), activation)
                 .with_window_effects(reusable_effects),
@@ -2409,11 +2411,11 @@ impl DockViewportRuntime {
         cx: &mut App,
     ) -> DockViewportClosedWindowRefresh {
         let pending_state = self.close_coordinator.take_window_close_state(window_id);
-        let close = self
-            .cleanup_closed_window(window_id)
-            .complete_pending_close_plan(pending_state, |plan| {
-                crate::commit_prevalidated_merge_back_plan(&self.controller, plan, cx)
-            });
+        let close = DockViewportWindowLifecycleController::complete_pending_close_plan(
+            self.cleanup_closed_window(window_id),
+            pending_state,
+            |plan| crate::commit_prevalidated_merge_back_plan(&self.controller, plan, cx),
+        );
         self.status.record_close(&close.outcome);
         close
     }
@@ -2433,11 +2435,13 @@ impl DockViewportRuntime {
         outcome: &DockViewportCloseOutcome,
         cx: &mut App,
     ) -> DockViewportCloseRecoveryActivation {
-        let Some(request) = DockViewportCloseRecoveryRequest::from_close_outcome(outcome) else {
+        let Some(target_space) = outcome.merge_target_space().cloned() else {
             return DockViewportCloseRecoveryActivation::none();
         };
-        self.reusable_window_for_space_with_cleanup(request.target_space(), cx)
-            .into_close_recovery_activation(request)
+        DockViewportWindowLifecycleController::close_recovery_activation(
+            outcome,
+            self.reusable_window_for_space_with_cleanup(&target_space, cx),
+        )
     }
 
     pub(crate) fn handle_window_should_close_with_app_and_refresh(
