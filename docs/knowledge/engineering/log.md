@@ -14,6 +14,14 @@ status: active
   `ae798e7`. `TableFilterKind` now carries explicit text and numeric comparison operators,
   case-sensitivity metadata, cache-key participation, and focused tests proving richer predicates
   compose with facets and the global filter.
+- 2026-06-24: Completed U3/U4 of the filter-operators plan and committed the component/gallery
+  slice as `82997fe` and `ecc5f45`. `TablePredicateFilter` now productizes the controlled
+  operator/value recipe, `TablePredicateFilterChange` preserves unrelated `TableState` slices,
+  and the Components gallery proves the predicate filter against the `filter-board` sample with
+  runtime logs and row-window changes.
+- 2026-06-24: Refreshed the Table memory bundle so `docs/ui/component-contract.md`,
+  `docs/verification.md`, and `docs/knowledge/engineering/current-state.md` now record the
+  predicate-filter slice as shipped behavior and keep nested AND/OR predicate builders deferred.
 - 2026-06-24: Completed U3/U4 of
   `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md` and committed the
   slice as `d8abeaa`. `release-matrix` now renders a `TableColumnVisibility` toolbar control over the wide

@@ -88,6 +88,12 @@ verified_by:
   - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_faceted_filter_updates_table_rows table
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components table_predicate_filter
+  - cargo nextest run -p open-gpui-ui-components component_api_inventory crate_root_and_prelude_exports_remain_explicit table_public_exports_include_core_table_and_virtualizer_contracts public_resolved_state_contracts_avoid_gpui_runtime_types
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_predicate_filter_updates_table_rows
+  - cargo nextest run -p open-gpui-ui-foundation-gallery official_component_catalog_entries_have_signals_and_sample_selectors state_contract_catalog_entries_have_signals_and_readout_selectors components_page_table_samples_expose_virtualized_row_model_contract
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
   - git diff --check
 ---
 
@@ -98,13 +104,18 @@ verified_by:
   Table API, interaction behavior, performance / virtualization, gallery proof, and docs contract
   are mature enough to serve as the official component-library baseline.
 - 2026-06-24: The global filtering and faceting slice is already shipped on the current main
-  history as `88749ce`, `fd66b20`, and `947daa2`. The next active Table boundary is richer filter
-  operators, and the new plan `docs/plans/2026-06-24-009-feat-ui-table-filter-operators-plan.md`
-  is already committed as `f4a0af7`.
+  history as `88749ce`, `fd66b20`, and `947daa2`. The next active Table boundary was richer filter
+  operators, and the plan `docs/plans/2026-06-24-009-feat-ui-table-filter-operators-plan.md` is
+  already committed as `f4a0af7`.
 - 2026-06-24: Completed U1/U2 of the filter operators plan and committed the core slice as
   `ae798e7`. `TableFilterKind` now carries explicit text and numeric comparison operators, text
   case-sensitivity metadata, and stable accessors; `ui_core`, `ui_components`, and the focused
   tests now export and verify the new built-in operator family.
+- 2026-06-24: Completed U3/U4 of the filter operators plan and committed the component/gallery
+  slice as `82997fe` and `ecc5f45`. `TablePredicateFilter` now productizes the controlled
+  operator/value recipe, `TablePredicateFilterChange` preserves unrelated `TableState` slices,
+  and the Components gallery proves the predicate filter against the `filter-board` sample with
+  runtime logs and row-window changes.
 - 2026-06-24: Wrote `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md`
   as the next Table boundary and committed it as `55c7970`. The plan follows TanStack's sparse
   `columnVisibility` state and Fret's caller-owned view-options menu pattern: keep
@@ -379,8 +390,13 @@ verified_by:
 - Done: Verified the Table cell editing slice with targeted `cargo fmt`, focused component and
   gallery `cargo nextest run` commands, engineering wiki validation, and `git diff --check`.
 - Done: The two-dimensional Table viewport contract is shipped on `main` as `725f859`.
+- Done: The predicate-filter Table slice is shipped on the current main history as `82997fe` and
+  `ecc5f45`; docs now record the official `TablePredicateFilter` contract and focused gallery
+  proof.
 - Blocked: None.
-- Next action: Continue the new filter-operators plan with U3: component recipe and payload.
+- Next action: Select the next Table maturity boundary now that predicate filters are shipped;
+  likely candidates are column-group / nested-header polish, richer editor families, or a
+  data-source ergonomics layer.
 
 # Citations
 

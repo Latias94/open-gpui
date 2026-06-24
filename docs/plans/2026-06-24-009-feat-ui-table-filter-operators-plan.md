@@ -208,6 +208,23 @@ column filter and honor other column filters plus the global query.
 
 ---
 
+## Execution Status
+
+- U1/U2 shipped as `ae798e7`: `TableFilterKind` now carries explicit built-in text and numeric
+  operators, cache-key participation, and composition coverage with facets and global filtering.
+- U3 shipped as `82997fe`: `TablePredicateFilter`, `TablePredicateFilterState`,
+  `TablePredicateFilterOperator`, `TablePredicateFilterOperatorOptionState`, and
+  `TablePredicateFilterChange` productize the one-column operator/value recipe.
+- U4 shipped as `ecc5f45`: the Components gallery `filter-board` sample renders the predicate
+  filter, records controlled payloads, applies them through sample-owned `TableState`, and proves
+  rendered row-window changes.
+- U5 shipped in the docs/memory refresh: `docs/ui/component-contract.md`, `docs/verification.md`,
+  and the engineering memory now record predicate filters as official Table behavior while
+  deferring nested query builders, saved views, server query compilation, fuzzy ranking, and
+  custom callback registries.
+
+---
+
 ## Acceptance Examples
 
 - AE1. Given `status = "Ready"`, when a case-insensitive equals predicate with value `ready` is

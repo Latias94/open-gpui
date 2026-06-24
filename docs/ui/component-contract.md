@@ -475,8 +475,13 @@ remove, or clear exact stable tokens while resetting pagination to the first pag
 `Popover`, preserves partially typed endpoint text in adapter runtime, and emits controlled
 `TableRangeFilterChange` payloads with parsed finite endpoints, clear state, and an `apply_to`
 helper that replaces only the target column's range filter while resetting pagination to the first
-page. Global faceting, async option search, richer predicate builders, and fetching/cache
-lifecycles remain application-owned or follow-up work.
+page. `TablePredicateFilter` is the general single-column leaf-predicate recipe for text and
+numeric comparisons: it renders a controlled operator selector plus value input, exposes
+`TablePredicateFilterOperator` options for text contains / equality / prefix / suffix and numeric
+greater-than / less-than comparisons, and emits `TablePredicateFilterChange` payloads that replace
+only the target column's predicate filters while preserving categorical facets, numeric ranges,
+and unrelated `TableState` slices. Nested AND/OR predicate builders, global faceting, async option
+search, and fetching/cache lifecycles remain application-owned or follow-up work.
 `TableColumnVisibility` is the sibling official column-visibility recipe: it reads renderer-neutral
 column descriptors plus runtime visibility overrides, renders hideable columns inside a `Popover`
 with checkbox rows and show-all / reset actions, keeps locked identity columns disabled, and emits
@@ -507,9 +512,9 @@ An official Table entry must satisfy the normal component completion gate: `Tabl
 exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
 entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests for row
 identity, grouping, source-tree expansion, row interaction payloads, and virtualizer behavior, and
-gallery runtime tests for nested scroll containment, faceted-filter row updates, and editable
-text-cell updates. Sticky headers, autosize-by-content, data-source fetch/cache orchestration,
-global faceting, richer editor families, and deeper two-axis grid
+gallery runtime tests for nested scroll containment, faceted-filter row updates, predicate-filter
+row updates, and editable text-cell updates. Sticky headers, autosize-by-content, data-source
+fetch/cache orchestration, global faceting, richer editor families, and deeper two-axis grid
 virtualization beyond the pinned center-column window remain follow-up capabilities.
 
 ## Splitter Constraints
@@ -671,6 +676,8 @@ one categorical facet column into an official searchable Popover recipe with con
 `TableFacetedFilterChange` payloads and stable option selectors. `TableRangeFilter` turns one
 numeric facet column into an official min/max Popover recipe with controlled
 `TableRangeFilterChange` payloads, finite-bound parsing, and stable min/max input selectors.
+`TablePredicateFilter` turns one text or numeric column into an official operator/value recipe
+with controlled `TablePredicateFilterChange` payloads and stable operator/value selectors.
 `TableColumnVisibility` turns configured columns and sparse visibility overrides into an official
 Popover recipe with controlled `TableColumnVisibilityChange` payloads, locked identity rows, and
 stable column-row / action selectors.
