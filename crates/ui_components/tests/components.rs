@@ -27,18 +27,21 @@ use open_gpui_ui_components::{
     TableColumnVisibilityState, TableExpansionMode, TableFacetValueCount, TableFacetedFilter,
     TableFacetedFilterChange, TableFacetedFilterState, TableFilter, TableGlobalFacetSummary,
     TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction,
-    TablePagination, TableRangeFilter, TableRangeFilterChange, TableRangeFilterState, TableRow,
-    TableRowChildrenLoadState, TableRowId, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
-    TableSelectionActivationMode, TableSelectionMode, TableSelectionScope, TableSort,
-    TableSortDirection, TableStageMode, TableState, TableToolbar, TableToolbarState, Tabs,
-    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput,
-    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
-    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
-    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
-    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, first_enabled,
+    TableNumericFilterOperator, TablePagination, TablePredicateFilter, TablePredicateFilterChange,
+    TablePredicateFilterOperator, TablePredicateFilterOperatorOptionState,
+    TablePredicateFilterState, TableRangeFilter, TableRangeFilterChange, TableRangeFilterState,
+    TableRow, TableRowChildrenLoadState, TableRowId, TableRowPinning, TableRowPinningPolicy,
+    TableRowRegion, TableSelectionActivationMode, TableSelectionMode, TableSelectionScope,
+    TableSort, TableSortDirection, TableStageMode, TableState, TableTextFilterOperator,
+    TableToolbar, TableToolbarState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
+    TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot,
+    Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
+    ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy,
+    TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList, VirtualizedListActivation,
+    VirtualizedListItemDescriptor, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
+    VirtualizedListScrollStrategy, VirtualizedListState, VirtualizerItemKey, VirtualizerRange,
+    VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys,
+    first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -598,6 +601,35 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         no_interaction_note: None,
     },
     ComponentApiInventoryEntry {
+        component: "TablePredicateFilter",
+        controlled_inputs: &["operator", "value"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_operator",
+                runtime_value: "operator",
+            },
+            DefaultSeedApi {
+                builder: "default_value",
+                runtime_value: "value",
+            },
+        ],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "operator_option",
+            "operators",
+            "placeholder",
+            "clear_label",
+            "disabled",
+            "tokens",
+        ],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "TablePredicateFilterChange",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
         component: "TableToolbar",
         controlled_inputs: &[],
         default_seeds: &[],
@@ -1078,6 +1110,19 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "on_open_change",
             "on_change",
         ],
+        "TablePredicateFilter" => &[
+            "operator",
+            "default_operator",
+            "value",
+            "default_value",
+            "operator_option",
+            "operators",
+            "placeholder",
+            "clear_label",
+            "disabled",
+            "tokens",
+            "on_change",
+        ],
         "TableToolbar" => &[
             "control",
             "controls",
@@ -1137,6 +1182,7 @@ fn component_source_file(component: &str) -> &'static str {
         "TableColumnVisibility" => "table.rs",
         "TableFacetedFilter" => "table.rs",
         "TableGlobalFilter" => "table.rs",
+        "TablePredicateFilter" => "table.rs",
         "TableRangeFilter" => "table.rs",
         "TableToolbar" => "table.rs",
         "VirtualizedList" => "virtualized_list.rs",
@@ -1493,6 +1539,21 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "new",
             "query",
             "default_query",
+            "placeholder",
+            "clear_label",
+            "disabled",
+            "tokens",
+            "on_change",
+            "state",
+        ],
+        "TablePredicateFilter" => &[
+            "new",
+            "operator",
+            "default_operator",
+            "value",
+            "default_value",
+            "operator_option",
+            "operators",
             "placeholder",
             "clear_label",
             "disabled",
@@ -4301,6 +4362,222 @@ fn table_global_filter_change_updates_state_and_resets_pagination() {
 }
 
 #[test]
+fn table_predicate_filter_state_resolves_operator_and_input_contract() {
+    let starts_with = TablePredicateFilterOperator::text(TableTextFilterOperator::StartsWith);
+    let state: TablePredicateFilterState =
+        TablePredicateFilter::new("name-predicate", "Name", "name")
+            .default_operator(TablePredicateFilterOperator::text(
+                TableTextFilterOperator::Contains,
+            ))
+            .operator(starts_with)
+            .default_value("stale")
+            .value("  Al  ")
+            .operators([
+                TablePredicateFilterOperator::text(TableTextFilterOperator::StartsWith),
+                TablePredicateFilterOperator::text(TableTextFilterOperator::EndsWith),
+                TablePredicateFilterOperator::number(TableNumericFilterOperator::GreaterThan),
+            ])
+            .placeholder("Filter name")
+            .clear_label("Reset name")
+            .small()
+            .state();
+
+    assert_eq!(state.id(), "name-predicate");
+    assert_eq!(state.label(), "Name");
+    assert_eq!(state.column_id().as_str(), "name");
+    assert_eq!(state.operator(), starts_with);
+    assert_eq!(
+        state.operator().text_operator(),
+        Some(TableTextFilterOperator::StartsWith)
+    );
+    assert_eq!(state.value(), "  Al  ");
+    assert!(state.active());
+    assert!(state.clear_enabled());
+    assert_eq!(state.placeholder(), "Filter name");
+    assert_eq!(state.clear_label(), "Reset name");
+    assert_eq!(state.size(), Size::Small);
+    assert!(!state.disabled());
+    assert_eq!(state.input().value(), "  Al  ");
+    assert_eq!(state.input().placeholder(), Some("Filter name"));
+    assert!(state.input().controller_driven());
+    assert_eq!(state.select().selected_value(), Some("text:starts_with"));
+    assert_eq!(state.select().trigger_label(), "Starts with");
+    let first_option: &TablePredicateFilterOperatorOptionState = state
+        .operator_options()
+        .first()
+        .expect("predicate filter should expose operator options");
+    assert_eq!(first_option.operator(), starts_with);
+
+    let options = state
+        .operator_options()
+        .iter()
+        .map(|option| {
+            (
+                option.value().to_owned(),
+                option.label().to_owned(),
+                option.selected(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        options,
+        vec![
+            (
+                "text:starts_with".to_string(),
+                "Starts with".to_string(),
+                true,
+            ),
+            ("text:ends_with".to_string(), "Ends with".to_string(), false),
+            (
+                "number:greater_than".to_string(),
+                "Greater than".to_string(),
+                false,
+            ),
+        ]
+    );
+
+    let invalid_number = TablePredicateFilter::new("score-predicate", "Score", "score")
+        .operator(TablePredicateFilterOperator::number(
+            TableNumericFilterOperator::GreaterThan,
+        ))
+        .value("not a number")
+        .state();
+    assert!(!invalid_number.active());
+    assert!(invalid_number.clear_enabled());
+    assert_eq!(
+        TablePredicateFilterOperator::from_str("number:less_than")
+            .expect("stable numeric operator should parse")
+            .numeric_operator(),
+        Some(TableNumericFilterOperator::LessThan)
+    );
+}
+
+#[test]
+fn table_predicate_filter_change_updates_only_target_predicate_filters() {
+    let score_range = TableFilter::number_range("score", Some(0.0), Some(100.0))
+        .expect("finite score range should be valid");
+    let score_comparison = TableFilter::number_greater_than("score", 5.0)
+        .expect("finite score comparison should be valid");
+    let state = TableState::new([
+        TableRow::new("row-a")
+            .with_cell("team", "UI")
+            .with_cell("status", "Ready")
+            .with_cell("score", 10_usize),
+        TableRow::new("row-b")
+            .with_cell("team", "Platform")
+            .with_cell("status", "Blocked")
+            .with_cell("score", 50_usize),
+    ])
+    .with_columns([
+        TableColumn::new("team", "Team"),
+        TableColumn::new("status", "Status"),
+        TableColumn::new("score", "Score"),
+    ])
+    .with_filters([
+        TableFilter::contains("team", "UI"),
+        TableFilter::contains("score", "1"),
+        score_comparison,
+        score_range.clone(),
+        TableFilter::one_of("score", ["10", "50"]),
+        TableFilter::one_of("status", ["Ready"]),
+    ])
+    .with_sorting([TableSort::descending("score")])
+    .with_selection_mode(TableSelectionMode::Multiple)
+    .with_selected_rows(["row-a"])
+    .with_column_pinning(TableColumnPinning::new().pinned_left(["team"]))
+    .with_row_pinning(TableRowPinning::new().pinned_top(["row-a"]))
+    .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(180.0)))
+    .with_column_visibility(TableColumnVisibilityOverrides::new().hide("status"))
+    .with_global_filter("ready")
+    .with_pagination(TablePagination::new(3, 25));
+
+    let change = TablePredicateFilterChange::new(
+        "score",
+        TablePredicateFilterOperator::number(TableNumericFilterOperator::LessThanOrEqual),
+        " 42 ",
+    );
+    assert_eq!(change.column_id().as_str(), "score");
+    assert_eq!(
+        change.operator(),
+        Some(TablePredicateFilterOperator::number(
+            TableNumericFilterOperator::LessThanOrEqual
+        ))
+    );
+    assert_eq!(change.value(), " 42 ");
+    assert!(change.active());
+    assert!(!change.cleared());
+
+    let next = change.apply_to(state.clone());
+    assert_eq!(next.pagination().page_index(), 0);
+    assert_eq!(next.pagination().page_size(), 25);
+    assert_eq!(next.sorting(), state.sorting());
+    assert_eq!(next.selected_rows(), state.selected_rows());
+    assert_eq!(next.column_pinning(), state.column_pinning());
+    assert_eq!(next.row_pinning(), state.row_pinning());
+    assert_eq!(next.column_sizing(), state.column_sizing());
+    assert_eq!(next.column_visibility(), state.column_visibility());
+    assert_eq!(next.global_filter(), state.global_filter());
+    assert_eq!(next.filters().len(), 5);
+    assert!(
+        next.filters()
+            .iter()
+            .any(|filter| filter.column().as_str() == "team" && filter.query() == "UI")
+    );
+    assert!(
+        next.filters()
+            .iter()
+            .any(|filter| filter.number_range_bounds() == score_range.number_range_bounds())
+    );
+    assert!(next.filters().iter().any(|filter| {
+        filter.column().as_str() == "score"
+            && filter
+                .selected_values()
+                .is_some_and(|values| values.contains("10") && values.contains("50"))
+    }));
+    let score_predicate = next
+        .filters()
+        .iter()
+        .find(|filter| filter.number_comparison_value().is_some())
+        .expect("score numeric comparison should be replaced");
+    assert_eq!(score_predicate.column().as_str(), "score");
+    assert_eq!(
+        score_predicate.number_comparison_value(),
+        Some((TableNumericFilterOperator::LessThanOrEqual, 42.0))
+    );
+    assert!(
+        next.filters().iter().all(|filter| {
+            filter.column().as_str() != "score" || filter.text_predicate().is_none()
+        }),
+        "same-column legacy/text predicate should be removed"
+    );
+
+    let cleared = TablePredicateFilterChange::clear("score");
+    assert!(cleared.cleared());
+    assert!(!cleared.active());
+    let cleared_state = cleared.apply_to(next);
+    assert_eq!(cleared_state.pagination().page_index(), 0);
+    assert_eq!(cleared_state.filters().len(), 4);
+    assert!(
+        cleared_state
+            .filters()
+            .iter()
+            .all(|filter| filter.number_comparison_value().is_none())
+    );
+    assert!(
+        cleared_state
+            .filters()
+            .iter()
+            .any(|filter| filter.number_range_bounds() == score_range.number_range_bounds())
+    );
+    assert!(cleared_state.filters().iter().any(|filter| {
+        filter.column().as_str() == "score"
+            && filter
+                .selected_values()
+                .is_some_and(|values| values.contains("10") && values.contains("50"))
+    }));
+}
+
+#[test]
 fn table_render_plan_exposes_text_cell_editability_for_leaf_cells_only() {
     let state = TableState::new([
         TableRow::new("row-a")
@@ -5395,6 +5672,18 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _root_global_filter_state: root::TableGlobalFilterState = root_global_filter.state();
     let _root_global_filter_change: root::TableGlobalFilterChange =
         root::TableGlobalFilterChange::new("ready");
+    let root_predicate_operator: root::TablePredicateFilterOperator =
+        root::TablePredicateFilterOperator::text(root::TableTextFilterOperator::StartsWith);
+    let root_predicate_filter: root::TablePredicateFilter =
+        root::TablePredicateFilter::new("root-name-predicate", "Name", "name")
+            .operator(root_predicate_operator)
+            .value("Al");
+    let root_predicate_filter_state: root::TablePredicateFilterState =
+        root_predicate_filter.state();
+    let _root_predicate_option: Option<&root::TablePredicateFilterOperatorOptionState> =
+        root_predicate_filter_state.operator_options().first();
+    let _root_predicate_change: root::TablePredicateFilterChange =
+        root::TablePredicateFilterChange::new("name", root_predicate_operator, "Al");
     let root_table_toolbar: root::TableToolbar =
         root::TableToolbar::new("root-table-toolbar", "Filters").summary("2 visible controls");
     let _root_table_toolbar_state: root::TableToolbarState = root_table_toolbar.state();
@@ -5404,6 +5693,20 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         prelude_global_filter.state();
     let _prelude_global_filter_change: prelude::TableGlobalFilterChange =
         prelude::TableGlobalFilterChange::clear();
+    let prelude_predicate_operator: prelude::TablePredicateFilterOperator =
+        prelude::TablePredicateFilterOperator::number(
+            prelude::TableNumericFilterOperator::GreaterThan,
+        );
+    let prelude_predicate_filter: prelude::TablePredicateFilter =
+        prelude::TablePredicateFilter::new("prelude-score-predicate", "Score", "score")
+            .operator(prelude_predicate_operator)
+            .default_value("10");
+    let prelude_predicate_filter_state: prelude::TablePredicateFilterState =
+        prelude_predicate_filter.state();
+    let _prelude_predicate_option: Option<&prelude::TablePredicateFilterOperatorOptionState> =
+        prelude_predicate_filter_state.operator_options().first();
+    let _prelude_predicate_change: prelude::TablePredicateFilterChange =
+        prelude::TablePredicateFilterChange::clear("score");
     let prelude_table_toolbar: prelude::TableToolbar =
         prelude::TableToolbar::new("prelude-table-toolbar", "Filters")
             .summary("2 visible controls");
@@ -8835,6 +9138,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_splitter = root::Splitter::new("split");
     let root_tabs = root::Tabs::new("tabs");
     let root_global_filter = root::TableGlobalFilter::new("global-filter", "Search");
+    let root_predicate_filter = root::TablePredicateFilter::new("predicate-filter", "Name", "name");
     let root_table_toolbar =
         root::TableToolbar::new("table-toolbar", "Filters").summary("2 rows visible");
     let root_faceted_filter = root::TableFacetedFilter::new("status-filter", "Status", "status");
@@ -8890,6 +9194,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_splitter = prelude::Splitter::new("split");
     let prelude_tabs = prelude::Tabs::new("tabs");
     let prelude_global_filter = prelude::TableGlobalFilter::new("global-filter", "Search");
+    let prelude_predicate_filter =
+        prelude::TablePredicateFilter::new("predicate-filter", "Name", "name");
     let prelude_table_toolbar =
         prelude::TableToolbar::new("table-toolbar", "Filters").summary("2 rows visible");
     let prelude_faceted_filter =
@@ -8922,6 +9228,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_splitter.state(),
         root_tabs.state(),
         root_global_filter.state(),
+        root_predicate_filter.state(),
         root_table_toolbar.state(),
         root_faceted_filter.state(),
         root_column_visibility.state(),
@@ -8948,6 +9255,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_splitter.state(),
         prelude_tabs.state(),
         prelude_global_filter.state(),
+        prelude_predicate_filter.state(),
         prelude_table_toolbar.state(),
         prelude_faceted_filter.state(),
         prelude_column_visibility.state(),
@@ -9225,6 +9533,15 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
     assert_inventory_contains_controlled_input("TableGlobalFilter", "query");
     assert_inventory_contains_default_seed("TableGlobalFilter", "default_query", "query");
     assert_inventory_contains_callback("TableGlobalFilter", "on_change", "TableGlobalFilterChange");
+    assert_inventory_contains_controlled_input("TablePredicateFilter", "operator");
+    assert_inventory_contains_controlled_input("TablePredicateFilter", "value");
+    assert_inventory_contains_default_seed("TablePredicateFilter", "default_operator", "operator");
+    assert_inventory_contains_default_seed("TablePredicateFilter", "default_value", "value");
+    assert_inventory_contains_callback(
+        "TablePredicateFilter",
+        "on_change",
+        "TablePredicateFilterChange",
+    );
     assert_inventory_contains_controlled_input("TableColumnVisibility", "visibility");
     assert_inventory_contains_controlled_input("TableColumnVisibility", "open");
     assert_inventory_contains_default_seed(
