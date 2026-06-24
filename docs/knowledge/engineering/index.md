@@ -29,6 +29,7 @@
 * [Table global filtering and faceting planning](progress/2026-06-24-table-global-filtering-faceting-plan.md) - Durable handoff for the next Table search / global faceting boundary.
 * [Table column visibility controls](progress/2026-06-24-table-column-visibility-controls.md) - Durable handoff for the active Table column visibility controls slice.
 * [Table filter operators planning](progress/2026-06-24-table-filter-operators.md) - Durable handoff for the built-in predicate operator slice.
+* [Table column groups and nested headers](progress/2026-06-24-table-column-groups-nested-headers.md) - Planning note for the next Table header-depth slice.
 * [Table cell editing completion](progress/2026-06-24-table-cell-editing-plan.md) - Durable handoff for the first text-cell editing slice.
 * [Table numeric range filter controls verification](verification/table-numeric-range-filter-controls-20260624.md) - Verification evidence for the numeric range filter control slice.
 

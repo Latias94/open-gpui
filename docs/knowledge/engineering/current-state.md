@@ -116,6 +116,11 @@ verified_by:
   operator/value recipe, `TablePredicateFilterChange` preserves unrelated `TableState` slices,
   and the Components gallery proves the predicate filter against the `filter-board` sample with
   runtime logs and row-window changes.
+- 2026-06-24: Wrote
+  `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` as the next Table
+  boundary. The plan keeps `TableColumn` as the leaf behavior descriptor, adds a separate column
+  group/tree contract for nested headers, follows TanStack/Fret header-group resolution, and starts
+  with U1 core descriptors plus a normalized leaf projection.
 - 2026-06-24: Wrote `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md`
   as the next Table boundary and committed it as `55c7970`. The plan follows TanStack's sparse
   `columnVisibility` state and Fret's caller-owned view-options menu pattern: keep
@@ -394,9 +399,9 @@ verified_by:
   `ecc5f45`; docs now record the official `TablePredicateFilter` contract and focused gallery
   proof.
 - Blocked: None.
-- Next action: Select the next Table maturity boundary now that predicate filters are shipped;
-  likely candidates are column-group / nested-header polish, richer editor families, or a
-  data-source ergonomics layer.
+- Next action: Implement U1 of
+  `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md`: core column tree
+  descriptors and normalized leaf projection.
 
 # Citations
 

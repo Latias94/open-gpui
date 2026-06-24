@@ -6,6 +6,11 @@ status: active
 
 # Log
 
+- 2026-06-24: Created
+  `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` as the next Table
+  maturity boundary. The plan keeps `TableColumn` as the behavioral leaf descriptor, adds a
+  separate group/tree header contract, uses TanStack and Fret header-group references, and starts
+  with U1 core column tree descriptors plus normalized leaf projection.
 - 2026-06-24: Created `docs/plans/2026-06-24-009-feat-ui-table-filter-operators-plan.md` as the
   next Table boundary and committed it as `f4a0af7`. The plan uses TanStack filter-function
   references and Fret parity tests to shape a closed built-in predicate family instead of a
