@@ -1491,11 +1491,51 @@ pub(crate) fn render_components_page(
                                                 current_sizing,
                                                 current_expansion,
                                                 cx,
-                                            );
+                                        );
                                         let state_summary =
                                             sample.state_summary_for_state(&table_state);
                                         let mut table = sample.build_table_with_state(table_state);
                                         let table_plan = table.state();
+                                        let global_filter_control: Option<AnyElement> =
+                                            if sample_id == "filter-board" {
+                                                let query = table
+                                                    .table_state()
+                                                    .global_filter()
+                                                    .unwrap_or("")
+                                                    .to_owned();
+                                                let sample_id_for_global = sample_id.to_owned();
+                                                let base_state = sample.state.clone();
+
+                                                Some(
+                                                    div()
+                                                        .w_full()
+                                                        .child(
+                                                            TableGlobalFilter::new(
+                                                                format!(
+                                                                    "component-table-global-filter:{}",
+                                                                    sample_id
+                                                                ),
+                                                                "Search",
+                                                            )
+                                                            .query(query)
+                                                            .placeholder("Search board rows")
+                                                            .clear_label("Clear search")
+                                                            .small()
+                                                            .tokens(snapshot.tokens)
+                                                            .on_change(move |change, _, cx| {
+                                                                pages::components::record_table_global_filter_change(
+                                                                    sample_id_for_global.clone(),
+                                                                    &base_state,
+                                                                    &change,
+                                                                    cx,
+                                                                );
+                                                            }),
+                                                        )
+                                                        .into_any_element(),
+                                                )
+                                            } else {
+                                                None
+                                            };
                                         let faceted_filter_control: Option<AnyElement> =
                                             if sample_id == "filter-board" {
                                                 let status_column = TableColumnId::new("status");
@@ -1620,6 +1660,11 @@ pub(crate) fn render_components_page(
                                             } else {
                                                 None
                                             };
+                                        let has_column_filter_controls =
+                                            faceted_filter_control.is_some()
+                                                || range_filter_control.is_some();
+                                        let has_filter_controls = global_filter_control.is_some()
+                                            || has_column_filter_controls;
                                         if sample_id == "release-resize" {
                                             let sample_id_for_resize = sample_id.to_owned();
                                             table = table.on_column_sizing_change(
@@ -1701,26 +1746,40 @@ pub(crate) fn render_components_page(
                                                     .text_color(rgb(0x5a6472))
                                                     .child(summary),
                                             )
-                                            .when(
-                                                faceted_filter_control.is_some()
-                                                    || range_filter_control.is_some(),
-                                                |this| {
-                                                    this.child(
-                                                        div()
-                                                            .flex()
-                                                            .items_start()
-                                                            .gap_3()
-                                                            .when_some(
-                                                                faceted_filter_control,
-                                                                |row, control| row.child(control),
+                                            .when(has_filter_controls, |this| {
+                                                this.child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_2()
+                                                        .when_some(
+                                                            global_filter_control,
+                                                            |column, control| {
+                                                                column.child(control)
+                                                            },
+                                                        )
+                                                        .when(has_column_filter_controls, |column| {
+                                                            column.child(
+                                                                div()
+                                                                    .flex()
+                                                                    .items_start()
+                                                                    .gap_3()
+                                                                    .when_some(
+                                                                        faceted_filter_control,
+                                                                        |row, control| {
+                                                                            row.child(control)
+                                                                        },
+                                                                    )
+                                                                    .when_some(
+                                                                        range_filter_control,
+                                                                        |row, control| {
+                                                                            row.child(control)
+                                                                        },
+                                                                    ),
                                                             )
-                                                            .when_some(
-                                                                range_filter_control,
-                                                                |row, control| row.child(control),
-                                                            ),
-                                                    )
-                                                },
-                                            )
+                                                        }),
+                                                )
+                                            })
                                             .child(
                                                 div()
                                                     .h(px(228.0))

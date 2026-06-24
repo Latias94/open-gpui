@@ -9,8 +9,9 @@ use open_gpui_ui_components::{
     OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
     SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableCellValue,
     TableColumnFacets, TableColumnId, TableColumnRegion, TableExpansionMode, TableExpansionState,
-    TableRangeFilterChange, TableRowChildrenLoadState, TableRowId, TableRowRegion, TableStageMode,
-    ThemeMode, ToggleVariant, TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
+    TableGlobalFilterChange, TableRangeFilterChange, TableRowChildrenLoadState, TableRowId,
+    TableRowRegion, TableStageMode, ThemeMode, ToggleVariant, TooltipOpenIntent,
+    TreeKeyboardAction, VirtualizedListScrollStrategy,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state, init_text_input,
     },
@@ -1366,6 +1367,12 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(gates[4].id, "tabs-overflow");
     assert_eq!(gates[5].id, "table-virtualization");
     assert!(gates[5].evidence.contains(&"TableFacetedFilter"));
+    assert!(gates[5].evidence.contains(&"TableGlobalFilter"));
+    assert!(
+        gates[5]
+            .evidence
+            .contains(&"components_gallery_smoke_global_filter_updates_table_rows")
+    );
     assert!(
         gates[5]
             .evidence
@@ -3246,6 +3253,9 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"open_gpui_ui_components::TableFacetedFilter"));
     assert!(signals.contains(&"open_gpui_ui_components::TableFacetedFilterChange"));
     assert!(signals.contains(&"open_gpui_ui_components::TableFacetedFilterState"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableGlobalFilter"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableGlobalFilterChange"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableGlobalFilterState"));
     assert!(signals.contains(&"open_gpui_ui_components::TableRangeFilter"));
     assert!(signals.contains(&"open_gpui_ui_components::TableRangeFilterChange"));
     assert!(signals.contains(&"open_gpui_ui_components::TableRangeFilterState"));
@@ -3281,7 +3291,13 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
         .find(|gate| gate.id == "table-virtualization")
         .unwrap_or_else(|| panic!("expected table conformance gate"));
     assert!(table_gate.evidence.contains(&"TableFacetedFilter"));
+    assert!(table_gate.evidence.contains(&"TableGlobalFilter"));
     assert!(table_gate.evidence.contains(&"TableRangeFilter"));
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_global_filter_updates_table_rows")
+    );
     assert!(
         table_gate
             .evidence
@@ -4463,6 +4479,76 @@ fn components_gallery_smoke_faceted_filter_updates_table_rows(cx: &mut open_gpui
     assert!(
         cx.debug_bounds(INITIAL_ROW).is_some(),
         "expected clearing the status facet to restore the original filtered board rows"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_global_filter_updates_table_rows(cx: &mut open_gpui::TestAppContext) {
+    const SAMPLE_ID: &str = "filter-board";
+    const SAMPLE: &str = "gallery:component-table-sample:filter-board";
+    const INPUT: &str = "text-input:component-table-global-filter:filter-board-input:root";
+    const INITIAL_ROW: &str = "table:component-table:filter-board:row:filter-board-row-177";
+    const FILTERED_ROW: &str = "table:component-table:filter-board:row:filter-board-row-012";
+
+    let table_samples = pages::components::table_samples(ThemeTokens::default());
+    let sample = table_sample(&table_samples, SAMPLE_ID);
+    let expected_state = TableGlobalFilterChange::new("012").apply_to(sample.state.clone());
+    let expected = expected_state.resolve();
+    let expected_filtered_rows = expected.filtered_model().rows().len();
+    let expected_final_rows = expected.final_model().rows().len();
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, INPUT);
+
+    let sample_before = bounds(cx, SAMPLE);
+    assert!(
+        cx.debug_bounds(INITIAL_ROW).is_some(),
+        "expected the initial filtered board row to render before applying a global search"
+    );
+
+    click(cx, INPUT);
+    settle(cx);
+    cx.simulate_input("012");
+    settle(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected the global-search input to stay inside the table sample"
+    );
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.global_filter_changes().to_vec()
+    });
+    assert!(!changes.is_empty());
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one global-filter change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.query, "012");
+    assert!(!last.cleared);
+    assert_eq!(last.filtered_rows, expected_filtered_rows);
+    assert_eq!(last.final_rows, expected_final_rows);
+
+    let persisted = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.global_filter_override(SAMPLE_ID)
+            .and_then(|state| state.global_filter().map(str::to_owned))
+    });
+    assert_eq!(persisted.as_deref(), Some("012"));
+    assert!(
+        cx.debug_bounds(INITIAL_ROW).is_none(),
+        "expected the initial board row to leave the rendered window after applying global search"
+    );
+    assert!(
+        cx.debug_bounds(FILTERED_ROW).is_some(),
+        "expected the matching board row to render after applying global search"
     );
 }
 
