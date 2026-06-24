@@ -30,7 +30,7 @@ git_branch: main
   `cargo nextest run -p open-gpui-ui-core table`,
   `cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit public_resolved_state_contracts_avoid_gpui_runtime_types`,
   and `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`.
-- 2026-06-24: Completed U3/U4 in the current branch. `release-matrix` now renders a
+- 2026-06-24: Completed U3/U4 and committed the slice as `d8abeaa`. `release-matrix` now renders a
   `TableColumnVisibility` toolbar control, keeps pinned identity/status columns locked, records
   app-owned visibility changes in `TableSampleRuntimeLog`, applies visibility overrides through the
   shared sample-runtime state path, and has focused smoke coverage for hiding/restoring a metric
@@ -41,7 +41,8 @@ git_branch: main
   `cargo nextest run -p open-gpui-ui-components table_column_visibility component_api_inventory crate_root_and_prelude_exports_remain_explicit public_resolved_state_contracts_avoid_gpui_runtime_types`,
   `cargo nextest run -p open-gpui-ui-foundation-gallery table`,
   and `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`.
-- Next action: Commit U3/U4, then choose the next Table maturity gap from the roadmap.
+- Next action: Start the next Table maturity gap from the roadmap, most likely global filtering /
+  faceting, and keep following the plan -> implement -> verify -> commit loop.
 
 # Citations
 

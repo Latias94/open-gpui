@@ -114,8 +114,8 @@ verified_by:
   and reset actions, and `TableColumnVisibilityChange::apply_to` helpers that preserve unrelated
   `TableState` slices. Public exports and the component API inventory now cover the recipe,
   state, item-state, action, payload, and `TableColumnVisibilityOverrides` contract.
-- 2026-06-24: Completed U3/U4 of the column visibility plan in the current branch. The
-  `release-matrix` Components gallery sample now renders a `TableColumnVisibility` toolbar control,
+- 2026-06-24: Completed U3/U4 of the column visibility plan and committed the slice as `d8abeaa`.
+  The `release-matrix` Components gallery sample now renders a `TableColumnVisibility` toolbar control,
   keeps the pinned identity/status columns non-hideable, records app-owned
   `TableColumnVisibilityChange` payloads in `TableSampleRuntimeLog`, applies visibility overrides
   through the existing `table_sample_state_with_runtime` path, and has focused smoke coverage that
@@ -207,7 +207,9 @@ verified_by:
 - In progress: The column visibility plan is complete; the long-running Table maturity goal remains
   active.
 - Blocked: None.
-- Next action: Commit U3/U4, then choose the next Table maturity gap from the roadmap.
+- Next action: Start the next Table maturity gap from the roadmap, most likely the global
+  filtering / faceting boundary, and keep the long-running goal moving with the same plan ->
+  implement -> verify -> commit loop.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
   with depth/parent/branch/descendant metadata, source-tree expansion reuses
