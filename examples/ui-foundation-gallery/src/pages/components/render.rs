@@ -2725,6 +2725,13 @@ pub(crate) fn component_table_state_row(
         ));
     }
 
+    if summary.header_rows > 1 || summary.header_groups > 0 {
+        row = row.child(format!(
+            "headers {} / groups {} / leaves {}",
+            summary.header_rows, summary.header_groups, summary.visible_leaf_columns
+        ));
+    }
+
     if summary.tree_rows > 0 {
         row = row.child(format!(
             "tree {} / branches {} / depth {} / expanded inputs {}{}{}",

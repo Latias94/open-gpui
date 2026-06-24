@@ -103,6 +103,20 @@ verified_by:
   fearless refactoring, implementation, verification, memory updates, and commits going until the
   Table API, interaction behavior, performance / virtualization, gallery proof, and docs contract
   are mature enough to serve as the official component-library baseline.
+- 2026-06-25: Completed U4 of
+  `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
+  tree. `ui_components::Table` now renders nested header groups with multi-row, region-aware GPUI
+  header lanes while preserving leaf sort and resize behavior; the same plan metadata continues to
+  expose region-specific header row counts and widths derived from the visible leaf contracts.
+  Focused core and component nextest checks passed, and the next action is U5: add gallery proof
+  for the nested headers slice.
+- 2026-06-25: Completed U5 of
+  `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
+  tree. `release-matrix` now carries the nested-header gallery proof with a grouped column tree, a
+  header-summary readout, and a focused center-lane scroll smoke that keeps pinned header families
+  mounted while the far center window enters and exits view. Focused gallery nextest checks passed,
+  wiki validation passed, and the remaining action is to decide whether this slice is ready to
+  commit.
 - 2026-06-24: Completed U1 of
   `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
   tree. `TableColumnGroupId`, `TableColumnNode`, and `TableColumnGroup` now provide a renderer-

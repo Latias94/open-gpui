@@ -395,8 +395,9 @@ default path must preserve offset across reconstructed component values.
 `TableState` describes renderer-neutral table behavior: stable row ids, nested source rows, row
 lookup, row-model stage vocabulary, selection keyed by row id, column visibility and ordering,
 pinned column regions, row pinning, sorting, filtering, grouping, built-in aggregation, expansion,
-and pagination. The official table contract now resolves the full pipeline core -> filtered ->
-grouped -> sorted -> expanded -> paginated -> row-region split -> final. Source tree rows remain
+column groups, nested headers, and pagination. The official table contract now resolves the full
+pipeline core -> filtered -> grouped -> sorted -> expanded -> paginated -> row-region split ->
+final. Source tree rows remain
 distinct from synthetic group rows: `TableRow` may own child rows, resolved source rows expose
 depth, parent id,
 branch/leaf state, descendant counts, and expansion metadata through `TableTreeRow`, and collapsed
@@ -488,6 +489,12 @@ with checkbox rows and show-all / reset actions, keeps locked identity columns d
 controlled `TableColumnVisibilityChange` payloads whose `apply_to` helper updates only visibility
 overrides while preserving the rest of `TableState`. Saved views, URL sync, persistence, and
 server-side capability negotiation remain application-owned or follow-up work.
+Nested header groups are resolved as renderer-neutral row families rather than data columns.
+`TableRenderPlan` exposes nested header-group rows for the left, center, and right regions, with
+stable row counts, summed widths, and depth-specific group metadata. Pinned regions split group
+families when visibility or pinning crosses region boundaries, while group headers continue to stay
+leaf-column-driven for sort, resize, visibility, and selection behavior. Flat tables still resolve
+to a single header row.
 Text cell editing is the official inline-edit recipe over table column metadata:
 `TableCellEditor::Text` and `TableColumn::text_editable` opt columns into editable leaf cells,
 while synthetic group rows and missing source cells stay display-only. The GPUI adapter renders the
@@ -513,9 +520,10 @@ exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_
 entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests for row
 identity, grouping, source-tree expansion, row interaction payloads, and virtualizer behavior, and
 gallery runtime tests for nested scroll containment, faceted-filter row updates, predicate-filter
-row updates, and editable text-cell updates. Sticky headers, autosize-by-content, data-source
-fetch/cache orchestration, global faceting, richer editor families, and deeper two-axis grid
-virtualization beyond the pinned center-column window remain follow-up capabilities.
+row updates, editable text-cell updates, and nested header gallery proof. Sticky headers,
+autosize-by-content, data-source fetch/cache orchestration, global faceting, richer editor families,
+and deeper two-axis grid virtualization beyond the pinned center-column window remain follow-up
+capabilities.
 
 ## Splitter Constraints
 

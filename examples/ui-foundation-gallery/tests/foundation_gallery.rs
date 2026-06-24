@@ -2715,6 +2715,9 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         release_matrix.state.sorting()[0].column().as_str(),
         "metric_13"
     );
+    assert_eq!(matrix_summary.header_rows, 3);
+    assert_eq!(matrix_summary.header_groups, 4);
+    assert_eq!(matrix_summary.visible_leaf_columns, 16);
     assert_eq!(matrix_summary.core_rows, 480);
     assert_eq!(matrix_summary.final_rows, 480);
     assert_eq!(matrix_summary.selected_rows, 1);
@@ -2727,6 +2730,37 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(matrix_summary.total_column_width_px, 1836);
     assert!(matrix_plan.uses_split_pinned_layout());
     assert_eq!(matrix_plan.aria_column_count(), 16);
+    assert_eq!(matrix_plan.header_row_count(), 3);
+    assert_eq!(matrix_plan.left_header_groups().header_row_count(), 3);
+    assert_eq!(matrix_plan.center_header_groups().header_row_count(), 3);
+    assert_eq!(matrix_plan.right_header_groups().header_row_count(), 3);
+    assert_eq!(
+        matrix_plan
+            .left_header_groups()
+            .group_at_depth(1)
+            .expect("left header group row should exist")
+            .headers()[0]
+            .label(),
+        "Identity"
+    );
+    assert_eq!(
+        matrix_plan
+            .center_header_groups()
+            .group_at_depth(1)
+            .expect("center header group row should exist")
+            .headers()[0]
+            .label(),
+        "Metrics"
+    );
+    assert_eq!(
+        matrix_plan
+            .right_header_groups()
+            .group_at_depth(1)
+            .expect("right header group row should exist")
+            .headers()[0]
+            .label(),
+        "Delivery"
+    );
     assert_eq!(
         matrix_plan
             .column_regions()
@@ -2754,7 +2788,6 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
             "metric_13",
         ]
     );
-
     let row_pinning = table_sample(samples, "row-pinning");
     let row_pinning_plan = row_pinning.render_plan();
     let row_pinning_summary = row_pinning.state_summary();
@@ -5060,6 +5093,9 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
     let first_row_key = plan.rows()[0].render_key().to_owned();
     let far_header = "table:component-table:release-matrix:header:metric_13";
     let far_cell = format!("table:component-table:release-matrix:cell:{first_row_key}:metric_13");
+    let left_group = "table:component-table:release-matrix:header-group:left:1:identity";
+    let metrics_group = "table:component-table:release-matrix:header-group:center:1:metrics";
+    let right_group = "table:component-table:release-matrix:header-group:right:1:delivery";
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     let table_entry = pages::components::COMPONENT_CATALOG
@@ -5081,6 +5117,19 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
     let right_before = bounds(
         cx,
         &format!("table:component-table:release-matrix:cell:{first_row_key}:status"),
+    );
+    let left_group_before = bounds(cx, left_group);
+    assert!(
+        cx.debug_bounds(metrics_group).is_some(),
+        "expected release-matrix metrics group header to render before horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds(right_group).is_some(),
+        "expected release-matrix delivery group header to render before horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds(left_group).is_some(),
+        "expected release-matrix identity group header to render before horizontal scrolling"
     );
     assert!(
         cx.debug_bounds("table:component-table:release-matrix:header:metric_00")
@@ -5125,6 +5174,7 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
         cx,
         &format!("table:component-table:release-matrix:cell:{first_row_key}:name"),
     );
+    let left_group_after = bounds(cx, left_group);
     let right_after = bounds(
         cx,
         &format!("table:component-table:release-matrix:cell:{first_row_key}:status"),
@@ -5141,6 +5191,11 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
         "expected matrix Table left pinned lane to keep its screen-space x position"
     );
     assert_eq!(
+        left_group_after.left(),
+        left_group_before.left(),
+        "expected matrix Table left header group to keep its screen-space x position"
+    );
+    assert_eq!(
         right_after.left(),
         right_before.left(),
         "expected matrix Table right pinned lane to keep its screen-space x position"
@@ -5148,6 +5203,14 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
     assert!(
         cx.debug_bounds(far_header).is_some(),
         "expected the far metric header to enter the rendered center window after horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds(metrics_group).is_some(),
+        "expected the metrics group header to stay mounted while the center window scrolls"
+    );
+    assert!(
+        cx.debug_bounds(right_group).is_some(),
+        "expected the delivery group header to stay mounted while the center window scrolls"
     );
     assert!(
         cx.debug_bounds(&far_cell).is_some(),

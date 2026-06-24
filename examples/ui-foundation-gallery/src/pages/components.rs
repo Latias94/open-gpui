@@ -13,24 +13,24 @@ use open_gpui_ui_components::{
     SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
     Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
     Switch, SwitchState, Table, TableAggregation, TableCellEditApplyOutcome, TableCellEditChange,
-    TableCellValue, TableColumn, TableColumnFacets, TableColumnId, TableColumnPinning,
-    TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableColumnVisibilityChange,
-    TableColumnVisibilityOverrides, TableExpansionMode, TableExpansionState, TableFacetValueCount,
-    TableFacetedFilterChange, TableFilter, TableGlobalFilterChange, TablePagination,
-    TablePredicateFilterChange, TableRangeFilterChange, TableRenderPlan, TableRow,
-    TableRowActivation, TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning,
-    TableRowPinningPolicy, TableSort, TableStageMode, TableState, Tabs, TabsActivationMode,
-    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState,
-    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
-    Tree, TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListItemDescriptor,
-    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState,
+    TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId,
+    TableColumnPinning, TableColumnRegion, TableColumnSizing, TableColumnSizingChange,
+    TableColumnVisibilityChange, TableColumnVisibilityOverrides, TableExpansionMode,
+    TableExpansionState, TableFacetValueCount, TableFacetedFilterChange, TableFilter,
+    TableGlobalFilterChange, TablePagination, TablePredicateFilterChange, TableRangeFilterChange,
+    TableRenderPlan, TableRow, TableRowActivation, TableRowChildrenLoadState,
+    TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy, TableSort, TableStageMode,
+    TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
+    TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
+    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
+    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
     OverlayPlacementAlignment, OverlayPlacementSide, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, LazyLock};
 
 #[path = "components/render.rs"]
@@ -2363,6 +2363,12 @@ pub struct TableSampleStateSummary {
     pub aria_rows: usize,
     /// Selected row count in the final model.
     pub selected_rows: usize,
+    /// Visible header row count across all rendered regions.
+    pub header_rows: usize,
+    /// Unique visible group header count across all rendered regions.
+    pub header_groups: usize,
+    /// Visible leaf column count across all rendered regions.
+    pub visible_leaf_columns: usize,
     /// Row count before expansion flattens the grouped tree.
     pub grouped_rows: usize,
     /// Row count after expansion applies.
@@ -2476,6 +2482,13 @@ impl TableSampleStateSummary {
             .count();
         let tree_depth = final_rows.iter().map(|row| row.depth()).max().unwrap_or(0);
         let regions = plan.table().visible_column_regions();
+        let header_groups = plan.table().header_groups();
+        let visible_group_ids = header_groups
+            .all()
+            .flat_map(|group| group.headers().iter())
+            .filter(|cell| cell.is_group())
+            .map(|cell| cell.source_id().to_owned())
+            .collect::<BTreeSet<_>>();
         let status_column = TableColumnId::new("status");
         let score_column = TableColumnId::new("score");
         let status_facet = plan.column_facet(&status_column);
@@ -2540,6 +2553,9 @@ impl TableSampleStateSummary {
             aria_columns: plan.aria_column_count(),
             aria_rows: plan.aria_row_count(),
             selected_rows: plan.table().final_model().selected_count(),
+            header_rows: plan.header_row_count(),
+            header_groups: visible_group_ids.len(),
+            visible_leaf_columns: plan.columns().len(),
             grouped_rows: plan.table().grouped_model().rows().len(),
             expanded_rows: plan.table().expanded_model().rows().len(),
             group_rows,
@@ -4117,10 +4133,10 @@ fn build_table_samples() -> Vec<TableSample> {
     let release_matrix = TableSample {
         id: "release-matrix",
         title: "Release matrix",
-        summary: "Pinned identity and status lanes frame a wide virtualized center metric window.",
+        summary: "Nested release groups keep pinned identity and status lanes fixed around a wide virtualized center window.",
         badge: "column window",
         state: TableState::new(release_matrix_rows)
-            .with_columns(release_matrix_table_columns())
+            .with_column_tree(release_matrix_column_tree())
             .with_column_order(release_matrix_column_order())
             .with_column_pinning(
                 TableColumnPinning::new()
@@ -4307,6 +4323,43 @@ fn resizable_table_columns() -> [TableColumn; 4] {
             .with_max_width(ui_px(120.0))
             .with_resizable(false),
     ]
+}
+
+fn release_matrix_column_tree() -> Vec<TableColumnGroup> {
+    vec![TableColumnGroup::new(
+        "release",
+        "Release",
+        [
+            TableColumnGroup::new(
+                "identity",
+                "Identity",
+                [TableColumn::new("name", "Release")
+                    .with_hideable(false)
+                    .with_width(ui_px(172.0))
+                    .with_min_width(ui_px(140.0))
+                    .with_max_width(ui_px(260.0))],
+            ),
+            TableColumnGroup::new(
+                "metrics",
+                "Metrics",
+                (0..RELEASE_MATRIX_METRIC_COUNT).map(|index| {
+                    TableColumn::new(format!("metric_{index:02}"), format!("Metric {index:02}"))
+                        .with_width(ui_px(92.0 + (index % 4) as f32 * 12.0))
+                        .with_min_width(ui_px(72.0))
+                        .with_max_width(ui_px(180.0))
+                }),
+            ),
+            TableColumnGroup::new(
+                "delivery",
+                "Delivery",
+                [TableColumn::new("status", "Status")
+                    .with_hideable(false)
+                    .with_width(ui_px(148.0))
+                    .with_min_width(ui_px(112.0))
+                    .with_max_width(ui_px(220.0))],
+            ),
+        ],
+    )]
 }
 
 fn release_matrix_table_columns() -> Vec<TableColumn> {

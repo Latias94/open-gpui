@@ -21,27 +21,27 @@ use open_gpui_ui_components::{
     SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
     Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
     TableCellEditApplyOutcome, TableCellEditChange, TableCellValue, TableCenterColumnWindowPlan,
-    TableColumn, TableColumnFacets, TableColumnId, TableColumnPinning, TableColumnRegion,
-    TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableColumnVisibility,
-    TableColumnVisibilityAction, TableColumnVisibilityChange, TableColumnVisibilityOverrides,
-    TableColumnVisibilityState, TableExpansionMode, TableFacetValueCount, TableFacetedFilter,
-    TableFacetedFilterChange, TableFacetedFilterState, TableFilter, TableGlobalFacetSummary,
-    TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction,
-    TableNumericFilterOperator, TablePagination, TablePredicateFilter, TablePredicateFilterChange,
-    TablePredicateFilterOperator, TablePredicateFilterOperatorOptionState,
-    TablePredicateFilterState, TableRangeFilter, TableRangeFilterChange, TableRangeFilterState,
-    TableRow, TableRowChildrenLoadState, TableRowId, TableRowPinning, TableRowPinningPolicy,
-    TableRowRegion, TableSelectionActivationMode, TableSelectionMode, TableSelectionScope,
-    TableSort, TableSortDirection, TableStageMode, TableState, TableTextFilterOperator,
-    TableToolbar, TableToolbarState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
-    TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot,
-    Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
-    ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy,
-    TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList, VirtualizedListActivation,
-    VirtualizedListItemDescriptor, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
-    VirtualizedListScrollStrategy, VirtualizedListState, VirtualizerItemKey, VirtualizerRange,
-    VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys,
-    first_enabled,
+    TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId, TableColumnPinning,
+    TableColumnRegion, TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange,
+    TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
+    TableColumnVisibilityOverrides, TableColumnVisibilityState, TableExpansionMode,
+    TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange, TableFacetedFilterState,
+    TableFilter, TableGlobalFacetSummary, TableGlobalFilter, TableGlobalFilterChange,
+    TableGlobalFilterState, TableHeaderAction, TableNumericFilterOperator, TablePagination,
+    TablePredicateFilter, TablePredicateFilterChange, TablePredicateFilterOperator,
+    TablePredicateFilterOperatorOptionState, TablePredicateFilterState, TableRangeFilter,
+    TableRangeFilterChange, TableRangeFilterState, TableResolvedHeaderKind, TableRow,
+    TableRowChildrenLoadState, TableRowId, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
+    TableSelectionActivationMode, TableSelectionMode, TableSelectionScope, TableSort,
+    TableSortDirection, TableStageMode, TableState, TableTextFilterOperator, TableToolbar,
+    TableToolbarState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
+    TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
+    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection,
+    ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree,
+    TreeItemDescriptor, VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
+    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -5233,6 +5233,70 @@ fn table_render_plan_exposes_column_sizing_metadata_and_matching_cell_widths() {
 }
 
 #[test]
+fn table_render_plan_exposes_nested_header_groups_and_region_widths() {
+    let state = TableState::new([TableRow::new("row-a")
+        .with_cell("name", "Alpha")
+        .with_cell("team", "UI")
+        .with_cell("score", 42_usize)
+        .with_cell("status", "Ready")])
+    .with_column_tree([
+        TableColumnGroup::new(
+            "identity",
+            "Identity",
+            [
+                TableColumn::new("name", "Name").with_width(ui_px(100.0)),
+                TableColumn::new("team", "Team").with_width(ui_px(120.0)),
+            ],
+        ),
+        TableColumnGroup::new(
+            "metrics",
+            "Metrics",
+            [TableColumnGroup::new(
+                "scores",
+                "Scores",
+                [
+                    TableColumn::new("score", "Score").with_width(ui_px(80.0)),
+                    TableColumn::new("status", "Status").with_width(ui_px(90.0)),
+                ],
+            )],
+        ),
+    ])
+    .with_column_pinning(
+        TableColumnPinning::new()
+            .pinned_left(["name"])
+            .pinned_right(["status"]),
+    )
+    .with_pagination(TablePagination::disabled());
+    let plan = Table::new("nested-headers", "Nested headers", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(240.0))
+        .render_plan(UiPx::ZERO, ui_px(240.0));
+
+    assert_eq!(plan.header_row_count(), 3);
+    assert_eq!(plan.left_header_groups().header_row_count(), 2);
+    assert_eq!(plan.center_header_groups().header_row_count(), 3);
+    assert_eq!(plan.right_header_groups().header_row_count(), 3);
+    assert_eq!(plan.left_header_groups().total_width(), ui_px(100.0));
+    assert_eq!(
+        plan.center_header_groups().total_width(),
+        ui_px(120.0 + 80.0)
+    );
+    assert_eq!(plan.right_header_groups().total_width(), ui_px(90.0));
+    assert_eq!(
+        plan.center_header_groups().groups()[0].headers()[0].label(),
+        "Identity"
+    );
+    assert_eq!(
+        plan.center_header_groups().groups()[1].headers()[0].label(),
+        "Team"
+    );
+    assert_eq!(
+        plan.center_header_groups().groups()[2].headers()[0].kind(),
+        TableResolvedHeaderKind::Placeholder
+    );
+}
+
+#[test]
 fn virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts() {
     let items = (0..10_000)
         .map(|index| {
@@ -5536,6 +5600,15 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         root::VirtualizerState::new(4, ui_px(24.0)).with_overscan(2);
     let root_plan: root::TableRenderPlan = table.state();
     let _root_region_plan: &root::TableColumnRegionRenderPlan = &root_plan.column_regions()[0];
+    let _root_header_groups: &root::TableResolvedHeaderGroupRegions =
+        root_plan.table().header_groups();
+    let _root_header_kind: root::TableResolvedHeaderKind =
+        root_plan.table().center_header_groups()[0].headers()[0].kind();
+    let _root_header_cell: &root::TableResolvedHeaderCell =
+        &root_plan.table().center_header_groups()[0].headers()[0];
+    let _root_header_group: &root::TableResolvedHeaderGroup =
+        &root_plan.table().center_header_groups()[0];
+    let _root_header_plan: &root::TableHeaderGroupRegionsRenderPlan = root_plan.header_groups();
     let root_group_id = root::TableColumnGroupId::new("identity");
     assert_eq!(root_group_id.as_str(), "identity");
     let root_column_group = root::TableColumnGroup::new(
@@ -5579,6 +5652,7 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .expect("exported pinned layout plan should resolve")
         .clone();
     let _prelude_pinned_layout: prelude::TablePinnedLayoutPlan = root_pinned_layout.clone();
+    let _prelude_header_plan: &prelude::TableHeaderGroupRegionsRenderPlan = _root_header_plan;
     assert_eq!(root_pinned_layout.table_id(), "root-pinned-table");
     let root_row_pinning: root::TableRowPinning = root::TableRowPinning::new()
         .pinned_top(["row-a"])

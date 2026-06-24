@@ -6,6 +6,26 @@ status: active
 
 # Log
 
+- 2026-06-25: Completed U4 of
+  `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
+  tree. `ui_components::Table` now renders nested header groups with multi-row, region-aware GPUI
+  header lanes while preserving leaf sort and resize behavior; focused core and component nextest
+  checks passed; and the next action is U5: add gallery proof for the nested headers slice.
+- 2026-06-25: Completed U5 of
+  `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
+  tree. `release-matrix` now carries the nested-header gallery proof with a grouped column tree, a
+  header-summary readout, and a focused center-lane scroll smoke that keeps pinned header families
+  mounted while the far center window enters and exits view. Focused gallery nextest checks passed,
+  wiki validation passed, and the next action is U6: update memory and decide whether this slice is
+  ready to commit.
+- 2026-06-25: Completed U2 of
+  `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
+  tree. `TableState::resolve` now emits region-split nested header groups using
+  `TableResolvedHeaderKind`, `TableResolvedHeaderCell`, `TableResolvedHeaderGroup`, and
+  `TableResolvedHeaderGroupRegions`; the new contract is exported from `ui_core` and
+  `ui_components`; and focused `cargo nextest run` checks passed for the core nested-header cases
+  plus the component public-export smoke. Next action is U3: expose nested headers in
+  `TableRenderPlan`.
 - 2026-06-24: Completed U1 of
   `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
   tree. `TableColumnGroupId`, `TableColumnNode`, and `TableColumnGroup` now expose the nested

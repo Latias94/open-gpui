@@ -10,13 +10,21 @@ related_plan: docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-heade
 
 # Summary
 
-- U1 is complete in the working tree.
+- U4 is complete in the working tree.
+- U5 is complete in the working tree.
 - `ui_core` now has `TableColumnGroupId`, `TableColumnNode`, and `TableColumnGroup` plus a
-  normalized column-tree `TableState` contract.
-- Duplicate leaf ids are pruned deterministically during tree normalization, and the cache key
-  includes the normalized tree shape.
-- `ui_components` root and prelude exports include the new types, and focused nextest checks pass.
-- The next Table maturity boundary is column groups and nested headers.
+  normalized column-tree `TableState` contract, and `TableRenderPlan` exposes nested header-group
+  render metadata.
+- Duplicate leaf ids are pruned deterministically during tree normalization, the cache key includes
+  the normalized tree shape, and the GPUI table adapter now renders multi-row nested headers while
+  preserving leaf sort and resize behavior.
+- `release-matrix` now serves as the gallery proof: the sample uses a grouped column tree, the
+  table summary reports header rows / visible groups / leaf counts, and the focused gallery smoke
+  proves the center lane scrolls while the pinned header families stay mounted.
+- `ui_components` root and prelude exports include the new types, and focused core / component
+  nextest checks pass.
+- The next Table maturity boundary is the commit decision for this slice, then the next Table
+  header maturity slice.
 - The plan is written at `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md`.
 - The chosen design keeps `TableColumn` as the behavioral leaf descriptor and adds a separate
   group/tree contract for header structure. Sorting, filtering, faceting, editing, visibility,
@@ -26,23 +34,20 @@ related_plan: docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-heade
 
 - Current `ui_core::TableState` stores flat `Vec<TableColumn>` descriptors and resolves visible
   leaf columns through visibility, ordering, pinning, and sizing.
-- Current `ui_components::TableRenderPlan` renders one fixed header row from
-  `TableColumnRenderPlan` and does not expose header-group rows.
+- Current `ui_components::TableRenderPlan` exposes nested header-group rows and the GPUI adapter
+  renders them in multi-row region-aware lanes.
 - Local references are available:
   `repo-ref/tanstack-table/packages/table-core/src/core/headers/buildHeaderGroups.ts` and
   `repo-ref/fret/ecosystem/fret-ui-headless/src/table/headers.rs`.
 
 # Open Threads
 
-- U1 still needs the core column tree descriptors and normalized leaf projection.
-- U2 still needs renderer-neutral header group resolution.
-- U3/U4 still need render-plan and GPUI multi-row header work.
-- U5/U6 still need gallery proof, contract docs, verification docs, and memory completion.
+- The remaining question is whether to commit this slice now or keep batching it with the next
+  Table header follow-up.
 
 # Next Action
 
-Implement U2: resolve renderer-neutral header groups from the normalized column tree and visible
-leaf regions.
+Decide whether to commit this slice now or keep batching it with the next Table header follow-up.
 
 # Citations
 
