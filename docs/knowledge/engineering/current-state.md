@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: cfcab3a
+git_commit: 1298177
 verified_by:
   - cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-core table
@@ -86,10 +86,21 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-foundation-gallery table
   - git diff --check
   - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_faceted_filter_updates_table_rows table
+  - git diff --check
 ---
 
 # Current State
 
+- 2026-06-24: Completed U3/U4 of the faceted filter controls plan as `1298177`.
+  `filter-board` now renders the status `TableFacetedFilter`, stores app-owned filter overrides in
+  `TableSampleRuntimeLog`, recomputes the table summary from the controlled state, and has a
+  focused gallery smoke proving popup wheel containment, exact `Done` token selection, filtered row
+  count changes, and clearing back to the original row window. Contract, verification, and memory
+  docs now record the recipe as shipped while keeping global faceting, numeric/range controls,
+  async option search, and fetch/cache orchestration out of scope.
 - 2026-06-24: Completed U2 of the faceted filter controls plan as `cfcab3a`. `TableFacetedFilter`
   now productizes the single-column categorical filter recipe with exact-value checkbox facets,
   controlled and default open/query ownership, a reusable `TableFacetedFilterChange` payload that
@@ -124,16 +135,17 @@ verified_by:
 
 - Goal: Execute `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md`.
 - Branch: `main`
-- Last verified: 2026-06-24, `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-core table`, `cargo nextest run -p open-gpui-ui-components table`, and `git diff --check` passed for U2.
+- Last verified: 2026-06-24, `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit`, `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_faceted_filter_updates_table_rows table`, and `git diff --check` passed for U3/U4.
 - Done: Wrote the Table faceted filter controls plan as `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md`.
 - Done: Completed U1 as `a52751f`. `TableFilterKind` is now exported through `ui_core`, `ui_components`, and both preludes; tests cover exact categorical matching, empty no-op filters, order-independent cache keys, and public export inventory.
 - Done: Completed U2 as `cfcab3a`. `TableFacetedFilter` now provides the single-column categorical filter recipe with checkbox facets, search query control, popover policy controls, a controlled change payload, and export / inventory coverage.
+- Done: Completed U3/U4 as `1298177`. `filter-board` now proves the status faceted filter in the Components gallery, and docs / verification / memory record the shipped contract.
 - Done: Completed the Table custom aggregation callbacks slice as `dded73b`. `TableState` now stores named custom aggregation callbacks, grouped rows resolve named custom aggregates through the renderer-neutral pipeline, `TableRenderPlan` exposes the callback count, and the Components gallery includes `grouped-custom-aggregation`.
 - Done: Completed the Table row-selection variants slice as `ea3785f`. `ui_core::TableState` now carries explicit selection policy knobs for single vs multiple selection, explicit-control vs row-click activation, and descendant propagation, plus renderer-neutral selection summaries for full-model and current-page scopes. `ui_components::Table` emits controlled `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when the policy is explicit-control.
 - Done: A combined two-axis viewport contract is already on `main` as `725f859`.
-- In progress: Table faceted filter controls slice.
+- In progress: None for the faceted filter controls slice.
 - Blocked: None.
-- Next action: Execute U3 by extending the gallery proof and contract evidence for the faceted filter recipe.
+- Next action: Select the next Table boundary after the completed faceted filter controls slice.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
   with depth/parent/branch/descendant metadata, source-tree expansion reuses
@@ -282,10 +294,10 @@ verified_by:
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Follow-up: The column sizing / resize, sticky pinned-column, center-column virtualization,
   tree-data, row-interaction, manual-expansion, manual row-model control, per-column faceting
-  metadata, row selection variants, row pinning, custom aggregation callbacks, and two-axis
-  viewport slices are complete on `main`. Remaining Table follow-ups are cell editing, global
-  faceting, concrete faceted filter UI, and standalone headless extraction if cross-framework
-  pressure appears.
+  metadata, single-column categorical faceted filter controls, row selection variants, row
+  pinning, custom aggregation callbacks, and two-axis viewport slices are complete on `main`.
+  Remaining Table follow-ups are cell editing, global faceting, numeric/range filter controls, and
+  standalone headless extraction if cross-framework pressure appears.
 - Done: The two-dimensional Table viewport contract is shipped on `main` as `725f859`.
 - Blocked: None.
 - Next action: Select the next Table boundary after the completed table slices.

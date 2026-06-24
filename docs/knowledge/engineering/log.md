@@ -6,6 +6,18 @@ status: active
 
 # Log
 
+- 2026-06-24: Completed U3/U4 of
+  `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md` as `1298177`.
+  `filter-board` now renders a status `TableFacetedFilter`, records app-owned filter overrides and
+  `TableFacetedFilterChange` payloads in the gallery runtime log, recomputes summary rows from the
+  controlled state, and has focused smoke coverage for popup wheel containment, selecting `Done`,
+  filtered/final row counts, and clearing back to the original row window. `docs/ui/component-contract.md`,
+  `docs/verification.md`, and engineering memory now record the recipe as shipped while keeping
+  global faceting, numeric/range controls, async option search, and fetch/cache orchestration as
+  follow-up work. Verified with `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`,
+  `cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit`,
+  `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_faceted_filter_updates_table_rows table`,
+  and `git diff --check`. Next action is selecting the next Table boundary.
 - 2026-06-24: Completed U2 of
   `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md` as `cfcab3a`.
   `TableFacetedFilter` now productizes the categorical faceted filter recipe with search query

@@ -110,10 +110,16 @@ app-supplied source snapshot, clicks the unloaded `server-workspace` disclosure,
 expansion payload carries zero loaded children plus idle child-load state, and then confirms the
 new child row renders after the gallery runtime supplies the loaded snapshot.
 
+`components_gallery_smoke_faceted_filter_updates_table_rows` is the focused faceted-filter proof:
+it enters the Table family view, opens the `filter-board` status popover, verifies wheel input on
+the popup content stays local, selects the exact `Done` token, checks the controlled change payload
+and filtered row counts, then toggles the token off and confirms the original row window returns.
+
 ```powershell
 cargo nextest run -p open-gpui-ui-core table
 cargo nextest run -p open-gpui-ui-components table
 cargo nextest run -p open-gpui-ui-foundation-gallery table
+cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_faceted_filter_updates_table_rows table
 ```
 
 `VirtualizedList` follows the same split at component scale: `open-gpui-ui-components` tests prove
@@ -201,23 +207,28 @@ descriptor, action/result, helper, and payload types. `TreeState` remains a reus
 contract even though `Tree` is now an official rendered component, matching the
 `VirtualizedListState` / `VirtualizedList` split. The Components page smoke also verifies every
 `state_contract_readout_pairs()` selector is visible.
-The official Table gate requires `Table`, `TableState`, `VirtualizerState`, role signals for table
-rows and cells, and at least one `gallery:component-table-sample:{id}` selector. Table smokes and
-state tests assert that rendered row selectors stay bounded by the virtualizer's visible rows plus
-overscan, scroll input stays inside the table viewport, sortable header actions emit state-update
-payloads, controlled column resize callbacks carry stable sizing payloads, row activation and
-expansion request payloads stay controlled, source-tree row models keep nested descendants
-addressable by stable row id, manual source-tree snapshots expose unloaded/loading/failed child
-metadata, row-pinning regions split top/center/bottom rows with keep-pinned and page-only
-policies, and grouped / expanded row models keep collapsed descendants addressable by stable row
-id. The Components gallery now carries `release-rollup`, a grouped Table
+The official Table gate requires `Table`, `TableState`, `VirtualizerState`,
+`TableFacetedFilter`, role signals for table rows and cells, and at least one
+`gallery:component-table-sample:{id}` selector. Table smokes and state tests assert that rendered
+row selectors stay bounded by the virtualizer's visible rows plus overscan, scroll input stays
+inside the table viewport, sortable header actions emit state-update payloads, controlled column
+resize callbacks carry stable sizing payloads, categorical faceted filters emit controlled
+exact-token updates, row activation and expansion request payloads stay controlled, source-tree row
+models keep nested descendants addressable by stable row id, manual source-tree snapshots expose
+unloaded/loading/failed child metadata, row-pinning regions split top/center/bottom rows with
+keep-pinned and page-only policies, and grouped / expanded row models keep collapsed descendants
+addressable by stable row id. The Components gallery now carries `release-rollup`, a grouped Table
 sample that mixes expanded and collapsed team groups, exposes aggregate count and score cells,
 pins the identifier and status columns, and has its own inner-scroll smoke. It also carries
 `server-paged`, a manual filtering/sorting/pagination sample that renders only the current
 app-supplied page snapshot while exposing server-known total row and page counts through the
 gallery summary and `TableRenderPlan`. It also carries `release-resize`, a controlled
 column-sizing sample whose resize smoke drags the `name` handle, records the app-owned committed
-width, and verifies header and first-row cell widths stay aligned.
+width, and verifies header and first-row cell widths stay aligned. `filter-board` is also the
+faceted-filter proof: it renders a `status` `TableFacetedFilter`, records
+`TableFacetedFilterChange` payloads in the sample runtime log, proves selecting `Done` changes the
+rendered row window, proves clearing restores it, and confirms popup wheel input does not move the
+outer table sample.
 `release-matrix` is the wide center-column virtualization sample: it pins the identity and status
 lanes, exposes fourteen center metrics, and has a focused smoke that proves off-window center
 columns unmount/remount while horizontal wheel input remains inside the sample. `row-pinning` is
@@ -436,7 +447,8 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     sample should accept real text editing through the
     controller-backed path, while the gallery remains scrollable and keeps focus visible when the
     page overflows. The Table samples should expose the `release-queue` 10k-row virtualized window,
-    the filtered/sorted/paginated `filter-board` model, the controlled `release-resize` sizing
+    the filtered/sorted/paginated `filter-board` model with a working status `TableFacetedFilter`,
+    the controlled `release-resize` sizing
     sample, the grouped and sticky pinned `release-rollup` model with left/right fixed lanes and a
     horizontally scrollable center lane, the wide `release-matrix` center-column window, the
     source-tree `dependency-tree` sample with nested rows and controlled expansion, stable selected

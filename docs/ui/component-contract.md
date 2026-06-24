@@ -466,7 +466,12 @@ filtering, sorting, pagination, and faceting ownership modes plus pagination row
 per-column facet metadata so gallery readouts and consumers can distinguish local row-model
 transforms from app-owned server snapshots. Facet metadata covers deterministic unique value/count
 entries, numeric min/max ranges, and explicit manual/server payloads keyed by column id; concrete
-filter popovers, async option search, and fetching/cache lifecycles remain application-owned.
+`TableFacetedFilter` is the official single-column categorical filter recipe over that metadata:
+it reads `TableColumnFacets`, renders a searchable `Popover` with checkbox facet rows, keeps query
+and popup runtime adapter-owned, and emits controlled `TableFacetedFilterChange` payloads that add,
+remove, or clear exact stable tokens while resetting pagination to the first page. Global faceting,
+numeric range controls, async option search, and fetching/cache lifecycles remain application-owned
+or follow-up work.
 For row-pinned tables, `TableRenderPlan` exposes top, center, and bottom `TableRowRenderPlan`
 regions with neutral `TableRowRegion` metadata, while the vertical virtualizer consumes only the
 center region. The GPUI adapter renders top and bottom row bands outside the center body
@@ -481,10 +486,10 @@ An official Table entry must satisfy the normal component completion gate: `Tabl
 exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
 entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests for row
 identity, grouping, source-tree expansion, row interaction payloads, and virtualizer behavior, and
-gallery runtime tests for nested scroll containment. Custom aggregation callbacks, sticky headers,
-autosize-by-content, data-source fetch/cache orchestration, global faceting, concrete faceted
-filter controls, checkbox/range selection, cell editing, and deeper two-axis grid virtualization
-beyond the pinned center-column window remain follow-up capabilities.
+gallery runtime tests for nested scroll containment and faceted-filter row updates. Custom
+aggregation callbacks, sticky headers, autosize-by-content, data-source fetch/cache orchestration,
+global faceting, numeric/range filter controls, cell editing, and deeper two-axis grid
+virtualization beyond the pinned center-column window remain follow-up capabilities.
 
 ## Splitter Constraints
 
@@ -639,13 +644,15 @@ and the center virtualizer counts only center rows.
 Table faceting is a metadata sidecar over configured columns: client facets derive unique
 value/count entries and numeric ranges from the source snapshot while excluding the target column's
 own local filter, and manual facet payloads can replace client-derived summaries for server-owned
-counts without giving the component crate fetch/cache responsibility.
+counts without giving the component crate fetch/cache responsibility. `TableFacetedFilter` turns
+one categorical facet column into an official searchable Popover recipe with controlled
+`TableFacetedFilterChange` payloads and stable option selectors.
 `VirtualizerState` covers one-dimensional range math, stable item keys, measurement idempotence,
 overscan, total size, and snapshot/restore data in `ui_core`; the Table adapter restores snapshot
 measurements but not captured scroll offsets. Custom aggregate callbacks, sticky headers,
-autosize-by-content, data-source orchestration, global faceting, concrete faceted filter controls,
-checkbox/range selection, cell editing, synthetic summary rows, and deeper two-axis grid
-virtualization remain follow-up work.
+autosize-by-content, data-source orchestration, global faceting, numeric/range filter controls,
+cell editing, synthetic summary rows, and deeper two-axis grid virtualization remain follow-up
+work.
 `StatusCue` and `EmptyState` are official feedback components. They expose resolved feedback
 intent, size, role, metrics, and token intents, while the GPUI adapters own concrete styling and
 rendered debug selectors. `Tree` is now an official rendered component backed by `TreeState`.
