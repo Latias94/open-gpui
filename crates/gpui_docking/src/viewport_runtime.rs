@@ -31,6 +31,12 @@ use crate::{
     interaction::DockRuntimeDragSession,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_registry::DockViewportPlatformRequests,
+    viewport_window_lifecycle::{
+        DockViewportCloseRecoveryActivation, DockViewportClosedWindowRefresh,
+        DockViewportReplacementCleanup, DockViewportRuntimeWindowStateCleanup,
+        DockViewportShouldCloseRefresh, DockViewportSpaceFocusCleanup,
+        DockViewportUnregisteredSpace, DockViewportVacatedTearOffSource,
+    },
     workspace_drop_transaction::DockWorkspacePayloadDropRequest,
 };
 #[cfg(test)]
@@ -75,17 +81,6 @@ impl DockViewportRuntimeRegistration {
     }
 }
 
-#[derive(Default)]
-struct DockViewportReplacementCleanup {
-    replaced_windows: Vec<AnyWindowHandle>,
-    affected_windows: Vec<AnyWindowHandle>,
-}
-
-struct DockViewportUnregisteredSpace {
-    window: AnyWindowHandle,
-    affected_windows: Vec<AnyWindowHandle>,
-}
-
 struct DockViewportBackendRouteRequest {
     request: DockViewportDropRouteRequest,
     changed: bool,
@@ -95,81 +90,6 @@ struct DockViewportDropRouteSnapshotRefresh {
     snapshot: DockViewportDropRouteSnapshot,
     changed: bool,
     window_effects: DockViewportWindowEffects,
-}
-
-#[derive(Default)]
-struct DockViewportVacatedTearOffSource {
-    windows: Vec<AnyWindowHandle>,
-    affected_windows: Vec<AnyWindowHandle>,
-}
-
-pub(crate) struct DockViewportClosedWindowRefresh {
-    pub(crate) outcome: DockViewportCloseOutcome,
-    window_effects: DockViewportWindowEffects,
-}
-
-pub(crate) struct DockViewportShouldCloseRefresh {
-    pub(crate) outcome: DockViewportShouldCloseOutcome,
-    window_effects: DockViewportWindowEffects,
-}
-
-pub(crate) struct DockViewportCloseRecoveryActivation {
-    pub(crate) activation: Option<DockViewportActivationTransaction>,
-    window_effects: DockViewportWindowEffects,
-}
-
-impl DockViewportClosedWindowRefresh {
-    pub(crate) fn window_effects(&self) -> DockViewportWindowEffects {
-        self.window_effects.clone()
-    }
-}
-
-impl DockViewportShouldCloseRefresh {
-    pub(crate) fn window_effects(&self) -> DockViewportWindowEffects {
-        self.window_effects.clone()
-    }
-}
-
-impl DockViewportCloseRecoveryActivation {
-    fn none() -> Self {
-        Self {
-            activation: None,
-            window_effects: DockViewportWindowEffects::default(),
-        }
-    }
-
-    pub(crate) fn window_effects(&self) -> DockViewportWindowEffects {
-        self.window_effects.clone()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DockViewportSpaceFocusCleanup {
-    Remove,
-    Preserve,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DockViewportRuntimeWindowStateCleanup {
-    SpaceUnregistered,
-    ReplacedSameSpaceMapping,
-    ReplacedDifferentSpaceMapping,
-    ClosedWindow,
-}
-
-impl DockViewportRuntimeWindowStateCleanup {
-    fn discard_close_plan(self) -> bool {
-        !matches!(self, Self::ClosedWindow)
-    }
-
-    fn focus_cleanup(self) -> DockViewportSpaceFocusCleanup {
-        match self {
-            Self::ReplacedSameSpaceMapping => DockViewportSpaceFocusCleanup::Preserve,
-            Self::SpaceUnregistered | Self::ReplacedDifferentSpaceMapping | Self::ClosedWindow => {
-                DockViewportSpaceFocusCleanup::Remove
-            }
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -2471,10 +2391,10 @@ impl DockViewportRuntime {
             self.clear_routed_drop_preview_if_window_matches(window_id)
                 .into_windows()
         };
-        DockViewportClosedWindowRefresh {
+        DockViewportClosedWindowRefresh::new(
             outcome,
-            window_effects: DockViewportWindowEffects::refresh_only(affected_windows),
-        }
+            DockViewportWindowEffects::refresh_only(affected_windows),
+        )
     }
 
     #[cfg(test)]
@@ -2494,6 +2414,7 @@ impl DockViewportRuntime {
     ) -> DockViewportClosedWindowRefresh {
         let pending_state = self.close_coordinator.take_window_close_state(window_id);
         let close = self.cleanup_closed_window(window_id);
+        let window_effects = close.window_effects();
         let outcome = match pending_state {
             Some(DockViewportClosePlanState::Pending(plan)) if close.outcome.space().is_some() => {
                 let close_status =
@@ -2510,10 +2431,7 @@ impl DockViewportRuntime {
             _ => close.outcome,
         };
         self.status.record_close(&outcome);
-        DockViewportClosedWindowRefresh {
-            outcome,
-            window_effects: close.window_effects,
-        }
+        DockViewportClosedWindowRefresh::new(outcome, window_effects)
     }
 
     #[cfg(test)]
@@ -2554,10 +2472,7 @@ impl DockViewportRuntime {
             }
             DockViewportReusableWindow::Missing | DockViewportReusableWindow::Stale => None,
         };
-        DockViewportCloseRecoveryActivation {
-            activation,
-            window_effects: reusable_effects,
-        }
+        DockViewportCloseRecoveryActivation::new(activation, reusable_effects)
     }
 
     pub(crate) fn handle_window_should_close_with_app_and_refresh(
@@ -2568,10 +2483,10 @@ impl DockViewportRuntime {
         if self.adapter.window_close_requested(window_id) {
             let outcome = self.allowed_should_close_outcome(window_id);
             self.status.record_should_close(&outcome);
-            return DockViewportShouldCloseRefresh {
+            return DockViewportShouldCloseRefresh::new(
                 outcome,
-                window_effects: DockViewportWindowEffects::default(),
-            };
+                DockViewportWindowEffects::default(),
+            );
         }
         let outcome = self
             .adapter
@@ -2591,10 +2506,10 @@ impl DockViewportRuntime {
             .apply_allowed_should_close_route_invalidation(&outcome)
             .into_windows();
         self.status.record_should_close(&outcome);
-        DockViewportShouldCloseRefresh {
+        DockViewportShouldCloseRefresh::new(
             outcome,
-            window_effects: DockViewportWindowEffects::refresh_only(affected_windows),
-        }
+            DockViewportWindowEffects::refresh_only(affected_windows),
+        )
     }
 
     fn allowed_should_close_outcome(&self, window_id: WindowId) -> DockViewportShouldCloseOutcome {

@@ -157,6 +157,7 @@ mod viewport_target_context;
 mod viewport_target_resolver;
 mod viewport_tear_off;
 mod viewport_tear_off_move;
+mod viewport_window_lifecycle;
 mod viewport_window_ownership;
 mod workspace;
 mod workspace_action;
