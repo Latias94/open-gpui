@@ -173,7 +173,7 @@ pub use table::{
     TableMetrics, TablePinnedLayoutPlan, TableRangeFilter, TableRangeFilterChange,
     TableRangeFilterState, TableRenderPlan, TableRowAction, TableRowActivation,
     TableRowActivationKind, TableRowExpansionToggle, TableRowRenderPlan, TableRowSelectionChange,
-    TableSelectionScope,
+    TableSelectionScope, TableToolbar, TableToolbarState,
 };
 pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

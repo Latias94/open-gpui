@@ -29,14 +29,15 @@ use open_gpui_ui_components::{
     TableRangeFilterChange, TableRangeFilterState, TableRow, TableRowChildrenLoadState, TableRowId,
     TableRowPinning, TableRowPinningPolicy, TableRowRegion, TableSelectionActivationMode,
     TableSelectionMode, TableSelectionScope, TableSort, TableSortDirection, TableStageMode,
-    TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState,
-    TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
-    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
-    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
-    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, first_enabled,
+    TableState, TableToolbar, TableToolbarState, Tabs, TabsActivationMode, TabsItem,
+    TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver,
+    ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
+    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
+    TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList,
+    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRenderPlan,
+    VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
+    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
+    VirtualizerState, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -555,6 +556,16 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         no_interaction_note: None,
     },
     ComponentApiInventoryEntry {
+        component: "TableToolbar",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["control", "secondary_control", "summary", "tokens"],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: Some("slot container"),
+    },
+    ComponentApiInventoryEntry {
         component: "TableRangeFilter",
         controlled_inputs: &["open"],
         default_seeds: &[
@@ -1005,6 +1016,14 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "on_query_change",
             "on_change",
         ],
+        "TableToolbar" => &[
+            "control",
+            "controls",
+            "secondary_control",
+            "secondary_controls",
+            "summary",
+            "tokens",
+        ],
         "VirtualizedList" => &["disabled", "viewport_item_count", "row_height", "overscan"],
         "StatusCue" => &["intent"],
         "EmptyState" => &["description", "intent"],
@@ -1056,6 +1075,7 @@ fn component_source_file(component: &str) -> &'static str {
         "TableFacetedFilter" => "table.rs",
         "TableGlobalFilter" => "table.rs",
         "TableRangeFilter" => "table.rs",
+        "TableToolbar" => "table.rs",
         "VirtualizedList" => "virtualized_list.rs",
         "StatusCue" => "feedback.rs",
         "EmptyState" => "feedback.rs",
@@ -1393,6 +1413,16 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "disabled",
             "tokens",
             "on_change",
+            "state",
+        ],
+        "TableToolbar" => &[
+            "new",
+            "control",
+            "controls",
+            "secondary_control",
+            "secondary_controls",
+            "summary",
+            "tokens",
             "state",
         ],
         "TableRangeFilter" => &[
@@ -3940,6 +3970,42 @@ fn table_global_filter_state_resolves_input_contract() {
 }
 
 #[test]
+fn table_toolbar_state_resolves_slot_counts_and_summary() {
+    let tokens = custom_tokens();
+    let state: TableToolbarState = TableToolbar::new("table-toolbar", "Filters")
+        .small()
+        .tokens(tokens)
+        .control(div())
+        .controls(vec![div(), div()])
+        .secondary_control(div())
+        .secondary_controls(vec![div(), div()])
+        .summary("3 filtered / 8 total")
+        .state();
+
+    assert_eq!(state.id(), "table-toolbar");
+    assert_eq!(state.label(), "Filters");
+    assert_eq!(state.size(), Size::Small);
+    assert_eq!(state.primary_control_count(), 3);
+    assert_eq!(state.secondary_control_count(), 3);
+    assert_eq!(state.control_count(), 6);
+    assert!(state.has_controls());
+    assert_eq!(state.summary(), Some("3 filtered / 8 total"));
+    assert!(state.has_summary());
+    assert_eq!(state.role(), Role::Toolbar);
+    assert_eq!(state.tokens(), tokens);
+    assert_eq!(state.foreground().token(), TEST_TEXT);
+    assert_eq!(state.muted_foreground().token(), TEST_TEXT_MUTED);
+
+    let empty = TableToolbar::new("empty-table-toolbar", "Filters").state();
+    assert_eq!(empty.primary_control_count(), 0);
+    assert_eq!(empty.secondary_control_count(), 0);
+    assert_eq!(empty.control_count(), 0);
+    assert!(!empty.has_controls());
+    assert_eq!(empty.summary(), None);
+    assert!(!empty.has_summary());
+}
+
+#[test]
 fn table_global_filter_change_updates_state_and_resets_pagination() {
     let state = sample_table_state(4)
         .with_filters([TableFilter::contains("team", "UI")])
@@ -5061,12 +5127,19 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _root_global_filter_state: root::TableGlobalFilterState = root_global_filter.state();
     let _root_global_filter_change: root::TableGlobalFilterChange =
         root::TableGlobalFilterChange::new("ready");
+    let root_table_toolbar: root::TableToolbar =
+        root::TableToolbar::new("root-table-toolbar", "Filters").summary("2 visible controls");
+    let _root_table_toolbar_state: root::TableToolbarState = root_table_toolbar.state();
     let prelude_global_filter: prelude::TableGlobalFilter =
         prelude::TableGlobalFilter::new("prelude-global-filter", "Search").default_query("ready");
     let _prelude_global_filter_state: prelude::TableGlobalFilterState =
         prelude_global_filter.state();
     let _prelude_global_filter_change: prelude::TableGlobalFilterChange =
         prelude::TableGlobalFilterChange::clear();
+    let prelude_table_toolbar: prelude::TableToolbar =
+        prelude::TableToolbar::new("prelude-table-toolbar", "Filters")
+            .summary("2 visible controls");
+    let _prelude_table_toolbar_state: prelude::TableToolbarState = prelude_table_toolbar.state();
     let root_faceted_filter: root::TableFacetedFilter =
         root::TableFacetedFilter::new("root-status-filter", "Status", "status")
             .facets(root_facets.clone())
@@ -8456,6 +8529,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_splitter = root::Splitter::new("split");
     let root_tabs = root::Tabs::new("tabs");
     let root_global_filter = root::TableGlobalFilter::new("global-filter", "Search");
+    let root_table_toolbar =
+        root::TableToolbar::new("table-toolbar", "Filters").summary("2 rows visible");
     let root_faceted_filter = root::TableFacetedFilter::new("status-filter", "Status", "status");
     let root_avatar = root::Avatar::new("avatar", "Ada Lovelace");
     let root_separator = root::Separator::new("separator");
@@ -8507,6 +8582,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_splitter = prelude::Splitter::new("split");
     let prelude_tabs = prelude::Tabs::new("tabs");
     let prelude_global_filter = prelude::TableGlobalFilter::new("global-filter", "Search");
+    let prelude_table_toolbar =
+        prelude::TableToolbar::new("table-toolbar", "Filters").summary("2 rows visible");
     let prelude_faceted_filter =
         prelude::TableFacetedFilter::new("status-filter", "Status", "status");
     let prelude_avatar = prelude::Avatar::new("avatar", "Ada Lovelace");
@@ -8534,6 +8611,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_splitter.state(),
         root_tabs.state(),
         root_global_filter.state(),
+        root_table_toolbar.state(),
         root_faceted_filter.state(),
         root_avatar.state(),
         root_separator.state(),
@@ -8558,6 +8636,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_splitter.state(),
         prelude_tabs.state(),
         prelude_global_filter.state(),
+        prelude_table_toolbar.state(),
         prelude_faceted_filter.state(),
         prelude_avatar.state(),
         prelude_separator.state(),

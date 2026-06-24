@@ -4486,6 +4486,7 @@ fn components_gallery_smoke_faceted_filter_updates_table_rows(cx: &mut open_gpui
 fn components_gallery_smoke_global_filter_updates_table_rows(cx: &mut open_gpui::TestAppContext) {
     const SAMPLE_ID: &str = "filter-board";
     const SAMPLE: &str = "gallery:component-table-sample:filter-board";
+    const TOOLBAR: &str = "table-toolbar:component-table-toolbar:filter-board:root";
     const INPUT: &str = "text-input:component-table-global-filter:filter-board-input:root";
     const INITIAL_ROW: &str = "table:component-table:filter-board:row:filter-board-row-177";
     const FILTERED_ROW: &str = "table:component-table:filter-board:row:filter-board-row-012";
@@ -4507,6 +4508,10 @@ fn components_gallery_smoke_global_filter_updates_table_rows(cx: &mut open_gpui:
     scroll_page_selector_into_view(&shell, cx, INPUT);
 
     let sample_before = bounds(cx, SAMPLE);
+    assert!(
+        cx.debug_bounds(TOOLBAR).is_some(),
+        "expected filter-board controls to render inside the table toolbar recipe"
+    );
     assert!(
         cx.debug_bounds(INITIAL_ROW).is_some(),
         "expected the initial filtered board row to render before applying a global search"

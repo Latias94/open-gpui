@@ -1660,11 +1660,39 @@ pub(crate) fn render_components_page(
                                             } else {
                                                 None
                                             };
-                                        let has_column_filter_controls =
-                                            faceted_filter_control.is_some()
-                                                || range_filter_control.is_some();
-                                        let has_filter_controls = global_filter_control.is_some()
-                                            || has_column_filter_controls;
+                                        let table_toolbar: Option<AnyElement> =
+                                            if sample_id == "filter-board" {
+                                                let mut has_toolbar_controls = false;
+                                                let mut toolbar = TableToolbar::new(
+                                                    format!("component-table-toolbar:{sample_id}"),
+                                                    "Table filters",
+                                                )
+                                                .small()
+                                                .tokens(snapshot.tokens)
+                                                .summary(format!(
+                                                    "{} filtered / {} final rows",
+                                                    state_summary.filtered_rows,
+                                                    state_summary.final_rows
+                                                ));
+
+                                                if let Some(control) = global_filter_control {
+                                                    has_toolbar_controls = true;
+                                                    toolbar = toolbar.control(control);
+                                                }
+                                                if let Some(control) = faceted_filter_control {
+                                                    has_toolbar_controls = true;
+                                                    toolbar = toolbar.secondary_control(control);
+                                                }
+                                                if let Some(control) = range_filter_control {
+                                                    has_toolbar_controls = true;
+                                                    toolbar = toolbar.secondary_control(control);
+                                                }
+
+                                                has_toolbar_controls
+                                                    .then(|| toolbar.into_any_element())
+                                            } else {
+                                                None
+                                            };
                                         if sample_id == "release-resize" {
                                             let sample_id_for_resize = sample_id.to_owned();
                                             table = table.on_column_sizing_change(
@@ -1746,39 +1774,8 @@ pub(crate) fn render_components_page(
                                                     .text_color(rgb(0x5a6472))
                                                     .child(summary),
                                             )
-                                            .when(has_filter_controls, |this| {
-                                                this.child(
-                                                    div()
-                                                        .flex()
-                                                        .flex_col()
-                                                        .gap_2()
-                                                        .when_some(
-                                                            global_filter_control,
-                                                            |column, control| {
-                                                                column.child(control)
-                                                            },
-                                                        )
-                                                        .when(has_column_filter_controls, |column| {
-                                                            column.child(
-                                                                div()
-                                                                    .flex()
-                                                                    .items_start()
-                                                                    .gap_3()
-                                                                    .when_some(
-                                                                        faceted_filter_control,
-                                                                        |row, control| {
-                                                                            row.child(control)
-                                                                        },
-                                                                    )
-                                                                    .when_some(
-                                                                        range_filter_control,
-                                                                        |row, control| {
-                                                                            row.child(control)
-                                                                        },
-                                                                    ),
-                                                            )
-                                                        }),
-                                                )
+                                            .when_some(table_toolbar, |this, toolbar| {
+                                                this.child(toolbar)
                                             })
                                             .child(
                                                 div()

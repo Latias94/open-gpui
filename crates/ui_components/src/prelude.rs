@@ -88,7 +88,7 @@ pub use crate::table::{
     TableMetrics, TablePinnedLayoutPlan, TableRangeFilter, TableRangeFilterChange,
     TableRangeFilterState, TableRenderPlan, TableRowAction, TableRowActivation,
     TableRowActivationKind, TableRowExpansionToggle, TableRowRenderPlan, TableRowSelectionChange,
-    TableSelectionScope,
+    TableSelectionScope, TableToolbar, TableToolbarState,
 };
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
