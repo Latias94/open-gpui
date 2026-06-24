@@ -99,10 +99,12 @@ verified_by:
 
 # Current State
 
-- 2026-06-24: The active Codex goal is the long-running Table maturity goal: keep planning,
+- 2026-06-25: The active Codex goal is the long-running Table maturity goal: keep planning,
   fearless refactoring, implementation, verification, memory updates, and commits going until the
   Table API, interaction behavior, performance / virtualization, gallery proof, and docs contract
-  are mature enough to serve as the official component-library baseline.
+  are mature enough to serve as the official component-library baseline. The next Table boundary is
+  autosize-by-content, with the plan written at
+  `docs/plans/2026-06-25-001-feat-ui-table-autosize-by-content-plan.md`.
 - 2026-06-25: Completed U4 of
   `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
   tree. `ui_components::Table` now renders nested header groups with multi-row, region-aware GPUI
@@ -222,9 +224,10 @@ verified_by:
   chrome in `ui_components`, and defers cell editing, server-synced selection persistence, and a
   general feature plugin system.
 
-- Goal: Continue the long-running Table maturity goal by shipping the remaining core recipes,
-  shell composition helpers, gallery proofs, and verification coverage until the table surface is
-  mature enough to serve as the default component-library baseline.
+- Goal: Continue the long-running Table maturity goal by shipping the autosize-by-content slice
+  next, then keep widening the table surface with follow-up recipes, gallery proofs, and
+  verification coverage until the table surface is mature enough to serve as the default
+  component-library baseline.
 - Branch: `main`
 - Last verified: 2026-06-24, `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`,
   `cargo nextest run -p open-gpui-ui-core table`, and
@@ -250,12 +253,11 @@ verified_by:
 - Done: Completed the Table custom aggregation callbacks slice as `dded73b`. `TableState` now stores named custom aggregation callbacks, grouped rows resolve named custom aggregates through the renderer-neutral pipeline, `TableRenderPlan` exposes the callback count, and the Components gallery includes `grouped-custom-aggregation`.
 - Done: Completed the Table row-selection variants slice as `ea3785f`. `ui_core::TableState` now carries explicit selection policy knobs for single vs multiple selection, explicit-control vs row-click activation, and descendant propagation, plus renderer-neutral selection summaries for full-model and current-page scopes. `ui_components::Table` emits controlled `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when the policy is explicit-control.
 - Done: A combined two-axis viewport contract is already on `main` as `725f859`.
-- In progress: The column visibility plan is complete; the long-running Table maturity goal remains
-  active.
+- In progress: The column visibility and nested-header slices are complete; the long-running Table
+  maturity goal remains active and autosize-by-content is the next boundary.
 - Blocked: None.
-- Next action: Start the next Table maturity gap from the roadmap, most likely the global
-  filtering / faceting boundary, and keep the long-running goal moving with the same plan ->
-  implement -> verify -> commit loop.
+- Next action: Start U1 of
+  `docs/plans/2026-06-25-001-feat-ui-table-autosize-by-content-plan.md`.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
   with depth/parent/branch/descendant metadata, source-tree expansion reuses
@@ -422,8 +424,8 @@ verified_by:
   proof.
 - Blocked: None.
 - Next action: Implement U1 of
-  `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md`: core column tree
-  descriptors and normalized leaf projection.
+  `docs/plans/2026-06-25-001-feat-ui-table-autosize-by-content-plan.md`: core content-fit column
+  policy and cache-key coverage.
 
 # Citations
 

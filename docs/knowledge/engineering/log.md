@@ -6,6 +6,11 @@ status: active
 
 # Log
 
+- 2026-06-25: Wrote `docs/plans/2026-06-25-001-feat-ui-table-autosize-by-content-plan.md`
+  as the next Table maturity boundary. The plan adds a renderer-neutral content-fit column policy
+  plus adapter-owned visible-width measurement and keeps manual sizing authoritative. Sticky
+  headers, column drag reorder, dataset-wide exact autosizing, multiline editor measurement, and
+  headless extraction remain deferred. Next action is U1: add the core content-fit column policy.
 - 2026-06-25: Completed U4 of
   `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
   tree. `ui_components::Table` now renders nested header groups with multi-row, region-aware GPUI
