@@ -4422,6 +4422,10 @@ fn components_gallery_smoke_faceted_filter_updates_table_rows(cx: &mut open_gpui
 
     click(cx, TRIGGER);
     settle(cx);
+    if cx.debug_bounds(CONTENT).is_none() {
+        click(cx, TRIGGER);
+        settle(cx);
+    }
     let popup_content = bounds(cx, CONTENT);
     cx.simulate_event(ScrollWheelEvent {
         position: popup_content.center(),
@@ -5031,6 +5035,137 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
     assert!(
         cx.debug_bounds(&far_cell).is_some(),
         "expected the far metric cell to enter the rendered center window after horizontal scrolling"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_column_visibility_updates_release_matrix(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE_ID: &str = "release-matrix";
+    const SAMPLE: &str = "gallery:component-table-sample:release-matrix";
+    const TOOLBAR: &str = "table-toolbar:component-table-toolbar:release-matrix:root";
+    const TRIGGER: &str = "popover:component-table-column-visibility:release-matrix:trigger";
+    const CONTENT: &str =
+        "table-column-visibility:component-table-column-visibility:release-matrix:content";
+    const METRIC_ROW: &str =
+        "table-column-visibility:component-table-column-visibility:release-matrix:column:metric_03";
+    const SHOW_ALL: &str =
+        "table-column-visibility:component-table-column-visibility:release-matrix:show-all";
+    const METRIC_HEADER: &str = "table:component-table:release-matrix:header:metric_03";
+
+    let table_samples = pages::components::table_samples(ThemeTokens::default());
+    let sample = table_sample(&table_samples, SAMPLE_ID);
+    let plan = sample.render_plan();
+    assert_eq!(plan.aria_column_count(), 16);
+    let first_row_key = plan.rows()[0].render_key().to_owned();
+    let metric_cell =
+        format!("table:component-table:release-matrix:cell:{first_row_key}:metric_03");
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, TRIGGER);
+
+    let sample_before = bounds(cx, SAMPLE);
+    assert!(
+        cx.debug_bounds(TOOLBAR).is_some(),
+        "expected release-matrix controls to render inside the table toolbar recipe"
+    );
+    assert!(
+        cx.debug_bounds(METRIC_HEADER).is_some(),
+        "expected metric_03 header to render before hiding the column"
+    );
+    assert!(
+        cx.debug_bounds(&metric_cell).is_some(),
+        "expected metric_03 cell to render before hiding the column"
+    );
+
+    click(cx, TRIGGER);
+    settle(cx);
+    assert!(
+        cx.debug_bounds(CONTENT).is_some(),
+        "expected the column visibility popover content to open"
+    );
+    click(cx, METRIC_ROW);
+    settle(cx);
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.visibility_changes().to_vec()
+    });
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].sample_id, SAMPLE_ID);
+    assert_eq!(changes[0].action, "toggle_column");
+    assert_eq!(changes[0].column_ids, vec!["metric_03".to_owned()]);
+    assert_eq!(changes[0].next_visible, Some(false));
+    assert_eq!(changes[0].visible_columns, 15);
+    assert_eq!(changes[0].hidden_columns, 1);
+    let metric_hidden = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.visibility_override(SAMPLE_ID)
+            .and_then(|visibility| visibility.override_for(&TableColumnId::new("metric_03")))
+    });
+    assert_eq!(metric_hidden, Some(false));
+    assert!(
+        cx.debug_bounds(METRIC_HEADER).is_none(),
+        "expected metric_03 header to unmount after hiding the column"
+    );
+    assert!(
+        cx.debug_bounds(&metric_cell).is_none(),
+        "expected metric_03 cell to unmount after hiding the column"
+    );
+
+    let popup_content = bounds(cx, CONTENT);
+    cx.simulate_event(ScrollWheelEvent {
+        position: popup_content.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-80.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+    let sample_after_popup_wheel = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after_popup_wheel.top(),
+        sample_before.top(),
+        "expected column-visibility popup wheel input to stay inside the table sample"
+    );
+
+    if cx.debug_bounds(SHOW_ALL).is_none() {
+        click(cx, TRIGGER);
+        settle(cx);
+    }
+    click(cx, SHOW_ALL);
+    settle(cx);
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.visibility_changes().to_vec()
+    });
+    assert_eq!(changes.len(), 2);
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected show-all visibility change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.action, "show_all");
+    assert!(last.column_ids.contains(&"metric_03".to_owned()));
+    assert_eq!(last.next_visible, Some(true));
+    assert_eq!(last.visible_columns, 16);
+    assert_eq!(last.hidden_columns, 0);
+    assert!(
+        cx.debug_bounds(METRIC_HEADER).is_some(),
+        "expected metric_03 header to return after show-all"
+    );
+    assert!(
+        cx.debug_bounds(&metric_cell).is_some(),
+        "expected metric_03 cell to return after show-all"
+    );
+
+    let sample_after = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected column-visibility interactions to keep the sample card anchored"
     );
 }
 

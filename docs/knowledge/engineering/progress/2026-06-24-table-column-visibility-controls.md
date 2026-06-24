@@ -30,8 +30,18 @@ git_branch: main
   `cargo nextest run -p open-gpui-ui-core table`,
   `cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit public_resolved_state_contracts_avoid_gpui_runtime_types`,
   and `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`.
-- Next action: Implement U3 by proving `TableColumnVisibility` in the Components gallery
-  `release-matrix` sample with app-owned visibility overrides and focused smoke coverage.
+- 2026-06-24: Completed U3/U4 in the current branch. `release-matrix` now renders a
+  `TableColumnVisibility` toolbar control, keeps pinned identity/status columns locked, records
+  app-owned visibility changes in `TableSampleRuntimeLog`, applies visibility overrides through the
+  shared sample-runtime state path, and has focused smoke coverage for hiding/restoring a metric
+  column plus popup wheel containment. `docs/ui/component-contract.md` and `docs/verification.md`
+  now document the shipped contract.
+- 2026-06-24: U3/U4 verification passed with
+  `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_column_visibility_updates_release_matrix components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_page_table_samples_expose_virtualized_row_model_contract`,
+  `cargo nextest run -p open-gpui-ui-components table_column_visibility component_api_inventory crate_root_and_prelude_exports_remain_explicit public_resolved_state_contracts_avoid_gpui_runtime_types`,
+  `cargo nextest run -p open-gpui-ui-foundation-gallery table`,
+  and `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`.
+- Next action: Commit U3/U4, then choose the next Table maturity gap from the roadmap.
 
 # Citations
 

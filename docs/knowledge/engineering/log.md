@@ -6,6 +6,14 @@ status: active
 
 # Log
 
+- 2026-06-24: Completed U3/U4 of
+  `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md` in the current
+  branch. `release-matrix` now renders a `TableColumnVisibility` toolbar control over the wide
+  metric table, locks the pinned identity/status columns, records controlled visibility payloads in
+  `TableSampleRuntimeLog`, applies app-owned visibility overrides through
+  `table_sample_state_with_runtime`, and has focused smoke coverage for hiding/restoring a metric
+  column plus popup wheel containment. `docs/ui/component-contract.md` and `docs/verification.md`
+  now record column visibility as shipped Table behavior.
 - 2026-06-24: Completed U2 of
   `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md` in the current
   branch. `TableColumnVisibility` now productizes the toolbar recipe with controlled open/visibility

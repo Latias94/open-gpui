@@ -224,13 +224,14 @@ contract even though `Tree` is now an official rendered component, matching the
 `VirtualizedListState` / `VirtualizedList` split. The Components page smoke also verifies every
 `state_contract_readout_pairs()` selector is visible.
 The official Table gate requires `Table`, `TableState`, `VirtualizerState`,
-`TableFacetedFilter`, `TableRangeFilter`, role signals for table rows and cells, and at least one
-`gallery:component-table-sample:{id}` selector. Table smokes and state tests assert that rendered
-row selectors stay bounded by the virtualizer's visible rows plus overscan, scroll input stays
-inside the table viewport, sortable header actions emit state-update payloads, controlled column
-resize callbacks carry stable sizing payloads, categorical faceted filters emit controlled
-exact-token updates, numeric range filters emit controlled finite-bound updates, editable text
-cells emit controlled stable row/column change payloads without
+`TableFacetedFilter`, `TableRangeFilter`, `TableColumnVisibility`, role signals for table rows and
+cells, and at least one `gallery:component-table-sample:{id}` selector. Table smokes and state
+tests assert that rendered row selectors stay bounded by the virtualizer's visible rows plus
+overscan, scroll input stays inside the table viewport, sortable header actions emit state-update
+payloads, controlled column resize callbacks carry stable sizing payloads, categorical faceted
+filters emit controlled exact-token updates, numeric range filters emit controlled finite-bound
+updates, column visibility emits controlled hide/show payloads, editable text cells emit
+controlled stable row/column change payloads without
 triggering row interaction callbacks, row activation and expansion request payloads stay controlled,
 source-tree row
 models keep nested descendants addressable by stable row id, manual source-tree snapshots expose
@@ -250,15 +251,19 @@ rendered row window, proves clearing restores it, and confirms popup wheel input
 outer table sample. It also renders a score `TableRangeFilter`, records
 `TableRangeFilterChange` payloads in the same runtime log, applies the range to a sample-owned
 `TableState` override, proves filtered/final row counts match the core contract, and confirms
-popup wheel input stays local.
+popup wheel input stays local. `release-matrix` also renders a `TableColumnVisibility` toolbar
+control, records `TableColumnVisibilityChange` payloads in the sample runtime log, applies
+visibility overrides to the sample-owned `TableState`, proves hiding a metric column removes its
+header and cells, proves show-all restores the column, and confirms popup wheel input stays local.
 `editable-release` is the text-cell editing proof: it renders editable `name` and `team` columns,
 keeps `status` read-only, records `TableCellEditChange` payloads in the sample runtime log, applies
 changes to a sample-owned `TableState` override, and proves the changed row text re-renders through
 the normal Table pipeline.
-`release-matrix` is the wide center-column virtualization sample: it pins the identity and status
-lanes, exposes fourteen center metrics, and has a focused smoke that proves off-window center
-columns unmount/remount while horizontal wheel input remains inside the sample. `row-pinning` is
-the row-region sample: it pins top and bottom review rows around a paged center body, exposes
+`release-matrix` is the wide center-column virtualization and column-visibility sample: it pins the
+identity and status lanes, exposes fourteen center metrics, locks identity/status visibility, and
+has focused smokes that prove off-window center columns unmount/remount, hide/show visibility
+changes update rendered headers/cells, and horizontal / popup wheel input remains inside the
+sample. `row-pinning` is the row-region sample: it pins top and bottom review rows around a paged center body, exposes
 top/center/bottom readouts, and proves center-body wheel input changes the center row window
 without moving the fixed row bands or outer sample. The Table adapter also exposes a combined
 `GridViewport2D` contract for the current row window and center-column window, keeping the row and
@@ -477,11 +482,12 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     and score `TableRangeFilter` controls,
     the controlled `release-resize` sizing
     sample, the grouped and sticky pinned `release-rollup` model with left/right fixed lanes and a
-    horizontally scrollable center lane, the wide `release-matrix` center-column window, the
-    source-tree `dependency-tree` sample with nested rows and controlled expansion, stable selected
-    row ids, the editable `editable-release` text-cell sample with app-owned row updates,
-    table/row/cell accessibility metadata, sortable header metadata, resize handle
-    metadata, row activation, expansion, and cell-edit log entries, and internal body viewports that scroll
+    horizontally scrollable center lane, the wide `release-matrix` center-column window with a
+    working `TableColumnVisibility` control, the source-tree `dependency-tree` sample with nested
+    rows and controlled expansion, stable selected row ids, the editable `editable-release`
+    text-cell sample with app-owned row updates, table/row/cell accessibility metadata, sortable
+    header metadata, resize handle metadata, row activation, expansion, column-visibility, and
+    cell-edit log entries, and internal body viewports that scroll
     without moving the outer Components page.
     The Tree sample should expose `document-outline`,
     tree/tree-item accessibility metadata, expandable `Paper` children, a state readout, an inner

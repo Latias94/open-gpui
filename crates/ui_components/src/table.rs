@@ -2663,6 +2663,8 @@ fn table_column_visibility_content_element(
     let show_all_label = state.show_all_label().to_owned();
     let reset_label = state.reset_label().to_owned();
     let empty_label = state.empty_label().to_owned();
+    let show_all_debug_id = state.id().to_owned();
+    let reset_debug_id = state.id().to_owned();
     let runtime_for_show_all = runtime.clone();
     let runtime_for_reset = runtime.clone();
     let on_change_for_show_all = on_change.clone();
@@ -2737,43 +2739,56 @@ fn table_column_visibility_content_element(
                 .justify_end()
                 .gap_2()
                 .child(
-                    Button::new(format!("{}-show-all", state.id()), show_all_label)
-                        .variant(ButtonVariant::Ghost)
-                        .with_size(size)
-                        .disabled(disabled || !show_all_enabled)
-                        .on_click(move |_, window, cx| {
-                            runtime_for_show_all.update(cx, |runtime, _| {
-                                runtime.visibility = show_all_ids.iter().cloned().fold(
-                                    runtime.visibility.clone(),
-                                    |visibility, column_id| {
-                                        visibility.with_visibility(column_id, true)
-                                    },
-                                );
-                            });
-                            if let Some(on_change) = on_change_for_show_all.as_ref() {
-                                on_change(
-                                    TableColumnVisibilityChange::show_all(
-                                        show_all_change_ids.clone(),
-                                    ),
-                                    window,
-                                    cx,
-                                );
-                            }
-                        }),
+                    div()
+                        .debug_selector(move || {
+                            format!("table-column-visibility:{show_all_debug_id}:show-all")
+                        })
+                        .child(
+                            Button::new(format!("{}-show-all", state.id()), show_all_label)
+                                .variant(ButtonVariant::Ghost)
+                                .with_size(size)
+                                .disabled(disabled || !show_all_enabled)
+                                .on_click(move |_, window, cx| {
+                                    runtime_for_show_all.update(cx, |runtime, _| {
+                                        runtime.visibility = show_all_ids.iter().cloned().fold(
+                                            runtime.visibility.clone(),
+                                            |visibility, column_id| {
+                                                visibility.with_visibility(column_id, true)
+                                            },
+                                        );
+                                    });
+                                    if let Some(on_change) = on_change_for_show_all.as_ref() {
+                                        on_change(
+                                            TableColumnVisibilityChange::show_all(
+                                                show_all_change_ids.clone(),
+                                            ),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                }),
+                        ),
                 )
                 .child(
-                    Button::new(format!("{}-reset", state.id()), reset_label)
-                        .variant(ButtonVariant::Ghost)
-                        .with_size(size)
-                        .disabled(disabled || !reset_enabled)
-                        .on_click(move |_, window, cx| {
-                            runtime_for_reset.update(cx, |runtime, _| {
-                                runtime.visibility = TableColumnVisibilityOverrides::default();
-                            });
-                            if let Some(on_change) = on_change_for_reset.as_ref() {
-                                on_change(TableColumnVisibilityChange::reset(), window, cx);
-                            }
-                        }),
+                    div()
+                        .debug_selector(move || {
+                            format!("table-column-visibility:{reset_debug_id}:reset")
+                        })
+                        .child(
+                            Button::new(format!("{}-reset", state.id()), reset_label)
+                                .variant(ButtonVariant::Ghost)
+                                .with_size(size)
+                                .disabled(disabled || !reset_enabled)
+                                .on_click(move |_, window, cx| {
+                                    runtime_for_reset.update(cx, |runtime, _| {
+                                        runtime.visibility =
+                                            TableColumnVisibilityOverrides::default();
+                                    });
+                                    if let Some(on_change) = on_change_for_reset.as_ref() {
+                                        on_change(TableColumnVisibilityChange::reset(), window, cx);
+                                    }
+                                }),
+                        ),
                 ),
         )
         .child(body)

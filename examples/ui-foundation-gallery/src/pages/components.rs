@@ -14,16 +14,16 @@ use open_gpui_ui_components::{
     Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
     Switch, SwitchState, Table, TableAggregation, TableCellEditApplyOutcome, TableCellEditChange,
     TableCellValue, TableColumn, TableColumnFacets, TableColumnId, TableColumnPinning,
-    TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableExpansionMode,
-    TableExpansionState, TableFacetValueCount, TableFacetedFilterChange, TableFilter,
-    TableGlobalFilterChange, TablePagination, TableRangeFilterChange, TableRenderPlan, TableRow,
-    TableRowActivation, TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning,
-    TableRowPinningPolicy, TableSort, TableStageMode, TableState, Tabs, TabsActivationMode,
-    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState,
-    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
-    Tree, TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListItemDescriptor,
-    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState,
+    TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableColumnVisibilityChange,
+    TableColumnVisibilityOverrides, TableExpansionMode, TableExpansionState, TableFacetValueCount,
+    TableFacetedFilterChange, TableFilter, TableGlobalFilterChange, TablePagination,
+    TableRangeFilterChange, TableRenderPlan, TableRow, TableRowActivation,
+    TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy,
+    TableSort, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
+    TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
+    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
+    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -138,6 +138,12 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::TableColumnRegion",
     "open_gpui_ui_components::TableColumnSizing",
     "open_gpui_ui_components::TableColumnSizingChange",
+    "open_gpui_ui_components::TableColumnVisibility",
+    "open_gpui_ui_components::TableColumnVisibilityAction",
+    "open_gpui_ui_components::TableColumnVisibilityChange",
+    "open_gpui_ui_components::TableColumnVisibilityItemState",
+    "open_gpui_ui_components::TableColumnVisibilityOverrides",
+    "open_gpui_ui_components::TableColumnVisibilityState",
     "open_gpui_ui_components::TableFacetedFilter",
     "open_gpui_ui_components::TableFacetedFilterChange",
     "open_gpui_ui_components::TableFacetedFilterOptionState",
@@ -913,7 +919,7 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
     ComponentConformanceGate {
         id: "table-virtualization",
         title: "Table row models and scroll ownership",
-        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate metadata, pinned columns, pinned rows, resize handles, and nested scroll ownership.",
+        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate metadata, pinned columns, pinned rows, resize handles, column visibility controls, and nested scroll ownership.",
         evidence: &[
             "TableState::resolve",
             "Table::render_plan",
@@ -926,10 +932,13 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "TableGlobalFilter",
             "TableFacetedFilter",
             "TableRangeFilter",
+            "TableColumnVisibility",
+            "TableColumnVisibilityChange",
             "TableToolbar",
             "components_gallery_smoke_global_filter_updates_table_rows",
             "components_gallery_smoke_faceted_filter_updates_table_rows",
             "components_gallery_smoke_range_filter_updates_table_rows",
+            "components_gallery_smoke_column_visibility_updates_release_matrix",
             "components_gallery_smoke_table_scroll_stays_inside_sample",
             "components_gallery_smoke_grouped_table_scroll_stays_inside_sample",
             "components_page_table_samples_expose_virtualized_row_model_contract",
@@ -1285,6 +1294,8 @@ pub struct TableSampleRuntimeLog {
     expansion_overrides: BTreeMap<String, TableExpansionState>,
     global_filter_changes: Vec<TableSampleGlobalFilterChange>,
     filter_overrides: BTreeMap<String, TableState>,
+    visibility_changes: Vec<TableSampleColumnVisibilityChange>,
+    visibility_overrides: BTreeMap<String, TableColumnVisibilityOverrides>,
     faceted_filter_changes: Vec<TableSampleFacetedFilterChange>,
     range_filter_changes: Vec<TableSampleRangeFilterChange>,
     cell_edit_changes: Vec<TableSampleCellEditChange>,
@@ -1305,6 +1316,23 @@ pub struct TableSampleGlobalFilterChange {
     pub filtered_rows: usize,
     /// Final row count after pagination after the change.
     pub final_rows: usize,
+}
+
+/// One column-visibility change captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSampleColumnVisibilityChange {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Stable visibility action label.
+    pub action: String,
+    /// Affected column ids.
+    pub column_ids: Vec<String>,
+    /// Next visibility for the affected columns, if the action sets one.
+    pub next_visible: Option<bool>,
+    /// Visible column count after the change.
+    pub visible_columns: usize,
+    /// Hidden column count after the change.
+    pub hidden_columns: usize,
 }
 
 /// One faceted-filter change captured from the rendered gallery `Table` sample.
@@ -1387,6 +1415,16 @@ impl TableSampleRuntimeLog {
         self.filter_overrides.get(sample_id)
     }
 
+    /// Returns captured column-visibility changes in event order.
+    pub fn visibility_changes(&self) -> &[TableSampleColumnVisibilityChange] {
+        &self.visibility_changes
+    }
+
+    /// Returns the current controlled column-visibility state for a sample, if any.
+    pub fn visibility_override(&self, sample_id: &str) -> Option<&TableColumnVisibilityOverrides> {
+        self.visibility_overrides.get(sample_id)
+    }
+
     /// Returns captured faceted filter changes in event order.
     pub fn faceted_filter_changes(&self) -> &[TableSampleFacetedFilterChange] {
         &self.faceted_filter_changes
@@ -1426,6 +1464,8 @@ impl TableSampleRuntimeLog {
         self.expansion_overrides.clear();
         self.global_filter_changes.clear();
         self.filter_overrides.clear();
+        self.visibility_changes.clear();
+        self.visibility_overrides.clear();
         self.faceted_filter_changes.clear();
         self.range_filter_changes.clear();
         self.cell_edit_changes.clear();
@@ -1509,6 +1549,21 @@ pub fn current_table_sample_global_filter_state(
     })
 }
 
+/// Returns the current controlled column-visibility overrides for a gallery `Table` sample.
+pub fn current_table_sample_column_visibility_overrides(
+    sample_id: impl Into<String>,
+    fallback: &TableColumnVisibilityOverrides,
+    cx: &impl AppContext,
+) -> TableColumnVisibilityOverrides {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.visibility_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    })
+}
+
 /// Returns the current controlled text-cell edit state for a gallery `Table` sample.
 pub fn current_table_sample_cell_edit_state(
     sample_id: impl Into<String>,
@@ -1554,6 +1609,9 @@ pub fn table_sample_state_with_runtime(
     } else {
         state
     };
+    let visibility =
+        current_table_sample_column_visibility_overrides(sample.id, state.column_visibility(), cx);
+    let state = state.with_column_visibility(visibility);
 
     table_state_with_expansion(state.with_column_sizing(sizing), expansion)
 }
@@ -1761,6 +1819,46 @@ pub fn record_table_global_filter_change(
                 final_rows,
             });
         log.filter_overrides.insert(sample_id, next);
+    });
+}
+
+/// Records and applies a controlled gallery `Table` column-visibility change.
+pub fn record_table_column_visibility_change(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    change: &TableColumnVisibilityChange,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = fallback.clone();
+    let next = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        let current_visibility = log
+            .visibility_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.column_visibility().clone());
+        let current = fallback.clone().with_column_visibility(current_visibility);
+        change.apply_to(current)
+    });
+    let visible_columns = next.visible_columns().len();
+    let hidden_columns = next.columns().len().saturating_sub(visible_columns);
+    let next_visibility = next.column_visibility().clone();
+
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.visibility_changes
+            .push(TableSampleColumnVisibilityChange {
+                sample_id: sample_id.clone(),
+                action: change.action().as_str().to_owned(),
+                column_ids: change
+                    .column_ids()
+                    .iter()
+                    .map(|column_id| column_id.as_str().to_owned())
+                    .collect(),
+                next_visible: change.next_visible(),
+                visible_columns,
+                hidden_columns,
+            });
+        log.visibility_overrides.insert(sample_id, next_visibility);
     });
 }
 
@@ -4122,6 +4220,7 @@ fn release_matrix_table_columns() -> Vec<TableColumn> {
     let mut columns = Vec::with_capacity(RELEASE_MATRIX_METRIC_COUNT + 2);
     columns.push(
         TableColumn::new("name", "Release")
+            .with_hideable(false)
             .with_width(ui_px(172.0))
             .with_min_width(ui_px(140.0))
             .with_max_width(ui_px(260.0)),
@@ -4135,6 +4234,7 @@ fn release_matrix_table_columns() -> Vec<TableColumn> {
     }));
     columns.push(
         TableColumn::new("status", "Status")
+            .with_hideable(false)
             .with_width(ui_px(148.0))
             .with_min_width(ui_px(112.0))
             .with_max_width(ui_px(220.0)),

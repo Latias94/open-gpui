@@ -477,6 +477,12 @@ remove, or clear exact stable tokens while resetting pagination to the first pag
 helper that replaces only the target column's range filter while resetting pagination to the first
 page. Global faceting, async option search, richer predicate builders, and fetching/cache
 lifecycles remain application-owned or follow-up work.
+`TableColumnVisibility` is the sibling official column-visibility recipe: it reads renderer-neutral
+column descriptors plus runtime visibility overrides, renders hideable columns inside a `Popover`
+with checkbox rows and show-all / reset actions, keeps locked identity columns disabled, and emits
+controlled `TableColumnVisibilityChange` payloads whose `apply_to` helper updates only visibility
+overrides while preserving the rest of `TableState`. Saved views, URL sync, persistence, and
+server-side capability negotiation remain application-owned or follow-up work.
 Text cell editing is the official inline-edit recipe over table column metadata:
 `TableCellEditor::Text` and `TableColumn::text_editable` opt columns into editable leaf cells,
 while synthetic group rows and missing source cells stay display-only. The GPUI adapter renders the
@@ -645,9 +651,10 @@ reset-on-key-change semantics. It intentionally does not yet expose custom scrol
 nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.
 `Table` covers stable row ids, row-model ordering, grouping, expansion, built-in group-row
 aggregate cells, source-tree branches with manual expansion and child-load metadata, pinned
-left/center/right column regions, manual filtering/sorting/pagination modes with pagination
-totals, committed column sizing state, clamped width resolution with region totals/offsets,
-row pinning with top/center/bottom regions, sortable header action payloads, crate-root/prelude
+left/center/right column regions, runtime column visibility overrides, locked column hideability,
+manual filtering/sorting/pagination modes with pagination totals, committed column sizing state,
+clamped width resolution with region totals/offsets, row pinning with top/center/bottom regions,
+sortable header action payloads, crate-root/prelude
 exports, table/cell roles, and a vertically virtualized GPUI recipe whose body scroll stays inside
 the table viewport.
 For pinned samples, the adapter renders fixed left/right lanes plus a shared horizontal center lane
@@ -664,6 +671,9 @@ one categorical facet column into an official searchable Popover recipe with con
 `TableFacetedFilterChange` payloads and stable option selectors. `TableRangeFilter` turns one
 numeric facet column into an official min/max Popover recipe with controlled
 `TableRangeFilterChange` payloads, finite-bound parsing, and stable min/max input selectors.
+`TableColumnVisibility` turns configured columns and sparse visibility overrides into an official
+Popover recipe with controlled `TableColumnVisibilityChange` payloads, locked identity rows, and
+stable column-row / action selectors.
 `VirtualizerState` covers one-dimensional range math, stable item keys, measurement idempotence,
 overscan, total size, and snapshot/restore data in `ui_core`; the Table adapter restores snapshot
 measurements but not captured scroll offsets. Sticky headers, autosize-by-content, data-source

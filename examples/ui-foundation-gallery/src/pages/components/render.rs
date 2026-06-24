@@ -1660,20 +1660,84 @@ pub(crate) fn render_components_page(
                                             } else {
                                                 None
                                             };
+                                        let column_visibility_control: Option<AnyElement> =
+                                            if sample_id == "release-matrix" {
+                                                let sample_id_for_visibility =
+                                                    sample_id.to_owned();
+                                                let base_state = table.table_state().clone();
+
+                                                Some(
+                                                    TableColumnVisibility::new(
+                                                        format!(
+                                                            "component-table-column-visibility:{}",
+                                                            sample_id
+                                                        ),
+                                                        "Columns",
+                                                    )
+                                                    .columns(
+                                                        table
+                                                            .table_state()
+                                                            .columns()
+                                                            .iter()
+                                                            .cloned(),
+                                                    )
+                                                    .visibility(
+                                                        table
+                                                            .table_state()
+                                                            .column_visibility()
+                                                            .clone(),
+                                                    )
+                                                    .default_visibility(
+                                                        sample.state.column_visibility().clone(),
+                                                    )
+                                                    .show_all_label("Show all metrics")
+                                                    .reset_label("Reset columns")
+                                                    .viewport_item_count(7)
+                                                    .small()
+                                                    .tokens(snapshot.tokens)
+                                                    .on_change(move |change, _, cx| {
+                                                        pages::components::record_table_column_visibility_change(
+                                                            sample_id_for_visibility.clone(),
+                                                            &base_state,
+                                                            &change,
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .into_any_element(),
+                                                )
+                                            } else {
+                                                None
+                                            };
                                         let table_toolbar: Option<AnyElement> =
-                                            if sample_id == "filter-board" {
+                                            if sample_id == "filter-board"
+                                                || sample_id == "release-matrix"
+                                            {
                                                 let mut has_toolbar_controls = false;
+                                                let toolbar_summary = if sample_id == "filter-board"
+                                                {
+                                                    format!(
+                                                        "{} filtered / {} final rows",
+                                                        state_summary.filtered_rows,
+                                                        state_summary.final_rows
+                                                    )
+                                                } else {
+                                                    format!(
+                                                        "{} visible / {} total columns",
+                                                        state_summary.aria_columns,
+                                                        table.table_state().columns().len()
+                                                    )
+                                                };
                                                 let mut toolbar = TableToolbar::new(
                                                     format!("component-table-toolbar:{sample_id}"),
-                                                    "Table filters",
+                                                    if sample_id == "filter-board" {
+                                                        "Table filters"
+                                                    } else {
+                                                        "Table columns"
+                                                    },
                                                 )
                                                 .small()
                                                 .tokens(snapshot.tokens)
-                                                .summary(format!(
-                                                    "{} filtered / {} final rows",
-                                                    state_summary.filtered_rows,
-                                                    state_summary.final_rows
-                                                ));
+                                                .summary(toolbar_summary);
 
                                                 if let Some(control) = global_filter_control {
                                                     has_toolbar_controls = true;
@@ -1686,6 +1750,10 @@ pub(crate) fn render_components_page(
                                                 if let Some(control) = range_filter_control {
                                                     has_toolbar_controls = true;
                                                     toolbar = toolbar.secondary_control(control);
+                                                }
+                                                if let Some(control) = column_visibility_control {
+                                                    has_toolbar_controls = true;
+                                                    toolbar = toolbar.control(control);
                                                 }
 
                                                 has_toolbar_controls
