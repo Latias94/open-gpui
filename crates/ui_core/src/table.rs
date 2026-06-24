@@ -175,6 +175,7 @@ pub struct TableColumn {
     id: TableColumnId,
     label: String,
     visible: bool,
+    hideable: bool,
     sortable: bool,
     filterable: bool,
     global_filterable: bool,
@@ -192,6 +193,7 @@ impl TableColumn {
             id: id.into(),
             label: label.into(),
             visible: true,
+            hideable: true,
             sortable: true,
             filterable: true,
             global_filterable: true,
@@ -216,6 +218,11 @@ impl TableColumn {
     /// Returns whether this column should render by default.
     pub const fn visible(&self) -> bool {
         self.visible
+    }
+
+    /// Returns whether user-facing visibility controls may hide this column.
+    pub const fn hideable(&self) -> bool {
+        self.hideable
     }
 
     /// Returns whether this column accepts sorting.
@@ -266,6 +273,12 @@ impl TableColumn {
     /// Applies column visibility.
     pub const fn with_visible(mut self, visible: bool) -> Self {
         self.visible = visible;
+        self
+    }
+
+    /// Applies user-facing hideability.
+    pub const fn with_hideable(mut self, hideable: bool) -> Self {
+        self.hideable = hideable;
         self
     }
 
@@ -334,6 +347,89 @@ impl TableColumn {
     pub fn resolved_width(&self, sizing: &TableColumnSizing) -> UiPx {
         let width = sizing.width(&self.id).unwrap_or(self.width);
         clamp_column_width(width, self.min_width, self.max_width)
+    }
+}
+
+/// Caller-owned runtime column visibility overrides.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TableColumnVisibility {
+    overrides: BTreeMap<TableColumnId, bool>,
+}
+
+impl TableColumnVisibility {
+    /// Creates an empty visibility override map.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates visibility state from explicit column overrides.
+    pub fn from_overrides<I, C>(overrides: I) -> Self
+    where
+        I: IntoIterator<Item = (C, bool)>,
+        C: Into<TableColumnId>,
+    {
+        let mut visibility = Self::default();
+        for (column, visible) in overrides {
+            visibility = visibility.with_visibility(column, visible);
+        }
+        visibility
+    }
+
+    /// Returns the runtime override for a column, if present.
+    pub fn override_for(&self, column: &TableColumnId) -> Option<bool> {
+        self.overrides.get(column).copied()
+    }
+
+    /// Returns the full override map.
+    pub fn overrides(&self) -> &BTreeMap<TableColumnId, bool> {
+        &self.overrides
+    }
+
+    /// Returns whether no runtime overrides exist.
+    pub fn is_empty(&self) -> bool {
+        self.overrides.is_empty()
+    }
+
+    /// Returns the number of runtime overrides.
+    pub fn len(&self) -> usize {
+        self.overrides.len()
+    }
+
+    /// Resolves effective visibility for a column descriptor.
+    pub fn is_visible(&self, column: &TableColumn) -> bool {
+        match self.override_for(column.id()) {
+            Some(false) if !column.hideable() => column.visible(),
+            Some(visible) => visible,
+            None => column.visible(),
+        }
+    }
+
+    /// Inserts or updates a runtime column visibility override.
+    pub fn with_visibility(mut self, column: impl Into<TableColumnId>, visible: bool) -> Self {
+        self.overrides.insert(column.into(), visible);
+        self
+    }
+
+    /// Shows a column at runtime.
+    pub fn show(self, column: impl Into<TableColumnId>) -> Self {
+        self.with_visibility(column, true)
+    }
+
+    /// Hides a column at runtime.
+    pub fn hide(self, column: impl Into<TableColumnId>) -> Self {
+        self.with_visibility(column, false)
+    }
+
+    /// Removes the runtime override for a column.
+    pub fn without(mut self, column: impl Into<TableColumnId>) -> Self {
+        self.overrides.remove(&column.into());
+        self
+    }
+
+    /// Removes all runtime overrides.
+    pub fn clear(mut self) -> Self {
+        self.overrides.clear();
+        self
     }
 }
 
@@ -2556,6 +2652,7 @@ pub const TABLE_ROW_MODEL_V0_PIPELINE: [TableRowModelStage; 5] = [
 pub struct TableState {
     columns: Vec<TableColumn>,
     column_order: Vec<TableColumnId>,
+    column_visibility: TableColumnVisibility,
     column_pinning: TableColumnPinning,
     column_sizing: TableColumnSizing,
     row_pinning: TableRowPinning,
@@ -2583,6 +2680,7 @@ impl PartialEq for TableState {
     fn eq(&self, other: &Self) -> bool {
         self.columns == other.columns
             && self.column_order == other.column_order
+            && self.column_visibility == other.column_visibility
             && self.column_pinning == other.column_pinning
             && self.column_sizing == other.column_sizing
             && self.row_pinning == other.row_pinning
@@ -2614,6 +2712,7 @@ impl TableState {
         Self {
             columns: Vec::new(),
             column_order: Vec::new(),
+            column_visibility: TableColumnVisibility::default(),
             column_pinning: TableColumnPinning::default(),
             column_sizing: TableColumnSizing::default(),
             row_pinning: TableRowPinning::default(),
@@ -2657,6 +2756,12 @@ impl TableState {
         column_order: impl IntoIterator<Item = impl Into<TableColumnId>>,
     ) -> Self {
         self.column_order = column_order.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Applies runtime column visibility overrides.
+    pub fn with_column_visibility(mut self, column_visibility: TableColumnVisibility) -> Self {
+        self.column_visibility = column_visibility;
         self
     }
 
@@ -2897,6 +3002,11 @@ impl TableState {
         &self.column_order
     }
 
+    /// Returns runtime column visibility overrides.
+    pub const fn column_visibility(&self) -> &TableColumnVisibility {
+        &self.column_visibility
+    }
+
     /// Returns source rows.
     pub fn rows(&self) -> &[TableRow] {
         self.rows.as_ref()
@@ -3012,6 +3122,7 @@ impl TableState {
             row_count: count_table_rows(&self.rows),
             columns: self.columns.clone(),
             column_order: self.column_order.clone(),
+            column_visibility: self.column_visibility.clone(),
             column_pinning: self.column_pinning.clone(),
             column_sizing: self.column_sizing.clone(),
             row_pinning: self.row_pinning.clone(),
@@ -3052,7 +3163,7 @@ impl TableState {
             return self
                 .columns
                 .iter()
-                .filter(|column| column.visible())
+                .filter(|column| self.column_visibility.is_visible(column))
                 .cloned()
                 .collect();
         }
@@ -3066,7 +3177,7 @@ impl TableState {
         self.column_order
             .iter()
             .filter_map(|id| columns_by_id.get(id))
-            .filter(|column| column.visible())
+            .filter(|column| self.column_visibility.is_visible(column))
             .cloned()
             .collect()
     }
@@ -3316,6 +3427,7 @@ pub struct TableStateCacheKey {
     row_count: usize,
     columns: Vec<TableColumn>,
     column_order: Vec<TableColumnId>,
+    column_visibility: TableColumnVisibility,
     column_pinning: TableColumnPinning,
     column_sizing: TableColumnSizing,
     row_pinning: TableRowPinning,
@@ -6654,6 +6766,7 @@ mod tests {
                 TableColumn::new("score", "Score"),
             ])
             .with_column_order(["score", "team", "name"])
+            .with_column_visibility(TableColumnVisibility::new().show("team").hide("score"))
             .resolve();
 
         assert_eq!(
@@ -6662,7 +6775,96 @@ mod tests {
                 .iter()
                 .map(|column| column.id().as_str())
                 .collect::<Vec<_>>(),
-            ["score", "name"]
+            ["team", "name"]
+        );
+    }
+
+    #[test]
+    fn column_visibility_overrides_descriptor_defaults_and_preserves_other_state() {
+        let base = TableState::new(sample_rows())
+            .with_columns([
+                TableColumn::new("name", "Name"),
+                TableColumn::new("team", "Team").with_visible(false),
+                TableColumn::new("score", "Score"),
+            ])
+            .with_column_order(["score", "team", "name"])
+            .with_sorting([TableSort::descending("score")])
+            .with_filters([TableFilter::contains("team", "ops")])
+            .with_pagination(TablePagination::new(1, 1))
+            .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
+            .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(220.0)));
+        let state = base.clone().with_column_visibility(
+            TableColumnVisibility::new()
+                .show("team")
+                .hide("score")
+                .with_visibility("missing", true),
+        );
+
+        assert_eq!(state.column_visibility().len(), 3);
+        assert_eq!(
+            state
+                .column_visibility()
+                .override_for(&TableColumnId::new("score")),
+            Some(false)
+        );
+        assert_eq!(
+            state
+                .column_visibility()
+                .override_for(&TableColumnId::new("team")),
+            Some(true)
+        );
+        assert_eq!(
+            state
+                .column_visibility()
+                .override_for(&TableColumnId::new("missing")),
+            Some(true)
+        );
+        assert_eq!(
+            state
+                .resolve()
+                .visible_columns()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["name", "team"]
+        );
+        assert_eq!(state.sorting(), base.sorting());
+        assert_eq!(state.filters(), base.filters());
+        assert_eq!(state.pagination(), base.pagination());
+        assert_eq!(state.column_pinning(), base.column_pinning());
+        assert_eq!(state.column_sizing(), base.column_sizing());
+        assert_ne!(state.cache_key(), base.cache_key());
+    }
+
+    #[test]
+    fn non_hideable_columns_ignore_hidden_overrides() {
+        let resolved = TableState::new(sample_rows())
+            .with_columns([
+                TableColumn::new("name", "Name").with_hideable(false),
+                TableColumn::new("team", "Team").with_visible(false),
+                TableColumn::new("score", "Score"),
+            ])
+            .with_column_visibility(
+                TableColumnVisibility::new()
+                    .hide("name")
+                    .show("team")
+                    .hide("score"),
+            )
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .visible_columns()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["name", "team"]
+        );
+        assert!(
+            !resolved
+                .visible_columns()
+                .iter()
+                .any(|column| column.id().as_str() == "score")
         );
     }
 
@@ -6677,6 +6879,7 @@ mod tests {
                 TableColumn::new("status", "Status"),
             ])
             .with_column_order(["status", "score", "owner", "team", "name"])
+            .with_column_visibility(TableColumnVisibility::new().show("team").hide("score"))
             .with_column_pinning(
                 TableColumnPinning::new()
                     .pinned_left(["name", "score", "missing"])
@@ -6694,7 +6897,7 @@ mod tests {
                 .iter()
                 .map(|column| column.id().as_str())
                 .collect::<Vec<_>>(),
-            ["score", "name"],
+            ["name"],
             "pinned left columns preserve resolved visible order"
         );
         assert_eq!(
@@ -6703,7 +6906,7 @@ mod tests {
                 .iter()
                 .map(|column| column.id().as_str())
                 .collect::<Vec<_>>(),
-            ["owner"],
+            ["owner", "team"],
             "unknown and invisible pinned ids are ignored"
         );
         assert_eq!(
@@ -6720,7 +6923,7 @@ mod tests {
                 .iter()
                 .map(|column| column.id().as_str())
                 .collect::<Vec<_>>(),
-            ["score", "name", "owner", "status"]
+            ["name", "owner", "team", "status"]
         );
     }
 

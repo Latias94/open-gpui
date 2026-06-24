@@ -5210,6 +5210,17 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         prelude::TableRowActivationKind::Keyboard;
     let _root_pinning: root::TableColumnPinning =
         root::TableColumnPinning::new().pinned_left(["name"]);
+    let root_visibility = root::TableColumnVisibility::new()
+        .hide("score")
+        .show("status")
+        .without("missing");
+    let _root_visibility: root::TableColumnVisibility = root_visibility.clone();
+    let _prelude_visibility: prelude::TableColumnVisibility =
+        prelude::TableColumnVisibility::new().show("status");
+    assert_eq!(
+        root_visibility.override_for(&root::TableColumnId::new("score")),
+        Some(false)
+    );
     let root_sizing = root::TableColumnSizing::new().with_width("name", ui_px(180.0));
     let _root_sizing: root::TableColumnSizing = root_sizing.clone();
     let _prelude_sizing: prelude::TableColumnSizing =

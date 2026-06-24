@@ -93,6 +93,21 @@ verified_by:
 
 # Current State
 
+- 2026-06-24: The active Codex goal is the long-running Table maturity goal: keep planning,
+  fearless refactoring, implementation, verification, memory updates, and commits going until the
+  Table API, interaction behavior, performance / virtualization, gallery proof, and docs contract
+  are mature enough to serve as the official component-library baseline.
+- 2026-06-24: Wrote `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md`
+  as the next Table boundary and committed it as `55c7970`. The plan follows TanStack's sparse
+  `columnVisibility` state and Fret's caller-owned view-options menu pattern: keep
+  `TableColumn::visible` as the schema default, add runtime visibility overrides to `TableState`,
+  expose hideability policy for locked identity columns, and prove a `TableColumnVisibility`
+  toolbar recipe in the wide `release-matrix` gallery sample.
+- 2026-06-24: Completed U1 of the column visibility plan in the working tree. `ui_core::TableState`
+  now carries `TableColumnVisibility` sparse runtime overrides, `TableColumn` exposes a hideable
+  policy for locked identity columns, effective visibility resolves through the existing visible
+  column pipeline before order / pinning / sizing consumers, and `ui_core`, `ui_components`, and
+  both preludes export the new contract type. Focused core table and component export gates pass.
 - 2026-06-24: Wrote `docs/plans/2026-06-24-007-feat-ui-table-global-filtering-faceting-plan.md`
   as the next Table boundary. The plan keeps global query state separate from column filters,
   derives global facet metadata from the row basis before the global query is applied, and scopes
@@ -152,7 +167,13 @@ verified_by:
   shell composition helpers, gallery proofs, and verification coverage until the table surface is
   mature enough to serve as the default component-library baseline.
 - Branch: `main`
-- Last verified: 2026-06-24, `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components --test components`, `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery components_gallery_smoke_global_filter_updates_table_rows components_page_conformance_gates_reference_core_and_gallery_contracts official_component_catalog_entries_have_signals_and_sample_selectors`, `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery components_gallery_smoke_faceted_filter_updates_table_rows components_gallery_smoke_range_filter_updates_table_rows`, and `git diff --check` passed for the `TableToolbar` slice.
+- Last verified: 2026-06-24, `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`,
+  `cargo nextest run -p open-gpui-ui-core table`, and
+  `cargo nextest run -p open-gpui-ui-components table_public_exports_include_core_table_and_virtualizer_contracts crate_root_and_prelude_exports_remain_explicit`
+  passed for U1 of the column visibility slice. `git diff --check` passed after the Rust changes
+  and before the latest memory-only update.
+- Done: Completed U1 of `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md`
+  in the working tree by adding core runtime column visibility overrides and hideability policy.
 - Done: Wrote `docs/plans/2026-06-24-007-feat-ui-table-global-filtering-faceting-plan.md` and recorded the planning handoff in `docs/knowledge/engineering/progress/2026-06-24-table-global-filtering-faceting-plan.md`.
 - Done: Wrote the Table faceted filter controls plan as `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md`.
 - Done: Completed U1 as `a52751f`. `TableFilterKind` is now exported through `ui_core`, `ui_components`, and both preludes; tests cover exact categorical matching, empty no-op filters, order-independent cache keys, and public export inventory.
@@ -161,9 +182,11 @@ verified_by:
 - Done: Completed the Table custom aggregation callbacks slice as `dded73b`. `TableState` now stores named custom aggregation callbacks, grouped rows resolve named custom aggregates through the renderer-neutral pipeline, `TableRenderPlan` exposes the callback count, and the Components gallery includes `grouped-custom-aggregation`.
 - Done: Completed the Table row-selection variants slice as `ea3785f`. `ui_core::TableState` now carries explicit selection policy knobs for single vs multiple selection, explicit-control vs row-click activation, and descendant propagation, plus renderer-neutral selection summaries for full-model and current-page scopes. `ui_components::Table` emits controlled `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when the policy is explicit-control.
 - Done: A combined two-axis viewport contract is already on `main` as `725f859`.
-- In progress: Plan review or implementation start for the global filtering and faceting boundary.
+- In progress: U2 of `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md`
+  is next: add the `TableColumnVisibility` component recipe and controlled change payload.
 - Blocked: None.
-- Next action: Decide whether to deepen the global filtering plan or start `ce-work` on it.
+- Next action: Implement U2 by deriving item metadata, visible / hidden counts, show-all / reset
+  payloads, and `apply_to` helpers while preserving unrelated `TableState` slices.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
   with depth/parent/branch/descendant metadata, source-tree expansion reuses

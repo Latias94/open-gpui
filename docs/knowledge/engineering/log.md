@@ -6,6 +6,23 @@ status: active
 
 # Log
 
+- 2026-06-24: Completed U1 of
+  `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md` in the working
+  tree. `TableColumnVisibility` now provides sparse runtime visibility overrides,
+  `TableColumn::with_hideable` protects default-visible identity columns from stale hidden
+  overrides, `TableState` includes visibility in equality/cache keys, and visible-column
+  resolution now uses runtime overrides before existing order / pinning / sizing consumers.
+  Verified with `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`,
+  `cargo nextest run -p open-gpui-ui-core table`,
+  `cargo nextest run -p open-gpui-ui-components table_public_exports_include_core_table_and_virtualizer_contracts crate_root_and_prelude_exports_remain_explicit`,
+  and `git diff --check`. Next action is U2: component recipe and payload.
+- 2026-06-24: Confirmed the active long-running Table maturity goal for the current session:
+  continue planning, fearless refactoring, implementation, verification, memory updates, and
+  commits until the Table API, interaction behavior, performance / virtualization, gallery proof,
+  and docs contract are mature enough to serve as the official component-library baseline. The
+  current next boundary is
+  `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md`, committed as
+  `55c7970`; next action is U1 core runtime column visibility state.
 - 2026-06-24: Set a long-running Table maturity goal for the current session: continue planning,
   fearless refactoring, implementation, verification, memory updates, and commits until the Table
   component is mature enough to be an official component-library baseline. The latest shipped slice
