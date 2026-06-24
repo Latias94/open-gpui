@@ -2339,13 +2339,14 @@ pub(crate) fn component_table_state_row(
 
     if summary.grouping_columns > 0 || summary.aggregation_count > 0 || summary.group_rows > 0 {
         row = row.child(format!(
-            "grouped {} / expanded {} / groups {} / leaves {} / grouping {} / aggregates {} / expanded inputs {}{}",
+            "grouped {} / expanded {} / groups {} / leaves {} / grouping {} / aggregates {} / custom {} / expanded inputs {}{}",
             summary.grouped_rows,
             summary.expanded_rows,
             summary.group_rows,
             summary.leaf_rows,
             summary.grouping_columns,
             summary.aggregation_count,
+            summary.custom_aggregation_count,
             summary.expanded_group_inputs,
             if summary.all_rows_expanded { " all" } else { "" }
         ));

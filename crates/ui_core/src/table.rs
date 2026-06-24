@@ -2,6 +2,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
@@ -1758,13 +1759,65 @@ impl TableAggregateKind {
             Self::Average => "average",
         }
     }
+
+    /// Resolves a stable label back to a built-in aggregate kind.
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "count" => Some(Self::Count),
+            "sum" => Some(Self::Sum),
+            "min" => Some(Self::Min),
+            "max" => Some(Self::Max),
+            "average" => Some(Self::Average),
+            _ => None,
+        }
+    }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TableAggregationSpec {
+    BuiltIn(TableAggregateKind),
+    Named(String),
+}
+
+#[derive(Clone)]
+struct TableAggregationFn(
+    Arc<dyn Fn(&TableColumnId, &[TableResolvedRow]) -> TableCellValue + Send + Sync>,
+);
+
+impl TableAggregationFn {
+    fn new(
+        aggregation_fn: impl Fn(&TableColumnId, &[TableResolvedRow]) -> TableCellValue
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        Self(Arc::new(aggregation_fn))
+    }
+
+    fn call(&self, column: &TableColumnId, rows: &[TableResolvedRow]) -> TableCellValue {
+        (self.0)(column, rows)
+    }
+}
+
+impl fmt::Debug for TableAggregationFn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("TableAggregationFn(..)")
+    }
+}
+
+impl PartialEq for TableAggregationFn {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for TableAggregationFn {}
 
 /// Aggregate specification for one table column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableAggregation {
     column: TableColumnId,
-    kind: TableAggregateKind,
+    spec: TableAggregationSpec,
 }
 
 impl TableAggregation {
@@ -1772,7 +1825,15 @@ impl TableAggregation {
     pub fn new(column: impl Into<TableColumnId>, kind: TableAggregateKind) -> Self {
         Self {
             column: column.into(),
-            kind,
+            spec: TableAggregationSpec::BuiltIn(kind),
+        }
+    }
+
+    /// Creates a named aggregate specification for a column.
+    pub fn named(column: impl Into<TableColumnId>, name: impl Into<String>) -> Self {
+        Self {
+            column: column.into(),
+            spec: TableAggregationSpec::Named(name.into()),
         }
     }
 
@@ -1806,9 +1867,20 @@ impl TableAggregation {
         &self.column
     }
 
-    /// Returns the aggregate kind.
-    pub const fn kind(&self) -> TableAggregateKind {
-        self.kind
+    /// Returns the aggregate kind when this is a built-in aggregate.
+    pub fn kind(&self) -> Option<TableAggregateKind> {
+        match self.spec {
+            TableAggregationSpec::BuiltIn(kind) => Some(kind),
+            TableAggregationSpec::Named(_) => None,
+        }
+    }
+
+    /// Returns the named aggregate callback key, when present.
+    pub fn name(&self) -> Option<&str> {
+        match &self.spec {
+            TableAggregationSpec::BuiltIn(_) => None,
+            TableAggregationSpec::Named(name) => Some(name.as_str()),
+        }
     }
 }
 
@@ -1950,6 +2022,7 @@ pub struct TableState {
     manual_facets: Vec<TableColumnFacets>,
     grouping: Vec<TableColumnId>,
     aggregations: Vec<TableAggregation>,
+    aggregation_fns: BTreeMap<String, TableAggregationFn>,
     expansion: TableExpansionState,
     expansion_mode: TableExpansionMode,
     selected_rows: BTreeSet<TableRowId>,
@@ -1973,6 +2046,7 @@ impl PartialEq for TableState {
             && self.manual_facets == other.manual_facets
             && self.grouping == other.grouping
             && self.aggregations == other.aggregations
+            && self.aggregation_fns == other.aggregation_fns
             && self.expansion == other.expansion
             && self.expansion_mode == other.expansion_mode
             && self.selected_rows == other.selected_rows
@@ -2002,6 +2076,7 @@ impl TableState {
             manual_facets: Vec::new(),
             grouping: Vec::new(),
             aggregations: Vec::new(),
+            aggregation_fns: BTreeMap::new(),
             expansion: TableExpansionState::default(),
             expansion_mode: TableExpansionMode::default(),
             selected_rows: BTreeSet::new(),
@@ -2142,6 +2217,20 @@ impl TableState {
         self
     }
 
+    /// Registers a named aggregation callback.
+    pub fn with_aggregation_fn(
+        mut self,
+        name: impl Into<String>,
+        aggregation_fn: impl Fn(&TableColumnId, &[TableResolvedRow]) -> TableCellValue
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.aggregation_fns
+            .insert(name.into(), TableAggregationFn::new(aggregation_fn));
+        self
+    }
+
     /// Applies explicit expanded group row ids.
     pub fn with_expanded_rows(
         mut self,
@@ -2234,6 +2323,16 @@ impl TableState {
         &self.aggregations
     }
 
+    /// Returns the number of named aggregation callbacks.
+    pub fn aggregation_fn_count(&self) -> usize {
+        self.aggregation_fns.len()
+    }
+
+    /// Returns whether a named aggregation callback has been registered.
+    pub fn has_aggregation_fn(&self, name: &str) -> bool {
+        self.aggregation_fns.contains_key(name)
+    }
+
     /// Returns pinned column state.
     pub const fn column_pinning(&self) -> &TableColumnPinning {
         &self.column_pinning
@@ -2296,6 +2395,7 @@ impl TableState {
             manual_facets: self.manual_facets.clone(),
             grouping: self.grouping.clone(),
             aggregations: self.aggregations.clone(),
+            aggregation_fns: self.aggregation_fns.clone(),
             expansion: self.expansion.clone(),
             expansion_mode: self.expansion_mode,
             selected_rows: self.selected_rows.clone(),
@@ -2464,7 +2564,15 @@ impl TableState {
                 .collect::<Vec<_>>();
         }
 
-        build_group_nodes(rows, &self.grouping, &self.aggregations, 0, None, None)
+        build_group_nodes(
+            rows,
+            &self.grouping,
+            &self.aggregations,
+            &self.aggregation_fns,
+            0,
+            None,
+            None,
+        )
     }
 
     fn sort_nodes(&self, mut nodes: Vec<TableRowNode>) -> Vec<TableRowNode> {
@@ -2537,6 +2645,7 @@ pub struct TableStateCacheKey {
     manual_facets: Vec<TableColumnFacets>,
     grouping: Vec<TableColumnId>,
     aggregations: Vec<TableAggregation>,
+    aggregation_fns: BTreeMap<String, TableAggregationFn>,
     expansion: TableExpansionState,
     expansion_mode: TableExpansionMode,
     selected_rows: BTreeSet<TableRowId>,
@@ -3325,6 +3434,7 @@ fn build_group_nodes(
     rows: &[TableResolvedRow],
     grouping: &[TableColumnId],
     aggregations: &[TableAggregation],
+    aggregation_fns: &BTreeMap<String, TableAggregationFn>,
     depth: usize,
     parent_group_id: Option<TableRowId>,
     inherited_parent_id: Option<TableRowId>,
@@ -3383,11 +3493,12 @@ fn build_group_nodes(
             &bucket_rows,
             &grouping[1..],
             aggregations,
+            aggregation_fns,
             depth + 1,
             Some(group_id.clone()),
             Some(group_id.clone()),
         );
-        let aggregate_cells = resolve_aggregate_cells(&bucket_rows, aggregations);
+        let aggregate_cells = resolve_aggregate_cells(&bucket_rows, aggregations, aggregation_fns);
         let row = TableResolvedRow::from_group(group_id, group, aggregate_cells);
         nodes.push(TableRowNode { row, children });
     }
@@ -3398,13 +3509,14 @@ fn build_group_nodes(
 fn resolve_aggregate_cells(
     rows: &[TableResolvedRow],
     aggregations: &[TableAggregation],
+    aggregation_fns: &BTreeMap<String, TableAggregationFn>,
 ) -> BTreeMap<TableColumnId, TableCellValue> {
     aggregations
         .iter()
         .map(|aggregation| {
             (
                 aggregation.column().clone(),
-                resolve_aggregate_cell(rows, aggregation),
+                resolve_aggregate_cell(rows, aggregation, aggregation_fns),
             )
         })
         .collect()
@@ -3413,12 +3525,35 @@ fn resolve_aggregate_cells(
 fn resolve_aggregate_cell(
     rows: &[TableResolvedRow],
     aggregation: &TableAggregation,
+    aggregation_fns: &BTreeMap<String, TableAggregationFn>,
 ) -> TableCellValue {
     match aggregation.kind() {
+        Some(kind) => resolve_aggregate_cell_builtin(rows, aggregation.column(), kind),
+        None => match aggregation.name() {
+            Some(name) => aggregation_fns
+                .get(name)
+                .map(|aggregation_fn| aggregation_fn.call(aggregation.column(), rows))
+                .or_else(|| {
+                    TableAggregateKind::from_str(name).map(|kind| {
+                        resolve_aggregate_cell_builtin(rows, aggregation.column(), kind)
+                    })
+                })
+                .unwrap_or_default(),
+            None => TableCellValue::Empty,
+        },
+    }
+}
+
+fn resolve_aggregate_cell_builtin(
+    rows: &[TableResolvedRow],
+    column: &TableColumnId,
+    kind: TableAggregateKind,
+) -> TableCellValue {
+    match kind {
         TableAggregateKind::Count => TableCellValue::Number(rows.len() as f64),
         TableAggregateKind::Sum => {
             let mut seen_numeric = false;
-            let sum = numeric_values(rows, aggregation.column()).fold(0.0, |sum, value| {
+            let sum = numeric_values(rows, column).fold(0.0, |sum, value| {
                 seen_numeric = true;
                 sum + value
             });
@@ -3429,17 +3564,17 @@ fn resolve_aggregate_cell(
                 TableCellValue::Empty
             }
         }
-        TableAggregateKind::Min => numeric_values(rows, aggregation.column())
+        TableAggregateKind::Min => numeric_values(rows, column)
             .min_by(f64::total_cmp)
             .map(TableCellValue::Number)
             .unwrap_or_default(),
-        TableAggregateKind::Max => numeric_values(rows, aggregation.column())
+        TableAggregateKind::Max => numeric_values(rows, column)
             .max_by(f64::total_cmp)
             .map(TableCellValue::Number)
             .unwrap_or_default(),
         TableAggregateKind::Average => {
             let mut count = 0_usize;
-            let sum = numeric_values(rows, aggregation.column()).fold(0.0, |sum, value| {
+            let sum = numeric_values(rows, column).fold(0.0, |sum, value| {
                 count += 1;
                 sum + value
             });
@@ -5013,6 +5148,56 @@ mod tests {
         assert_eq!(
             ops.cell(&TableColumnId::new("noise")),
             Some(&TableCellValue::Empty)
+        );
+    }
+
+    #[test]
+    fn grouped_rows_resolve_named_custom_aggregation_callbacks() {
+        let state = TableState::new(aggregate_rows())
+            .with_grouping(["team"])
+            .with_aggregations([
+                TableAggregation::count("name"),
+                TableAggregation::named("score", "score_plus_one"),
+                TableAggregation::named("duration", "sum"),
+                TableAggregation::named("noise", "missing_custom"),
+            ])
+            .with_aggregation_fn("score_plus_one", |column, rows| {
+                TableCellValue::Number(
+                    numeric_values(rows, column).fold(0.0, |sum, value| sum + value) + 1.0,
+                )
+            });
+
+        let resolved = state.resolve();
+        let ops = resolved
+            .grouped_model()
+            .row(&TableRowId::new("group:team=ops"))
+            .expect("ops group should resolve");
+
+        assert_eq!(
+            ops.cell(&TableColumnId::new("score")),
+            Some(&TableCellValue::Number(51.0))
+        );
+        assert_eq!(
+            ops.cell(&TableColumnId::new("duration")),
+            Some(&TableCellValue::Number(6.0))
+        );
+        assert_eq!(
+            ops.cell(&TableColumnId::new("noise")),
+            Some(&TableCellValue::Empty)
+        );
+        assert_eq!(state.aggregation_fn_count(), 1);
+        assert!(state.has_aggregation_fn("score_plus_one"));
+        assert!(!state.has_aggregation_fn("missing_custom"));
+        assert_ne!(
+            state.cache_key(),
+            state
+                .clone()
+                .with_aggregation_fn("score_plus_one", |column, rows| {
+                    TableCellValue::Number(
+                        numeric_values(rows, column).fold(0.0, |sum, value| sum + value) + 2.0,
+                    )
+                })
+                .cache_key()
         );
     }
 

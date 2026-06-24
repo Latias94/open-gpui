@@ -12,13 +12,13 @@ use open_gpui_ui_components::{
     ScrollResetPolicy, SelectState, Separator, SeparatorState, SidebarCollapseMode,
     SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
     Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
-    Switch, SwitchState, Table, TableAggregation, TableColumn, TableColumnFacets, TableColumnId,
-    TableColumnPinning, TableColumnRegion, TableColumnSizing, TableColumnSizingChange,
-    TableExpansionMode, TableExpansionState, TableFacetValueCount, TableFilter, TablePagination,
-    TableRenderPlan, TableRow, TableRowActivation, TableRowChildrenLoadState,
-    TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy, TableSort, TableStageMode,
-    TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
-    TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
+    Switch, SwitchState, Table, TableAggregation, TableCellValue, TableColumn, TableColumnFacets,
+    TableColumnId, TableColumnPinning, TableColumnRegion, TableColumnSizing,
+    TableColumnSizingChange, TableExpansionMode, TableExpansionState, TableFacetValueCount,
+    TableFilter, TablePagination, TableRenderPlan, TableRow, TableRowActivation,
+    TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy,
+    TableSort, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
+    TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
     ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
     VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
     VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
@@ -905,10 +905,12 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "Table::render_plan",
             "TableHeaderAction",
             "release-rollup",
+            "grouped-custom-aggregation",
             "release-resize",
             "row-pinning",
             "components_gallery_smoke_table_scroll_stays_inside_sample",
             "components_gallery_smoke_grouped_table_scroll_stays_inside_sample",
+            "components_page_table_samples_expose_virtualized_row_model_contract",
             "components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample",
             "components_gallery_smoke_resizable_table_resize_updates_sample",
         ],
@@ -1867,6 +1869,8 @@ pub struct TableSampleStateSummary {
     pub grouping_columns: usize,
     /// Configured aggregate column count.
     pub aggregation_count: usize,
+    /// Named custom aggregate callback count.
+    pub custom_aggregation_count: usize,
     /// Explicit expanded group row ids, or all group rows when expansion is global.
     pub expanded_group_inputs: usize,
     /// Explicit expanded tree row ids, or all tree branch rows when expansion is global.
@@ -2030,6 +2034,7 @@ impl TableSampleStateSummary {
             score_facet_max,
             grouping_columns: state.grouping().len(),
             aggregation_count: state.aggregations().len(),
+            custom_aggregation_count: plan.aggregation_fn_count(),
             expanded_group_inputs,
             expanded_tree_inputs,
             all_rows_expanded,
@@ -3374,6 +3379,9 @@ fn build_table_samples() -> Vec<TableSample> {
     let server_paged_rows = server_paged_rows();
     let release_resize_rows = (0..160).map(release_resize_row).collect::<Vec<_>>();
     let grouped_release_rows = (0..320).map(grouped_release_row).collect::<Vec<_>>();
+    let grouped_custom_aggregation_rows = (0..8)
+        .map(grouped_custom_aggregation_row)
+        .collect::<Vec<_>>();
     let release_matrix_rows = (0..480).map(release_matrix_row).collect::<Vec<_>>();
     let row_pinning_rows = (0..96).map(row_pinning_row).collect::<Vec<_>>();
     let dependency_tree_rows = dependency_tree_rows();
@@ -3493,6 +3501,41 @@ fn build_table_samples() -> Vec<TableSample> {
         overscan: 4,
         state_summary: TableSampleStateSummary::default(),
     };
+    let grouped_custom_aggregation = TableSample {
+        id: "grouped-custom-aggregation",
+        title: "Custom aggregation",
+        summary: "Grouped rows combine a built-in count with a named custom score aggregate.",
+        badge: "custom aggregate",
+        state: TableState::new(grouped_custom_aggregation_rows)
+            .with_columns(sticky_pinned_table_columns())
+            .with_column_order(["name", "team", "score", "status"])
+            .with_column_pinning(
+                TableColumnPinning::new()
+                    .pinned_left(["name"])
+                    .pinned_right(["status"]),
+            )
+            .with_grouping(["team"])
+            .with_expanded_rows(["group:team=UI", "group:team=Platform"])
+            .with_aggregations([
+                TableAggregation::count("name"),
+                TableAggregation::named("score", "score_plus_one"),
+            ])
+            .with_aggregation_fn("score_plus_one", |column, rows| {
+                let score = rows.iter().fold(0.0, |sum, row| match row.cell(column) {
+                    Some(TableCellValue::Number(value)) => sum + *value,
+                    _ => sum,
+                });
+                TableCellValue::Number(score + 1.0)
+            })
+            .with_sorting([TableSort::descending("score")])
+            .with_selected_rows(["grouped-custom-aggregation-row-000"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
     let release_matrix = TableSample {
         id: "release-matrix",
         title: "Release matrix",
@@ -3592,6 +3635,7 @@ fn build_table_samples() -> Vec<TableSample> {
         server_paged.with_state_summary(),
         release_resize.with_state_summary(),
         grouped_release.with_state_summary(),
+        grouped_custom_aggregation.with_state_summary(),
         release_matrix.with_state_summary(),
         row_pinning.with_state_summary(),
         dependency_tree.with_state_summary(),
@@ -3972,6 +4016,20 @@ fn grouped_release_row(index: usize) -> TableRow {
         .with_cell("name", format!("Release rollup {index:03}"))
         .with_cell("team", teams[index % teams.len()])
         .with_cell("status", statuses[(index / 9) % statuses.len()])
+        .with_cell("score", score)
+}
+
+fn grouped_custom_aggregation_row(index: usize) -> TableRow {
+    let status = ["Ready", "Review", "Blocked", "Verify"][index % 4];
+    let (team, score) = match index {
+        0..=3 => ("UI", index + 1),
+        _ => ("Platform", (index - 3) * 10),
+    };
+
+    TableRow::new(format!("grouped-custom-aggregation-row-{index:03}"))
+        .with_cell("name", format!("Custom aggregate {index:03}"))
+        .with_cell("team", team)
+        .with_cell("status", status)
         .with_cell("score", score)
 }
 

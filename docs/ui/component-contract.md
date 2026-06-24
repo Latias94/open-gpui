@@ -413,8 +413,13 @@ expansion, and stable row ids intact; the table cache key includes those ownersh
 pagination totals. Group rows may expose aggregate cells through `TableAggregation` using the
 built-in `count`, `sum`, `min`, `max`, and `average` kinds;
 the active grouping column still displays the grouping value instead of an aggregate payload.
-Grouping plus source-tree composition remains deferred until a later policy slice defines mixed
-filtering, sorting, and expansion semantics. `TableColumnPinning` is caller-owned state that splits
+Named custom aggregate callbacks are also supported through `TableState::with_aggregation_fn`,
+with named specs resolving through the registered callback map and safely falling back to empty
+cells when a callback name is unknown. Grouping plus source-tree composition remains deferred
+until a later policy slice defines mixed filtering, sorting, and expansion semantics.
+Custom aggregation rows stay renderer-neutral and are surfaced in the Components gallery through
+the focused `grouped-custom-aggregation` sample.
+`TableColumnPinning` is caller-owned state that splits
 resolved visible columns into `left`, `center`, and `right` `TableColumnRegions` after visibility
 and explicit ordering have been applied; unknown or invisible pinned ids are ignored. `TableColumn`
 also carries preferred width, min/max width, and resizable metadata, while `TableColumnSizing` is

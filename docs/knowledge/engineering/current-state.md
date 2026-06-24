@@ -84,14 +84,21 @@ verified_by:
 - 2026-06-24: Merged the Table row-pinning / two-axis viewport slice back to `main` as `d55f2d1`
   and pushed it to `origin/main`. The working tree is clean and `git diff --check` passed; the next
   Table follow-up can start from the updated `main` line.
+- 2026-06-24: Started the Table custom aggregation callbacks slice from
+  `docs/plans/2026-06-24-002-feat-ui-table-custom-aggregation-callbacks-plan.md`. `ui_core::TableState`
+  now stores named aggregation callbacks, grouped rows can resolve built-in and named aggregate
+  cells through the same renderer-neutral pipeline, `ui_components::TableRenderPlan` exposes the
+  registered callback count, and the Components gallery has a focused `grouped-custom-aggregation`
+  sample. Core/grouped tests and gallery sample coverage are in progress; docs and engineering
+  memory still need the final verification pass.
 
-- Goal: Execute `docs/plans/2026-06-23-009-feat-ui-table-row-pinning-plan.md`.
+- Goal: Execute `docs/plans/2026-06-24-002-feat-ui-table-custom-aggregation-callbacks-plan.md`.
 - Branch: `main`
 - Last verified: 2026-06-24, `git diff --check` passed after merging the row-pinning slice into
   `main` and pushing the result to `origin/main`.
-- In progress: None.
+- In progress: Table custom aggregation callbacks slice.
 - Blocked: None.
-- Next action: Start the next Table follow-up when a new plan is ready.
+- Next action: Finish verification, refresh memory, and commit the custom aggregation slice.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
   with depth/parent/branch/descendant metadata, source-tree expansion reuses

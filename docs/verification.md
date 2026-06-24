@@ -234,9 +234,11 @@ metadata, and drives controlled expansion plus row activation through the galler
 renders unloaded, loading, and failed branch affordances, records loaded-child and load-state
 metadata in expansion payloads, and proves that child rows appear only after the gallery runtime
 supplies the loaded snapshot.
-Core table tests also assert that `TableAggregation` exposes stable built-in aggregate labels and
+Core table tests also assert that `TableAggregation` exposes stable built-in aggregate labels,
 resolves count, sum, min, max, and average cells for grouped rows without hiding the grouping
-column value. Core and component tests assert that `TableColumnPinning` splits visible columns into
+column value, and lets `TableState::with_aggregation_fn` resolve named custom aggregate callbacks
+with safe empty fallback for unknown names. Core and component tests assert that
+`TableColumnPinning` splits visible columns into
 left, center, and right regions after visibility/order resolution, ignores unknown or invisible
 pinned ids, removes moved columns from their previous pinned side, and exposes matching
 header/body region metadata and debug selectors. They also assert `TableRowPinning` deduplicates

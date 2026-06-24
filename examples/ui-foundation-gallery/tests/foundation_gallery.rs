@@ -2613,6 +2613,55 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         ]
     );
 
+    let custom_grouped = table_sample(samples, "grouped-custom-aggregation");
+    let custom_plan = custom_grouped.render_plan();
+    let custom_summary = custom_grouped.state_summary();
+
+    assert_eq!(custom_grouped.id, "grouped-custom-aggregation");
+    assert_eq!(custom_grouped.state.rows().len(), 8);
+    assert_eq!(custom_grouped.state.grouping()[0].as_str(), "team");
+    assert_eq!(custom_grouped.state.aggregations().len(), 2);
+    assert_eq!(custom_grouped.state.aggregation_fn_count(), 1);
+    assert!(custom_grouped.state.has_aggregation_fn("score_plus_one"));
+    assert_eq!(custom_summary.custom_aggregation_count, 1);
+    assert_eq!(custom_plan.aggregation_fn_count(), 1);
+    assert_eq!(custom_summary.grouping_columns, 1);
+    assert_eq!(custom_summary.aggregation_count, 2);
+    assert_eq!(custom_summary.group_rows, 2);
+    assert_eq!(custom_summary.leaf_rows, 8);
+    assert_eq!(custom_summary.expanded_group_inputs, 2);
+    assert_eq!(custom_plan.table().final_model().rows().len(), 10);
+    let custom_ui_group = custom_plan
+        .table()
+        .final_model()
+        .row(&TableRowId::new("group:team=UI"))
+        .expect("expanded UI custom group should be visible and addressable");
+    assert_eq!(
+        custom_ui_group
+            .cell(&TableColumnId::new("name"))
+            .expect("custom group count aggregate should be present")
+            .filter_text(),
+        "4"
+    );
+    assert_eq!(
+        custom_ui_group
+            .cell(&TableColumnId::new("score"))
+            .expect("custom score aggregate should be present")
+            .filter_text(),
+        "11"
+    );
+    assert_eq!(
+        custom_plan
+            .table()
+            .final_model()
+            .row(&TableRowId::new("group:team=Platform"))
+            .expect("expanded Platform custom group should be visible and addressable")
+            .cell(&TableColumnId::new("score"))
+            .expect("platform custom score aggregate should be present")
+            .filter_text(),
+        "101"
+    );
+
     let release_matrix = table_sample(samples, "release-matrix");
     let matrix_plan = release_matrix.render_plan();
     let matrix_summary = release_matrix.state_summary();
@@ -3698,6 +3747,11 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
         cx.debug_bounds("gallery:component-table-sample:release-matrix")
             .is_some(),
         "expected focused Table mode to render the wide matrix Table sample"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-table-sample:grouped-custom-aggregation")
+            .is_some(),
+        "expected focused Table mode to render the custom aggregation Table sample"
     );
     assert!(
         cx.debug_bounds("gallery:component-table-sample:row-pinning")

@@ -6,6 +6,14 @@ status: active
 
 # Log
 
+- 2026-06-24: Started the Table custom aggregation callbacks slice from
+  `docs/plans/2026-06-24-002-feat-ui-table-custom-aggregation-callbacks-plan.md`. `TableState`
+  now stores named aggregation callbacks, grouped rows resolve named custom aggregates through the
+  same renderer-neutral pipeline as built-ins, `TableRenderPlan` exposes the registered callback
+  count, and the Components gallery includes a focused `grouped-custom-aggregation` sample. Core
+  checks passed, `cargo check -p open-gpui-ui-foundation-gallery` surfaced a `Send + Sync` bound
+  gap on the stored callback type, and the next step is to tighten the callback wrapper and rerun
+  validation.
 - 2026-06-24: Merged the Table row-pinning / two-axis viewport slice back to `main` as `d55f2d1`
   and pushed it to `origin/main`. The working tree is clean, `git diff --check` passed, and the
   next Table follow-up can start from the updated `main` line.

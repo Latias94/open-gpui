@@ -1009,6 +1009,7 @@ pub struct TableRenderPlan {
     pagination_row_count: Option<usize>,
     pagination_page_count: Option<usize>,
     faceting_mode: TableStageMode,
+    aggregation_fn_count: usize,
     top_rows: Vec<TableRowRenderPlan>,
     rows: Vec<TableRowRenderPlan>,
     bottom_rows: Vec<TableRowRenderPlan>,
@@ -1098,6 +1099,7 @@ impl TableRenderPlan {
             pagination_row_count: pagination.row_count(),
             pagination_page_count: pagination.page_count(),
             faceting_mode: state.faceting_mode(),
+            aggregation_fn_count: state.aggregation_fn_count(),
             top_rows,
             rows,
             bottom_rows,
@@ -1156,6 +1158,11 @@ impl TableRenderPlan {
     /// Returns whether faceting was resolved locally or supplied by the caller.
     pub const fn faceting_mode(&self) -> TableStageMode {
         self.faceting_mode
+    }
+
+    /// Returns the number of named custom aggregation callbacks registered on the table state.
+    pub const fn aggregation_fn_count(&self) -> usize {
+        self.aggregation_fn_count
     }
 
     /// Returns resolved facet metadata for configured columns.
