@@ -1067,6 +1067,7 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "enable_column_resizing",
             "column_resize_mode",
             "column_resize_direction",
+            "content_fit_columns",
         ],
         "TableFacetedFilter" => &[
             "facets",
@@ -5233,6 +5234,32 @@ fn table_render_plan_exposes_column_sizing_metadata_and_matching_cell_widths() {
 }
 
 #[test]
+fn table_render_plan_preserves_column_width_policies() {
+    let state = TableState::new([TableRow::new("row-a")
+        .with_cell("name", "Alpha")
+        .with_cell("status", "Ready")])
+    .with_columns([
+        TableColumn::new("name", "Name"),
+        TableColumn::new("status", "Status").with_content_fit(),
+    ])
+    .with_pagination(TablePagination::disabled());
+    let plan = Table::new("policy-table", "Policy table", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+    let status_column = plan
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "status")
+        .expect("status column should be present");
+
+    assert_eq!(
+        status_column.width_policy(),
+        open_gpui_ui_components::TableColumnWidthPolicy::ContentFit
+    );
+}
+
+#[test]
 fn table_render_plan_exposes_nested_header_groups_and_region_widths() {
     let state = TableState::new([TableRow::new("row-a")
         .with_cell("name", "Alpha")
@@ -5904,6 +5931,15 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         prelude::TableRowActivationKind::Keyboard;
     let _root_pinning: root::TableColumnPinning =
         root::TableColumnPinning::new().pinned_left(["name"]);
+    let _root_width_policy: root::TableColumnWidthPolicy = root::TableColumnWidthPolicy::ContentFit;
+    let _prelude_width_policy: prelude::TableColumnWidthPolicy =
+        prelude::TableColumnWidthPolicy::Fixed;
+    let content_fit_column = root::TableColumn::new("status", "Status").with_content_fit();
+    assert!(content_fit_column.is_content_fit());
+    assert_eq!(
+        content_fit_column.width_policy(),
+        root::TableColumnWidthPolicy::ContentFit
+    );
     let root_visibility = root::TableColumnVisibilityOverrides::new()
         .hide("score")
         .show("status")

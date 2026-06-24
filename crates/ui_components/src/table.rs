@@ -23,12 +23,13 @@ use open_gpui_ui_core::{
     OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable, Size, TableCellValue,
     TableColumn, TableColumnFacets, TableColumnId, TableColumnRegion, TableColumnResizeDirection,
     TableColumnResizeMode, TableColumnResizeState, TableColumnSizing,
-    TableColumnVisibilityOverrides, TableExpansionMode, TableExpansionState, TableFacetRange,
-    TableFilter, TableGlobalFacetSummary, TableNumericFilterOperator, TableResolvedColumnSizing,
-    TableResolvedRow, TableResolvedState, TableRowChildrenLoadState, TableRowId, TableRowRegion,
-    TableSelectionMode, TableSelectionPolicy, TableSelectionSummary, TableSort, TableSortDirection,
-    TableStageMode, TableState, TableStateCacheKey, TableTextFilterOperator, TableTreeRow,
-    ThemeTokens, Toggled, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
+    TableColumnVisibilityOverrides, TableColumnWidthPolicy, TableExpansionMode,
+    TableExpansionState, TableFacetRange, TableFilter, TableGlobalFacetSummary,
+    TableNumericFilterOperator, TableResolvedColumnSizing, TableResolvedRow, TableResolvedState,
+    TableRowChildrenLoadState, TableRowId, TableRowRegion, TableSelectionMode,
+    TableSelectionPolicy, TableSelectionSummary, TableSort, TableSortDirection, TableStageMode,
+    TableState, TableStateCacheKey, TableTextFilterOperator, TableTreeRow, ThemeTokens, Toggled,
+    UiPx, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
     VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState, drag_table_column_resize,
     end_table_column_resize, ui_px,
 };
@@ -4357,6 +4358,7 @@ pub struct TableColumnRenderPlan {
     aria_column_index: usize,
     sortable: bool,
     text_editable: bool,
+    width_policy: TableColumnWidthPolicy,
     sort_direction: Option<TableSortDirection>,
     sort_action: Option<TableHeaderAction>,
     width: UiPx,
@@ -4384,6 +4386,7 @@ impl TableColumnRenderPlan {
             aria_column_index,
             sortable: column.sortable(),
             text_editable: column.text_editable(),
+            width_policy: column.width_policy(),
             sort_direction,
             sort_action: column
                 .sortable()
@@ -4425,6 +4428,11 @@ impl TableColumnRenderPlan {
     /// Returns whether leaf cells in this column render text editors.
     pub const fn text_editable(&self) -> bool {
         self.text_editable
+    }
+
+    /// Returns the configured width policy for this column.
+    pub const fn width_policy(&self) -> TableColumnWidthPolicy {
+        self.width_policy
     }
 
     /// Returns the resolved sort direction for this column, when present.

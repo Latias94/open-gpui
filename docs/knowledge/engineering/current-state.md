@@ -3,8 +3,14 @@ type: Current State
 title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
-git_branch: main
+git_branch: feat/table-nested-headers
 verified_by:
+  - cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components
+  - cargo nextest run -p open-gpui-ui-core table
+  - cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit public_resolved_state_contracts_avoid_gpui_runtime_types table_public_exports_include_core_table_and_virtualizer_contracts
+  - cargo nextest run -p open-gpui-ui-foundation-gallery table
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
+  - git diff --check
   - cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-core table
   - cargo nextest run -p open-gpui-ui-components table
@@ -102,9 +108,14 @@ verified_by:
 - 2026-06-25: The active Codex goal is the long-running Table maturity goal: keep planning,
   fearless refactoring, implementation, verification, memory updates, and commits going until the
   Table API, interaction behavior, performance / virtualization, gallery proof, and docs contract
-  are mature enough to serve as the official component-library baseline. The next Table boundary is
-  autosize-by-content, with the plan written at
+  are mature enough to serve as the official component-library baseline. The current Table boundary
+  is autosize-by-content, with the plan written at
   `docs/plans/2026-06-25-001-feat-ui-table-autosize-by-content-plan.md`.
+- 2026-06-25: Completed U1 of `docs/plans/2026-06-25-001-feat-ui-table-autosize-by-content-plan.md`
+  in the working tree. `ui_core::TableColumn` now carries a renderer-neutral width policy with
+  `Fixed` and `ContentFit` modes, the policy participates in table cache keys, the GPUI table
+  render plan exposes the policy for each resolved column, and focused core/components/table
+  nextest checks passed. Next action is U2: adapter-owned visible-width measurement and overlay.
 - 2026-06-25: Completed U4 of
   `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
   tree. `ui_components::Table` now renders nested header groups with multi-row, region-aware GPUI

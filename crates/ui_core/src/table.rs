@@ -197,6 +197,26 @@ impl TableCellEditor {
     }
 }
 
+/// Renderer-neutral column width policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableColumnWidthPolicy {
+    /// Keep the configured width unless committed sizing overrides it.
+    #[default]
+    Fixed,
+    /// Let adapter-owned content-fit measurement widen the column.
+    ContentFit,
+}
+
+impl TableColumnWidthPolicy {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fixed => "fixed",
+            Self::ContentFit => "content-fit",
+        }
+    }
+}
+
 /// Renderer-neutral column descriptor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableColumn {
@@ -208,6 +228,7 @@ pub struct TableColumn {
     filterable: bool,
     global_filterable: bool,
     editor: Option<TableCellEditor>,
+    width_policy: TableColumnWidthPolicy,
     width: UiPx,
     min_width: UiPx,
     max_width: UiPx,
@@ -226,6 +247,7 @@ impl TableColumn {
             filterable: true,
             global_filterable: true,
             editor: None,
+            width_policy: TableColumnWidthPolicy::default(),
             width: TABLE_DEFAULT_COLUMN_WIDTH,
             min_width: TABLE_MIN_COLUMN_WIDTH,
             max_width: TABLE_MAX_COLUMN_WIDTH,
@@ -276,6 +298,16 @@ impl TableColumn {
     /// Returns whether this column renders text-cell editors for editable leaf cells.
     pub const fn text_editable(&self) -> bool {
         matches!(self.editor, Some(TableCellEditor::Text))
+    }
+
+    /// Returns the configured width policy for this column.
+    pub const fn width_policy(&self) -> TableColumnWidthPolicy {
+        self.width_policy
+    }
+
+    /// Returns whether this column should widen from visible content.
+    pub const fn is_content_fit(&self) -> bool {
+        matches!(self.width_policy, TableColumnWidthPolicy::ContentFit)
     }
 
     /// Returns the preferred width before committed sizing is applied.
@@ -331,6 +363,18 @@ impl TableColumn {
     /// Applies cell editor metadata.
     pub const fn with_editor(mut self, editor: Option<TableCellEditor>) -> Self {
         self.editor = editor;
+        self
+    }
+
+    /// Marks this column as content-fit sized.
+    pub const fn with_content_fit(mut self) -> Self {
+        self.width_policy = TableColumnWidthPolicy::ContentFit;
+        self
+    }
+
+    /// Marks this column as fixed-width sized.
+    pub const fn with_fixed_width(mut self) -> Self {
+        self.width_policy = TableColumnWidthPolicy::Fixed;
         self
     }
 
@@ -5871,10 +5915,16 @@ mod tests {
             .with_width(ui_px(120.0))
             .with_min_width(ui_px(80.0))
             .with_max_width(ui_px(160.0));
+        let content_fit = TableColumn::new("status", "Status").with_content_fit();
 
         assert_eq!(column.width(), ui_px(120.0));
         assert_eq!(column.min_width(), ui_px(80.0));
         assert_eq!(column.max_width(), ui_px(160.0));
+        assert_eq!(
+            content_fit.width_policy(),
+            TableColumnWidthPolicy::ContentFit
+        );
+        assert!(content_fit.is_content_fit());
         assert!(column.resizable());
         assert_eq!(
             column.resolved_width(&TableColumnSizing::new()),
@@ -5901,6 +5951,11 @@ mod tests {
             column.resolved_width(&unrelated),
             ui_px(120.0),
             "unknown committed sizing ids do not affect this column"
+        );
+        assert_eq!(
+            content_fit.resolved_width(&TableColumnSizing::new()),
+            TABLE_DEFAULT_COLUMN_WIDTH,
+            "content-fit columns still resolve to their configured fallback until the adapter overlays measured width"
         );
     }
 
@@ -6047,6 +6102,32 @@ mod tests {
             flat.cache_key(),
             grouped.cache_key(),
             "tree shape invalidates header caches even when leaf columns match"
+        );
+    }
+
+    #[test]
+    fn content_fit_width_policy_participates_in_cache_key() {
+        let base = TableState::new(sample_rows()).with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("status", "Status"),
+        ]);
+        let content_fit = base.clone().with_columns([
+            TableColumn::new("name", "Name").with_content_fit(),
+            TableColumn::new("status", "Status"),
+        ]);
+
+        assert_eq!(
+            base.columns()[0].width_policy(),
+            TableColumnWidthPolicy::Fixed
+        );
+        assert_eq!(
+            content_fit.columns()[0].width_policy(),
+            TableColumnWidthPolicy::ContentFit
+        );
+        assert_ne!(
+            base.cache_key(),
+            content_fit.cache_key(),
+            "content-fit policy should invalidate the table cache key"
         );
     }
 
