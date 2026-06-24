@@ -103,6 +103,14 @@ verified_by:
   fearless refactoring, implementation, verification, memory updates, and commits going until the
   Table API, interaction behavior, performance / virtualization, gallery proof, and docs contract
   are mature enough to serve as the official component-library baseline.
+- 2026-06-24: Completed U1 of
+  `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
+  tree. `TableColumnGroupId`, `TableColumnNode`, and `TableColumnGroup` now provide a renderer-
+  neutral nested column-tree contract in `ui_core`; `TableState` preserves a normalized tree plus
+  leaf projection; duplicate leaf ids are pruned deterministically; and the table cache key now
+  includes tree shape. `ui_components` root and prelude exports cover the new types, and focused
+  core / component-export nextest checks passed. Next action is U2: renderer-neutral header group
+  resolution.
 - 2026-06-24: The global filtering and faceting slice is already shipped on the current main
   history as `88749ce`, `fd66b20`, and `947daa2`. The next active Table boundary was richer filter
   operators, and the plan `docs/plans/2026-06-24-009-feat-ui-table-filter-operators-plan.md` is

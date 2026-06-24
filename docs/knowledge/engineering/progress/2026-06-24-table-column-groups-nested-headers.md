@@ -10,6 +10,12 @@ related_plan: docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-heade
 
 # Summary
 
+- U1 is complete in the working tree.
+- `ui_core` now has `TableColumnGroupId`, `TableColumnNode`, and `TableColumnGroup` plus a
+  normalized column-tree `TableState` contract.
+- Duplicate leaf ids are pruned deterministically during tree normalization, and the cache key
+  includes the normalized tree shape.
+- `ui_components` root and prelude exports include the new types, and focused nextest checks pass.
 - The next Table maturity boundary is column groups and nested headers.
 - The plan is written at `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md`.
 - The chosen design keeps `TableColumn` as the behavioral leaf descriptor and adds a separate
@@ -35,8 +41,8 @@ related_plan: docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-heade
 
 # Next Action
 
-Implement U1: add column tree descriptors while keeping the existing flat `with_columns` API and
-leaf `columns()` projection stable.
+Implement U2: resolve renderer-neutral header groups from the normalized column tree and visible
+leaf regions.
 
 # Citations
 

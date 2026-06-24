@@ -5536,6 +5536,28 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         root::VirtualizerState::new(4, ui_px(24.0)).with_overscan(2);
     let root_plan: root::TableRenderPlan = table.state();
     let _root_region_plan: &root::TableColumnRegionRenderPlan = &root_plan.column_regions()[0];
+    let root_group_id = root::TableColumnGroupId::new("identity");
+    assert_eq!(root_group_id.as_str(), "identity");
+    let root_column_group = root::TableColumnGroup::new(
+        root_group_id.clone(),
+        "Identity",
+        [root::TableColumn::new("name", "Name")],
+    )
+    .with_child(root::TableColumn::new("team", "Team"));
+    let root_column_tree_state =
+        root::TableState::new([root::TableRow::new("row-a").with_cell("name", "Alpha")])
+            .with_column_tree([root_column_group.clone()]);
+    let _root_column_node: &root::TableColumnNode = &root_column_tree_state.column_tree()[0];
+    let _root_column_group: root::TableColumnGroup = root_column_group;
+    let prelude_group = prelude::TableColumnGroup::new(
+        prelude::TableColumnGroupId::new("status-group"),
+        "Status",
+        [prelude::TableColumn::new("status", "Status")],
+    );
+    let prelude_state =
+        prelude::TableState::new([prelude::TableRow::new("row-c").with_cell("status", "Ready")])
+            .with_column_tree([prelude::TableColumnNode::from(prelude_group)]);
+    assert_eq!(prelude_state.columns()[0].id().as_str(), "status");
     let root_pinned_state = root::TableState::new([root::TableRow::new("row-a")
         .with_cell("name", "Alpha")
         .with_cell("team", "UI")

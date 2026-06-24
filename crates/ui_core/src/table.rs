@@ -75,6 +75,34 @@ impl From<String> for TableColumnId {
     }
 }
 
+/// Stable renderer-neutral identity for a table column group header.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TableColumnGroupId(String);
+
+impl TableColumnGroupId {
+    /// Creates a column-group identity from a stable string.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// Returns the stable string value.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for TableColumnGroupId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for TableColumnGroupId {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
 /// Renderer-neutral scalar value used by table filtering and sorting.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TableCellValue {
@@ -347,6 +375,126 @@ impl TableColumn {
     pub fn resolved_width(&self, sizing: &TableColumnSizing) -> UiPx {
         let width = sizing.width(&self.id).unwrap_or(self.width);
         clamp_column_width(width, self.min_width, self.max_width)
+    }
+}
+
+/// One node in a renderer-neutral table column tree.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TableColumnNode {
+    /// Behavioral leaf column.
+    Column(TableColumn),
+    /// Visual group header with nested column nodes.
+    Group(TableColumnGroup),
+}
+
+impl TableColumnNode {
+    /// Creates a leaf column node.
+    pub fn column(column: TableColumn) -> Self {
+        Self::Column(column)
+    }
+
+    /// Creates a group node.
+    pub fn group(group: TableColumnGroup) -> Self {
+        Self::Group(group)
+    }
+
+    /// Returns the leaf column, when this node is a leaf.
+    pub const fn as_column(&self) -> Option<&TableColumn> {
+        match self {
+            Self::Column(column) => Some(column),
+            Self::Group(_) => None,
+        }
+    }
+
+    /// Returns the column group, when this node is a group.
+    pub const fn as_group(&self) -> Option<&TableColumnGroup> {
+        match self {
+            Self::Column(_) => None,
+            Self::Group(group) => Some(group),
+        }
+    }
+
+    /// Returns true when this node is a leaf column.
+    pub const fn is_column(&self) -> bool {
+        matches!(self, Self::Column(_))
+    }
+
+    /// Returns true when this node is a column group.
+    pub const fn is_group(&self) -> bool {
+        matches!(self, Self::Group(_))
+    }
+}
+
+impl From<TableColumn> for TableColumnNode {
+    fn from(value: TableColumn) -> Self {
+        Self::Column(value)
+    }
+}
+
+impl From<TableColumnGroup> for TableColumnNode {
+    fn from(value: TableColumnGroup) -> Self {
+        Self::Group(value)
+    }
+}
+
+/// Renderer-neutral column group descriptor used by nested table headers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableColumnGroup {
+    id: TableColumnGroupId,
+    label: String,
+    children: Vec<TableColumnNode>,
+}
+
+impl TableColumnGroup {
+    /// Creates a column group from stable id, label, and child column nodes.
+    pub fn new<N>(
+        id: impl Into<TableColumnGroupId>,
+        label: impl Into<String>,
+        children: impl IntoIterator<Item = N>,
+    ) -> Self
+    where
+        N: Into<TableColumnNode>,
+    {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            children: children.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    /// Returns the stable group identity.
+    pub const fn id(&self) -> &TableColumnGroupId {
+        &self.id
+    }
+
+    /// Returns the visible group label.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Returns child column-tree nodes.
+    pub fn children(&self) -> &[TableColumnNode] {
+        &self.children
+    }
+
+    /// Adds one child column-tree node.
+    pub fn with_child(mut self, child: impl Into<TableColumnNode>) -> Self {
+        self.children.push(child.into());
+        self
+    }
+
+    /// Adds child column-tree nodes.
+    pub fn with_children<N>(mut self, children: impl IntoIterator<Item = N>) -> Self
+    where
+        N: Into<TableColumnNode>,
+    {
+        self.children.extend(children.into_iter().map(Into::into));
+        self
+    }
+
+    fn with_normalized_children(mut self, children: Vec<TableColumnNode>) -> Self {
+        self.children = children;
+        self
     }
 }
 
@@ -2909,6 +3057,7 @@ pub const TABLE_ROW_MODEL_V0_PIPELINE: [TableRowModelStage; 5] = [
 /// Renderer-neutral input state for table row-model resolution.
 #[derive(Debug, Clone)]
 pub struct TableState {
+    column_tree: Vec<TableColumnNode>,
     columns: Vec<TableColumn>,
     column_order: Vec<TableColumnId>,
     column_visibility: TableColumnVisibilityOverrides,
@@ -2937,7 +3086,8 @@ pub struct TableState {
 
 impl PartialEq for TableState {
     fn eq(&self, other: &Self) -> bool {
-        self.columns == other.columns
+        self.column_tree == other.column_tree
+            && self.columns == other.columns
             && self.column_order == other.column_order
             && self.column_visibility == other.column_visibility
             && self.column_pinning == other.column_pinning
@@ -2969,6 +3119,7 @@ impl TableState {
         let rows = rows.into_iter().collect::<Vec<_>>();
 
         Self {
+            column_tree: Vec::new(),
             columns: Vec::new(),
             column_order: Vec::new(),
             column_visibility: TableColumnVisibilityOverrides::default(),
@@ -2998,7 +3149,21 @@ impl TableState {
 
     /// Applies column descriptors.
     pub fn with_columns(mut self, columns: impl IntoIterator<Item = TableColumn>) -> Self {
-        self.columns = columns.into_iter().collect();
+        let (column_tree, columns) =
+            normalize_table_column_tree(columns.into_iter().map(TableColumnNode::from));
+        self.column_tree = column_tree;
+        self.columns = columns;
+        self
+    }
+
+    /// Applies nested column-tree descriptors.
+    pub fn with_column_tree<N>(mut self, column_tree: impl IntoIterator<Item = N>) -> Self
+    where
+        N: Into<TableColumnNode>,
+    {
+        let (column_tree, columns) = normalize_table_column_tree(column_tree);
+        self.column_tree = column_tree;
+        self.columns = columns;
         self
     }
 
@@ -3259,6 +3424,11 @@ impl TableState {
         &self.columns
     }
 
+    /// Returns the normalized configured column tree.
+    pub fn column_tree(&self) -> &[TableColumnNode] {
+        &self.column_tree
+    }
+
     /// Returns explicit column order ids.
     pub fn column_order(&self) -> &[TableColumnId] {
         &self.column_order
@@ -3382,6 +3552,7 @@ impl TableState {
         TableStateCacheKey {
             rows_identity: self.rows_identity,
             row_count: count_table_rows(&self.rows),
+            column_tree: self.column_tree.clone(),
             columns: self.columns.clone(),
             column_order: self.column_order.clone(),
             column_visibility: self.column_visibility.clone(),
@@ -3687,6 +3858,7 @@ impl TableState {
 pub struct TableStateCacheKey {
     rows_identity: u64,
     row_count: usize,
+    column_tree: Vec<TableColumnNode>,
     columns: Vec<TableColumn>,
     column_order: Vec<TableColumnId>,
     column_visibility: TableColumnVisibilityOverrides,
@@ -3784,6 +3956,47 @@ fn unique_column_ids(
         .map(Into::into)
         .filter(|column| seen.insert(column.clone()))
         .collect()
+}
+
+fn normalize_table_column_tree<N>(
+    column_tree: impl IntoIterator<Item = N>,
+) -> (Vec<TableColumnNode>, Vec<TableColumn>)
+where
+    N: Into<TableColumnNode>,
+{
+    let mut seen = BTreeSet::new();
+    normalize_table_column_nodes(column_tree.into_iter().map(Into::into), &mut seen)
+}
+
+fn normalize_table_column_nodes(
+    column_tree: impl IntoIterator<Item = TableColumnNode>,
+    seen: &mut BTreeSet<TableColumnId>,
+) -> (Vec<TableColumnNode>, Vec<TableColumn>) {
+    let mut normalized_tree = Vec::new();
+    let mut leaf_columns = Vec::new();
+
+    for node in column_tree {
+        match node {
+            TableColumnNode::Column(column) => {
+                if seen.insert(column.id().clone()) {
+                    leaf_columns.push(column.clone());
+                    normalized_tree.push(TableColumnNode::Column(column));
+                }
+            }
+            TableColumnNode::Group(group) => {
+                let (children, leaves) =
+                    normalize_table_column_nodes(group.children().iter().cloned(), seen);
+                if !children.is_empty() {
+                    leaf_columns.extend(leaves);
+                    normalized_tree.push(TableColumnNode::Group(
+                        group.with_normalized_children(children),
+                    ));
+                }
+            }
+        }
+    }
+
+    (normalized_tree, leaf_columns)
 }
 
 fn unique_row_ids(rows: impl IntoIterator<Item = impl Into<TableRowId>>) -> Vec<TableRowId> {
@@ -5093,6 +5306,152 @@ mod tests {
             column.resolved_width(&unrelated),
             ui_px(120.0),
             "unknown committed sizing ids do not affect this column"
+        );
+    }
+
+    #[test]
+    fn flat_columns_project_to_a_flat_column_tree() {
+        let state = TableState::new(sample_rows()).with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+        ]);
+
+        assert_eq!(
+            state
+                .columns()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["name", "team"]
+        );
+        assert_eq!(
+            state
+                .visible_columns()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["name", "team"]
+        );
+        assert_eq!(state.column_tree().len(), 2);
+        assert!(state.column_tree().iter().all(TableColumnNode::is_column));
+        assert_eq!(
+            state.column_tree()[0]
+                .as_column()
+                .expect("flat tree should keep the first leaf")
+                .label(),
+            "Name"
+        );
+    }
+
+    #[test]
+    fn column_tree_projects_nested_leaves_and_prunes_duplicates() {
+        let state = TableState::new(sample_rows()).with_column_tree([
+            TableColumnNode::group(TableColumnGroup::new(
+                "identity",
+                "Identity",
+                [
+                    TableColumnNode::column(TableColumn::new("name", "Name")),
+                    TableColumnNode::group(TableColumnGroup::new(
+                        "metrics",
+                        "Metrics",
+                        [
+                            TableColumnNode::column(TableColumn::new("score", "Score")),
+                            TableColumnNode::column(TableColumn::new("score", "Duplicate score")),
+                        ],
+                    )),
+                ],
+            )),
+            TableColumnNode::column(TableColumn::new("team", "Team")),
+            TableColumnNode::group(TableColumnGroup::new(
+                "duplicate-only",
+                "Duplicate only",
+                [TableColumnNode::column(TableColumn::new(
+                    "name",
+                    "Duplicate name",
+                ))],
+            )),
+        ]);
+
+        assert_eq!(
+            state
+                .columns()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["name", "score", "team"],
+            "leaf projection follows first-seen tree order"
+        );
+        assert_eq!(
+            state
+                .visible_columns()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["name", "score", "team"],
+            "group ids do not become behavior columns"
+        );
+        assert_eq!(
+            state.column_tree().len(),
+            2,
+            "groups with no non-duplicate leaves are removed"
+        );
+
+        let identity = state.column_tree()[0]
+            .as_group()
+            .expect("first root node should remain a group");
+        assert_eq!(identity.id().as_str(), "identity");
+        assert_eq!(identity.label(), "Identity");
+        assert_eq!(identity.children().len(), 2);
+        assert_eq!(
+            identity.children()[0]
+                .as_column()
+                .expect("first group child should be a leaf")
+                .id()
+                .as_str(),
+            "name"
+        );
+
+        let metrics = identity.children()[1]
+            .as_group()
+            .expect("second group child should stay nested");
+        assert_eq!(metrics.id().as_str(), "metrics");
+        assert_eq!(metrics.label(), "Metrics");
+        assert_eq!(metrics.children().len(), 1);
+        assert_eq!(
+            metrics.children()[0]
+                .as_column()
+                .expect("duplicate metric leaf should be pruned")
+                .id()
+                .as_str(),
+            "score"
+        );
+    }
+
+    #[test]
+    fn column_tree_participates_in_table_cache_key() {
+        let base = TableState::new(sample_rows());
+        let flat = base.clone().with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+        ]);
+        let grouped = base.with_column_tree([TableColumnGroup::new(
+            "identity",
+            "Identity",
+            [
+                TableColumn::new("name", "Name"),
+                TableColumn::new("team", "Team"),
+            ],
+        )]);
+
+        assert_eq!(
+            flat.columns(),
+            grouped.columns(),
+            "grouped trees keep the same leaf-column contract"
+        );
+        assert_ne!(
+            flat.cache_key(),
+            grouped.cache_key(),
+            "tree shape invalidates header caches even when leaf columns match"
         );
     }
 
