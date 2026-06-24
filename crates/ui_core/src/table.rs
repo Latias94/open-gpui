@@ -1443,6 +1443,252 @@ impl Default for TableStageMode {
     }
 }
 
+/// Row-selection cardinality for a table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableSelectionMode {
+    /// Multiple rows may be selected at once.
+    #[default]
+    Multiple,
+    /// Exactly one row should be selected at a time.
+    Single,
+}
+
+impl TableSelectionMode {
+    /// Returns whether the table is single-select.
+    pub const fn is_single(self) -> bool {
+        matches!(self, Self::Single)
+    }
+
+    /// Returns whether the table permits multiple selected rows.
+    pub const fn is_multiple(self) -> bool {
+        matches!(self, Self::Multiple)
+    }
+}
+
+/// How row selection is triggered from the table surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableSelectionActivationMode {
+    /// Selection happens through explicit controls such as checkboxes or radios.
+    #[default]
+    ExplicitControl,
+    /// Clicking the row surface toggles selection.
+    RowClick,
+}
+
+impl TableSelectionActivationMode {
+    /// Returns whether row clicks toggle selection.
+    pub const fn is_row_click(self) -> bool {
+        matches!(self, Self::RowClick)
+    }
+}
+
+/// Whether selecting a row propagates to its descendants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableSubRowSelectionPolicy {
+    /// Child rows stay independent unless they are selected directly.
+    #[default]
+    Independent,
+    /// Selecting a row also selects all of its descendants.
+    Descendants,
+}
+
+impl TableSubRowSelectionPolicy {
+    /// Returns whether descendant rows are selected together with their parent.
+    pub const fn propagates_descendants(self) -> bool {
+        matches!(self, Self::Descendants)
+    }
+}
+
+/// Policy for resolving table row selection behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TableSelectionPolicy {
+    selection_mode: TableSelectionMode,
+    activation_mode: TableSelectionActivationMode,
+    sub_row_policy: TableSubRowSelectionPolicy,
+}
+
+impl TableSelectionPolicy {
+    /// Creates a selection policy from explicit mode choices.
+    pub const fn new(
+        selection_mode: TableSelectionMode,
+        activation_mode: TableSelectionActivationMode,
+        sub_row_policy: TableSubRowSelectionPolicy,
+    ) -> Self {
+        Self {
+            selection_mode,
+            activation_mode,
+            sub_row_policy,
+        }
+    }
+
+    /// Returns the selection cardinality.
+    pub const fn selection_mode(self) -> TableSelectionMode {
+        self.selection_mode
+    }
+
+    /// Returns how selection is triggered from the row surface.
+    pub const fn activation_mode(self) -> TableSelectionActivationMode {
+        self.activation_mode
+    }
+
+    /// Returns how selection propagates to descendant rows.
+    pub const fn sub_row_policy(self) -> TableSubRowSelectionPolicy {
+        self.sub_row_policy
+    }
+
+    /// Applies a selection cardinality.
+    pub const fn with_selection_mode(mut self, selection_mode: TableSelectionMode) -> Self {
+        self.selection_mode = selection_mode;
+        self
+    }
+
+    /// Applies a row-surface activation mode.
+    pub const fn with_activation_mode(
+        mut self,
+        activation_mode: TableSelectionActivationMode,
+    ) -> Self {
+        self.activation_mode = activation_mode;
+        self
+    }
+
+    /// Applies a descendant-selection policy.
+    pub const fn with_sub_row_policy(mut self, sub_row_policy: TableSubRowSelectionPolicy) -> Self {
+        self.sub_row_policy = sub_row_policy;
+        self
+    }
+
+    fn resolve_selected_rows(
+        self,
+        rows: &[TableRow],
+        selected_rows: &BTreeSet<TableRowId>,
+    ) -> BTreeSet<TableRowId> {
+        let mut resolved = self.normalize_selected_rows(selected_rows.iter().cloned());
+        if self.selection_mode.is_single() {
+            return resolved;
+        }
+        if self.sub_row_policy.propagates_descendants() {
+            collect_descendant_selected_rows(rows, selected_rows, &mut resolved);
+        }
+
+        resolved
+    }
+
+    fn normalize_selected_rows(
+        self,
+        selected_rows: impl IntoIterator<Item = impl Into<TableRowId>>,
+    ) -> BTreeSet<TableRowId> {
+        let selected_rows = selected_rows
+            .into_iter()
+            .map(Into::into)
+            .collect::<BTreeSet<_>>();
+        if self.selection_mode.is_single() {
+            return selected_rows.into_iter().next().into_iter().collect();
+        }
+
+        selected_rows
+    }
+}
+
+impl Default for TableSelectionPolicy {
+    fn default() -> Self {
+        Self::new(
+            TableSelectionMode::Multiple,
+            TableSelectionActivationMode::ExplicitControl,
+            TableSubRowSelectionPolicy::Independent,
+        )
+    }
+}
+
+/// The resolved state for one table-selection summary scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableSelectionSummaryState {
+    /// No rows in the scope are selected.
+    None,
+    /// Some but not all rows in the scope are selected.
+    Some,
+    /// Every row in the scope is selected.
+    All,
+}
+
+impl TableSelectionSummaryState {
+    /// Returns a stable label for the summary state.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Some => "some",
+            Self::All => "all",
+        }
+    }
+
+    /// Returns whether the scope has no selected rows.
+    pub const fn is_none(self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    /// Returns whether the scope has some but not all selected rows.
+    pub const fn is_some(self) -> bool {
+        matches!(self, Self::Some)
+    }
+
+    /// Returns whether the scope has every row selected.
+    pub const fn is_all(self) -> bool {
+        matches!(self, Self::All)
+    }
+}
+
+/// Summary of selection across one resolved row-model scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TableSelectionSummary {
+    selected_count: usize,
+    total_count: usize,
+}
+
+impl TableSelectionSummary {
+    /// Creates a selection summary from explicit counts.
+    pub const fn new(selected_count: usize, total_count: usize) -> Self {
+        Self {
+            selected_count,
+            total_count,
+        }
+    }
+
+    /// Returns the number of selected rows in the scope.
+    pub const fn selected_count(self) -> usize {
+        self.selected_count
+    }
+
+    /// Returns the total number of rows in the scope.
+    pub const fn total_count(self) -> usize {
+        self.total_count
+    }
+
+    /// Returns the resolved state for the summary.
+    pub const fn state(self) -> TableSelectionSummaryState {
+        if self.total_count == 0 || self.selected_count == 0 {
+            TableSelectionSummaryState::None
+        } else if self.selected_count == self.total_count {
+            TableSelectionSummaryState::All
+        } else {
+            TableSelectionSummaryState::Some
+        }
+    }
+
+    /// Returns whether the scope has no selected rows.
+    pub const fn is_none_selected(self) -> bool {
+        self.state().is_none()
+    }
+
+    /// Returns whether the scope has some but not all selected rows.
+    pub const fn is_some_selected(self) -> bool {
+        self.state().is_some()
+    }
+
+    /// Returns whether the scope has every row selected.
+    pub const fn is_all_selected(self) -> bool {
+        self.state().is_all()
+    }
+}
+
 /// Pagination state for a table row model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TablePagination {
@@ -2025,6 +2271,7 @@ pub struct TableState {
     aggregation_fns: BTreeMap<String, TableAggregationFn>,
     expansion: TableExpansionState,
     expansion_mode: TableExpansionMode,
+    selection_policy: TableSelectionPolicy,
     selected_rows: BTreeSet<TableRowId>,
     pagination: TablePagination,
 }
@@ -2049,6 +2296,7 @@ impl PartialEq for TableState {
             && self.aggregation_fns == other.aggregation_fns
             && self.expansion == other.expansion
             && self.expansion_mode == other.expansion_mode
+            && self.selection_policy == other.selection_policy
             && self.selected_rows == other.selected_rows
             && self.pagination == other.pagination
     }
@@ -2079,6 +2327,7 @@ impl TableState {
             aggregation_fns: BTreeMap::new(),
             expansion: TableExpansionState::default(),
             expansion_mode: TableExpansionMode::default(),
+            selection_policy: TableSelectionPolicy::default(),
             selected_rows: BTreeSet::new(),
             pagination: TablePagination::default(),
         }
@@ -2258,12 +2507,51 @@ impl TableState {
         self
     }
 
+    /// Applies the row-selection policy.
+    pub fn with_selection_policy(mut self, selection_policy: TableSelectionPolicy) -> Self {
+        self.selection_policy = selection_policy;
+        self.selected_rows = self
+            .selection_policy
+            .normalize_selected_rows(self.selected_rows.iter().cloned());
+        self
+    }
+
+    /// Applies the selection cardinality.
+    pub fn with_selection_mode(mut self, selection_mode: TableSelectionMode) -> Self {
+        self.selection_policy = self.selection_policy.with_selection_mode(selection_mode);
+        self.selected_rows = self
+            .selection_policy
+            .normalize_selected_rows(self.selected_rows.iter().cloned());
+        self
+    }
+
+    /// Applies the selection activation mode.
+    pub const fn with_selection_activation_mode(
+        mut self,
+        activation_mode: TableSelectionActivationMode,
+    ) -> Self {
+        self.selection_policy = self.selection_policy.with_activation_mode(activation_mode);
+        self
+    }
+
+    /// Applies the sub-row selection policy.
+    pub fn with_sub_row_selection_policy(
+        mut self,
+        sub_row_policy: TableSubRowSelectionPolicy,
+    ) -> Self {
+        self.selection_policy = self.selection_policy.with_sub_row_policy(sub_row_policy);
+        self.selected_rows = self
+            .selection_policy
+            .normalize_selected_rows(self.selected_rows.iter().cloned());
+        self
+    }
+
     /// Applies selected row ids.
     pub fn with_selected_rows(
         mut self,
         selected_rows: impl IntoIterator<Item = impl Into<TableRowId>>,
     ) -> Self {
-        self.selected_rows = selected_rows.into_iter().map(Into::into).collect();
+        self.selected_rows = self.selection_policy.normalize_selected_rows(selected_rows);
         self
     }
 
@@ -2363,6 +2651,11 @@ impl TableState {
         self.expansion_mode
     }
 
+    /// Returns the selection policy.
+    pub const fn selection_policy(&self) -> TableSelectionPolicy {
+        self.selection_policy
+    }
+
     /// Returns selected row ids.
     pub const fn selected_rows(&self) -> &BTreeSet<TableRowId> {
         &self.selected_rows
@@ -2398,6 +2691,7 @@ impl TableState {
             aggregation_fns: self.aggregation_fns.clone(),
             expansion: self.expansion.clone(),
             expansion_mode: self.expansion_mode,
+            selection_policy: self.selection_policy,
             selected_rows: self.selected_rows.clone(),
             pagination: self.pagination,
         }
@@ -2446,10 +2740,13 @@ impl TableState {
         let mut seen_row_ids = BTreeSet::new();
         record_source_row_ids(&self.rows, &mut seen_row_ids, &mut duplicate_row_ids);
         let include_source_children = self.grouping.is_empty();
+        let selected_rows = self
+            .selection_policy
+            .resolve_selected_rows(&self.rows, &self.selected_rows);
         let mut source_index = 0;
         let source_nodes = build_source_row_nodes(
             &self.rows,
-            &self.selected_rows,
+            &selected_rows,
             &self.expansion,
             include_source_children,
             None,
@@ -2530,6 +2827,7 @@ impl TableState {
             expanded_model,
             paginated_model,
             final_model,
+            selection_policy: self.selection_policy,
         }
     }
 
@@ -2648,6 +2946,7 @@ pub struct TableStateCacheKey {
     aggregation_fns: BTreeMap<String, TableAggregationFn>,
     expansion: TableExpansionState,
     expansion_mode: TableExpansionMode,
+    selection_policy: TableSelectionPolicy,
     selected_rows: BTreeSet<TableRowId>,
     pagination: TablePagination,
 }
@@ -2672,6 +2971,28 @@ fn count_table_rows(rows: &[TableRow]) -> usize {
     rows.iter()
         .map(|row| 1 + count_table_rows(row.children()))
         .sum()
+}
+
+fn collect_descendant_selected_rows(
+    rows: &[TableRow],
+    selected_rows: &BTreeSet<TableRowId>,
+    resolved: &mut BTreeSet<TableRowId>,
+) {
+    for row in rows {
+        if selected_rows.contains(row.id()) {
+            collect_all_descendant_rows(row.children(), resolved);
+            continue;
+        }
+
+        collect_descendant_selected_rows(row.children(), selected_rows, resolved);
+    }
+}
+
+fn collect_all_descendant_rows(rows: &[TableRow], resolved: &mut BTreeSet<TableRowId>) {
+    for row in rows {
+        resolved.insert(row.id().clone());
+        collect_all_descendant_rows(row.children(), resolved);
+    }
 }
 
 fn record_source_row_ids(
@@ -3209,6 +3530,7 @@ pub struct TableResolvedState {
     faceting_mode: TableStageMode,
     column_facets: Vec<TableColumnFacets>,
     row_pinning_policy: TableRowPinningPolicy,
+    selection_policy: TableSelectionPolicy,
     row_regions: TableRowRegions,
     core_model: TableRowModel,
     filtered_model: TableRowModel,
@@ -3255,6 +3577,11 @@ impl TableResolvedState {
     /// Returns the pinned row visibility policy.
     pub const fn row_pinning_policy(&self) -> TableRowPinningPolicy {
         self.row_pinning_policy
+    }
+
+    /// Returns the row-selection policy.
+    pub const fn selection_policy(&self) -> TableSelectionPolicy {
+        self.selection_policy
     }
 
     /// Returns resolved row metadata for pinned and center regions.
@@ -3315,6 +3642,72 @@ impl TableResolvedState {
     /// Returns the final row model consumed by renderers.
     pub const fn final_model(&self) -> &TableRowModel {
         &self.final_model
+    }
+
+    /// Returns the selection summary for the core row model.
+    pub fn core_selection_summary(&self) -> TableSelectionSummary {
+        TableSelectionSummary::new(
+            self.core_model.selected_count(),
+            self.core_model.rows().len(),
+        )
+    }
+
+    /// Returns the selection summary for the filtered row model.
+    pub fn filtered_selection_summary(&self) -> TableSelectionSummary {
+        TableSelectionSummary::new(
+            self.filtered_model.selected_count(),
+            self.filtered_model.rows().len(),
+        )
+    }
+
+    /// Returns the selection summary for the grouped row model.
+    pub fn grouped_selection_summary(&self) -> TableSelectionSummary {
+        TableSelectionSummary::new(
+            self.grouped_model.selected_count(),
+            self.grouped_model.rows().len(),
+        )
+    }
+
+    /// Returns the selection summary for the sorted row model.
+    pub fn sorted_selection_summary(&self) -> TableSelectionSummary {
+        TableSelectionSummary::new(
+            self.sorted_model.selected_count(),
+            self.sorted_model.rows().len(),
+        )
+    }
+
+    /// Returns the selection summary for the expanded row model.
+    pub fn expanded_selection_summary(&self) -> TableSelectionSummary {
+        TableSelectionSummary::new(
+            self.expanded_model.selected_count(),
+            self.expanded_model.rows().len(),
+        )
+    }
+
+    /// Returns the selection summary for the full resolved model before pagination.
+    pub fn full_selection_summary(&self) -> TableSelectionSummary {
+        self.core_selection_summary()
+    }
+
+    /// Returns the selection summary for the paginated row model.
+    pub fn paginated_selection_summary(&self) -> TableSelectionSummary {
+        TableSelectionSummary::new(
+            self.paginated_model.selected_count(),
+            self.paginated_model.rows().len(),
+        )
+    }
+
+    /// Returns the selection summary for the current page scope.
+    pub fn current_page_selection_summary(&self) -> TableSelectionSummary {
+        self.final_selection_summary()
+    }
+
+    /// Returns the selection summary for the final row model.
+    pub fn final_selection_summary(&self) -> TableSelectionSummary {
+        TableSelectionSummary::new(
+            self.final_model.selected_count(),
+            self.final_model.rows().len(),
+        )
     }
 }
 
@@ -4292,6 +4685,85 @@ mod tests {
             row_ids(resolved.final_model().rows()),
             ["row-a", "row-b", "row-c"]
         );
+    }
+
+    #[test]
+    fn selection_policy_single_keeps_only_one_selected_row() {
+        let state = TableState::new(sample_rows())
+            .with_selection_mode(TableSelectionMode::Single)
+            .with_selected_rows(["row-a", "row-c"]);
+
+        assert_eq!(
+            state
+                .selected_rows()
+                .iter()
+                .map(TableRowId::as_str)
+                .collect::<Vec<_>>(),
+            ["row-a"]
+        );
+        assert_eq!(
+            state.selection_policy().selection_mode(),
+            TableSelectionMode::Single
+        );
+    }
+
+    #[test]
+    fn selection_policy_descendants_propagates_to_tree_children() {
+        let resolved = TableState::new(tree_rows())
+            .with_selection_policy(
+                TableSelectionPolicy::default()
+                    .with_sub_row_policy(TableSubRowSelectionPolicy::Descendants),
+            )
+            .with_all_rows_expanded()
+            .with_selected_rows(["pkg"])
+            .resolve();
+
+        let selected_ids = resolved
+            .core_model()
+            .rows()
+            .iter()
+            .filter(|row| row.selected())
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(selected_ids, ["pkg", "pkg-ui", "pkg-core", "pkg-core-test"]);
+        assert_eq!(resolved.core_selection_summary().selected_count(), 4);
+        assert!(resolved.core_selection_summary().is_some_selected());
+        assert_eq!(resolved.final_selection_summary().selected_count(), 4);
+    }
+
+    #[test]
+    fn selection_summaries_report_all_some_and_none() {
+        let all = TableState::new(sample_rows())
+            .with_selected_rows(["row-a", "row-b", "row-c"])
+            .resolve();
+        let some = TableState::new(sample_rows())
+            .with_selected_rows(["row-a"])
+            .resolve();
+        let none = TableState::new(sample_rows()).resolve();
+
+        assert!(all.final_selection_summary().is_all_selected());
+        assert_eq!(all.final_selection_summary().state().as_str(), "all");
+        assert!(some.final_selection_summary().is_some_selected());
+        assert_eq!(some.final_selection_summary().state().as_str(), "some");
+        assert!(none.final_selection_summary().is_none_selected());
+        assert_eq!(none.final_selection_summary().state().as_str(), "none");
+    }
+
+    #[test]
+    fn full_and_current_page_selection_summaries_use_different_scopes() {
+        let resolved = TableState::new(sample_rows())
+            .with_selected_rows(["row-c"])
+            .with_pagination(TablePagination::new(0, 1))
+            .resolve();
+
+        assert_eq!(resolved.full_selection_summary().selected_count(), 1);
+        assert_eq!(
+            resolved.current_page_selection_summary().selected_count(),
+            0
+        );
+        assert!(resolved.full_selection_summary().is_some_selected());
+        assert!(resolved.current_page_selection_summary().is_none_selected());
     }
 
     #[test]

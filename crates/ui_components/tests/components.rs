@@ -24,9 +24,10 @@ use open_gpui_ui_components::{
     TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
     TableColumnSizingChange, TableExpansionMode, TableFacetValueCount, TableFilter,
     TableHeaderAction, TablePagination, TableRow, TableRowChildrenLoadState, TableRowPinning,
-    TableRowPinningPolicy, TableRowRegion, TableSort, TableSortDirection, TableStageMode,
-    TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState,
-    TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
+    TableRowPinningPolicy, TableRowRegion, TableSelectionActivationMode, TableSelectionMode,
+    TableSelectionScope, TableSort, TableSortDirection, TableStageMode, TableState, Tabs,
+    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput,
+    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
     ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
     TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
     VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
@@ -474,6 +475,10 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             CallbackApi {
                 name: "on_row_activate",
                 payload: "TableRowActivation",
+            },
+            CallbackApi {
+                name: "on_row_selection_change",
+                payload: "TableRowSelectionChange",
             },
             CallbackApi {
                 name: "on_row_expansion_request",
@@ -1215,6 +1220,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "column_resize_mode",
             "column_resize_direction",
             "on_column_sizing_change",
+            "on_row_selection_change",
             "on_row_activate",
             "on_row_expansion_request",
             "table_state",
@@ -4704,6 +4710,149 @@ fn table_runtime_row_click_and_tree_toggle_emit_controlled_payloads(
 }
 
 #[open_gpui::test]
+fn table_runtime_row_click_selection_is_controlled_and_preserves_activation(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    type ActivationLog = Vec<String>;
+    type SelectionLog = Vec<(
+        String,
+        bool,
+        TableSelectionMode,
+        TableSelectionScope,
+        Vec<String>,
+    )>;
+
+    struct TestView {
+        activations: Rc<RefCell<ActivationLog>>,
+        selections: Rc<RefCell<SelectionLog>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let activations = self.activations.clone();
+            let selections = self.selections.clone();
+            let state = TableState::new([
+                TableRow::new("row-a")
+                    .with_cell("name", "Alpha")
+                    .with_cell("status", "Ready"),
+                TableRow::new("row-b")
+                    .with_cell("name", "Beta")
+                    .with_cell("status", "Blocked"),
+            ])
+            .with_columns([
+                TableColumn::new("name", "Name").with_width(ui_px(180.0)),
+                TableColumn::new("status", "Status").with_width(ui_px(120.0)),
+            ])
+            .with_pagination(TablePagination::disabled())
+            .with_selection_mode(TableSelectionMode::Multiple)
+            .with_selection_activation_mode(TableSelectionActivationMode::RowClick)
+            .with_selected_rows(["row-a"]);
+            let table = Table::new("selection-runtime-table", "Selection runtime", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .on_row_selection_change(move |change, _, _| {
+                    selections.borrow_mut().push((
+                        change.row_id().as_str().to_owned(),
+                        change.selected(),
+                        change.selection_mode(),
+                        change.scope(),
+                        change
+                            .current_selection()
+                            .iter()
+                            .map(|row_id| row_id.as_str().to_owned())
+                            .collect(),
+                    ));
+                })
+                .on_row_activate(move |activation, _, _| {
+                    activations
+                        .borrow_mut()
+                        .push(activation.row_id().as_str().to_owned());
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        activations: activations.clone(),
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let row = cx
+        .debug_bounds("table:selection-runtime-table:row:row-a")
+        .expect("selected row should render");
+    cx.simulate_click(row.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(activations.borrow().as_slice(), ["row-a"]);
+    assert_eq!(
+        selections.borrow().as_slice(),
+        &[(
+            "row-a".to_owned(),
+            false,
+            TableSelectionMode::Multiple,
+            TableSelectionScope::Row,
+            Vec::<String>::new(),
+        )],
+        "row-click selection should emit the next selected-row ids without swallowing activation"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_explicit_control_selection_ignores_row_click(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+            let state = sample_table_state(4)
+                .with_selection_activation_mode(TableSelectionActivationMode::ExplicitControl)
+                .with_selected_rows(["row-0001"]);
+            let table = Table::new("explicit-selection-table", "Explicit selection", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .on_row_selection_change(move |change, _, _| {
+                    selections
+                        .borrow_mut()
+                        .push(change.row_id().as_str().to_owned());
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let row = cx
+        .debug_bounds("table:explicit-selection-table:row:row-0001")
+        .expect("selected row should render");
+    cx.simulate_click(row.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        selections.borrow().is_empty(),
+        "explicit-control selection should wait for checkbox/radio chrome instead of row clicks"
+    );
+}
+
+#[open_gpui::test]
 fn table_runtime_unloaded_branch_toggle_emits_child_load_metadata(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -7574,6 +7723,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_open_change",
         "on_query_change",
         "on_row_activate",
+        "on_row_selection_change",
         "on_row_expansion_request",
         "on_select",
         "on_selected_values_change",
@@ -7697,6 +7847,11 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
     assert_inventory_contains_default_seed("ContextMenu", "default_focused_value", "focused_value");
     assert_inventory_contains_default_seed("Table", "default_focused_row", "focused_row");
     assert_inventory_contains_callback("Table", "on_row_activate", "TableRowActivation");
+    assert_inventory_contains_callback(
+        "Table",
+        "on_row_selection_change",
+        "TableRowSelectionChange",
+    );
     assert_inventory_contains_callback(
         "Table",
         "on_row_expansion_request",

@@ -33,8 +33,10 @@ pub use crate::{
         TablePagination, TableResolvedColumnSizing, TableResolvedColumnSizingRegions,
         TableResolvedRow, TableResolvedRowKind, TableResolvedState, TableRow, TableRowId,
         TableRowModel, TableRowModelStage, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
-        TableRowRegions, TableSort, TableSortDirection, TableStageMode, TableState,
-        TableStateCacheKey, drag_table_column_resize, end_table_column_resize,
+        TableRowRegions, TableSelectionActivationMode, TableSelectionMode, TableSelectionPolicy,
+        TableSelectionSummary, TableSelectionSummaryState, TableSort, TableSortDirection,
+        TableStageMode, TableState, TableStateCacheKey, TableSubRowSelectionPolicy,
+        drag_table_column_resize, end_table_column_resize,
     },
     tokens::{ThemeTokens, TokenKey, semantic},
     virtualizer::{

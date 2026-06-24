@@ -83,7 +83,8 @@ pub use crate::table::{
     Table, TableCellRenderPlan, TableCenterColumnWindowPlan, TableColumnRegionRenderPlan,
     TableColumnRenderPlan, TableColumnSizingChange, TableHeaderAction, TableInputModifiers,
     TableMetrics, TablePinnedLayoutPlan, TableRenderPlan, TableRowAction, TableRowActivation,
-    TableRowActivationKind, TableRowExpansionToggle, TableRowRenderPlan,
+    TableRowActivationKind, TableRowExpansionToggle, TableRowRenderPlan, TableRowSelectionChange,
+    TableSelectionScope,
 };
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
@@ -121,8 +122,10 @@ pub use open_gpui_ui_core::{
     TableResolvedColumnSizing, TableResolvedColumnSizingRegions, TableResolvedRow,
     TableResolvedRowKind, TableResolvedState, TableRow, TableRowChildrenLoadState, TableRowId,
     TableRowModel, TableRowModelStage, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
-    TableRowRegions, TableSort, TableSortDirection, TableStageMode, TableState, TableStateCacheKey,
-    TableTreeRow, ThemeTokens, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
+    TableRowRegions, TableSelectionActivationMode, TableSelectionMode, TableSelectionPolicy,
+    TableSelectionSummary, TableSelectionSummaryState, TableSort, TableSortDirection,
+    TableStageMode, TableState, TableStateCacheKey, TableSubRowSelectionPolicy, TableTreeRow,
+    ThemeTokens, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
     VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
     drag_table_column_resize, end_table_column_resize, resolve_grid_viewport_2d,
 };

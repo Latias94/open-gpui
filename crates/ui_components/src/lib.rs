@@ -128,6 +128,10 @@ pub use open_gpui_ui_core::{
     VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
     drag_table_column_resize, end_table_column_resize, resolve_grid_viewport_2d,
 };
+pub use open_gpui_ui_core::{
+    TableSelectionActivationMode, TableSelectionMode, TableSelectionPolicy, TableSelectionSummary,
+    TableSelectionSummaryState, TableSubRowSelectionPolicy,
+};
 pub use overlay::OverlayResolvedState;
 pub use popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
 pub use progress::{Progress, ProgressColors, ProgressMetrics, ProgressState, ProgressVisualMode};
@@ -163,7 +167,8 @@ pub use table::{
     Table, TableCellRenderPlan, TableCenterColumnWindowPlan, TableColumnRegionRenderPlan,
     TableColumnRenderPlan, TableColumnSizingChange, TableHeaderAction, TableInputModifiers,
     TableMetrics, TablePinnedLayoutPlan, TableRenderPlan, TableRowAction, TableRowActivation,
-    TableRowActivationKind, TableRowExpansionToggle, TableRowRenderPlan,
+    TableRowActivationKind, TableRowExpansionToggle, TableRowRenderPlan, TableRowSelectionChange,
+    TableSelectionScope,
 };
 pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

@@ -15,10 +15,11 @@ use open_gpui_ui_core::{
     TableColumnId, TableColumnRegion, TableColumnResizeDirection, TableColumnResizeMode,
     TableColumnResizeState, TableColumnSizing, TableExpansionMode, TableExpansionState,
     TableResolvedColumnSizing, TableResolvedRow, TableResolvedState, TableRowChildrenLoadState,
-    TableRowId, TableRowRegion, TableSort, TableSortDirection, TableStageMode, TableState,
-    TableStateCacheKey, TableTreeRow, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
-    VirtualizerRange, VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState,
-    drag_table_column_resize, end_table_column_resize, ui_px,
+    TableRowId, TableRowRegion, TableSelectionMode, TableSelectionPolicy, TableSelectionSummary,
+    TableSort, TableSortDirection, TableStageMode, TableState, TableStateCacheKey, TableTreeRow,
+    UiPx, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
+    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState, drag_table_column_resize,
+    end_table_column_resize, ui_px,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -27,6 +28,7 @@ type TableSortHandler = Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>;
 type TableColumnSizingHandler = Rc<dyn Fn(TableColumnSizingChange, &mut Window, &mut App)>;
 type TableRowActivationHandler = Rc<dyn Fn(TableRowActivation, &mut Window, &mut App)>;
 type TableRowExpansionHandler = Rc<dyn Fn(TableRowExpansionToggle, &mut Window, &mut App)>;
+type TableRowSelectionHandler = Rc<dyn Fn(TableRowSelectionChange, &mut Window, &mut App)>;
 
 /// Resolved table sizing and virtualization metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -800,6 +802,145 @@ impl TableRowExpansionToggle {
     }
 }
 
+/// Selection scope used by table selection requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableSelectionScope {
+    /// Only the current row changes.
+    #[default]
+    Row,
+    /// Every selectable row in the model changes.
+    AllRows,
+    /// Every selectable row in the current page changes.
+    PageRows,
+}
+
+impl TableSelectionScope {
+    /// Returns a stable label for the scope.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Row => "row",
+            Self::AllRows => "all-rows",
+            Self::PageRows => "page-rows",
+        }
+    }
+}
+
+/// Controlled payload emitted when a table row selection changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableRowSelectionChange {
+    action: TableRowAction,
+    selection_mode: TableSelectionMode,
+    selected: bool,
+    scope: TableSelectionScope,
+    current_selection: Vec<TableRowId>,
+}
+
+impl TableRowSelectionChange {
+    fn new(
+        action: TableRowAction,
+        selection_mode: TableSelectionMode,
+        selected: bool,
+        scope: TableSelectionScope,
+        current_selection: impl IntoIterator<Item = impl Into<TableRowId>>,
+    ) -> Self {
+        Self {
+            action,
+            selection_mode,
+            selected,
+            scope,
+            current_selection: current_selection.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    /// Returns common row metadata.
+    pub const fn action(&self) -> &TableRowAction {
+        &self.action
+    }
+
+    /// Returns the row id whose selection changed.
+    pub const fn row_id(&self) -> &TableRowId {
+        self.action.row_id()
+    }
+
+    /// Returns the selection mode used for this row surface.
+    pub const fn selection_mode(&self) -> TableSelectionMode {
+        self.selection_mode
+    }
+
+    /// Returns whether the row is selected after the change.
+    pub const fn selected(&self) -> bool {
+        self.selected
+    }
+
+    /// Returns the requested selection scope.
+    pub const fn scope(&self) -> TableSelectionScope {
+        self.scope
+    }
+
+    /// Returns the current selected row ids after the change.
+    pub fn current_selection(&self) -> &[TableRowId] {
+        &self.current_selection
+    }
+}
+
+fn request_table_row_selection_change(
+    runtime: &Entity<TableRuntime>,
+    action: &TableRowAction,
+    selection_policy: TableSelectionPolicy,
+    scope: TableSelectionScope,
+    selected_row_ids: Rc<Vec<TableRowId>>,
+    on_row_selection_change: Option<TableRowSelectionHandler>,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    let current_selected = action.selected();
+    let selection_mode = selection_policy.selection_mode();
+    let next_selection = if selection_mode.is_single() {
+        true
+    } else {
+        !current_selected
+    };
+
+    if selection_mode.is_single() && current_selected {
+        return false;
+    }
+
+    let next_selection_ids = if next_selection {
+        if selection_mode.is_single() {
+            vec![action.row_id().clone()]
+        } else {
+            let mut next_selection_ids = selected_row_ids.as_ref().clone();
+            next_selection_ids.push(action.row_id().clone());
+            next_selection_ids
+        }
+    } else {
+        selected_row_ids
+            .iter()
+            .filter(|row_id| *row_id != action.row_id())
+            .cloned()
+            .collect()
+    };
+
+    let change = TableRowSelectionChange::new(
+        action.clone(),
+        selection_mode,
+        next_selection,
+        scope,
+        next_selection_ids,
+    );
+
+    runtime.update(cx, |runtime, cx| {
+        runtime.set_selection_anchor(Some(action.row_id().clone()), cx);
+    });
+
+    if let Some(on_row_selection_change) = on_row_selection_change.as_ref() {
+        on_row_selection_change(change, window, cx);
+        return true;
+    }
+
+    false
+}
+
 /// One resolved table cell in render order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableCellRenderPlan {
@@ -1009,6 +1150,8 @@ pub struct TableRenderPlan {
     pagination_row_count: Option<usize>,
     pagination_page_count: Option<usize>,
     faceting_mode: TableStageMode,
+    selection_policy: TableSelectionPolicy,
+    selection_summary: TableSelectionSummary,
     aggregation_fn_count: usize,
     top_rows: Vec<TableRowRenderPlan>,
     rows: Vec<TableRowRenderPlan>,
@@ -1080,6 +1223,7 @@ impl TableRenderPlan {
             top_row_count + center_total_row_count,
         );
         let pagination = state.pagination();
+        let selection_summary = table.final_selection_summary();
 
         Self {
             table_id,
@@ -1099,6 +1243,8 @@ impl TableRenderPlan {
             pagination_row_count: pagination.row_count(),
             pagination_page_count: pagination.page_count(),
             faceting_mode: state.faceting_mode(),
+            selection_policy: state.selection_policy(),
+            selection_summary,
             aggregation_fn_count: state.aggregation_fn_count(),
             top_rows,
             rows,
@@ -1158,6 +1304,16 @@ impl TableRenderPlan {
     /// Returns whether faceting was resolved locally or supplied by the caller.
     pub const fn faceting_mode(&self) -> TableStageMode {
         self.faceting_mode
+    }
+
+    /// Returns the row-selection policy.
+    pub const fn selection_policy(&self) -> TableSelectionPolicy {
+        self.selection_policy
+    }
+
+    /// Returns the final row-model selection summary.
+    pub const fn selection_summary(&self) -> TableSelectionSummary {
+        self.selection_summary
     }
 
     /// Returns the number of named custom aggregation callbacks registered on the table state.
@@ -1361,6 +1517,7 @@ struct TableRuntime {
     focused_row: Option<TableRowId>,
     focus_handles: BTreeMap<TableRowId, FocusHandle>,
     expansion_override: Option<TableExpansionState>,
+    selection_anchor: Option<TableRowId>,
 }
 
 impl TableRuntime {
@@ -1396,6 +1553,13 @@ impl TableRuntime {
         if self.expansion_override.as_ref() != Some(&expansion) {
             self.expansion_override = Some(expansion);
             self.resolved = None;
+            cx.notify();
+        }
+    }
+
+    fn set_selection_anchor(&mut self, row_id: Option<TableRowId>, cx: &mut Context<Self>) {
+        if self.selection_anchor != row_id {
+            self.selection_anchor = row_id;
             cx.notify();
         }
     }
@@ -1437,6 +1601,7 @@ pub struct Table {
     column_resize_mode: TableColumnResizeMode,
     column_resize_direction: TableColumnResizeDirection,
     on_column_sizing_change: Option<TableColumnSizingHandler>,
+    on_row_selection_change: Option<TableRowSelectionHandler>,
     on_row_activate: Option<TableRowActivationHandler>,
     on_row_expansion_request: Option<TableRowExpansionHandler>,
 }
@@ -1456,6 +1621,7 @@ impl Table {
             column_resize_mode: TableColumnResizeMode::default(),
             column_resize_direction: TableColumnResizeDirection::default(),
             on_column_sizing_change: None,
+            on_row_selection_change: None,
             on_row_activate: None,
             on_row_expansion_request: None,
         }
@@ -1551,6 +1717,15 @@ impl Table {
         handler: impl Fn(TableColumnSizingChange, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_column_sizing_change = Some(Rc::new(handler));
+        self
+    }
+
+    /// Registers a handler for controlled row selection changes.
+    pub fn on_row_selection_change(
+        mut self,
+        handler: impl Fn(TableRowSelectionChange, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_row_selection_change = Some(Rc::new(handler));
         self
     }
 
@@ -1789,6 +1964,7 @@ impl RenderOnce for Table {
             focused_row: default_focused_row,
             focus_handles: BTreeMap::new(),
             expansion_override: None,
+            selection_anchor: None,
         });
         let scroll_handle = runtime.read(cx).scroll_handle.clone();
         let horizontal_scroll_handle = runtime.read(cx).horizontal_scroll_handle.clone();
@@ -1827,7 +2003,18 @@ impl RenderOnce for Table {
         let label = plan.label().to_owned();
         let metrics = plan.metrics();
         let scroll_viewport_id = format!("table:{table_id}:body-scroll");
+        let selection_policy = plan.selection_policy();
+        let selected_row_ids = Rc::new(
+            plan.table()
+                .core_model()
+                .rows()
+                .iter()
+                .filter(|row| row.selected())
+                .map(|row| row.id().clone())
+                .collect::<Vec<_>>(),
+        );
         let on_row_activate = self.on_row_activate.clone();
+        let on_row_selection_change = self.on_row_selection_change.clone();
         let on_row_expansion_request = self.on_row_expansion_request.clone();
 
         div()
@@ -1887,6 +2074,9 @@ impl RenderOnce for Table {
                 runtime.clone(),
                 runtime_snapshot,
                 current_expansion,
+                selection_policy,
+                selected_row_ids,
+                on_row_selection_change,
                 on_row_activate,
                 on_row_expansion_request,
             ))
@@ -2315,6 +2505,9 @@ fn render_table_body(
     runtime: Entity<TableRuntime>,
     runtime_snapshot: TableRuntime,
     current_expansion: TableExpansionState,
+    selection_policy: TableSelectionPolicy,
+    selected_row_ids: Rc<Vec<TableRowId>>,
+    on_row_selection_change: Option<TableRowSelectionHandler>,
     on_row_activate: Option<TableRowActivationHandler>,
     on_row_expansion_request: Option<TableRowExpansionHandler>,
 ) -> impl IntoElement {
@@ -2359,6 +2552,9 @@ fn render_table_body(
                 top_row_count,
                 center_total_row_count,
                 current_expansion.clone(),
+                selection_policy,
+                selected_row_ids.clone(),
+                on_row_selection_change.clone(),
                 on_row_activate.clone(),
                 on_row_expansion_request.clone(),
             ))
@@ -2383,6 +2579,9 @@ fn render_table_body(
                         top_row_count,
                         center_total_row_count,
                         current_expansion.clone(),
+                        selection_policy,
+                        selected_row_ids.clone(),
+                        on_row_selection_change.clone(),
                         on_row_activate.clone(),
                         on_row_expansion_request.clone(),
                     ),
@@ -2409,6 +2608,9 @@ fn render_table_body(
                 top_row_count,
                 center_total_row_count,
                 current_expansion,
+                selection_policy,
+                selected_row_ids,
+                on_row_selection_change,
                 on_row_activate,
                 on_row_expansion_request,
             ))
@@ -2431,6 +2633,9 @@ fn render_table_row_band(
     top_row_count: usize,
     center_total_row_count: usize,
     current_expansion: TableExpansionState,
+    selection_policy: TableSelectionPolicy,
+    selected_row_ids: Rc<Vec<TableRowId>>,
+    on_row_selection_change: Option<TableRowSelectionHandler>,
     on_row_activate: Option<TableRowActivationHandler>,
     on_row_expansion_request: Option<TableRowExpansionHandler>,
 ) -> AnyElement {
@@ -2466,6 +2671,9 @@ fn render_table_row_band(
                 top_row_count,
                 center_total_row_count,
                 current_expansion.clone(),
+                selection_policy,
+                selected_row_ids.clone(),
+                on_row_selection_change.clone(),
                 on_row_activate.clone(),
                 on_row_expansion_request.clone(),
             )
@@ -2488,6 +2696,9 @@ fn render_table_row(
     top_row_count: usize,
     center_total_row_count: usize,
     current_expansion: TableExpansionState,
+    selection_policy: TableSelectionPolicy,
+    selected_row_ids: Rc<Vec<TableRowId>>,
+    on_row_selection_change: Option<TableRowSelectionHandler>,
     on_row_activate: Option<TableRowActivationHandler>,
     on_row_expansion_request: Option<TableRowExpansionHandler>,
 ) -> impl IntoElement {
@@ -2582,6 +2793,9 @@ fn render_table_row(
         .on_click({
             let runtime = runtime.clone();
             let focus_handle = focus_handle.clone();
+            let selection_policy = selection_policy;
+            let selected_row_ids = selected_row_ids.clone();
+            let on_row_selection_change = on_row_selection_change.clone();
             let on_row_activate = on_row_activate.clone();
             move |event: &ClickEvent, window, cx| {
                 if !event.standard_click() {
@@ -2591,15 +2805,28 @@ fn render_table_row(
                 cx.stop_propagation();
                 window.prevent_default();
 
+                let action = TableRowAction::from_render_plan(
+                    &row_for_click,
+                    TableInputModifiers::from_gpui(event.modifiers()),
+                );
+                if selection_policy.activation_mode().is_row_click() {
+                    request_table_row_selection_change(
+                        &runtime,
+                        &action,
+                        selection_policy,
+                        TableSelectionScope::Row,
+                        selected_row_ids.clone(),
+                        on_row_selection_change.clone(),
+                        window,
+                        cx,
+                    );
+                }
+
                 let activation_kind = if event.click_count() >= 2 {
                     TableRowActivationKind::DoubleClick
                 } else {
                     TableRowActivationKind::Click
                 };
-                let action = TableRowAction::from_render_plan(
-                    &row_for_click,
-                    TableInputModifiers::from_gpui(event.modifiers()),
-                );
                 runtime.update(cx, |runtime, cx| {
                     runtime.set_focused(row_id.clone(), cx);
                 });
