@@ -93,6 +93,10 @@ verified_by:
 
 # Current State
 
+- 2026-06-24: Wrote `docs/plans/2026-06-24-007-feat-ui-table-global-filtering-faceting-plan.md`
+  as the next Table boundary. The plan keeps global query state separate from column filters,
+  derives global facet metadata from the row basis before the global query is applied, and scopes
+  the first component recipe to a controlled search input rather than a predicate builder.
 - 2026-06-24: Completed the Table numeric range filter controls slice in the working tree.
   `TableFilterKind` now supports inclusive finite numeric ranges, `TableRangeFilter` provides a
   min/max Popover recipe with controlled `TableRangeFilterChange` payloads, and `filter-board`
@@ -139,10 +143,10 @@ verified_by:
   chrome in `ui_components`, and defers cell editing, server-synced selection persistence, and a
   general feature plugin system.
 
-- Goal: Complete `docs/plans/2026-06-24-006-feat-ui-table-numeric-range-filter-controls-plan.md`.
+- Goal: Complete `docs/plans/2026-06-24-007-feat-ui-table-global-filtering-faceting-plan.md`.
 - Branch: `main`
 - Last verified: 2026-06-24, `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, focused `cargo nextest run` commands for numeric range core/components coverage, `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_range_filter_updates_table_rows`, engineering wiki validation, and `git diff --check` passed for the range-filter slice.
-- Done: Completed the Table numeric range filter controls slice in the working tree and recorded progress in `docs/knowledge/engineering/progress/2026-06-24-table-numeric-range-filter-controls.md`.
+- Done: Wrote `docs/plans/2026-06-24-007-feat-ui-table-global-filtering-faceting-plan.md` and recorded the planning handoff in `docs/knowledge/engineering/progress/2026-06-24-table-global-filtering-faceting-plan.md`.
 - Done: Wrote the Table faceted filter controls plan as `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md`.
 - Done: Completed U1 as `a52751f`. `TableFilterKind` is now exported through `ui_core`, `ui_components`, and both preludes; tests cover exact categorical matching, empty no-op filters, order-independent cache keys, and public export inventory.
 - Done: Completed U2 as `cfcab3a`. `TableFacetedFilter` now provides the single-column categorical filter recipe with checkbox facets, search query control, popover policy controls, a controlled change payload, and export / inventory coverage.
@@ -150,9 +154,9 @@ verified_by:
 - Done: Completed the Table custom aggregation callbacks slice as `dded73b`. `TableState` now stores named custom aggregation callbacks, grouped rows resolve named custom aggregates through the renderer-neutral pipeline, `TableRenderPlan` exposes the callback count, and the Components gallery includes `grouped-custom-aggregation`.
 - Done: Completed the Table row-selection variants slice as `ea3785f`. `ui_core::TableState` now carries explicit selection policy knobs for single vs multiple selection, explicit-control vs row-click activation, and descendant propagation, plus renderer-neutral selection summaries for full-model and current-page scopes. `ui_components::Table` emits controlled `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when the policy is explicit-control.
 - Done: A combined two-axis viewport contract is already on `main` as `725f859`.
-- In progress: None for the numeric range filter controls slice.
+- In progress: Plan review or implementation start for the global filtering and faceting boundary.
 - Blocked: None.
-- Next action: Select the next Table boundary after numeric range filtering.
+- Next action: Decide whether to deepen the global filtering plan or start `ce-work` on it.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
   with depth/parent/branch/descendant metadata, source-tree expansion reuses
@@ -315,7 +319,7 @@ verified_by:
   gallery `cargo nextest run` commands, engineering wiki validation, and `git diff --check`.
 - Done: The two-dimensional Table viewport contract is shipped on `main` as `725f859`.
 - Blocked: None.
-- Next action: Select the next Table boundary after numeric range filtering.
+- Next action: Decide whether to deepen the global filtering plan or start `ce-work` on it.
 
 # Citations
 

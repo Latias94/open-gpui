@@ -26,6 +26,7 @@
 * [Table row selection variants planning](progress/2026-06-24-table-row-selection-variants-plan.md) - Planning note for the next Table follow-up boundary and the durable handoff for the row-selection variants slice.
 * [Table faceted filter controls completion](progress/2026-06-24-table-faceted-filter-controls-plan.md) - Durable handoff for the single-column categorical faceted filter control slice.
 * [Table numeric range filter controls](progress/2026-06-24-table-numeric-range-filter-controls.md) - Durable handoff for the numeric min/max filter control slice.
+* [Table global filtering and faceting planning](progress/2026-06-24-table-global-filtering-faceting-plan.md) - Durable handoff for the next Table search / global faceting boundary.
 * [Table cell editing completion](progress/2026-06-24-table-cell-editing-plan.md) - Durable handoff for the first text-cell editing slice.
 * [Table numeric range filter controls verification](verification/table-numeric-range-filter-controls-20260624.md) - Verification evidence for the numeric range filter control slice.
 

@@ -6,6 +6,11 @@ status: active
 
 # Log
 
+- 2026-06-24: Wrote `docs/plans/2026-06-24-007-feat-ui-table-global-filtering-faceting-plan.md`
+  as the next Table boundary. The plan keeps global filter state separate from column filters,
+  adds a global facet summary derived from the pre-global-query row basis, and scopes the first
+  `TableGlobalFilter` recipe to a controlled search input. Fuzzy ranking, operator menus, and
+  nested predicate builders are deferred.
 - 2026-06-24: Completed the Table numeric range filter controls slice from
   `docs/plans/2026-06-24-006-feat-ui-table-numeric-range-filter-controls-plan.md`. `ui_core`
   now supports inclusive finite numeric range filters through `TableNumericFilterBound`,
