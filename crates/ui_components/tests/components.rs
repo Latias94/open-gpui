@@ -24,7 +24,8 @@ use open_gpui_ui_components::{
     TableColumn, TableColumnFacets, TableColumnId, TableColumnPinning, TableColumnRegion,
     TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableExpansionMode,
     TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange, TableFacetedFilterState,
-    TableFilter, TableGlobalFacetSummary, TableHeaderAction, TablePagination, TableRangeFilter,
+    TableFilter, TableGlobalFacetSummary, TableGlobalFilter, TableGlobalFilterChange,
+    TableGlobalFilterState, TableHeaderAction, TablePagination, TableRangeFilter,
     TableRangeFilterChange, TableRangeFilterState, TableRow, TableRowChildrenLoadState, TableRowId,
     TableRowPinning, TableRowPinningPolicy, TableRowRegion, TableSelectionActivationMode,
     TableSelectionMode, TableSelectionScope, TableSort, TableSortDirection, TableStageMode,
@@ -538,6 +539,22 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         no_interaction_note: None,
     },
     ComponentApiInventoryEntry {
+        component: "TableGlobalFilter",
+        controlled_inputs: &["query"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_query",
+            runtime_value: "query",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &["placeholder", "clear_label", "disabled"],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "TableGlobalFilterChange",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
         component: "TableRangeFilter",
         controlled_inputs: &["open"],
         default_seeds: &[
@@ -1037,6 +1054,7 @@ fn component_source_file(component: &str) -> &'static str {
         "Splitter" => "splitter.rs",
         "Table" => "table.rs",
         "TableFacetedFilter" => "table.rs",
+        "TableGlobalFilter" => "table.rs",
         "TableRangeFilter" => "table.rs",
         "VirtualizedList" => "virtualized_list.rs",
         "StatusCue" => "feedback.rs",
@@ -1363,6 +1381,17 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "tokens",
             "on_open_change",
             "on_query_change",
+            "on_change",
+            "state",
+        ],
+        "TableGlobalFilter" => &[
+            "new",
+            "query",
+            "default_query",
+            "placeholder",
+            "clear_label",
+            "disabled",
+            "tokens",
             "on_change",
             "state",
         ],
@@ -3877,6 +3906,75 @@ fn table_range_filter_change_updates_filters_and_resets_pagination() {
 }
 
 #[test]
+fn table_global_filter_state_resolves_input_contract() {
+    let state: TableGlobalFilterState = TableGlobalFilter::new("global-filter", "Search rows")
+        .default_query("stale")
+        .query("  done  ")
+        .placeholder("Search every row")
+        .clear_label("Reset search")
+        .small()
+        .state();
+
+    assert_eq!(state.id(), "global-filter");
+    assert_eq!(state.label(), "Search rows");
+    assert_eq!(state.query(), "  done  ");
+    assert!(state.active());
+    assert!(state.clear_enabled());
+    assert_eq!(state.placeholder(), "Search every row");
+    assert_eq!(state.clear_label(), "Reset search");
+    assert_eq!(state.size(), Size::Small);
+    assert!(!state.disabled());
+    assert_eq!(state.input().value(), "  done  ");
+    assert_eq!(state.input().placeholder(), Some("Search every row"));
+    assert_eq!(state.input().size(), Size::Small);
+    assert!(state.input().controller_driven());
+
+    let empty = TableGlobalFilter::new("empty-global-filter", "Search")
+        .default_query("   ")
+        .disabled(true)
+        .state();
+    assert!(!empty.active());
+    assert!(empty.clear_enabled());
+    assert!(empty.disabled());
+    assert!(empty.input().disabled());
+}
+
+#[test]
+fn table_global_filter_change_updates_state_and_resets_pagination() {
+    let state = sample_table_state(4)
+        .with_filters([TableFilter::contains("team", "UI")])
+        .with_sorting([TableSort::ascending("name")])
+        .with_selection_mode(TableSelectionMode::Multiple)
+        .with_selected_rows(["row-0001"])
+        .with_global_filter("old")
+        .with_pagination(TablePagination::new(3, 25));
+
+    let change = TableGlobalFilterChange::new("  done  ");
+    assert_eq!(change.query(), "  done  ");
+    assert!(change.active());
+    assert!(!change.cleared());
+
+    let next = change.apply_to(state.clone());
+    assert_eq!(next.global_filter(), Some("done"));
+    assert_eq!(next.pagination().page_index(), 0);
+    assert_eq!(next.pagination().page_size(), 25);
+    assert_eq!(next.filters(), state.filters());
+    assert_eq!(next.sorting(), state.sorting());
+    assert_eq!(next.selected_rows(), state.selected_rows());
+
+    let cleared = TableGlobalFilterChange::clear();
+    assert_eq!(cleared.query(), "");
+    assert!(cleared.cleared());
+    assert!(!cleared.active());
+    let cleared_state = cleared.apply_to(next);
+    assert_eq!(cleared_state.global_filter(), None);
+    assert_eq!(cleared_state.pagination().page_index(), 0);
+    assert_eq!(cleared_state.filters(), state.filters());
+    assert_eq!(cleared_state.sorting(), state.sorting());
+    assert_eq!(cleared_state.selected_rows(), state.selected_rows());
+}
+
+#[test]
 fn table_render_plan_exposes_text_cell_editability_for_leaf_cells_only() {
     let state = TableState::new([
         TableRow::new("row-a")
@@ -4958,6 +5056,17 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let root_global_facets: root::TableGlobalFacetSummary =
         root::TableGlobalFacetSummary::default();
     let _prelude_global_facets: prelude::TableGlobalFacetSummary = root_global_facets.clone();
+    let root_global_filter: root::TableGlobalFilter =
+        root::TableGlobalFilter::new("root-global-filter", "Search").query("ready");
+    let _root_global_filter_state: root::TableGlobalFilterState = root_global_filter.state();
+    let _root_global_filter_change: root::TableGlobalFilterChange =
+        root::TableGlobalFilterChange::new("ready");
+    let prelude_global_filter: prelude::TableGlobalFilter =
+        prelude::TableGlobalFilter::new("prelude-global-filter", "Search").default_query("ready");
+    let _prelude_global_filter_state: prelude::TableGlobalFilterState =
+        prelude_global_filter.state();
+    let _prelude_global_filter_change: prelude::TableGlobalFilterChange =
+        prelude::TableGlobalFilterChange::clear();
     let root_faceted_filter: root::TableFacetedFilter =
         root::TableFacetedFilter::new("root-status-filter", "Status", "status")
             .facets(root_facets.clone())
@@ -8346,6 +8455,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_scroll = root::ScrollArea::new("scroll", div());
     let root_splitter = root::Splitter::new("split");
     let root_tabs = root::Tabs::new("tabs");
+    let root_global_filter = root::TableGlobalFilter::new("global-filter", "Search");
     let root_faceted_filter = root::TableFacetedFilter::new("status-filter", "Status", "status");
     let root_avatar = root::Avatar::new("avatar", "Ada Lovelace");
     let root_separator = root::Separator::new("separator");
@@ -8396,6 +8506,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_scroll = prelude::ScrollArea::new("scroll", div());
     let prelude_splitter = prelude::Splitter::new("split");
     let prelude_tabs = prelude::Tabs::new("tabs");
+    let prelude_global_filter = prelude::TableGlobalFilter::new("global-filter", "Search");
     let prelude_faceted_filter =
         prelude::TableFacetedFilter::new("status-filter", "Status", "status");
     let prelude_avatar = prelude::Avatar::new("avatar", "Ada Lovelace");
@@ -8422,6 +8533,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_scroll.state(),
         root_splitter.state(),
         root_tabs.state(),
+        root_global_filter.state(),
         root_faceted_filter.state(),
         root_avatar.state(),
         root_separator.state(),
@@ -8445,6 +8557,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_scroll.state(),
         prelude_splitter.state(),
         prelude_tabs.state(),
+        prelude_global_filter.state(),
         prelude_faceted_filter.state(),
         prelude_avatar.state(),
         prelude_separator.state(),
@@ -8717,6 +8830,9 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
     assert_inventory_contains_default_seed("Menu", "default_focused_value", "focused_value");
     assert_inventory_contains_default_seed("ContextMenu", "default_focused_value", "focused_value");
     assert_inventory_contains_default_seed("Table", "default_focused_row", "focused_row");
+    assert_inventory_contains_controlled_input("TableGlobalFilter", "query");
+    assert_inventory_contains_default_seed("TableGlobalFilter", "default_query", "query");
+    assert_inventory_contains_callback("TableGlobalFilter", "on_change", "TableGlobalFilterChange");
     assert_inventory_contains_callback("Table", "on_row_activate", "TableRowActivation");
     assert_inventory_contains_callback(
         "Table",
