@@ -13,15 +13,16 @@ status: active
   `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when
   the policy is explicit-control. The Components test suite now covers row-click selection,
   explicit-control row clicks, and API inventory / export baselines for the new row-selection
-  callback.
-- 2026-06-24: Completed the Table row-selection variants slice from
-  `docs/plans/2026-06-24-003-feat-ui-table-row-selection-variants-plan.md`. `ui_core::TableState`
-  now has explicit selection policy knobs for single vs multiple selection, explicit-control vs
-  row-click activation, and descendant propagation, plus renderer-neutral selection summaries for
-  full-model and current-page scopes. `ui_components::Table` emits controlled
-  `TableRowSelectionChange` payloads, keeps row-click selection distinct from activation when the
-  policy is explicit-control, and the Components test suite now covers row-click selection,
-  explicit-control row clicks, and API inventory / export baselines for the new callback surface.
+  callback. Verified with `cargo nextest run -p open-gpui-ui-core table`,
+  `cargo nextest run -p open-gpui-ui-components table`, `cargo nextest run -p open-gpui-ui-foundation-gallery table`,
+  and `git diff --check`.
+- 2026-06-24: Completed the Table custom aggregation callbacks slice as `dded73b`. `TableState`
+  now stores named custom aggregation callbacks, grouped rows resolve named custom aggregates
+  through the renderer-neutral pipeline, `TableRenderPlan` exposes the callback count, and the
+  Components gallery includes `grouped-custom-aggregation`. Verified with
+  `cargo nextest run -p open-gpui-ui-core table`,
+  `cargo nextest run -p open-gpui-ui-components table`, `cargo nextest run -p open-gpui-ui-foundation-gallery table`,
+  and `git diff --check`.
 - 2026-06-24: Chose the next Table planning boundary as
   `docs/plans/2026-06-24-003-feat-ui-table-row-selection-variants-plan.md`. The slice covers
   checkbox, radio, and list-like row selection recipes on top of the existing stable selected-row
@@ -36,9 +37,10 @@ status: active
   checks passed, `cargo check -p open-gpui-ui-foundation-gallery` surfaced a `Send + Sync` bound
   gap on the stored callback type, and the next step is to tighten the callback wrapper and rerun
   validation.
-- 2026-06-24: Merged the Table row-pinning / two-axis viewport slice back to `main` as `d55f2d1`
-  and pushed it to `origin/main`. The working tree is clean, `git diff --check` passed, and the
-  next Table follow-up can start from the updated `main` line.
+- 2026-06-24: Completed the Table row-pinning / two-axis viewport slice as `725f859` on `main`.
+  The later `docs(knowledge): sync row-pinning completion state` commit `bbc6633` refreshed the
+  memory bundle after the code landed. The working tree was clean, `git diff --check` passed, and
+  the next Table follow-up could start from the updated `main` line.
 - 2026-06-24: Started the Table two-axis viewport follow-up from
   `docs/plans/2026-06-24-001-feat-ui-table-two-axis-virtualization-plan.md`. `ui_core` now has a
   renderer-neutral `GridViewport2D` plus `resolve_grid_viewport_2d`, and `ui_components::Table`

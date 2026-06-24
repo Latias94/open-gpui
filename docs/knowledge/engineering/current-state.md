@@ -4,8 +4,13 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: d55f2d1
+git_commit: 2c7f9fd
 verified_by:
+  - cargo nextest run -p open-gpui-ui-core table
+  - cargo nextest run -p open-gpui-ui-components table
+  - cargo nextest run -p open-gpui-ui-foundation-gallery table
+  - git diff --check
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
   - cargo fmt -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-components table component_api_inventory
   - git diff --check
@@ -81,9 +86,10 @@ verified_by:
 
 # Current State
 
-- 2026-06-24: Merged the Table row-pinning / two-axis viewport slice back to `main` as `d55f2d1`
-  and pushed it to `origin/main`. The working tree is clean and `git diff --check` passed; the next
-  Table follow-up can start from the updated `main` line.
+- 2026-06-24: Completed the Table row-pinning / two-axis viewport slice as `725f859` on `main`.
+  The later `docs(knowledge): sync row-pinning completion state` commit `bbc6633` refreshed the
+  memory bundle after the code landed. The working tree is clean and `git diff --check` passed;
+  the next Table follow-up can start from the updated `main` line.
 - 2026-06-24: Completed the Table row-selection variants slice from
   `docs/plans/2026-06-24-003-feat-ui-table-row-selection-variants-plan.md`. `ui_core::TableState`
   now carries explicit selection policy knobs for single vs multiple selection, explicit-control
@@ -99,21 +105,15 @@ verified_by:
   chrome in `ui_components`, and defers cell editing, server-synced selection persistence, and a
   general feature plugin system.
 
-- Goal: Execute `docs/plans/2026-06-24-002-feat-ui-table-custom-aggregation-callbacks-plan.md`.
+- Goal: Keep the engineering wiki aligned with the completed Table custom aggregation and row-selection slices.
 - Branch: `main`
-- Last verified: 2026-06-24, `git diff --check` passed on the row-selection working tree before the
-  final memory refresh and documentation commit.
-- In progress: Table custom aggregation callbacks slice.
+- Last verified: 2026-06-24, `cargo nextest run -p open-gpui-ui-core table`, `cargo nextest run -p open-gpui-ui-components table`, and `cargo nextest run -p open-gpui-ui-foundation-gallery table` all passed.
+- Done: Completed the Table custom aggregation callbacks slice as `dded73b`. `TableState` now stores named custom aggregation callbacks, grouped rows resolve named custom aggregates through the renderer-neutral pipeline, `TableRenderPlan` exposes the callback count, and the Components gallery includes `grouped-custom-aggregation`.
+- Done: Completed the Table row-selection variants slice as `ea3785f`. `ui_core::TableState` now carries explicit selection policy knobs for single vs multiple selection, explicit-control vs row-click activation, and descendant propagation, plus renderer-neutral selection summaries for full-model and current-page scopes. `ui_components::Table` emits controlled `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when the policy is explicit-control.
+- Done: A combined two-axis viewport contract is already on `main` as `725f859`.
+- In progress: None.
 - Blocked: None.
-- Next action: Finish verification, refresh memory, and commit the custom aggregation slice.
-- Done: Completed the Table row-selection variants slice as `ea3785f`. `ui_core::TableState` now
-  carries explicit selection policy knobs for single vs multiple selection, explicit-control vs
-  row-click activation, and descendant propagation, plus renderer-neutral selection summaries for
-  full-model and current-page scopes. `ui_components::Table` emits controlled
-  `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when
-  the policy is explicit-control. The Components test suite now covers row-click selection,
-  explicit-control row clicks, and API inventory / export baselines for the new row-selection
-  callback.
+- Next action: Pick the next Table boundary after the shipped custom aggregation and row-selection slices.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
   with depth/parent/branch/descendant metadata, source-tree expansion reuses
@@ -262,17 +262,13 @@ verified_by:
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Follow-up: The column sizing / resize, sticky pinned-column, center-column virtualization,
   tree-data, row-interaction, manual-expansion, manual row-model control, per-column faceting
-  metadata, row selection variants, and row pinning slices are complete. The next Table follow-up
-  is two-dimensional grid virtualization. Later Table follow-ups are custom aggregation callbacks,
-  cell editing, global faceting, concrete faceted filter UI, and standalone headless extraction if
-  cross-framework pressure appears.
-- In progress: Started the two-dimensional Table viewport follow-up. `ui_core` now has
-  `GridViewport2D` plus `resolve_grid_viewport_2d`, `ui_components::TableRenderPlan` exposes the
-  combined row/center-column viewport when both axes are available, and the focused gallery tests
-  now cover the row-pinning sample's combined two-axis contract alongside the existing
-  center-column and row-pinning smoke gates.
+  metadata, row selection variants, row pinning, custom aggregation callbacks, and two-axis
+  viewport slices are complete on `main`. Remaining Table follow-ups are cell editing, global
+  faceting, concrete faceted filter UI, and standalone headless extraction if cross-framework
+  pressure appears.
+- Done: The two-dimensional Table viewport contract is shipped on `main` as `725f859`.
 - Blocked: None.
-- Next action: Validate the engineering wiki bundle, then stage and commit the row-pinning slice.
+- Next action: Select the next Table boundary after the completed table slices.
 
 # Citations
 
