@@ -131,7 +131,6 @@ mod viewport;
 mod viewport_activation;
 mod viewport_backend_focus;
 mod viewport_close;
-mod viewport_close_plan;
 mod viewport_coordinates;
 mod viewport_drop_delivery;
 mod viewport_drop_route;
@@ -225,7 +224,12 @@ pub(crate) use viewport_activation::{
 };
 pub(crate) use viewport_backend_focus::*;
 pub use viewport_close::*;
-pub(crate) use viewport_close_plan::*;
+#[allow(unused_imports)]
+pub(crate) use viewport_close::{
+    DockMergeBackTarget, DockViewportCloseCoordinator, DockViewportClosePlanEffect,
+    DockViewportClosePlanState, DockViewportMergeBackClosePlan,
+    commit_prevalidated_merge_back_plan,
+};
 pub(crate) use viewport_drop_delivery::*;
 pub(crate) use viewport_drop_route::*;
 pub use viewport_focus::*;

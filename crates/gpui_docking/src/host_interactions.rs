@@ -26,9 +26,7 @@ struct DockHostResolvedDropCommit {
 
 impl DockHost {
     pub(crate) fn clear_drop_preview_interaction(&mut self) -> bool {
-        let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
-        let drop_acceptance_cleared = self.interaction_mut().clear_drop_acceptance();
-        route_preview_cleared || drop_acceptance_cleared
+        self.interaction_mut().clear_drop_acceptance()
     }
 
     pub(crate) fn select_tab_interaction(
@@ -165,7 +163,6 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
-        let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
         let (policy, payload_classes, graph) = self.with_workspace(cx, |workspace| {
             (
                 workspace.policy().clone(),
@@ -200,10 +197,10 @@ impl DockHost {
             drop_preview_cleared = self.clear_drop_preview_interaction();
             outcome
         } else {
-            let _runtime_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
+            let runtime_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
             return DockHostInteractionOutcome::Notify { changed: false }
                 .merge(DockHostInteractionOutcome::from_session_changed(
-                    route_preview_cleared,
+                    runtime_preview_cleared,
                 ))
                 .merge(self.finish_floating_drag_interaction());
         };
@@ -211,7 +208,7 @@ impl DockHost {
         let runtime_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
         outcome
             .merge(DockHostInteractionOutcome::from_session_changed(
-                route_preview_cleared || runtime_preview_cleared || drop_preview_cleared,
+                runtime_preview_cleared || drop_preview_cleared,
             ))
             .merge(self.finish_floating_drag_interaction())
     }

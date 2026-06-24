@@ -15,14 +15,15 @@ use crate::{
     DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportPlatformFocusRestoreGate, DockViewportPlatformFocusRestorePolicy,
     DockViewportPlatformSyncRecord, DockViewportRegisterOutcome, DockViewportResolvedDropRoute,
-    DockViewportRestoreReadiness, DockViewportRouteSelectionSource, DockViewportRoutedDropPreview,
-    DockViewportRoutedDropPreviewReplacement, DockViewportRoutedDropPreviewState,
-    DockViewportRuntimeHandle, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
-    DockViewportShouldCloseStatus, DockViewportTargetHit, DockViewportTearOffBeginOutcome,
-    DockViewportTearOffCancelReason, DockViewportTearOffCancelled, DockViewportTearOffCompleted,
-    DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffSourceStatus,
-    DockViewportWindowFacts, DockViewportWindowOwnership, DockViewportWindowRetirement,
+    DockViewportRestoreReadiness, DockViewportRoutePreview, DockViewportRouteSelectionSource,
+    DockViewportRoutedDropPreview, DockViewportRoutedDropPreviewReplacement,
+    DockViewportRoutedDropPreviewState, DockViewportRuntimeHandle, DockViewportRuntimeStatus,
+    DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus, DockViewportTargetHit,
+    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
+    DockViewportTearOffCompleted, DockViewportTearOffKey, DockViewportTearOffMachine,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
+    DockViewportTearOffSourceStatus, DockViewportWindowFacts, DockViewportWindowOwnership,
+    DockViewportWindowRetirement,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
@@ -1339,6 +1340,14 @@ impl DockViewportRuntime {
         self.routed_drop_preview.preview_for(space, window_id)
     }
 
+    pub(crate) fn routed_drop_route_preview_for(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<crate::drop_preview::DockDropRoutePreview> {
+        self.routed_drop_preview.route_preview_for(space, window_id)
+    }
+
     pub(crate) fn has_routed_drop_preview(&self) -> bool {
         self.routed_drop_preview.has_preview()
     }
@@ -1357,10 +1366,39 @@ impl DockViewportRuntime {
         self.routed_drop_preview.is_currently_accepted()
     }
 
+    #[cfg(test)]
     pub(crate) fn update_routed_drop_preview(
         &mut self,
         resolution: &DockViewportResolvedDropRoute,
         payload_title: impl Into<String>,
+    ) -> DockViewportRuntimeUpdate {
+        self.update_routed_drop_preview_inner(resolution, payload_title, None, None, None)
+    }
+
+    pub(crate) fn update_host_routed_drop_preview(
+        &mut self,
+        resolution: &DockViewportResolvedDropRoute,
+        payload_title: impl Into<String>,
+        host_space: DockSpaceId,
+        host_window_id: WindowId,
+        host_position: Point<Pixels>,
+    ) -> DockViewportRuntimeUpdate {
+        self.update_routed_drop_preview_inner(
+            resolution,
+            payload_title,
+            Some(host_space),
+            Some(host_window_id),
+            Some(host_position),
+        )
+    }
+
+    fn update_routed_drop_preview_inner(
+        &mut self,
+        resolution: &DockViewportResolvedDropRoute,
+        payload_title: impl Into<String>,
+        host_space: Option<DockSpaceId>,
+        host_window_id: Option<WindowId>,
+        host_position: Option<Point<Pixels>>,
     ) -> DockViewportRuntimeUpdate {
         let payload_title = payload_title.into();
         let active_drag_session_id = self.active_drag.as_ref().map(|drag| drag.session().id());
@@ -1404,6 +1442,18 @@ impl DockViewportRuntime {
             DockViewportDropRoute::TearOff => None,
             DockViewportDropRoute::Unavailable => None,
         };
+        let next_route_preview = match (host_space, host_window_id, host_position) {
+            (Some(space), Some(window_id), Some(position)) => {
+                crate::routed_drop_route_preview_for_host(
+                    resolution,
+                    space,
+                    window_id,
+                    position,
+                    active_drag_session_id,
+                )
+            }
+            _ => None,
+        };
         let next_resolution = match resolution.route() {
             DockViewportDropRoute::Unavailable => None,
             _ => Some(resolution.clone()),
@@ -1419,7 +1469,8 @@ impl DockViewportRuntime {
         if starts_acceptance_pass && let Some(preview) = next.as_ref() {
             target_window = self.adapter.window_for_space(preview.space());
         }
-        let mut update = self.replace_routed_drop_preview(next, next_resolution);
+        let mut update =
+            self.replace_routed_drop_preview(next, next_route_preview, next_resolution);
         if starts_acceptance_pass {
             update.extend_windows(target_window);
         }
@@ -1470,9 +1521,12 @@ impl DockViewportRuntime {
     fn replace_routed_drop_preview(
         &mut self,
         next: Option<DockViewportRoutedDropPreview>,
+        next_route_preview: Option<DockViewportRoutePreview>,
         next_resolution: Option<DockViewportResolvedDropRoute>,
     ) -> DockViewportRuntimeUpdate {
-        let replacement = self.routed_drop_preview.replace(next, next_resolution);
+        let replacement =
+            self.routed_drop_preview
+                .replace(next, next_route_preview, next_resolution);
         let mut update = DockViewportRuntimeUpdate::default();
         update.mark_changed(replacement.has_changed());
         update.extend_windows(self.windows_for_routed_preview_replacement(&replacement));
@@ -1491,7 +1545,7 @@ impl DockViewportRuntime {
     }
 
     pub(crate) fn clear_routed_drop_preview(&mut self) -> DockViewportRuntimeUpdate {
-        self.replace_routed_drop_preview(None, None)
+        self.replace_routed_drop_preview(None, None, None)
     }
 
     fn clear_routed_drop_preview_if_window_matches(
@@ -1502,7 +1556,7 @@ impl DockViewportRuntime {
             active_drag.clear_last_routed_viewport_identity_if_window_matches(window_id);
         }
         if self.routed_drop_preview.targets_window(window_id) {
-            self.replace_routed_drop_preview(None, None)
+            self.replace_routed_drop_preview(None, None, None)
         } else {
             DockViewportRuntimeUpdate::default()
         }
@@ -2689,7 +2743,7 @@ impl DockViewportRuntime {
     ) -> Option<DockItemId> {
         self.controller
             .read(cx)
-            .graph()
+            .workspace()
             .activation_focus_item_for_viewport_payload(
                 request.payload(),
                 request.source_node(),
@@ -2707,7 +2761,7 @@ impl DockViewportRuntime {
         let focused_item = self.focus.focused_panel(&payload.source_space)?;
         self.controller
             .read(cx)
-            .graph()
+            .workspace()
             .drag_focus_item_for_payload(payload, Some(focused_item))
     }
 

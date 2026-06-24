@@ -407,7 +407,9 @@ impl DockHost {
             .viewport_runtime()
             .routed_drop_preview_for(self.space(), window.window_handle().window_id());
         let local_preview = self.interaction().drop_preview();
-        let route_preview = self.interaction().drop_route_preview();
+        let route_preview = self
+            .viewport_runtime()
+            .routed_drop_route_preview_for(self.space(), window.window_handle().window_id());
         let routed_target_preview =
             routed_preview.map(|preview| (preview.preview, Some(preview.payload_title)));
 

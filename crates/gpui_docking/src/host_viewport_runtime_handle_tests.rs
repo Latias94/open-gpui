@@ -112,6 +112,27 @@ fn cache_known_viewport_preview(
     resolution
 }
 
+fn cache_host_route_preview(
+    cx: &mut TestAppContext,
+    runtime: &DockViewportRuntimeHandle,
+    resolution: &crate::DockViewportResolvedDropRoute,
+    payload_title: &str,
+    host_space: DockSpaceId,
+    host_window_id: open_gpui::WindowId,
+    host_position: open_gpui::Point<open_gpui::Pixels>,
+) {
+    cx.update(|app| {
+        runtime.update_host_routed_drop_preview(
+            resolution,
+            payload_title,
+            host_space,
+            host_window_id,
+            host_position,
+            app,
+        );
+    });
+}
+
 fn accepted_resolution_for_request(
     cx: &mut TestAppContext,
     runtime: &DockViewportRuntimeHandle,
@@ -3598,10 +3619,17 @@ fn hovered_host_release_does_not_consume_cached_delivery_for_another_window(
         "Panel A",
     );
 
+    cache_host_route_preview(
+        cx,
+        &runtime,
+        &resolution,
+        "Panel A",
+        source_space.clone(),
+        source_opened.window().window_id(),
+        target_center_host_position(),
+    );
     source_window
         .update(cx, |host, window, cx| {
-            host.interaction_mut()
-                .update_drop_route_preview(&resolution, target_center_host_position());
             host.drop_payload_release_from_render(
                 DockPayloadDropRelease::hovered_host_with_session(
                     payload.clone(),
@@ -3726,10 +3754,17 @@ fn hovered_host_release_rejects_cached_delivery_when_release_point_misses_target
         Some(session.clone()),
         "Panel A",
     );
+    cache_host_route_preview(
+        cx,
+        &runtime,
+        &resolution,
+        "Panel A",
+        target_space.clone(),
+        target_opened.window().window_id(),
+        target_center_host_position(),
+    );
     target_window
-        .update(cx, |host, window, cx| {
-            host.interaction_mut()
-                .update_drop_route_preview(&resolution, target_center_host_position());
+        .update(cx, |_host, window, cx| {
             window.refresh();
             cx.notify();
         })
@@ -4125,10 +4160,17 @@ fn hovered_host_release_rejects_when_release_point_misses_accepted_preview(
         "Panel A",
     );
 
+    cache_host_route_preview(
+        cx,
+        &runtime,
+        &resolution,
+        "Panel A",
+        target_space.clone(),
+        target_opened.window().window_id(),
+        target_center_host_position(),
+    );
     target_window
         .update(cx, |host, window, cx| {
-            host.interaction_mut()
-                .update_drop_route_preview(&resolution, target_center_host_position());
             let missed = point(px(720.0), px(420.0));
             host.drop_payload_release_from_render(
                 DockPayloadDropRelease::hovered_host_with_session(
@@ -4242,10 +4284,17 @@ fn host_render_route_preview_uses_route_debug_selector(cx: &mut TestAppContext) 
         "Panel A",
     );
 
+    cache_host_route_preview(
+        cx,
+        &runtime,
+        &resolution,
+        "Panel A",
+        source_space.clone(),
+        source_opened.window().window_id(),
+        target_center_host_position(),
+    );
     source_window
-        .update(cx, |host, window, cx| {
-            host.interaction_mut()
-                .update_drop_route_preview(&resolution, target_center_host_position());
+        .update(cx, |_host, window, cx| {
             window.refresh();
             cx.notify();
         })
@@ -4348,10 +4397,17 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
         "Panel A",
     );
 
+    cache_host_route_preview(
+        cx,
+        &runtime,
+        &resolution,
+        "Panel A",
+        source_space.clone(),
+        source_opened.window().window_id(),
+        target_center_host_position(),
+    );
     source_window
-        .update(cx, |host, window, cx| {
-            host.interaction_mut()
-                .update_drop_route_preview(&resolution, target_center_host_position());
+        .update(cx, |_host, window, cx| {
             window.refresh();
             cx.notify();
         })
@@ -4643,10 +4699,17 @@ fn source_release_prefers_local_target_over_cached_route_delivery(cx: &mut TestA
         "Panel A",
     );
 
+    cache_host_route_preview(
+        cx,
+        &runtime,
+        &resolution,
+        "Panel A",
+        source_space.clone(),
+        source_opened.window().window_id(),
+        target_center_host_position(),
+    );
     source_window
-        .update(cx, |host, window, cx| {
-            host.interaction_mut()
-                .update_drop_route_preview(&resolution, target_center_host_position());
+        .update(cx, |_host, window, cx| {
             window.refresh();
             cx.notify();
         })
@@ -4825,10 +4888,17 @@ fn source_only_release_does_not_consume_cached_route_delivery(cx: &mut TestAppCo
         ),
         "preview setup should resolve the target viewport"
     );
+    cache_host_route_preview(
+        cx,
+        &runtime,
+        &resolution,
+        "Panel A",
+        source_space.clone(),
+        source_opened.window().window_id(),
+        target_center_host_position(),
+    );
     source_window
-        .update(cx, |host, window, cx| {
-            host.interaction_mut()
-                .update_drop_route_preview(&resolution, target_center_host_position());
+        .update(cx, |_host, window, cx| {
             window.refresh();
             cx.notify();
         })

@@ -185,7 +185,7 @@ impl DockWorkspace {
         }?;
         Ok(DockWorkspacePayloadDropOutcome::new(
             action,
-            self.graph().activation_focus_item_for_workspace_payload(
+            self.activation_focus_item_for_workspace_payload(
                 &payload,
                 Some(&drop_target.target_space),
                 frozen_focus_item,

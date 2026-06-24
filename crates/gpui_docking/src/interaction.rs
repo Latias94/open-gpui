@@ -1,8 +1,8 @@
 use crate::{
-    DockItemId, DockNodeId, DockPolicy, DockSpaceId, DockViewportDropRoute,
-    DockViewportFocusCommand, DockViewportFocusCommandSource, DockViewportResolvedDropRoute,
+    DockItemId, DockNodeId, DockPolicy, DockSpaceId, DockViewportFocusCommand,
+    DockViewportFocusCommandSource,
     drag::{DockDragPayload, DockDragPayloadIdentity, DockDragTearOffGeometry},
-    drop_preview::{DockDropPreview, DockDropRoutePreview},
+    drop_preview::DockDropPreview,
     drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
     drop_target::{DockDropTargetValidator, DockEdgePlanResolver, DockResolvedDropTarget},
     geometry::{self, DockDropGuideStyle},
@@ -16,7 +16,6 @@ pub(crate) struct DockInteractionRuntime {
     splitter_drag: Option<SplitterDrag>,
     floating_drag: Option<FloatingDrag>,
     drop: DockDropRuntime,
-    drop_route_preview: Option<DockDropRoutePreview>,
     outside_release_poll: Option<DockOutsideReleasePollSession>,
     next_outside_release_poll_id: u64,
     viewport_host_scene_frame: Option<DockViewportHostSceneFrame>,
@@ -594,24 +593,6 @@ impl DockInteractionRuntime {
         self.drop.clear()
     }
 
-    pub(crate) fn update_drop_route_preview(
-        &mut self,
-        resolution: &DockViewportResolvedDropRoute,
-        host_position: Point<Pixels>,
-    ) -> bool {
-        let route = resolution.route();
-        if matches!(route, DockViewportDropRoute::Unavailable) {
-            return self.clear_drop_route_preview();
-        }
-        let preview_changed =
-            self.set_drop_route_preview(DockDropRoutePreview::from_route(route, host_position));
-        preview_changed
-    }
-
-    pub(crate) fn clear_drop_route_preview(&mut self) -> bool {
-        self.set_drop_route_preview(None)
-    }
-
     #[cfg(test)]
     pub(crate) fn begin_outside_release_poll(
         &mut self,
@@ -789,18 +770,6 @@ impl DockInteractionRuntime {
 
     pub(crate) fn finish_drop_acceptance_pass(&mut self) -> bool {
         self.drop.finish_acceptance_pass()
-    }
-
-    pub(crate) fn drop_route_preview(&self) -> Option<DockDropRoutePreview> {
-        self.drop_route_preview.clone()
-    }
-
-    fn set_drop_route_preview(&mut self, preview: Option<DockDropRoutePreview>) -> bool {
-        if self.drop_route_preview == preview {
-            return false;
-        }
-        self.drop_route_preview = preview;
-        true
     }
 
     #[cfg(test)]
@@ -1311,26 +1280,10 @@ mod tests {
     }
 
     #[test]
-    fn drop_preview_prefers_local_resolution_over_route_preview() {
+    fn drop_preview_uses_local_resolution() {
         let tabs = DockNodeId::null();
         let mut runtime = DockInteractionRuntime::default();
         let position = point(px(80.0), px(60.0));
-        let rejected_route =
-            DockViewportDropRoute::Rejected(crate::DockPolicyError::PlatformViewportsDisabled);
-        let rejected_resolution = DockViewportResolvedDropRoute::new(rejected_route, None);
-
-        assert!(runtime.update_drop_route_preview(&rejected_resolution, position,));
-        assert!(
-            runtime.drop_preview().is_none(),
-            "route marker should not be exposed as a target drop preview"
-        );
-        assert_eq!(
-            runtime
-                .drop_route_preview()
-                .expect("route preview should be visible")
-                .kind,
-            crate::drop_preview::DockDropRoutePreviewKind::Rejected
-        );
 
         runtime.begin_drop_scene(DockHostDropScene::new(position), &DockPolicy::default());
         runtime.push_drop_scene_fact(
@@ -1348,10 +1301,6 @@ mod tests {
         assert!(
             runtime.drop_preview().is_some(),
             "local target preview should be visible"
-        );
-        assert!(
-            runtime.drop_route_preview().is_some(),
-            "route marker remains separate from the local target preview"
         );
     }
 

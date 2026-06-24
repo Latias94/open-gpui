@@ -1,13 +1,14 @@
 use crate::{
     DockSpaceId, DockViewportDropRoute, DockViewportIdentity, DockViewportResolvedDropRoute,
-    DockViewportResolvedDropTargetSnapshot, drop_target::DockDropTargetKey,
-    interaction::DockRuntimeDragSession,
+    DockViewportResolvedDropTargetSnapshot, drop_preview::DockDropRoutePreview,
+    drop_target::DockDropTargetKey, interaction::DockRuntimeDragSession,
 };
-use open_gpui::{AnyWindowHandle, WindowId};
+use open_gpui::{AnyWindowHandle, Point, WindowId};
 
 #[derive(Debug, Default)]
 pub(crate) struct DockViewportRoutedDropPreviewState {
     preview: Option<DockViewportRoutedDropPreview>,
+    route_preview: Option<DockViewportRoutePreview>,
     resolution: Option<DockViewportResolvedDropRoute>,
     epoch: u64,
     accepted: Option<DockViewportAcceptedRoutedPreview>,
@@ -83,7 +84,7 @@ impl DockViewportAcceptedRoutedPreview {
 
 impl DockViewportRoutedDropPreviewState {
     pub(crate) fn has_preview(&self) -> bool {
-        self.preview.is_some()
+        self.preview.is_some() || self.route_preview.is_some()
     }
 
     pub(crate) fn preview_for(
@@ -95,6 +96,17 @@ impl DockViewportRoutedDropPreviewState {
             .as_ref()
             .filter(|preview| preview.matches(space, window_id))
             .cloned()
+    }
+
+    pub(crate) fn route_preview_for(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<DockDropRoutePreview> {
+        self.route_preview
+            .as_ref()
+            .filter(|preview| preview.matches(space, window_id))
+            .map(|preview| preview.preview.clone())
     }
 
     pub(crate) fn resolution_target_snapshot(
@@ -113,9 +125,13 @@ impl DockViewportRoutedDropPreviewState {
     pub(crate) fn replace(
         &mut self,
         next_preview: Option<DockViewportRoutedDropPreview>,
+        next_route_preview: Option<DockViewportRoutePreview>,
         next_resolution: Option<DockViewportResolvedDropRoute>,
     ) -> DockViewportRoutedDropPreviewReplacement {
-        if self.preview == next_preview && self.resolution == next_resolution {
+        if self.preview == next_preview
+            && self.route_preview == next_route_preview
+            && self.resolution == next_resolution
+        {
             return DockViewportRoutedDropPreviewReplacement::unchanged();
         }
 
@@ -128,10 +144,23 @@ impl DockViewportRoutedDropPreviewState {
                 push_unique_space(&mut affected_spaces, next.space());
             }
         }
+        if self.route_preview != next_route_preview {
+            if let Some(current) = self.route_preview.as_ref() {
+                push_unique_space(&mut affected_spaces, current.space());
+            }
+            if let Some(next) = next_route_preview.as_ref() {
+                push_unique_space(&mut affected_spaces, next.space());
+            }
+        }
 
+        let accepted_invalidated = self.preview.as_ref() != next_preview.as_ref()
+            || self.resolution.as_ref() != next_resolution.as_ref();
         self.preview = next_preview;
+        self.route_preview = next_route_preview;
         self.resolution = next_resolution;
-        self.accepted = None;
+        if accepted_invalidated {
+            self.accepted = None;
+        }
         DockViewportRoutedDropPreviewReplacement::changed(affected_spaces)
     }
 
@@ -186,6 +215,10 @@ impl DockViewportRoutedDropPreviewState {
             .as_ref()
             .is_some_and(|preview| preview.window_id() == window_id)
             || self
+                .route_preview
+                .as_ref()
+                .is_some_and(|preview| preview.window_id() == window_id)
+            || self
                 .resolution
                 .as_ref()
                 .is_some_and(|resolution| resolution_targets_window(resolution, window_id))
@@ -202,8 +235,12 @@ impl DockViewportRoutedDropPreviewState {
             .preview
             .as_ref()
             .is_some_and(|preview| preview.drag_session_id() == Some(session.id()))
+            || self
+                .route_preview
+                .as_ref()
+                .is_some_and(|preview| preview.drag_session_id() == Some(session.id()))
         {
-            self.replace(None, None)
+            self.replace(None, None, None)
         } else {
             DockViewportRoutedDropPreviewReplacement::unchanged()
         }
@@ -228,6 +265,44 @@ impl DockViewportRoutedDropPreviewState {
         self.accepted
             .as_ref()
             .is_some_and(|accepted| accepted.epoch == self.epoch)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockViewportRoutePreview {
+    identity: DockViewportIdentity,
+    preview: DockDropRoutePreview,
+    drag_session_id: Option<u64>,
+}
+
+impl DockViewportRoutePreview {
+    pub(crate) fn new(
+        space: DockSpaceId,
+        window_id: WindowId,
+        preview: DockDropRoutePreview,
+        drag_session_id: Option<u64>,
+    ) -> Self {
+        Self {
+            identity: DockViewportIdentity::new(space, window_id),
+            preview,
+            drag_session_id,
+        }
+    }
+
+    fn matches(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
+        self.identity.matches(space, window_id)
+    }
+
+    fn space(&self) -> &DockSpaceId {
+        self.identity.space()
+    }
+
+    fn window_id(&self) -> WindowId {
+        self.identity.window_id()
+    }
+
+    fn drag_session_id(&self) -> Option<u64> {
+        self.drag_session_id
     }
 }
 
@@ -304,6 +379,17 @@ pub(crate) fn routed_rejected_drop_preview_from_target(
         drag_session_id,
         payload_title,
     ))
+}
+
+pub(crate) fn routed_drop_route_preview_for_host(
+    resolution: &DockViewportResolvedDropRoute,
+    space: DockSpaceId,
+    window_id: WindowId,
+    host_position: Point<open_gpui::Pixels>,
+    drag_session_id: Option<u64>,
+) -> Option<DockViewportRoutePreview> {
+    DockDropRoutePreview::from_route(resolution.route(), host_position)
+        .map(|preview| DockViewportRoutePreview::new(space, window_id, preview, drag_session_id))
 }
 
 pub(crate) fn push_unique_window(

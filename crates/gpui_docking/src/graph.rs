@@ -14,18 +14,12 @@ mod graph_floating_mutation;
 mod graph_layout;
 #[path = "graph_mutation.rs"]
 mod graph_mutation;
-#[path = "graph_node_validation.rs"]
-mod graph_node_validation;
 #[path = "graph_op_validation.rs"]
 mod graph_op_validation;
 #[path = "graph_ops.rs"]
 mod graph_ops;
 #[path = "graph_query.rs"]
 mod graph_query;
-#[path = "graph_space_validation.rs"]
-mod graph_space_validation;
-#[path = "graph_split_validation.rs"]
-mod graph_split_validation;
 #[path = "graph_tab_stack.rs"]
 mod graph_tab_stack;
 #[path = "graph_validation.rs"]
@@ -287,94 +281,6 @@ impl DockGraph {
     /// Inserts a node and returns its runtime id.
     pub fn insert_node(&mut self, node: DockNode) -> DockNodeId {
         self.nodes.insert(node)
-    }
-
-    pub(crate) fn activation_focus_item_for_workspace_payload(
-        &self,
-        payload: &crate::workspace_transaction::DockWorkspaceDropPayload<'_>,
-        target_space: Option<&DockSpaceId>,
-        frozen_focus_item: Option<&DockItemId>,
-    ) -> Option<DockItemId> {
-        let item = match payload {
-            crate::workspace_transaction::DockWorkspaceDropPayload::Item { item, .. } => {
-                (*item).clone()
-            }
-            crate::workspace_transaction::DockWorkspaceDropPayload::Tabs { .. }
-            | crate::workspace_transaction::DockWorkspaceDropPayload::Floating { .. } => {
-                frozen_focus_item?.clone()
-            }
-        };
-
-        match target_space {
-            Some(space) if self.find_item_in_space(space, &item).is_some() => Some(item),
-            Some(_) => None,
-            None => Some(item),
-        }
-    }
-
-    pub(crate) fn activation_focus_item_for_viewport_payload(
-        &self,
-        payload: &crate::viewport_tear_off::DockViewportDropPayload,
-        source_node: DockNodeId,
-        frozen_focus_item: Option<&DockItemId>,
-    ) -> Option<DockItemId> {
-        let workspace_payload = payload.as_workspace_payload(source_node);
-        self.resolve_payload_focus_item(&workspace_payload, None, frozen_focus_item)
-    }
-
-    pub(crate) fn drag_focus_item_for_payload(
-        &self,
-        payload: &crate::drag::DockDragPayload,
-        recorded_focus_item: Option<&DockItemId>,
-    ) -> Option<DockItemId> {
-        let workspace_payload = payload.as_workspace_payload();
-        self.resolve_payload_focus_item(&workspace_payload, None, recorded_focus_item)
-    }
-
-    fn resolve_payload_focus_item(
-        &self,
-        payload: &crate::workspace_transaction::DockWorkspaceDropPayload<'_>,
-        target_space: Option<&DockSpaceId>,
-        frozen_focus_item: Option<&DockItemId>,
-    ) -> Option<DockItemId> {
-        let item = match payload {
-            crate::workspace_transaction::DockWorkspaceDropPayload::Item { item, .. } => {
-                (*item).clone()
-            }
-            crate::workspace_transaction::DockWorkspaceDropPayload::Tabs { .. }
-            | crate::workspace_transaction::DockWorkspaceDropPayload::Floating { .. } => {
-                let item = frozen_focus_item?;
-                self.payload_contains_workspace_focus_item(payload, item)
-                    .then_some(item.clone())?
-            }
-        };
-
-        match target_space {
-            Some(space) if self.find_item_in_space(space, &item).is_some() => Some(item),
-            Some(_) => None,
-            None => Some(item),
-        }
-    }
-
-    fn payload_contains_workspace_focus_item(
-        &self,
-        payload: &crate::workspace_transaction::DockWorkspaceDropPayload<'_>,
-        item: &DockItemId,
-    ) -> bool {
-        match payload {
-            crate::workspace_transaction::DockWorkspaceDropPayload::Item {
-                source_tabs: _,
-                item: payload_item,
-            } => *payload_item == item,
-            crate::workspace_transaction::DockWorkspaceDropPayload::Tabs { source_tabs } => self
-                .collect_items_in_subtree(*source_tabs)
-                .iter()
-                .any(|candidate| candidate == item),
-            crate::workspace_transaction::DockWorkspaceDropPayload::Floating { floating } => self
-                .collect_items_in_subtree(*floating)
-                .iter()
-                .any(|candidate| candidate == item),
-        }
     }
 
     pub(in crate::graph) fn record_tab_selection(&mut self, tabs: DockNodeId, item: &DockItemId) {
