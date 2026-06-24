@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-06-24: Completed U1 of
+  `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md` as `a52751f`.
+  `TableFilter` now carries `TableFilterKind`, preserving `contains` while adding exact
+  categorical `one_of` / `exact` token filters with order-independent selected value sets.
+  `TableFilterKind` is exported through `ui_core`, `ui_components`, and both preludes. Verified
+  with `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`,
+  `cargo nextest run -p open-gpui-ui-core table`,
+  `cargo nextest run -p open-gpui-ui-components table`, and `git diff --check`. Next action is U2:
+  add the faceted filter recipe in `ui_components`.
 - 2026-06-24: Wrote `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md`
   as the next Table follow-up boundary. The plan keeps scope to single-column categorical faceted
   filter controls, adds exact categorical filter semantics to `TableFilter`, reuses existing

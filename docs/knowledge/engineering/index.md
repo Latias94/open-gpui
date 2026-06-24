@@ -24,7 +24,7 @@
 * [Table exact-size virtualizer window verification](verification/table-exact-size-virtualizer-window-20260623.md) - Verification evidence for the exact-size virtualizer window used by Table center-column virtualization.
 * [Table custom aggregation callbacks completion](progress/2026-06-24-table-custom-aggregation-callbacks-plan.md) - Durable handoff for the custom aggregation callbacks slice.
 * [Table row selection variants planning](progress/2026-06-24-table-row-selection-variants-plan.md) - Planning note for the next Table follow-up boundary and the durable handoff for the row-selection variants slice.
-* [Table faceted filter controls planning](progress/2026-06-24-table-faceted-filter-controls-plan.md) - Planning note for the next Table follow-up boundary and U1 handoff.
+* [Table faceted filter controls planning](progress/2026-06-24-table-faceted-filter-controls-plan.md) - Planning note for the next Table follow-up boundary and U1 completion handoff.
 
 ## Concepts
 
