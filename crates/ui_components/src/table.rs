@@ -842,9 +842,24 @@ fn table_faceted_filter_options_element(
                 let query_runtime_for_toggle = query_runtime.clone();
                 let query_for_toggle = query.clone();
                 let option_id = format!("{}-option-{option_value}", state.id());
+                let row_id = format!("{}-option-row-{option_value}", state.id());
+                let option_debug_id = state.id().to_owned();
+                let option_debug_value = option_value.clone();
+                let row_selected_values = selected_values.clone();
+                let row_on_change = on_change.clone();
+                let row_column_id = column_id.clone();
+                let row_query_runtime = query_runtime.clone();
+                let row_query = query.clone();
+                let row_option_value = option_value.clone();
 
                 list.child(
                     div()
+                        .id(row_id)
+                        .debug_selector(move || {
+                            format!(
+                                "table-faceted-filter:{option_debug_id}:option:{option_debug_value}"
+                            )
+                        })
                         .flex()
                         .items_center()
                         .justify_between()
@@ -853,8 +868,30 @@ fn table_faceted_filter_options_element(
                         .px(px(6.0))
                         .py(px(4.0))
                         .when(disabled, |this| this.opacity(0.56))
-                        .when(!disabled, |this| {
-                            this.hover(|style| style.bg(rgba(0x00000010)))
+                        .when(!disabled, move |this| {
+                            this.cursor_pointer()
+                                .hover(|style| style.bg(rgba(0x00000010)))
+                                .on_click(move |_, window, cx| {
+                                    let mut next_values = row_selected_values.clone();
+                                    let next_selected = !option_checked;
+                                    if next_selected {
+                                        next_values.insert(row_option_value.clone());
+                                    } else {
+                                        next_values.remove(&row_option_value);
+                                    }
+                                    row_query_runtime.update(cx, |runtime, _| {
+                                        runtime.query = row_query.clone();
+                                    });
+                                    if let Some(on_change) = row_on_change.as_ref() {
+                                        let change = TableFacetedFilterChange::new(
+                                            row_column_id.clone(),
+                                            next_values.into_iter(),
+                                            Some(row_option_value.clone()),
+                                            next_selected,
+                                        );
+                                        on_change(change, window, cx);
+                                    }
+                                })
                         })
                         .child(
                             Checkbox::new(option_id)

@@ -1362,6 +1362,12 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(gates[3].id, "splitter-runtime");
     assert_eq!(gates[4].id, "tabs-overflow");
     assert_eq!(gates[5].id, "table-virtualization");
+    assert!(gates[5].evidence.contains(&"TableFacetedFilter"));
+    assert!(
+        gates[5]
+            .evidence
+            .contains(&"components_gallery_smoke_faceted_filter_updates_table_rows")
+    );
     assert_eq!(gates[6].id, "tree-renderer");
     assert_eq!(gates[7].id, "virtualized-list-renderer");
     assert_eq!(gates[8].id, "state-contract-readouts");
@@ -1690,7 +1696,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 
-    assert_eq!(tables.len(), 9);
+    assert_eq!(tables.len(), 10);
     let release_queue = table_sample(tables, "release-queue");
     assert_eq!(release_queue.state.rows().len(), 10_000);
     assert_eq!(
@@ -3214,6 +3220,9 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"open_gpui_ui_components::Table"));
     assert!(signals.contains(&"open_gpui_ui_components::TableState"));
     assert!(signals.contains(&"open_gpui_ui_components::TableAggregation"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableFacetedFilter"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableFacetedFilterChange"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableFacetedFilterState"));
     assert!(signals.contains(&"open_gpui_ui_components::TableColumnPinning"));
     assert!(signals.contains(&"open_gpui_ui_components::TableColumnRegion"));
     assert!(signals.contains(&"open_gpui_ui_components::TableExpansionState"));
@@ -4319,6 +4328,94 @@ fn components_gallery_smoke_resizable_table_resize_updates_sample(
     assert_eq!(committed_width, Some(changes[0].width));
     assert_eq!(header_after.size.width, cell_after.size.width);
     assert!(header_after.size.width > header_before.size.width);
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_faceted_filter_updates_table_rows(cx: &mut open_gpui::TestAppContext) {
+    const SAMPLE: &str = "gallery:component-table-sample:filter-board";
+    const TRIGGER: &str = "popover:component-table-faceted-filter:filter-board:status:trigger";
+    const CONTENT: &str =
+        "table-faceted-filter:component-table-faceted-filter:filter-board:status:content";
+    const DONE_OPTION: &str =
+        "table-faceted-filter:component-table-faceted-filter:filter-board:status:option:Done";
+    const INITIAL_ROW: &str = "table:component-table:filter-board:row:filter-board-row-177";
+    const FILTERED_ROW: &str = "table:component-table:filter-board:row:filter-board-row-171";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, TRIGGER);
+
+    let sample_before = bounds(cx, SAMPLE);
+    assert!(
+        cx.debug_bounds(INITIAL_ROW).is_some(),
+        "expected the initial filtered board row to render before selecting a status facet"
+    );
+
+    click(cx, TRIGGER);
+    settle(cx);
+    let popup_content = bounds(cx, CONTENT);
+    cx.simulate_event(ScrollWheelEvent {
+        position: popup_content.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-180.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after_popup_wheel = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after_popup_wheel.top(),
+        sample_before.top(),
+        "expected faceted-filter popup wheel input to stay inside the table sample"
+    );
+
+    click(cx, DONE_OPTION);
+    settle(cx);
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.faceted_filter_changes().to_vec()
+    });
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].sample_id, "filter-board");
+    assert_eq!(changes[0].column_id, "status");
+    assert_eq!(changes[0].selected_values, vec!["Done".to_owned()]);
+    assert_eq!(changes[0].toggled_value, Some("Done".to_owned()));
+    assert!(changes[0].selected);
+    assert_eq!(changes[0].filtered_rows, 15);
+    assert_eq!(changes[0].final_rows, 15);
+    assert!(
+        cx.debug_bounds(INITIAL_ROW).is_none(),
+        "expected the Doing row to leave the rendered window after selecting Done"
+    );
+    assert!(
+        cx.debug_bounds(FILTERED_ROW).is_some(),
+        "expected the highest-scoring Done row to render after selecting Done"
+    );
+
+    if cx.debug_bounds(DONE_OPTION).is_none() {
+        click(cx, TRIGGER);
+        settle(cx);
+    }
+    click(cx, DONE_OPTION);
+    settle(cx);
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.faceted_filter_changes().to_vec()
+    });
+    assert_eq!(changes.len(), 2);
+    assert!(changes[1].selected_values.is_empty());
+    assert_eq!(changes[1].toggled_value, Some("Done".to_owned()));
+    assert!(!changes[1].selected);
+    assert_eq!(changes[1].filtered_rows, 60);
+    assert_eq!(changes[1].final_rows, 24);
+    assert!(
+        cx.debug_bounds(INITIAL_ROW).is_some(),
+        "expected clearing the status facet to restore the original filtered board rows"
+    );
 }
 
 #[open_gpui::test]

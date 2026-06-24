@@ -15,13 +15,14 @@ use open_gpui_ui_components::{
     Switch, SwitchState, Table, TableAggregation, TableCellValue, TableColumn, TableColumnFacets,
     TableColumnId, TableColumnPinning, TableColumnRegion, TableColumnSizing,
     TableColumnSizingChange, TableExpansionMode, TableExpansionState, TableFacetValueCount,
-    TableFilter, TablePagination, TableRenderPlan, TableRow, TableRowActivation,
-    TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy,
-    TableSort, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
-    TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
-    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
-    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
+    TableFacetedFilterChange, TableFilter, TablePagination, TableRenderPlan, TableRow,
+    TableRowActivation, TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning,
+    TableRowPinningPolicy, TableSort, TableStageMode, TableState, Tabs, TabsActivationMode,
+    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState,
+    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
+    Tree, TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListItemDescriptor,
+    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -136,6 +137,10 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::TableColumnRegion",
     "open_gpui_ui_components::TableColumnSizing",
     "open_gpui_ui_components::TableColumnSizingChange",
+    "open_gpui_ui_components::TableFacetedFilter",
+    "open_gpui_ui_components::TableFacetedFilterChange",
+    "open_gpui_ui_components::TableFacetedFilterOptionState",
+    "open_gpui_ui_components::TableFacetedFilterState",
     "open_gpui_ui_components::TableColumnResizeMode",
     "open_gpui_ui_components::TableExpansionState",
     "open_gpui_ui_components::TableRowPinning",
@@ -908,6 +913,9 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "grouped-custom-aggregation",
             "release-resize",
             "row-pinning",
+            "filter-board",
+            "TableFacetedFilter",
+            "components_gallery_smoke_faceted_filter_updates_table_rows",
             "components_gallery_smoke_table_scroll_stays_inside_sample",
             "components_gallery_smoke_grouped_table_scroll_stays_inside_sample",
             "components_page_table_samples_expose_virtualized_row_model_contract",
@@ -1242,7 +1250,28 @@ pub struct TableSampleRuntimeLog {
     row_activations: Vec<TableSampleRowActivation>,
     expansion_toggles: Vec<TableSampleExpansionToggle>,
     expansion_overrides: BTreeMap<String, TableExpansionState>,
+    faceted_filter_changes: Vec<TableSampleFacetedFilterChange>,
+    faceted_filter_overrides: BTreeMap<String, TableState>,
     server_tree_loaded: BTreeMap<String, bool>,
+}
+
+/// One faceted-filter change captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSampleFacetedFilterChange {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Filtered column id.
+    pub column_id: String,
+    /// Exact categorical tokens selected after the change.
+    pub selected_values: Vec<String>,
+    /// Token that was toggled, if any.
+    pub toggled_value: Option<String>,
+    /// Whether the toggled token is selected after the change.
+    pub selected: bool,
+    /// Filtered row count after the change.
+    pub filtered_rows: usize,
+    /// Final row count after pagination after the change.
+    pub final_rows: usize,
 }
 
 impl Global for TableSampleRuntimeLog {}
@@ -1273,6 +1302,16 @@ impl TableSampleRuntimeLog {
         self.expansion_overrides.get(sample_id)
     }
 
+    /// Returns captured faceted filter changes in event order.
+    pub fn faceted_filter_changes(&self) -> &[TableSampleFacetedFilterChange] {
+        &self.faceted_filter_changes
+    }
+
+    /// Returns the current controlled faceted filter state for a sample, if any.
+    pub fn faceted_filter_override(&self, sample_id: &str) -> Option<&TableState> {
+        self.faceted_filter_overrides.get(sample_id)
+    }
+
     /// Clears captured interactions.
     pub fn clear(&mut self) {
         self.sizing_changes.clear();
@@ -1280,6 +1319,8 @@ impl TableSampleRuntimeLog {
         self.row_activations.clear();
         self.expansion_toggles.clear();
         self.expansion_overrides.clear();
+        self.faceted_filter_changes.clear();
+        self.faceted_filter_overrides.clear();
         self.server_tree_loaded.clear();
     }
 }
@@ -1314,6 +1355,21 @@ pub fn current_table_sample_expansion(
     })
 }
 
+/// Returns the current controlled faceted-filter state for a gallery `Table` sample.
+pub fn current_table_sample_faceted_filter_state(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    cx: &impl AppContext,
+) -> TableState {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.faceted_filter_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    })
+}
+
 /// Applies a resolved expansion state to a sample table state.
 pub fn table_state_with_expansion(state: TableState, expansion: TableExpansionState) -> TableState {
     match expansion {
@@ -1329,6 +1385,7 @@ pub fn table_sample_state_with_runtime(
     expansion: TableExpansionState,
     cx: &impl AppContext,
 ) -> TableState {
+    let state = current_table_sample_faceted_filter_state(sample.id, &sample.state, cx);
     let loaded_server_tree = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
         log.server_tree_loaded
             .get(sample.id)
@@ -1338,7 +1395,7 @@ pub fn table_sample_state_with_runtime(
     let state = if sample.id == "server-tree" && loaded_server_tree {
         server_tree_table_state(true)
     } else {
-        sample.state.clone()
+        state
     };
 
     table_state_with_expansion(state.with_column_sizing(sizing), expansion)
@@ -1440,6 +1497,42 @@ pub fn record_table_expansion_request(
             }
         };
         log.expansion_overrides.insert(sample_id, next);
+    });
+}
+
+/// Records and applies a controlled gallery `Table` faceted-filter change.
+pub fn record_table_faceted_filter_change(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    change: &TableFacetedFilterChange,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = fallback.clone();
+    let next = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        let current = log
+            .faceted_filter_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone());
+        change.apply_to(current)
+    });
+    let resolved = next.resolve();
+    let filtered_rows = resolved.filtered_model().rows().len();
+    let final_rows = resolved.final_model().rows().len();
+
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.faceted_filter_changes
+            .push(TableSampleFacetedFilterChange {
+                sample_id: sample_id.clone(),
+                column_id: change.column_id().as_str().to_owned(),
+                selected_values: change.selected_values().to_vec(),
+                toggled_value: change.toggled_value().map(str::to_owned),
+                selected: change.selected(),
+                filtered_rows,
+                final_rows,
+            });
+        log.faceted_filter_overrides.insert(sample_id, next);
     });
 }
 
@@ -2092,6 +2185,14 @@ impl TableSample {
     /// Returns the precomputed state summary used by the gallery page.
     pub const fn state_summary(&self) -> TableSampleStateSummary {
         self.state_summary
+    }
+
+    /// Resolves the summary for a caller-supplied table state using this sample's layout settings.
+    pub fn state_summary_for_state(&self, state: &TableState) -> TableSampleStateSummary {
+        let plan = self
+            .build_table_with_state(state.clone())
+            .render_plan(UiPx::ZERO, self.viewport_extent);
+        TableSampleStateSummary::from_plan(&plan, state)
     }
 }
 

@@ -3,7 +3,7 @@
 use crate::pages;
 use crate::shell::*;
 use open_gpui::prelude::*;
-use open_gpui::{Context, IntoElement, ScrollAnchor, ScrollHandle, div, px, rgb};
+use open_gpui::{AnyElement, Context, IntoElement, ScrollAnchor, ScrollHandle, div, px, rgb};
 use open_gpui_ui_components::*;
 use open_gpui_ui_core::{Orientation, Sizable, Size, ThemeTokens};
 
@@ -1471,7 +1471,6 @@ pub(crate) fn render_components_page(
                                         let title = sample.title;
                                         let summary = sample.summary;
                                         let badge = sample.badge;
-                                        let state_summary = sample.state_summary();
                                         let base_sizing = sample.state.column_sizing().clone();
                                         let current_sizing =
                                             pages::components::current_table_sample_sizing(
@@ -1493,7 +1492,74 @@ pub(crate) fn render_components_page(
                                                 current_expansion,
                                                 cx,
                                             );
+                                        let state_summary =
+                                            sample.state_summary_for_state(&table_state);
                                         let mut table = sample.build_table_with_state(table_state);
+                                        let table_plan = table.state();
+                                        let faceted_filter_control: Option<AnyElement> =
+                                            if sample_id == "filter-board" {
+                                                let status_column = TableColumnId::new("status");
+                                                let selected_values = table
+                                                    .table_state()
+                                                    .filters()
+                                                    .iter()
+                                                    .find(|filter| filter.column() == &status_column)
+                                                    .and_then(|filter| filter.selected_values())
+                                                    .map(|values| {
+                                                        values.iter().cloned().collect::<Vec<_>>()
+                                                    })
+                                                    .unwrap_or_default();
+                                                table_plan
+                                                    .column_facet(&status_column)
+                                                    .cloned()
+                                                    .map(|facets| {
+                                                        let sample_id_for_filter =
+                                                            sample_id.to_owned();
+                                                        let base_state = sample.state.clone();
+                                                        div()
+                                                            .flex()
+                                                            .flex_col()
+                                                            .gap_1()
+                                                            .child(
+                                                                div()
+                                                                    .text_xs()
+                                                                    .font_weight(
+                                                                        open_gpui::FontWeight::BOLD,
+                                                                    )
+                                                                    .text_color(rgb(0x3f4a57))
+                                                                    .child("Status"),
+                                                            )
+                                                            .child(
+                                                                TableFacetedFilter::new(
+                                                                    format!(
+                                                                        "component-table-faceted-filter:{}:status",
+                                                                        sample_id
+                                                                    ),
+                                                                    "Status",
+                                                                    "status",
+                                                                )
+                                                                .facets(facets)
+                                                                .selected_values(selected_values)
+                                                                .default_query("")
+                                                                .placeholder("Filter statuses")
+                                                                .empty_label("No matching statuses")
+                                                                .clear_label("Clear status")
+                                                                .small()
+                                                                .tokens(snapshot.tokens)
+                                                                .on_change(move |change, _, cx| {
+                                                                    pages::components::record_table_faceted_filter_change(
+                                                                        sample_id_for_filter.clone(),
+                                                                        &base_state,
+                                                                        &change,
+                                                                        cx,
+                                                                    );
+                                                                }),
+                                                            )
+                                                            .into_any_element()
+                                                    })
+                                            } else {
+                                                None
+                                            };
                                         if sample_id == "release-resize" {
                                             let sample_id_for_resize = sample_id.to_owned();
                                             table = table.on_column_sizing_change(
@@ -1564,6 +1630,16 @@ pub(crate) fn render_components_page(
                                                     .text_color(rgb(0x5a6472))
                                                     .child(summary),
                                             )
+                                            .when_some(faceted_filter_control, |this, control| {
+                                                this.child(
+                                                    div()
+                                                        .flex()
+                                                        .items_start()
+                                                        .justify_between()
+                                                        .gap_3()
+                                                        .child(control),
+                                                )
+                                            })
                                             .child(
                                                 div()
                                                     .h(px(228.0))
