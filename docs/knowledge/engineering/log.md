@@ -6,6 +6,28 @@ status: active
 
 # Log
 
+- 2026-06-24: Completed the Table row-selection variants slice as `ea3785f`. `ui_core::TableState`
+  now carries explicit selection policy knobs for single vs multiple selection, explicit-control
+  vs row-click activation, and descendant propagation, plus renderer-neutral selection summaries
+  for full-model and current-page scopes. `ui_components::Table` emits controlled
+  `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when
+  the policy is explicit-control. The Components test suite now covers row-click selection,
+  explicit-control row clicks, and API inventory / export baselines for the new row-selection
+  callback.
+- 2026-06-24: Completed the Table row-selection variants slice from
+  `docs/plans/2026-06-24-003-feat-ui-table-row-selection-variants-plan.md`. `ui_core::TableState`
+  now has explicit selection policy knobs for single vs multiple selection, explicit-control vs
+  row-click activation, and descendant propagation, plus renderer-neutral selection summaries for
+  full-model and current-page scopes. `ui_components::Table` emits controlled
+  `TableRowSelectionChange` payloads, keeps row-click selection distinct from activation when the
+  policy is explicit-control, and the Components test suite now covers row-click selection,
+  explicit-control row clicks, and API inventory / export baselines for the new callback surface.
+- 2026-06-24: Chose the next Table planning boundary as
+  `docs/plans/2026-06-24-003-feat-ui-table-row-selection-variants-plan.md`. The slice covers
+  checkbox, radio, and list-like row selection recipes on top of the existing stable selected-row
+  id state, keeps selection semantics renderer-neutral in `ui_core`, keeps selection chrome and
+  gestures in `ui_components`, and defers cell editing, server-synced selection persistence, and a
+  general feature plugin system.
 - 2026-06-24: Started the Table custom aggregation callbacks slice from
   `docs/plans/2026-06-24-002-feat-ui-table-custom-aggregation-callbacks-plan.md`. `TableState`
   now stores named aggregation callbacks, grouped rows resolve named custom aggregates through the

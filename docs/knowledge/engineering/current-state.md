@@ -84,21 +84,36 @@ verified_by:
 - 2026-06-24: Merged the Table row-pinning / two-axis viewport slice back to `main` as `d55f2d1`
   and pushed it to `origin/main`. The working tree is clean and `git diff --check` passed; the next
   Table follow-up can start from the updated `main` line.
-- 2026-06-24: Started the Table custom aggregation callbacks slice from
-  `docs/plans/2026-06-24-002-feat-ui-table-custom-aggregation-callbacks-plan.md`. `ui_core::TableState`
-  now stores named aggregation callbacks, grouped rows can resolve built-in and named aggregate
-  cells through the same renderer-neutral pipeline, `ui_components::TableRenderPlan` exposes the
-  registered callback count, and the Components gallery has a focused `grouped-custom-aggregation`
-  sample. Core/grouped tests and gallery sample coverage are in progress; docs and engineering
-  memory still need the final verification pass.
+- 2026-06-24: Completed the Table row-selection variants slice from
+  `docs/plans/2026-06-24-003-feat-ui-table-row-selection-variants-plan.md`. `ui_core::TableState`
+  now carries explicit selection policy knobs for single vs multiple selection, explicit-control
+  vs row-click activation, and descendant propagation, plus renderer-neutral selection summaries
+  for full-model and current-page scopes. `ui_components::Table` now emits controlled
+  `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when
+  the policy is explicit-control. The Components test suite now covers row-click selection,
+  explicit-control row clicks, and inventory / export baselines for the new row-selection callback.
+- 2026-06-24: Chose the next Table planning boundary as
+  `docs/plans/2026-06-24-003-feat-ui-table-row-selection-variants-plan.md`. The slice covers
+  checkbox, radio, and list-like row selection recipes over the existing stable selected-row id
+  state, keeps selection semantics renderer-neutral in `ui_core`, keeps gestures and selection
+  chrome in `ui_components`, and defers cell editing, server-synced selection persistence, and a
+  general feature plugin system.
 
 - Goal: Execute `docs/plans/2026-06-24-002-feat-ui-table-custom-aggregation-callbacks-plan.md`.
 - Branch: `main`
-- Last verified: 2026-06-24, `git diff --check` passed after merging the row-pinning slice into
-  `main` and pushing the result to `origin/main`.
+- Last verified: 2026-06-24, `git diff --check` passed on the row-selection working tree before the
+  final memory refresh and documentation commit.
 - In progress: Table custom aggregation callbacks slice.
 - Blocked: None.
 - Next action: Finish verification, refresh memory, and commit the custom aggregation slice.
+- Done: Completed the Table row-selection variants slice as `ea3785f`. `ui_core::TableState` now
+  carries explicit selection policy knobs for single vs multiple selection, explicit-control vs
+  row-click activation, and descendant propagation, plus renderer-neutral selection summaries for
+  full-model and current-page scopes. `ui_components::Table` emits controlled
+  `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when
+  the policy is explicit-control. The Components test suite now covers row-click selection,
+  explicit-control row clicks, and API inventory / export baselines for the new row-selection
+  callback.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
   with depth/parent/branch/descendant metadata, source-tree expansion reuses
@@ -247,8 +262,8 @@ verified_by:
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
 - Follow-up: The column sizing / resize, sticky pinned-column, center-column virtualization,
   tree-data, row-interaction, manual-expansion, manual row-model control, per-column faceting
-  metadata, and row pinning slices are complete. The next Table follow-up is two-dimensional grid
-  virtualization. Later Table follow-ups are custom aggregation callbacks, row selection variants,
+  metadata, row selection variants, and row pinning slices are complete. The next Table follow-up
+  is two-dimensional grid virtualization. Later Table follow-ups are custom aggregation callbacks,
   cell editing, global faceting, concrete faceted filter UI, and standalone headless extraction if
   cross-framework pressure appears.
 - In progress: Started the two-dimensional Table viewport follow-up. `ui_core` now has
