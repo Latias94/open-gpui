@@ -469,9 +469,14 @@ entries, numeric min/max ranges, and explicit manual/server payloads keyed by co
 `TableFacetedFilter` is the official single-column categorical filter recipe over that metadata:
 it reads `TableColumnFacets`, renders a searchable `Popover` with checkbox facet rows, keeps query
 and popup runtime adapter-owned, and emits controlled `TableFacetedFilterChange` payloads that add,
-remove, or clear exact stable tokens while resetting pagination to the first page. Global faceting,
-numeric range controls, async option search, and fetching/cache lifecycles remain application-owned
-or follow-up work.
+remove, or clear exact stable tokens while resetting pagination to the first page.
+`TableRangeFilter` is the sibling single-column numeric range recipe: it reads the same
+`TableColumnFacets::numeric_range()` metadata, renders minimum and maximum `TextInput` fields in a
+`Popover`, preserves partially typed endpoint text in adapter runtime, and emits controlled
+`TableRangeFilterChange` payloads with parsed finite endpoints, clear state, and an `apply_to`
+helper that replaces only the target column's range filter while resetting pagination to the first
+page. Global faceting, async option search, richer predicate builders, and fetching/cache
+lifecycles remain application-owned or follow-up work.
 Text cell editing is the official inline-edit recipe over table column metadata:
 `TableCellEditor::Text` and `TableColumn::text_editable` opt columns into editable leaf cells,
 while synthetic group rows and missing source cells stay display-only. The GPUI adapter renders the
@@ -497,9 +502,8 @@ exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_
 entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests for row
 identity, grouping, source-tree expansion, row interaction payloads, and virtualizer behavior, and
 gallery runtime tests for nested scroll containment, faceted-filter row updates, and editable
-text-cell updates. Custom
-aggregation callbacks, sticky headers, autosize-by-content, data-source fetch/cache orchestration,
-global faceting, numeric/range filter controls, richer editor families, and deeper two-axis grid
+text-cell updates. Sticky headers, autosize-by-content, data-source fetch/cache orchestration,
+global faceting, richer editor families, and deeper two-axis grid
 virtualization beyond the pinned center-column window remain follow-up capabilities.
 
 ## Splitter Constraints
@@ -657,12 +661,14 @@ value/count entries and numeric ranges from the source snapshot while excluding 
 own local filter, and manual facet payloads can replace client-derived summaries for server-owned
 counts without giving the component crate fetch/cache responsibility. `TableFacetedFilter` turns
 one categorical facet column into an official searchable Popover recipe with controlled
-`TableFacetedFilterChange` payloads and stable option selectors.
+`TableFacetedFilterChange` payloads and stable option selectors. `TableRangeFilter` turns one
+numeric facet column into an official min/max Popover recipe with controlled
+`TableRangeFilterChange` payloads, finite-bound parsing, and stable min/max input selectors.
 `VirtualizerState` covers one-dimensional range math, stable item keys, measurement idempotence,
 overscan, total size, and snapshot/restore data in `ui_core`; the Table adapter restores snapshot
-measurements but not captured scroll offsets. Custom aggregate callbacks, sticky headers,
-autosize-by-content, data-source orchestration, global faceting, numeric/range filter controls,
-cell editing, synthetic summary rows, and deeper two-axis grid virtualization remain follow-up
+measurements but not captured scroll offsets. Sticky headers, autosize-by-content, data-source
+orchestration, global faceting, richer editor families, synthetic summary rows, and deeper
+two-axis grid virtualization remain follow-up
 work.
 `StatusCue` and `EmptyState` are official feedback components. They expose resolved feedback
 intent, size, role, metrics, and token intents, while the GPUI adapters own concrete styling and

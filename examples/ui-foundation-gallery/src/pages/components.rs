@@ -16,10 +16,10 @@ use open_gpui_ui_components::{
     TableCellValue, TableColumn, TableColumnFacets, TableColumnId, TableColumnPinning,
     TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableExpansionMode,
     TableExpansionState, TableFacetValueCount, TableFacetedFilterChange, TableFilter,
-    TablePagination, TableRenderPlan, TableRow, TableRowActivation, TableRowChildrenLoadState,
-    TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy, TableSort, TableStageMode,
-    TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
-    TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
+    TablePagination, TableRangeFilterChange, TableRenderPlan, TableRow, TableRowActivation,
+    TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy,
+    TableSort, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
+    TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
     ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
     VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
     VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
@@ -141,6 +141,9 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::TableFacetedFilterChange",
     "open_gpui_ui_components::TableFacetedFilterOptionState",
     "open_gpui_ui_components::TableFacetedFilterState",
+    "open_gpui_ui_components::TableRangeFilter",
+    "open_gpui_ui_components::TableRangeFilterChange",
+    "open_gpui_ui_components::TableRangeFilterState",
     "open_gpui_ui_components::TableColumnResizeMode",
     "open_gpui_ui_components::TableExpansionState",
     "open_gpui_ui_components::TableRowPinning",
@@ -915,7 +918,9 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "row-pinning",
             "filter-board",
             "TableFacetedFilter",
+            "TableRangeFilter",
             "components_gallery_smoke_faceted_filter_updates_table_rows",
+            "components_gallery_smoke_range_filter_updates_table_rows",
             "components_gallery_smoke_table_scroll_stays_inside_sample",
             "components_gallery_smoke_grouped_table_scroll_stays_inside_sample",
             "components_page_table_samples_expose_virtualized_row_model_contract",
@@ -1271,6 +1276,8 @@ pub struct TableSampleRuntimeLog {
     expansion_overrides: BTreeMap<String, TableExpansionState>,
     faceted_filter_changes: Vec<TableSampleFacetedFilterChange>,
     faceted_filter_overrides: BTreeMap<String, TableState>,
+    range_filter_changes: Vec<TableSampleRangeFilterChange>,
+    range_filter_overrides: BTreeMap<String, TableState>,
     cell_edit_changes: Vec<TableSampleCellEditChange>,
     cell_edit_overrides: BTreeMap<String, TableState>,
     server_tree_loaded: BTreeMap<String, bool>,
@@ -1289,6 +1296,29 @@ pub struct TableSampleFacetedFilterChange {
     pub toggled_value: Option<String>,
     /// Whether the toggled token is selected after the change.
     pub selected: bool,
+    /// Filtered row count after the change.
+    pub filtered_rows: usize,
+    /// Final row count after pagination after the change.
+    pub final_rows: usize,
+}
+
+/// One range-filter change captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableSampleRangeFilterChange {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Filtered column id.
+    pub column_id: String,
+    /// Lower endpoint text.
+    pub min_text: String,
+    /// Upper endpoint text.
+    pub max_text: String,
+    /// Parsed lower endpoint after normalization.
+    pub min_value: Option<f64>,
+    /// Parsed upper endpoint after normalization.
+    pub max_value: Option<f64>,
+    /// Whether this payload clears the range.
+    pub cleared: bool,
     /// Filtered row count after the change.
     pub filtered_rows: usize,
     /// Final row count after pagination after the change.
@@ -1333,6 +1363,16 @@ impl TableSampleRuntimeLog {
         self.faceted_filter_overrides.get(sample_id)
     }
 
+    /// Returns captured range filter changes in event order.
+    pub fn range_filter_changes(&self) -> &[TableSampleRangeFilterChange] {
+        &self.range_filter_changes
+    }
+
+    /// Returns the current controlled range filter state for a sample, if any.
+    pub fn range_filter_override(&self, sample_id: &str) -> Option<&TableState> {
+        self.range_filter_overrides.get(sample_id)
+    }
+
     /// Returns captured text-cell edits in event order.
     pub fn cell_edit_changes(&self) -> &[TableSampleCellEditChange] {
         &self.cell_edit_changes
@@ -1352,6 +1392,8 @@ impl TableSampleRuntimeLog {
         self.expansion_overrides.clear();
         self.faceted_filter_changes.clear();
         self.faceted_filter_overrides.clear();
+        self.range_filter_changes.clear();
+        self.range_filter_overrides.clear();
         self.cell_edit_changes.clear();
         self.cell_edit_overrides.clear();
         self.server_tree_loaded.clear();
@@ -1403,6 +1445,21 @@ pub fn current_table_sample_faceted_filter_state(
     })
 }
 
+/// Returns the current controlled range-filter state for a gallery `Table` sample.
+pub fn current_table_sample_range_filter_state(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    cx: &impl AppContext,
+) -> TableState {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.range_filter_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    })
+}
+
 /// Returns the current controlled text-cell edit state for a gallery `Table` sample.
 pub fn current_table_sample_cell_edit_state(
     sample_id: impl Into<String>,
@@ -1434,6 +1491,7 @@ pub fn table_sample_state_with_runtime(
     cx: &impl AppContext,
 ) -> TableState {
     let state = current_table_sample_faceted_filter_state(sample.id, &sample.state, cx);
+    let state = current_table_sample_range_filter_state(sample.id, &state, cx);
     let state = current_table_sample_cell_edit_state(sample.id, &state, cx);
     let loaded_server_tree = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
         log.server_tree_loaded
@@ -1582,6 +1640,43 @@ pub fn record_table_faceted_filter_change(
                 final_rows,
             });
         log.faceted_filter_overrides.insert(sample_id, next);
+    });
+}
+
+/// Records and applies a controlled gallery `Table` range-filter change.
+pub fn record_table_range_filter_change(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    change: &TableRangeFilterChange,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = fallback.clone();
+    let next = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        let current = log
+            .range_filter_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone());
+        change.apply_to(current)
+    });
+    let resolved = next.resolve();
+    let filtered_rows = resolved.filtered_model().rows().len();
+    let final_rows = resolved.final_model().rows().len();
+
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.range_filter_changes.push(TableSampleRangeFilterChange {
+            sample_id: sample_id.clone(),
+            column_id: change.column_id().as_str().to_owned(),
+            min_text: change.min_text().to_owned(),
+            max_text: change.max_text().to_owned(),
+            min_value: change.min_value(),
+            max_value: change.max_value(),
+            cleared: change.cleared(),
+            filtered_rows,
+            final_rows,
+        });
+        log.range_filter_overrides.insert(sample_id, next);
     });
 }
 

@@ -1560,6 +1560,66 @@ pub(crate) fn render_components_page(
                                             } else {
                                                 None
                                             };
+                                        let range_filter_control: Option<AnyElement> =
+                                            if sample_id == "filter-board" {
+                                                let score_column = TableColumnId::new("score");
+                                                let (selected_min, selected_max) = table
+                                                    .table_state()
+                                                    .filters()
+                                                    .iter()
+                                                    .find(|filter| filter.column() == &score_column)
+                                                    .and_then(|filter| {
+                                                        filter.number_range_bounds()
+                                                    })
+                                                    .unwrap_or((None, None));
+                                                table_plan
+                                                    .column_facet(&score_column)
+                                                    .cloned()
+                                                    .map(|facets| {
+                                                        let sample_id_for_range =
+                                                            sample_id.to_owned();
+                                                        let base_state = sample.state.clone();
+                                                        div()
+                                                            .flex()
+                                                            .flex_col()
+                                                            .gap_1()
+                                                            .child(
+                                                                div()
+                                                                    .text_xs()
+                                                                    .font_weight(
+                                                                        open_gpui::FontWeight::BOLD,
+                                                                    )
+                                                                    .text_color(rgb(0x3f4a57))
+                                                                    .child("Score"),
+                                                            )
+                                                            .child(
+                                                                TableRangeFilter::new(
+                                                                    format!(
+                                                                        "component-table-range-filter:{}:score",
+                                                                        sample_id
+                                                                    ),
+                                                                    "Score",
+                                                                    "score",
+                                                                )
+                                                                .facets(facets)
+                                                                .range(selected_min, selected_max)
+                                                                .clear_label("Clear score")
+                                                                .small()
+                                                                .tokens(snapshot.tokens)
+                                                                .on_change(move |change, _, cx| {
+                                                                    pages::components::record_table_range_filter_change(
+                                                                        sample_id_for_range.clone(),
+                                                                        &base_state,
+                                                                        &change,
+                                                                        cx,
+                                                                    );
+                                                                }),
+                                                            )
+                                                            .into_any_element()
+                                                    })
+                                            } else {
+                                                None
+                                            };
                                         if sample_id == "release-resize" {
                                             let sample_id_for_resize = sample_id.to_owned();
                                             table = table.on_column_sizing_change(
@@ -1641,16 +1701,26 @@ pub(crate) fn render_components_page(
                                                     .text_color(rgb(0x5a6472))
                                                     .child(summary),
                                             )
-                                            .when_some(faceted_filter_control, |this, control| {
-                                                this.child(
-                                                    div()
-                                                        .flex()
-                                                        .items_start()
-                                                        .justify_between()
-                                                        .gap_3()
-                                                        .child(control),
-                                                )
-                                            })
+                                            .when(
+                                                faceted_filter_control.is_some()
+                                                    || range_filter_control.is_some(),
+                                                |this| {
+                                                    this.child(
+                                                        div()
+                                                            .flex()
+                                                            .items_start()
+                                                            .gap_3()
+                                                            .when_some(
+                                                                faceted_filter_control,
+                                                                |row, control| row.child(control),
+                                                            )
+                                                            .when_some(
+                                                                range_filter_control,
+                                                                |row, control| row.child(control),
+                                                            ),
+                                                    )
+                                                },
+                                            )
                                             .child(
                                                 div()
                                                     .h(px(228.0))

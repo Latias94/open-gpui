@@ -9,8 +9,8 @@ use open_gpui_ui_components::{
     OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
     SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableCellValue,
     TableColumnFacets, TableColumnId, TableColumnRegion, TableExpansionMode, TableExpansionState,
-    TableRowChildrenLoadState, TableRowId, TableRowRegion, TableStageMode, ThemeMode,
-    ToggleVariant, TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
+    TableRangeFilterChange, TableRowChildrenLoadState, TableRowId, TableRowRegion, TableStageMode,
+    ThemeMode, ToggleVariant, TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state, init_text_input,
     },
@@ -3246,6 +3246,9 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"open_gpui_ui_components::TableFacetedFilter"));
     assert!(signals.contains(&"open_gpui_ui_components::TableFacetedFilterChange"));
     assert!(signals.contains(&"open_gpui_ui_components::TableFacetedFilterState"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableRangeFilter"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableRangeFilterChange"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableRangeFilterState"));
     assert!(signals.contains(&"open_gpui_ui_components::TableColumnPinning"));
     assert!(signals.contains(&"open_gpui_ui_components::TableColumnRegion"));
     assert!(signals.contains(&"open_gpui_ui_components::TableExpansionState"));
@@ -3272,6 +3275,23 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"Role::Cell"));
     assert!(signals.contains(&"Role::Tree"));
     assert!(signals.contains(&"Role::TreeItem"));
+
+    let table_gate = gates
+        .iter()
+        .find(|gate| gate.id == "table-virtualization")
+        .unwrap_or_else(|| panic!("expected table conformance gate"));
+    assert!(table_gate.evidence.contains(&"TableFacetedFilter"));
+    assert!(table_gate.evidence.contains(&"TableRangeFilter"));
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_faceted_filter_updates_table_rows")
+    );
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_range_filter_updates_table_rows")
+    );
 }
 
 #[open_gpui::test]
@@ -4443,6 +4463,119 @@ fn components_gallery_smoke_faceted_filter_updates_table_rows(cx: &mut open_gpui
     assert!(
         cx.debug_bounds(INITIAL_ROW).is_some(),
         "expected clearing the status facet to restore the original filtered board rows"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_range_filter_updates_table_rows(cx: &mut open_gpui::TestAppContext) {
+    const SAMPLE_ID: &str = "filter-board";
+    const SAMPLE: &str = "gallery:component-table-sample:filter-board";
+    const TRIGGER: &str = "popover:component-table-range-filter:filter-board:score:trigger";
+    const CONTENT: &str =
+        "table-range-filter:component-table-range-filter:filter-board:score:content";
+    const MIN_INPUT: &str = "text-input:component-table-range-filter:filter-board:score-min:root";
+
+    let table_samples = pages::components::table_samples(ThemeTokens::default());
+    let sample = table_sample(&table_samples, SAMPLE_ID);
+    let baseline = sample.state.resolve();
+    let baseline_rows = baseline.filtered_model().rows().len();
+    let expected_state =
+        TableRangeFilterChange::new("score", "170", "").apply_to(sample.state.clone());
+    let expected = expected_state.resolve();
+    let expected_filtered_rows = expected.filtered_model().rows().len();
+    let expected_final_rows = expected.final_model().rows().len();
+    let expected_page_row_ids = expected
+        .final_model()
+        .rows()
+        .iter()
+        .map(|row| row.id().clone())
+        .collect::<Vec<_>>();
+    let removed_row_id = baseline
+        .final_model()
+        .rows()
+        .iter()
+        .find(|row| !expected_page_row_ids.contains(row.id()))
+        .unwrap_or_else(|| panic!("expected score range to remove at least one initial page row"))
+        .id()
+        .as_str()
+        .to_owned();
+    let removed_row_selector = format!("table:component-table:filter-board:row:{removed_row_id}");
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, TRIGGER);
+
+    let sample_before = bounds(cx, SAMPLE);
+    assert!(
+        cx.debug_bounds(&removed_row_selector).is_some(),
+        "expected the initial filter-board row to render before applying a score range"
+    );
+
+    click(cx, TRIGGER);
+    settle(cx);
+    let popup_content = bounds(cx, CONTENT);
+    cx.simulate_event(ScrollWheelEvent {
+        position: popup_content.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-180.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after_popup_wheel = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after_popup_wheel.top(),
+        sample_before.top(),
+        "expected range-filter popup wheel input to stay inside the table sample"
+    );
+
+    click(cx, MIN_INPUT);
+    settle(cx);
+    cx.simulate_input("170");
+    settle(cx);
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.range_filter_changes().to_vec()
+    });
+    assert!(
+        changes.len() >= 3,
+        "typing a three-digit range minimum should record controlled changes; changes={changes:?}"
+    );
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one range-filter change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.column_id, "score");
+    assert_eq!(last.min_text, "170");
+    assert_eq!(last.max_text, "");
+    assert_eq!(last.min_value, Some(170.0));
+    assert_eq!(last.max_value, None);
+    assert!(!last.cleared);
+    assert_eq!(last.filtered_rows, expected_filtered_rows);
+    assert_eq!(last.final_rows, expected_final_rows);
+    assert!(
+        last.filtered_rows < baseline_rows,
+        "score range should narrow the table row model"
+    );
+
+    let persisted_range =
+        cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+            log.range_filter_override(SAMPLE_ID).and_then(|state| {
+                state
+                    .filters()
+                    .iter()
+                    .find(|filter| filter.column() == &TableColumnId::new("score"))
+                    .and_then(|filter| filter.number_range_bounds())
+            })
+        });
+    assert_eq!(persisted_range, Some((Some(170.0), None)));
+    assert!(
+        cx.debug_bounds(&removed_row_selector).is_none(),
+        "expected lower-score filter-board row to leave the rendered window after applying score range"
     );
 }
 

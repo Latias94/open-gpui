@@ -115,6 +115,12 @@ it enters the Table family view, opens the `filter-board` status popover, verifi
 the popup content stays local, selects the exact `Done` token, checks the controlled change payload
 and filtered row counts, then toggles the token off and confirms the original row window returns.
 
+`components_gallery_smoke_range_filter_updates_table_rows` is the focused numeric range proof:
+it enters the Table family view, opens the `filter-board` score popover, verifies wheel input on
+the popup content stays local, types a minimum score, checks the controlled
+`TableRangeFilterChange` payload and filtered row counts against the same `TableState` contract,
+and confirms a lower-score row leaves the rendered window.
+
 `components_gallery_smoke_editable_table_cell_updates_sample_rows` is the focused text-cell editing
 proof: it enters the Table family view, targets the `editable-release` sample, edits a rendered
 `name` cell through the nested `TextInput`, verifies `TableCellEditChange` targets the stable
@@ -125,7 +131,9 @@ and proves a read-only `status` cell does not mount an editor.
 cargo nextest run -p open-gpui-ui-core table
 cargo nextest run -p open-gpui-ui-components table
 cargo nextest run -p open-gpui-ui-foundation-gallery table
-cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_faceted_filter_updates_table_rows table
+cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_faceted_filter_updates_table_rows components_gallery_smoke_range_filter_updates_table_rows table
+cargo nextest run -p open-gpui-ui-core numeric_range_filters_match_finite_number_cells_inclusively numeric_range_filters_normalize_open_and_reversed_bounds categorical_filters_match_exact_tokens_and_multiple_values
+cargo nextest run -p open-gpui-ui-components table_range_filter_state_resolves_bounds_and_popover_contract table_range_filter_change_updates_filters_and_resets_pagination table_render_plan_exposes_faceting_metadata table_public_exports_include_core_table_and_virtualizer_contracts component_api_inventory_uses_stable_ownership_vocabulary
 cargo nextest run -p open-gpui-ui-components table_render_plan_exposes_text_cell_editability_for_leaf_cells_only table_cell_edit_change_updates_source_row_and_preserves_table_state table_runtime_text_cell_edit_emits_change_without_row_interaction controlled_text_input_on_change_accepts_input_without_supplied_controller component_api_inventory_uses_stable_ownership_vocabulary table_public_exports_include_core_table_and_virtualizer_contracts
 cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_editable_table_cell_updates_sample_rows
 ```
@@ -216,12 +224,13 @@ contract even though `Tree` is now an official rendered component, matching the
 `VirtualizedListState` / `VirtualizedList` split. The Components page smoke also verifies every
 `state_contract_readout_pairs()` selector is visible.
 The official Table gate requires `Table`, `TableState`, `VirtualizerState`,
-`TableFacetedFilter`, role signals for table rows and cells, and at least one
+`TableFacetedFilter`, `TableRangeFilter`, role signals for table rows and cells, and at least one
 `gallery:component-table-sample:{id}` selector. Table smokes and state tests assert that rendered
 row selectors stay bounded by the virtualizer's visible rows plus overscan, scroll input stays
 inside the table viewport, sortable header actions emit state-update payloads, controlled column
 resize callbacks carry stable sizing payloads, categorical faceted filters emit controlled
-exact-token updates, editable text cells emit controlled stable row/column change payloads without
+exact-token updates, numeric range filters emit controlled finite-bound updates, editable text
+cells emit controlled stable row/column change payloads without
 triggering row interaction callbacks, row activation and expansion request payloads stay controlled,
 source-tree row
 models keep nested descendants addressable by stable row id, manual source-tree snapshots expose
@@ -238,7 +247,10 @@ width, and verifies header and first-row cell widths stay aligned. `filter-board
 faceted-filter proof: it renders a `status` `TableFacetedFilter`, records
 `TableFacetedFilterChange` payloads in the sample runtime log, proves selecting `Done` changes the
 rendered row window, proves clearing restores it, and confirms popup wheel input does not move the
-outer table sample.
+outer table sample. It also renders a score `TableRangeFilter`, records
+`TableRangeFilterChange` payloads in the same runtime log, applies the range to a sample-owned
+`TableState` override, proves filtered/final row counts match the core contract, and confirms
+popup wheel input stays local.
 `editable-release` is the text-cell editing proof: it renders editable `name` and `team` columns,
 keeps `status` read-only, records `TableCellEditChange` payloads in the sample runtime log, applies
 changes to a sample-owned `TableState` override, and proves the changed row text re-renders through
@@ -461,7 +473,8 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     sample should accept real text editing through the
     controller-backed path, while the gallery remains scrollable and keeps focus visible when the
     page overflows. The Table samples should expose the `release-queue` 10k-row virtualized window,
-    the filtered/sorted/paginated `filter-board` model with a working status `TableFacetedFilter`,
+    the filtered/sorted/paginated `filter-board` model with working status `TableFacetedFilter`
+    and score `TableRangeFilter` controls,
     the controlled `release-resize` sizing
     sample, the grouped and sticky pinned `release-rollup` model with left/right fixed lanes and a
     horizontally scrollable center lane, the wide `release-matrix` center-column window, the

@@ -24,18 +24,18 @@ use open_gpui_ui_components::{
     TableColumn, TableColumnFacets, TableColumnId, TableColumnPinning, TableColumnRegion,
     TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableExpansionMode,
     TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange, TableFacetedFilterState,
-    TableFilter, TableHeaderAction, TablePagination, TableRow, TableRowChildrenLoadState,
-    TableRowId, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
-    TableSelectionActivationMode, TableSelectionMode, TableSelectionScope, TableSort,
-    TableSortDirection, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem,
-    TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver,
-    ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
-    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
-    TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList,
-    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRenderPlan,
-    VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
-    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
-    VirtualizerState, active_index_from_str_keys, first_enabled,
+    TableFilter, TableHeaderAction, TablePagination, TableRangeFilter, TableRangeFilterChange,
+    TableRangeFilterState, TableRow, TableRowChildrenLoadState, TableRowId, TableRowPinning,
+    TableRowPinningPolicy, TableRowRegion, TableSelectionActivationMode, TableSelectionMode,
+    TableSelectionScope, TableSort, TableSortDirection, TableStageMode, TableState, Tabs,
+    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput,
+    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
+    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
+    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
+    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -538,6 +538,47 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         no_interaction_note: None,
     },
     ComponentApiInventoryEntry {
+        component: "TableRangeFilter",
+        controlled_inputs: &["open"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_open",
+                runtime_value: "open",
+            },
+            DefaultSeedApi {
+                builder: "default_min_text",
+                runtime_value: "min_text",
+            },
+            DefaultSeedApi {
+                builder: "default_max_text",
+                runtime_value: "max_text",
+            },
+        ],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "facets",
+            "range",
+            "clear_label",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+        ],
+        callbacks: &[
+            CallbackApi {
+                name: "on_open_change",
+                payload: "bool",
+            },
+            CallbackApi {
+                name: "on_change",
+                payload: "TableRangeFilterChange",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
         component: "VirtualizedList",
         controlled_inputs: &[],
         default_seeds: &[
@@ -996,6 +1037,7 @@ fn component_source_file(component: &str) -> &'static str {
         "Splitter" => "splitter.rs",
         "Table" => "table.rs",
         "TableFacetedFilter" => "table.rs",
+        "TableRangeFilter" => "table.rs",
         "VirtualizedList" => "virtualized_list.rs",
         "StatusCue" => "feedback.rs",
         "EmptyState" => "feedback.rs",
@@ -1321,6 +1363,26 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "tokens",
             "on_open_change",
             "on_query_change",
+            "on_change",
+            "state",
+        ],
+        "TableRangeFilter" => &[
+            "new",
+            "facets",
+            "range",
+            "default_min_text",
+            "default_max_text",
+            "open",
+            "default_open",
+            "clear_label",
+            "disabled",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
             "on_change",
             "state",
         ],
@@ -3616,6 +3678,142 @@ fn table_faceted_filter_change_updates_filters_and_resets_pagination() {
 }
 
 #[test]
+fn table_range_filter_state_resolves_bounds_and_popover_contract() {
+    let facets = TableColumnFacets::manual("score", 64).with_numeric_range(1.0, 64.0);
+
+    let state: TableRangeFilterState = TableRangeFilter::new("score-range", "Score", "score")
+        .facets(facets)
+        .range(Some(40.0), Some(10.0))
+        .open(true)
+        .clear_label("Reset score")
+        .small()
+        .placement_side(OverlayPlacementSide::Top)
+        .placement_alignment(OverlayPlacementAlignment::End)
+        .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
+        .state();
+
+    assert_eq!(state.id(), "score-range");
+    assert_eq!(state.label(), "Score");
+    assert_eq!(state.column_id().as_str(), "score");
+    assert_eq!(state.min_text(), "10");
+    assert_eq!(state.max_text(), "40");
+    assert_eq!(state.min_value(), Some(10.0));
+    assert_eq!(state.max_value(), Some(40.0));
+    assert_eq!(state.trigger_label(), "Score: 10-40");
+    assert!(state.active());
+    assert!(state.clear_enabled());
+    assert_eq!(state.clear_label(), "Reset score");
+    let facet_range = state
+        .facet_range()
+        .expect("manual score facets should expose a numeric range");
+    assert_eq!(facet_range.min(), 1.0);
+    assert_eq!(facet_range.max(), 64.0);
+    assert_eq!(state.min_placeholder(), "Min (1)");
+    assert_eq!(state.max_placeholder(), "Max (64)");
+    assert_eq!(state.popover().open_mode(), PopoverOpenMode::Controlled);
+    assert!(state.popover().open());
+    assert_eq!(state.popover().placement_side(), OverlayPlacementSide::Top);
+    assert_eq!(
+        state.popover().placement_alignment(),
+        OverlayPlacementAlignment::End
+    );
+    assert_eq!(
+        state.popover().outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert_eq!(state.min_input().value(), "10");
+    assert_eq!(state.max_input().value(), "40");
+    assert_eq!(state.min_input().placeholder(), Some("Min (1)"));
+    assert_eq!(state.max_input().placeholder(), Some("Max (64)"));
+    assert!(state.min_input().controller_driven());
+    assert!(state.max_input().controller_driven());
+}
+
+#[test]
+fn table_range_filter_change_updates_filters_and_resets_pagination() {
+    let state = TableState::new([
+        TableRow::new("row-a")
+            .with_cell("team", "UI")
+            .with_cell("score", 10_usize),
+        TableRow::new("row-b")
+            .with_cell("team", "Platform")
+            .with_cell("score", 40_usize),
+    ])
+    .with_columns([
+        TableColumn::new("team", "Team"),
+        TableColumn::new("score", "Score"),
+    ])
+    .with_filters([
+        TableFilter::contains("team", "UI"),
+        TableFilter::contains("score", "1"),
+        TableFilter::number_range("score", Some(5.0), Some(20.0))
+            .expect("initial score range should be valid"),
+    ])
+    .with_pagination(TablePagination::new(3, 25));
+
+    let change = TableRangeFilterChange::new("score", "30", "10");
+    assert_eq!(change.column_id().as_str(), "score");
+    assert_eq!(change.min_text(), "30");
+    assert_eq!(change.max_text(), "10");
+    assert_eq!(change.min_value(), Some(10.0));
+    assert_eq!(change.max_value(), Some(30.0));
+    assert!(change.active());
+    assert!(!change.cleared());
+
+    let next = change.apply_to(state);
+    assert_eq!(next.pagination().page_index(), 0);
+    assert_eq!(next.pagination().page_size(), 25);
+    assert_eq!(next.filters().len(), 3);
+    let team_filter = next
+        .filters()
+        .iter()
+        .find(|filter| filter.column().as_str() == "team")
+        .expect("unrelated team filter should be preserved");
+    assert_eq!(team_filter.query(), "UI");
+    let score_text_filter = next
+        .filters()
+        .iter()
+        .find(|filter| filter.column().as_str() == "score" && filter.query() == "1")
+        .expect("same-column non-range filter should be preserved");
+    assert_eq!(score_text_filter.number_range_bounds(), None);
+    let score_filter = next
+        .filters()
+        .iter()
+        .find(|filter| {
+            filter.column().as_str() == "score" && filter.number_range_bounds().is_some()
+        })
+        .expect("score filter should be replaced by the range selection");
+    assert_eq!(
+        score_filter.number_range_bounds(),
+        Some((Some(10.0), Some(30.0)))
+    );
+
+    let cleared = TableRangeFilterChange::clear("score");
+    assert!(cleared.cleared());
+    let cleared_state = cleared.apply_to(next);
+    assert_eq!(cleared_state.pagination().page_index(), 0);
+    assert_eq!(cleared_state.filters().len(), 2);
+    assert!(
+        cleared_state
+            .filters()
+            .iter()
+            .all(|filter| filter.number_range_bounds().is_none())
+    );
+    assert!(
+        cleared_state
+            .filters()
+            .iter()
+            .any(|filter| filter.column().as_str() == "team")
+    );
+    assert!(
+        cleared_state
+            .filters()
+            .iter()
+            .any(|filter| filter.column().as_str() == "score" && filter.query() == "1")
+    );
+}
+
+#[test]
 fn table_render_plan_exposes_text_cell_editability_for_leaf_cells_only() {
     let state = TableState::new([
         TableRow::new("row-a")
@@ -4678,6 +4876,18 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _root_filter_kind: root::TableFilterKind = root_filter.kind().clone();
     let _prelude_filter_kind: prelude::TableFilterKind =
         prelude::TableFilterKind::Contains { query: "UI".into() };
+    let _root_numeric_bound: root::TableNumericFilterBound =
+        root::TableNumericFilterBound::new(10.0)
+            .expect("finite numeric bounds should be constructible");
+    let _prelude_numeric_bound: prelude::TableNumericFilterBound =
+        prelude::TableNumericFilterBound::new(20.0)
+            .expect("finite numeric bounds should be constructible");
+    let root_range_filter = root::TableFilter::number_range("score", Some(10.0), Some(20.0))
+        .expect("exported numeric range filter should construct");
+    assert_eq!(
+        root_range_filter.number_range_bounds(),
+        Some((Some(10.0), Some(20.0)))
+    );
     let root_facet_value = root::TableFacetValueCount::new("Ready", 2);
     let root_facets: root::TableColumnFacets =
         root::TableColumnFacets::manual("status", 2).with_unique_values([root_facet_value]);
@@ -4702,6 +4912,22 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _prelude_faceted_change: prelude::TableFacetedFilterChange =
         prelude::TableFacetedFilterChange::clear("status");
     let _root_facet_range: Option<root::TableFacetRange> = root::TableFacetRange::new(1.0, 2.0);
+    let root_range_facets =
+        root::TableColumnFacets::manual("score", 2).with_numeric_range(1.0, 20.0);
+    let root_range_filter: root::TableRangeFilter =
+        root::TableRangeFilter::new("root-score-range", "Score", "score")
+            .facets(root_range_facets.clone())
+            .range(Some(1.0), Some(20.0));
+    let _root_range_filter_state: root::TableRangeFilterState = root_range_filter.state();
+    let _root_range_change: root::TableRangeFilterChange =
+        root::TableRangeFilterChange::new("score", "1", "20");
+    let prelude_range_filter: prelude::TableRangeFilter =
+        prelude::TableRangeFilter::new("prelude-score-range", "Score", "score")
+            .facets(root_range_facets)
+            .range(Some(1.0), Some(20.0));
+    let _prelude_range_filter_state: prelude::TableRangeFilterState = prelude_range_filter.state();
+    let _prelude_range_change: prelude::TableRangeFilterChange =
+        prelude::TableRangeFilterChange::clear("score");
     let _prelude_facet_value: prelude::TableFacetValueCount =
         prelude::TableFacetValueCount::new("Blocked", 1);
     let _root_child_load_state: root::TableRowChildrenLoadState =

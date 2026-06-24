@@ -1442,6 +1442,36 @@ pub enum TableFilterKind {
         /// Exact stable facet tokens.
         values: BTreeSet<String>,
     },
+    /// Inclusive numeric range filter with optional finite endpoints.
+    NumberRange {
+        /// Inclusive lower bound.
+        min: Option<TableNumericFilterBound>,
+        /// Inclusive upper bound.
+        max: Option<TableNumericFilterBound>,
+    },
+}
+
+/// Finite numeric endpoint for table range filters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TableNumericFilterBound(f64);
+
+impl Eq for TableNumericFilterBound {}
+
+impl TableNumericFilterBound {
+    /// Creates a finite numeric filter bound.
+    pub fn new(value: f64) -> Option<Self> {
+        if !value.is_finite() {
+            return None;
+        }
+
+        let value = if value == 0.0 { 0.0 } else { value };
+        Some(Self(value))
+    }
+
+    /// Returns the numeric endpoint value.
+    pub const fn value(self) -> f64 {
+        self.0
+    }
 }
 
 /// Column filter specification for one column.
@@ -1480,6 +1510,26 @@ impl TableFilter {
         }
     }
 
+    /// Creates an inclusive numeric range filter.
+    pub fn number_range(
+        column: impl Into<TableColumnId>,
+        min: Option<f64>,
+        max: Option<f64>,
+    ) -> Option<Self> {
+        let min = min.and_then(TableNumericFilterBound::new);
+        let max = max.and_then(TableNumericFilterBound::new);
+        let (min, max) = normalize_table_numeric_filter_bounds(min, max);
+
+        if min.is_none() && max.is_none() {
+            return None;
+        }
+
+        Some(Self {
+            column: column.into(),
+            kind: TableFilterKind::NumberRange { min, max },
+        })
+    }
+
     /// Returns the filtered column identity.
     pub const fn column(&self) -> &TableColumnId {
         &self.column
@@ -1495,6 +1545,7 @@ impl TableFilter {
         match &self.kind {
             TableFilterKind::Contains { query } => query,
             TableFilterKind::OneOf { .. } => "",
+            TableFilterKind::NumberRange { .. } => "",
         }
     }
 
@@ -1503,6 +1554,18 @@ impl TableFilter {
         match &self.kind {
             TableFilterKind::Contains { .. } => None,
             TableFilterKind::OneOf { values } => Some(values),
+            TableFilterKind::NumberRange { .. } => None,
+        }
+    }
+
+    /// Returns numeric filter endpoints when this is a range filter.
+    pub fn number_range_bounds(&self) -> Option<(Option<f64>, Option<f64>)> {
+        match &self.kind {
+            TableFilterKind::NumberRange { min, max } => Some((
+                min.map(|bound| bound.value()),
+                max.map(|bound| bound.value()),
+            )),
+            TableFilterKind::Contains { .. } | TableFilterKind::OneOf { .. } => None,
         }
     }
 
@@ -1531,7 +1594,40 @@ impl TableFilter {
                     .map(|value| values.contains(&value.filter_text()))
                     .unwrap_or(false)
             }
+            TableFilterKind::NumberRange { min, max } => {
+                if min.is_none() && max.is_none() {
+                    return true;
+                }
+
+                let Some(TableCellValue::Number(number)) = row.cell(&self.column) else {
+                    return false;
+                };
+                if !number.is_finite() {
+                    return false;
+                }
+                if min.is_some_and(|bound| *number < bound.value()) {
+                    return false;
+                }
+                if max.is_some_and(|bound| *number > bound.value()) {
+                    return false;
+                }
+
+                true
+            }
         }
+    }
+}
+
+fn normalize_table_numeric_filter_bounds(
+    min: Option<TableNumericFilterBound>,
+    max: Option<TableNumericFilterBound>,
+) -> (
+    Option<TableNumericFilterBound>,
+    Option<TableNumericFilterBound>,
+) {
+    match (min, max) {
+        (Some(left), Some(right)) if left.value() > right.value() => (Some(right), Some(left)),
+        bounds => bounds,
     }
 }
 
@@ -4664,6 +4760,58 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["row-b", "row-a", "row-c"],
             "an empty categorical filter should behave like no filter"
+        );
+    }
+
+    #[test]
+    fn numeric_range_filters_match_finite_number_cells_inclusively() {
+        let resolved = TableState::new([
+            TableRow::new("row-low").with_cell("score", 10_usize),
+            TableRow::new("row-min").with_cell("score", 20_usize),
+            TableRow::new("row-mid").with_cell("score", 25_usize),
+            TableRow::new("row-max").with_cell("score", 30_usize),
+            TableRow::new("row-high").with_cell("score", 40_usize),
+            TableRow::new("row-text").with_cell("score", "30"),
+            TableRow::new("row-missing").with_cell("team", "UI"),
+            TableRow::new("row-infinite").with_cell("score", f64::INFINITY),
+        ])
+        .with_columns([TableColumn::new("score", "Score")])
+        .with_filters([TableFilter::number_range("score", Some(20.0), Some(30.0))
+            .expect("bounded numeric range should produce a filter")])
+        .resolve();
+
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-min", "row-mid", "row-max"],
+            "range filters are inclusive and only match finite numeric cells"
+        );
+    }
+
+    #[test]
+    fn numeric_range_filters_normalize_open_and_reversed_bounds() {
+        let min_only = TableFilter::number_range("score", Some(20.0), None)
+            .expect("minimum-only range should produce a filter");
+        assert_eq!(min_only.number_range_bounds(), Some((Some(20.0), None)));
+
+        let max_only = TableFilter::number_range("score", Some(f64::NAN), Some(30.0))
+            .expect("invalid minimum should become an open lower bound");
+        assert_eq!(max_only.number_range_bounds(), Some((None, Some(30.0))));
+
+        let reversed = TableFilter::number_range("score", Some(40.0), Some(10.0))
+            .expect("reversed range should normalize");
+        assert_eq!(
+            reversed.number_range_bounds(),
+            Some((Some(10.0), Some(40.0)))
+        );
+
+        assert!(
+            TableFilter::number_range("score", Some(f64::NAN), Some(f64::INFINITY)).is_none(),
+            "filters with no finite endpoints should be removable no-ops"
         );
     }
 

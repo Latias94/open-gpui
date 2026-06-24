@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-06-24: Completed the Table numeric range filter controls slice from
+  `docs/plans/2026-06-24-006-feat-ui-table-numeric-range-filter-controls-plan.md`. `ui_core`
+  now supports inclusive finite numeric range filters through `TableNumericFilterBound`,
+  `ui_components` exposes the `TableRangeFilter` recipe and `TableRangeFilterChange` payload, and
+  the Components gallery adds a focused `filter-board` score range proof with runtime logs.
+  Updated `docs/ui/component-contract.md` and `docs/verification.md` so numeric range filtering is
+  recorded as a shipped Table recipe. Targeted `cargo fmt` and `cargo nextest` commands passed for
+  the core/components/gallery slice, and engineering wiki validation plus `git diff --check`
+  passed. Next action is selecting the next Table boundary.
 - 2026-06-24: Completed the Table cell editing slice from
   `docs/plans/2026-06-24-005-feat-ui-table-cell-editing-plan.md` in the working tree.
   `TableColumn::text_editable`, `TableCellEditor::Text`, `TableCellEditChange`, and
@@ -23,8 +32,8 @@ status: active
   controlled state, and has focused smoke coverage for popup wheel containment, selecting `Done`,
   filtered/final row counts, and clearing back to the original row window. `docs/ui/component-contract.md`,
   `docs/verification.md`, and engineering memory now record the recipe as shipped while keeping
-  global faceting, numeric/range controls, async option search, and fetch/cache orchestration as
-  follow-up work. Verified with `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`,
+  global faceting, async option search, and fetch/cache orchestration as follow-up work. Verified
+  with `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`,
   `cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit`,
   `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_faceted_filter_updates_table_rows table`,
   and `git diff --check`. Next action is selecting the next Table boundary.
