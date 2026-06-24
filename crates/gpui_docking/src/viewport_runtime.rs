@@ -1,5 +1,7 @@
 #[cfg(test)]
 use crate::viewport_registry::DockViewportRouteUnavailableReason;
+#[cfg(test)]
+use crate::viewport_window_lifecycle::DockViewportReusableWindow;
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockDropDelivery,
     DockDropWorkspaceCommit, DockItemId, DockSpaceId, DockViewportActivationBackendFocusApply,
@@ -33,10 +35,9 @@ use crate::{
     viewport_window_lifecycle::{
         DockViewportCloseRecoveryActivation, DockViewportCloseRecoveryRequest,
         DockViewportClosedWindowRefresh, DockViewportReplacementCleanup,
-        DockViewportReusableWindow, DockViewportReusableWindowOutcome,
-        DockViewportRuntimeWindowStateCleanup, DockViewportShouldCloseRefresh,
-        DockViewportSpaceFocusCleanup, DockViewportUnregisteredSpace,
-        DockViewportVacatedTearOffSource,
+        DockViewportReusableWindowOutcome, DockViewportRuntimeWindowStateCleanup,
+        DockViewportShouldCloseRefresh, DockViewportSpaceFocusCleanup,
+        DockViewportUnregisteredSpace, DockViewportVacatedTearOffSource,
     },
     workspace_drop_transaction::DockWorkspacePayloadDropRequest,
 };
@@ -1519,15 +1520,9 @@ impl DockViewportRuntime {
         let focus_request = focus_item
             .map(DockViewportFocusRequest::panel)
             .unwrap_or_else(DockViewportFocusRequest::no_panel_focus);
-        let (reusable, reusable_effects) = self
+        let (activation, reusable_effects) = self
             .reusable_window_for_space_with_cleanup(&target_space, cx)
-            .into_parts();
-        let activation = match reusable {
-            DockViewportReusableWindow::Reused(window) => Some(
-                DockViewportActivationTransaction::new(target_space.clone(), window, focus_request),
-            ),
-            DockViewportReusableWindow::Missing | DockViewportReusableWindow::Stale => None,
-        };
+            .into_drop_activation(target_space.clone(), focus_request);
         Ok(DockViewportDropRouteOutcome::Action(
             DockViewportDropActionOutcome::new(drop_outcome.action(), activation)
                 .with_window_effects(reusable_effects),
@@ -2441,10 +2436,8 @@ impl DockViewportRuntime {
         let Some(request) = DockViewportCloseRecoveryRequest::from_close_outcome(outcome) else {
             return DockViewportCloseRecoveryActivation::none();
         };
-        let (reusable, reusable_effects) = self
-            .reusable_window_for_space_with_cleanup(request.target_space(), cx)
-            .into_parts();
-        request.into_activation(reusable, reusable_effects)
+        self.reusable_window_for_space_with_cleanup(request.target_space(), cx)
+            .into_close_recovery_activation(request)
     }
 
     pub(crate) fn handle_window_should_close_with_app_and_refresh(

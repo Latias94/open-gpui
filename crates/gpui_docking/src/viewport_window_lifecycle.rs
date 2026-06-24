@@ -172,6 +172,21 @@ impl DockViewportReusableWindow {
             Self::Missing | Self::Stale => None,
         }
     }
+
+    fn into_drop_activation(
+        self,
+        space: DockSpaceId,
+        focus_request: DockViewportFocusRequest,
+    ) -> Option<DockViewportActivationTransaction> {
+        match self {
+            Self::Reused(window) => Some(DockViewportActivationTransaction::new(
+                space,
+                window,
+                focus_request,
+            )),
+            Self::Missing | Self::Stale => None,
+        }
+    }
 }
 
 pub(crate) struct DockViewportReusableWindowOutcome {
@@ -212,6 +227,29 @@ impl DockViewportReusableWindowOutcome {
     pub(crate) fn into_parts(self) -> (DockViewportReusableWindow, DockViewportWindowEffects) {
         (self.window, self.window_effects)
     }
+
+    pub(crate) fn into_drop_activation(
+        self,
+        space: DockSpaceId,
+        focus_request: DockViewportFocusRequest,
+    ) -> (
+        Option<DockViewportActivationTransaction>,
+        DockViewportWindowEffects,
+    ) {
+        let (window, window_effects) = self.into_parts();
+        (
+            window.into_drop_activation(space, focus_request),
+            window_effects,
+        )
+    }
+
+    pub(crate) fn into_close_recovery_activation(
+        self,
+        request: DockViewportCloseRecoveryRequest,
+    ) -> DockViewportCloseRecoveryActivation {
+        let (reusable, window_effects) = self.into_parts();
+        request.into_activation(reusable, window_effects)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,5 +278,91 @@ impl DockViewportRuntimeWindowStateCleanup {
                 DockViewportSpaceFocusCleanup::Remove
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        DockItemId, DockViewportCloseOutcome, DockViewportCloseStatus,
+        DockViewportMergeBackClosePlan, DockViewportWindowActivation,
+        viewport_test_support::{handle, space},
+    };
+
+    #[test]
+    fn reusable_window_outcome_builds_drop_activation() {
+        let target_space = space("target");
+        let target_window = handle(7);
+        let focus_item = DockItemId::from("panel-a");
+        let focus_request = DockViewportFocusRequest::panel(focus_item.clone());
+
+        let (activation, window_effects) = DockViewportReusableWindowOutcome::reused(target_window)
+            .into_drop_activation(target_space.clone(), focus_request);
+
+        assert_eq!(window_effects, DockViewportWindowEffects::default());
+        let activation = activation.expect("reused window should create drop activation");
+        assert_eq!(activation.space(), &target_space);
+        assert_eq!(activation.window(), target_window);
+        assert_eq!(
+            activation.window_activation(),
+            DockViewportWindowActivation::Request
+        );
+        assert_eq!(
+            activation.focus_request(),
+            &DockViewportFocusRequest::panel(focus_item)
+        );
+    }
+
+    #[test]
+    fn reusable_window_outcome_builds_close_recovery_activation() {
+        let source_space = space("source");
+        let target_space = space("target");
+        let target_window = handle(11);
+        let focus_item = DockItemId::from("panel-b");
+        let close = DockViewportCloseOutcome::new(
+            Some(source_space.clone()),
+            handle(5).window_id(),
+            DockViewportCloseStatus::Closed,
+        )
+        .with_merge_back(DockViewportMergeBackClosePlan::new(
+            source_space,
+            target_space.clone(),
+            Some(focus_item.clone()),
+        ));
+        let request = DockViewportCloseRecoveryRequest::from_close_outcome(&close)
+            .expect("merged close should request recovery");
+
+        let recovery = DockViewportReusableWindowOutcome::reused(target_window)
+            .into_close_recovery_activation(request);
+
+        assert_eq!(
+            recovery.window_effects(),
+            DockViewportWindowEffects::default()
+        );
+        let activation = recovery
+            .activation
+            .expect("reused target window should create recovery activation");
+        assert_eq!(activation.space(), &target_space);
+        assert_eq!(activation.window(), target_window);
+        assert_eq!(
+            activation.window_activation(),
+            DockViewportWindowActivation::DoNotRequest
+        );
+        assert_eq!(
+            activation.focus_request(),
+            &DockViewportFocusRequest::panel(focus_item)
+        );
+    }
+
+    #[test]
+    fn stale_reusable_window_outcome_keeps_cleanup_effects_without_activation() {
+        let refresh = handle(13);
+        let (activation, window_effects) =
+            DockViewportReusableWindowOutcome::stale_with_affected_windows(vec![refresh])
+                .into_drop_activation(space("target"), DockViewportFocusRequest::no_panel_focus());
+
+        assert!(activation.is_none());
+        assert_eq!(window_effects.refresh(), &[refresh]);
     }
 }
