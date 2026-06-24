@@ -4,8 +4,12 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: a52751f
+git_commit: cfcab3a
 verified_by:
+  - cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components
+  - cargo nextest run -p open-gpui-ui-core table
+  - cargo nextest run -p open-gpui-ui-components table
+  - git diff --check
   - cargo nextest run -p open-gpui-ui-core table
   - cargo nextest run -p open-gpui-ui-components table
   - cargo nextest run -p open-gpui-ui-foundation-gallery table
@@ -86,6 +90,12 @@ verified_by:
 
 # Current State
 
+- 2026-06-24: Completed U2 of the faceted filter controls plan as `cfcab3a`. `TableFacetedFilter`
+  now productizes the single-column categorical filter recipe with exact-value checkbox facets,
+  controlled and default open/query ownership, a reusable `TableFacetedFilterChange` payload that
+  resets pagination to the first page, and public exports through `ui_components` and both
+  preludes. The focused Components tests now cover resolved state, empty query results, and
+  controlled filter-change application.
 - 2026-06-24: Completed the Table row-pinning / two-axis viewport slice as `725f859` on `main`.
   The later `docs(knowledge): sync row-pinning completion state` commit `bbc6633` refreshed the
   memory bundle after the code landed. The working tree is clean and `git diff --check` passed;
@@ -114,15 +124,16 @@ verified_by:
 
 - Goal: Execute `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md`.
 - Branch: `main`
-- Last verified: 2026-06-24, `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-core table`, `cargo nextest run -p open-gpui-ui-components table`, and `git diff --check` passed for U1.
+- Last verified: 2026-06-24, `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-core table`, `cargo nextest run -p open-gpui-ui-components table`, and `git diff --check` passed for U2.
 - Done: Wrote the Table faceted filter controls plan as `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md`.
 - Done: Completed U1 as `a52751f`. `TableFilterKind` is now exported through `ui_core`, `ui_components`, and both preludes; tests cover exact categorical matching, empty no-op filters, order-independent cache keys, and public export inventory.
+- Done: Completed U2 as `cfcab3a`. `TableFacetedFilter` now provides the single-column categorical filter recipe with checkbox facets, search query control, popover policy controls, a controlled change payload, and export / inventory coverage.
 - Done: Completed the Table custom aggregation callbacks slice as `dded73b`. `TableState` now stores named custom aggregation callbacks, grouped rows resolve named custom aggregates through the renderer-neutral pipeline, `TableRenderPlan` exposes the callback count, and the Components gallery includes `grouped-custom-aggregation`.
 - Done: Completed the Table row-selection variants slice as `ea3785f`. `ui_core::TableState` now carries explicit selection policy knobs for single vs multiple selection, explicit-control vs row-click activation, and descendant propagation, plus renderer-neutral selection summaries for full-model and current-page scopes. `ui_components::Table` emits controlled `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when the policy is explicit-control.
 - Done: A combined two-axis viewport contract is already on `main` as `725f859`.
 - In progress: Table faceted filter controls slice.
 - Blocked: None.
-- Next action: Execute U2 by adding the reusable faceted filter recipe in `ui_components`.
+- Next action: Execute U3 by extending the gallery proof and contract evidence for the faceted filter recipe.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
   with depth/parent/branch/descendant metadata, source-tree expansion reuses

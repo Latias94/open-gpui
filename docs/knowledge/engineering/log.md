@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-06-24: Completed U2 of
+  `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md` as `cfcab3a`.
+  `TableFacetedFilter` now productizes the categorical faceted filter recipe with search query
+  control, popover policy control, checkbox facet rows, a controlled `TableFacetedFilterChange`
+  payload that resets pagination to the first page, and crate-root / prelude exports. Verified
+  with `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`,
+  `cargo nextest run -p open-gpui-ui-core table`,
+  `cargo nextest run -p open-gpui-ui-components table`, and `git diff --check`. Next action is U3:
+  extend the gallery proof and contract evidence for the faceted filter recipe.
 - 2026-06-24: Completed U1 of
   `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md` as `a52751f`.
   `TableFilter` now carries `TableFilterKind`, preserving `contains` while adding exact
