@@ -6,6 +6,14 @@ status: active
 
 # Log
 
+- 2026-06-24: Set a long-running Table maturity goal for the current session: continue planning,
+  fearless refactoring, implementation, verification, memory updates, and commits until the Table
+  component is mature enough to be an official component-library baseline. The latest shipped slice
+  is `8fc540f feat(table): add toolbar recipe for filter compositions`, which adds
+  `TableToolbar` / `TableToolbarState`, exports and inventories the recipe, and moves the gallery
+  `filter-board` controls into the toolbar. Verified with focused component and gallery nextest
+  runs plus `git diff --check`. Next planning boundary is likely column visibility or another
+  shell-level table composition helper.
 - 2026-06-24: Wrote `docs/plans/2026-06-24-007-feat-ui-table-global-filtering-faceting-plan.md`
   as the next Table boundary. The plan keeps global filter state separate from column filters,
   adds a global facet summary derived from the pre-global-query row basis, and scopes the first

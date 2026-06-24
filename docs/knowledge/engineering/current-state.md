@@ -97,6 +97,11 @@ verified_by:
   as the next Table boundary. The plan keeps global query state separate from column filters,
   derives global facet metadata from the row basis before the global query is applied, and scopes
   the first component recipe to a controlled search input rather than a predicate builder.
+- 2026-06-24: Committed `8fc540f` to add `TableToolbar` as a narrow table filter-composition
+  recipe. The gallery `filter-board` sample now uses the toolbar to host global, faceted, and
+  range filter controls, and the focused component/gallery tests passed. The next Table boundary
+  is likely column visibility or another shell-level composition recipe that keeps the table API
+  moving toward a mature default surface.
 - 2026-06-24: Completed the Table numeric range filter controls slice in the working tree.
   `TableFilterKind` now supports inclusive finite numeric ranges, `TableRangeFilter` provides a
   min/max Popover recipe with controlled `TableRangeFilterChange` payloads, and `filter-board`
@@ -143,9 +148,11 @@ verified_by:
   chrome in `ui_components`, and defers cell editing, server-synced selection persistence, and a
   general feature plugin system.
 
-- Goal: Complete `docs/plans/2026-06-24-007-feat-ui-table-global-filtering-faceting-plan.md`.
+- Goal: Continue the long-running Table maturity goal by shipping the remaining core recipes,
+  shell composition helpers, gallery proofs, and verification coverage until the table surface is
+  mature enough to serve as the default component-library baseline.
 - Branch: `main`
-- Last verified: 2026-06-24, `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, focused `cargo nextest run` commands for numeric range core/components coverage, `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_range_filter_updates_table_rows`, engineering wiki validation, and `git diff --check` passed for the range-filter slice.
+- Last verified: 2026-06-24, `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components --test components`, `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery components_gallery_smoke_global_filter_updates_table_rows components_page_conformance_gates_reference_core_and_gallery_contracts official_component_catalog_entries_have_signals_and_sample_selectors`, `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery components_gallery_smoke_faceted_filter_updates_table_rows components_gallery_smoke_range_filter_updates_table_rows`, and `git diff --check` passed for the `TableToolbar` slice.
 - Done: Wrote `docs/plans/2026-06-24-007-feat-ui-table-global-filtering-faceting-plan.md` and recorded the planning handoff in `docs/knowledge/engineering/progress/2026-06-24-table-global-filtering-faceting-plan.md`.
 - Done: Wrote the Table faceted filter controls plan as `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md`.
 - Done: Completed U1 as `a52751f`. `TableFilterKind` is now exported through `ui_core`, `ui_components`, and both preludes; tests cover exact categorical matching, empty no-op filters, order-independent cache keys, and public export inventory.
