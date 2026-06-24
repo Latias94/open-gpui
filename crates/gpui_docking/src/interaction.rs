@@ -7,7 +7,8 @@ use crate::{
     drop_target::{DockDropTargetValidator, DockEdgePlanResolver, DockResolvedDropTarget},
     geometry::{self, DockDropGuideStyle},
     viewport_drop_scene::DockViewportHostSceneFrame,
-    workspace_transaction::{DockWorkspacePayloadDropRequest, DockWorkspaceResolvedDropTarget},
+    workspace_drop_target::DockWorkspaceResolvedDropTarget,
+    workspace_drop_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{Bounds, Pixels, Point, point};
 
@@ -799,7 +800,7 @@ mod tests {
     use crate::{
         DockItemId, DockNodeId,
         drop_target::{DockLeafDropTarget, DockResolvedDropTargetKind},
-        workspace_transaction::DockWorkspaceDropPayload,
+        workspace_drop_transaction::DockWorkspaceDropPayload,
     };
     use open_gpui::{point, px, size};
     use slotmap::Key;

@@ -6,9 +6,10 @@ use crate::{
     DockViewportDropRouteRequest, DockViewportHostSceneRenderToken, DockViewportIdentity,
     DockViewportOpenOutcome, DockViewportOpenStatus, DockViewportPlacementLayout,
     DockViewportPlacementValidationError, DockViewportPlatformFocusRestoreGate,
-    DockViewportResolvedDropRoute, DockViewportResolvedDropRouteOutcome,
-    DockViewportRestoreReadiness, DockViewportRoutedDropPreview, DockViewportRuntime,
-    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTearOffCancelReason,
+    DockViewportPointerInputSyncRequest, DockViewportResolvedDropRoute,
+    DockViewportResolvedDropRouteOutcome, DockViewportRestoreReadiness,
+    DockViewportRoutedDropPreview, DockViewportRuntime, DockViewportRuntimeStatus,
+    DockViewportRuntimeUpdate, DockViewportShouldCloseOutcome, DockViewportTearOffCancelReason,
     DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
     DockViewportWindowEffects, DockViewportWindowFacts,
     drag::{DockDragPayload, DockDragTearOffGeometry},
@@ -20,8 +21,8 @@ use crate::{
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_platform_sync::sync_reused_viewport_window,
     viewport_runtime::{
-        DockViewportPointerInputSyncRequest, DockViewportPreparedTearOffBegin,
-        DockViewportPreparedTearOffDrop, DockViewportReusableWindow, DockViewportRuntimeUpdate,
+        DockViewportPreparedTearOffBegin, DockViewportPreparedTearOffDrop,
+        DockViewportReusableWindow,
     },
 };
 #[cfg(test)]
@@ -887,7 +888,7 @@ impl DockViewportRuntimeHandle {
         &self,
         space: DockSpaceId,
         window: AnyWindowHandle,
-    ) -> crate::viewport_runtime::DockViewportRuntimeUpdate {
+    ) -> DockViewportRuntimeUpdate {
         self.runtime
             .borrow_mut()
             .register_rendered_host_viewport_with_cleanup(space, window)

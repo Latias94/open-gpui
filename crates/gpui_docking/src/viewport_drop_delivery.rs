@@ -9,8 +9,8 @@ use crate::{
     },
     interaction::DockRuntimeDragSession,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistry},
+    workspace_drop_target::DockWorkspaceResolvedDropTarget,
     workspace_move_validation::{DockPayloadDockClasses, dock_target_validator},
-    workspace_transaction::DockWorkspaceResolvedDropTarget,
 };
 use open_gpui::{Pixels, Point, Size, WindowId};
 

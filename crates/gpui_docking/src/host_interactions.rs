@@ -9,8 +9,8 @@ use crate::{
         DockFloatingBoundsRequest, DockPayloadDropRelease, DockRuntimeDragSession,
         DockSplitterResizeRequest,
     },
+    workspace_drop_transaction::DockWorkspacePayloadDropRequest,
     workspace_move_validation::dock_target_validator,
-    workspace_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
 

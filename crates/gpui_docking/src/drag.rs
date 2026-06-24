@@ -1,5 +1,6 @@
 use crate::{
-    DockGraph, DockItemId, DockNodeId, DockSpaceId, workspace_transaction::DockWorkspaceDropPayload,
+    DockGraph, DockItemId, DockNodeId, DockSpaceId,
+    workspace_drop_transaction::DockWorkspaceDropPayload,
 };
 use open_gpui::{
     Bounds, Context, IntoElement, ParentElement, Pixels, Point, Render, Size, Styled, Window, div,

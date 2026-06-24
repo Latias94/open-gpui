@@ -1,7 +1,8 @@
 use crate::{
     DockGraph, DockGraphMutationError, DockItemId, DockNodeId, DockOp, DockPanel,
     DockPanelDescriptor, DockPanelRegistry, DockPolicy, DockSpaceId, DockViewportDropPayload,
-    drag::DockDragPayload, host::DockHostOptions, workspace_transaction::DockWorkspaceDropPayload,
+    drag::DockDragPayload, host::DockHostOptions,
+    workspace_drop_transaction::DockWorkspaceDropPayload,
 };
 
 /// Owner for one logical docking workspace.
