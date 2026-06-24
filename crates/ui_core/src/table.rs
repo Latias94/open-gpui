@@ -177,6 +177,7 @@ pub struct TableColumn {
     visible: bool,
     sortable: bool,
     filterable: bool,
+    global_filterable: bool,
     editor: Option<TableCellEditor>,
     width: UiPx,
     min_width: UiPx,
@@ -193,6 +194,7 @@ impl TableColumn {
             visible: true,
             sortable: true,
             filterable: true,
+            global_filterable: true,
             editor: None,
             width: TABLE_DEFAULT_COLUMN_WIDTH,
             min_width: TABLE_MIN_COLUMN_WIDTH,
@@ -224,6 +226,11 @@ impl TableColumn {
     /// Returns whether this column accepts filtering.
     pub const fn filterable(&self) -> bool {
         self.filterable
+    }
+
+    /// Returns whether this column participates in global filtering.
+    pub const fn global_filterable(&self) -> bool {
+        self.global_filterable
     }
 
     /// Returns the cell editor configured for this column, if any.
@@ -271,6 +278,12 @@ impl TableColumn {
     /// Applies filtering capability.
     pub const fn with_filterable(mut self, filterable: bool) -> Self {
         self.filterable = filterable;
+        self
+    }
+
+    /// Applies global filtering capability.
+    pub const fn with_global_filterable(mut self, global_filterable: bool) -> Self {
+        self.global_filterable = global_filterable;
         self
     }
 
@@ -1631,6 +1644,16 @@ fn normalize_table_numeric_filter_bounds(
     }
 }
 
+fn normalize_table_global_filter_query(query: impl Into<String>) -> Option<String> {
+    let query = query.into();
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 /// Per-stage row-model ownership for client or manual control.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableStageMode {
@@ -2195,6 +2218,69 @@ impl TableColumnFacets {
     }
 }
 
+/// Faceting metadata for the global filter context.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableGlobalFacetSummary {
+    mode: TableStageMode,
+    row_count: usize,
+    column_facets: Vec<TableColumnFacets>,
+}
+
+impl TableGlobalFacetSummary {
+    /// Creates an empty client-derived global facet summary.
+    pub fn new() -> Self {
+        Self {
+            mode: TableStageMode::Client,
+            row_count: 0,
+            column_facets: Vec::new(),
+        }
+    }
+
+    fn client(row_count: usize, column_facets: Vec<TableColumnFacets>) -> Self {
+        Self {
+            mode: TableStageMode::Client,
+            row_count,
+            column_facets,
+        }
+    }
+
+    fn manual() -> Self {
+        Self {
+            mode: TableStageMode::Manual,
+            row_count: 0,
+            column_facets: Vec::new(),
+        }
+    }
+
+    /// Returns whether this summary was locally derived or caller supplied.
+    pub const fn mode(&self) -> TableStageMode {
+        self.mode
+    }
+
+    /// Returns the number of rows covered by the global facet basis.
+    pub const fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    /// Returns per-column facet summaries for globally filterable columns.
+    pub fn column_facets(&self) -> &[TableColumnFacets] {
+        &self.column_facets
+    }
+
+    /// Returns the global facet summary for one globally filterable column.
+    pub fn column_facet(&self, column: &TableColumnId) -> Option<&TableColumnFacets> {
+        self.column_facets
+            .iter()
+            .find(|facet| facet.column() == column)
+    }
+}
+
+impl Default for TableGlobalFacetSummary {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Built-in aggregate calculation for grouped table rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableAggregateKind {
@@ -2479,6 +2565,7 @@ pub struct TableState {
     sorting: Vec<TableSort>,
     sorting_mode: TableStageMode,
     filters: Vec<TableFilter>,
+    global_filter: Option<String>,
     filtering_mode: TableStageMode,
     faceting_mode: TableStageMode,
     manual_facets: Vec<TableColumnFacets>,
@@ -2504,6 +2591,7 @@ impl PartialEq for TableState {
             && self.sorting == other.sorting
             && self.sorting_mode == other.sorting_mode
             && self.filters == other.filters
+            && self.global_filter == other.global_filter
             && self.filtering_mode == other.filtering_mode
             && self.faceting_mode == other.faceting_mode
             && self.manual_facets == other.manual_facets
@@ -2535,6 +2623,7 @@ impl TableState {
             sorting: Vec::new(),
             sorting_mode: TableStageMode::default(),
             filters: Vec::new(),
+            global_filter: None,
             filtering_mode: TableStageMode::default(),
             faceting_mode: TableStageMode::default(),
             manual_facets: Vec::new(),
@@ -2619,6 +2708,20 @@ impl TableState {
     /// Applies filter specifications.
     pub fn with_filters(mut self, filters: impl IntoIterator<Item = TableFilter>) -> Self {
         self.filters = filters.into_iter().collect();
+        self
+    }
+
+    /// Applies a global text filter query.
+    ///
+    /// Empty or whitespace-only queries clear the global filter state.
+    pub fn with_global_filter(mut self, query: impl Into<String>) -> Self {
+        self.global_filter = normalize_table_global_filter_query(query);
+        self
+    }
+
+    /// Clears the global text filter query.
+    pub fn without_global_filter(mut self) -> Self {
+        self.global_filter = None;
         self
     }
 
@@ -2814,6 +2917,11 @@ impl TableState {
         &self.filters
     }
 
+    /// Returns the normalized global text filter query.
+    pub fn global_filter(&self) -> Option<&str> {
+        self.global_filter.as_deref()
+    }
+
     /// Returns the filtering ownership mode.
     pub const fn filtering_mode(&self) -> TableStageMode {
         self.filtering_mode
@@ -2911,6 +3019,7 @@ impl TableState {
             sorting: self.sorting.clone(),
             sorting_mode: self.sorting_mode,
             filters: self.filters.clone(),
+            global_filter: self.global_filter.clone(),
             filtering_mode: self.filtering_mode,
             faceting_mode: self.faceting_mode,
             manual_facets: self.manual_facets.clone(),
@@ -2968,6 +3077,7 @@ impl TableState {
         let mut seen_row_ids = BTreeSet::new();
         record_source_row_ids(&self.rows, &mut seen_row_ids, &mut duplicate_row_ids);
         let include_source_children = self.grouping.is_empty();
+        let global_filterable_columns = self.global_filterable_column_ids();
         let selected_rows = self
             .selection_policy
             .resolve_selected_rows(&self.rows, &self.selected_rows);
@@ -2982,20 +3092,31 @@ impl TableState {
             &mut source_index,
         );
         let core_rows = flatten_nodes(&source_nodes);
-        let column_facets = self.resolve_column_facets(&source_nodes);
-
-        let core_model = TableRowModel::new(TableRowModelStage::Core, core_rows);
-
-        let filtered_nodes = if self.filtering_mode.is_manual() {
+        let column_filtered_nodes = if self.filtering_mode.is_manual() {
             source_nodes.clone()
         } else {
             filter_source_row_nodes(&source_nodes, &self.filters, None)
         };
-        let filtered_rows = flatten_nodes(&filtered_nodes);
+        let global_filtered_nodes = if self.filtering_mode.is_manual() {
+            column_filtered_nodes.clone()
+        } else {
+            filter_source_row_nodes_by_global_query(
+                &column_filtered_nodes,
+                self.global_filter.as_deref(),
+                &global_filterable_columns,
+            )
+        };
+        let column_facets = self.resolve_column_facets(&source_nodes, &global_filterable_columns);
+        let global_facet_summary =
+            self.resolve_global_facet_summary(&column_filtered_nodes, &global_filterable_columns);
+
+        let core_model = TableRowModel::new(TableRowModelStage::Core, core_rows);
+
+        let filtered_rows = flatten_nodes(&global_filtered_nodes);
         let filtered_model = TableRowModel::new(TableRowModelStage::Filtered, filtered_rows);
 
         let grouped_nodes = if self.grouping.is_empty() {
-            filtered_nodes
+            global_filtered_nodes
         } else {
             self.group_nodes(filtered_model.rows())
         };
@@ -3046,6 +3167,7 @@ impl TableState {
             duplicate_row_ids: duplicate_row_ids.into_iter().collect(),
             faceting_mode: self.faceting_mode,
             column_facets,
+            global_facet_summary,
             row_pinning_policy: self.row_pinning_policy,
             row_regions,
             core_model,
@@ -3125,7 +3247,11 @@ impl TableState {
         rows
     }
 
-    fn resolve_column_facets(&self, source_nodes: &[TableRowNode]) -> Vec<TableColumnFacets> {
+    fn resolve_column_facets(
+        &self,
+        source_nodes: &[TableRowNode],
+        global_filterable_columns: &[TableColumnId],
+    ) -> Vec<TableColumnFacets> {
         self.columns
             .iter()
             .filter_map(|column| {
@@ -3145,9 +3271,40 @@ impl TableState {
                     column.id().clone(),
                     source_nodes,
                     &self.filters,
+                    self.global_filter.as_deref(),
+                    global_filterable_columns,
                     self.filtering_mode,
                 ))
             })
+            .collect()
+    }
+
+    fn resolve_global_facet_summary(
+        &self,
+        source_nodes: &[TableRowNode],
+        global_filterable_columns: &[TableColumnId],
+    ) -> TableGlobalFacetSummary {
+        if self.faceting_mode.is_manual() {
+            return TableGlobalFacetSummary::manual();
+        }
+
+        let row_count = count_table_row_nodes(source_nodes);
+        let mut column_facets = Vec::new();
+        for column_id in global_filterable_columns {
+            column_facets.push(resolve_client_global_column_facets(
+                column_id.clone(),
+                source_nodes,
+            ));
+        }
+
+        TableGlobalFacetSummary::client(row_count, column_facets)
+    }
+
+    fn global_filterable_column_ids(&self) -> Vec<TableColumnId> {
+        self.columns
+            .iter()
+            .filter(|column| column.global_filterable())
+            .map(|column| column.id().clone())
             .collect()
     }
 }
@@ -3166,6 +3323,7 @@ pub struct TableStateCacheKey {
     sorting: Vec<TableSort>,
     sorting_mode: TableStageMode,
     filters: Vec<TableFilter>,
+    global_filter: Option<String>,
     filtering_mode: TableStageMode,
     faceting_mode: TableStageMode,
     manual_facets: Vec<TableColumnFacets>,
@@ -3198,6 +3356,13 @@ fn next_table_rows_identity() -> u64 {
 fn count_table_rows(rows: &[TableRow]) -> usize {
     rows.iter()
         .map(|row| 1 + count_table_rows(row.children()))
+        .sum()
+}
+
+fn count_table_row_nodes(nodes: &[TableRowNode]) -> usize {
+    nodes
+        .iter()
+        .map(|node| 1 + count_table_row_nodes(&node.children))
         .sum()
 }
 
@@ -3288,6 +3453,8 @@ fn resolve_client_column_facets(
     column_id: TableColumnId,
     source_nodes: &[TableRowNode],
     filters: &[TableFilter],
+    global_filter: Option<&str>,
+    global_filterable_columns: &[TableColumnId],
     filtering_mode: TableStageMode,
 ) -> TableColumnFacets {
     let mut unique_values = BTreeMap::<TableFacetValueKey, TableFacetValueCount>::new();
@@ -3298,31 +3465,23 @@ fn resolve_client_column_facets(
 
     {
         let mut visit = |row: &TableResolvedRow| {
-            row_count += 1;
-            let value = row.cell(&column_id).cloned().unwrap_or_default();
-            let key = TableFacetValueKey::from_value(&value);
-            unique_values
-                .entry(key)
-                .and_modify(|entry| entry.count += 1)
-                .or_insert_with(|| TableFacetValueCount::new(value.clone(), 1));
-
-            if let TableCellValue::Number(number) = value {
-                if number.is_finite() {
-                    found_numeric = true;
-                    if number < min {
-                        min = number;
-                    }
-                    if number > max {
-                        max = number;
-                    }
-                }
-            }
+            record_column_facet_value(
+                row,
+                &column_id,
+                &mut row_count,
+                &mut unique_values,
+                &mut min,
+                &mut max,
+                &mut found_numeric,
+            );
         };
 
         visit_facet_rows(
             source_nodes,
             filters,
             &column_id,
+            global_filter,
+            global_filterable_columns,
             filtering_mode,
             &mut visit,
         );
@@ -3342,10 +3501,85 @@ fn resolve_client_column_facets(
     )
 }
 
+fn resolve_client_global_column_facets(
+    column_id: TableColumnId,
+    source_nodes: &[TableRowNode],
+) -> TableColumnFacets {
+    let mut unique_values = BTreeMap::<TableFacetValueKey, TableFacetValueCount>::new();
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let mut found_numeric = false;
+    let mut row_count = 0;
+
+    visit_source_row_nodes(source_nodes, &mut |row| {
+        record_column_facet_value(
+            row,
+            &column_id,
+            &mut row_count,
+            &mut unique_values,
+            &mut min,
+            &mut max,
+            &mut found_numeric,
+        );
+    });
+
+    let numeric_range = if found_numeric {
+        TableFacetRange::new(min, max)
+    } else {
+        None
+    };
+
+    TableColumnFacets::client(
+        column_id,
+        row_count,
+        unique_values.into_values().collect(),
+        numeric_range,
+    )
+}
+
+fn record_column_facet_value(
+    row: &TableResolvedRow,
+    column_id: &TableColumnId,
+    row_count: &mut usize,
+    unique_values: &mut BTreeMap<TableFacetValueKey, TableFacetValueCount>,
+    min: &mut f64,
+    max: &mut f64,
+    found_numeric: &mut bool,
+) {
+    *row_count += 1;
+    let value = row.cell(column_id).cloned().unwrap_or_default();
+    let key = TableFacetValueKey::from_value(&value);
+    unique_values
+        .entry(key)
+        .and_modify(|entry| entry.count += 1)
+        .or_insert_with(|| TableFacetValueCount::new(value.clone(), 1));
+
+    if let TableCellValue::Number(number) = value {
+        if number.is_finite() {
+            *found_numeric = true;
+            if number < *min {
+                *min = number;
+            }
+            if number > *max {
+                *max = number;
+            }
+        }
+    }
+}
+
+fn visit_source_row_nodes(nodes: &[TableRowNode], visit: &mut impl FnMut(&TableResolvedRow)) {
+    for node in nodes {
+        visit(&node.row);
+        visit_source_row_nodes(&node.children, visit);
+    }
+}
+
 fn visit_facet_rows(
     nodes: &[TableRowNode],
     filters: &[TableFilter],
     excluded_column: &TableColumnId,
+    global_filter: Option<&str>,
+    global_filterable_columns: &[TableColumnId],
     filtering_mode: TableStageMode,
     visit: &mut impl FnMut(&TableResolvedRow),
 ) {
@@ -3355,12 +3589,23 @@ fn visit_facet_rows(
         {
             continue;
         }
+        if !filtering_mode.is_manual()
+            && !resolved_row_matches_global_filter(
+                &node.row,
+                global_filter,
+                global_filterable_columns,
+            )
+        {
+            continue;
+        }
 
         visit(&node.row);
         visit_facet_rows(
             &node.children,
             filters,
             excluded_column,
+            global_filter,
+            global_filterable_columns,
             filtering_mode,
             visit,
         );
@@ -3375,6 +3620,40 @@ fn row_matches_facet_filters(
     filters.iter().all(|filter| {
         filter.column() == excluded_column
             || row.source().is_some_and(|source| filter.matches(source))
+    })
+}
+
+fn resolved_row_matches_global_filter(
+    row: &TableResolvedRow,
+    global_filter: Option<&str>,
+    global_filterable_columns: &[TableColumnId],
+) -> bool {
+    match row.source() {
+        Some(source) => row_matches_global_filter(source, global_filter, global_filterable_columns),
+        None => true,
+    }
+}
+
+fn row_matches_global_filter(
+    row: &TableRow,
+    global_filter: Option<&str>,
+    global_filterable_columns: &[TableColumnId],
+) -> bool {
+    let Some(query) = global_filter else {
+        return true;
+    };
+    if query.is_empty() {
+        return true;
+    }
+    if global_filterable_columns.is_empty() {
+        return false;
+    }
+
+    let query = query.to_lowercase();
+    global_filterable_columns.iter().any(|column| {
+        row.cell(column)
+            .map(|value| value.filter_text().to_lowercase().contains(&query))
+            .unwrap_or(false)
     })
 }
 
@@ -3757,6 +4036,7 @@ pub struct TableResolvedState {
     duplicate_row_ids: Vec<TableRowId>,
     faceting_mode: TableStageMode,
     column_facets: Vec<TableColumnFacets>,
+    global_facet_summary: TableGlobalFacetSummary,
     row_pinning_policy: TableRowPinningPolicy,
     selection_policy: TableSelectionPolicy,
     row_regions: TableRowRegions,
@@ -3800,6 +4080,11 @@ impl TableResolvedState {
         self.column_facets
             .iter()
             .find(|facet| facet.column() == column)
+    }
+
+    /// Returns resolved facet metadata for the global filter context.
+    pub const fn global_facet_summary(&self) -> &TableGlobalFacetSummary {
+        &self.global_facet_summary
     }
 
     /// Returns the pinned row visibility policy.
@@ -4037,6 +4322,35 @@ fn filter_source_row_nodes(
             Some(TableRowNode {
                 row: node.row.clone(),
                 children: filter_source_row_nodes(&node.children, filters, excluded_column),
+            })
+        })
+        .collect()
+}
+
+fn filter_source_row_nodes_by_global_query(
+    nodes: &[TableRowNode],
+    global_filter: Option<&str>,
+    global_filterable_columns: &[TableColumnId],
+) -> Vec<TableRowNode> {
+    if matches!(global_filter, None | Some("")) {
+        return nodes.to_vec();
+    }
+
+    nodes
+        .iter()
+        .filter_map(|node| {
+            let source = node.row.source()?;
+            if !row_matches_global_filter(source, global_filter, global_filterable_columns) {
+                return None;
+            }
+
+            Some(TableRowNode {
+                row: node.row.clone(),
+                children: filter_source_row_nodes_by_global_query(
+                    &node.children,
+                    global_filter,
+                    global_filterable_columns,
+                ),
             })
         })
         .collect()
@@ -4673,6 +4987,131 @@ mod tests {
     }
 
     #[test]
+    fn global_filter_matches_globally_filterable_columns_and_normalizes_queries() {
+        let base = TableState::new([
+            TableRow::new("row-1")
+                .with_cell("name", "Alpha")
+                .with_cell("notes", "done")
+                .with_cell("score", 1_usize),
+            TableRow::new("row-2")
+                .with_cell("name", "Beta")
+                .with_cell("notes", "pending")
+                .with_cell("score", 2_usize),
+            TableRow::new("row-3")
+                .with_cell("name", "Done")
+                .with_cell("notes", "pending")
+                .with_cell("score", 3_usize),
+        ])
+        .with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("notes", "Notes").with_global_filterable(false),
+            TableColumn::new("score", "Score"),
+        ]);
+
+        assert_eq!(base.clone().with_global_filter("   ").global_filter(), None);
+        assert_eq!(
+            base.clone().with_global_filter("  done  ").global_filter(),
+            Some("done")
+        );
+        assert_eq!(
+            base.cache_key(),
+            base.clone().with_global_filter("   ").cache_key(),
+            "whitespace-only global filters normalize to cache-key absence"
+        );
+        assert_ne!(
+            base.cache_key(),
+            base.clone().with_global_filter("done").cache_key(),
+            "non-empty global filters should invalidate row-model caches"
+        );
+
+        let resolved = base.with_global_filter("done").resolve();
+
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-3"],
+            "global filtering should ignore columns opted out of the global scan"
+        );
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-3"],
+            "global filtering should feed the final row model"
+        );
+    }
+
+    #[test]
+    fn global_filter_runs_after_column_filters_before_sorting_and_pagination() {
+        let resolved = TableState::new([
+            TableRow::new("row-1")
+                .with_cell("team", "UI")
+                .with_cell("name", "Done Alpha")
+                .with_cell("score", 40_usize),
+            TableRow::new("row-2")
+                .with_cell("team", "UI")
+                .with_cell("name", "Done Beta")
+                .with_cell("score", 10_usize),
+            TableRow::new("row-3")
+                .with_cell("team", "UI")
+                .with_cell("name", "Gamma")
+                .with_cell("score", 30_usize),
+            TableRow::new("row-4")
+                .with_cell("team", "API")
+                .with_cell("name", "Done Delta")
+                .with_cell("score", 20_usize),
+        ])
+        .with_columns([
+            TableColumn::new("team", "Team"),
+            TableColumn::new("name", "Name"),
+            TableColumn::new("score", "Score"),
+        ])
+        .with_filters([TableFilter::contains("team", "UI")])
+        .with_global_filter("done")
+        .with_sorting([TableSort::descending("score")])
+        .with_pagination(TablePagination::new(0, 1))
+        .resolve();
+
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-1", "row-2"],
+            "global filtering should run after column filtering"
+        );
+        assert_eq!(
+            resolved
+                .sorted_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-1", "row-2"],
+            "sorting should still see the globally filtered row set"
+        );
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-1"],
+            "pagination should apply after global filtering and sorting"
+        );
+    }
+
+    #[test]
     fn categorical_filters_match_exact_tokens_and_multiple_values() {
         let resolved = TableState::new([
             TableRow::new("row-ready")
@@ -4708,6 +5147,40 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["row-ready", "row-blocked"],
             "categorical filters use exact facet tokens and compose with other filters"
+        );
+    }
+
+    #[test]
+    fn manual_filtering_preserves_snapshot_and_global_filter_state() {
+        let state = TableState::new([
+            TableRow::new("row-1").with_cell("name", "Alpha"),
+            TableRow::new("row-2").with_cell("name", "Beta"),
+        ])
+        .with_columns([TableColumn::new("name", "Name")])
+        .with_global_filter("beta")
+        .with_manual_filtering();
+        let resolved = state.resolve();
+
+        assert_eq!(state.global_filter(), Some("beta"));
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-1", "row-2"],
+            "manual filtering should preserve the supplied row snapshot"
+        );
+        assert_eq!(resolved.global_facet_summary().row_count(), 2);
+        assert_eq!(
+            resolved
+                .global_facet_summary()
+                .column_facet(&TableColumnId::new("name"))
+                .expect("global facet should resolve for the name column")
+                .row_count(),
+            2,
+            "manual filtering should keep global facet summaries anchored to the supplied snapshot"
         );
     }
 
@@ -5279,6 +5752,116 @@ mod tests {
             [("API".to_string(), 1), ("UI".to_string(), 2)],
             "team facet ignores its own filter and honors the status filter"
         );
+    }
+
+    #[test]
+    fn global_facet_summary_honors_column_filters_and_excludes_global_query() {
+        let resolved = TableState::new([
+            TableRow::new("row-1")
+                .with_cell("team", "UI")
+                .with_cell("status", "Ready")
+                .with_cell("score", 10_usize)
+                .with_cell("enabled", true)
+                .with_cell("tag", "alpha")
+                .with_cell("notes", "ready"),
+            TableRow::new("row-2")
+                .with_cell("team", "UI")
+                .with_cell("status", "Blocked")
+                .with_cell("score", 20_usize)
+                .with_cell("enabled", false)
+                .with_cell("notes", "done"),
+            TableRow::new("row-3")
+                .with_cell("team", "API")
+                .with_cell("status", "Ready")
+                .with_cell("score", 30_usize)
+                .with_cell("enabled", true)
+                .with_cell("tag", "beta")
+                .with_cell("notes", "done"),
+        ])
+        .with_columns([
+            TableColumn::new("team", "Team"),
+            TableColumn::new("status", "Status"),
+            TableColumn::new("score", "Score"),
+            TableColumn::new("enabled", "Enabled"),
+            TableColumn::new("tag", "Tag"),
+            TableColumn::new("notes", "Notes").with_global_filterable(false),
+        ])
+        .with_filters([TableFilter::contains("team", "UI")])
+        .with_global_filter("done")
+        .resolve();
+
+        assert!(
+            resolved.filtered_model().rows().is_empty(),
+            "global query should not match text from columns opted out of global filtering"
+        );
+        assert_eq!(
+            resolved
+                .column_facet(&TableColumnId::new("status"))
+                .expect("status column facet should resolve")
+                .row_count(),
+            0,
+            "column facets should honor the active global query"
+        );
+
+        let summary = resolved.global_facet_summary();
+        assert_eq!(summary.mode(), TableStageMode::Client);
+        assert_eq!(summary.row_count(), 2);
+        assert_eq!(
+            summary
+                .column_facets()
+                .iter()
+                .map(|facet| facet.column().as_str())
+                .collect::<Vec<_>>(),
+            ["team", "status", "score", "enabled", "tag"],
+            "global facets should only include globally filterable columns"
+        );
+        assert!(summary.column_facet(&TableColumnId::new("notes")).is_none());
+
+        let status = summary
+            .column_facet(&TableColumnId::new("status"))
+            .expect("status global facet should resolve");
+        assert_eq!(status.row_count(), 2);
+        assert_eq!(
+            text_facet_counts(status),
+            [("Blocked".to_string(), 1), ("Ready".to_string(), 1)]
+        );
+
+        let score = summary
+            .column_facet(&TableColumnId::new("score"))
+            .expect("score global facet should resolve");
+        let score_range = score
+            .numeric_range()
+            .expect("score global facet should expose a numeric range");
+        assert_eq!(score_range.min(), 10.0);
+        assert_eq!(score_range.max(), 20.0);
+
+        let enabled = summary
+            .column_facet(&TableColumnId::new("enabled"))
+            .expect("enabled global facet should resolve");
+        assert!(matches!(
+            enabled.unique_values()[0].value(),
+            TableCellValue::Bool(false)
+        ));
+        assert_eq!(enabled.unique_values()[0].count(), 1);
+        assert!(matches!(
+            enabled.unique_values()[1].value(),
+            TableCellValue::Bool(true)
+        ));
+        assert_eq!(enabled.unique_values()[1].count(), 1);
+
+        let tag = summary
+            .column_facet(&TableColumnId::new("tag"))
+            .expect("tag global facet should resolve");
+        assert!(matches!(
+            tag.unique_values()[0].value(),
+            TableCellValue::Empty
+        ));
+        assert_eq!(tag.unique_values()[0].count(), 1);
+        assert!(matches!(
+            tag.unique_values()[1].value(),
+            TableCellValue::Text(value) if value == "alpha"
+        ));
+        assert_eq!(tag.unique_values()[1].count(), 1);
     }
 
     #[test]

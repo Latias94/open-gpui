@@ -20,12 +20,13 @@ use open_gpui_ui_core::{
     OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable, Size, TableCellValue,
     TableColumn, TableColumnFacets, TableColumnId, TableColumnRegion, TableColumnResizeDirection,
     TableColumnResizeMode, TableColumnResizeState, TableColumnSizing, TableExpansionMode,
-    TableExpansionState, TableFacetRange, TableFilter, TableResolvedColumnSizing, TableResolvedRow,
-    TableResolvedState, TableRowChildrenLoadState, TableRowId, TableRowRegion, TableSelectionMode,
-    TableSelectionPolicy, TableSelectionSummary, TableSort, TableSortDirection, TableStageMode,
-    TableState, TableStateCacheKey, TableTreeRow, ThemeTokens, Toggled, UiPx, VirtualizerItemKey,
-    VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState, VirtualizerSnapshot,
-    VirtualizerState, drag_table_column_resize, end_table_column_resize, ui_px,
+    TableExpansionState, TableFacetRange, TableFilter, TableGlobalFacetSummary,
+    TableResolvedColumnSizing, TableResolvedRow, TableResolvedState, TableRowChildrenLoadState,
+    TableRowId, TableRowRegion, TableSelectionMode, TableSelectionPolicy, TableSelectionSummary,
+    TableSort, TableSortDirection, TableStageMode, TableState, TableStateCacheKey, TableTreeRow,
+    ThemeTokens, Toggled, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
+    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState, drag_table_column_resize,
+    end_table_column_resize, ui_px,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -3304,6 +3305,11 @@ impl TableRenderPlan {
     /// Returns resolved facet metadata for one configured column.
     pub fn column_facet(&self, column: &TableColumnId) -> Option<&TableColumnFacets> {
         self.table.column_facet(column)
+    }
+
+    /// Returns resolved facet metadata for the global filter context.
+    pub fn global_facet_summary(&self) -> &TableGlobalFacetSummary {
+        self.table.global_facet_summary()
     }
 
     /// Returns the resolved renderer-neutral virtualizer state.

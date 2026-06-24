@@ -24,12 +24,12 @@ use open_gpui_ui_components::{
     TableColumn, TableColumnFacets, TableColumnId, TableColumnPinning, TableColumnRegion,
     TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableExpansionMode,
     TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange, TableFacetedFilterState,
-    TableFilter, TableHeaderAction, TablePagination, TableRangeFilter, TableRangeFilterChange,
-    TableRangeFilterState, TableRow, TableRowChildrenLoadState, TableRowId, TableRowPinning,
-    TableRowPinningPolicy, TableRowRegion, TableSelectionActivationMode, TableSelectionMode,
-    TableSelectionScope, TableSort, TableSortDirection, TableStageMode, TableState, Tabs,
-    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput,
-    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
+    TableFilter, TableGlobalFacetSummary, TableHeaderAction, TablePagination, TableRangeFilter,
+    TableRangeFilterChange, TableRangeFilterState, TableRow, TableRowChildrenLoadState, TableRowId,
+    TableRowPinning, TableRowPinningPolicy, TableRowRegion, TableSelectionActivationMode,
+    TableSelectionMode, TableSelectionScope, TableSort, TableSortDirection, TableStageMode,
+    TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState,
+    TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
     ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
     TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
     VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
@@ -3526,6 +3526,69 @@ fn table_render_plan_exposes_faceting_metadata() {
 }
 
 #[test]
+fn table_render_plan_exposes_global_facet_summary() {
+    let state = TableState::new([
+        TableRow::new("row-1")
+            .with_cell("team", "UI")
+            .with_cell("status", "Ready")
+            .with_cell("score", 10_usize)
+            .with_cell("enabled", true)
+            .with_cell("tag", "alpha")
+            .with_cell("notes", "ready"),
+        TableRow::new("row-2")
+            .with_cell("team", "UI")
+            .with_cell("status", "Blocked")
+            .with_cell("score", 20_usize)
+            .with_cell("enabled", false)
+            .with_cell("notes", "done"),
+        TableRow::new("row-3")
+            .with_cell("team", "API")
+            .with_cell("status", "Ready")
+            .with_cell("score", 30_usize)
+            .with_cell("enabled", true)
+            .with_cell("tag", "beta")
+            .with_cell("notes", "done"),
+    ])
+    .with_columns([
+        TableColumn::new("team", "Team"),
+        TableColumn::new("status", "Status"),
+        TableColumn::new("score", "Score"),
+        TableColumn::new("enabled", "Enabled"),
+        TableColumn::new("tag", "Tag"),
+        TableColumn::new("notes", "Notes").with_global_filterable(false),
+    ])
+    .with_filters([TableFilter::contains("team", "UI")])
+    .with_global_filter("done")
+    .with_pagination(TablePagination::disabled());
+
+    let plan = Table::new("global-facet-table", "Global facet table", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    let summary: &TableGlobalFacetSummary = plan.global_facet_summary();
+    assert_eq!(summary.mode(), TableStageMode::Client);
+    assert_eq!(summary.row_count(), 2);
+    assert!(summary.column_facet(&TableColumnId::new("notes")).is_none());
+    assert_eq!(
+        summary
+            .column_facets()
+            .iter()
+            .map(|facet| facet.column().as_str())
+            .collect::<Vec<_>>(),
+        ["team", "status", "score", "enabled", "tag"]
+    );
+    assert_eq!(
+        text_facet_counts(
+            summary
+                .column_facet(&TableColumnId::new("status"))
+                .expect("status global facet should resolve")
+        ),
+        [("Blocked".to_string(), 1), ("Ready".to_string(), 1)]
+    );
+}
+
+#[test]
 fn table_faceted_filter_state_resolves_query_selection_and_popover_contract() {
     let facets = TableColumnFacets::manual("status", 4).with_unique_values([
         TableFacetValueCount::new("Ready", 2),
@@ -4892,6 +4955,9 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let root_facets: root::TableColumnFacets =
         root::TableColumnFacets::manual("status", 2).with_unique_values([root_facet_value]);
     let _prelude_facets: prelude::TableColumnFacets = root_facets.clone();
+    let root_global_facets: root::TableGlobalFacetSummary =
+        root::TableGlobalFacetSummary::default();
+    let _prelude_global_facets: prelude::TableGlobalFacetSummary = root_global_facets.clone();
     let root_faceted_filter: root::TableFacetedFilter =
         root::TableFacetedFilter::new("root-status-filter", "Status", "status")
             .facets(root_facets.clone())
