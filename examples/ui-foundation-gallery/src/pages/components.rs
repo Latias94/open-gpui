@@ -17,13 +17,14 @@ use open_gpui_ui_components::{
     TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableColumnVisibilityChange,
     TableColumnVisibilityOverrides, TableExpansionMode, TableExpansionState, TableFacetValueCount,
     TableFacetedFilterChange, TableFilter, TableGlobalFilterChange, TablePagination,
-    TableRangeFilterChange, TableRenderPlan, TableRow, TableRowActivation,
-    TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy,
-    TableSort, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
-    TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
-    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
-    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
+    TablePredicateFilterChange, TableRangeFilterChange, TableRenderPlan, TableRow,
+    TableRowActivation, TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning,
+    TableRowPinningPolicy, TableSort, TableStageMode, TableState, Tabs, TabsActivationMode,
+    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState,
+    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
+    Tree, TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListItemDescriptor,
+    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -151,6 +152,11 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::TableGlobalFilter",
     "open_gpui_ui_components::TableGlobalFilterChange",
     "open_gpui_ui_components::TableGlobalFilterState",
+    "open_gpui_ui_components::TablePredicateFilter",
+    "open_gpui_ui_components::TablePredicateFilterChange",
+    "open_gpui_ui_components::TablePredicateFilterOperator",
+    "open_gpui_ui_components::TablePredicateFilterOperatorOptionState",
+    "open_gpui_ui_components::TablePredicateFilterState",
     "open_gpui_ui_components::TableToolbar",
     "open_gpui_ui_components::TableToolbarState",
     "open_gpui_ui_components::TableRangeFilter",
@@ -930,12 +936,14 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "row-pinning",
             "filter-board",
             "TableGlobalFilter",
+            "TablePredicateFilter",
             "TableFacetedFilter",
             "TableRangeFilter",
             "TableColumnVisibility",
             "TableColumnVisibilityChange",
             "TableToolbar",
             "components_gallery_smoke_global_filter_updates_table_rows",
+            "components_gallery_smoke_predicate_filter_updates_table_rows",
             "components_gallery_smoke_faceted_filter_updates_table_rows",
             "components_gallery_smoke_range_filter_updates_table_rows",
             "components_gallery_smoke_column_visibility_updates_release_matrix",
@@ -1293,6 +1301,7 @@ pub struct TableSampleRuntimeLog {
     expansion_toggles: Vec<TableSampleExpansionToggle>,
     expansion_overrides: BTreeMap<String, TableExpansionState>,
     global_filter_changes: Vec<TableSampleGlobalFilterChange>,
+    predicate_filter_changes: Vec<TableSamplePredicateFilterChange>,
     filter_overrides: BTreeMap<String, TableState>,
     visibility_changes: Vec<TableSampleColumnVisibilityChange>,
     visibility_overrides: BTreeMap<String, TableColumnVisibilityOverrides>,
@@ -1311,6 +1320,25 @@ pub struct TableSampleGlobalFilterChange {
     /// Filter query text.
     pub query: String,
     /// Whether this payload clears the global filter.
+    pub cleared: bool,
+    /// Filtered row count after the change.
+    pub filtered_rows: usize,
+    /// Final row count after pagination after the change.
+    pub final_rows: usize,
+}
+
+/// One predicate-filter change captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSamplePredicateFilterChange {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Filtered column id.
+    pub column_id: String,
+    /// Stable operator value, when this is not a clear action.
+    pub operator: Option<String>,
+    /// Raw predicate value text.
+    pub value: String,
+    /// Whether this payload clears the predicate.
     pub cleared: bool,
     /// Filtered row count after the change.
     pub filtered_rows: usize,
@@ -1415,6 +1443,16 @@ impl TableSampleRuntimeLog {
         self.filter_overrides.get(sample_id)
     }
 
+    /// Returns captured predicate-filter changes in event order.
+    pub fn predicate_filter_changes(&self) -> &[TableSamplePredicateFilterChange] {
+        &self.predicate_filter_changes
+    }
+
+    /// Returns the current controlled predicate-filter state for a sample, if any.
+    pub fn predicate_filter_override(&self, sample_id: &str) -> Option<&TableState> {
+        self.filter_overrides.get(sample_id)
+    }
+
     /// Returns captured column-visibility changes in event order.
     pub fn visibility_changes(&self) -> &[TableSampleColumnVisibilityChange] {
         &self.visibility_changes
@@ -1463,6 +1501,7 @@ impl TableSampleRuntimeLog {
         self.expansion_toggles.clear();
         self.expansion_overrides.clear();
         self.global_filter_changes.clear();
+        self.predicate_filter_changes.clear();
         self.filter_overrides.clear();
         self.visibility_changes.clear();
         self.visibility_overrides.clear();
@@ -1549,6 +1588,21 @@ pub fn current_table_sample_global_filter_state(
     })
 }
 
+/// Returns the current controlled predicate-filter state for a gallery `Table` sample.
+pub fn current_table_sample_predicate_filter_state(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    cx: &impl AppContext,
+) -> TableState {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.filter_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    })
+}
+
 /// Returns the current controlled column-visibility overrides for a gallery `Table` sample.
 pub fn current_table_sample_column_visibility_overrides(
     sample_id: impl Into<String>,
@@ -1595,6 +1649,7 @@ pub fn table_sample_state_with_runtime(
     cx: &impl AppContext,
 ) -> TableState {
     let state = current_table_sample_global_filter_state(sample.id, &sample.state, cx);
+    let state = current_table_sample_predicate_filter_state(sample.id, &state, cx);
     let state = current_table_sample_faceted_filter_state(sample.id, &state, cx);
     let state = current_table_sample_range_filter_state(sample.id, &state, cx);
     let state = current_table_sample_cell_edit_state(sample.id, &state, cx);
@@ -1814,6 +1869,44 @@ pub fn record_table_global_filter_change(
             .push(TableSampleGlobalFilterChange {
                 sample_id: sample_id.clone(),
                 query: change.query().to_owned(),
+                cleared: change.cleared(),
+                filtered_rows,
+                final_rows,
+            });
+        log.filter_overrides.insert(sample_id, next);
+    });
+}
+
+/// Records and applies a controlled gallery `Table` predicate-filter change.
+pub fn record_table_predicate_filter_change(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    change: &TablePredicateFilterChange,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = fallback.clone();
+    let next = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        let current = log
+            .filter_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone());
+        change.apply_to(current)
+    });
+    let resolved = next.resolve();
+    let filtered_rows = resolved.filtered_model().rows().len();
+    let final_rows = resolved.final_model().rows().len();
+
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.predicate_filter_changes
+            .push(TableSamplePredicateFilterChange {
+                sample_id: sample_id.clone(),
+                column_id: change.column_id().as_str().to_owned(),
+                operator: change
+                    .operator()
+                    .map(|operator| operator.as_str().to_owned()),
+                value: change.value().to_owned(),
                 cleared: change.cleared(),
                 filtered_rows,
                 final_rows,

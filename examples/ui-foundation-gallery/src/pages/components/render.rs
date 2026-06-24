@@ -1536,6 +1536,94 @@ pub(crate) fn render_components_page(
                                             } else {
                                                 None
                                             };
+                                        let predicate_filter_control: Option<AnyElement> =
+                                            if sample_id == "filter-board" {
+                                                let name_column = TableColumnId::new("name");
+                                                let (selected_operator, selected_value) = table
+                                                    .table_state()
+                                                    .filters()
+                                                    .iter()
+                                                    .find(|filter| filter.column() == &name_column)
+                                                    .and_then(|filter| {
+                                                        filter.text_predicate().map(
+                                                            |(operator, query, _)| {
+                                                                (
+                                                                    TablePredicateFilterOperator::text(
+                                                                        operator,
+                                                                    ),
+                                                                    query.to_owned(),
+                                                                )
+                                                            },
+                                                        )
+                                                    })
+                                                    .unwrap_or((
+                                                        TablePredicateFilterOperator::text(
+                                                            TableTextFilterOperator::Contains,
+                                                        ),
+                                                        String::new(),
+                                                    ));
+                                                let sample_id_for_predicate = sample_id.to_owned();
+                                                let base_state = sample.state.clone();
+
+                                                Some(
+                                                    div()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_1()
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .font_weight(
+                                                                    open_gpui::FontWeight::BOLD,
+                                                                )
+                                                                .text_color(rgb(0x3f4a57))
+                                                                .child("Name"),
+                                                        )
+                                                        .child(
+                                                            TablePredicateFilter::new(
+                                                                format!(
+                                                                    "component-table-predicate-filter:{}:name",
+                                                                    sample_id
+                                                                ),
+                                                                "Name",
+                                                                "name",
+                                                            )
+                                                            .default_operator(
+                                                                TablePredicateFilterOperator::text(
+                                                                    TableTextFilterOperator::Contains,
+                                                                ),
+                                                            )
+                                                            .operator(selected_operator)
+                                                            .value(selected_value)
+                                                            .operators([
+                                                                TablePredicateFilterOperator::text(
+                                                                    TableTextFilterOperator::Contains,
+                                                                ),
+                                                                TablePredicateFilterOperator::text(
+                                                                    TableTextFilterOperator::StartsWith,
+                                                                ),
+                                                                TablePredicateFilterOperator::text(
+                                                                    TableTextFilterOperator::EndsWith,
+                                                                ),
+                                                            ])
+                                                            .placeholder("Filter names")
+                                                            .clear_label("Clear name")
+                                                            .small()
+                                                            .tokens(snapshot.tokens)
+                                                            .on_change(move |change, _, cx| {
+                                                                pages::components::record_table_predicate_filter_change(
+                                                                    sample_id_for_predicate.clone(),
+                                                                    &base_state,
+                                                                    &change,
+                                                                    cx,
+                                                                );
+                                                            }),
+                                                        )
+                                                        .into_any_element(),
+                                                )
+                                            } else {
+                                                None
+                                            };
                                         let faceted_filter_control: Option<AnyElement> =
                                             if sample_id == "filter-board" {
                                                 let status_column = TableColumnId::new("status");
@@ -1742,6 +1830,10 @@ pub(crate) fn render_components_page(
                                                 if let Some(control) = global_filter_control {
                                                     has_toolbar_controls = true;
                                                     toolbar = toolbar.control(control);
+                                                }
+                                                if let Some(control) = predicate_filter_control {
+                                                    has_toolbar_controls = true;
+                                                    toolbar = toolbar.secondary_control(control);
                                                 }
                                                 if let Some(control) = faceted_filter_control {
                                                     has_toolbar_controls = true;
