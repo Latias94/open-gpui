@@ -352,11 +352,11 @@ impl TableColumn {
 
 /// Caller-owned runtime column visibility overrides.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct TableColumnVisibility {
+pub struct TableColumnVisibilityOverrides {
     overrides: BTreeMap<TableColumnId, bool>,
 }
 
-impl TableColumnVisibility {
+impl TableColumnVisibilityOverrides {
     /// Creates an empty visibility override map.
     pub fn new() -> Self {
         Self::default()
@@ -2652,7 +2652,7 @@ pub const TABLE_ROW_MODEL_V0_PIPELINE: [TableRowModelStage; 5] = [
 pub struct TableState {
     columns: Vec<TableColumn>,
     column_order: Vec<TableColumnId>,
-    column_visibility: TableColumnVisibility,
+    column_visibility: TableColumnVisibilityOverrides,
     column_pinning: TableColumnPinning,
     column_sizing: TableColumnSizing,
     row_pinning: TableRowPinning,
@@ -2712,7 +2712,7 @@ impl TableState {
         Self {
             columns: Vec::new(),
             column_order: Vec::new(),
-            column_visibility: TableColumnVisibility::default(),
+            column_visibility: TableColumnVisibilityOverrides::default(),
             column_pinning: TableColumnPinning::default(),
             column_sizing: TableColumnSizing::default(),
             row_pinning: TableRowPinning::default(),
@@ -2760,7 +2760,10 @@ impl TableState {
     }
 
     /// Applies runtime column visibility overrides.
-    pub fn with_column_visibility(mut self, column_visibility: TableColumnVisibility) -> Self {
+    pub fn with_column_visibility(
+        mut self,
+        column_visibility: TableColumnVisibilityOverrides,
+    ) -> Self {
         self.column_visibility = column_visibility;
         self
     }
@@ -3003,7 +3006,7 @@ impl TableState {
     }
 
     /// Returns runtime column visibility overrides.
-    pub const fn column_visibility(&self) -> &TableColumnVisibility {
+    pub const fn column_visibility(&self) -> &TableColumnVisibilityOverrides {
         &self.column_visibility
     }
 
@@ -3427,7 +3430,7 @@ pub struct TableStateCacheKey {
     row_count: usize,
     columns: Vec<TableColumn>,
     column_order: Vec<TableColumnId>,
-    column_visibility: TableColumnVisibility,
+    column_visibility: TableColumnVisibilityOverrides,
     column_pinning: TableColumnPinning,
     column_sizing: TableColumnSizing,
     row_pinning: TableRowPinning,
@@ -6766,7 +6769,11 @@ mod tests {
                 TableColumn::new("score", "Score"),
             ])
             .with_column_order(["score", "team", "name"])
-            .with_column_visibility(TableColumnVisibility::new().show("team").hide("score"))
+            .with_column_visibility(
+                TableColumnVisibilityOverrides::new()
+                    .show("team")
+                    .hide("score"),
+            )
             .resolve();
 
         assert_eq!(
@@ -6794,7 +6801,7 @@ mod tests {
             .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
             .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(220.0)));
         let state = base.clone().with_column_visibility(
-            TableColumnVisibility::new()
+            TableColumnVisibilityOverrides::new()
                 .show("team")
                 .hide("score")
                 .with_visibility("missing", true),
@@ -6845,7 +6852,7 @@ mod tests {
                 TableColumn::new("score", "Score"),
             ])
             .with_column_visibility(
-                TableColumnVisibility::new()
+                TableColumnVisibilityOverrides::new()
                     .hide("name")
                     .show("team")
                     .hide("score"),
@@ -6879,7 +6886,11 @@ mod tests {
                 TableColumn::new("status", "Status"),
             ])
             .with_column_order(["status", "score", "owner", "team", "name"])
-            .with_column_visibility(TableColumnVisibility::new().show("team").hide("score"))
+            .with_column_visibility(
+                TableColumnVisibilityOverrides::new()
+                    .show("team")
+                    .hide("score"),
+            )
             .with_column_pinning(
                 TableColumnPinning::new()
                     .pinned_left(["name", "score", "missing"])

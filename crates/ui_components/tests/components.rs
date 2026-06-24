@@ -22,22 +22,23 @@ use open_gpui_ui_components::{
     Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
     TableCellEditApplyOutcome, TableCellEditChange, TableCellValue, TableCenterColumnWindowPlan,
     TableColumn, TableColumnFacets, TableColumnId, TableColumnPinning, TableColumnRegion,
-    TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableExpansionMode,
-    TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange, TableFacetedFilterState,
-    TableFilter, TableGlobalFacetSummary, TableGlobalFilter, TableGlobalFilterChange,
-    TableGlobalFilterState, TableHeaderAction, TablePagination, TableRangeFilter,
-    TableRangeFilterChange, TableRangeFilterState, TableRow, TableRowChildrenLoadState, TableRowId,
-    TableRowPinning, TableRowPinningPolicy, TableRowRegion, TableSelectionActivationMode,
-    TableSelectionMode, TableSelectionScope, TableSort, TableSortDirection, TableStageMode,
-    TableState, TableToolbar, TableToolbarState, Tabs, TabsActivationMode, TabsItem,
-    TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver,
-    ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
-    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
-    TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList,
-    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRenderPlan,
-    VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
-    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
-    VirtualizerState, active_index_from_str_keys, first_enabled,
+    TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableColumnVisibility,
+    TableColumnVisibilityAction, TableColumnVisibilityChange, TableColumnVisibilityOverrides,
+    TableColumnVisibilityState, TableExpansionMode, TableFacetValueCount, TableFacetedFilter,
+    TableFacetedFilterChange, TableFacetedFilterState, TableFilter, TableGlobalFacetSummary,
+    TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction,
+    TablePagination, TableRangeFilter, TableRangeFilterChange, TableRangeFilterState, TableRow,
+    TableRowChildrenLoadState, TableRowId, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
+    TableSelectionActivationMode, TableSelectionMode, TableSelectionScope, TableSort,
+    TableSortDirection, TableStageMode, TableState, TableToolbar, TableToolbarState, Tabs,
+    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput,
+    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
+    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
+    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
+    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -540,6 +541,47 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         no_interaction_note: None,
     },
     ComponentApiInventoryEntry {
+        component: "TableColumnVisibility",
+        controlled_inputs: &["open", "visibility"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_open",
+                runtime_value: "open",
+            },
+            DefaultSeedApi {
+                builder: "default_visibility",
+                runtime_value: "visibility",
+            },
+        ],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "columns",
+            "empty_label",
+            "show_all_label",
+            "reset_label",
+            "disabled",
+            "viewport_item_count",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+        ],
+        callbacks: &[
+            CallbackApi {
+                name: "on_open_change",
+                payload: "bool",
+            },
+            CallbackApi {
+                name: "on_change",
+                payload: "TableColumnVisibilityChange",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
         component: "TableGlobalFilter",
         controlled_inputs: &["query"],
         default_seeds: &[DefaultSeedApi {
@@ -1016,6 +1058,26 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "on_query_change",
             "on_change",
         ],
+        "TableColumnVisibility" => &[
+            "columns",
+            "visibility",
+            "default_visibility",
+            "open",
+            "default_open",
+            "empty_label",
+            "show_all_label",
+            "reset_label",
+            "disabled",
+            "viewport_item_count",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
+            "on_change",
+        ],
         "TableToolbar" => &[
             "control",
             "controls",
@@ -1072,6 +1134,7 @@ fn component_source_file(component: &str) -> &'static str {
         "ScrollArea" => "scroll_area.rs",
         "Splitter" => "splitter.rs",
         "Table" => "table.rs",
+        "TableColumnVisibility" => "table.rs",
         "TableFacetedFilter" => "table.rs",
         "TableGlobalFilter" => "table.rs",
         "TableRangeFilter" => "table.rs",
@@ -1401,6 +1464,28 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "tokens",
             "on_open_change",
             "on_query_change",
+            "on_change",
+            "state",
+        ],
+        "TableColumnVisibility" => &[
+            "new",
+            "columns",
+            "visibility",
+            "default_visibility",
+            "open",
+            "default_open",
+            "empty_label",
+            "show_all_label",
+            "reset_label",
+            "disabled",
+            "viewport_item_count",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
             "on_change",
             "state",
         ],
@@ -3936,6 +4021,181 @@ fn table_range_filter_change_updates_filters_and_resets_pagination() {
 }
 
 #[test]
+fn table_column_visibility_state_resolves_items_counts_and_popover_contract() {
+    let visibility = TableColumnVisibilityOverrides::new()
+        .hide("name")
+        .show("team")
+        .hide("score");
+
+    let state: TableColumnVisibilityState =
+        TableColumnVisibility::new("column-visibility", "Columns")
+            .columns([
+                TableColumn::new("name", "Name").with_hideable(false),
+                TableColumn::new("team", "Team").with_visible(false),
+                TableColumn::new("score", "Score"),
+            ])
+            .visibility(visibility)
+            .open(true)
+            .empty_label("No columns configured")
+            .show_all_label("Show every column")
+            .reset_label("Reset columns")
+            .small()
+            .placement_side(OverlayPlacementSide::Top)
+            .placement_alignment(OverlayPlacementAlignment::End)
+            .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
+            .state();
+
+    assert_eq!(state.id(), "column-visibility");
+    assert_eq!(state.label(), "Columns");
+    assert_eq!(state.trigger_label(), "Columns: 1 hidden");
+    assert_eq!(state.item_count(), 3);
+    assert_eq!(state.visible_count(), 2);
+    assert_eq!(state.hidden_count(), 1);
+    assert_eq!(state.hideable_count(), 2);
+    assert!(!state.all_visible());
+    assert!(state.some_visible());
+    assert!(state.show_all_enabled());
+    assert!(state.reset_enabled());
+    assert_eq!(state.empty_label(), "No columns configured");
+    assert_eq!(state.show_all_label(), "Show every column");
+    assert_eq!(state.reset_label(), "Reset columns");
+    assert_eq!(state.popover().open_mode(), PopoverOpenMode::Controlled);
+    assert!(state.popover().open());
+    assert_eq!(state.popover().placement_side(), OverlayPlacementSide::Top);
+    assert_eq!(
+        state.popover().placement_alignment(),
+        OverlayPlacementAlignment::End
+    );
+    assert_eq!(
+        state.popover().outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+
+    let items = state
+        .items()
+        .iter()
+        .map(|item| {
+            (
+                item.column_id().as_str().to_owned(),
+                item.label().to_owned(),
+                item.checked(),
+                item.hideable(),
+                item.disabled(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        items,
+        vec![
+            ("name".to_string(), "Name".to_string(), true, false, true),
+            ("team".to_string(), "Team".to_string(), true, true, false),
+            ("score".to_string(), "Score".to_string(), false, true, false),
+        ]
+    );
+}
+
+#[test]
+fn table_column_visibility_change_updates_visibility_and_preserves_table_state() {
+    let state = TableState::new([
+        TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("team", "UI")
+            .with_cell("score", 10_usize),
+        TableRow::new("row-b")
+            .with_cell("name", "Beta")
+            .with_cell("team", "Platform")
+            .with_cell("score", 40_usize),
+    ])
+    .with_columns([
+        TableColumn::new("name", "Name").with_hideable(false),
+        TableColumn::new("team", "Team").with_visible(false),
+        TableColumn::new("score", "Score"),
+    ])
+    .with_column_visibility(
+        TableColumnVisibilityOverrides::new()
+            .hide("name")
+            .show("team")
+            .hide("score"),
+    )
+    .with_filters([
+        TableFilter::contains("team", "UI"),
+        TableFilter::number_range("score", Some(5.0), Some(50.0))
+            .expect("finite score range should be valid"),
+    ])
+    .with_sorting([TableSort::descending("score")])
+    .with_selected_rows(["row-a"])
+    .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
+    .with_row_pinning(TableRowPinning::new().pinned_top(["row-a"]))
+    .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(180.0)))
+    .with_pagination(TablePagination::new(2, 25));
+
+    let change = TableColumnVisibilityChange::new("team", false);
+    assert_eq!(change.action(), TableColumnVisibilityAction::ToggleColumn);
+    assert_eq!(change.action().as_str(), "toggle_column");
+    assert_eq!(change.column_id().map(TableColumnId::as_str), Some("team"));
+    assert_eq!(change.column_ids(), &[TableColumnId::new("team")]);
+    assert_eq!(change.next_visible(), Some(false));
+
+    let next = change.apply_to(state.clone());
+    assert_eq!(
+        next.column_visibility()
+            .override_for(&TableColumnId::new("team")),
+        Some(false)
+    );
+    assert_eq!(
+        next.column_visibility()
+            .override_for(&TableColumnId::new("score")),
+        Some(false)
+    );
+    assert_eq!(
+        next.column_visibility()
+            .override_for(&TableColumnId::new("name")),
+        Some(false)
+    );
+    assert_eq!(next.filters(), state.filters());
+    assert_eq!(next.sorting(), state.sorting());
+    assert_eq!(next.pagination(), state.pagination());
+    assert_eq!(next.selected_rows(), state.selected_rows());
+    assert_eq!(next.column_pinning(), state.column_pinning());
+    assert_eq!(next.row_pinning(), state.row_pinning());
+    assert_eq!(next.column_sizing(), state.column_sizing());
+
+    let show_all = TableColumnVisibilityChange::show_all(["team", "score"]);
+    assert_eq!(show_all.action(), TableColumnVisibilityAction::ShowAll);
+    assert_eq!(show_all.action().as_str(), "show_all");
+    assert_eq!(show_all.next_visible(), Some(true));
+    assert_eq!(show_all.column_ids().len(), 2);
+    let shown = show_all.apply_to(state.clone());
+    assert_eq!(
+        shown
+            .column_visibility()
+            .override_for(&TableColumnId::new("team")),
+        Some(true)
+    );
+    assert_eq!(
+        shown
+            .column_visibility()
+            .override_for(&TableColumnId::new("score")),
+        Some(true)
+    );
+    assert_eq!(
+        shown
+            .column_visibility()
+            .override_for(&TableColumnId::new("name")),
+        Some(false)
+    );
+
+    let reset = TableColumnVisibilityChange::reset();
+    assert_eq!(reset.action(), TableColumnVisibilityAction::Reset);
+    assert_eq!(reset.action().as_str(), "reset");
+    assert!(reset.column_ids().is_empty());
+    assert_eq!(reset.column_id(), None);
+    assert_eq!(reset.next_visible(), None);
+    let reset_state = reset.apply_to(state);
+    assert!(reset_state.column_visibility().is_empty());
+}
+
+#[test]
 fn table_global_filter_state_resolves_input_contract() {
     let state: TableGlobalFilterState = TableGlobalFilter::new("global-filter", "Search rows")
         .default_query("stale")
@@ -5159,6 +5419,33 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         prelude_faceted_filter_state.options().first();
     let _prelude_faceted_change: prelude::TableFacetedFilterChange =
         prelude::TableFacetedFilterChange::clear("status");
+    let root_column_visibility: root::TableColumnVisibility =
+        root::TableColumnVisibility::new("root-columns", "Columns")
+            .columns([
+                root::TableColumn::new("name", "Name").with_hideable(false),
+                root::TableColumn::new("status", "Status"),
+            ])
+            .visibility(root::TableColumnVisibilityOverrides::new().hide("status"));
+    let root_column_visibility_state: root::TableColumnVisibilityState =
+        root_column_visibility.state();
+    let _root_column_visibility_item: Option<&root::TableColumnVisibilityItemState> =
+        root_column_visibility_state.items().first();
+    let root_column_visibility_change: root::TableColumnVisibilityChange =
+        root::TableColumnVisibilityChange::new("status", false);
+    let _root_column_visibility_action: root::TableColumnVisibilityAction =
+        root_column_visibility_change.action();
+    let prelude_column_visibility: prelude::TableColumnVisibility =
+        prelude::TableColumnVisibility::new("prelude-columns", "Columns")
+            .columns([prelude::TableColumn::new("status", "Status")])
+            .default_visibility(prelude::TableColumnVisibilityOverrides::new().hide("status"));
+    let prelude_column_visibility_state: prelude::TableColumnVisibilityState =
+        prelude_column_visibility.state();
+    let _prelude_column_visibility_item: Option<&prelude::TableColumnVisibilityItemState> =
+        prelude_column_visibility_state.items().first();
+    let prelude_column_visibility_change: prelude::TableColumnVisibilityChange =
+        prelude::TableColumnVisibilityChange::reset();
+    let _prelude_column_visibility_action: prelude::TableColumnVisibilityAction =
+        prelude_column_visibility_change.action();
     let _root_facet_range: Option<root::TableFacetRange> = root::TableFacetRange::new(1.0, 2.0);
     let root_range_facets =
         root::TableColumnFacets::manual("score", 2).with_numeric_range(1.0, 20.0);
@@ -5210,13 +5497,13 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         prelude::TableRowActivationKind::Keyboard;
     let _root_pinning: root::TableColumnPinning =
         root::TableColumnPinning::new().pinned_left(["name"]);
-    let root_visibility = root::TableColumnVisibility::new()
+    let root_visibility = root::TableColumnVisibilityOverrides::new()
         .hide("score")
         .show("status")
         .without("missing");
-    let _root_visibility: root::TableColumnVisibility = root_visibility.clone();
-    let _prelude_visibility: prelude::TableColumnVisibility =
-        prelude::TableColumnVisibility::new().show("status");
+    let _root_visibility: root::TableColumnVisibilityOverrides = root_visibility.clone();
+    let _prelude_visibility: prelude::TableColumnVisibilityOverrides =
+        prelude::TableColumnVisibilityOverrides::new().show("status");
     assert_eq!(
         root_visibility.override_for(&root::TableColumnId::new("score")),
         Some(false)
@@ -8543,6 +8830,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_table_toolbar =
         root::TableToolbar::new("table-toolbar", "Filters").summary("2 rows visible");
     let root_faceted_filter = root::TableFacetedFilter::new("status-filter", "Status", "status");
+    let root_column_visibility = root::TableColumnVisibility::new("column-visibility", "Columns")
+        .columns([root::TableColumn::new("status", "Status")]);
     let root_avatar = root::Avatar::new("avatar", "Ada Lovelace");
     let root_separator = root::Separator::new("separator");
     let root_kbd = root::Kbd::new("kbd", "Ctrl+K");
@@ -8597,6 +8886,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude::TableToolbar::new("table-toolbar", "Filters").summary("2 rows visible");
     let prelude_faceted_filter =
         prelude::TableFacetedFilter::new("status-filter", "Status", "status");
+    let prelude_column_visibility =
+        prelude::TableColumnVisibility::new("column-visibility", "Columns")
+            .columns([prelude::TableColumn::new("status", "Status")]);
     let prelude_avatar = prelude::Avatar::new("avatar", "Ada Lovelace");
     let prelude_separator = prelude::Separator::new("separator");
     let prelude_kbd = prelude::Kbd::new("kbd", "Ctrl+K");
@@ -8624,6 +8916,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_global_filter.state(),
         root_table_toolbar.state(),
         root_faceted_filter.state(),
+        root_column_visibility.state(),
         root_avatar.state(),
         root_separator.state(),
         root_kbd.state(),
@@ -8649,6 +8942,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_global_filter.state(),
         prelude_table_toolbar.state(),
         prelude_faceted_filter.state(),
+        prelude_column_visibility.state(),
         prelude_avatar.state(),
         prelude_separator.state(),
         prelude_kbd.state(),
@@ -8923,6 +9217,19 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
     assert_inventory_contains_controlled_input("TableGlobalFilter", "query");
     assert_inventory_contains_default_seed("TableGlobalFilter", "default_query", "query");
     assert_inventory_contains_callback("TableGlobalFilter", "on_change", "TableGlobalFilterChange");
+    assert_inventory_contains_controlled_input("TableColumnVisibility", "visibility");
+    assert_inventory_contains_controlled_input("TableColumnVisibility", "open");
+    assert_inventory_contains_default_seed(
+        "TableColumnVisibility",
+        "default_visibility",
+        "visibility",
+    );
+    assert_inventory_contains_default_seed("TableColumnVisibility", "default_open", "open");
+    assert_inventory_contains_callback(
+        "TableColumnVisibility",
+        "on_change",
+        "TableColumnVisibilityChange",
+    );
     assert_inventory_contains_callback("Table", "on_row_activate", "TableRowActivation");
     assert_inventory_contains_callback(
         "Table",

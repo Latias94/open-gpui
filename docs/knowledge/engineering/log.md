@@ -6,9 +6,18 @@ status: active
 
 # Log
 
+- 2026-06-24: Completed U2 of
+  `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md` in the current
+  branch. `TableColumnVisibility` now productizes the toolbar recipe with controlled open/visibility
+  ownership, item metadata, show-all / reset payloads, and `apply_to` helpers that preserve
+  unrelated `TableState` slices. The components test suite now covers state resolution, payload
+  semantics, public exports, and the API inventory contract for the new recipe family.
+- 2026-06-24: The active Table maturity goal remains open. The current next boundary is
+  column visibility, and the next actions after that slice are gallery proof, contract updates,
+  and the next maturity gap in the table roadmap.
 - 2026-06-24: Completed U1 of
   `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md` in the working
-  tree. `TableColumnVisibility` now provides sparse runtime visibility overrides,
+  tree. `TableColumnVisibilityOverrides` now provides sparse runtime visibility overrides,
   `TableColumn::with_hideable` protects default-visible identity columns from stale hidden
   overrides, `TableState` includes visibility in equality/cache keys, and visible-column
   resolution now uses runtime overrides before existing order / pinning / sizing consumers.

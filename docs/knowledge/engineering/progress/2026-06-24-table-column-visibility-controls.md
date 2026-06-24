@@ -9,7 +9,7 @@ git_branch: main
 # Table Column Visibility Controls
 
 - 2026-06-24: Completed U1 of the column visibility controls plan in the working tree.
-  `TableColumnVisibility` now stores caller-owned sparse runtime overrides, `TableColumn` exposes
+  `TableColumnVisibilityOverrides` now stores caller-owned sparse runtime overrides, `TableColumn` exposes
   `hideable` / `with_hideable`, `TableState` carries visibility through equality and cache keys,
   and the existing visible-column pipeline resolves effective visibility before order, pinning,
   sizing, and render-plan consumers.
@@ -21,9 +21,17 @@ git_branch: main
   `cargo nextest run -p open-gpui-ui-core table`,
   `cargo nextest run -p open-gpui-ui-components table_public_exports_include_core_table_and_virtualizer_contracts crate_root_and_prelude_exports_remain_explicit`,
   and `git diff --check`.
-- Next action: Implement U2 by adding the `TableColumnVisibility` component recipe, item metadata,
-  visible / hidden counts, show-all / reset changes, and `apply_to` helpers for app-owned
-  `TableState` updates.
+- 2026-06-24: Completed U2 of the column visibility controls plan in the current branch.
+  `TableColumnVisibility` now resolves item metadata, visible / hidden counts, show-all / reset
+  actions, controlled open / visibility ownership, and `TableColumnVisibilityChange::apply_to`
+  helpers while preserving unrelated `TableState` slices.
+- 2026-06-24: U2 verification passed with
+  `cargo nextest run -p open-gpui-ui-components table_column_visibility_state_resolves_items_counts_and_popover_contract table_column_visibility_change_updates_visibility_and_preserves_table_state table_public_exports_include_core_table_and_virtualizer_contracts crate_root_and_prelude_exports_remain_explicit component_api_inventory_uses_stable_ownership_vocabulary public_resolved_state_contracts_avoid_gpui_runtime_types`,
+  `cargo nextest run -p open-gpui-ui-core table`,
+  `cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit public_resolved_state_contracts_avoid_gpui_runtime_types`,
+  and `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`.
+- Next action: Implement U3 by proving `TableColumnVisibility` in the Components gallery
+  `release-matrix` sample with app-owned visibility overrides and focused smoke coverage.
 
 # Citations
 
