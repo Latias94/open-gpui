@@ -6,11 +6,10 @@ use crate::{
     DockViewportActivationBackendFocusObservation, DockViewportActivationBackendFocusRecordEffect,
     DockViewportActivationPendingBackendFocusEffect, DockViewportActivationTransaction,
     DockViewportAdapter, DockViewportBackendFocusState, DockViewportCloseCoordinator,
-    DockViewportCloseOutcome, DockViewportClosePlanState, DockViewportClosePolicy,
-    DockViewportCloseStatus, DockViewportCommittedTearOffMove, DockViewportDropActionOutcome,
-    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportDropRouteResolution, DockViewportFocusCoordinator, DockViewportFocusRequest,
-    DockViewportFocusStampFallbackPermit, DockViewportFrameCoordinator,
+    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportCommittedTearOffMove,
+    DockViewportDropActionOutcome, DockViewportDropRoute, DockViewportDropRouteOutcome,
+    DockViewportDropRouteRequest, DockViewportDropRouteResolution, DockViewportFocusCoordinator,
+    DockViewportFocusRequest, DockViewportFocusStampFallbackPermit, DockViewportFrameCoordinator,
     DockViewportHostSceneRenderExpiration, DockViewportHostSceneRenderToken, DockViewportIdentity,
     DockViewportPayloadDragBegin, DockViewportPayloadDragState, DockViewportPlacementLayout,
     DockViewportPlacementValidationError, DockViewportPlatformFocusRestoreGate,
@@ -32,10 +31,12 @@ use crate::{
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_registry::DockViewportPlatformRequests,
     viewport_window_lifecycle::{
-        DockViewportCloseRecoveryActivation, DockViewportClosedWindowRefresh,
-        DockViewportReplacementCleanup, DockViewportRuntimeWindowStateCleanup,
-        DockViewportShouldCloseRefresh, DockViewportSpaceFocusCleanup,
-        DockViewportUnregisteredSpace, DockViewportVacatedTearOffSource,
+        DockViewportCloseRecoveryActivation, DockViewportCloseRecoveryRequest,
+        DockViewportClosedWindowRefresh, DockViewportReplacementCleanup,
+        DockViewportReusableWindow, DockViewportReusableWindowOutcome,
+        DockViewportRuntimeWindowStateCleanup, DockViewportShouldCloseRefresh,
+        DockViewportSpaceFocusCleanup, DockViewportUnregisteredSpace,
+        DockViewportVacatedTearOffSource,
     },
     workspace_drop_transaction::DockWorkspacePayloadDropRequest,
 };
@@ -2413,25 +2414,13 @@ impl DockViewportRuntime {
         cx: &mut App,
     ) -> DockViewportClosedWindowRefresh {
         let pending_state = self.close_coordinator.take_window_close_state(window_id);
-        let close = self.cleanup_closed_window(window_id);
-        let window_effects = close.window_effects();
-        let outcome = match pending_state {
-            Some(DockViewportClosePlanState::Pending(plan)) if close.outcome.space().is_some() => {
-                let close_status =
-                    crate::commit_prevalidated_merge_back_plan(&self.controller, &plan, cx);
-                if close_status == DockViewportCloseStatus::MergedBack {
-                    close.outcome.with_merge_back(plan)
-                } else {
-                    close.outcome.with_status(close_status)
-                }
-            }
-            Some(DockViewportClosePlanState::Discarded) => close
-                .outcome
-                .with_status(DockViewportCloseStatus::MergeBackFailed),
-            _ => close.outcome,
-        };
-        self.status.record_close(&outcome);
-        DockViewportClosedWindowRefresh::new(outcome, window_effects)
+        let close = self
+            .cleanup_closed_window(window_id)
+            .complete_pending_close_plan(pending_state, |plan| {
+                crate::commit_prevalidated_merge_back_plan(&self.controller, plan, cx)
+            });
+        self.status.record_close(&close.outcome);
+        close
     }
 
     #[cfg(test)]
@@ -2449,30 +2438,13 @@ impl DockViewportRuntime {
         outcome: &DockViewportCloseOutcome,
         cx: &mut App,
     ) -> DockViewportCloseRecoveryActivation {
-        if outcome.status() != DockViewportCloseStatus::MergedBack {
-            return DockViewportCloseRecoveryActivation::none();
-        }
-        let Some(target_space) = outcome.merge_target_space().cloned() else {
+        let Some(request) = DockViewportCloseRecoveryRequest::from_close_outcome(outcome) else {
             return DockViewportCloseRecoveryActivation::none();
         };
-        let focus_request = outcome.focus_item().cloned().map_or_else(
-            DockViewportFocusRequest::no_panel_focus,
-            DockViewportFocusRequest::panel,
-        );
         let (reusable, reusable_effects) = self
-            .reusable_window_for_space_with_cleanup(&target_space, cx)
+            .reusable_window_for_space_with_cleanup(request.target_space(), cx)
             .into_parts();
-        let activation = match reusable {
-            DockViewportReusableWindow::Reused(window) => {
-                Some(DockViewportActivationTransaction::close_recovery(
-                    target_space,
-                    window,
-                    focus_request,
-                ))
-            }
-            DockViewportReusableWindow::Missing | DockViewportReusableWindow::Stale => None,
-        };
-        DockViewportCloseRecoveryActivation::new(activation, reusable_effects)
+        request.into_activation(reusable, reusable_effects)
     }
 
     pub(crate) fn handle_window_should_close_with_app_and_refresh(
@@ -2627,51 +2599,5 @@ fn resolved_drop_route_outcome(
     DockViewportResolvedDropRouteRefresh {
         outcome: DockViewportResolvedDropRouteOutcome::new(resolution, changed),
         window_effects,
-    }
-}
-
-pub(crate) enum DockViewportReusableWindow {
-    Missing,
-    Reused(AnyWindowHandle),
-    Stale,
-}
-
-pub(crate) struct DockViewportReusableWindowOutcome {
-    window: DockViewportReusableWindow,
-    window_effects: DockViewportWindowEffects,
-}
-
-impl DockViewportReusableWindowOutcome {
-    fn missing() -> Self {
-        Self {
-            window: DockViewportReusableWindow::Missing,
-            window_effects: DockViewportWindowEffects::default(),
-        }
-    }
-
-    fn reused(window: AnyWindowHandle) -> Self {
-        Self {
-            window: DockViewportReusableWindow::Reused(window),
-            window_effects: DockViewportWindowEffects::default(),
-        }
-    }
-
-    fn stale() -> Self {
-        Self::stale_with_affected_windows(Vec::new())
-    }
-
-    fn stale_with_affected_windows(affected_windows: Vec<AnyWindowHandle>) -> Self {
-        Self {
-            window: DockViewportReusableWindow::Stale,
-            window_effects: DockViewportWindowEffects::new(
-                Vec::new(),
-                affected_windows,
-                Vec::new(),
-            ),
-        }
-    }
-
-    pub(crate) fn into_parts(self) -> (DockViewportReusableWindow, DockViewportWindowEffects) {
-        (self.window, self.window_effects)
     }
 }

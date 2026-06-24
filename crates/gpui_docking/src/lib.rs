@@ -263,5 +263,9 @@ pub(crate) use viewport_tear_off::{
     DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
 };
 pub(crate) use viewport_tear_off_move::*;
+#[allow(unused_imports)]
+pub(crate) use viewport_window_lifecycle::{
+    DockViewportReusableWindow, DockViewportReusableWindowOutcome,
+};
 pub(crate) use viewport_window_ownership::*;
 pub use workspace::*;

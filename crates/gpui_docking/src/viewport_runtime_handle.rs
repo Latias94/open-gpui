@@ -20,10 +20,8 @@ use crate::{
     },
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_platform_sync::sync_reused_viewport_window,
-    viewport_runtime::{
-        DockViewportPreparedTearOffBegin, DockViewportPreparedTearOffDrop,
-        DockViewportReusableWindow,
-    },
+    viewport_runtime::{DockViewportPreparedTearOffBegin, DockViewportPreparedTearOffDrop},
+    viewport_window_lifecycle::DockViewportReusableWindow,
 };
 #[cfg(test)]
 use crate::{
