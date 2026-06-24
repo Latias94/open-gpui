@@ -186,6 +186,8 @@ mod host_tests;
 #[cfg(test)]
 mod host_viewport_matrix_tests;
 #[cfg(test)]
+mod host_viewport_model_tests;
+#[cfg(test)]
 mod host_viewport_runtime_handle_tests;
 #[cfg(test)]
 mod host_viewport_runtime_tests;
