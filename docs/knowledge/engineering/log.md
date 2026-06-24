@@ -6,6 +6,16 @@ status: active
 
 # Log
 
+- 2026-06-24: Completed the Table cell editing slice from
+  `docs/plans/2026-06-24-005-feat-ui-table-cell-editing-plan.md` in the working tree.
+  `TableColumn::text_editable`, `TableCellEditor::Text`, `TableCellEditChange`, and
+  `Table::on_cell_edit_change` now provide opt-in text-cell editors over app-owned row state.
+  The `editable-release` gallery sample records controlled edit payloads, applies changes to a
+  sample-owned `TableState` override, re-renders changed row text, and keeps read-only cells
+  display-only. Updated `docs/ui/component-contract.md`, `docs/verification.md`, and
+  `docs/knowledge/engineering/progress/2026-06-24-table-cell-editing-plan.md`; verified with
+  focused component and gallery nextest runs, memory validation, and `git diff --check`. Next
+  action is commit.
 - 2026-06-24: Completed U3/U4 of
   `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md` as `1298177`.
   `filter-board` now renders a status `TableFacetedFilter`, records app-owned filter overrides and

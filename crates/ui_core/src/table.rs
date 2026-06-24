@@ -153,6 +153,22 @@ impl From<bool> for TableCellValue {
     }
 }
 
+/// Renderer-neutral cell editor kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableCellEditor {
+    /// Single-line text editing with app-owned values.
+    Text,
+}
+
+impl TableCellEditor {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+        }
+    }
+}
+
 /// Renderer-neutral column descriptor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableColumn {
@@ -161,6 +177,7 @@ pub struct TableColumn {
     visible: bool,
     sortable: bool,
     filterable: bool,
+    editor: Option<TableCellEditor>,
     width: UiPx,
     min_width: UiPx,
     max_width: UiPx,
@@ -176,6 +193,7 @@ impl TableColumn {
             visible: true,
             sortable: true,
             filterable: true,
+            editor: None,
             width: TABLE_DEFAULT_COLUMN_WIDTH,
             min_width: TABLE_MIN_COLUMN_WIDTH,
             max_width: TABLE_MAX_COLUMN_WIDTH,
@@ -206,6 +224,16 @@ impl TableColumn {
     /// Returns whether this column accepts filtering.
     pub const fn filterable(&self) -> bool {
         self.filterable
+    }
+
+    /// Returns the cell editor configured for this column, if any.
+    pub const fn editor(&self) -> Option<TableCellEditor> {
+        self.editor
+    }
+
+    /// Returns whether this column renders text-cell editors for editable leaf cells.
+    pub const fn text_editable(&self) -> bool {
+        matches!(self.editor, Some(TableCellEditor::Text))
     }
 
     /// Returns the preferred width before committed sizing is applied.
@@ -243,6 +271,22 @@ impl TableColumn {
     /// Applies filtering capability.
     pub const fn with_filterable(mut self, filterable: bool) -> Self {
         self.filterable = filterable;
+        self
+    }
+
+    /// Applies cell editor metadata.
+    pub const fn with_editor(mut self, editor: Option<TableCellEditor>) -> Self {
+        self.editor = editor;
+        self
+    }
+
+    /// Enables or disables single-line text editing for leaf cells in this column.
+    pub const fn with_text_editable(mut self, editable: bool) -> Self {
+        self.editor = if editable {
+            Some(TableCellEditor::Text)
+        } else {
+            None
+        };
         self
     }
 
@@ -1294,6 +1338,12 @@ impl TableRow {
     /// Adds nested source rows.
     pub fn with_children(mut self, children: impl IntoIterator<Item = TableRow>) -> Self {
         self.children.extend(children);
+        self
+    }
+
+    /// Replaces nested source rows.
+    pub fn with_replaced_children(mut self, children: impl IntoIterator<Item = TableRow>) -> Self {
+        self.children = children.into_iter().collect();
         self
     }
 
@@ -2409,6 +2459,13 @@ impl TableState {
         self
     }
 
+    /// Replaces source rows while preserving the rest of the table configuration.
+    pub fn with_rows(mut self, rows: impl IntoIterator<Item = TableRow>) -> Self {
+        self.rows = rows.into_iter().collect::<Vec<_>>().into();
+        self.rows_identity = next_table_rows_identity();
+        self
+    }
+
     /// Applies explicit column order.
     pub fn with_column_order(
         mut self,
@@ -2634,6 +2691,11 @@ impl TableState {
     /// Returns configured columns.
     pub fn columns(&self) -> &[TableColumn] {
         &self.columns
+    }
+
+    /// Returns explicit column order ids.
+    pub fn column_order(&self) -> &[TableColumnId] {
+        &self.column_order
     }
 
     /// Returns source rows.

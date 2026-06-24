@@ -115,11 +115,19 @@ it enters the Table family view, opens the `filter-board` status popover, verifi
 the popup content stays local, selects the exact `Done` token, checks the controlled change payload
 and filtered row counts, then toggles the token off and confirms the original row window returns.
 
+`components_gallery_smoke_editable_table_cell_updates_sample_rows` is the focused text-cell editing
+proof: it enters the Table family view, targets the `editable-release` sample, edits a rendered
+`name` cell through the nested `TextInput`, verifies `TableCellEditChange` targets the stable
+`(row_id, column_id)` pair, confirms the gallery applies the change to its app-owned `TableState`,
+and proves a read-only `status` cell does not mount an editor.
+
 ```powershell
 cargo nextest run -p open-gpui-ui-core table
 cargo nextest run -p open-gpui-ui-components table
 cargo nextest run -p open-gpui-ui-foundation-gallery table
 cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_faceted_filter_updates_table_rows table
+cargo nextest run -p open-gpui-ui-components table_render_plan_exposes_text_cell_editability_for_leaf_cells_only table_cell_edit_change_updates_source_row_and_preserves_table_state table_runtime_text_cell_edit_emits_change_without_row_interaction controlled_text_input_on_change_accepts_input_without_supplied_controller component_api_inventory_uses_stable_ownership_vocabulary table_public_exports_include_core_table_and_virtualizer_contracts
+cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_editable_table_cell_updates_sample_rows
 ```
 
 `VirtualizedList` follows the same split at component scale: `open-gpui-ui-components` tests prove
@@ -213,7 +221,9 @@ The official Table gate requires `Table`, `TableState`, `VirtualizerState`,
 row selectors stay bounded by the virtualizer's visible rows plus overscan, scroll input stays
 inside the table viewport, sortable header actions emit state-update payloads, controlled column
 resize callbacks carry stable sizing payloads, categorical faceted filters emit controlled
-exact-token updates, row activation and expansion request payloads stay controlled, source-tree row
+exact-token updates, editable text cells emit controlled stable row/column change payloads without
+triggering row interaction callbacks, row activation and expansion request payloads stay controlled,
+source-tree row
 models keep nested descendants addressable by stable row id, manual source-tree snapshots expose
 unloaded/loading/failed child metadata, row-pinning regions split top/center/bottom rows with
 keep-pinned and page-only policies, and grouped / expanded row models keep collapsed descendants
@@ -229,6 +239,10 @@ faceted-filter proof: it renders a `status` `TableFacetedFilter`, records
 `TableFacetedFilterChange` payloads in the sample runtime log, proves selecting `Done` changes the
 rendered row window, proves clearing restores it, and confirms popup wheel input does not move the
 outer table sample.
+`editable-release` is the text-cell editing proof: it renders editable `name` and `team` columns,
+keeps `status` read-only, records `TableCellEditChange` payloads in the sample runtime log, applies
+changes to a sample-owned `TableState` override, and proves the changed row text re-renders through
+the normal Table pipeline.
 `release-matrix` is the wide center-column virtualization sample: it pins the identity and status
 lanes, exposes fourteen center metrics, and has a focused smoke that proves off-window center
 columns unmount/remount while horizontal wheel input remains inside the sample. `row-pinning` is
@@ -452,8 +466,9 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     sample, the grouped and sticky pinned `release-rollup` model with left/right fixed lanes and a
     horizontally scrollable center lane, the wide `release-matrix` center-column window, the
     source-tree `dependency-tree` sample with nested rows and controlled expansion, stable selected
-    row ids, table/row/cell accessibility metadata, sortable header metadata, resize handle
-    metadata, row activation and expansion log entries, and internal body viewports that scroll
+    row ids, the editable `editable-release` text-cell sample with app-owned row updates,
+    table/row/cell accessibility metadata, sortable header metadata, resize handle
+    metadata, row activation, expansion, and cell-edit log entries, and internal body viewports that scroll
     without moving the outer Components page.
     The Tree sample should expose `document-outline`,
     tree/tree-item accessibility metadata, expandable `Paper` children, a state readout, an inner

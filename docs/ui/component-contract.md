@@ -472,6 +472,16 @@ and popup runtime adapter-owned, and emits controlled `TableFacetedFilterChange`
 remove, or clear exact stable tokens while resetting pagination to the first page. Global faceting,
 numeric range controls, async option search, and fetching/cache lifecycles remain application-owned
 or follow-up work.
+Text cell editing is the official inline-edit recipe over table column metadata:
+`TableCellEditor::Text` and `TableColumn::text_editable` opt columns into editable leaf cells,
+while synthetic group rows and missing source cells stay display-only. The GPUI adapter renders the
+existing controlled `TextInput` path inside rendered body cells and emits
+`TableCellEditChange` through `Table::on_cell_edit_change`; applications keep row data app-owned and
+feed back a changed `TableState`. The helper `TableCellEditChange::apply_to` updates the matching
+stable source row id while preserving unrelated row-model inputs such as sorting, filters,
+pagination, selection, pinning, expansion, faceting, and sizing. Rich editor variants, validation,
+dirty-state tracking, commit/cancel workflows, clipboard range editing, and server persistence
+remain application-owned or follow-up work.
 For row-pinned tables, `TableRenderPlan` exposes top, center, and bottom `TableRowRenderPlan`
 regions with neutral `TableRowRegion` metadata, while the vertical virtualizer consumes only the
 center region. The GPUI adapter renders top and bottom row bands outside the center body
@@ -486,9 +496,10 @@ An official Table entry must satisfy the normal component completion gate: `Tabl
 exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
 entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests for row
 identity, grouping, source-tree expansion, row interaction payloads, and virtualizer behavior, and
-gallery runtime tests for nested scroll containment and faceted-filter row updates. Custom
+gallery runtime tests for nested scroll containment, faceted-filter row updates, and editable
+text-cell updates. Custom
 aggregation callbacks, sticky headers, autosize-by-content, data-source fetch/cache orchestration,
-global faceting, numeric/range filter controls, cell editing, and deeper two-axis grid
+global faceting, numeric/range filter controls, richer editor families, and deeper two-axis grid
 virtualization beyond the pinned center-column window remain follow-up capabilities.
 
 ## Splitter Constraints

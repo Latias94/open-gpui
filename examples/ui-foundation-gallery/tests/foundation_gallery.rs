@@ -7,11 +7,13 @@ use open_gpui_ui_components::{
     CommandIndexSnapshotMode, CommandOpenMode, CommandSelectionMode, DialogOpenMode,
     FeedbackIntent, HoverCardOpenIntent, HoverCardOpenMode, MenuItemKind, MenuOpenMode,
     OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableColumnFacets,
-    TableColumnId, TableColumnRegion, TableExpansionMode, TableExpansionState,
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableCellValue,
+    TableColumnFacets, TableColumnId, TableColumnRegion, TableExpansionMode, TableExpansionState,
     TableRowChildrenLoadState, TableRowId, TableRowRegion, TableStageMode, ThemeMode,
     ToggleVariant, TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
-    gpui_adapter::{DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state},
+    gpui_adapter::{
+        DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state, init_text_input,
+    },
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
@@ -47,6 +49,7 @@ fn open_gallery_page_with_shell(
     cx: &mut open_gpui::TestAppContext,
     page: GalleryPage,
 ) -> (Entity<GalleryShell>, &mut VisualTestContext) {
+    cx.update(init_text_input);
     let (shell, cx) = cx.add_window_view(|_, cx| GalleryShell::with_selected_page(page, cx));
     set_short_gallery_viewport(cx);
     redraw(cx);
@@ -1696,7 +1699,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 
-    assert_eq!(tables.len(), 10);
+    assert_eq!(tables.len(), 11);
     let release_queue = table_sample(tables, "release-queue");
     assert_eq!(release_queue.state.rows().len(), 10_000);
     assert_eq!(
@@ -1838,6 +1841,26 @@ fn components_page_samples_expose_component_metadata() {
     assert!(
         !resize_plan.columns()[3].resizable(),
         "score column should prove per-column resize disablement"
+    );
+
+    let editable_release = table_sample(tables, "editable-release");
+    let editable_plan = editable_release.render_plan();
+    assert_eq!(editable_release.state.rows().len(), 32);
+    assert!(
+        editable_plan.columns()[0].text_editable(),
+        "editable-release name column should expose text editing metadata"
+    );
+    assert!(
+        editable_plan.columns()[1].text_editable(),
+        "editable-release team column should expose text editing metadata"
+    );
+    assert!(
+        !editable_plan.columns()[2].text_editable(),
+        "editable-release status column should stay read-only"
+    );
+    assert!(
+        editable_plan.rows()[0].cells()[0].text_editable(),
+        "editable-release first visible name cell should render as editable"
     );
 
     let grouped_release = table_sample(tables, "release-rollup");
@@ -3753,6 +3776,11 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
         "expected focused Table mode to render the resizable Table sample"
     );
     assert!(
+        cx.debug_bounds("gallery:component-table-sample:editable-release")
+            .is_some(),
+        "expected focused Table mode to render the editable Table sample"
+    );
+    assert!(
         cx.debug_bounds("gallery:component-table-sample:release-matrix")
             .is_some(),
         "expected focused Table mode to render the wide matrix Table sample"
@@ -4416,6 +4444,74 @@ fn components_gallery_smoke_faceted_filter_updates_table_rows(cx: &mut open_gpui
         cx.debug_bounds(INITIAL_ROW).is_some(),
         "expected clearing the status facet to restore the original filtered board rows"
     );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_editable_table_cell_updates_sample_rows(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE_ID: &str = "editable-release";
+    const SAMPLE: &str = "gallery:component-table-sample:editable-release";
+    const NAME_INPUT: &str = "text-input:table:component-table:editable-release:cell:editable-release-row-000:name:editor:root";
+    const STATUS_INPUT: &str = "text-input:table:component-table:editable-release:cell:editable-release-row-000:status:editor:root";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, NAME_INPUT);
+
+    assert!(
+        cx.debug_bounds(STATUS_INPUT).is_none(),
+        "read-only status column should not mount a text input"
+    );
+    let sample_before = bounds(cx, SAMPLE);
+    let input = bounds(cx, NAME_INPUT);
+    cx.simulate_click(
+        point(input.right() - px(8.0), input.center().y),
+        Default::default(),
+    );
+    settle(cx);
+    cx.simulate_input(" Prime");
+    settle(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "editing a table cell should not move the sample card"
+    );
+    assert!(
+        cx.debug_bounds(NAME_INPUT).is_some(),
+        "editable input should remain mounted after app-owned state feedback"
+    );
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_changes().to_vec()
+    });
+    assert!(
+        changes.len() >= 2,
+        "gallery edit should record controlled text changes; changes={changes:?}"
+    );
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one edit change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.row_id, "editable-release-row-000");
+    assert_eq!(last.column_id, "name");
+    assert_eq!(last.outcome, "updated");
+    assert_eq!(last.next_text, "Editable release 000 Prime");
+
+    let edited_name = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_override(SAMPLE_ID)
+            .and_then(|state| state.rows().first())
+            .and_then(|row| row.cell(&TableColumnId::new("name")))
+            .map(TableCellValue::filter_text)
+    });
+    assert_eq!(edited_name.as_deref(), Some("Editable release 000 Prime"));
 }
 
 #[open_gpui::test]

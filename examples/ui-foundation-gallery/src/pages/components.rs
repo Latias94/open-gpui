@@ -12,17 +12,17 @@ use open_gpui_ui_components::{
     ScrollResetPolicy, SelectState, Separator, SeparatorState, SidebarCollapseMode,
     SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
     Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
-    Switch, SwitchState, Table, TableAggregation, TableCellValue, TableColumn, TableColumnFacets,
-    TableColumnId, TableColumnPinning, TableColumnRegion, TableColumnSizing,
-    TableColumnSizingChange, TableExpansionMode, TableExpansionState, TableFacetValueCount,
-    TableFacetedFilterChange, TableFilter, TablePagination, TableRenderPlan, TableRow,
-    TableRowActivation, TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning,
-    TableRowPinningPolicy, TableSort, TableStageMode, TableState, Tabs, TabsActivationMode,
-    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState,
-    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
-    Tree, TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListItemDescriptor,
-    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState,
+    Switch, SwitchState, Table, TableAggregation, TableCellEditApplyOutcome, TableCellEditChange,
+    TableCellValue, TableColumn, TableColumnFacets, TableColumnId, TableColumnPinning,
+    TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableExpansionMode,
+    TableExpansionState, TableFacetValueCount, TableFacetedFilterChange, TableFilter,
+    TablePagination, TableRenderPlan, TableRow, TableRowActivation, TableRowChildrenLoadState,
+    TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy, TableSort, TableStageMode,
+    TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
+    TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
+    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
+    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -1242,6 +1242,25 @@ pub struct TableSampleExpansionToggle {
     pub children_load_message: Option<String>,
 }
 
+/// One text-cell edit captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSampleCellEditChange {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Edited row id.
+    pub row_id: String,
+    /// Edited column id.
+    pub column_id: String,
+    /// Source-row index carried by the edit payload, when available.
+    pub source_index: Option<usize>,
+    /// Resolved text before the edit.
+    pub previous_text: String,
+    /// Next controlled text value.
+    pub next_text: String,
+    /// Result from applying the change to app-owned sample state.
+    pub outcome: String,
+}
+
 /// Runtime interaction log used by gallery Table smoke tests.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct TableSampleRuntimeLog {
@@ -1252,6 +1271,8 @@ pub struct TableSampleRuntimeLog {
     expansion_overrides: BTreeMap<String, TableExpansionState>,
     faceted_filter_changes: Vec<TableSampleFacetedFilterChange>,
     faceted_filter_overrides: BTreeMap<String, TableState>,
+    cell_edit_changes: Vec<TableSampleCellEditChange>,
+    cell_edit_overrides: BTreeMap<String, TableState>,
     server_tree_loaded: BTreeMap<String, bool>,
 }
 
@@ -1312,6 +1333,16 @@ impl TableSampleRuntimeLog {
         self.faceted_filter_overrides.get(sample_id)
     }
 
+    /// Returns captured text-cell edits in event order.
+    pub fn cell_edit_changes(&self) -> &[TableSampleCellEditChange] {
+        &self.cell_edit_changes
+    }
+
+    /// Returns the current controlled cell-edit state for a sample, if any.
+    pub fn cell_edit_override(&self, sample_id: &str) -> Option<&TableState> {
+        self.cell_edit_overrides.get(sample_id)
+    }
+
     /// Clears captured interactions.
     pub fn clear(&mut self) {
         self.sizing_changes.clear();
@@ -1321,6 +1352,8 @@ impl TableSampleRuntimeLog {
         self.expansion_overrides.clear();
         self.faceted_filter_changes.clear();
         self.faceted_filter_overrides.clear();
+        self.cell_edit_changes.clear();
+        self.cell_edit_overrides.clear();
         self.server_tree_loaded.clear();
     }
 }
@@ -1370,6 +1403,21 @@ pub fn current_table_sample_faceted_filter_state(
     })
 }
 
+/// Returns the current controlled text-cell edit state for a gallery `Table` sample.
+pub fn current_table_sample_cell_edit_state(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    cx: &impl AppContext,
+) -> TableState {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    })
+}
+
 /// Applies a resolved expansion state to a sample table state.
 pub fn table_state_with_expansion(state: TableState, expansion: TableExpansionState) -> TableState {
     match expansion {
@@ -1386,6 +1434,7 @@ pub fn table_sample_state_with_runtime(
     cx: &impl AppContext,
 ) -> TableState {
     let state = current_table_sample_faceted_filter_state(sample.id, &sample.state, cx);
+    let state = current_table_sample_cell_edit_state(sample.id, &state, cx);
     let loaded_server_tree = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
         log.server_tree_loaded
             .get(sample.id)
@@ -1533,6 +1582,40 @@ pub fn record_table_faceted_filter_change(
                 final_rows,
             });
         log.faceted_filter_overrides.insert(sample_id, next);
+    });
+}
+
+/// Records and applies a controlled gallery `Table` text-cell edit.
+pub fn record_table_cell_edit_change(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    change: &TableCellEditChange,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = fallback.clone();
+    let (next, outcome) = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        let current = log
+            .cell_edit_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone());
+        change.apply_to(current)
+    });
+
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_changes.push(TableSampleCellEditChange {
+            sample_id: sample_id.clone(),
+            row_id: change.row_id().as_str().to_owned(),
+            column_id: change.column_id().as_str().to_owned(),
+            source_index: change.source_index(),
+            previous_text: change.previous_text().to_owned(),
+            next_text: change.next_text().to_owned(),
+            outcome: outcome.as_str().to_owned(),
+        });
+        if outcome == TableCellEditApplyOutcome::Updated {
+            log.cell_edit_overrides.insert(sample_id, next);
+        }
     });
 }
 
@@ -3479,6 +3562,7 @@ fn build_table_samples() -> Vec<TableSample> {
     let filter_board_rows = (0..180).map(filter_board_row).collect::<Vec<_>>();
     let server_paged_rows = server_paged_rows();
     let release_resize_rows = (0..160).map(release_resize_row).collect::<Vec<_>>();
+    let editable_release_rows = (0..32).map(editable_release_row).collect::<Vec<_>>();
     let grouped_release_rows = (0..320).map(grouped_release_row).collect::<Vec<_>>();
     let grouped_custom_aggregation_rows = (0..8)
         .map(grouped_custom_aggregation_row)
@@ -3571,6 +3655,29 @@ fn build_table_samples() -> Vec<TableSample> {
         size: Size::Small,
         viewport_extent: ui_px(196.0),
         row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
+    let editable_release = TableSample {
+        id: "editable-release",
+        title: "Editable release cells",
+        summary: "Text-cell editors emit controlled row/column payloads while app-owned rows feed updated values back into Table.",
+        badge: "cell edit",
+        state: TableState::new(editable_release_rows)
+            .with_columns(editable_table_columns())
+            .with_column_order(["name", "team", "status", "score"])
+            .with_column_sizing(
+                TableColumnSizing::new()
+                    .with_width("name", ui_px(204.0))
+                    .with_width("team", ui_px(132.0))
+                    .with_width("status", ui_px(128.0))
+                    .with_width("score", ui_px(84.0)),
+            )
+            .with_selected_rows(["editable-release-row-002"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(34.0),
         overscan: 4,
         state_summary: TableSampleStateSummary::default(),
     };
@@ -3735,6 +3842,7 @@ fn build_table_samples() -> Vec<TableSample> {
         filter_board.with_state_summary(),
         server_paged.with_state_summary(),
         release_resize.with_state_summary(),
+        editable_release.with_state_summary(),
         grouped_release.with_state_summary(),
         grouped_custom_aggregation.with_state_summary(),
         release_matrix.with_state_summary(),
@@ -3754,6 +3862,29 @@ impl TableSample {
             ..self
         }
     }
+}
+
+fn editable_table_columns() -> [TableColumn; 4] {
+    [
+        TableColumn::new("name", "Name")
+            .with_text_editable(true)
+            .with_width(ui_px(204.0))
+            .with_min_width(ui_px(160.0))
+            .with_max_width(ui_px(320.0)),
+        TableColumn::new("team", "Team")
+            .with_text_editable(true)
+            .with_width(ui_px(132.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(220.0)),
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(128.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(180.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(84.0))
+            .with_min_width(ui_px(72.0))
+            .with_max_width(ui_px(120.0)),
+    ]
 }
 
 fn table_columns() -> [TableColumn; 4] {
@@ -4088,6 +4219,18 @@ fn release_resize_row(index: usize) -> TableRow {
         .with_cell("name", format!("Resize candidate #{index:03}"))
         .with_cell("team", teams[index % teams.len()])
         .with_cell("status", statuses[(index / 5) % statuses.len()])
+        .with_cell("score", score)
+}
+
+fn editable_release_row(index: usize) -> TableRow {
+    let teams = ["UI", "Runtime", "Platform", "QA"];
+    let statuses = ["Draft", "Review", "Ready", "Held"];
+    let score = 320_usize.saturating_sub(index % 320);
+
+    TableRow::new(format!("editable-release-row-{index:03}"))
+        .with_cell("name", format!("Editable release {index:03}"))
+        .with_cell("team", teams[index % teams.len()])
+        .with_cell("status", statuses[(index / 4) % statuses.len()])
         .with_cell("score", score)
 }
 

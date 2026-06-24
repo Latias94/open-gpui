@@ -1590,6 +1590,17 @@ pub(crate) fn render_components_page(
                                                     cx,
                                                 );
                                             });
+                                        let sample_id_for_edit = sample_id.to_owned();
+                                        let base_state_for_edit = sample.state.clone();
+                                        table =
+                                            table.on_cell_edit_change(move |change, _, cx| {
+                                                pages::components::record_table_cell_edit_change(
+                                                    sample_id_for_edit.clone(),
+                                                    &base_state_for_edit,
+                                                    &change,
+                                                    cx,
+                                                );
+                                            });
 
                                         div()
                                             .id(format!("component-table-sample:{sample_id}"))

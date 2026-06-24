@@ -20,13 +20,14 @@ use open_gpui_ui_components::{
     SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor,
     SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
     Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
-    TableCellValue, TableCenterColumnWindowPlan, TableColumn, TableColumnFacets, TableColumnId,
-    TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
-    TableColumnSizingChange, TableExpansionMode, TableFacetValueCount, TableFacetedFilter,
-    TableFacetedFilterChange, TableFacetedFilterState, TableFilter, TableHeaderAction,
-    TablePagination, TableRow, TableRowChildrenLoadState, TableRowPinning, TableRowPinningPolicy,
-    TableRowRegion, TableSelectionActivationMode, TableSelectionMode, TableSelectionScope,
-    TableSort, TableSortDirection, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem,
+    TableCellEditApplyOutcome, TableCellEditChange, TableCellValue, TableCenterColumnWindowPlan,
+    TableColumn, TableColumnFacets, TableColumnId, TableColumnPinning, TableColumnRegion,
+    TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableExpansionMode,
+    TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange, TableFacetedFilterState,
+    TableFilter, TableHeaderAction, TablePagination, TableRow, TableRowChildrenLoadState,
+    TableRowId, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
+    TableSelectionActivationMode, TableSelectionMode, TableSelectionScope, TableSort,
+    TableSortDirection, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem,
     TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver,
     ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
     ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
@@ -484,6 +485,10 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             CallbackApi {
                 name: "on_row_expansion_request",
                 payload: "TableRowExpansionToggle",
+            },
+            CallbackApi {
+                name: "on_cell_edit_change",
+                payload: "TableCellEditChange",
             },
         ],
         renderer_neutral_state: true,
@@ -1290,6 +1295,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "on_row_selection_change",
             "on_row_activate",
             "on_row_expansion_request",
+            "on_cell_edit_change",
             "table_state",
             "state",
             "render_plan",
@@ -3610,6 +3616,153 @@ fn table_faceted_filter_change_updates_filters_and_resets_pagination() {
 }
 
 #[test]
+fn table_render_plan_exposes_text_cell_editability_for_leaf_cells_only() {
+    let state = TableState::new([
+        TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("score", 10_usize),
+        TableRow::new("row-b").with_cell("score", 20_usize),
+    ])
+    .with_columns([
+        TableColumn::new("name", "Name").with_text_editable(true),
+        TableColumn::new("score", "Score"),
+    ])
+    .with_grouping(["score"])
+    .with_all_rows_expanded()
+    .with_pagination(TablePagination::disabled());
+    let plan = Table::new("editable-plan-table", "Editable plan table", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(120.0))
+        .render_plan(UiPx::ZERO, ui_px(120.0));
+
+    let name_column = plan
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "name")
+        .expect("name column should resolve");
+    let score_column = plan
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "score")
+        .expect("score column should resolve");
+    assert!(name_column.text_editable());
+    assert!(!score_column.text_editable());
+
+    let group_row = plan
+        .rows()
+        .iter()
+        .find(|row| row.row().is_group())
+        .expect("group row should resolve");
+    let group_name_cell = group_row
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "name")
+        .expect("group name cell should resolve");
+    assert!(
+        !group_name_cell.text_editable(),
+        "synthetic grouped rows must stay display-only"
+    );
+
+    let editable_leaf = plan
+        .rows()
+        .iter()
+        .find(|row| row.id().as_str() == "row-a")
+        .expect("row-a should resolve");
+    let editable_name = editable_leaf
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "name")
+        .expect("row-a name cell should resolve");
+    assert!(editable_name.text_editable());
+
+    let missing_leaf = plan
+        .rows()
+        .iter()
+        .find(|row| row.id().as_str() == "row-b")
+        .expect("row-b should resolve");
+    let missing_name = missing_leaf
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "name")
+        .expect("row-b missing name cell should resolve");
+    assert!(!missing_name.text_editable());
+}
+
+#[test]
+fn table_cell_edit_change_updates_source_row_and_preserves_table_state() {
+    let state = TableState::new([
+        TableRow::new("root")
+            .with_cell("name", "Root")
+            .with_cell("team", "Platform")
+            .with_child(
+                TableRow::new("child")
+                    .with_cell("name", "Child")
+                    .with_cell("team", "UI"),
+            ),
+        TableRow::new("other")
+            .with_cell("name", "Other")
+            .with_cell("team", "Ops"),
+    ])
+    .with_columns([
+        TableColumn::new("name", "Name").with_text_editable(true),
+        TableColumn::new("team", "Team"),
+    ])
+    .with_column_order(["team", "name"])
+    .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
+    .with_filters([TableFilter::contains("team", "UI")])
+    .with_sorting([TableSort::ascending("name")])
+    .with_expanded_rows(["root"])
+    .with_selected_rows(["child"])
+    .with_pagination(TablePagination::new(2, 25));
+
+    let change = TableCellEditChange::for_row("child", "name", "Child", "Child Prime");
+
+    let (next, outcome) = change.apply_to(state.clone());
+    assert_eq!(outcome, TableCellEditApplyOutcome::Updated);
+    assert_eq!(next.column_order()[0].as_str(), "team");
+    assert_eq!(next.column_pinning().left()[0].as_str(), "name");
+    assert_eq!(next.filters()[0].query(), "UI");
+    assert_eq!(next.sorting()[0].column().as_str(), "name");
+    assert_eq!(next.expansion(), state.expansion());
+    assert!(next.selected_rows().contains(&TableRowId::new("child")));
+    assert_eq!(next.pagination().page_index(), 2);
+
+    let updated = next
+        .rows()
+        .iter()
+        .find(|row| row.id().as_str() == "root")
+        .and_then(|row| row.children().first())
+        .expect("nested child should remain nested");
+    assert_eq!(
+        updated
+            .cell(&TableColumnId::new("name"))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("Child Prime")
+    );
+
+    let missing_column = TableCellEditChange::for_row("child", "missing", "old", "new");
+    let (missing_column_state, missing_outcome) = missing_column.apply_to(next.clone());
+    assert_eq!(missing_outcome, TableCellEditApplyOutcome::CellNotFound);
+    assert_eq!(missing_column_state, next);
+    assert_eq!(
+        missing_column_state.cache_key().rows_identity(),
+        next.cache_key().rows_identity(),
+        "missing cell edits should be inspectable no-ops"
+    );
+
+    let missing_row = TableCellEditChange::for_row("missing-row", "name", "old", "new");
+    let (missing_row_state, missing_row_outcome) = missing_row.apply_to(next.clone());
+    assert_eq!(missing_row_outcome, TableCellEditApplyOutcome::RowNotFound);
+    assert_eq!(missing_row_state, next);
+    assert_eq!(
+        missing_row_state.cache_key().rows_identity(),
+        next.cache_key().rows_identity(),
+        "missing row edits should be inspectable no-ops"
+    );
+}
+
+#[test]
 fn table_render_plan_exposes_pinned_column_regions() {
     let flat_plan = Table::new("flat-table", "Flat table", sample_table_state(1))
         .render_plan(UiPx::ZERO, ui_px(96.0));
@@ -5069,6 +5222,159 @@ fn table_runtime_row_click_selection_is_controlled_and_preserves_activation(
             Vec::<String>::new(),
         )],
         "row-click selection should emit the next selected-row ids without swallowing activation"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_text_cell_edit_emits_change_without_row_interaction(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    type EditLog = Vec<(String, String, Option<usize>, String, String)>;
+
+    struct TestView {
+        state: Rc<RefCell<TableState>>,
+        edits: Rc<RefCell<EditLog>>,
+        activations: Rc<RefCell<Vec<String>>>,
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let table_state = self.state.borrow().clone();
+            let state_for_edit = self.state.clone();
+            let edits = self.edits.clone();
+            let activations = self.activations.clone();
+            let selections = self.selections.clone();
+            let table = Table::new("edit-runtime-table", "Edit runtime", table_state)
+                .row_height(ui_px(32.0))
+                .viewport_extent(ui_px(96.0))
+                .on_cell_edit_change(move |change, _, _| {
+                    edits.borrow_mut().push((
+                        change.row_id().as_str().to_owned(),
+                        change.column_id().as_str().to_owned(),
+                        change.source_index(),
+                        change.previous_text().to_owned(),
+                        change.next_text().to_owned(),
+                    ));
+                    let (next, outcome) = change.apply_to(state_for_edit.borrow().clone());
+                    assert_eq!(outcome, TableCellEditApplyOutcome::Updated);
+                    *state_for_edit.borrow_mut() = next;
+                })
+                .on_row_activate(move |activation, _, _| {
+                    activations
+                        .borrow_mut()
+                        .push(activation.row_id().as_str().to_owned());
+                })
+                .on_row_selection_change(move |selection, _, _| {
+                    selections
+                        .borrow_mut()
+                        .push(selection.row_id().as_str().to_owned());
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    cx.update(init_text_input);
+    let edits = Rc::new(RefCell::new(Vec::new()));
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let state = Rc::new(RefCell::new(
+        TableState::new([TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("status", "Ready")])
+        .with_columns([
+            TableColumn::new("name", "Name")
+                .with_text_editable(true)
+                .with_width(ui_px(180.0)),
+            TableColumn::new("status", "Status").with_width(ui_px(120.0)),
+        ])
+        .with_pagination(TablePagination::disabled())
+        .with_selection_activation_mode(TableSelectionActivationMode::RowClick),
+    ));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        state: state.clone(),
+        edits: edits.clone(),
+        activations: activations.clone(),
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("table:edit-runtime-table:cell:row-a:status")
+            .is_some(),
+        "read-only cell should still render as a plain table cell"
+    );
+    assert!(
+        cx.debug_bounds("text-input:table:edit-runtime-table:cell:row-a:name:editor:root")
+            .is_some(),
+        "editable name cell should render a nested text input with a stable selector"
+    );
+    assert!(
+        cx.debug_bounds("text-input:table:edit-runtime-table:cell:row-a:status:editor:root")
+            .is_none(),
+        "read-only status cell must not mount a text input"
+    );
+
+    let input = cx
+        .debug_bounds("text-input:table:edit-runtime-table:cell:row-a:name:editor:root")
+        .expect("editable name input should expose a stable debug selector");
+    cx.simulate_click(input.center(), Default::default());
+    cx.simulate_input(" Prime");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let edits = edits.borrow();
+    assert!(
+        edits.len() >= 2,
+        "simulated text entry should emit controlled changes as the input value evolves"
+    );
+    assert!(
+        edits.iter().all(|(row_id, column_id, source_index, _, _)| {
+            row_id == "row-a" && column_id == "name" && *source_index == Some(0)
+        }),
+        "every edit payload should stay targeted by stable row and column ids"
+    );
+    assert_eq!(
+        edits.first().cloned(),
+        Some((
+            "row-a".to_owned(),
+            "name".to_owned(),
+            Some(0),
+            "Alpha".to_owned(),
+            "Alpha ".to_owned(),
+        ))
+    );
+    assert_eq!(
+        edits.last().cloned(),
+        Some((
+            "row-a".to_owned(),
+            "name".to_owned(),
+            Some(0),
+            "Alpha Prim".to_owned(),
+            "Alpha Prime".to_owned(),
+        ))
+    );
+    assert_eq!(
+        state
+            .borrow()
+            .rows()
+            .first()
+            .and_then(|row| row.cell(&TableColumnId::new("name")))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("Alpha Prime")
+    );
+    assert!(
+        activations.borrow().is_empty(),
+        "typing inside editable cell must not activate the row"
+    );
+    assert!(
+        selections.borrow().is_empty(),
+        "typing inside editable cell must not toggle row selection"
     );
 }
 
@@ -7991,6 +8297,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_change",
         "on_click",
         "on_close",
+        "on_cell_edit_change",
         "on_column_sizing_change",
         "on_open_change",
         "on_query_change",

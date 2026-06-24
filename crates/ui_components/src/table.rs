@@ -36,6 +36,7 @@ type TableRowActivationHandler = Rc<dyn Fn(TableRowActivation, &mut Window, &mut
 type TableRowExpansionHandler = Rc<dyn Fn(TableRowExpansionToggle, &mut Window, &mut App)>;
 type TableRowSelectionHandler = Rc<dyn Fn(TableRowSelectionChange, &mut Window, &mut App)>;
 type TableFacetedFilterChangeHandler = Rc<dyn Fn(TableFacetedFilterChange, &mut Window, &mut App)>;
+type TableCellEditHandler = Rc<dyn Fn(TableCellEditChange, &mut Window, &mut App)>;
 
 /// One visible option in a table faceted filter recipe.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,6 +157,181 @@ impl TableFacetedFilterChange {
             .with_filters(next_filters)
             .with_pagination(next_pagination)
     }
+}
+
+/// Outcome from applying a controlled table cell edit to app-owned table state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableCellEditApplyOutcome {
+    /// The matching source row and cell were updated.
+    Updated,
+    /// No source row matched the edit payload row id.
+    RowNotFound,
+    /// The source row exists, but the edited column does not exist on that row.
+    CellNotFound,
+}
+
+impl TableCellEditApplyOutcome {
+    /// Returns true when the state was updated.
+    pub const fn updated(self) -> bool {
+        matches!(self, Self::Updated)
+    }
+
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Updated => "updated",
+            Self::RowNotFound => "row-not-found",
+            Self::CellNotFound => "cell-not-found",
+        }
+    }
+}
+
+/// Controlled payload emitted when an editable table text cell changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableCellEditChange {
+    action: TableRowAction,
+    column_id: TableColumnId,
+    previous_text: String,
+    next_text: String,
+}
+
+impl TableCellEditChange {
+    fn new(
+        action: TableRowAction,
+        column_id: impl Into<TableColumnId>,
+        previous_text: impl Into<String>,
+        next_text: impl Into<String>,
+    ) -> Self {
+        Self {
+            action,
+            column_id: column_id.into(),
+            previous_text: previous_text.into(),
+            next_text: next_text.into(),
+        }
+    }
+
+    /// Creates a text-cell edit payload from stable row and column ids.
+    pub fn for_row(
+        row_id: impl Into<TableRowId>,
+        column_id: impl Into<TableColumnId>,
+        previous_text: impl Into<String>,
+        next_text: impl Into<String>,
+    ) -> Self {
+        let row_id = row_id.into();
+        Self {
+            action: TableRowAction {
+                row_id,
+                render_key: String::new(),
+                model_index: 0,
+                source_index: None,
+                depth: 0,
+                selected: false,
+                tree_branch: false,
+                tree_expanded: None,
+                loaded_child_count: 0,
+                children_load_state: None,
+                modifiers: TableInputModifiers::default(),
+            },
+            column_id: column_id.into(),
+            previous_text: previous_text.into(),
+            next_text: next_text.into(),
+        }
+    }
+
+    /// Returns common row metadata for the edited cell.
+    pub const fn action(&self) -> &TableRowAction {
+        &self.action
+    }
+
+    /// Returns the stable edited row id.
+    pub const fn row_id(&self) -> &TableRowId {
+        self.action.row_id()
+    }
+
+    /// Returns the unique render key used by the edited row element.
+    pub fn render_key(&self) -> &str {
+        self.action.render_key()
+    }
+
+    /// Returns this row's zero-based index in the final row model.
+    pub const fn model_index(&self) -> usize {
+        self.action.model_index()
+    }
+
+    /// Returns the source-row preorder index, when this is a source row.
+    pub const fn source_index(&self) -> Option<usize> {
+        self.action.source_index()
+    }
+
+    /// Returns the stable edited column id.
+    pub const fn column_id(&self) -> &TableColumnId {
+        &self.column_id
+    }
+
+    /// Returns the resolved text before the edit.
+    pub fn previous_text(&self) -> &str {
+        &self.previous_text
+    }
+
+    /// Returns the next controlled text value.
+    pub fn next_text(&self) -> &str {
+        &self.next_text
+    }
+
+    /// Applies this edit to a table state and returns an inspectable outcome.
+    pub fn apply_to(&self, state: TableState) -> (TableState, TableCellEditApplyOutcome) {
+        let mut outcome = TableCellEditApplyOutcome::RowNotFound;
+        let rows = state
+            .rows()
+            .iter()
+            .cloned()
+            .map(|row| {
+                apply_table_cell_edit_to_row(
+                    row,
+                    self.row_id(),
+                    &self.column_id,
+                    &self.next_text,
+                    &mut outcome,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        if outcome.updated() {
+            (state.with_rows(rows), outcome)
+        } else {
+            (state, outcome)
+        }
+    }
+}
+
+fn apply_table_cell_edit_to_row(
+    mut row: open_gpui_ui_core::TableRow,
+    row_id: &TableRowId,
+    column_id: &TableColumnId,
+    next_text: &str,
+    outcome: &mut TableCellEditApplyOutcome,
+) -> open_gpui_ui_core::TableRow {
+    if row.id() == row_id {
+        *outcome = if row.cell(column_id).is_some() {
+            TableCellEditApplyOutcome::Updated
+        } else {
+            TableCellEditApplyOutcome::CellNotFound
+        };
+
+        if outcome.updated() {
+            return row.with_cell(column_id.clone(), next_text.to_owned());
+        }
+        return row;
+    }
+
+    let children = row
+        .children()
+        .iter()
+        .cloned()
+        .map(|child| apply_table_cell_edit_to_row(child, row_id, column_id, next_text, outcome))
+        .collect::<Vec<_>>();
+    row = row.with_replaced_children(children);
+    row
 }
 
 /// Resolved renderer-neutral state for a table faceted filter recipe.
@@ -1099,6 +1275,7 @@ pub struct TableColumnRenderPlan {
     region: TableColumnRegion,
     aria_column_index: usize,
     sortable: bool,
+    text_editable: bool,
     sort_direction: Option<TableSortDirection>,
     sort_action: Option<TableHeaderAction>,
     width: UiPx,
@@ -1125,6 +1302,7 @@ impl TableColumnRenderPlan {
             region,
             aria_column_index,
             sortable: column.sortable(),
+            text_editable: column.text_editable(),
             sort_direction,
             sort_action: column
                 .sortable()
@@ -1161,6 +1339,11 @@ impl TableColumnRenderPlan {
     /// Returns whether this column is sortable in the contract.
     pub const fn sortable(&self) -> bool {
         self.sortable
+    }
+
+    /// Returns whether leaf cells in this column render text editors.
+    pub const fn text_editable(&self) -> bool {
+        self.text_editable
     }
 
     /// Returns the resolved sort direction for this column, when present.
@@ -1935,10 +2118,16 @@ pub struct TableCellRenderPlan {
     aria_column_index: usize,
     role: Role,
     width: UiPx,
+    text_editable: bool,
 }
 
 impl TableCellRenderPlan {
-    fn new(column: &TableColumnRenderPlan, value: Option<&TableCellValue>) -> Self {
+    fn new(
+        column: &TableColumnRenderPlan,
+        row: &TableResolvedRow,
+        value: Option<&TableCellValue>,
+    ) -> Self {
+        let text_editable = column.text_editable() && row.is_leaf() && value.is_some();
         Self {
             column_id: column.id().clone(),
             text: value.map(TableCellValue::filter_text).unwrap_or_default(),
@@ -1946,6 +2135,7 @@ impl TableCellRenderPlan {
             aria_column_index: column.aria_column_index(),
             role: Role::Cell,
             width: column.width(),
+            text_editable,
         }
     }
 
@@ -1978,6 +2168,11 @@ impl TableCellRenderPlan {
     pub const fn width(&self) -> UiPx {
         self.width
     }
+
+    /// Returns whether this resolved leaf cell should render a text editor.
+    pub const fn text_editable(&self) -> bool {
+        self.text_editable
+    }
 }
 
 /// One resolved virtualized row to render.
@@ -2004,7 +2199,7 @@ impl TableRowRenderPlan {
     ) -> Self {
         let cells = columns
             .iter()
-            .map(|column| TableCellRenderPlan::new(column, row.cell(column.id())))
+            .map(|column| TableCellRenderPlan::new(column, &row, row.cell(column.id())))
             .collect();
 
         Self {
@@ -2589,6 +2784,7 @@ pub struct Table {
     on_row_selection_change: Option<TableRowSelectionHandler>,
     on_row_activate: Option<TableRowActivationHandler>,
     on_row_expansion_request: Option<TableRowExpansionHandler>,
+    on_cell_edit_change: Option<TableCellEditHandler>,
 }
 
 impl Table {
@@ -2609,6 +2805,7 @@ impl Table {
             on_row_selection_change: None,
             on_row_activate: None,
             on_row_expansion_request: None,
+            on_cell_edit_change: None,
         }
     }
 
@@ -2729,6 +2926,15 @@ impl Table {
         handler: impl Fn(TableRowExpansionToggle, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_row_expansion_request = Some(Rc::new(handler));
+        self
+    }
+
+    /// Registers a handler for controlled text-cell edit changes.
+    pub fn on_cell_edit_change(
+        mut self,
+        handler: impl Fn(TableCellEditChange, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_cell_edit_change = Some(Rc::new(handler));
         self
     }
 
@@ -3001,6 +3207,7 @@ impl RenderOnce for Table {
         let on_row_activate = self.on_row_activate.clone();
         let on_row_selection_change = self.on_row_selection_change.clone();
         let on_row_expansion_request = self.on_row_expansion_request.clone();
+        let on_cell_edit_change = self.on_cell_edit_change.clone();
 
         div()
             .id(self.id)
@@ -3064,6 +3271,7 @@ impl RenderOnce for Table {
                 on_row_selection_change,
                 on_row_activate,
                 on_row_expansion_request,
+                on_cell_edit_change,
             ))
     }
 }
@@ -3495,6 +3703,7 @@ fn render_table_body(
     on_row_selection_change: Option<TableRowSelectionHandler>,
     on_row_activate: Option<TableRowActivationHandler>,
     on_row_expansion_request: Option<TableRowExpansionHandler>,
+    on_cell_edit_change: Option<TableCellEditHandler>,
 ) -> impl IntoElement {
     let table_id = plan.table_id().to_owned();
     let metrics = plan.metrics();
@@ -3542,6 +3751,7 @@ fn render_table_body(
                 on_row_selection_change.clone(),
                 on_row_activate.clone(),
                 on_row_expansion_request.clone(),
+                on_cell_edit_change.clone(),
             ))
         })
         .child(
@@ -3569,6 +3779,7 @@ fn render_table_body(
                         on_row_selection_change.clone(),
                         on_row_activate.clone(),
                         on_row_expansion_request.clone(),
+                        on_cell_edit_change.clone(),
                     ),
                 )
                 .vertical()
@@ -3598,6 +3809,7 @@ fn render_table_body(
                 on_row_selection_change,
                 on_row_activate,
                 on_row_expansion_request,
+                on_cell_edit_change,
             ))
         })
 }
@@ -3623,6 +3835,7 @@ fn render_table_row_band(
     on_row_selection_change: Option<TableRowSelectionHandler>,
     on_row_activate: Option<TableRowActivationHandler>,
     on_row_expansion_request: Option<TableRowExpansionHandler>,
+    on_cell_edit_change: Option<TableCellEditHandler>,
 ) -> AnyElement {
     let table_id = table_id.to_owned();
     let region_name = region.as_str();
@@ -3661,6 +3874,7 @@ fn render_table_row_band(
                 on_row_selection_change.clone(),
                 on_row_activate.clone(),
                 on_row_expansion_request.clone(),
+                on_cell_edit_change.clone(),
             )
         }))
         .into_any_element()
@@ -3686,6 +3900,7 @@ fn render_table_row(
     on_row_selection_change: Option<TableRowSelectionHandler>,
     on_row_activate: Option<TableRowActivationHandler>,
     on_row_expansion_request: Option<TableRowExpansionHandler>,
+    on_cell_edit_change: Option<TableCellEditHandler>,
 ) -> impl IntoElement {
     let render_key = row.render_key().to_owned();
     let row_id = row.id().clone();
@@ -3875,6 +4090,7 @@ fn render_table_row(
                     let runtime = runtime.clone();
                     let focus_handle = focus_handle.clone();
                     let on_row_expansion_request = on_row_expansion_request.clone();
+                    let on_cell_edit_change = on_cell_edit_change.clone();
                     let tree = tree.clone();
                     let tree_affordance_column_id = tree_affordance_column_id.clone();
                     move |cell| {
@@ -3896,6 +4112,7 @@ fn render_table_row(
                             focus_handle.clone(),
                             current_expansion_for_cells.clone(),
                             on_row_expansion_request.clone(),
+                            on_cell_edit_change.clone(),
                         )
                         .into_any_element()
                     }
@@ -3982,6 +4199,7 @@ fn render_table_body_cell(
     focus_handle: Option<FocusHandle>,
     current_expansion: TableExpansionState,
     on_row_expansion_request: Option<TableRowExpansionHandler>,
+    on_cell_edit_change: Option<TableCellEditHandler>,
 ) -> impl IntoElement {
     let column_id = cell.column_id().as_str().to_owned();
     let show_tree_affordance = tree_affordance && tree.is_some();
@@ -4007,16 +4225,56 @@ fn render_table_body_cell(
             on_row_expansion_request,
         ));
     }
-    content.push(
-        div()
-            .flex_1()
-            .min_w(px(0.0))
-            .overflow_hidden()
-            .truncate()
-            .whitespace_nowrap()
-            .child(cell.text().to_owned())
-            .into_any_element(),
-    );
+    let cell_text = cell.text().to_owned();
+    if cell.text_editable() && on_cell_edit_change.is_some() {
+        let action = TableRowAction::from_render_plan(&row, TableInputModifiers::default());
+        let column_id_for_change = cell.column_id().clone();
+        let previous_text = cell_text.clone();
+        let on_change = on_cell_edit_change.clone();
+        content.push(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .overflow_hidden()
+                .on_mouse_up(MouseButton::Left, |_, _, cx| {
+                    cx.stop_propagation();
+                })
+                .child(
+                    TextInput::new(
+                        format!("table:{table_id}:cell:{render_key}:{column_id}:editor"),
+                        format!("Edit {column_id} for row {}", row.id().as_str()),
+                    )
+                    .value(cell_text)
+                    .on_change(move |next_text, window, cx| {
+                        if let Some(on_change) = on_change.as_ref() {
+                            on_change(
+                                TableCellEditChange::new(
+                                    action.clone(),
+                                    column_id_for_change.clone(),
+                                    previous_text.clone(),
+                                    next_text,
+                                ),
+                                window,
+                                cx,
+                            );
+                        }
+                    })
+                    .with_size(metrics.size()),
+                )
+                .into_any_element(),
+        );
+    } else {
+        content.push(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .overflow_hidden()
+                .truncate()
+                .whitespace_nowrap()
+                .child(cell_text)
+                .into_any_element(),
+        );
+    }
 
     div()
         .id(format!("table:{table_id}:cell:{render_key}:{column_id}"))

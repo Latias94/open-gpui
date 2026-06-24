@@ -116,18 +116,18 @@ pub use menu::{
 pub use open_gpui_ui_core::{
     GridViewport2D, TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
     TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind, TableAggregation,
-    TableCellValue, TableColumn, TableColumnFacets, TableColumnId, TableColumnPinning,
-    TableColumnRegion, TableColumnRegions, TableColumnResizeDirection, TableColumnResizeMode,
-    TableColumnResizeState, TableColumnResizeUpdate, TableColumnSizing, TableExpansionMode,
-    TableExpansionState, TableFacetRange, TableFacetValueCount, TableFilter, TableFilterKind,
-    TableGroupRow, TablePagination, TableResolvedColumnSizing, TableResolvedColumnSizingRegions,
-    TableResolvedRow, TableResolvedRowKind, TableResolvedState, TableRow,
-    TableRowChildrenLoadState, TableRowId, TableRowModel, TableRowModelStage, TableRowPinning,
-    TableRowPinningPolicy, TableRowRegion, TableRowRegions, TableSort, TableSortDirection,
-    TableStageMode, TableState, TableStateCacheKey, TableTreeRow, VirtualizerItemKey,
-    VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState, VirtualizerSnapshot,
-    VirtualizerSnapshotItem, VirtualizerState, drag_table_column_resize, end_table_column_resize,
-    resolve_grid_viewport_2d,
+    TableCellEditor, TableCellValue, TableColumn, TableColumnFacets, TableColumnId,
+    TableColumnPinning, TableColumnRegion, TableColumnRegions, TableColumnResizeDirection,
+    TableColumnResizeMode, TableColumnResizeState, TableColumnResizeUpdate, TableColumnSizing,
+    TableExpansionMode, TableExpansionState, TableFacetRange, TableFacetValueCount, TableFilter,
+    TableFilterKind, TableGroupRow, TablePagination, TableResolvedColumnSizing,
+    TableResolvedColumnSizingRegions, TableResolvedRow, TableResolvedRowKind, TableResolvedState,
+    TableRow, TableRowChildrenLoadState, TableRowId, TableRowModel, TableRowModelStage,
+    TableRowPinning, TableRowPinningPolicy, TableRowRegion, TableRowRegions, TableSort,
+    TableSortDirection, TableStageMode, TableState, TableStateCacheKey, TableTreeRow,
+    VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState,
+    VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState, drag_table_column_resize,
+    end_table_column_resize, resolve_grid_viewport_2d,
 };
 pub use open_gpui_ui_core::{
     TableSelectionActivationMode, TableSelectionMode, TableSelectionPolicy, TableSelectionSummary,
@@ -165,8 +165,9 @@ pub use splitter::{
 };
 pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use table::{
-    Table, TableCellRenderPlan, TableCenterColumnWindowPlan, TableColumnRegionRenderPlan,
-    TableColumnRenderPlan, TableColumnSizingChange, TableFacetedFilter, TableFacetedFilterChange,
+    Table, TableCellEditApplyOutcome, TableCellEditChange, TableCellRenderPlan,
+    TableCenterColumnWindowPlan, TableColumnRegionRenderPlan, TableColumnRenderPlan,
+    TableColumnSizingChange, TableFacetedFilter, TableFacetedFilterChange,
     TableFacetedFilterOptionState, TableFacetedFilterState, TableHeaderAction, TableInputModifiers,
     TableMetrics, TablePinnedLayoutPlan, TableRenderPlan, TableRowAction, TableRowActivation,
     TableRowActivationKind, TableRowExpansionToggle, TableRowRenderPlan, TableRowSelectionChange,

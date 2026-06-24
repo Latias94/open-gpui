@@ -295,12 +295,20 @@ verified_by:
 - Follow-up: The column sizing / resize, sticky pinned-column, center-column virtualization,
   tree-data, row-interaction, manual-expansion, manual row-model control, per-column faceting
   metadata, single-column categorical faceted filter controls, row selection variants, row
-  pinning, custom aggregation callbacks, and two-axis viewport slices are complete on `main`.
-  Remaining Table follow-ups are cell editing, global faceting, numeric/range filter controls, and
+  pinning, custom aggregation callbacks, two-axis viewport, and text cell editing slices are
+  complete in the current working tree.
+  Remaining Table follow-ups are global faceting, numeric/range filter controls, richer editor
+  families, and
   standalone headless extraction if cross-framework pressure appears.
+- Done: Completed `docs/plans/2026-06-24-005-feat-ui-table-cell-editing-plan.md` in the working
+  tree. Table columns can opt into `TableCellEditor::Text`, editable leaf cells render controlled
+  `TextInput` editors through the GPUI adapter, `TableCellEditChange` targets stable row and column
+  ids, and `editable-release` proves app-owned row updates in the Components gallery.
+- Done: Verified the Table cell editing slice with targeted `cargo fmt`, focused component and
+  gallery `cargo nextest run` commands, engineering wiki validation, and `git diff --check`.
 - Done: The two-dimensional Table viewport contract is shipped on `main` as `725f859`.
 - Blocked: None.
-- Next action: Select the next Table boundary after the completed table slices.
+- Next action: Commit the Table cell editing slice, then select the next Table boundary.
 
 # Citations
 
@@ -368,3 +376,10 @@ verified_by:
 [62] Verification command `cargo nextest run -p open-gpui-ui-components table component_api_inventory`
 [63] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery table`
 [64] Plan `docs/plans/2026-06-23-009-feat-ui-table-row-pinning-plan.md`
+[65] Plan `docs/plans/2026-06-24-005-feat-ui-table-cell-editing-plan.md`
+[66] Progress note `docs/knowledge/engineering/progress/2026-06-24-table-cell-editing-plan.md`
+[67] Verification command `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`
+[68] Verification command `cargo nextest run -p open-gpui-ui-components table_render_plan_exposes_text_cell_editability_for_leaf_cells_only table_cell_edit_change_updates_source_row_and_preserves_table_state table_runtime_text_cell_edit_emits_change_without_row_interaction controlled_text_input_on_change_accepts_input_without_supplied_controller component_api_inventory_uses_stable_ownership_vocabulary table_public_exports_include_core_table_and_virtualizer_contracts`
+[69] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_editable_table_cell_updates_sample_rows`
+[70] Verification command `python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering`
+[71] Verification command `git diff --check`
