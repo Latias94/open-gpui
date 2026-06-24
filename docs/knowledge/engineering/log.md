@@ -6,6 +6,12 @@ status: active
 
 # Log
 
+- 2026-06-24: Wrote `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md`
+  as the next Table follow-up boundary. The plan keeps scope to single-column categorical faceted
+  filter controls, adds exact categorical filter semantics to `TableFilter`, reuses existing
+  Popover + command-palette primitives for the UI recipe, and defers global faceting, numeric
+  range sliders, async facet loading, and standalone headless extraction. Next action is U1:
+  extend core `TableFilter` semantics.
 - 2026-06-24: Completed the Table row-selection variants slice as `ea3785f`. `ui_core::TableState`
   now carries explicit selection policy knobs for single vs multiple selection, explicit-control
   vs row-click activation, and descendant propagation, plus renderer-neutral selection summaries

@@ -4,7 +4,7 @@ title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: main
-git_commit: 2c7f9fd
+git_commit: 0af7eec
 verified_by:
   - cargo nextest run -p open-gpui-ui-core table
   - cargo nextest run -p open-gpui-ui-components table
@@ -98,6 +98,10 @@ verified_by:
   `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when
   the policy is explicit-control. The Components test suite now covers row-click selection,
   explicit-control row clicks, and inventory / export baselines for the new row-selection callback.
+- 2026-06-24: Wrote `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md`
+  as the next Table boundary. The plan adds exact categorical filter semantics, a Popover +
+  command-palette faceted filter recipe, and a gallery proof while deferring global faceting,
+  numeric range sliders, async facet loading, and standalone headless extraction.
 - 2026-06-24: Chose the next Table planning boundary as
   `docs/plans/2026-06-24-003-feat-ui-table-row-selection-variants-plan.md`. The slice covers
   checkbox, radio, and list-like row selection recipes over the existing stable selected-row id
@@ -105,15 +109,16 @@ verified_by:
   chrome in `ui_components`, and defers cell editing, server-synced selection persistence, and a
   general feature plugin system.
 
-- Goal: Keep the engineering wiki aligned with the completed Table custom aggregation and row-selection slices.
+- Goal: Execute `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md`.
 - Branch: `main`
-- Last verified: 2026-06-24, `cargo nextest run -p open-gpui-ui-core table`, `cargo nextest run -p open-gpui-ui-components table`, and `cargo nextest run -p open-gpui-ui-foundation-gallery table` all passed.
+- Last verified: 2026-06-24, `git diff --check` and engineering wiki validation passed after writing the faceted filter controls plan.
+- Done: Wrote the Table faceted filter controls plan as `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md`.
 - Done: Completed the Table custom aggregation callbacks slice as `dded73b`. `TableState` now stores named custom aggregation callbacks, grouped rows resolve named custom aggregates through the renderer-neutral pipeline, `TableRenderPlan` exposes the callback count, and the Components gallery includes `grouped-custom-aggregation`.
 - Done: Completed the Table row-selection variants slice as `ea3785f`. `ui_core::TableState` now carries explicit selection policy knobs for single vs multiple selection, explicit-control vs row-click activation, and descendant propagation, plus renderer-neutral selection summaries for full-model and current-page scopes. `ui_components::Table` emits controlled `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when the policy is explicit-control.
 - Done: A combined two-axis viewport contract is already on `main` as `725f859`.
-- In progress: None.
+- In progress: Table faceted filter controls slice.
 - Blocked: None.
-- Next action: Pick the next Table boundary after the shipped custom aggregation and row-selection slices.
+- Next action: Execute U1, extending core `TableFilter` semantics for exact categorical facet selection.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
   with depth/parent/branch/descendant metadata, source-tree expansion reuses
