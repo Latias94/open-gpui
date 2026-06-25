@@ -10,7 +10,7 @@ use crate::{
     workspace_drop_target::DockWorkspaceResolvedDropTarget,
     workspace_drop_transaction::{DockWorkspaceDropPayload, DockWorkspacePayloadDropRequest},
 };
-use open_gpui::{AppContext as _, TestAppContext};
+use open_gpui::{AnyWindowHandle, AppContext as _, TestAppContext};
 
 const MODEL_ITEMS: [&str; 7] = ["a", "b", "c", "d", "e", "f", "g"];
 
@@ -41,22 +41,108 @@ struct InitialModelNodes {
     top_bottom_root: DockNodeId,
 }
 
+struct DockModelHarness {
+    controller: open_gpui::Entity<DockController>,
+    runtime: DockViewportRuntimeHandle,
+    opened: [(DockSpaceId, AnyWindowHandle); 3],
+    scenario_spaces: [DockSpaceId; 3],
+    nodes: InitialModelNodes,
+}
+
 #[open_gpui::test]
 fn runtime_opened_multi_window_sequential_dock_model_keeps_state_consistent(
     cx: &mut TestAppContext,
 ) {
-    let source_space = DockSpaceId::from("source");
-    let left_right_space = DockSpaceId::from("left-right");
-    let top_bottom_space = DockSpaceId::from("top-bottom");
-    let scenario_spaces = [
-        source_space.clone(),
-        left_right_space.clone(),
-        top_bottom_space.clone(),
-    ];
+    let harness = DockModelHarness::new(cx);
+    harness.assert_graph_invariants(cx, "initial model");
+    harness.assert_initial_shape(cx);
 
-    let (graph, nodes) = model_graph(&source_space, &left_right_space, &top_bottom_space);
-    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-    workspace.policy_mut().set_allow_platform_viewports(true);
+    for operation in sequential_model_moves() {
+        harness.commit_move(cx, operation);
+        harness.assert_graph_invariants(cx, operation.name);
+        harness.assert_operation_shape(cx, operation);
+        harness.assert_runtime_viewports(operation.expected_open_spaces, operation.name);
+    }
+}
+
+#[open_gpui::test]
+fn runtime_opened_multi_window_reoriented_dock_model_keeps_state_consistent(
+    cx: &mut TestAppContext,
+) {
+    let harness = DockModelHarness::new(cx);
+    harness.assert_graph_invariants(cx, "initial model");
+    harness.assert_initial_shape(cx);
+
+    for operation in reoriented_model_moves() {
+        harness.commit_move(cx, operation);
+        harness.assert_graph_invariants(cx, operation.name);
+        harness.assert_operation_shape(cx, operation);
+        harness.assert_runtime_viewports(operation.expected_open_spaces, operation.name);
+    }
+}
+
+impl DockModelHarness {
+    fn new(cx: &mut TestAppContext) -> Self {
+        let source_space = DockSpaceId::from("source");
+        let left_right_space = DockSpaceId::from("left-right");
+        let top_bottom_space = DockSpaceId::from("top-bottom");
+        let scenario_spaces = [
+            source_space.clone(),
+            left_right_space.clone(),
+            top_bottom_space.clone(),
+        ];
+
+        let (graph, nodes) = model_graph(&source_space, &left_right_space, &top_bottom_space);
+        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        register_model_panels(cx, &mut workspace);
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+        let opened = [
+            (source_space.clone(), handle(1)),
+            (left_right_space.clone(), handle(2)),
+            (top_bottom_space.clone(), handle(3)),
+        ];
+        register_viewports(&runtime, &opened);
+
+        Self {
+            controller,
+            runtime,
+            opened,
+            scenario_spaces,
+            nodes,
+        }
+    }
+
+    fn assert_graph_invariants(&self, cx: &TestAppContext, context: &str) {
+        assert_graph_invariants(
+            cx,
+            &self.controller,
+            &self.scenario_spaces,
+            &MODEL_ITEMS,
+            context,
+        );
+    }
+
+    fn assert_initial_shape(&self, cx: &TestAppContext) {
+        assert_initial_model_shape(cx, &self.controller, &self.nodes);
+    }
+
+    fn commit_move(&self, cx: &mut TestAppContext, operation: ModelMove) {
+        commit_model_move(cx, &self.controller, &self.runtime, operation);
+    }
+
+    fn assert_operation_shape(&self, cx: &TestAppContext, operation: ModelMove) {
+        assert_operation_shape(cx, &self.controller, operation);
+    }
+
+    fn assert_runtime_viewports(&self, expected_spaces: &[&str], context: &str) {
+        assert_runtime_viewports(&self.runtime, &self.opened, expected_spaces, context);
+    }
+}
+
+fn register_model_panels(cx: &mut TestAppContext, workspace: &mut DockWorkspace) {
     for id in MODEL_ITEMS {
         workspace.register_panel_view(
             item(id),
@@ -64,29 +150,10 @@ fn runtime_opened_multi_window_sequential_dock_model_keeps_state_consistent(
             crate::host_test_support::test_view(cx, panel_label(id)),
         );
     }
-    let controller = cx.new(|_| DockController::new(workspace));
-    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+}
 
-    let source_window = handle(1);
-    let left_right_window = handle(2);
-    let top_bottom_window = handle(3);
-    let opened = [
-        (source_space.clone(), source_window),
-        (left_right_space.clone(), left_right_window),
-        (top_bottom_space.clone(), top_bottom_window),
-    ];
-    register_viewports(&runtime, &opened);
-
-    assert_graph_invariants(
-        cx,
-        &controller,
-        &scenario_spaces,
-        &MODEL_ITEMS,
-        "initial model",
-    );
-    assert_initial_model_shape(cx, &controller, &nodes);
-
-    for operation in [
+fn sequential_model_moves() -> [ModelMove; 5] {
+    [
         ModelMove {
             name: "source a docks below right child in left-right window",
             source_space: "source",
@@ -132,33 +199,53 @@ fn runtime_opened_multi_window_sequential_dock_model_keeps_state_consistent(
             drop_kind: ModelDropKind::Center,
             expected_open_spaces: &["left-right", "top-bottom"],
         },
-    ] {
-        commit_model_move(cx, &controller, &runtime, operation);
-        assert_graph_invariants(
-            cx,
-            &controller,
-            &scenario_spaces,
-            &MODEL_ITEMS,
-            operation.name,
-        );
-        assert_operation_shape(cx, &controller, operation);
-        assert_runtime_viewports(
-            &runtime,
-            &opened,
-            operation.expected_open_spaces,
-            operation.name,
-        );
-    }
+    ]
+}
+
+fn reoriented_model_moves() -> [ModelMove; 3] {
+    [
+        ModelMove {
+            name: "source a docks below right child in left-right window",
+            source_space: "source",
+            item: "a",
+            target_space: "left-right",
+            target_item: "c",
+            drop_kind: ModelDropKind::InnerEdge(DropZone::Bottom),
+            expected_open_spaces: &["left-right", "source", "top-bottom"],
+        },
+        ModelMove {
+            name: "source d docks above moved a in left-right window",
+            source_space: "source",
+            item: "d",
+            target_space: "left-right",
+            target_item: "a",
+            drop_kind: ModelDropKind::InnerEdge(DropZone::Top),
+            expected_open_spaces: &["left-right", "source", "top-bottom"],
+        },
+        ModelMove {
+            name: "last source item g centers onto top-bottom window after reorientation",
+            source_space: "source",
+            item: "g",
+            target_space: "top-bottom",
+            target_item: "e",
+            drop_kind: ModelDropKind::Center,
+            expected_open_spaces: &["left-right", "top-bottom"],
+        },
+    ]
 }
 
 fn register_viewports(
     runtime: &DockViewportRuntimeHandle,
-    viewports: &[(DockSpaceId, open_gpui::AnyWindowHandle)],
+    viewports: &[(DockSpaceId, AnyWindowHandle)],
 ) {
     for (space, window) in viewports {
-        let _ = runtime
+        let closed = runtime
             .borrow_mut()
             .register_opened_viewport(space.clone(), window.clone());
+        assert!(
+            closed.is_empty(),
+            "fresh viewport registration should not request cleanup"
+        );
     }
 }
 
