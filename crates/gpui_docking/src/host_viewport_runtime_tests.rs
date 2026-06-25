@@ -5526,6 +5526,76 @@ fn viewport_runtime_late_close_for_replaced_window_keeps_current_viewport_state(
 }
 
 #[open_gpui::test]
+fn viewport_runtime_render_registration_rebinds_same_window_to_new_space_and_clears_old_state(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut runtime = DockViewportRuntime::new(controller);
+
+    let window = handle(73);
+    assert!(runtime.register_rendered_host_viewport(source_space.clone(), window));
+    assert!(runtime.begin_viewport_host_scene(
+        source_space.clone(),
+        window.window_id(),
+        DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
+            100.0, 100.0, 360.0, 220.0,
+        ))),
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        center_drop_position(floating_bounds(0.0, 0.0, 360.0, 220.0)),
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &source_space,
+        window.window_id(),
+        leaf_host_scene_fact(source_tabs, source_tabs),
+    ));
+    runtime.record_panel_focus(source_space.clone(), item("a"));
+
+    let replaced = runtime.register_rendered_host_viewport(target_space.clone(), window);
+    assert!(replaced);
+
+    assert_eq!(runtime.adapter().window_for_space(&source_space), None);
+    assert_eq!(
+        runtime.adapter().window_for_space(&target_space),
+        Some(window)
+    );
+    assert_eq!(runtime.last_host_scene_screen_position(&source_space), None);
+    assert_eq!(
+        runtime.recorded_had_panel_focus_for_test(&source_space),
+        None
+    );
+    assert!(
+        !runtime.push_viewport_host_scene_fact(
+            &source_space,
+            window.window_id(),
+            leaf_host_scene_fact(source_tabs, source_tabs),
+        ),
+        "rebound rendered-host mapping must reject stale facts for the old space"
+    );
+    assert_eq!(
+        runtime.recorded_had_panel_focus_for_test(&target_space),
+        None,
+        "rebinding a window to a new space should not invent target focus history"
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_window_closed_finishes_source_drag_session(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");
