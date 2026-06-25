@@ -14,9 +14,9 @@ use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, Context, CursorStyle, DragMoveEvent, Empty, Entity, FocusHandle,
-    FontWeight, InteractiveElement, IntoElement, KeyDownEvent, Modifiers, MouseButton,
-    ParentElement, RenderOnce, ScrollHandle, ScrollWheelEvent, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, point, px, rgb, rgba,
+    Font, FontWeight, InteractiveElement, IntoElement, KeyDownEvent, Modifiers, MouseButton,
+    ParentElement, Pixels, RenderOnce, ScrollHandle, ScrollWheelEvent, SharedString,
+    StatefulInteractiveElement, Styled, TextRun, Window, div, point, px, rems, rgb, rgba,
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, GridViewport2D, InitialFocusIntent, OutsidePressPolicy,
@@ -53,6 +53,207 @@ type TableGlobalFilterChangeHandler = Rc<dyn Fn(TableGlobalFilterChange, &mut Wi
 type TablePredicateFilterChangeHandler =
     Rc<dyn Fn(TablePredicateFilterChange, &mut Window, &mut App)>;
 type TableCellEditHandler = Rc<dyn Fn(TableCellEditChange, &mut Window, &mut App)>;
+
+#[derive(Debug, Clone, PartialEq)]
+struct TableContentFitMeasureKey {
+    state_key: TableStateCacheKey,
+    font: Font,
+    font_size: Pixels,
+    cell_padding_x: UiPx,
+    sample_set: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct TableContentFitMeasureCache {
+    key: Option<TableContentFitMeasureKey>,
+    widths: BTreeMap<TableColumnId, UiPx>,
+}
+
+impl TableContentFitMeasureCache {
+    fn widths_for(
+        &mut self,
+        key: TableContentFitMeasureKey,
+        columns: &[TableColumnRenderPlan],
+        rendered_rows: &[&TableResolvedRow],
+        metrics: TableMetrics,
+        window: &Window,
+    ) -> &BTreeMap<TableColumnId, UiPx> {
+        let needs_refresh = self.key.as_ref() != Some(&key);
+        if needs_refresh {
+            let measured =
+                measure_table_content_fit_widths(columns, rendered_rows, metrics, window);
+            for (column_id, width) in measured {
+                self.widths
+                    .entry(column_id)
+                    .and_modify(|existing| *existing = (*existing).max(width))
+                    .or_insert(width);
+            }
+            self.key = Some(key);
+        }
+
+        &self.widths
+    }
+}
+
+fn measure_table_content_fit_widths(
+    columns: &[TableColumnRenderPlan],
+    rendered_rows: &[&TableResolvedRow],
+    metrics: TableMetrics,
+    window: &Window,
+) -> BTreeMap<TableColumnId, UiPx> {
+    let mut widths = BTreeMap::new();
+    let font = window.text_style().font();
+    let font_size = table_content_fit_text_size(window);
+    let padding_x = metrics.cell_padding_x();
+    let tree_affordance_column_id = columns.first().map(|column| column.id().clone());
+
+    for column in columns
+        .iter()
+        .filter(|column| column.width_policy() == TableColumnWidthPolicy::ContentFit)
+    {
+        let mut measured = measure_table_header_text_width(
+            window,
+            column.label(),
+            column.sort_direction(),
+            font.clone(),
+            font_size,
+        );
+        for row in rendered_rows {
+            if let Some(value) = row.cell(column.id()) {
+                let value_text = value.filter_text();
+                let mut value_width =
+                    measure_table_text_width(window, &value_text, font.clone(), font_size);
+                if tree_affordance_column_id
+                    .as_ref()
+                    .is_some_and(|tree_column_id| {
+                        tree_column_id == column.id() && row.tree().is_some()
+                    })
+                {
+                    value_width = value_width + ui_px(18.0) + ui_px(16.0) * row.depth() as f32;
+                }
+                measured = measured.max(value_width);
+            }
+        }
+
+        let measured = measured + padding_x * 2.0;
+        widths.insert(column.id().clone(), measured);
+    }
+
+    widths
+}
+
+fn measure_table_header_text_width(
+    window: &Window,
+    label: &str,
+    sort_direction: Option<TableSortDirection>,
+    font: Font,
+    font_size: Pixels,
+) -> UiPx {
+    let mut text = label.to_owned();
+    if let Some(direction) = sort_direction {
+        text.push_str(match direction {
+            TableSortDirection::Ascending => " ↑",
+            TableSortDirection::Descending => " ↓",
+        });
+    }
+
+    measure_table_text_width(window, &text, font.bold(), font_size)
+}
+
+fn content_fit_measure_key(
+    state_key: TableStateCacheKey,
+    metrics: TableMetrics,
+    columns: &[TableColumnRenderPlan],
+    rendered_rows: &[&TableResolvedRow],
+    window: &Window,
+) -> TableContentFitMeasureKey {
+    let mut sample_set = Vec::new();
+    let font = window.text_style().font();
+    let font_size = table_content_fit_text_size(window);
+    sample_set.push(format!("size:{}", metrics.size().as_str()));
+    sample_set.extend(
+        columns
+            .iter()
+            .filter(|column| column.width_policy() == TableColumnWidthPolicy::ContentFit)
+            .map(|column| format!("column:{}", column.id().as_str())),
+    );
+    sample_set.extend(rendered_rows.iter().flat_map(|row| {
+        let row_key = table_content_fit_row_sample_key(row);
+        let row_depth = row.depth();
+        let row_has_tree = row.tree().is_some();
+        columns
+            .iter()
+            .filter(|column| column.width_policy() == TableColumnWidthPolicy::ContentFit)
+            .map(move |column| {
+                let value = row
+                    .cell(column.id())
+                    .map(TableCellValue::filter_text)
+                    .unwrap_or_default();
+                format!(
+                    "row:{row_key}|depth:{row_depth}|tree:{row_has_tree}|column:{}|value:{}",
+                    column.id().as_str(),
+                    value
+                )
+            })
+    }));
+
+    TableContentFitMeasureKey {
+        state_key,
+        font,
+        font_size,
+        cell_padding_x: metrics.cell_padding_x(),
+        sample_set,
+    }
+}
+
+fn table_content_fit_rendered_rows<'a>(
+    table: &'a TableResolvedState,
+    virtualizer: &'a VirtualizerResolvedState,
+) -> Vec<&'a TableResolvedRow> {
+    let mut rows = Vec::with_capacity(
+        table.top_rows().len() + virtualizer.items().len() + table.bottom_rows().len(),
+    );
+    rows.extend(table.top_rows());
+    rows.extend(
+        virtualizer
+            .items()
+            .iter()
+            .filter_map(|measurement| table.center_rows().get(measurement.index())),
+    );
+    rows.extend(table.bottom_rows());
+    rows
+}
+
+fn measure_table_text_width(window: &Window, text: &str, font: Font, font_size: Pixels) -> UiPx {
+    if text.is_empty() {
+        return UiPx::ZERO;
+    }
+
+    let shaped = window.text_system().shape_line(
+        text.to_owned().into(),
+        font_size,
+        &[TextRun {
+            len: text.len(),
+            font,
+            color: window.text_style().color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }],
+        None,
+    );
+    ui_px(shaped.width().as_f32())
+}
+
+fn table_content_fit_text_size(window: &Window) -> Pixels {
+    rems(0.75).to_pixels(window.rem_size())
+}
+
+fn table_content_fit_row_sample_key(row: &TableResolvedRow) -> String {
+    row.source_index()
+        .map(|index| format!("{index}:{}", row.id().as_str()))
+        .unwrap_or_else(|| row.id().as_str().to_owned())
+}
 
 /// One visible option in a table faceted filter recipe.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4482,6 +4683,17 @@ impl TableColumnRenderPlan {
             None => self.label.clone(),
         }
     }
+
+    fn with_width(mut self, width: UiPx) -> Self {
+        self.width = width.max(self.min_width).min(self.max_width);
+        self
+    }
+
+    fn with_offsets(mut self, start: UiPx, after: UiPx) -> Self {
+        self.start = start;
+        self.after = after;
+        self
+    }
 }
 
 /// Resolved table columns for one render lane.
@@ -5798,6 +6010,7 @@ pub struct TableRenderPlan {
     metrics: TableMetrics,
     table: Rc<TableResolvedState>,
     virtualizer: VirtualizerResolvedState,
+    content_fit_widths: BTreeMap<TableColumnId, UiPx>,
     columns: Vec<TableColumnRenderPlan>,
     column_regions: Vec<TableColumnRegionRenderPlan>,
     header_groups: TableHeaderGroupRegionsRenderPlan,
@@ -5832,9 +6045,12 @@ impl TableRenderPlan {
         table: Rc<TableResolvedState>,
         virtualizer: VirtualizerResolvedState,
         columns: Vec<TableColumnRenderPlan>,
+        content_fit_widths: BTreeMap<TableColumnId, UiPx>,
         center_scroll_offset: Option<UiPx>,
         center_viewport_extent: Option<UiPx>,
     ) -> Self {
+        let columns =
+            apply_table_content_fit_widths(columns, &content_fit_widths, state.column_sizing());
         let column_regions = resolve_column_region_render_plans(&columns);
         let header_groups = TableHeaderGroupRegionsRenderPlan::from_resolved(
             &table_id,
@@ -5898,6 +6114,7 @@ impl TableRenderPlan {
             metrics,
             table,
             virtualizer,
+            content_fit_widths,
             columns,
             column_regions,
             header_groups,
@@ -6012,6 +6229,11 @@ impl TableRenderPlan {
     /// Returns visible columns in render order.
     pub fn columns(&self) -> &[TableColumnRenderPlan] {
         &self.columns
+    }
+
+    /// Returns the measured content-fit widths that informed this render plan.
+    pub fn content_fit_widths(&self) -> &BTreeMap<TableColumnId, UiPx> {
+        &self.content_fit_widths
     }
 
     /// Returns visible columns split into render regions.
@@ -6211,6 +6433,7 @@ struct TableRuntime {
     scroll_handle: ScrollHandle,
     horizontal_scroll_handle: ScrollHandle,
     resolved: Option<TableResolvedCache>,
+    content_fit: TableContentFitMeasureCache,
     column_resize: TableColumnResizeState,
     focused_row: Option<TableRowId>,
     focus_handles: BTreeMap<TableRowId, FocusHandle>,
@@ -6481,6 +6704,7 @@ impl Table {
             table,
             virtualizer,
             columns,
+            BTreeMap::new(),
             None,
             None,
         )
@@ -6491,6 +6715,7 @@ impl Table {
         scroll_offset: UiPx,
         viewport_extent: UiPx,
         horizontal_scroll_handle: ScrollHandle,
+        window: &Window,
         runtime: &mut TableRuntime,
     ) -> TableRenderPlan {
         let metrics = self.metrics_for_viewport(viewport_extent);
@@ -6522,12 +6747,29 @@ impl Table {
             .as_ref()
             .expect("table runtime cache should be initialized");
         let virtualizer = self.resolve_virtualizer(&cache.table, metrics, scroll_offset);
+        let rendered_rows = table_content_fit_rendered_rows(&cache.table, &virtualizer);
         let center_scroll_offset =
             ui_px((-ui_px_from_gpui(horizontal_scroll_handle.offset().x).as_f32()).max(0.0));
         let center_viewport_extent = ui_px_from_gpui(horizontal_scroll_handle.bounds().size.width);
         let center_viewport_extent =
             (center_viewport_extent.as_f32() > 0.0).then_some(center_viewport_extent);
         let center_scroll_offset = center_viewport_extent.map(|_| center_scroll_offset);
+        let content_fit_widths = runtime
+            .content_fit
+            .widths_for(
+                content_fit_measure_key(
+                    cache.key.clone(),
+                    metrics,
+                    &cache.columns,
+                    &rendered_rows,
+                    window,
+                ),
+                &cache.columns,
+                &rendered_rows,
+                metrics,
+                window,
+            )
+            .clone();
 
         TableRenderPlan::resolve(
             self.id.clone(),
@@ -6537,6 +6779,7 @@ impl Table {
             cache.table.clone(),
             virtualizer,
             cache.columns.clone(),
+            content_fit_widths,
             center_scroll_offset,
             center_viewport_extent,
         )
@@ -6635,6 +6878,59 @@ fn resolve_column_region_render_plans(
         .collect()
 }
 
+fn apply_table_content_fit_widths(
+    columns: Vec<TableColumnRenderPlan>,
+    measured_widths: &BTreeMap<TableColumnId, UiPx>,
+    committed_sizing: &TableColumnSizing,
+) -> Vec<TableColumnRenderPlan> {
+    let columns = columns
+        .into_iter()
+        .map(|column| {
+            if column.width_policy() != TableColumnWidthPolicy::ContentFit
+                || committed_sizing.width(column.id()).is_some()
+            {
+                return column;
+            }
+
+            match measured_widths.get(column.id()).copied() {
+                Some(width) => column.with_width(width),
+                None => column,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    resolve_table_column_offsets(columns)
+}
+
+fn resolve_table_column_offsets(columns: Vec<TableColumnRenderPlan>) -> Vec<TableColumnRenderPlan> {
+    let region_totals = TableColumnRegion::ALL
+        .into_iter()
+        .map(|region| {
+            let total = columns
+                .iter()
+                .filter(|column| column.region() == region)
+                .fold(UiPx::ZERO, |total, column| total + column.width());
+            (region, total)
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut region_starts = TableColumnRegion::ALL
+        .into_iter()
+        .map(|region| (region, UiPx::ZERO))
+        .collect::<BTreeMap<_, _>>();
+
+    columns
+        .into_iter()
+        .map(|column| {
+            let region = column.region();
+            let start = region_starts.get(&region).copied().unwrap_or(UiPx::ZERO);
+            let total_width = region_totals.get(&region).copied().unwrap_or(UiPx::ZERO);
+            let after = nonnegative_px(total_width - start - column.width());
+            region_starts.insert(region, start + column.width());
+            column.with_offsets(start, after)
+        })
+        .collect()
+}
+
 fn resolve_center_column_window(
     regions: &[TableColumnRegionRenderPlan],
     scroll_offset: Option<UiPx>,
@@ -6669,6 +6965,7 @@ impl RenderOnce for Table {
             scroll_handle: ScrollHandle::new(),
             horizontal_scroll_handle: ScrollHandle::new(),
             resolved: None,
+            content_fit: TableContentFitMeasureCache::default(),
             column_resize: TableColumnResizeState::default(),
             focused_row: default_focused_row,
             focus_handles: BTreeMap::new(),
@@ -6698,6 +6995,7 @@ impl RenderOnce for Table {
                 scroll_offset,
                 viewport_extent,
                 horizontal_scroll_handle.clone(),
+                window,
                 runtime,
             );
             runtime.sync_rows(&plan, cx);
@@ -8221,5 +8519,41 @@ const fn nonnegative_px(value: UiPx) -> UiPx {
         UiPx::ZERO
     } else {
         value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_table_content_fit_widths_keeps_committed_widths_authoritative() {
+        let committed_width = ui_px(72.0);
+        let column = TableColumnRenderPlan {
+            id: TableColumnId::new("status"),
+            label: "Status".to_owned(),
+            region: TableColumnRegion::Center,
+            aria_column_index: 1,
+            sortable: false,
+            text_editable: false,
+            width_policy: TableColumnWidthPolicy::ContentFit,
+            sort_direction: None,
+            sort_action: None,
+            width: committed_width,
+            min_width: ui_px(10.0),
+            max_width: ui_px(240.0),
+            start: UiPx::ZERO,
+            after: UiPx::ZERO,
+            resizable: true,
+        };
+
+        let measured_widths = BTreeMap::from([(TableColumnId::new("status"), ui_px(128.0))]);
+        let committed_sizing = TableColumnSizing::new().with_width("status", committed_width);
+        let columns =
+            apply_table_content_fit_widths(vec![column], &measured_widths, &committed_sizing);
+
+        assert_eq!(columns[0].width(), committed_width);
+        assert_eq!(columns[0].start(), UiPx::ZERO);
+        assert_eq!(columns[0].after(), UiPx::ZERO);
     }
 }

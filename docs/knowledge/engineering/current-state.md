@@ -111,11 +111,12 @@ verified_by:
   are mature enough to serve as the official component-library baseline. The current Table boundary
   is autosize-by-content, with the plan written at
   `docs/plans/2026-06-25-001-feat-ui-table-autosize-by-content-plan.md`.
-- 2026-06-25: Completed U1 of `docs/plans/2026-06-25-001-feat-ui-table-autosize-by-content-plan.md`
-  in the working tree. `ui_core::TableColumn` now carries a renderer-neutral width policy with
-  `Fixed` and `ContentFit` modes, the policy participates in table cache keys, the GPUI table
-  render plan exposes the policy for each resolved column, and focused core/components/table
-  nextest checks passed. Next action is U2: adapter-owned visible-width measurement and overlay.
+- 2026-06-25: Completed the content-fit slice in the working tree. `ui_core::TableColumn` now
+  carries a renderer-neutral width policy with `Fixed` and `ContentFit` modes, the policy
+  participates in table cache keys, the GPUI table render plan exposes the policy for each
+  resolved column, the Components gallery proves visible edits widen the `content-fit-release`
+  sample, and focused core/components/table plus gallery nextest checks passed. Next action is to
+  commit the slice and decide the next Table boundary.
 - 2026-06-25: Completed U4 of
   `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
   tree. `ui_components::Table` now renders nested header groups with multi-row, region-aware GPUI
@@ -434,9 +435,9 @@ verified_by:
   `ecc5f45`; docs now record the official `TablePredicateFilter` contract and focused gallery
   proof.
 - Blocked: None.
-- Next action: Implement U1 of
-  `docs/plans/2026-06-25-001-feat-ui-table-autosize-by-content-plan.md`: core content-fit column
-  policy and cache-key coverage.
+- Next action: Implement U2 of
+  `docs/plans/2026-06-25-001-feat-ui-table-autosize-by-content-plan.md`: gallery proof and docs
+  / memory sync for content-fit width growth.
 
 # Citations
 

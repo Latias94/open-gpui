@@ -133,6 +133,11 @@ proof: it enters the Table family view, targets the `editable-release` sample, e
 `(row_id, column_id)` pair, confirms the gallery applies the change to its app-owned `TableState`,
 and proves a read-only `status` cell does not mount an editor.
 
+`components_gallery_smoke_content_fit_table_cell_edit_widens_name_column` is the focused
+content-fit proof: it enters the Table family view, targets the `content-fit-release` sample,
+edits the visible `name` cell, verifies the sample keeps the fixed `score` lane anchored, and
+proves the adapter-measured `name` column widens while header and body stay aligned.
+
 ```powershell
 cargo nextest run -p open-gpui-ui-core table
 cargo nextest run -p open-gpui-ui-components table

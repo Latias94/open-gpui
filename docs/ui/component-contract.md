@@ -420,6 +420,10 @@ cells when a callback name is unknown. Grouping plus source-tree composition rem
 until a later policy slice defines mixed filtering, sorting, and expansion semantics.
 Custom aggregation rows stay renderer-neutral and are surfaced in the Components gallery through
 the focused `grouped-custom-aggregation` sample.
+Content-fit width growth is also renderer-neutral: `TableColumn::with_content_fit` marks a column
+as adapter-measured, `TableRenderPlan` exposes the measured widths, and the GPUI table adapter
+keeps header/body alignment stable while visible content changes. The Components gallery surfaces
+this behavior through the focused `content-fit-release` sample.
 `TableColumnPinning` is caller-owned state that splits
 resolved visible columns into `left`, `center`, and `right` `TableColumnRegions` after visibility
 and explicit ordering have been applied; unknown or invisible pinned ids are ignored. `TableColumn`
@@ -521,7 +525,7 @@ entry, at least one `gallery:component-table-sample:{id}` rendered selector, sta
 identity, grouping, source-tree expansion, row interaction payloads, and virtualizer behavior, and
 gallery runtime tests for nested scroll containment, faceted-filter row updates, predicate-filter
 row updates, editable text-cell updates, and nested header gallery proof. Sticky headers,
-autosize-by-content, data-source fetch/cache orchestration, global faceting, richer editor families,
+dataset-wide exact autosizing, data-source fetch/cache orchestration, global faceting, richer editor families,
 and deeper two-axis grid virtualization beyond the pinned center-column window remain follow-up
 capabilities.
 
@@ -691,7 +695,7 @@ Popover recipe with controlled `TableColumnVisibilityChange` payloads, locked id
 stable column-row / action selectors.
 `VirtualizerState` covers one-dimensional range math, stable item keys, measurement idempotence,
 overscan, total size, and snapshot/restore data in `ui_core`; the Table adapter restores snapshot
-measurements but not captured scroll offsets. Sticky headers, autosize-by-content, data-source
+measurements but not captured scroll offsets. Sticky headers, dataset-wide exact autosizing, data-source
 orchestration, global faceting, richer editor families, synthetic summary rows, and deeper
 two-axis grid virtualization remain follow-up
 work.

@@ -11,6 +11,11 @@ status: active
   plus adapter-owned visible-width measurement and keeps manual sizing authoritative. Sticky
   headers, column drag reorder, dataset-wide exact autosizing, multiline editor measurement, and
   headless extraction remain deferred. Next action is U1: add the core content-fit column policy.
+- 2026-06-25: Completed the first content-fit slice in the working tree. `TableColumn`
+  width-policy exposure is in place, `TableRenderPlan` now reports measured content-fit widths, the
+  Components gallery has a `content-fit-release` proof sample, and focused tests prove visible
+  edits widen the name column while the fixed score column stays anchored. Next action is to commit
+  the slice and choose the next Table boundary.
 - 2026-06-25: Completed U1 of
   `docs/plans/2026-06-25-001-feat-ui-table-autosize-by-content-plan.md` in the working tree.
   `ui_core::TableColumn` now carries a renderer-neutral width policy with `Fixed` and

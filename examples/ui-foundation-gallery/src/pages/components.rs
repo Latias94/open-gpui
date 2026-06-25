@@ -925,7 +925,7 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
     ComponentConformanceGate {
         id: "table-virtualization",
         title: "Table row models and scroll ownership",
-        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate metadata, pinned columns, pinned rows, resize handles, column visibility controls, and nested scroll ownership.",
+        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate metadata, pinned columns, pinned rows, resize handles, content-fit width growth, column visibility controls, and nested scroll ownership.",
         evidence: &[
             "TableState::resolve",
             "Table::render_plan",
@@ -933,8 +933,10 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "release-rollup",
             "grouped-custom-aggregation",
             "release-resize",
+            "content-fit-release",
             "row-pinning",
             "filter-board",
+            "TableColumnWidthPolicy",
             "TableGlobalFilter",
             "TablePredicateFilter",
             "TableFacetedFilter",
@@ -946,6 +948,7 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "components_gallery_smoke_predicate_filter_updates_table_rows",
             "components_gallery_smoke_faceted_filter_updates_table_rows",
             "components_gallery_smoke_range_filter_updates_table_rows",
+            "components_gallery_smoke_content_fit_table_cell_edit_widens_name_column",
             "components_gallery_smoke_column_visibility_updates_release_matrix",
             "components_gallery_smoke_table_scroll_stays_inside_sample",
             "components_gallery_smoke_grouped_table_scroll_stays_inside_sample",
@@ -4044,6 +4047,22 @@ fn build_table_samples() -> Vec<TableSample> {
         overscan: 4,
         state_summary: TableSampleStateSummary::default(),
     };
+    let content_fit_release = TableSample {
+        id: "content-fit-release",
+        title: "Content-fit release table",
+        summary: "A fit-content identity column widens from visible edits while a fixed score column stays anchored.",
+        badge: "content fit",
+        state: TableState::new(editable_release_rows.clone())
+            .with_columns(content_fit_release_table_columns())
+            .with_column_order(["name", "team", "status", "score"])
+            .with_selected_rows(["editable-release-row-002"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(34.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
     let editable_release = TableSample {
         id: "editable-release",
         title: "Editable release cells",
@@ -4228,6 +4247,7 @@ fn build_table_samples() -> Vec<TableSample> {
         filter_board.with_state_summary(),
         server_paged.with_state_summary(),
         release_resize.with_state_summary(),
+        content_fit_release.with_state_summary(),
         editable_release.with_state_summary(),
         grouped_release.with_state_summary(),
         grouped_custom_aggregation.with_state_summary(),
@@ -4315,6 +4335,29 @@ fn resizable_table_columns() -> [TableColumn; 4] {
             .with_max_width(ui_px(180.0)),
         TableColumn::new("status", "Status")
             .with_width(ui_px(132.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(220.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(84.0))
+            .with_min_width(ui_px(72.0))
+            .with_max_width(ui_px(120.0))
+            .with_resizable(false),
+    ]
+}
+
+fn content_fit_release_table_columns() -> [TableColumn; 4] {
+    [
+        TableColumn::new("name", "Name")
+            .with_text_editable(true)
+            .with_content_fit()
+            .with_min_width(ui_px(160.0))
+            .with_max_width(ui_px(320.0)),
+        TableColumn::new("team", "Team")
+            .with_width(ui_px(132.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(220.0)),
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(128.0))
             .with_min_width(ui_px(104.0))
             .with_max_width(ui_px(220.0)),
         TableColumn::new("score", "Score")

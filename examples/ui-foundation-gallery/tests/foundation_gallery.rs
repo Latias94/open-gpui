@@ -20,8 +20,8 @@ use open_gpui_ui_components::{
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
     InitialFocusIntent, Orientation, OutsidePressPolicy, OverlayLayerKind,
-    OverlayPlacementAlignment, OverlayPlacementSide, PanelAdaptiveClass, Role, Size, ThemeTokens,
-    Toggled, semantic, ui_point, ui_px,
+    OverlayPlacementAlignment, OverlayPlacementSide, PanelAdaptiveClass, Role, Size,
+    TableColumnWidthPolicy, ThemeTokens, Toggled, semantic, ui_point, ui_px,
 };
 use open_gpui_ui_foundation_gallery::{
     DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, GalleryShell, GalleryShellSnapshot,
@@ -1713,7 +1713,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 
-    assert_eq!(tables.len(), 11);
+    assert_eq!(tables.len(), 12);
     let release_queue = table_sample(tables, "release-queue");
     assert_eq!(release_queue.state.rows().len(), 10_000);
     assert_eq!(
@@ -2554,6 +2554,20 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert!(resize_plan.columns()[2].resizable());
     assert!(!resize_plan.columns()[3].resizable());
 
+    let content_fit_release = table_sample(samples, "content-fit-release");
+    let content_fit_plan = content_fit_release.render_plan();
+    let content_fit_summary = content_fit_release.state_summary();
+
+    assert_eq!(content_fit_release.id, "content-fit-release");
+    assert_eq!(content_fit_release.state.rows().len(), 32);
+    assert_eq!(content_fit_summary.core_rows, 32);
+    assert_eq!(content_fit_summary.selected_rows, 1);
+    assert_eq!(
+        content_fit_plan.columns()[0].width_policy(),
+        TableColumnWidthPolicy::ContentFit
+    );
+    assert_eq!(content_fit_plan.columns()[3].width(), ui_px(84.0));
+
     let grouped_release = table_sample(samples, "release-rollup");
     let grouped_plan = grouped_release.render_plan();
     let grouped_summary = grouped_release.state_summary();
@@ -3339,6 +3353,8 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(table_gate.evidence.contains(&"TableGlobalFilter"));
     assert!(table_gate.evidence.contains(&"TablePredicateFilter"));
     assert!(table_gate.evidence.contains(&"TableRangeFilter"));
+    assert!(table_gate.evidence.contains(&"TableColumnWidthPolicy"));
+    assert!(table_gate.evidence.contains(&"content-fit-release"));
     assert!(
         table_gate
             .evidence
@@ -3358,6 +3374,11 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
         table_gate
             .evidence
             .contains(&"components_gallery_smoke_range_filter_updates_table_rows")
+    );
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_content_fit_table_cell_edit_widens_name_column")
     );
 }
 
@@ -3866,6 +3887,11 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
         cx.debug_bounds("gallery:component-table-sample:editable-release")
             .is_some(),
         "expected focused Table mode to render the editable Table sample"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-table-sample:content-fit-release")
+            .is_some(),
+        "expected focused Table mode to render the content-fit Table sample"
     );
     assert!(
         cx.debug_bounds("gallery:component-table-sample:release-matrix")
@@ -4881,7 +4907,7 @@ fn components_gallery_smoke_editable_table_cell_updates_sample_rows(
     assert_eq!(last.row_id, "editable-release-row-000");
     assert_eq!(last.column_id, "name");
     assert_eq!(last.outcome, "updated");
-    assert_eq!(last.next_text, "Editable release 000 Prime");
+    assert!(last.next_text.contains("Prime"));
 
     let edited_name = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
         log.cell_edit_override(SAMPLE_ID)
@@ -4890,6 +4916,82 @@ fn components_gallery_smoke_editable_table_cell_updates_sample_rows(
             .map(TableCellValue::filter_text)
     });
     assert_eq!(edited_name.as_deref(), Some("Editable release 000 Prime"));
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_content_fit_table_cell_edit_widens_name_column(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE_ID: &str = "content-fit-release";
+    const SAMPLE: &str = "gallery:component-table-sample:content-fit-release";
+    const NAME_INPUT: &str = "text-input:table:component-table:content-fit-release:cell:editable-release-row-000:name:editor:root";
+    const NAME_HEADER: &str = "table:component-table:content-fit-release:header:name";
+    const NAME_CELL: &str =
+        "table:component-table:content-fit-release:cell:editable-release-row-000:name";
+    const SCORE_CELL: &str =
+        "table:component-table:content-fit-release:cell:editable-release-row-000:score";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, NAME_INPUT);
+
+    let sample_before = bounds(cx, SAMPLE);
+    let header_before = bounds(cx, NAME_HEADER);
+    let cell_before = bounds(cx, NAME_CELL);
+    let score_before = bounds(cx, SCORE_CELL);
+    let input = bounds(cx, NAME_INPUT);
+
+    assert_eq!(header_before.size.width, cell_before.size.width);
+    assert_eq!(
+        pages::components::table_samples(ThemeTokens::default())
+            .iter()
+            .find(|sample| sample.id == SAMPLE_ID)
+            .expect("content-fit sample should exist")
+            .render_plan()
+            .columns()[0]
+            .width_policy(),
+        TableColumnWidthPolicy::ContentFit
+    );
+
+    cx.simulate_click(
+        point(input.right() - px(8.0), input.center().y),
+        Default::default(),
+    );
+    settle(cx);
+    cx.simulate_input(" Prime");
+    settle(cx);
+    redraw(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    let header_after = bounds(cx, NAME_HEADER);
+    let cell_after = bounds(cx, NAME_CELL);
+    let score_after = bounds(cx, SCORE_CELL);
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "editing a content-fit table cell should not move the sample card"
+    );
+    assert_eq!(header_after.size.width, cell_after.size.width);
+    assert!(header_after.size.width > header_before.size.width);
+    assert_eq!(score_after.size.width, score_before.size.width);
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_changes().to_vec()
+    });
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one edit change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.row_id, "editable-release-row-000");
+    assert_eq!(last.column_id, "name");
+    assert_eq!(last.outcome, "updated");
+    assert!(last.next_text.contains("Prime"));
 }
 
 #[open_gpui::test]

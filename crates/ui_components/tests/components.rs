@@ -8303,6 +8303,81 @@ fn table_runtime_cache_invalidates_when_table_state_changes(cx: &mut open_gpui::
 }
 
 #[open_gpui::test]
+fn table_runtime_content_fit_widths_follow_visible_content(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        long_value: bool,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let status_value = if self.long_value {
+                "Ready for release rollout"
+            } else {
+                "Ready"
+            };
+            let state = TableState::new([TableRow::new("row-a")
+                .with_cell("name", "Alpha")
+                .with_cell("status", status_value)])
+            .with_columns([
+                TableColumn::new("name", "Name").with_width(ui_px(140.0)),
+                TableColumn::new("status", "Status").with_content_fit(),
+            ])
+            .with_pagination(TablePagination::disabled());
+            let table = Table::new("content-fit-runtime-table", "Content fit runtime", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0));
+
+            div().w(px(360.0)).h(px(140.0)).child(table)
+        }
+    }
+
+    let (view, cx) = cx.add_window_view(|_, _| TestView { long_value: false });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let status_header_before = cx
+        .debug_bounds("table:content-fit-runtime-table:header:status")
+        .expect("status header should render before content growth");
+    let status_cell_before = cx
+        .debug_bounds("table:content-fit-runtime-table:cell:row-a:status")
+        .expect("status cell should render before content growth");
+    assert_eq!(status_header_before.left(), status_cell_before.left());
+    assert_eq!(status_header_before.right(), status_cell_before.right());
+
+    view.update(cx, |view, cx| {
+        view.long_value = true;
+        cx.notify();
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let status_header_after = cx
+        .debug_bounds("table:content-fit-runtime-table:header:status")
+        .expect("status header should still render after content growth");
+    let status_cell_after = cx
+        .debug_bounds("table:content-fit-runtime-table:cell:row-a:status")
+        .expect("status cell should still render after content growth");
+    assert_eq!(status_header_after.left(), status_cell_after.left());
+    assert_eq!(status_header_after.right(), status_cell_after.right());
+    assert!(
+        (status_header_after.right() - status_header_after.left())
+            > (status_header_before.right() - status_header_before.left()),
+        "expected the content-fit column to widen when a longer visible value appears"
+    );
+    assert_eq!(
+        cx.debug_bounds("table:content-fit-runtime-table:cell:row-a:name")
+            .expect("fixed-width name cell should stay rendered")
+            .right()
+            - cx.debug_bounds("table:content-fit-runtime-table:cell:row-a:name")
+                .expect("fixed-width name cell should stay rendered")
+                .left(),
+        px(140.0)
+    );
+}
+
+#[open_gpui::test]
 fn scroll_area_nested_scroll_keeps_parent_static(cx: &mut open_gpui::TestAppContext) {
     struct TestView;
 
