@@ -185,6 +185,29 @@ fn focus_backend_window_for_test(window: AnyWindowHandle, cx: &mut TestAppContex
         .expect("test viewport should activate");
 }
 
+fn seed_runtime_host_scene_for_test(
+    runtime: &DockViewportRuntimeHandle,
+    space: &DockSpaceId,
+    window: AnyWindowHandle,
+    tabs: crate::DockNodeId,
+) {
+    let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+    let host_position = center_drop_position(host_bounds);
+    assert!(runtime.begin_viewport_host_scene(
+        space.clone(),
+        window.window_id(),
+        DockViewportWindowFacts::from_window_bounds(window_bounds),
+        host_bounds,
+        host_position,
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        space,
+        window.window_id(),
+        leaf_host_scene_fact(tabs, tabs),
+    ));
+}
+
 #[open_gpui::test]
 fn viewport_runtime_drag_restores_original_no_input_source_state(cx: &mut TestAppContext) {
     let source = DockSpaceId::from("source");
@@ -5592,6 +5615,153 @@ fn viewport_runtime_render_registration_rebinds_same_window_to_new_space_and_cle
         runtime.recorded_had_panel_focus_for_test(&target_space),
         None,
         "rebinding a window to a new space should not invent target focus history"
+    );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_open_registration_rebinds_one_runtime_window_across_two_spaces_and_keeps_target_state(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("source viewport should open through runtime");
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("target viewport should open through runtime");
+
+    runtime.record_panel_focus(source_space.clone(), item("a"));
+    runtime.record_panel_focus(target_space.clone(), item("b"));
+    seed_runtime_host_scene_for_test(&runtime, &source_space, source_opened.window(), source_tabs);
+    seed_runtime_host_scene_for_test(&runtime, &target_space, target_opened.window(), target_tabs);
+
+    let registration = runtime
+        .borrow_mut()
+        .register_opened_viewport_with_cleanup(target_space.clone(), source_opened.window());
+    let effects = registration.window_effects();
+
+    assert_eq!(registration.outcome.space(), &target_space);
+    assert_eq!(registration.outcome.window(), source_opened.window());
+    assert_eq!(registration.outcome.replaced().len(), 2);
+    assert!(
+        registration
+            .outcome
+            .replaced()
+            .contains(&crate::DockViewportUnregisterOutcome {
+                space: target_space.clone(),
+                window: target_opened.window(),
+                reason: crate::DockViewportUnregisterReason::Replaced,
+            })
+    );
+    assert!(
+        registration
+            .outcome
+            .replaced()
+            .contains(&crate::DockViewportUnregisterOutcome {
+                space: source_space.clone(),
+                window: source_opened.window(),
+                reason: crate::DockViewportUnregisterReason::Replaced,
+            })
+    );
+    assert_eq!(effects.close_now(), &[target_opened.window()]);
+    assert!(effects.refresh().is_empty());
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&source_space),
+        None
+    );
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&target_space),
+        Some(source_opened.window())
+    );
+    assert_eq!(
+        runtime.recorded_had_panel_focus_for_test(&source_space),
+        None,
+        "moving the window away from its old space should retire that space focus state"
+    );
+    assert_eq!(
+        runtime.recorded_had_panel_focus_for_test(&target_space),
+        Some(true),
+        "same-space replacement must preserve the surviving target focus state"
+    );
+    assert_eq!(runtime.last_host_scene_screen_position(&source_space), None);
+    assert_eq!(runtime.last_host_scene_screen_position(&target_space), None);
+    assert_eq!(
+        runtime.borrow().adapter().spaces(),
+        vec![target_space.clone()]
+    );
+
+    assert!(
+        !runtime
+            .borrow_mut()
+            .unregister_host_for_space(&source_space, source_opened.window().window_id())
+    );
+    assert_eq!(
+        runtime.recorded_had_panel_focus_for_test(&target_space),
+        Some(true),
+        "stale source-space cleanup must not disturb the surviving target focus state"
+    );
+
+    let stale_outcome = runtime
+        .borrow_mut()
+        .handle_window_closed(target_opened.window().window_id());
+    assert_eq!(
+        stale_outcome.status(),
+        DockViewportCloseStatus::UnknownWindow
+    );
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&target_space),
+        Some(source_opened.window())
+    );
+    assert_eq!(
+        runtime.recorded_had_panel_focus_for_test(&target_space),
+        Some(true),
+        "late close for the retired window must not affect the live target mapping"
+    );
+
+    let closed_outcome = runtime
+        .borrow_mut()
+        .handle_window_closed(source_opened.window().window_id());
+    assert_eq!(closed_outcome.status(), DockViewportCloseStatus::Closed);
+    assert_eq!(closed_outcome.space(), Some(&target_space));
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&target_space),
+        None
+    );
+    assert_eq!(
+        runtime.recorded_had_panel_focus_for_test(&target_space),
+        None,
+        "closing the live rehomed window should retire the target focus state"
     );
 }
 

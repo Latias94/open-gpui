@@ -666,6 +666,49 @@ mod tests {
     }
 
     #[test]
+    fn register_swaps_two_populated_spaces_and_clears_both_old_indexes() {
+        let mut registry = DockViewportRegistry::default();
+        let source_space = space("source");
+        let target_space = space("target");
+        let source_window = handle(1);
+        let target_window = handle(2);
+
+        assert!(
+            registry
+                .register(source_space.clone(), source_window)
+                .is_none()
+        );
+        assert!(
+            registry
+                .register(target_space.clone(), target_window)
+                .is_none()
+        );
+
+        let replaced = registry.register_with_replacements(target_space.clone(), source_window);
+        assert_eq!(replaced.len(), 2);
+        assert!(replaced.iter().any(|(space, snapshot)| {
+            *space == target_space && snapshot.window == target_window
+        }));
+        assert!(replaced.iter().any(|(space, snapshot)| {
+            *space == source_space && snapshot.window == source_window
+        }));
+        assert_eq!(registry.window_for_space(&source_space), None);
+        assert_eq!(
+            registry.window_for_space(&target_space),
+            Some(source_window)
+        );
+        assert_eq!(
+            registry.space_for_window_id(source_window.window_id()),
+            Some(&target_space)
+        );
+        assert_eq!(
+            registry.space_for_window_id(target_window.window_id()),
+            None
+        );
+        assert_eq!(registry.spaces(), vec![target_space]);
+    }
+
+    #[test]
     fn valid_window_lookup_ignores_and_cleanup_discards_stale_indexes() {
         let mut registry = DockViewportRegistry::default();
         let window_id = WindowId::from(7);
