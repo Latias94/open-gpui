@@ -3,27 +3,27 @@ use open_gpui::{
     Render, ScrollDelta, ScrollWheelEvent, Styled, Window, div, point, px,
 };
 use open_gpui_ui_components::{
-    AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Avatar, Badge,
-    BadgeVariant, Button, ButtonVariant, Checkbox, ColorIntent, ColorState, Combobox,
-    ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command, CommandGroup,
-    CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItem,
-    CommandItemDescriptor, CommandLoadingState, CommandMatchSource, CommandOpenMode,
-    CommandQueryMode, CommandSelection, CommandSelectionChange, CommandSelectionMode, ContextMenu,
-    DEFAULT_FOCUS_RING_WIDTH, Dialog, DialogOpenMode, EmptyState, FeedbackIntent, Field, FocusRing,
-    HoverCard, HoverCardContentKind, HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode,
-    IconButton, Kbd, Label, Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption,
-    ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem,
-    MenuItemKind, MenuOpenMode, MenuSelection, Popover, PopoverOpenMode, Progress,
-    ProgressVisualMode, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor,
-    RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select,
-    SelectOpenMode, SelectSelection, Separator, Sheet, SheetCloseAffordance, SheetModalMode,
-    SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor,
-    SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
-    Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
-    TableCellEditApplyOutcome, TableCellEditChange, TableCellEditor, TableCellValue,
-    TableCenterColumnWindowPlan, TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId,
-    TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
-    TableColumnSizingChange, TableColumnVisibility, TableColumnVisibilityAction,
+    AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Avatar,
+    AvatarGroup, AvatarGroupCount, Badge, BadgeVariant, Button, ButtonVariant, Checkbox,
+    ColorIntent, ColorState, Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption,
+    ComboboxSelection, Command, CommandGroup, CommandGroupDescriptor, CommandIndexSnapshot,
+    CommandIndexSnapshotMode, CommandItem, CommandItemDescriptor, CommandLoadingState,
+    CommandMatchSource, CommandOpenMode, CommandQueryMode, CommandSelection,
+    CommandSelectionChange, CommandSelectionMode, ContextMenu, DEFAULT_FOCUS_RING_WIDTH, Dialog,
+    DialogOpenMode, EmptyState, FeedbackIntent, Field, FocusRing, HoverCard, HoverCardContentKind,
+    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton, Kbd, Label, Listbox,
+    ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
+    ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode,
+    MenuSelection, Popover, PopoverOpenMode, Progress, ProgressVisualMode, RadioGroup,
+    RadioGroupState, RadioItem, RadioItemDescriptor, RadioSelection, ScrollArea, ScrollAreaAxis,
+    ScrollAreaState, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, Separator, Sheet,
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
+    SidebarItem, SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide,
+    SidebarState, SidebarVariant, Skeleton, Splitter, SplitterPanel, SplitterPanelDescriptor,
+    SplitterState, StatusCue, Switch, Table, TableCellEditApplyOutcome, TableCellEditChange,
+    TableCellEditor, TableCellValue, TableCenterColumnWindowPlan, TableColumn, TableColumnFacets,
+    TableColumnGroup, TableColumnId, TableColumnPinning, TableColumnRegion, TableColumnResizeMode,
+    TableColumnSizing, TableColumnSizingChange, TableColumnVisibility, TableColumnVisibilityAction,
     TableColumnVisibilityChange, TableColumnVisibilityOverrides, TableColumnVisibilityState,
     TableExpansionMode, TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange,
     TableFacetedFilterState, TableFilter, TableGlobalFacetSummary, TableGlobalFilter,
@@ -1180,6 +1180,7 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
         "Progress" => &["value", "indeterminate"],
         "Skeleton" => &["subtle"],
         "Avatar" => &["source", "fallback", "accessible_label"],
+        "AvatarGroup" => &["avatars", "avatar", "max_visible"],
         "Tooltip" => &["disabled"],
         "HoverCard" => &["disabled"],
         "Popover" => &["disabled"],
@@ -1236,6 +1237,7 @@ fn component_source_file(component: &str) -> &'static str {
         "Progress" => "progress.rs",
         "Skeleton" => "skeleton.rs",
         "Avatar" => "avatar.rs",
+        "AvatarGroup" => "avatar.rs",
         "Tooltip" => "tooltip.rs",
         "HoverCard" => "hover_card.rs",
         "Popover" => "popover.rs",
@@ -1688,6 +1690,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "tokens",
             "state",
         ],
+        "AvatarGroup" => &["new", "avatar", "avatars", "max_visible", "tokens", "state"],
         "Tooltip" => &[
             "new",
             "element",
@@ -13238,6 +13241,32 @@ fn avatar_size_metrics_and_token_intents_are_stable() {
     assert_eq!(large.colors().background().token(), tokens.surface_muted);
     assert_eq!(large.colors().foreground().token(), tokens.text);
     assert_eq!(large.colors().border().token(), tokens.border);
+}
+
+#[test]
+fn avatar_group_state_tracks_visible_and_hidden_counts() {
+    let group = AvatarGroup::new("team")
+        .avatar(Avatar::new("ada", "Ada Lovelace"))
+        .avatar(Avatar::new("grace", "Grace Hopper"))
+        .avatar(Avatar::new("katherine", "Katherine Johnson"))
+        .avatar(Avatar::new("margaret", "Margaret Hamilton"))
+        .max_visible(3)
+        .tokens(custom_tokens());
+    let state = group.state();
+
+    assert_eq!(state.size(), Size::Medium);
+    assert_eq!(state.total_count(), 4);
+    assert_eq!(state.visible_count(), 3);
+    assert_eq!(state.hidden_count(), 1);
+
+    let count = AvatarGroupCount::new("team-count", state.hidden_count())
+        .with_size(state.size())
+        .tokens(custom_tokens());
+    let count_state = count.state();
+
+    assert_eq!(count_state.count(), 1);
+    assert_eq!(count_state.size(), Size::Medium);
+    assert_eq!(count_state.role(), Role::Label);
 }
 
 #[open_gpui::test]

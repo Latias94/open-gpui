@@ -293,6 +293,7 @@ pub(crate) fn render_components_page(
     let progress_samples = pages::components::progress_samples(snapshot.tokens);
     let skeleton_samples = pages::components::skeleton_samples(snapshot.tokens);
     let avatar_samples = pages::components::avatar_samples(snapshot.tokens);
+    let avatar_group_samples = pages::components::avatar_group_samples(snapshot.tokens);
     let status_cue_samples = pages::components::status_cue_samples(snapshot.tokens);
     let empty_state_samples = pages::components::empty_state_samples(snapshot.tokens);
     let tree_samples = pages::components::tree_samples(snapshot.tokens);
@@ -348,6 +349,7 @@ pub(crate) fn render_components_page(
                     progress_samples,
                     skeleton_samples,
                     avatar_samples,
+                    avatar_group_samples,
                     snapshot.tokens,
                 )),
         )

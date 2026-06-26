@@ -70,6 +70,8 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Skeleton",
     "open_gpui_ui_components::SkeletonState",
     "open_gpui_ui_components::Avatar",
+    "open_gpui_ui_components::AvatarGroup",
+    "open_gpui_ui_components::AvatarGroupCount",
     "open_gpui_ui_components::AvatarState",
     "open_gpui_ui_components::StatusCue",
     "open_gpui_ui_components::StatusCueState",
@@ -615,7 +617,9 @@ impl ComponentCatalogEntry {
             "Tabs" => "tabs",
             "Splitter" => "splitter",
             "Table" => "table",
-            "Separator" | "Kbd" | "Progress" | "Skeleton" | "Avatar" => "primitives",
+            "Separator" | "Kbd" | "Progress" | "Skeleton" | "Avatar" | "AvatarGroup" => {
+                "primitives"
+            }
             _ => "catalog",
         }
     }
@@ -840,6 +844,13 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "AvatarState",
         "exports / gallery / state tests",
         "gallery:component-avatar-sample:ada",
+    ),
+    ComponentCatalogEntry::official(
+        "AvatarGroup",
+        "identity",
+        "AvatarGroupState",
+        "exports / gallery / state tests",
+        "gallery:component-avatar-group-sample:team",
     ),
     ComponentCatalogEntry::state_contract(
         "TreeState",
@@ -1111,6 +1122,19 @@ pub struct AvatarSample {
     pub id: &'static str,
     /// Resolved state.
     pub state: AvatarState,
+}
+
+/// One avatar group sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AvatarGroupSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Visible child avatars.
+    pub avatars: Vec<AvatarSample>,
+    /// Overflow counter label.
+    pub count_label: &'static str,
 }
 
 /// One status cue sample in the gallery.
@@ -3154,6 +3178,7 @@ impl_component_sample_selectors!(KbdSample, "component-kbd-sample");
 impl_component_sample_selectors!(ProgressSample, "component-progress-sample");
 impl_component_sample_selectors!(SkeletonSample, "component-skeleton-sample");
 impl_component_sample_selectors!(AvatarSample, "component-avatar-sample");
+impl_component_sample_selectors!(AvatarGroupSample, "component-avatar-group-sample");
 impl_component_sample_selectors!(StatusCueSample, "component-status-cue-sample");
 impl_component_sample_selectors!(EmptyStateSample, "component-empty-state-sample");
 
@@ -3438,6 +3463,49 @@ pub fn avatar_samples(tokens: ThemeTokens) -> [AvatarSample; 4] {
             state: avatar.state(),
         }
     })
+}
+
+/// Returns avatar group samples backed by real component state.
+pub fn avatar_group_samples(tokens: ThemeTokens) -> [AvatarGroupSample; 1] {
+    [AvatarGroupSample {
+        id: "team",
+        summary: "Compact overlapping roster with overflow count",
+        avatars: vec![
+            AvatarSample {
+                id: "team-ada",
+                state: Avatar::new("team-ada", "Ada Lovelace")
+                    .accessible_label("Ada Lovelace")
+                    .with_size(Size::Medium)
+                    .tokens(tokens)
+                    .state(),
+            },
+            AvatarSample {
+                id: "team-grace",
+                state: Avatar::new("team-grace", "Grace Hopper")
+                    .accessible_label("Grace Hopper")
+                    .with_size(Size::Medium)
+                    .tokens(tokens)
+                    .state(),
+            },
+            AvatarSample {
+                id: "team-katherine",
+                state: Avatar::new("team-katherine", "Katherine Johnson")
+                    .accessible_label("Katherine Johnson")
+                    .with_size(Size::Medium)
+                    .tokens(tokens)
+                    .state(),
+            },
+            AvatarSample {
+                id: "team-margaret",
+                state: Avatar::new("team-margaret", "Margaret Hamilton")
+                    .accessible_label("Margaret Hamilton")
+                    .with_size(Size::Medium)
+                    .tokens(tokens)
+                    .state(),
+            },
+        ],
+        count_label: "+1",
+    }]
 }
 
 /// Returns status cue samples backed by real component state.

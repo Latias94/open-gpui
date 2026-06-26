@@ -3914,6 +3914,17 @@ fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
         .is_some(),
         "expected Components page to show official primitive entries"
     );
+    assert!(
+        cx.debug_bounds(
+            &pages::components::COMPONENT_CATALOG
+                .iter()
+                .find(|entry| entry.name == "AvatarGroup")
+                .unwrap_or_else(|| panic!("expected catalog entry `AvatarGroup`"))
+                .catalog_selector()
+        )
+        .is_some(),
+        "expected Components page to show AvatarGroup as an official primitive entry"
+    );
     for (name, selector) in pages::components::official_sample_selector_pairs() {
         assert!(
             cx.debug_bounds(selector).is_some(),
@@ -3932,6 +3943,7 @@ fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
         "progress:component-progress:sync:root",
         "skeleton:component-skeleton:body-line:root",
         "avatar:component-avatar:ada:root",
+        "gallery:component-avatar-group-sample:team",
         "status-cue:component-status-cue:sync-warning:root",
         "empty-state:component-empty-state:no-results:root",
     ] {

@@ -10,14 +10,15 @@ use open_gpui::{
 };
 
 use open_gpui_ui_components::{
-    AlertDialog, Avatar, AvatarState, BadgeState, Button, ButtonState, ButtonVariant, Checkbox,
-    CheckboxState, ColorIntent, Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption,
-    ComboboxState, Command, CommandGroup, CommandItem, CommandOpenMode, CommandSelectionMode,
-    CommandState, ContextMenu, Dialog, Field, FieldState, FocusRing, HoverCard, IconButtonState,
-    Kbd, KbdState, Label, LabelState, Listbox, ListboxGroup, ListboxOption, ListboxState, Menu,
-    MenuItem, OverlayResolvedState, Popover, Progress, ProgressState, ScrollArea, Select,
-    SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, Skeleton, SkeletonState,
-    SwitchState, TextInput, TextInputState, Textarea, TextareaState, ToggleState, Tooltip,
+    AlertDialog, Avatar, AvatarGroup, AvatarState, BadgeState, Button, ButtonState, ButtonVariant,
+    Checkbox, CheckboxState, ColorIntent, Combobox, ComboboxGroup, ComboboxOpenMode,
+    ComboboxOption, ComboboxState, Command, CommandGroup, CommandItem, CommandOpenMode,
+    CommandSelectionMode, CommandState, ContextMenu, Dialog, Field, FieldState, FocusRing,
+    HoverCard, IconButtonState, Kbd, KbdState, Label, LabelState, Listbox, ListboxGroup,
+    ListboxOption, ListboxState, Menu, MenuItem, OverlayResolvedState, Popover, Progress,
+    ProgressState, ScrollArea, Select, SelectOpenMode, SelectState, Separator, SeparatorState,
+    Sheet, Skeleton, SkeletonState, SwitchState, TextInput, TextInputState, Textarea,
+    TextareaState, ToggleState, Tooltip,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, focus_ring_shadow,
         gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui, init_text_input,
@@ -3593,6 +3594,8 @@ pub(crate) fn component_primitive_samples_section(
 
     avatars: [pages::components::AvatarSample; 4],
 
+    avatar_groups: [pages::components::AvatarGroupSample; 1],
+
     tokens: ThemeTokens,
 ) -> impl IntoElement {
     div()
@@ -3833,6 +3836,57 @@ pub(crate) fn component_primitive_samples_section(
                         ),
                     )
                     .child(component_avatar_state_row(&state))
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(avatar_groups.into_iter().map(move |sample| {
+                    let debug_selector = sample.debug_selector();
+
+                    let avatar_names = sample
+                        .avatars
+                        .iter()
+                        .map(|avatar| avatar.state.name().to_owned())
+                        .collect::<Vec<_>>();
+
+                    gallery_card_shell(
+                        format!("component-avatar-group-sample:{}", sample.id),
+                        Some(debug_selector),
+                    )
+                    .min_w(px(280.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child(sample.summary),
+                    )
+                    .child(
+                        AvatarGroup::new(format!("component-avatar-group:{}", sample.id))
+                            .avatars(sample.avatars.iter().map(|avatar| {
+                                Avatar::new(
+                                    format!("component-avatar-group:{}:{}", sample.id, avatar.id),
+                                    avatar.state.name(),
+                                )
+                                .accessible_label(avatar.state.accessible_label())
+                                .fallback(avatar.state.fallback())
+                                .with_size(avatar.state.size())
+                                .tokens(tokens)
+                            }))
+                            .max_visible(sample.avatars.len().saturating_sub(1))
+                            .with_size(Size::Medium)
+                            .tokens(tokens),
+                    )
+                    .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
+                        "{}: {}",
+                        sample.count_label,
+                        avatar_names.join(", ")
+                    )))
                 })),
         )
 }

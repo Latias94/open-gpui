@@ -6,6 +6,20 @@ status: active
 
 # Log
 
+- 2026-06-26: Started the Avatar family slice on `feat/scroll-surface-containment`. Added
+  `AvatarGroup` and `AvatarGroupCount` to `open-gpui-ui-components`, wired theme colors and root /
+  prelude exports, added focused component tests for visible/hidden counts and group count state,
+  and promoted the family into the Components gallery catalog plus smoke coverage. Verified with
+  `cargo check -p open-gpui-ui-components --tests`,
+  `cargo check -p open-gpui-ui-foundation-gallery`,
+  `cargo nextest run -p open-gpui-ui-components --tests avatar --no-fail-fast`, and
+  `cargo nextest run -p open-gpui-ui-foundation-gallery --tests foundation_gallery --no-fail-fast`.
+- 2026-06-26: Closed the Avatar family slice on `feat/scroll-surface-containment`. Added a real
+  overlapping `AvatarGroup` surface, a dedicated `AvatarGroupCount` overflow bubble, public exports
+  and theme intents, focused API/state tests, gallery catalog proof, and a dedicated smoke selector.
+  Verified with `cargo nextest run -p open-gpui-ui-components avatar_group_state_tracks_visible_and_hidden_counts controlled_text_input_on_change_marks_input_controller_driven --no-fail-fast`,
+  `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation --no-fail-fast`,
+  `git diff --check`, and the existing `cargo check` gates.
 - 2026-06-26: Finished the scroll-surface local containment slice on
   `feat/scroll-surface-containment`. Vertical `Tabs` now route their rail through the shared
   `ScrollArea` primitive, long `Sidebar` navigation keeps the same shared scroll ownership, and

@@ -206,10 +206,9 @@ part of the first resolved-state contract.
 
 `AvatarState` is the identity primitive contract. It resolves display name, fallback initials or
 explicit fallback text, optional renderer-neutral `AvatarSource` metadata, accessible label,
-metrics, token intents, and `Role::Image`. The first slice intentionally does not own async image
-loading status, retry policy, cache state, grouped avatar overlap layout, or fallback delay timers;
-callers can model those outside the primitive and pass only the current source/fallback intent into
-the GPUI adapter.
+metrics, token intents, and `Role::Image`. `AvatarGroupState` tracks visible and hidden counts for
+the overlap family, while `AvatarGroupCountState` resolves the overflow bubble. Async image loading
+status, retry policy, cache state, and fallback delay timers remain caller-owned.
 
 ## Focus Rings
 

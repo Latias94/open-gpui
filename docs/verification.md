@@ -208,10 +208,11 @@ Toolbar test renders real toolbar items, moves roving focus with arrow/Home keys
 separator items, and activates the focused item with Enter.
 
 The components package also includes low-state primitive coverage for Separator, Kbd, Progress,
-Skeleton, and Avatar. Those tests verify resolved state branches, explicit root/prelude exports,
-theme color intents, stable rendered debug selectors, decorative separator semantics, progress
-clamping, indeterminate progress, Avatar fallback initials, explicit accessible labels, size
-metrics, `Role::Image`, and source metadata staying outside image-loading ownership. The gallery metadata and
+Skeleton, Avatar, AvatarGroup, and AvatarGroupCount. Those tests verify resolved state branches,
+explicit root/prelude exports, theme color intents, stable rendered debug selectors, decorative
+separator semantics, progress clamping, indeterminate progress, Avatar fallback initials,
+explicit accessible labels, size metrics, `Role::Image`, group visible/hidden counts, overflow
+label state, and source metadata staying outside image-loading ownership. The gallery metadata and
 short-viewport smoke tests also verify those primitives are listed as official catalog entries and
 render visible samples with stable debug selectors.
 The public API inventory gate lives in `crates/ui_components/tests/components.rs` as

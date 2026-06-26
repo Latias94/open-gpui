@@ -4,7 +4,10 @@ pub use crate::alert_dialog::{
     AlertDialog, AlertDialogActionKind, AlertDialogActionState, AlertDialogColors,
     AlertDialogIntent, AlertDialogMetrics, AlertDialogOpenMode, AlertDialogState,
 };
-pub use crate::avatar::{Avatar, AvatarColors, AvatarMetrics, AvatarSource, AvatarState};
+pub use crate::avatar::{
+    Avatar, AvatarColors, AvatarGroup, AvatarGroupCount, AvatarGroupCountColors,
+    AvatarGroupCountState, AvatarGroupState, AvatarMetrics, AvatarSource, AvatarState,
+};
 pub use crate::badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVariant};
 pub use crate::button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use crate::checkbox::{Checkbox, CheckboxColors, CheckboxMetrics, CheckboxState};

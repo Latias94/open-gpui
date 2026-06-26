@@ -5,6 +5,13 @@ status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
 git_branch: feat/scroll-surface-containment
 verified_by:
+  - cargo check -p open-gpui-ui-components --tests
+  - cargo check -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components --tests avatar --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery --tests foundation_gallery --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components avatar_group_state_tracks_visible_and_hidden_counts controlled_text_input_on_change_marks_input_controller_driven --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation --no-fail-fast
+  - git diff --check
   - cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-core table
   - cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit public_resolved_state_contracts_avoid_gpui_runtime_types table_public_exports_include_core_table_and_virtualizer_contracts
@@ -126,6 +133,14 @@ verified_by:
 ---
 
 # Current State
+
+- Goal: 深化 open-gpui 的头像家族，补齐 AvatarGroup / AvatarGroupCount 的公开组件、gallery 证明和契约测试。
+- Branch: feat/scroll-surface-containment
+- Last verified: `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components --tests avatar --no-fail-fast`, `cargo nextest run -p open-gpui-ui-foundation-gallery --tests foundation_gallery --no-fail-fast`
+- Done: `AvatarGroup` / `AvatarGroupCount` 已进入 `open-gpui-ui-components` 公共导出和 prelude，主题解析补了 group count 颜色，组件测试覆盖了 group 可见/隐藏计数和 count bubble state，gallery 样例与 smoke 已补到 Components 页面，并已完成当前 Avatar 家族切片的收口。
+- In progress: None.
+- Blocked: None.
+- Next action: 如需继续这个分支，优先挑选下一条 polish boundary；当前头像家族这一刀已可直接提交。
 
 - 2026-06-26: Completed the Tree drag-and-drop hierarchy editing slice from
   `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md`. `TreeMove`,
