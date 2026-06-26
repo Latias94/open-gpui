@@ -519,7 +519,7 @@ pub(crate) fn render_components_page(
                 .when(!show_component_section(focus_mode, "tree"), |this| {
                     this.hidden()
                 })
-                .child(component_tree_samples_section(tree_samples)),
+                .child(component_tree_samples_section(tree_samples, cx)),
         )
         .child(
             component_page_section("toolbar", anchors.toolbar.clone())
@@ -2271,7 +2271,95 @@ fn show_component_section_group(
 
 fn component_tree_samples_section(
     tree_samples: &'static [pages::components::TreeSample],
+    cx: &mut Context<GalleryShell>,
 ) -> impl IntoElement {
+    let sample_cards = tree_samples
+        .iter()
+        .map(|sample| {
+            let sample_id = sample.id;
+            let debug_selector = sample.debug_selector();
+            let title = sample.title;
+            let summary = sample.summary;
+            let badge = sample.badge;
+            let sample_id_for_selection = sample_id.to_owned();
+            let sample_id_for_toggle = sample_id.to_owned();
+            let mut tree = sample
+                .build_tree_with_runtime(cx)
+                .on_select(move |selection, _, cx| {
+                    pages::components::record_tree_selection(
+                        sample_id_for_selection.clone(),
+                        selection.value().to_owned(),
+                        cx,
+                    );
+                })
+                .on_toggle(move |toggle, _, cx| {
+                    pages::components::record_tree_toggle(
+                        sample_id_for_toggle.clone(),
+                        toggle.value().to_owned(),
+                        toggle.expanded(),
+                        toggle.loaded_child_count(),
+                        toggle.children_load_state().as_str().to_owned(),
+                        toggle.children_load_state().message().map(str::to_owned),
+                        cx,
+                    );
+                });
+
+            if sample.draggable {
+                let sample_id_for_move = sample_id.to_owned();
+                let base_items = sample.items.clone();
+                tree = tree.on_move(move |tree_move, _, cx| {
+                    pages::components::record_tree_move(
+                        sample_id_for_move.clone(),
+                        &base_items,
+                        &tree_move,
+                        cx,
+                    );
+                });
+            }
+
+            div()
+                .id(format!("component-tree-sample:{sample_id}"))
+                .debug_selector(move || debug_selector)
+                .w(px(420.0))
+                .flex_none()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .rounded_sm()
+                .border_1()
+                .border_color(rgb(0xd6d8ce))
+                .bg(rgb(0xffffff))
+                .on_scroll_wheel(|_, window, cx| {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                })
+                .p_3()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(open_gpui::FontWeight::BOLD)
+                                .child(title),
+                        )
+                        .child(label_pill(badge)),
+                )
+                .child(div().text_xs().text_color(rgb(0x5a6472)).child(summary))
+                .child(
+                    div()
+                        .h(px(240.0))
+                        .min_h(px(0.0))
+                        .overflow_hidden()
+                        .child(tree),
+                )
+                .child(component_tree_state_contract_row(&sample.current_state(cx)))
+        })
+        .collect::<Vec<_>>();
+
     div()
         .flex()
         .flex_col()
@@ -2282,83 +2370,7 @@ fn component_tree_samples_section(
                 .font_weight(open_gpui::FontWeight::BOLD)
                 .child("Tree"),
         )
-        .child(
-            div()
-                .flex()
-                .gap_3()
-                .flex_wrap()
-                .children(tree_samples.iter().map(|sample| {
-                    let sample_id = sample.id;
-                    let debug_selector = sample.debug_selector();
-                    let title = sample.title;
-                    let summary = sample.summary;
-                    let badge = sample.badge;
-                    let state = sample.state.clone();
-                    let sample_id_for_selection = sample_id.to_owned();
-                    let sample_id_for_toggle = sample_id.to_owned();
-                    let tree = sample
-                        .build_tree()
-                        .on_select(move |selection, _, cx| {
-                            pages::components::record_tree_selection(
-                                sample_id_for_selection.clone(),
-                                selection.value().to_owned(),
-                                cx,
-                            );
-                        })
-                        .on_toggle(move |toggle, _, cx| {
-                            pages::components::record_tree_toggle(
-                                sample_id_for_toggle.clone(),
-                                toggle.value().to_owned(),
-                                toggle.expanded(),
-                                toggle.loaded_child_count(),
-                                toggle.children_load_state().as_str().to_owned(),
-                                toggle.children_load_state().message().map(str::to_owned),
-                                cx,
-                            );
-                        });
-
-                    div()
-                        .id(format!("component-tree-sample:{sample_id}"))
-                        .debug_selector(move || debug_selector)
-                        .w(px(420.0))
-                        .flex_none()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(0xd6d8ce))
-                        .bg(rgb(0xffffff))
-                        .on_scroll_wheel(|_, window, cx| {
-                            window.prevent_default();
-                            cx.stop_propagation();
-                        })
-                        .p_3()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(open_gpui::FontWeight::BOLD)
-                                        .child(title),
-                                )
-                                .child(label_pill(badge)),
-                        )
-                        .child(div().text_xs().text_color(rgb(0x5a6472)).child(summary))
-                        .child(
-                            div()
-                                .h(px(240.0))
-                                .min_h(px(0.0))
-                                .overflow_hidden()
-                                .child(tree),
-                        )
-                        .child(component_tree_state_contract_row(&state))
-                })),
-        )
+        .child(div().flex().gap_3().flex_wrap().children(sample_cards))
 }
 
 fn component_feedback_samples_section(

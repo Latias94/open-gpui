@@ -126,6 +126,7 @@ pub struct GalleryShell {
 impl GalleryShell {
     fn build(selected_page: GalleryPage, cx: &mut Context<Self>) -> Self {
         cx.set_global(pages::components::TableSampleRuntimeLog::default());
+        cx.set_global(pages::components::TreeSampleRuntimeLog::default());
 
         Self {
             selected_page,

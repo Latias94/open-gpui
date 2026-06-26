@@ -23,9 +23,9 @@ use open_gpui_ui_components::{
     TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
     TextInputDisplayMode, TextInputState, Textarea, TextareaState, Toggle, ToggleState,
     ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
-    Tree, TreeItemDescriptor, TreeRenderPlan, TreeState, VirtualizedList,
+    Tree, TreeItemDescriptor, TreeMove, TreeRenderPlan, TreeState, VirtualizedList,
     VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRenderPlan,
-    VirtualizedListScrollStrategy, VirtualizedListState,
+    VirtualizedListScrollStrategy, VirtualizedListState, apply_tree_move,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -1174,10 +1174,21 @@ pub struct TreeSample {
     pub size: Size,
     /// Whether the concrete tree uses fixed-row virtualized rendering.
     pub virtualized: bool,
+    /// Whether the concrete Tree enables pointer drag move affordances.
+    pub draggable: bool,
     /// Fallback virtualized viewport item count before layout measurement.
     pub viewport_item_count: usize,
     /// Virtualized overscan item budget.
     pub overscan_count: usize,
+}
+
+/// One Tree drag move captured from the rendered gallery sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeSampleMoveEvent {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Controlled Tree move payload.
+    pub tree_move: TreeMove,
 }
 
 /// One selection captured from the rendered gallery `Tree` sample.
@@ -1211,6 +1222,8 @@ pub struct TreeSampleToggleEvent {
 pub struct TreeSampleRuntimeLog {
     selections: Vec<TreeSampleSelection>,
     toggles: Vec<TreeSampleToggleEvent>,
+    moves: Vec<TreeSampleMoveEvent>,
+    tree_item_overrides: BTreeMap<String, Vec<TreeItemDescriptor>>,
 }
 
 impl Global for TreeSampleRuntimeLog {}
@@ -1226,10 +1239,22 @@ impl TreeSampleRuntimeLog {
         &self.toggles
     }
 
+    /// Returns captured move payloads in event order.
+    pub fn moves(&self) -> &[TreeSampleMoveEvent] {
+        &self.moves
+    }
+
+    /// Returns the current controlled item descriptors for a sample, if any.
+    pub fn tree_item_override(&self, sample_id: &str) -> Option<&[TreeItemDescriptor]> {
+        self.tree_item_overrides.get(sample_id).map(Vec::as_slice)
+    }
+
     /// Clears captured interactions.
     pub fn clear(&mut self) {
         self.selections.clear();
         self.toggles.clear();
+        self.moves.clear();
+        self.tree_item_overrides.clear();
     }
 }
 
@@ -1263,6 +1288,48 @@ pub fn record_tree_toggle(
             children_load_message,
         });
     });
+}
+
+/// Returns the current controlled item descriptors for a gallery `Tree` sample.
+pub fn current_tree_sample_items(
+    sample_id: impl Into<String>,
+    fallback: &[TreeItemDescriptor],
+    cx: &impl AppContext,
+) -> Vec<TreeItemDescriptor> {
+    let sample_id = sample_id.into();
+    cx.read_global::<TreeSampleRuntimeLog, _>(|log, _| {
+        log.tree_item_override(&sample_id)
+            .map(|items| items.to_vec())
+            .unwrap_or_else(|| fallback.to_vec())
+    })
+}
+
+/// Records and applies a controlled gallery `Tree` move request.
+pub fn record_tree_move(
+    sample_id: impl Into<String>,
+    fallback: &[TreeItemDescriptor],
+    tree_move: &TreeMove,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = fallback.to_vec();
+    let next = cx.read_global::<TreeSampleRuntimeLog, _>(|log, _| {
+        let current = log
+            .tree_item_override(&sample_id)
+            .map(|items| items.to_vec())
+            .unwrap_or_else(|| fallback.clone());
+        apply_tree_move(current, tree_move)
+    });
+
+    if let Some(next) = next {
+        cx.update_default_global::<TreeSampleRuntimeLog, _>(|log, _| {
+            log.moves.push(TreeSampleMoveEvent {
+                sample_id: sample_id.clone(),
+                tree_move: tree_move.clone(),
+            });
+            log.tree_item_overrides.insert(sample_id, next);
+        });
+    }
 }
 
 /// One committed column sizing change captured from the rendered gallery `Table` sample.
@@ -2035,6 +2102,23 @@ pub fn record_table_cell_edit_change(
 }
 
 impl TreeSample {
+    /// Returns the current controlled item descriptors for this sample.
+    pub fn current_items(&self, cx: &impl AppContext) -> Vec<TreeItemDescriptor> {
+        current_tree_sample_items(self.id, &self.items, cx)
+    }
+
+    /// Returns the current controlled tree state for this sample.
+    pub fn current_state(&self, cx: &impl AppContext) -> TreeState {
+        let items = self.current_items(cx);
+        TreeState::resolve(
+            self.state.size(),
+            self.state.label(),
+            self.state.selected_value(),
+            self.state.focused_value(),
+            items,
+        )
+    }
+
     /// Builds the concrete GPUI tree for this sample.
     pub fn build_tree(&self) -> Tree {
         let mut tree = Tree::new(
@@ -2044,6 +2128,30 @@ impl TreeSample {
         )
         .with_size(self.size)
         .virtualized(self.virtualized)
+        .draggable(self.draggable)
+        .viewport_item_count(self.viewport_item_count)
+        .overscan_count(self.overscan_count);
+
+        if let Some(selected) = self.state.selected_value() {
+            tree = tree.default_selected(selected);
+        }
+        if let Some(focused) = self.state.focused_value() {
+            tree = tree.default_focused(focused);
+        }
+
+        tree
+    }
+
+    /// Builds the concrete GPUI tree for this sample using current gallery overrides.
+    pub fn build_tree_with_runtime(&self, cx: &impl AppContext) -> Tree {
+        let mut tree = Tree::new(
+            format!("component-tree:{}", self.id),
+            self.title,
+            self.current_items(cx),
+        )
+        .with_size(self.size)
+        .virtualized(self.virtualized)
+        .draggable(self.draggable)
         .viewport_item_count(self.viewport_item_count)
         .overscan_count(self.overscan_count);
 
@@ -3406,14 +3514,14 @@ pub fn empty_state_samples(tokens: ThemeTokens) -> [EmptyStateSample; 2] {
     )
 }
 
-static TREE_SAMPLES: LazyLock<[TreeSample; 3]> = LazyLock::new(build_tree_samples);
+static TREE_SAMPLES: LazyLock<[TreeSample; 4]> = LazyLock::new(build_tree_samples);
 
 /// Returns tree samples backed by the concrete renderer and hierarchy contract.
 pub fn tree_samples(_tokens: ThemeTokens) -> &'static [TreeSample] {
     TREE_SAMPLES.as_slice()
 }
 
-fn build_tree_samples() -> [TreeSample; 3] {
+fn build_tree_samples() -> [TreeSample; 4] {
     let size = Size::Small;
     let items = document_outline_tree_sample_items();
     let state = TreeState::resolve(
@@ -3422,6 +3530,14 @@ fn build_tree_samples() -> [TreeSample; 3] {
         Some("paper"),
         Some("paper"),
         items.clone(),
+    );
+    let editable_items = editable_outline_tree_sample_items();
+    let editable_state = TreeState::resolve(
+        size,
+        "Editable outline",
+        Some("root"),
+        Some("root"),
+        editable_items.clone(),
     );
 
     let remote_items = remote_workspace_tree_sample_items();
@@ -3452,6 +3568,7 @@ fn build_tree_samples() -> [TreeSample; 3] {
             state,
             size,
             virtualized: false,
+            draggable: false,
             viewport_item_count: 12,
             overscan_count: 4,
         },
@@ -3464,6 +3581,7 @@ fn build_tree_samples() -> [TreeSample; 3] {
             state: remote_state,
             size,
             virtualized: false,
+            draggable: false,
             viewport_item_count: 12,
             overscan_count: 4,
         },
@@ -3476,7 +3594,21 @@ fn build_tree_samples() -> [TreeSample; 3] {
             state: release_state,
             size,
             virtualized: true,
+            draggable: false,
             viewport_item_count: 8,
+            overscan_count: 4,
+        },
+        TreeSample {
+            id: "editable-outline",
+            title: "Editable outline",
+            summary: "Controlled drag moves update the visible outline in place.",
+            badge: "drag tree",
+            items: editable_items,
+            state: editable_state,
+            size,
+            virtualized: false,
+            draggable: true,
+            viewport_item_count: 12,
             overscan_count: 4,
         },
     ]
@@ -3565,6 +3697,16 @@ fn document_outline_tree_items() -> Vec<TreeItemDescriptor> {
             ),
         TreeItemDescriptor::new("disabled", "Disabled").disabled(true),
         TreeItemDescriptor::new("notes", "Notes"),
+    ]
+}
+
+fn editable_outline_tree_sample_items() -> Vec<TreeItemDescriptor> {
+    vec![
+        TreeItemDescriptor::new("root", "Root")
+            .expanded(true)
+            .child(TreeItemDescriptor::new("child", "Child"))
+            .child(TreeItemDescriptor::new("peer", "Peer")),
+        TreeItemDescriptor::new("sibling", "Sibling"),
     ]
 }
 

@@ -6,6 +6,19 @@ status: active
 
 # Log
 
+- 2026-06-26: Completed the first Tree drag-and-drop hierarchy slice from
+  `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md`. The Tree contract now
+  exposes controlled move payloads and pure move application helpers, the GPUI adapter owns the
+  pointer drag sensor plus drop-zone preview, and the Components gallery proves a visible
+  `editable-outline` reorder. The final smoke had to scroll the `child` row itself into view before
+  starting the drag; that kept the test stable inside the nested gallery viewport. Focused
+  `cargo nextest run` checks passed for `open-gpui-ui-components` Tree move contracts and the
+  gallery Tree samples.
+- 2026-06-26: Wrote `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md` for
+  the next Tree boundary. The plan keeps Tree move ownership controlled, splits pure move
+  resolution from adapter-owned pointer drag state, and defers cross-tree dragging, auto-expand on
+  hover, and a shared DnD crate until the first slice proves the contract. Next action is U1:
+  add the pure Tree move target contract.
 - 2026-06-26: Completed
   `docs/plans/2026-06-26-003-feat-ui-tree-virtualized-window-plan.md` in the working tree.
   `TreeRenderPlan` / `TreeRowRenderPlan` now resolve a fixed-row overscan window from `TreeState`

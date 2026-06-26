@@ -5,9 +5,9 @@ use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use crate::scroll_area::ScrollArea;
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, RenderOnce, ScrollHandle, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, point, px, rgb,
+    AnyElement, App, ClickEvent, Context, CursorStyle, Empty, Entity, FocusHandle,
+    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, RenderOnce, ScrollHandle,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, point, px, rgb, rgba,
 };
 use open_gpui_ui_core::{
     Role, Sizable, Size, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
@@ -23,10 +23,17 @@ use crate::roving_focus::{first_enabled, last_enabled, next_enabled};
 
 type TreeSelectHandler = Rc<dyn Fn(TreeSelection, &mut Window, &mut App)>;
 type TreeToggleHandler = Rc<dyn Fn(TreeToggle, &mut Window, &mut App)>;
+type TreeMoveHandler = Rc<dyn Fn(TreeMove, &mut Window, &mut App)>;
 
 const TREE_TYPEAHEAD_RESET: Duration = Duration::from_millis(700);
 const DEFAULT_TREE_VIEWPORT_ITEM_COUNT: usize = 12;
 const DEFAULT_TREE_OVERSCAN_COUNT: usize = 4;
+
+#[derive(Clone)]
+struct TreeDragPayload {
+    tree_id: String,
+    source_value: String,
+}
 
 /// Caller-owned child loading metadata for a tree item.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -513,6 +520,153 @@ pub enum TreeKeyboardAction {
     Select(TreeSelection),
 }
 
+/// Relative drop position for a Tree move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeDropPosition {
+    /// Insert before the target row in the target row's parent.
+    Before,
+    /// Insert after the target row in the target row's parent.
+    After,
+    /// Insert as the last loaded child of the target row.
+    Inside,
+}
+
+impl TreeDropPosition {
+    /// Returns a stable position label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Before => "before",
+            Self::After => "after",
+            Self::Inside => "inside",
+        }
+    }
+}
+
+/// Resolved Tree move target metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeMoveTarget {
+    target_index: usize,
+    target_value: String,
+    target_label: String,
+    position: TreeDropPosition,
+    target_parent_value: Option<String>,
+    sibling_anchor_value: Option<String>,
+}
+
+impl TreeMoveTarget {
+    fn from_target(target: &TreeItemState, position: TreeDropPosition) -> Self {
+        let target_parent_value = match position {
+            TreeDropPosition::Inside => Some(target.value.clone()),
+            TreeDropPosition::Before | TreeDropPosition::After => target.parent_value.clone(),
+        };
+        let sibling_anchor_value = match position {
+            TreeDropPosition::Inside => None,
+            TreeDropPosition::Before | TreeDropPosition::After => Some(target.value.clone()),
+        };
+
+        Self {
+            target_index: target.index,
+            target_value: target.value.clone(),
+            target_label: target.label.clone(),
+            position,
+            target_parent_value,
+            sibling_anchor_value,
+        }
+    }
+
+    /// Returns the visible target row index.
+    pub const fn target_index(&self) -> usize {
+        self.target_index
+    }
+
+    /// Returns the target row value.
+    pub fn target_value(&self) -> &str {
+        &self.target_value
+    }
+
+    /// Returns the target row label.
+    pub fn target_label(&self) -> &str {
+        &self.target_label
+    }
+
+    /// Returns the relative drop position.
+    pub const fn position(&self) -> TreeDropPosition {
+        self.position
+    }
+
+    /// Returns the destination parent value.
+    pub fn target_parent_value(&self) -> Option<&str> {
+        self.target_parent_value.as_deref()
+    }
+
+    /// Returns the sibling anchor for before/after drops.
+    pub fn sibling_anchor_value(&self) -> Option<&str> {
+        self.sibling_anchor_value.as_deref()
+    }
+}
+
+/// Controlled Tree move payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeMove {
+    source_index: usize,
+    value: String,
+    label: String,
+    source_parent_value: Option<String>,
+    target: TreeMoveTarget,
+}
+
+impl TreeMove {
+    fn from_items(source: &TreeItemState, target: TreeMoveTarget) -> Self {
+        Self {
+            source_index: source.index,
+            value: source.value.clone(),
+            label: source.label.clone(),
+            source_parent_value: source.parent_value.clone(),
+            target,
+        }
+    }
+
+    /// Returns the source visible row index.
+    pub const fn source_index(&self) -> usize {
+        self.source_index
+    }
+
+    /// Returns the moved item value.
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// Returns the moved item label.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Returns the source parent value.
+    pub fn source_parent_value(&self) -> Option<&str> {
+        self.source_parent_value.as_deref()
+    }
+
+    /// Returns the resolved move target.
+    pub const fn target(&self) -> &TreeMoveTarget {
+        &self.target
+    }
+
+    /// Returns the destination parent value.
+    pub fn target_parent_value(&self) -> Option<&str> {
+        self.target.target_parent_value()
+    }
+
+    /// Returns the target sibling anchor for before/after drops.
+    pub fn sibling_anchor_value(&self) -> Option<&str> {
+        self.target.sibling_anchor_value()
+    }
+
+    /// Returns the relative drop position.
+    pub const fn position(&self) -> TreeDropPosition {
+        self.target.position()
+    }
+}
+
 /// Resolved tree state used by tests, adapters, and rendering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TreeState {
@@ -712,6 +866,55 @@ impl TreeState {
     /// Returns an item by stable value.
     pub fn item_by_value(&self, value: &str) -> Option<&TreeItemState> {
         self.items.iter().find(|item| item.value() == value)
+    }
+
+    /// Resolves a legal controlled move payload for a visible Tree drop.
+    pub fn move_for_drop(
+        &self,
+        source_value: &str,
+        target_value: &str,
+        position: TreeDropPosition,
+    ) -> Option<TreeMove> {
+        let source = self.item_by_value(source_value)?;
+        let target = self.item_by_value(target_value)?;
+
+        if !source.focusable()
+            || !target.focusable()
+            || source.value() == target.value()
+            || self.item_is_descendant_of(target.value(), source.value())
+        {
+            return None;
+        }
+
+        if position == TreeDropPosition::Inside
+            && (!target.has_children()
+                || !target.expanded()
+                || !target.children_loaded()
+                || target.children_load_failed())
+        {
+            return None;
+        }
+
+        Some(TreeMove::from_items(
+            source,
+            TreeMoveTarget::from_target(target, position),
+        ))
+    }
+
+    fn item_is_descendant_of(&self, value: &str, ancestor_value: &str) -> bool {
+        let mut parent = self
+            .item_by_value(value)
+            .and_then(TreeItemState::parent_value);
+        while let Some(parent_value) = parent {
+            if parent_value == ancestor_value {
+                return true;
+            }
+            parent = self
+                .item_by_value(parent_value)
+                .and_then(TreeItemState::parent_value);
+        }
+
+        false
     }
 }
 
@@ -1014,8 +1217,10 @@ pub struct Tree {
     virtualized: bool,
     viewport_item_count: usize,
     overscan_count: usize,
+    draggable: bool,
     on_select: Option<TreeSelectHandler>,
     on_toggle: Option<TreeToggleHandler>,
+    on_move: Option<TreeMoveHandler>,
 }
 
 impl Tree {
@@ -1035,8 +1240,10 @@ impl Tree {
             virtualized: false,
             viewport_item_count: DEFAULT_TREE_VIEWPORT_ITEM_COUNT,
             overscan_count: DEFAULT_TREE_OVERSCAN_COUNT,
+            draggable: false,
             on_select: None,
             on_toggle: None,
+            on_move: None,
         }
     }
 
@@ -1076,6 +1283,12 @@ impl Tree {
         self
     }
 
+    /// Enables or disables pointer drag move affordances.
+    pub fn draggable(mut self, draggable: bool) -> Self {
+        self.draggable = draggable;
+        self
+    }
+
     /// Registers a tree selection handler.
     pub fn on_select(
         mut self,
@@ -1091,6 +1304,12 @@ impl Tree {
         handler: impl Fn(TreeToggle, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_toggle = Some(Rc::new(handler));
+        self
+    }
+
+    /// Registers a controlled tree move handler.
+    pub fn on_move(mut self, handler: impl Fn(TreeMove, &mut Window, &mut App) + 'static) -> Self {
+        self.on_move = Some(Rc::new(handler));
         self
     }
 
@@ -1156,8 +1375,10 @@ impl RenderOnce for Tree {
             virtualized,
             viewport_item_count,
             overscan_count,
+            draggable,
             on_select,
             on_toggle,
+            on_move,
         } = self;
 
         window.with_id(id.clone(), |window| {
@@ -1222,8 +1443,10 @@ impl RenderOnce for Tree {
                     focus_handles.clone(),
                     runtime.clone(),
                     scroll_handle.clone(),
+                    draggable,
                     on_select.clone(),
                     on_toggle.clone(),
+                    on_move.clone(),
                 )
             } else {
                 render_full_tree_body(
@@ -1234,8 +1457,10 @@ impl RenderOnce for Tree {
                     runtime.clone(),
                     scroll_handle.clone(),
                     state.clone(),
+                    draggable,
                     on_select.clone(),
                     on_toggle.clone(),
+                    on_move.clone(),
                 )
             };
 
@@ -1286,8 +1511,10 @@ fn render_full_tree_body(
     runtime: Entity<TreeRuntime>,
     scroll_handle: ScrollHandle,
     state: TreeState,
+    draggable: bool,
     on_select: Option<TreeSelectHandler>,
     on_toggle: Option<TreeToggleHandler>,
+    on_move: Option<TreeMoveHandler>,
 ) -> AnyElement {
     div()
         .debug_selector({
@@ -1307,8 +1534,10 @@ fn render_full_tree_body(
                 runtime.clone(),
                 scroll_handle.clone(),
                 state.clone(),
+                draggable,
                 on_select.clone(),
                 on_toggle.clone(),
+                on_move.clone(),
                 None,
             )
         }))
@@ -1321,8 +1550,10 @@ fn render_virtual_tree_body(
     focus_handles: Vec<Option<FocusHandle>>,
     runtime: Entity<TreeRuntime>,
     scroll_handle: ScrollHandle,
+    draggable: bool,
     on_select: Option<TreeSelectHandler>,
     on_toggle: Option<TreeToggleHandler>,
+    on_move: Option<TreeMoveHandler>,
 ) -> AnyElement {
     let metrics = plan.metrics();
     let state = plan.state().clone();
@@ -1347,8 +1578,10 @@ fn render_virtual_tree_body(
                 runtime.clone(),
                 scroll_handle.clone(),
                 state.clone(),
+                draggable,
                 on_select.clone(),
                 on_toggle.clone(),
+                on_move.clone(),
                 Some((row.virtual_start(), row.virtual_size())),
             )
         }))
@@ -1363,8 +1596,10 @@ fn render_tree_item(
     runtime: Entity<TreeRuntime>,
     scroll_handle: ScrollHandle,
     state: TreeState,
+    draggable: bool,
     on_select: Option<TreeSelectHandler>,
     on_toggle: Option<TreeToggleHandler>,
+    on_move: Option<TreeMoveHandler>,
     virtual_geometry: Option<(UiPx, UiPx)>,
 ) -> impl IntoElement {
     let item_value = item.value().to_owned();
@@ -1395,6 +1630,7 @@ fn render_tree_item(
     let item_size_of_set = item.size_of_set();
     let virtual_start = virtual_geometry.map(|(start, _)| start);
     let virtual_size = virtual_geometry.map(|(_, size)| size);
+    let move_enabled = draggable && on_move.is_some() && !disabled;
 
     div()
         .id(format!("tree:{tree_id}:item:{item_value}"))
@@ -1423,6 +1659,7 @@ fn render_tree_item(
         .bg(row_background)
         .text_color(text_color)
         .overflow_hidden()
+        .relative()
         .ui_role(item.role())
         .aria_label(item.label().to_owned())
         .aria_selected(selected)
@@ -1443,6 +1680,17 @@ fn render_tree_item(
             this.cursor_pointer().hover(|style| style.bg(rgb(0xf1f5ee)))
         })
         .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
+        .when(move_enabled, |this| {
+            let tree_id = tree_id.clone();
+            let item_value = item_value.clone();
+            this.cursor(CursorStyle::OpenHand).on_drag(
+                TreeDragPayload {
+                    tree_id,
+                    source_value: item_value,
+                },
+                |_, _, _, _, cx| cx.new(|_| Empty),
+            )
+        })
         .when(!disabled, |this| {
             let runtime = runtime.clone();
             let on_select = on_select.clone();
@@ -1474,6 +1722,7 @@ fn render_tree_item(
             let scroll_handle = scroll_handle.clone();
             let on_select = on_select.clone();
             let on_toggle = on_toggle.clone();
+            let state = state.clone();
             move |event: &KeyDownEvent, window, cx| {
                 handle_tree_key_down(
                     &state,
@@ -1508,8 +1757,9 @@ fn render_tree_item(
                 .overflow_hidden()
                 .child(item_label),
         )
-        .when_some(
-            tree_children_load_hint(&children_load_state),
+        .when_some(tree_children_load_hint(&children_load_state), {
+            let tree_id = tree_id.clone();
+            let item_value = item_value.clone();
             move |this, hint| {
                 this.child(
                     div()
@@ -1523,8 +1773,119 @@ fn render_tree_item(
                         .text_color(rgb(0x5a6472))
                         .child(hint),
                 )
-            },
-        )
+            }
+        })
+        .when(move_enabled, |this| {
+            this.child(tree_drop_zone(
+                tree_id.clone(),
+                item_value.clone(),
+                state.clone(),
+                metrics,
+                TreeDropPosition::Before,
+                on_move.clone(),
+            ))
+            .child(tree_drop_zone(
+                tree_id.clone(),
+                item_value.clone(),
+                state.clone(),
+                metrics,
+                TreeDropPosition::Inside,
+                on_move.clone(),
+            ))
+            .child(tree_drop_zone(
+                tree_id.clone(),
+                item_value.clone(),
+                state.clone(),
+                metrics,
+                TreeDropPosition::After,
+                on_move.clone(),
+            ))
+        })
+}
+
+fn tree_drop_zone(
+    tree_id: String,
+    target_value: String,
+    state: TreeState,
+    metrics: TreeMetrics,
+    position: TreeDropPosition,
+    on_move: Option<TreeMoveHandler>,
+) -> AnyElement {
+    let Some(on_move) = on_move else {
+        return div().into_any_element();
+    };
+    let position_key = position.as_str().to_owned();
+    let zone_extent = gpui_px_from_ui(metrics.row_height() * (1.0 / 3.0));
+    let state_for_can_drop = state.clone();
+    let target_for_can_drop = target_value.clone();
+    let tree_for_can_drop = tree_id.clone();
+    let state_for_drag_over = state.clone();
+    let target_for_drag_over = target_value.clone();
+    let tree_for_drag_over = tree_id.clone();
+    let state_for_drop = state;
+    let target_for_drop = target_value.clone();
+    let tree_for_drop = tree_id.clone();
+
+    div()
+        .debug_selector({
+            let tree_id = tree_id.clone();
+            let target_value = target_value.clone();
+            move || format!("tree:{tree_id}:drop:{position_key}:{target_value}")
+        })
+        .absolute()
+        .left(px(0.0))
+        .right(px(0.0))
+        .h(zone_extent)
+        .when(position == TreeDropPosition::Before, |this| {
+            this.top(px(0.0))
+        })
+        .when(position == TreeDropPosition::Inside, |this| {
+            this.top(zone_extent)
+        })
+        .when(position == TreeDropPosition::After, |this| {
+            this.bottom(px(0.0))
+        })
+        .can_drop(move |dragged, _, _| {
+            dragged
+                .downcast_ref::<TreeDragPayload>()
+                .filter(|drag| drag.tree_id == tree_for_can_drop)
+                .and_then(|drag| {
+                    state_for_can_drop.move_for_drop(
+                        &drag.source_value,
+                        &target_for_can_drop,
+                        position,
+                    )
+                })
+                .is_some()
+        })
+        .drag_over::<TreeDragPayload>(move |style, drag, _, _| {
+            if drag.tree_id != tree_for_drag_over
+                || state_for_drag_over
+                    .move_for_drop(&drag.source_value, &target_for_drag_over, position)
+                    .is_none()
+            {
+                return style;
+            }
+
+            match position {
+                TreeDropPosition::Before | TreeDropPosition::After => style.bg(rgba(0x1f7a662e)),
+                TreeDropPosition::Inside => style
+                    .border_1()
+                    .border_color(rgb(0x1f7a66))
+                    .bg(rgb(0xe8f3ef)),
+            }
+        })
+        .on_drop(move |drag: &TreeDragPayload, window, cx| {
+            if drag.tree_id != tree_for_drop {
+                return;
+            }
+            if let Some(tree_move) =
+                state_for_drop.move_for_drop(&drag.source_value, &target_for_drop, position)
+            {
+                on_move(tree_move, window, cx);
+            }
+        })
+        .into_any_element()
 }
 
 fn tree_disclosure(
@@ -1756,6 +2117,85 @@ fn apply_tree_expanded_override(
     item
 }
 
+/// Applies a controlled Tree move to descriptor data.
+pub fn apply_tree_move(
+    items: impl IntoIterator<Item = TreeItemDescriptor>,
+    tree_move: &TreeMove,
+) -> Option<Vec<TreeItemDescriptor>> {
+    let mut items = items.into_iter().collect::<Vec<_>>();
+    let moved = remove_tree_descriptor(&mut items, tree_move.value())?;
+
+    match tree_move.position() {
+        TreeDropPosition::Inside => {
+            let parent_value = tree_move.target_parent_value()?;
+            let parent = find_tree_descriptor_mut(&mut items, parent_value)?;
+            parent.children.push(moved);
+        }
+        TreeDropPosition::Before | TreeDropPosition::After => {
+            let parent_value = tree_move.target_parent_value();
+            let anchor_value = tree_move.sibling_anchor_value()?;
+            let siblings = tree_descriptor_children_mut(&mut items, parent_value)?;
+            let anchor_index = siblings
+                .iter()
+                .position(|item| item.value() == anchor_value)?;
+            let insert_index = match tree_move.position() {
+                TreeDropPosition::Before => anchor_index,
+                TreeDropPosition::After => anchor_index + 1,
+                TreeDropPosition::Inside => unreachable!("inside handled above"),
+            };
+            siblings.insert(insert_index, moved);
+        }
+    }
+
+    Some(items)
+}
+
+fn remove_tree_descriptor(
+    items: &mut Vec<TreeItemDescriptor>,
+    value: &str,
+) -> Option<TreeItemDescriptor> {
+    let mut index = 0usize;
+    while index < items.len() {
+        if items[index].value() == value {
+            return Some(items.remove(index));
+        }
+        if let Some(removed) = remove_tree_descriptor(&mut items[index].children, value) {
+            return Some(removed);
+        }
+        index += 1;
+    }
+
+    None
+}
+
+fn tree_descriptor_children_mut<'a>(
+    items: &'a mut Vec<TreeItemDescriptor>,
+    parent_value: Option<&str>,
+) -> Option<&'a mut Vec<TreeItemDescriptor>> {
+    match parent_value {
+        Some(parent_value) => {
+            find_tree_descriptor_mut(items, parent_value).map(|item| &mut item.children)
+        }
+        None => Some(items),
+    }
+}
+
+fn find_tree_descriptor_mut<'a>(
+    items: &'a mut [TreeItemDescriptor],
+    value: &str,
+) -> Option<&'a mut TreeItemDescriptor> {
+    for item in items {
+        if item.value() == value {
+            return Some(item);
+        }
+        if let Some(found) = find_tree_descriptor_mut(&mut item.children, value) {
+            return Some(found);
+        }
+    }
+
+    None
+}
+
 fn resolve_tree_viewport_extent(
     metrics: TreeMetrics,
     viewport_extent: UiPx,
@@ -1926,6 +2366,144 @@ mod tests {
             None,
             "collapsed descendants should not participate in visible Tree typeahead"
         );
+    }
+
+    #[test]
+    fn tree_move_payload_resolves_sibling_and_inside_targets() {
+        let state = TreeState::resolve(
+            Size::Medium,
+            "Document outline",
+            None,
+            Some("intro"),
+            sample_tree(),
+        );
+
+        let sibling_move = state
+            .move_for_drop("intro", "figures", TreeDropPosition::After)
+            .expect("visible siblings should resolve a move payload");
+        assert_eq!(sibling_move.value(), "intro");
+        assert_eq!(sibling_move.source_parent_value(), Some("paper"));
+        assert_eq!(sibling_move.target_parent_value(), Some("paper"));
+        assert_eq!(sibling_move.sibling_anchor_value(), Some("figures"));
+        assert_eq!(sibling_move.position(), TreeDropPosition::After);
+        assert_eq!(sibling_move.target().target_index(), 2);
+        assert_eq!(sibling_move.target().target_label(), "Figures");
+
+        let inside_move = state
+            .move_for_drop("notes", "paper", TreeDropPosition::Inside)
+            .expect("expanded loaded branch should accept inside drops");
+        assert_eq!(inside_move.source_parent_value(), None);
+        assert_eq!(inside_move.target_parent_value(), Some("paper"));
+        assert_eq!(inside_move.sibling_anchor_value(), None);
+        assert_eq!(inside_move.position().as_str(), "inside");
+    }
+
+    #[test]
+    fn tree_move_payload_rejects_illegal_targets() {
+        let state = TreeState::resolve(
+            Size::Medium,
+            "Document outline",
+            None,
+            Some("paper"),
+            sample_tree(),
+        );
+
+        assert_eq!(
+            state.move_for_drop("paper", "paper", TreeDropPosition::Before),
+            None
+        );
+        assert_eq!(
+            state.move_for_drop("paper", "intro", TreeDropPosition::Before),
+            None,
+            "dropping a branch near its descendant would create an invalid tree"
+        );
+        assert_eq!(
+            state.move_for_drop("notes", "disabled", TreeDropPosition::Before),
+            None
+        );
+        assert_eq!(
+            state.move_for_drop("notes", "figures", TreeDropPosition::Inside),
+            None,
+            "collapsed branches are not inside-drop targets in the first slice"
+        );
+
+        let remote = TreeState::resolve(
+            Size::Medium,
+            "Remote tree",
+            None,
+            Some("leaf"),
+            [
+                TreeItemDescriptor::new("unloaded", "Unloaded")
+                    .expanded(true)
+                    .with_children_unloaded(),
+                TreeItemDescriptor::new("loading", "Loading")
+                    .expanded(true)
+                    .with_children_loading("Loading children"),
+                TreeItemDescriptor::new("failed", "Failed")
+                    .expanded(true)
+                    .with_children_load_failed("Network unavailable"),
+                TreeItemDescriptor::new("leaf", "Leaf"),
+            ],
+        );
+
+        for target in ["unloaded", "loading", "failed"] {
+            assert_eq!(
+                remote.move_for_drop("leaf", target, TreeDropPosition::Inside),
+                None,
+                "{target} should not accept inside drops"
+            );
+        }
+    }
+
+    #[test]
+    fn apply_tree_move_reorders_and_reparents_descriptor_subtrees() {
+        let items = sample_tree();
+        let state = TreeState::resolve(
+            Size::Medium,
+            "Document outline",
+            None,
+            Some("intro"),
+            items.clone(),
+        );
+        let sibling_move = state
+            .move_for_drop("intro", "figures", TreeDropPosition::After)
+            .unwrap();
+        let reordered = apply_tree_move(items.clone(), &sibling_move).unwrap();
+        let paper = reordered
+            .iter()
+            .find(|item| item.value() == "paper")
+            .expect("paper branch should remain");
+        let child_values = paper
+            .child_descriptors()
+            .iter()
+            .map(TreeItemDescriptor::value)
+            .collect::<Vec<_>>();
+
+        assert_eq!(child_values, ["figures", "intro"]);
+
+        let state = TreeState::resolve(
+            Size::Medium,
+            "Document outline",
+            None,
+            Some("notes"),
+            reordered.clone(),
+        );
+        let inside_move = state
+            .move_for_drop("notes", "paper", TreeDropPosition::Inside)
+            .unwrap();
+        let reparented = apply_tree_move(reordered, &inside_move).unwrap();
+        let state = TreeState::resolve(
+            Size::Medium,
+            "Document outline",
+            Some("notes"),
+            Some("notes"),
+            reparented,
+        );
+        let notes = state.item_by_value("notes").unwrap();
+
+        assert_eq!(notes.parent_value(), Some("paper"));
+        assert_eq!(notes.depth(), 1);
+        assert!(notes.selected());
     }
 
     #[test]

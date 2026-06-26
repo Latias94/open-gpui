@@ -1544,7 +1544,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(sidebars[2].state.scrollable());
     assert!(sidebars[2].state.items().len() > 8);
 
-    assert_eq!(trees.len(), 3);
+    assert_eq!(trees.len(), 4);
     let tree = &trees[0];
     assert_eq!(tree.id, "document-outline");
     assert_eq!(tree.state.role(), Role::Tree);
@@ -1594,6 +1594,12 @@ fn components_page_samples_expose_component_metadata() {
         release_tree_plan.rows()[0].render_key(),
         "0:release-node-0000"
     );
+    let editable_tree = &trees[3];
+    assert_eq!(editable_tree.id, "editable-outline");
+    assert!(editable_tree.draggable);
+    assert_eq!(editable_tree.state.selected_value(), Some("root"));
+    assert_eq!(editable_tree.state.focused_value(), Some("root"));
+    assert_eq!(editable_tree.state.items().len(), 4);
 
     assert_eq!(listboxes.len(), 2);
     assert_eq!(listboxes[0].id, "assignee-listbox");
@@ -6072,6 +6078,89 @@ fn components_gallery_smoke_tree_expands_and_selects(cx: &mut open_gpui::TestApp
         "expected Tree typeahead to focus the visible Notes row; focused={:?}",
         cx.focused_debug_selector()
     );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_tree_drag_updates_sample(cx: &mut open_gpui::TestAppContext) {
+    const CHILD: &str = "tree:component-tree:editable-outline:item:child";
+    const PEER: &str = "tree:component-tree:editable-outline:item:peer";
+    const SIBLING: &str = "tree:component-tree:editable-outline:item:sibling";
+    const DROP: &str = "tree:component-tree:editable-outline:drop:before:sibling";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TreeSampleRuntimeLog::default());
+    let tree_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Tree")
+        .unwrap_or_else(|| panic!("expected catalog entry `Tree`"));
+    focus_components_catalog_entry(&shell, cx, tree_entry);
+
+    scroll_page_selector_into_view(&shell, cx, CHILD);
+    let child_before = bounds(cx, CHILD).center();
+    let peer_before = bounds(cx, PEER).center();
+    let sibling_before = bounds(cx, SIBLING).center();
+    let drop_before = bounds(cx, DROP).center();
+    assert!(
+        child_before.y < peer_before.y,
+        "expected child row to render above peer before drag"
+    );
+    assert!(peer_before.y < sibling_before.y);
+
+    cx.simulate_click(child_before, Default::default());
+    redraw(cx);
+    let selections = cx.read_global::<pages::components::TreeSampleRuntimeLog, _>(|log, _| {
+        log.selections().to_vec()
+    });
+    assert_eq!(
+        selections.len(),
+        1,
+        "expected the editable Tree row to accept a normal click before dragging"
+    );
+    assert_eq!(selections[0].sample_id, "editable-outline");
+    assert_eq!(selections[0].value, "child");
+    cx.update_global::<pages::components::TreeSampleRuntimeLog, _>(|log, _| {
+        log.clear();
+    });
+
+    cx.simulate_mouse_down(child_before, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(child_before.x + px(18.0), child_before.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(
+        point(child_before.x + px(42.0), child_before.y + px(2.0)),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(drop_before, MouseButton::Left, Default::default());
+    cx.simulate_mouse_up(drop_before, MouseButton::Left, Default::default());
+    cx.run_until_parked();
+    redraw(cx);
+
+    let moves =
+        cx.read_global::<pages::components::TreeSampleRuntimeLog, _>(|log, _| log.moves().to_vec());
+    assert_eq!(moves.len(), 1);
+    assert_eq!(moves[0].sample_id, "editable-outline");
+    assert_eq!(moves[0].tree_move.value(), "child");
+    assert_eq!(moves[0].tree_move.source_parent_value(), Some("root"));
+    assert_eq!(
+        moves[0].tree_move.position(),
+        open_gpui_ui_components::TreeDropPosition::Before
+    );
+    assert_eq!(moves[0].tree_move.target().target_value(), "sibling");
+    assert_eq!(moves[0].tree_move.target_parent_value(), None);
+    assert_eq!(moves[0].tree_move.sibling_anchor_value(), Some("sibling"));
+
+    redraw(cx);
+    let child_after = bounds(cx, CHILD).center();
+    let peer_after = bounds(cx, PEER).center();
+    let sibling_after = bounds(cx, SIBLING).center();
+    assert!(
+        child_after.y > peer_after.y,
+        "expected child row to move below peer after a before-drop move"
+    );
+    assert!(peer_after.y < sibling_after.y);
 }
 
 #[open_gpui::test]

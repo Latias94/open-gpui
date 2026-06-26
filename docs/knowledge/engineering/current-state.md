@@ -122,6 +122,19 @@ verified_by:
 
 # Current State
 
+- 2026-06-26: Completed the Tree drag-and-drop hierarchy editing slice from
+  `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md`. `TreeMove`,
+  `TreeMoveTarget`, and `TreeDropPosition` are now public, `Tree::draggable` and `Tree::on_move`
+  are wired, caller-owned descriptor reordering is handled by `apply_tree_move`, and the
+  Components gallery now carries an `editable-outline` sample with passing drag smoke coverage.
+  The drag smoke scrolls the `child` row into view before the move so the interaction is stable in
+  the nested gallery viewport. Next Tree follow-ups are now beyond the first hierarchy-editing
+  slice.
+- 2026-06-26: Started the Tree drag-and-drop hierarchy editing slice from
+  `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md`. The next work focuses on
+  a pure move contract first, then adapter-owned drag runtime and gallery proof. The existing Tree
+  lazy-loading, typeahead, and virtualized render-window slices remain shipped; Tree drag-and-drop
+  is now the next boundary.
 - 2026-06-26: Completed the Tree virtualized render-window slice from
   `docs/plans/2026-06-26-003-feat-ui-tree-virtualized-window-plan.md` in the working tree.
   `TreeRenderPlan` and `TreeRowRenderPlan` now resolve a fixed-row overscan window from

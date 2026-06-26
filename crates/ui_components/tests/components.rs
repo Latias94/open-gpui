@@ -39,11 +39,12 @@ use open_gpui_ui_components::{
     ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
     ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
     TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeChildrenLoadState,
-    TreeItemDescriptor, TreeRenderPlan, TreeRowRenderPlan, VirtualizedList,
-    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRenderPlan,
-    VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
-    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
-    VirtualizerState, active_index_from_str_keys, first_enabled,
+    TreeDropPosition, TreeItemDescriptor, TreeMove, TreeMoveTarget, TreeRenderPlan,
+    TreeRowRenderPlan, VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
+    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, apply_tree_move,
+    first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -247,7 +248,12 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             },
         ],
         legacy_seed_inputs: &[],
-        policy_hints: &["virtualized", "viewport_item_count", "overscan_count"],
+        policy_hints: &[
+            "virtualized",
+            "viewport_item_count",
+            "overscan_count",
+            "draggable",
+        ],
         callbacks: &[
             CallbackApi {
                 name: "on_select",
@@ -256,6 +262,10 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             CallbackApi {
                 name: "on_toggle",
                 payload: "TreeToggle",
+            },
+            CallbackApi {
+                name: "on_move",
+                payload: "TreeMove",
             },
         ],
         renderer_neutral_state: true,
@@ -1017,6 +1027,7 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "virtualized",
             "viewport_item_count",
             "overscan_count",
+            "draggable",
         ],
         "Listbox" => &[
             "option",
@@ -1331,8 +1342,10 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "virtualized",
             "viewport_item_count",
             "overscan_count",
+            "draggable",
             "on_select",
             "on_toggle",
+            "on_move",
             "items",
             "state",
             "render_plan",
@@ -5690,6 +5703,114 @@ fn tree_runtime_typeahead_focuses_visible_matching_row(cx: &mut open_gpui::TestA
     );
 }
 
+#[open_gpui::test]
+fn tree_runtime_drag_move_emits_controlled_payload(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        moves: Rc<RefCell<Vec<TreeMove>>>,
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let moves = self.moves.clone();
+            let selections = self.selections.clone();
+            let tree = Tree::new(
+                "runtime-drag-tree",
+                "Runtime drag tree",
+                vec![
+                    TreeItemDescriptor::new("root", "Root")
+                        .expanded(true)
+                        .child(TreeItemDescriptor::new("child", "Child"))
+                        .child(TreeItemDescriptor::new("peer", "Peer")),
+                    TreeItemDescriptor::new("sibling", "Sibling"),
+                ],
+            )
+            .with_size(Size::Small)
+            .default_focused("root")
+            .draggable(true)
+            .on_select(move |selection, _, _| {
+                selections.borrow_mut().push(selection.value().to_owned());
+            })
+            .on_move(move |tree_move, _, _| {
+                moves.borrow_mut().push(tree_move);
+            });
+
+            div()
+                .size_full()
+                .child(div().w(px(320.0)).h(px(220.0)).child(tree))
+        }
+    }
+
+    let moves = Rc::new(RefCell::new(Vec::new()));
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        moves: moves.clone(),
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let child = cx
+        .debug_bounds("tree:runtime-drag-tree:item:child")
+        .expect("expanded child row should render");
+    cx.simulate_click(child.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(
+        selections.borrow().as_slice(),
+        ["child".to_owned()],
+        "enabling tree drag affordances should not break regular row clicks"
+    );
+    assert!(
+        moves.borrow().is_empty(),
+        "regular clicks should not emit controlled tree moves"
+    );
+    selections.borrow_mut().clear();
+
+    let source = cx
+        .debug_bounds("tree:runtime-drag-tree:item:child")
+        .expect("child row should remain rendered")
+        .center();
+    let target = cx
+        .debug_bounds("tree:runtime-drag-tree:drop:before:sibling")
+        .expect("before-sibling drop zone should render")
+        .center();
+
+    cx.simulate_mouse_down(source, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(source.x + px(18.0), source.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(target, MouseButton::Left, Default::default());
+    cx.simulate_mouse_up(target, MouseButton::Left, Default::default());
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let moves = moves.borrow();
+    assert_eq!(
+        moves.len(),
+        1,
+        "expected one controlled move after dropping child before sibling"
+    );
+    let tree_move = &moves[0];
+    assert_eq!(tree_move.value(), "child");
+    assert_eq!(tree_move.label(), "Child");
+    assert_eq!(tree_move.source_parent_value(), Some("root"));
+    assert_eq!(tree_move.position(), TreeDropPosition::Before);
+    assert_eq!(tree_move.target().target_value(), "sibling");
+    assert_eq!(tree_move.target_parent_value(), None);
+    assert_eq!(tree_move.sibling_anchor_value(), Some("sibling"));
+    assert!(
+        selections.borrow().is_empty(),
+        "drag drops should not also emit row selections"
+    );
+}
+
 #[test]
 fn table_header_action_cycles_sorting_without_render_coupling() {
     let unsorted = Table::new("sort-cycle", "Sort cycle", sample_table_state(8))
@@ -6238,6 +6359,26 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         2,
         1,
     );
+    let move_items = [
+        root::TreeItemDescriptor::new("root", "Root")
+            .expanded(true)
+            .child(root::TreeItemDescriptor::new("child", "Child")),
+        root::TreeItemDescriptor::new("sibling", "Sibling"),
+    ];
+    let move_state: root::TreeState =
+        root::TreeState::resolve(Size::Medium, "Move tree", None, None, move_items.clone());
+    let root_tree_move: root::TreeMove = move_state
+        .move_for_drop("child", "sibling", root::TreeDropPosition::Before)
+        .expect("public Tree move payload should resolve");
+    let _root_tree_move_target: &root::TreeMoveTarget = root_tree_move.target();
+    let prelude_tree_position: prelude::TreeDropPosition = prelude::TreeDropPosition::Inside;
+    let _direct_tree_move: TreeMove = root_tree_move.clone();
+    let _direct_tree_move_target: &TreeMoveTarget = root_tree_move.target();
+    let moved_tree = root::apply_tree_move(move_items, &root_tree_move)
+        .expect("public apply_tree_move helper should apply valid payload");
+    let _direct_moved_tree = apply_tree_move(moved_tree.clone(), &root_tree_move);
+    let prelude_move_state: prelude::TreeState =
+        prelude::TreeState::resolve(Size::Medium, "Move tree", None, None, moved_tree);
     let root_virtualized_state: root::VirtualizedListState =
         root::VirtualizedListState::resolve(Size::Small, false, 12, Some(4), Some(4), Some(3));
     let prelude_virtualized_state: prelude::VirtualizedListState =
@@ -6358,6 +6499,12 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     assert_eq!(root_tree_plan.rows()[0].render_key(), "0:root");
     assert_eq!(prelude_tree_plan.virtualizer().count(), 1);
     assert_eq!(direct_tree_plan.rendered_row_count(), 1);
+    assert_eq!(root_tree_move.position(), TreeDropPosition::Before);
+    assert_eq!(root_tree_move.target_parent_value(), None);
+    assert_eq!(root_tree_move.sibling_anchor_value(), Some("sibling"));
+    assert_eq!(prelude_tree_position.as_str(), "inside");
+    assert_eq!(prelude_move_state.items()[0].value(), "root");
+    assert_eq!(prelude_move_state.items()[1].value(), "child");
     assert_eq!(
         root_virtualized_state.navigation_target("pagedown"),
         Some(7)
@@ -9955,6 +10102,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_close",
         "on_cell_edit_change",
         "on_column_sizing_change",
+        "on_move",
         "on_open_change",
         "on_query_change",
         "on_row_activate",
@@ -10065,6 +10213,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
     assert_inventory_contains_default_seed("Tree", "default_selected", "selected");
     assert_inventory_contains_default_seed("Tree", "default_focused", "focused");
     assert_inventory_contains_callback("Tree", "on_toggle", "TreeToggle");
+    assert_inventory_contains_callback("Tree", "on_move", "TreeMove");
     assert_inventory_contains_default_seed(
         "VirtualizedList",
         "default_active_index",
