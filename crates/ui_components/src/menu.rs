@@ -1258,6 +1258,11 @@ fn menu_item_element(
             } else {
                 None
             };
+            let hover_focusable = item_state.focusable();
+            let hover_path = item_state.path().to_vec();
+            let hover_value = item_state.value().to_owned();
+            let hover_submenu_navigation = submenu_navigation.clone();
+            let hover_runtime = runtime.clone();
 
             div()
                 .id(format!("{debug_prefix}-item:{item_path_key}"))
@@ -1295,6 +1300,17 @@ fn menu_item_element(
                     this.cursor_pointer()
                         .hover(move |style| {
                             style.bg(ThemeResolver::resolve(colors.item_hover_background()))
+                        })
+                        .on_hover(move |hovered, _window, cx| {
+                            if *hovered && hover_focusable {
+                                update_menu_hover_target(
+                                    hover_runtime.clone(),
+                                    hover_path.clone(),
+                                    hover_value.clone(),
+                                    hover_submenu_navigation.clone(),
+                                    cx,
+                                );
+                            }
                         })
                         .on_click(move |_event: &ClickEvent, window, cx| {
                             cx.stop_propagation();
@@ -1340,6 +1356,31 @@ fn menu_item_element(
                 .into_any_element()
         }
     }
+}
+
+fn update_menu_hover_target(
+    runtime: open_gpui::Entity<MenuRuntime>,
+    focused_path: Vec<String>,
+    focused_value: String,
+    submenu_navigation: Option<MenuSubmenuNavigation>,
+    cx: &mut App,
+) {
+    runtime.update(cx, |runtime, _| {
+        if let Some(submenu_navigation) = submenu_navigation {
+            runtime.open_path = submenu_navigation.open_path().to_vec();
+            runtime.focused_path = Some(submenu_navigation.focused_path().to_vec());
+            runtime.focused_value = Some(submenu_navigation.focused_value().to_owned());
+        } else if !runtime.open_path.is_empty()
+            && !focused_path.starts_with(runtime.open_path.as_slice())
+        {
+            runtime.open_path = focused_path[..focused_path.len().saturating_sub(1)].to_vec();
+            runtime.focused_path = Some(focused_path.clone());
+            runtime.focused_value = Some(focused_value);
+        } else {
+            runtime.focused_path = Some(focused_path);
+            runtime.focused_value = Some(focused_value);
+        }
+    });
 }
 
 /// A concrete GPUI menu item.

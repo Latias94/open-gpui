@@ -136,8 +136,8 @@ placement preference, resolved metrics, token intents, and menu layer state. `Co
 reuses the same item, submenu, typeahead, scrollability, and roving focus model while adding a point
 anchor and renderer-neutral placement input sized from the visible menu surface. Keyboard and
 pointer activation both invoke item-level selection handlers before component-level selection
-handlers. Hover corridor submenu opening, menu bars, application menu integration, global command
-dispatch, and native OS menu bridging remain follow-up work.
+handlers. Hover-open submenu affordance is now implemented for menu items; menubars, application
+menu integration, global command dispatch, and native OS menu bridging remain follow-up work.
 
 The Overlay page has its own product catalog instead of being merged into the Components page.
 `open_gpui_ui_foundation_gallery::pages::overlay::OVERLAY_CATALOG` lists Tooltip, HoverCard,

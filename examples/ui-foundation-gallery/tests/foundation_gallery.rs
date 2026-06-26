@@ -3843,6 +3843,52 @@ fn overlay_gallery_smoke_closes_menu_from_escape_and_outside_press(
 }
 
 #[open_gpui::test]
+fn overlay_gallery_smoke_opens_menu_submenu_from_hover(cx: &mut open_gpui::TestAppContext) {
+    let cx = open_overlay_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:overlay-menu-sample:rich-items");
+    click(cx, "menu:overlay-menu-demo:rich-items:trigger");
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort")
+            .is_some(),
+        "expected the rich menu submenu trigger to render after opening the menu"
+    );
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
+            .is_none(),
+        "expected rich menu submenu child to start hidden before hover"
+    );
+
+    let sort = bounds(cx, "menu:overlay-menu-demo:rich-items:item:3:sort").center();
+    cx.simulate_mouse_move(sort, None, Default::default());
+    redraw(cx);
+
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
+            .is_some(),
+        "expected hovering the rich menu submenu trigger to open its child rows"
+    );
+
+    let child = bounds(cx, "menu:overlay-menu-demo:rich-items:item:3:sort/0:name").center();
+    cx.simulate_mouse_move(child, None, Default::default());
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
+            .is_some(),
+        "expected moving into the submenu child to keep the branch open"
+    );
+
+    let root_item = bounds(cx, "menu:overlay-menu-demo:rich-items:item:0:show-hidden").center();
+    cx.simulate_mouse_move(root_item, None, Default::default());
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
+            .is_none(),
+        "expected hovering another root item to close the rich menu submenu branch"
+    );
+}
+
+#[open_gpui::test]
 fn overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses(
     cx: &mut open_gpui::TestAppContext,
 ) {
