@@ -1544,7 +1544,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(sidebars[2].state.scrollable());
     assert!(sidebars[2].state.items().len() > 8);
 
-    assert_eq!(trees.len(), 2);
+    assert_eq!(trees.len(), 3);
     let tree = &trees[0];
     assert_eq!(tree.id, "document-outline");
     assert_eq!(tree.state.role(), Role::Tree);
@@ -1579,6 +1579,20 @@ fn components_page_samples_expose_component_metadata() {
             .item_by_value("remote-build")
             .is_some_and(|item| item.children_load_failed()
                 && item.children_load_state().message() == Some("Network unavailable"))
+    );
+    let release_tree = &trees[2];
+    assert_eq!(release_tree.id, "release-outline");
+    assert!(release_tree.virtualized);
+    assert_eq!(release_tree.viewport_item_count, 8);
+    assert_eq!(release_tree.overscan_count, 4);
+    assert_eq!(release_tree.state.items().len(), 240);
+    let release_tree_plan = release_tree.render_plan();
+    assert_eq!(release_tree_plan.virtualizer().count(), 240);
+    assert_eq!(release_tree_plan.visible_row_count(), 8);
+    assert_eq!(release_tree_plan.rendered_row_count(), 12);
+    assert_eq!(
+        release_tree_plan.rows()[0].render_key(),
+        "0:release-node-0000"
     );
 
     assert_eq!(listboxes.len(), 2);
@@ -6193,6 +6207,43 @@ fn components_gallery_smoke_tree_card_wheel_does_not_leak_to_page(
     assert!(
         item_after.top() < item_before.top(),
         "expected Tree card wheel input to move the inner viewport; before={item_before:?} after={item_after:?}"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_virtualized_tree_scrolls_inside_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE: &str = "gallery:component-tree-sample:release-outline";
+    const ROOT: &str = "tree:component-tree:release-outline:item:release-node-0000";
+    const LAST: &str = "tree:component-tree:release-outline:item:release-node-0239";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    let tree_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Tree")
+        .unwrap_or_else(|| panic!("expected catalog entry `Tree`"));
+    focus_components_catalog_entry(&shell, cx, tree_entry);
+
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    let sample_before = bounds(cx, SAMPLE);
+    assert!(cx.debug_bounds(ROOT).is_some());
+    assert!(cx.debug_bounds(LAST).is_none());
+
+    click(cx, ROOT);
+    redraw(cx);
+    cx.simulate_keystrokes("end");
+    redraw(cx);
+    let sample_after = bounds(cx, SAMPLE);
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected virtualized Tree keyboard navigation to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert!(
+        cx.debug_bounds(LAST).is_none(),
+        "expected the far Tree row to remain outside the initial render window after End"
     );
 }
 

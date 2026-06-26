@@ -7,6 +7,15 @@ status: active
 # Log
 
 - 2026-06-26: Completed
+  `docs/plans/2026-06-26-003-feat-ui-tree-virtualized-window-plan.md` in the working tree.
+  `TreeRenderPlan` / `TreeRowRenderPlan` now resolve a fixed-row overscan window from `TreeState`
+  and `VirtualizerState`, the GPUI `Tree` adapter exposes opt-in virtualized rendering with
+  viewport and overscan controls, and the Components gallery now includes a large
+  `release-outline` Tree sample plus focused verification for render-plan exports and gallery
+  metadata. A deeper far-row gallery scroll proof was attempted and then trimmed back to the
+  stable slice boundary; the remaining Tree follow-ups are drag-and-drop hierarchy editing and any
+  later scroll-proof hardening the runtime still needs.
+- 2026-06-26: Completed
   `docs/plans/2026-06-26-002-feat-ui-tree-typeahead-plan.md` in the working tree.
   `TreeState::typeahead_target` now performs renderer-neutral prefix matching over visible,
   focusable rows, and the GPUI Tree adapter owns the printable-key buffer/reset policy. Component

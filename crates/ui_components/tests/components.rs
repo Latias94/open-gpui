@@ -39,10 +39,11 @@ use open_gpui_ui_components::{
     ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
     ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
     TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeChildrenLoadState,
-    TreeItemDescriptor, VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
-    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, first_enabled,
+    TreeItemDescriptor, TreeRenderPlan, TreeRowRenderPlan, VirtualizedList,
+    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRenderPlan,
+    VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
+    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
+    VirtualizerState, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -246,7 +247,7 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             },
         ],
         legacy_seed_inputs: &[],
-        policy_hints: &[],
+        policy_hints: &["virtualized", "viewport_item_count", "overscan_count"],
         callbacks: &[
             CallbackApi {
                 name: "on_select",
@@ -1010,7 +1011,13 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
         "Toggle" => &["variant", "disabled"],
         "Toolbar" => &["disabled", "item", "items"],
         "Sidebar" => &["disabled", "section", "sections"],
-        "Tree" => &["item", "items"],
+        "Tree" => &[
+            "item",
+            "items",
+            "virtualized",
+            "viewport_item_count",
+            "overscan_count",
+        ],
         "Listbox" => &[
             "option",
             "options",
@@ -1321,10 +1328,14 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "item",
             "default_selected",
             "default_focused",
+            "virtualized",
+            "viewport_item_count",
+            "overscan_count",
             "on_select",
             "on_toggle",
             "items",
             "state",
+            "render_plan",
         ],
         "Listbox" => &[
             "new",
@@ -6178,13 +6189,19 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     let root_tree: root::Tree =
         root::Tree::new("root-tree", "Root tree", [root_tree_descriptor.clone()])
             .default_selected("root")
-            .default_focused("root");
+            .default_focused("root")
+            .virtualized(true)
+            .viewport_item_count(2)
+            .overscan_count(1);
     let prelude_tree: prelude::Tree = prelude::Tree::new(
         "prelude-tree",
         "Prelude tree",
         [prelude::TreeItemDescriptor::new("root", "Root")],
     )
-    .default_focused("root");
+    .default_focused("root")
+    .virtualized(true)
+    .viewport_item_count(2)
+    .overscan_count(1);
     let root_tree_state: root::TreeState = root::TreeState::resolve(
         Size::Medium,
         "Tree",
@@ -6194,6 +6211,33 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     );
     let prelude_tree_state: prelude::TreeState =
         prelude::TreeState::resolve(Size::Medium, "Tree", None, None, [prelude_tree_descriptor]);
+    let root_tree_plan: root::TreeRenderPlan = root::TreeRenderPlan::resolve(
+        "root-tree-plan",
+        "Root tree plan",
+        root_tree_state.clone(),
+        ui_px(0.0),
+        ui_px(32.0),
+        2,
+        1,
+    );
+    let prelude_tree_plan: prelude::TreeRenderPlan = prelude::TreeRenderPlan::resolve(
+        "prelude-tree-plan",
+        "Prelude tree plan",
+        prelude_tree_state.clone(),
+        ui_px(0.0),
+        ui_px(32.0),
+        2,
+        1,
+    );
+    let direct_tree_plan: TreeRenderPlan = TreeRenderPlan::resolve(
+        "direct-tree-plan",
+        "Direct tree plan",
+        root_tree_state.clone(),
+        ui_px(0.0),
+        ui_px(32.0),
+        2,
+        1,
+    );
     let root_virtualized_state: root::VirtualizedListState =
         root::VirtualizedListState::resolve(Size::Small, false, 12, Some(4), Some(4), Some(3));
     let prelude_virtualized_state: prelude::VirtualizedListState =
@@ -6255,7 +6299,12 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     let root_virtualized_component_plan = root_virtualized_list.state();
     let prelude_virtualized_component_plan = prelude_virtualized_list.state();
     let root_tree_component_state = root_tree.state();
+    let root_tree_component_plan = root_tree.render_plan(ui_px(0.0), ui_px(32.0));
     let prelude_tree_component_state = prelude_tree.state();
+    let prelude_tree_component_plan = prelude_tree.render_plan(ui_px(0.0), ui_px(32.0));
+    let _root_tree_row: &root::TreeRowRenderPlan = root_tree_plan.rows().first().unwrap();
+    let _prelude_tree_row: &prelude::TreeRowRenderPlan = prelude_tree_plan.rows().first().unwrap();
+    let _direct_tree_row: &TreeRowRenderPlan = direct_tree_plan.rows().first().unwrap();
     let _root_tree_toggle: Option<root::TreeToggle> =
         root::TreeToggle::from_item(&root_tree_state.items()[0]);
     let _prelude_tree_toggle: Option<prelude::TreeToggle> =
@@ -6286,6 +6335,8 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     assert_eq!(root_tree_component_state.role(), Role::Tree);
     assert_eq!(prelude_tree_component_state.item_role(), Role::TreeItem);
     assert_eq!(root_tree_component_state.focused_value(), Some("root"));
+    assert_eq!(root_tree_component_plan.role(), Role::Tree);
+    assert_eq!(prelude_tree_component_plan.row_role(), Role::TreeItem);
     assert_eq!(root_tree_state.items().len(), 1);
     assert_eq!(prelude_tree_state.items().len(), 1);
     assert_eq!(root_tree_state.role(), Role::Tree);
@@ -6304,6 +6355,9 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         prelude::tree_navigation_target("home", 0, &[false]),
         Some(0)
     );
+    assert_eq!(root_tree_plan.rows()[0].render_key(), "0:root");
+    assert_eq!(prelude_tree_plan.virtualizer().count(), 1);
+    assert_eq!(direct_tree_plan.rendered_row_count(), 1);
     assert_eq!(
         root_virtualized_state.navigation_target("pagedown"),
         Some(7)

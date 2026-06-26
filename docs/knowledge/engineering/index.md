@@ -20,6 +20,7 @@
 * [Menu runtime focus regression verification](verification/menu-runtime-focus-regression-20260620.md) - Verification evidence for the menu/context-menu runtime focus repair.
 * [Gallery scroll and viewport hardening verification](verification/gallery-scroll-viewport-hardening-20260621.md) - Verification evidence for navigation rail, ScrollArea, and vertical Tabs scroll regressions.
 * [Tree renderer productization verification](verification/tree-renderer-productization-20260622.md) - Verification evidence for the official Tree renderer, gallery sample, and nested scroll smokes.
+* [Tree virtualized window verification](verification/tree-virtualized-window-20260626.md) - Verification evidence for the opt-in Tree virtualized render window, API export coverage, and gallery metadata proof.
 * [Table sticky pinned columns verification](verification/table-sticky-pinned-columns-20260623.md) - Verification evidence for sticky pinned Table center scrolling and nested vertical containment.
 * [Table exact-size virtualizer window verification](verification/table-exact-size-virtualizer-window-20260623.md) - Verification evidence for the exact-size virtualizer window used by Table center-column virtualization.
 * [Table custom aggregation callbacks completion](progress/2026-06-24-table-custom-aggregation-callbacks-plan.md) - Durable handoff for the custom aggregation callbacks slice.

@@ -205,7 +205,8 @@ pub use tooltip::{
 };
 pub use tree::{
     Tree, TreeChildrenLoadState, TreeFocusTarget, TreeItemDescriptor, TreeItemState,
-    TreeKeyboardAction, TreeMetrics, TreeSelection, TreeState, TreeToggle, tree_navigation_target,
+    TreeKeyboardAction, TreeMetrics, TreeRenderPlan, TreeRowRenderPlan, TreeSelection, TreeState,
+    TreeToggle, tree_navigation_target,
 };
 pub use virtualized_list::{
     VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,

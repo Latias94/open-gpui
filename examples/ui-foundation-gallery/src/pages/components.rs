@@ -23,9 +23,9 @@ use open_gpui_ui_components::{
     TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
     TextInputDisplayMode, TextInputState, Textarea, TextareaState, Toggle, ToggleState,
     ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
-    Tree, TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListItemDescriptor,
-    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState,
+    Tree, TreeItemDescriptor, TreeRenderPlan, TreeState, VirtualizedList,
+    VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRenderPlan,
+    VirtualizedListScrollStrategy, VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -980,13 +980,17 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
         summary: "Tree composes renderer-neutral hierarchy state with GPUI focus, expansion, selection, and local scroll ownership.",
         evidence: &[
             "Tree::state",
+            "Tree::render_plan",
+            "TreeRenderPlan",
             "TreeState::keyboard_action_for_key",
             "TreeState::typeahead_target",
+            "tree_render_plan_virtualizes_visible_rows_with_stable_metadata",
             "tree_runtime_expands_reveals_and_selects_items",
             "tree_runtime_typeahead_focuses_visible_matching_row",
             "components_gallery_smoke_tree_expands_and_selects",
             "components_gallery_smoke_tree_lazy_branches_emit_load_metadata",
             "components_gallery_smoke_tree_card_wheel_does_not_leak_to_page",
+            "components_gallery_smoke_virtualized_tree_scrolls_inside_sample",
         ],
     },
     ComponentConformanceGate {
@@ -1168,6 +1172,12 @@ pub struct TreeSample {
     pub state: TreeState,
     /// Visual size applied to the concrete tree.
     pub size: Size,
+    /// Whether the concrete tree uses fixed-row virtualized rendering.
+    pub virtualized: bool,
+    /// Fallback virtualized viewport item count before layout measurement.
+    pub viewport_item_count: usize,
+    /// Virtualized overscan item budget.
+    pub overscan_count: usize,
 }
 
 /// One selection captured from the rendered gallery `Tree` sample.
@@ -2032,7 +2042,10 @@ impl TreeSample {
             self.title,
             self.items.clone(),
         )
-        .with_size(self.size);
+        .with_size(self.size)
+        .virtualized(self.virtualized)
+        .viewport_item_count(self.viewport_item_count)
+        .overscan_count(self.overscan_count);
 
         if let Some(selected) = self.state.selected_value() {
             tree = tree.default_selected(selected);
@@ -2042,6 +2055,14 @@ impl TreeSample {
         }
 
         tree
+    }
+
+    /// Resolves the sample's virtualized render plan at the viewport origin.
+    pub fn render_plan(&self) -> TreeRenderPlan {
+        self.build_tree().render_plan(
+            UiPx::ZERO,
+            self.state.metrics().row_height() * self.viewport_item_count as f32,
+        )
     }
 }
 
@@ -3385,14 +3406,14 @@ pub fn empty_state_samples(tokens: ThemeTokens) -> [EmptyStateSample; 2] {
     )
 }
 
-static TREE_SAMPLES: LazyLock<[TreeSample; 2]> = LazyLock::new(build_tree_samples);
+static TREE_SAMPLES: LazyLock<[TreeSample; 3]> = LazyLock::new(build_tree_samples);
 
 /// Returns tree samples backed by the concrete renderer and hierarchy contract.
 pub fn tree_samples(_tokens: ThemeTokens) -> &'static [TreeSample] {
     TREE_SAMPLES.as_slice()
 }
 
-fn build_tree_samples() -> [TreeSample; 2] {
+fn build_tree_samples() -> [TreeSample; 3] {
     let size = Size::Small;
     let items = document_outline_tree_sample_items();
     let state = TreeState::resolve(
@@ -3412,6 +3433,15 @@ fn build_tree_samples() -> [TreeSample; 2] {
         remote_items.clone(),
     );
 
+    let release_items = virtualized_release_tree_sample_items();
+    let release_state = TreeState::resolve(
+        size,
+        "Release outline",
+        Some("release-node-0000"),
+        Some("release-node-0000"),
+        release_items.clone(),
+    );
+
     [
         TreeSample {
             id: "document-outline",
@@ -3421,6 +3451,9 @@ fn build_tree_samples() -> [TreeSample; 2] {
             items,
             state,
             size,
+            virtualized: false,
+            viewport_item_count: 12,
+            overscan_count: 4,
         },
         TreeSample {
             id: "remote-workspace",
@@ -3430,6 +3463,21 @@ fn build_tree_samples() -> [TreeSample; 2] {
             items: remote_items,
             state: remote_state,
             size,
+            virtualized: false,
+            viewport_item_count: 12,
+            overscan_count: 4,
+        },
+        TreeSample {
+            id: "release-outline",
+            title: "Release outline",
+            summary: "Large visible hierarchy rendered through the Tree fixed-row virtual window.",
+            badge: "virtual tree",
+            items: release_items,
+            state: release_state,
+            size,
+            virtualized: true,
+            viewport_item_count: 8,
+            overscan_count: 4,
         },
     ]
 }
@@ -3492,6 +3540,17 @@ fn remote_workspace_tree_sample_items() -> Vec<TreeItemDescriptor> {
                     .child(TreeItemDescriptor::new("remote-readme", "README.md")),
             ),
     ]
+}
+
+fn virtualized_release_tree_sample_items() -> Vec<TreeItemDescriptor> {
+    (0..240)
+        .map(|index| {
+            TreeItemDescriptor::new(
+                format!("release-node-{index:04}"),
+                format!("Release node {index:04}"),
+            )
+        })
+        .collect()
 }
 
 fn document_outline_tree_items() -> Vec<TreeItemDescriptor> {

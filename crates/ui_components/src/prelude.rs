@@ -116,7 +116,8 @@ pub use crate::tooltip::{
 };
 pub use crate::tree::{
     Tree, TreeChildrenLoadState, TreeFocusTarget, TreeItemDescriptor, TreeItemState,
-    TreeKeyboardAction, TreeMetrics, TreeSelection, TreeState, TreeToggle, tree_navigation_target,
+    TreeKeyboardAction, TreeMetrics, TreeRenderPlan, TreeRowRenderPlan, TreeSelection, TreeState,
+    TreeToggle, tree_navigation_target,
 };
 pub use crate::virtualized_list::{
     VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,

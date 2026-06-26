@@ -5,11 +5,14 @@ use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use crate::scroll_area::ScrollArea;
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
-    Window, div, point, px, rgb,
+    AnyElement, App, ClickEvent, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
+    KeyDownEvent, ParentElement, RenderOnce, ScrollHandle, SharedString,
+    StatefulInteractiveElement, Styled, Window, div, point, px, rgb,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, UiPx, ui_px};
+use open_gpui_ui_core::{
+    Role, Sizable, Size, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement,
+    VirtualizerResolvedState, VirtualizerState, ui_px,
+};
 use std::{
     collections::BTreeMap,
     rc::Rc,
@@ -22,6 +25,8 @@ type TreeSelectHandler = Rc<dyn Fn(TreeSelection, &mut Window, &mut App)>;
 type TreeToggleHandler = Rc<dyn Fn(TreeToggle, &mut Window, &mut App)>;
 
 const TREE_TYPEAHEAD_RESET: Duration = Duration::from_millis(700);
+const DEFAULT_TREE_VIEWPORT_ITEM_COUNT: usize = 12;
+const DEFAULT_TREE_OVERSCAN_COUNT: usize = 4;
 
 /// Caller-owned child loading metadata for a tree item.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -710,6 +715,215 @@ impl TreeState {
     }
 }
 
+/// One row in a resolved virtualized tree render window.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TreeRowRenderPlan {
+    item: TreeItemState,
+    render_key: String,
+    measurement: VirtualizerItemMeasurement,
+}
+
+impl TreeRowRenderPlan {
+    fn new(
+        item: TreeItemState,
+        render_key: String,
+        measurement: VirtualizerItemMeasurement,
+    ) -> Self {
+        Self {
+            item,
+            render_key,
+            measurement,
+        }
+    }
+
+    /// Returns the resolved tree item for this row.
+    pub const fn item(&self) -> &TreeItemState {
+        &self.item
+    }
+
+    /// Returns the renderer-stable row key.
+    pub fn render_key(&self) -> &str {
+        &self.render_key
+    }
+
+    /// Returns the virtualizer measurement for this row.
+    pub const fn measurement(&self) -> &VirtualizerItemMeasurement {
+        &self.measurement
+    }
+
+    /// Returns the zero-based visible item index.
+    pub const fn index(&self) -> usize {
+        self.item.index()
+    }
+
+    /// Returns the stable item value.
+    pub fn value(&self) -> &str {
+        self.item.value()
+    }
+
+    /// Returns the visible item label.
+    pub fn label(&self) -> &str {
+        self.item.label()
+    }
+
+    /// Returns the zero-based hierarchy depth.
+    pub const fn depth(&self) -> usize {
+        self.item.depth()
+    }
+
+    /// Returns the virtual row start offset.
+    pub const fn virtual_start(&self) -> UiPx {
+        self.measurement.start()
+    }
+
+    /// Returns the virtual row size.
+    pub const fn virtual_size(&self) -> UiPx {
+        self.measurement.size()
+    }
+
+    /// Returns whether this row is selected.
+    pub const fn selected(&self) -> bool {
+        self.item.selected()
+    }
+
+    /// Returns whether this row currently has roving focus.
+    pub const fn focused(&self) -> bool {
+        self.item.focused()
+    }
+}
+
+/// Fully resolved render contract for a virtualized tree.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TreeRenderPlan {
+    tree_id: String,
+    label: String,
+    state: TreeState,
+    metrics: TreeMetrics,
+    virtualizer: VirtualizerResolvedState,
+    rows: Vec<TreeRowRenderPlan>,
+    role: Role,
+    row_role: Role,
+}
+
+impl TreeRenderPlan {
+    /// Resolves a fixed-row virtualized tree render plan.
+    pub fn resolve(
+        tree_id: impl Into<String>,
+        label: impl Into<String>,
+        state: TreeState,
+        scroll_offset: UiPx,
+        viewport_extent: UiPx,
+        viewport_item_count: usize,
+        overscan_count: usize,
+    ) -> Self {
+        let metrics = state.metrics();
+        let viewport_extent =
+            resolve_tree_viewport_extent(metrics, viewport_extent, viewport_item_count);
+        let virtualizer = VirtualizerState::new(state.items().len(), metrics.row_height())
+            .with_viewport_extent(viewport_extent)
+            .with_overscan(overscan_count)
+            .with_scroll_offset(nonnegative_px(scroll_offset))
+            .resolve_fixed_window(|index| {
+                let key = state
+                    .items()
+                    .get(index)
+                    .map(|item| tree_row_render_key(item, index))
+                    .unwrap_or_else(|| index.to_string());
+
+                VirtualizerItemKey::new(key)
+            });
+        let rows = virtualizer
+            .items()
+            .iter()
+            .filter_map(|measurement| {
+                state.items().get(measurement.index()).cloned().map(|item| {
+                    TreeRowRenderPlan::new(
+                        item.clone(),
+                        tree_row_render_key(&item, measurement.index()),
+                        measurement.clone(),
+                    )
+                })
+            })
+            .collect();
+
+        Self {
+            tree_id: tree_id.into(),
+            label: label.into(),
+            state,
+            metrics,
+            virtualizer,
+            rows,
+            role: Role::Tree,
+            row_role: Role::TreeItem,
+        }
+    }
+
+    /// Returns the stable tree id.
+    pub fn tree_id(&self) -> &str {
+        &self.tree_id
+    }
+
+    /// Returns the accessible tree label.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Returns the resolved renderer-neutral tree state.
+    pub const fn state(&self) -> &TreeState {
+        &self.state
+    }
+
+    /// Returns the resolved metrics.
+    pub const fn metrics(&self) -> TreeMetrics {
+        self.metrics
+    }
+
+    /// Returns the resolved virtualizer state.
+    pub const fn virtualizer(&self) -> &VirtualizerResolvedState {
+        &self.virtualizer
+    }
+
+    /// Returns rows in render order after overscan.
+    pub fn rows(&self) -> &[TreeRowRenderPlan] {
+        &self.rows
+    }
+
+    /// Returns the accessibility role for the root tree container.
+    pub const fn role(&self) -> Role {
+        self.role
+    }
+
+    /// Returns the accessibility role for row containers.
+    pub const fn row_role(&self) -> Role {
+        self.row_role
+    }
+
+    /// Returns the number of rows rendered after overscan.
+    pub fn rendered_row_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Returns the number of rows visible before overscan.
+    pub fn visible_row_count(&self) -> usize {
+        self.virtualizer.visible_items().len()
+    }
+
+    /// Returns the overscan item budget.
+    pub const fn overscan_count(&self) -> usize {
+        self.virtualizer.overscan()
+    }
+
+    /// Returns the focused row when it is inside the rendered window.
+    pub fn focused_row(&self) -> Option<&TreeRowRenderPlan> {
+        self.rows.iter().find(|row| row.focused())
+    }
+
+    /// Returns the selected row when it is inside the rendered window.
+    pub fn selected_row(&self) -> Option<&TreeRowRenderPlan> {
+        self.rows.iter().find(|row| row.selected())
+    }
+}
+
 /// Resolves tree navigation for APG-style key names.
 pub fn tree_navigation_target(key: &str, current: usize, disabled: &[bool]) -> Option<usize> {
     match key {
@@ -797,6 +1011,9 @@ pub struct Tree {
     size: Size,
     selected_value: Option<String>,
     focused_value: Option<String>,
+    virtualized: bool,
+    viewport_item_count: usize,
+    overscan_count: usize,
     on_select: Option<TreeSelectHandler>,
     on_toggle: Option<TreeToggleHandler>,
 }
@@ -815,6 +1032,9 @@ impl Tree {
             size: Size::Medium,
             selected_value: None,
             focused_value: None,
+            virtualized: false,
+            viewport_item_count: DEFAULT_TREE_VIEWPORT_ITEM_COUNT,
+            overscan_count: DEFAULT_TREE_OVERSCAN_COUNT,
             on_select: None,
             on_toggle: None,
         }
@@ -835,6 +1055,24 @@ impl Tree {
     /// Applies the default focused item value for adapter-owned runtime state.
     pub fn default_focused(mut self, value: impl Into<SharedString>) -> Self {
         self.focused_value = Some(value.into().to_string());
+        self
+    }
+
+    /// Enables or disables fixed-row virtualized rendering.
+    pub fn virtualized(mut self, virtualized: bool) -> Self {
+        self.virtualized = virtualized;
+        self
+    }
+
+    /// Applies the fallback viewport item count used before the viewport is measured.
+    pub fn viewport_item_count(mut self, viewport_item_count: usize) -> Self {
+        self.viewport_item_count = viewport_item_count.max(1);
+        self
+    }
+
+    /// Applies the virtualized overscan item budget.
+    pub fn overscan_count(mut self, overscan_count: usize) -> Self {
+        self.overscan_count = overscan_count;
         self
     }
 
@@ -870,6 +1108,19 @@ impl Tree {
         )
     }
 
+    /// Returns a fixed-row virtualized render plan from the builder seed.
+    pub fn render_plan(&self, scroll_offset: UiPx, viewport_extent: UiPx) -> TreeRenderPlan {
+        TreeRenderPlan::resolve(
+            self.id.clone(),
+            self.label.to_string(),
+            self.state(),
+            scroll_offset,
+            viewport_extent,
+            self.viewport_item_count,
+            self.overscan_count,
+        )
+    }
+
     fn resolve_state(
         &self,
         items: Vec<TreeItemDescriptor>,
@@ -902,6 +1153,9 @@ impl RenderOnce for Tree {
             size,
             selected_value,
             focused_value,
+            virtualized,
+            viewport_item_count,
+            overscan_count,
             on_select,
             on_toggle,
         } = self;
@@ -948,29 +1202,42 @@ impl RenderOnce for Tree {
                 .and_then(|index| focus_handles.get(index).cloned().flatten());
             let scroll_handle = runtime.read(cx).scroll_handle.clone();
             let metrics = state.metrics();
-            let rows = state.items().to_vec();
-            let content = div()
-                .debug_selector({
-                    let debug_id = debug_id.clone();
-                    move || format!("tree:{debug_id}:content")
-                })
-                .flex()
-                .flex_col()
-                .gap_1()
-                .p(gpui_px_from_ui(ui_px(6.0)))
-                .children(rows.into_iter().enumerate().map(|(index, item)| {
-                    render_tree_item(
-                        debug_id.clone(),
-                        item,
-                        focus_handles.get(index).cloned().flatten(),
-                        metrics,
-                        runtime.clone(),
-                        scroll_handle.clone(),
-                        state.clone(),
-                        on_select.clone(),
-                        on_toggle.clone(),
-                    )
-                }));
+            let content = if virtualized {
+                let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
+                let scroll_offset =
+                    UiPx::new((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
+                let plan = TreeRenderPlan::resolve(
+                    debug_id.clone(),
+                    label.to_string(),
+                    state.clone(),
+                    scroll_offset,
+                    viewport_extent,
+                    viewport_item_count,
+                    overscan_count,
+                );
+
+                render_virtual_tree_body(
+                    debug_id.clone(),
+                    plan,
+                    focus_handles.clone(),
+                    runtime.clone(),
+                    scroll_handle.clone(),
+                    on_select.clone(),
+                    on_toggle.clone(),
+                )
+            } else {
+                render_full_tree_body(
+                    debug_id.clone(),
+                    state.items().to_vec(),
+                    focus_handles.clone(),
+                    metrics,
+                    runtime.clone(),
+                    scroll_handle.clone(),
+                    state.clone(),
+                    on_select.clone(),
+                    on_toggle.clone(),
+                )
+            };
 
             div()
                 .id(id.clone())
@@ -999,10 +1266,6 @@ impl RenderOnce for Tree {
                         cx.stop_propagation();
                     }
                 })
-                .on_scroll_wheel(|_, window, cx| {
-                    window.prevent_default();
-                    cx.stop_propagation();
-                })
                 .child(
                     div().flex_1().min_h(px(0.0)).child(
                         ScrollArea::new(format!("tree:{id}:scroll"), content)
@@ -1015,6 +1278,83 @@ impl RenderOnce for Tree {
     }
 }
 
+fn render_full_tree_body(
+    tree_id: String,
+    rows: Vec<TreeItemState>,
+    focus_handles: Vec<Option<FocusHandle>>,
+    metrics: TreeMetrics,
+    runtime: Entity<TreeRuntime>,
+    scroll_handle: ScrollHandle,
+    state: TreeState,
+    on_select: Option<TreeSelectHandler>,
+    on_toggle: Option<TreeToggleHandler>,
+) -> AnyElement {
+    div()
+        .debug_selector({
+            let tree_id = tree_id.clone();
+            move || format!("tree:{tree_id}:content")
+        })
+        .flex()
+        .flex_col()
+        .gap_1()
+        .p(gpui_px_from_ui(ui_px(6.0)))
+        .children(rows.into_iter().enumerate().map(move |(index, item)| {
+            render_tree_item(
+                tree_id.clone(),
+                item,
+                focus_handles.get(index).cloned().flatten(),
+                metrics,
+                runtime.clone(),
+                scroll_handle.clone(),
+                state.clone(),
+                on_select.clone(),
+                on_toggle.clone(),
+                None,
+            )
+        }))
+        .into_any_element()
+}
+
+fn render_virtual_tree_body(
+    tree_id: String,
+    plan: TreeRenderPlan,
+    focus_handles: Vec<Option<FocusHandle>>,
+    runtime: Entity<TreeRuntime>,
+    scroll_handle: ScrollHandle,
+    on_select: Option<TreeSelectHandler>,
+    on_toggle: Option<TreeToggleHandler>,
+) -> AnyElement {
+    let metrics = plan.metrics();
+    let state = plan.state().clone();
+    let rows = plan.rows().to_vec();
+    let total_size = plan.virtualizer().total_size();
+
+    div()
+        .debug_selector({
+            let tree_id = tree_id.clone();
+            move || format!("tree:{tree_id}:content")
+        })
+        .relative()
+        .w_full()
+        .h(gpui_px_from_ui(total_size))
+        .children(rows.into_iter().map(move |row| {
+            let index = row.index();
+            render_tree_item(
+                tree_id.clone(),
+                row.item().clone(),
+                focus_handles.get(index).cloned().flatten(),
+                metrics,
+                runtime.clone(),
+                scroll_handle.clone(),
+                state.clone(),
+                on_select.clone(),
+                on_toggle.clone(),
+                Some((row.virtual_start(), row.virtual_size())),
+            )
+        }))
+        .into_any_element()
+}
+
 fn render_tree_item(
     tree_id: String,
     item: TreeItemState,
@@ -1025,6 +1365,7 @@ fn render_tree_item(
     state: TreeState,
     on_select: Option<TreeSelectHandler>,
     on_toggle: Option<TreeToggleHandler>,
+    virtual_geometry: Option<(UiPx, UiPx)>,
 ) -> impl IntoElement {
     let item_value = item.value().to_owned();
     let item_label = item.label().to_owned();
@@ -1052,6 +1393,8 @@ fn render_tree_item(
     let indent = metrics.indent_width() * item.depth() as f32;
     let item_position = item.position_in_set();
     let item_size_of_set = item.size_of_set();
+    let virtual_start = virtual_geometry.map(|(start, _)| start);
+    let virtual_size = virtual_geometry.map(|(_, size)| size);
 
     div()
         .id(format!("tree:{tree_id}:item:{item_value}"))
@@ -1060,7 +1403,16 @@ fn render_tree_item(
             let item_value = item_value.clone();
             move || format!("tree:{tree_id}:item:{item_value}")
         })
-        .min_h(gpui_px_from_ui(metrics.row_height()))
+        .when_some(virtual_start, |this, start| {
+            this.absolute()
+                .top(gpui_px_from_ui(start))
+                .left(px(0.0))
+                .right(px(0.0))
+        })
+        .when_some(virtual_size, |this, size| this.h(gpui_px_from_ui(size)))
+        .when(virtual_size.is_none(), |this| {
+            this.min_h(gpui_px_from_ui(metrics.row_height()))
+        })
         .w_full()
         .px(gpui_px_from_ui(metrics.row_padding_x()))
         .py(gpui_px_from_ui(metrics.row_padding_y()))
@@ -1345,8 +1697,8 @@ fn tree_typeahead_key(event: &KeyDownEvent) -> Option<String> {
 }
 
 fn scroll_tree_item_into_view(scroll_handle: &ScrollHandle, state: &TreeState, index: usize) {
-    let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
     let row_height = nonnegative_px(state.metrics().row_height());
+    let viewport_extent = resolve_tree_scroll_viewport_extent(scroll_handle, row_height);
     if viewport_extent.as_f32() <= 0.0 || row_height.as_f32() <= 0.0 {
         return;
     }
@@ -1367,6 +1719,15 @@ fn scroll_tree_item_into_view(scroll_handle: &ScrollHandle, state: &TreeState, i
     let target = target.max(UiPx::ZERO).min(max_scroll);
 
     scroll_handle.set_offset(point(px(0.0), -gpui_px_from_ui(target)));
+}
+
+fn resolve_tree_scroll_viewport_extent(scroll_handle: &ScrollHandle, row_height: UiPx) -> UiPx {
+    let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
+    if viewport_extent.as_f32() > 0.0 {
+        viewport_extent
+    } else {
+        row_height * DEFAULT_TREE_VIEWPORT_ITEM_COUNT as f32
+    }
 }
 
 fn apply_tree_expanded_overrides(
@@ -1393,6 +1754,23 @@ fn apply_tree_expanded_override(
         .map(|child| apply_tree_expanded_override(child, expanded_values))
         .collect();
     item
+}
+
+fn resolve_tree_viewport_extent(
+    metrics: TreeMetrics,
+    viewport_extent: UiPx,
+    viewport_item_count: usize,
+) -> UiPx {
+    let viewport_extent = nonnegative_px(viewport_extent);
+    if viewport_extent.as_f32() > 0.0 {
+        viewport_extent
+    } else {
+        metrics.row_height() * viewport_item_count.max(1) as f32
+    }
+}
+
+fn tree_row_render_key(item: &TreeItemState, index: usize) -> String {
+    format!("{index}:{}", item.value())
 }
 
 const fn nonnegative_px(value: UiPx) -> UiPx {
@@ -1547,6 +1925,62 @@ mod tests {
             state.typeahead_target("figure 1").map(TreeItemState::value),
             None,
             "collapsed descendants should not participate in visible Tree typeahead"
+        );
+    }
+
+    #[test]
+    fn tree_render_plan_virtualizes_visible_rows_with_stable_metadata() {
+        let items = (0..100)
+            .map(|index| {
+                TreeItemDescriptor::new(format!("node-{index:04}"), format!("Node {index:04}"))
+            })
+            .collect::<Vec<_>>();
+        let state = TreeState::resolve(
+            Size::Small,
+            "Large tree",
+            Some("node-0012"),
+            Some("node-0012"),
+            items,
+        );
+        let row_height = state.metrics().row_height();
+        let plan = TreeRenderPlan::resolve(
+            "large-tree",
+            "Large tree",
+            state,
+            row_height * 10.0,
+            row_height * 5.0,
+            5,
+            4,
+        );
+
+        assert_eq!(plan.tree_id(), "large-tree");
+        assert_eq!(plan.label(), "Large tree");
+        assert_eq!(plan.role(), Role::Tree);
+        assert_eq!(plan.row_role(), Role::TreeItem);
+        assert_eq!(plan.virtualizer().count(), 100);
+        assert_eq!(
+            *plan.virtualizer().visible_range(),
+            open_gpui_ui_core::VirtualizerRange::new(10, 15)
+        );
+        assert_eq!(
+            *plan.virtualizer().overscan_range(),
+            open_gpui_ui_core::VirtualizerRange::new(8, 17)
+        );
+        assert_eq!(plan.visible_row_count(), 5);
+        assert_eq!(plan.rendered_row_count(), 9);
+        assert_eq!(plan.virtualizer().measurements().len(), 9);
+        assert_eq!(plan.rows()[0].index(), 8);
+        assert_eq!(plan.rows()[0].value(), "node-0008");
+        assert_eq!(plan.rows()[0].render_key(), "8:node-0008");
+        assert_eq!(plan.rows()[0].virtual_start(), row_height * 8.0);
+        assert_eq!(plan.rows()[0].virtual_size(), row_height);
+        assert_eq!(
+            plan.focused_row().map(TreeRowRenderPlan::value),
+            Some("node-0012")
+        );
+        assert_eq!(
+            plan.selected_row().map(TreeRowRenderPlan::value),
+            Some("node-0012")
         );
     }
 
