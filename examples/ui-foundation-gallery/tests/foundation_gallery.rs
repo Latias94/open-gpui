@@ -1544,7 +1544,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(sidebars[2].state.scrollable());
     assert!(sidebars[2].state.items().len() > 8);
 
-    assert_eq!(trees.len(), 1);
+    assert_eq!(trees.len(), 2);
     let tree = &trees[0];
     assert_eq!(tree.id, "document-outline");
     assert_eq!(tree.state.role(), Role::Tree);
@@ -1557,6 +1557,29 @@ fn components_page_samples_expose_component_metadata() {
         Some(TreeKeyboardAction::Toggle(toggle)) if toggle.value() == "paper" && toggle.expanded()
     ));
     assert_eq!(tree.build_tree().state().role(), Role::Tree);
+    let remote_tree = &trees[1];
+    assert_eq!(remote_tree.id, "remote-workspace");
+    assert_eq!(remote_tree.state.selected_value(), Some("remote-src"));
+    assert!(
+        remote_tree
+            .state
+            .item_by_value("remote-src")
+            .is_some_and(|item| item.children_unloaded() && item.loaded_child_count() == 0)
+    );
+    assert!(
+        remote_tree
+            .state
+            .item_by_value("remote-crates")
+            .is_some_and(|item| item.children_loading()
+                && item.children_load_state().message() == Some("Loading child packages"))
+    );
+    assert!(
+        remote_tree
+            .state
+            .item_by_value("remote-build")
+            .is_some_and(|item| item.children_load_failed()
+                && item.children_load_state().message() == Some("Network unavailable"))
+    );
 
     assert_eq!(listboxes.len(), 2);
     assert_eq!(listboxes[0].id, "assignee-listbox");
@@ -6025,6 +6048,106 @@ fn components_gallery_smoke_tree_expands_and_selects(cx: &mut open_gpui::TestApp
         selections,
         vec![("document-outline".to_owned(), "intro".to_owned())],
         "expected Enter to select the focused child row"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_tree_lazy_branches_emit_load_metadata(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE: &str = "gallery:component-tree-sample:remote-workspace";
+    const UNLOADED_TOGGLE: &str = "tree:component-tree:remote-workspace:toggle:remote-src";
+    const LOADING_TOGGLE: &str = "tree:component-tree:remote-workspace:toggle:remote-crates";
+    const FAILED_TOGGLE: &str = "tree:component-tree:remote-workspace:toggle:remote-build";
+    const UNLOADED_ITEM: &str = "tree:component-tree:remote-workspace:item:remote-src";
+    const LOADING_ITEM: &str = "tree:component-tree:remote-workspace:item:remote-crates";
+    const FAILED_ITEM: &str = "tree:component-tree:remote-workspace:item:remote-build";
+    const LOADING_HINT: &str = "tree:component-tree:remote-workspace:load-state:remote-crates";
+    const FAILED_HINT: &str = "tree:component-tree:remote-workspace:load-state:remote-build";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TreeSampleRuntimeLog::default());
+    let tree_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Tree")
+        .unwrap_or_else(|| panic!("expected catalog entry `Tree`"));
+    focus_components_catalog_entry(&shell, cx, tree_entry);
+
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    scroll_page_selector_into_view(&shell, cx, UNLOADED_ITEM);
+    assert!(
+        cx.debug_bounds(UNLOADED_TOGGLE).is_some(),
+        "expected unloaded remote branch to render a disclosure affordance"
+    );
+    assert!(
+        cx.debug_bounds(LOADING_TOGGLE).is_some(),
+        "expected loading remote branch to render a disclosure affordance"
+    );
+    assert!(
+        cx.debug_bounds(FAILED_TOGGLE).is_some(),
+        "expected failed remote branch to render a disclosure affordance"
+    );
+    assert!(
+        cx.debug_bounds(LOADING_HINT).is_some(),
+        "expected loading branch to expose a visible load-state hint"
+    );
+    assert!(
+        cx.debug_bounds(FAILED_HINT).is_some(),
+        "expected failed branch to expose a visible load-state hint"
+    );
+    cx.update_global::<pages::components::TreeSampleRuntimeLog, _>(|log, _| {
+        log.clear();
+    });
+
+    click(cx, UNLOADED_ITEM);
+    redraw(cx);
+    assert!(
+        cx.debug_selector_is_focused(UNLOADED_ITEM),
+        "expected unloaded branch row to receive focus before Right; focused={:?}",
+        cx.focused_debug_selector()
+    );
+    cx.simulate_keystrokes("right");
+    redraw(cx);
+    click(cx, LOADING_ITEM);
+    redraw(cx);
+    assert!(
+        cx.debug_selector_is_focused(LOADING_ITEM),
+        "expected loading branch row to receive focus before Right; focused={:?}",
+        cx.focused_debug_selector()
+    );
+    cx.simulate_keystrokes("right");
+    redraw(cx);
+    click(cx, FAILED_ITEM);
+    redraw(cx);
+    assert!(
+        cx.debug_selector_is_focused(FAILED_ITEM),
+        "expected failed branch row to receive focus before Right; focused={:?}",
+        cx.focused_debug_selector()
+    );
+    cx.simulate_keystrokes("right");
+    redraw(cx);
+
+    let toggles = cx
+        .read_global::<pages::components::TreeSampleRuntimeLog, _>(|log, _| log.toggles().to_vec());
+    assert_eq!(
+        toggles.len(),
+        2,
+        "expected unloaded and failed branches to toggle while loading branch is blocked; toggles={toggles:?}"
+    );
+    assert_eq!(toggles[0].sample_id, "remote-workspace");
+    assert_eq!(toggles[0].value, "remote-src");
+    assert!(toggles[0].expanded);
+    assert_eq!(toggles[0].loaded_child_count, 0);
+    assert_eq!(toggles[0].children_load_state, "unloaded");
+    assert_eq!(toggles[0].children_load_message, None);
+    assert_eq!(toggles[1].sample_id, "remote-workspace");
+    assert_eq!(toggles[1].value, "remote-build");
+    assert!(toggles[1].expanded);
+    assert_eq!(toggles[1].loaded_child_count, 0);
+    assert_eq!(toggles[1].children_load_state, "failed");
+    assert_eq!(
+        toggles[1].children_load_message.as_deref(),
+        Some("Network unavailable")
     );
 }
 

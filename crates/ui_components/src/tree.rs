@@ -18,12 +18,106 @@ use crate::roving_focus::{first_enabled, last_enabled, next_enabled};
 type TreeSelectHandler = Rc<dyn Fn(TreeSelection, &mut Window, &mut App)>;
 type TreeToggleHandler = Rc<dyn Fn(TreeToggle, &mut Window, &mut App)>;
 
+/// Caller-owned child loading metadata for a tree item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreeChildrenLoadState {
+    /// Children are fully represented by the current descriptor list.
+    Loaded,
+    /// Children may exist, but none are currently loaded into descriptors.
+    Unloaded,
+    /// Children are being loaded by the caller.
+    Loading {
+        /// Loading status text supplied by the caller.
+        message: String,
+    },
+    /// Child loading failed.
+    Failed {
+        /// Failure status text supplied by the caller.
+        message: String,
+    },
+}
+
+impl TreeChildrenLoadState {
+    /// Creates loaded child metadata.
+    pub const fn loaded() -> Self {
+        Self::Loaded
+    }
+
+    /// Creates unloaded child metadata.
+    pub const fn unloaded() -> Self {
+        Self::Unloaded
+    }
+
+    /// Creates loading child metadata.
+    pub fn loading(message: impl Into<String>) -> Self {
+        Self::Loading {
+            message: message.into(),
+        }
+    }
+
+    /// Creates failed child metadata.
+    pub fn failed(message: impl Into<String>) -> Self {
+        Self::Failed {
+            message: message.into(),
+        }
+    }
+
+    /// Returns whether the descriptor children are fully loaded.
+    pub const fn is_loaded(&self) -> bool {
+        matches!(self, Self::Loaded)
+    }
+
+    /// Returns whether children are not loaded yet.
+    pub const fn is_unloaded(&self) -> bool {
+        matches!(self, Self::Unloaded)
+    }
+
+    /// Returns whether children are currently loading.
+    pub const fn is_loading(&self) -> bool {
+        matches!(self, Self::Loading { .. })
+    }
+
+    /// Returns whether child loading failed.
+    pub const fn is_failed(&self) -> bool {
+        matches!(self, Self::Failed { .. })
+    }
+
+    /// Returns a stable loading-state label.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Loaded => "loaded",
+            Self::Unloaded => "unloaded",
+            Self::Loading { .. } => "loading",
+            Self::Failed { .. } => "failed",
+        }
+    }
+
+    /// Returns the loading or failure message, when present.
+    pub fn message(&self) -> Option<&str> {
+        match self {
+            Self::Loaded | Self::Unloaded => None,
+            Self::Loading { message } | Self::Failed { message } => Some(message.as_str()),
+        }
+    }
+
+    const fn marks_branch(&self) -> bool {
+        !matches!(self, Self::Loaded)
+    }
+}
+
+impl Default for TreeChildrenLoadState {
+    fn default() -> Self {
+        Self::Loaded
+    }
+}
+
 /// Pure descriptor for one tree item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeItemDescriptor {
     value: String,
     label: String,
     children: Vec<TreeItemDescriptor>,
+    children_load_state: TreeChildrenLoadState,
     disabled: bool,
     expanded: bool,
 }
@@ -35,6 +129,7 @@ impl TreeItemDescriptor {
             value: value.into(),
             label: label.into(),
             children: Vec::new(),
+            children_load_state: TreeChildrenLoadState::Loaded,
             disabled: false,
             expanded: false,
         }
@@ -50,6 +145,27 @@ impl TreeItemDescriptor {
     pub fn children(mut self, children: impl IntoIterator<Item = TreeItemDescriptor>) -> Self {
         self.children.extend(children);
         self
+    }
+
+    /// Applies caller-owned child loading metadata.
+    pub fn with_children_load_state(mut self, state: TreeChildrenLoadState) -> Self {
+        self.children_load_state = state;
+        self
+    }
+
+    /// Marks children as loadable but not loaded yet.
+    pub fn with_children_unloaded(self) -> Self {
+        self.with_children_load_state(TreeChildrenLoadState::unloaded())
+    }
+
+    /// Marks children as currently loading.
+    pub fn with_children_loading(self, message: impl Into<String>) -> Self {
+        self.with_children_load_state(TreeChildrenLoadState::loading(message))
+    }
+
+    /// Marks child loading as failed.
+    pub fn with_children_load_failed(self, message: impl Into<String>) -> Self {
+        self.with_children_load_state(TreeChildrenLoadState::failed(message))
     }
 
     /// Marks this item as disabled.
@@ -77,6 +193,11 @@ impl TreeItemDescriptor {
     /// Returns child descriptors.
     pub fn child_descriptors(&self) -> &[TreeItemDescriptor] {
         &self.children
+    }
+
+    /// Returns caller-owned child loading metadata.
+    pub const fn children_load_state(&self) -> &TreeChildrenLoadState {
+        &self.children_load_state
     }
 
     /// Returns whether this item is disabled.
@@ -150,6 +271,8 @@ pub struct TreeItemState {
     depth: usize,
     parent_value: Option<String>,
     has_children: bool,
+    loaded_child_count: usize,
+    children_load_state: TreeChildrenLoadState,
     expanded: bool,
     disabled: bool,
     selected: bool,
@@ -192,6 +315,36 @@ impl TreeItemState {
     /// Returns whether the item has children.
     pub const fn has_children(&self) -> bool {
         self.has_children
+    }
+
+    /// Returns how many child descriptors are currently loaded.
+    pub const fn loaded_child_count(&self) -> usize {
+        self.loaded_child_count
+    }
+
+    /// Returns caller-owned child loading metadata.
+    pub const fn children_load_state(&self) -> &TreeChildrenLoadState {
+        &self.children_load_state
+    }
+
+    /// Returns whether descriptor children are fully loaded.
+    pub const fn children_loaded(&self) -> bool {
+        self.children_load_state.is_loaded()
+    }
+
+    /// Returns whether descriptor children are not loaded yet.
+    pub const fn children_unloaded(&self) -> bool {
+        self.children_load_state.is_unloaded()
+    }
+
+    /// Returns whether children are currently loading.
+    pub const fn children_loading(&self) -> bool {
+        self.children_load_state.is_loading()
+    }
+
+    /// Returns whether child loading failed.
+    pub const fn children_load_failed(&self) -> bool {
+        self.children_load_state.is_failed()
     }
 
     /// Returns whether the item is expanded.
@@ -270,15 +423,19 @@ pub struct TreeToggle {
     index: usize,
     value: String,
     expanded: bool,
+    loaded_child_count: usize,
+    children_load_state: TreeChildrenLoadState,
 }
 
 impl TreeToggle {
     /// Creates a toggle payload from a tree item.
     pub fn from_item(item: &TreeItemState) -> Option<Self> {
-        (item.focusable() && item.has_children()).then(|| Self {
+        (item.focusable() && item.has_children() && !item.children_loading()).then(|| Self {
             index: item.index,
             value: item.value.clone(),
             expanded: !item.expanded,
+            loaded_child_count: item.loaded_child_count,
+            children_load_state: item.children_load_state.clone(),
         })
     }
 
@@ -295,6 +452,16 @@ impl TreeToggle {
     /// Returns the desired expanded state after the toggle.
     pub const fn expanded(&self) -> bool {
         self.expanded
+    }
+
+    /// Returns how many child descriptors are currently loaded.
+    pub const fn loaded_child_count(&self) -> usize {
+        self.loaded_child_count
+    }
+
+    /// Returns caller-owned child loading metadata captured at toggle time.
+    pub const fn children_load_state(&self) -> &TreeChildrenLoadState {
+        &self.children_load_state
     }
 }
 
@@ -824,6 +991,7 @@ fn render_tree_item(
     let selected = item.selected();
     let focused = item.focused();
     let has_children = item.has_children();
+    let children_load_state = item.children_load_state().clone();
     let expanded = item.expanded();
     let selection = TreeSelection::from_item(&item);
     let toggle = TreeToggle::from_item(&item);
@@ -927,10 +1095,11 @@ fn render_tree_item(
         })
         .child(div().w(gpui_px_from_ui(indent)).flex_none())
         .child(tree_disclosure(
-            tree_id,
-            item_value,
+            tree_id.clone(),
+            item_value.clone(),
             item_label.clone(),
             has_children,
+            children_load_state.clone(),
             expanded,
             disabled,
             toggle,
@@ -945,6 +1114,23 @@ fn render_tree_item(
                 .overflow_hidden()
                 .child(item_label),
         )
+        .when_some(
+            tree_children_load_hint(&children_load_state),
+            move |this, hint| {
+                this.child(
+                    div()
+                        .debug_selector({
+                            let tree_id = tree_id.clone();
+                            let item_value = item_value.clone();
+                            move || format!("tree:{tree_id}:load-state:{item_value}")
+                        })
+                        .flex_none()
+                        .text_xs()
+                        .text_color(rgb(0x5a6472))
+                        .child(hint),
+                )
+            },
+        )
 }
 
 fn tree_disclosure(
@@ -952,6 +1138,7 @@ fn tree_disclosure(
     item_value: String,
     item_label: String,
     has_children: bool,
+    children_load_state: TreeChildrenLoadState,
     expanded: bool,
     disabled: bool,
     toggle: Option<TreeToggle>,
@@ -959,19 +1146,23 @@ fn tree_disclosure(
     focus_handle: Option<FocusHandle>,
     on_toggle: Option<TreeToggleHandler>,
 ) -> impl IntoElement {
+    let children_loading = children_load_state.is_loading();
     let glyph = if !has_children {
         ""
+    } else if children_loading {
+        "..."
     } else if expanded {
         "v"
     } else {
         ">"
     };
-    let aria_label = if expanded {
+    let aria_label = if children_loading {
+        format!("Loading {item_label}")
+    } else if expanded {
         format!("Collapse {item_label}")
     } else {
         format!("Expand {item_label}")
     };
-
     div()
         .id(format!("tree:{tree_id}:toggle:{item_value}"))
         .debug_selector({
@@ -990,8 +1181,8 @@ fn tree_disclosure(
         .ui_role(Role::Button)
         .aria_label(aria_label)
         .aria_expanded(expanded)
-        .aria_disabled(disabled || !has_children)
-        .when(has_children && !disabled, |this| {
+        .aria_disabled(disabled || !has_children || children_loading)
+        .when(has_children && !disabled && !children_loading, |this| {
             this.cursor_pointer()
                 .hover(|style| style.bg(rgb(0xe8ede6)))
                 .on_click(move |_event: &ClickEvent, window, cx| {
@@ -1150,7 +1341,9 @@ fn flatten_tree_items(
             label: item.label.clone(),
             depth,
             parent_value: parent_value.map(str::to_owned),
-            has_children: !item.children.is_empty(),
+            has_children: !item.children.is_empty() || item.children_load_state.marks_branch(),
+            loaded_child_count: item.children.len(),
+            children_load_state: item.children_load_state.clone(),
             expanded: item.expanded,
             disabled: item.disabled,
             selected: false,
@@ -1162,6 +1355,14 @@ fn flatten_tree_items(
         if item.expanded {
             flatten_tree_items(&item.children, Some(item.value()), depth + 1, flattened);
         }
+    }
+}
+
+fn tree_children_load_hint(state: &TreeChildrenLoadState) -> Option<String> {
+    match state {
+        TreeChildrenLoadState::Loaded | TreeChildrenLoadState::Unloaded => None,
+        TreeChildrenLoadState::Loading { message } => Some(message.clone()),
+        TreeChildrenLoadState::Failed { message } => Some(format!("Failed: {message}")),
     }
 }
 
@@ -1252,6 +1453,8 @@ mod tests {
                 index: 2,
                 value: "figures".to_owned(),
                 expanded: true,
+                loaded_child_count: 1,
+                children_load_state: TreeChildrenLoadState::Loaded,
             }))
         );
         assert_eq!(
@@ -1272,6 +1475,8 @@ mod tests {
                 index: 0,
                 value: "paper".to_owned(),
                 expanded: false,
+                loaded_child_count: 2,
+                children_load_state: TreeChildrenLoadState::Loaded,
             }))
         );
         assert_eq!(
@@ -1303,5 +1508,109 @@ mod tests {
             TreeSelection::from_item(notes).map(|selection| selection.value().to_owned()),
             Some("notes".to_owned())
         );
+    }
+
+    #[test]
+    fn tree_state_resolves_lazy_branch_load_metadata_without_synthetic_children() {
+        let state = TreeState::resolve(
+            Size::Medium,
+            "Remote tree",
+            None,
+            Some("unloaded"),
+            [
+                TreeItemDescriptor::new("unloaded", "Unloaded")
+                    .expanded(true)
+                    .with_children_unloaded(),
+                TreeItemDescriptor::new("loading", "Loading")
+                    .expanded(true)
+                    .with_children_loading("Loading children"),
+                TreeItemDescriptor::new("failed", "Failed")
+                    .expanded(true)
+                    .with_children_load_failed("Network unavailable"),
+                TreeItemDescriptor::new("loaded", "Loaded")
+                    .expanded(true)
+                    .child(TreeItemDescriptor::new("loaded-child", "Loaded child")),
+            ],
+        );
+        let values = state
+            .items()
+            .iter()
+            .map(TreeItemState::value)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            values,
+            ["unloaded", "loading", "failed", "loaded", "loaded-child"]
+        );
+
+        let unloaded = state.item_by_value("unloaded").unwrap();
+        assert!(unloaded.has_children());
+        assert_eq!(unloaded.loaded_child_count(), 0);
+        assert!(unloaded.children_unloaded());
+        assert!(unloaded.expanded());
+
+        let loading = state.item_by_value("loading").unwrap();
+        assert!(loading.has_children());
+        assert_eq!(loading.loaded_child_count(), 0);
+        assert!(loading.children_loading());
+        assert_eq!(
+            loading.children_load_state().message(),
+            Some("Loading children")
+        );
+
+        let failed = state.item_by_value("failed").unwrap();
+        assert!(failed.has_children());
+        assert_eq!(failed.loaded_child_count(), 0);
+        assert!(failed.children_load_failed());
+        assert_eq!(
+            failed.children_load_state().message(),
+            Some("Network unavailable")
+        );
+
+        let loaded = state.item_by_value("loaded").unwrap();
+        assert!(loaded.children_loaded());
+        assert_eq!(loaded.loaded_child_count(), 1);
+    }
+
+    #[test]
+    fn tree_toggle_payload_includes_child_load_state_and_blocks_loading() {
+        let state = TreeState::resolve(
+            Size::Medium,
+            "Remote tree",
+            None,
+            Some("unloaded"),
+            [
+                TreeItemDescriptor::new("unloaded", "Unloaded").with_children_unloaded(),
+                TreeItemDescriptor::new("loading", "Loading")
+                    .with_children_loading("Loading children"),
+                TreeItemDescriptor::new("failed", "Failed")
+                    .with_children_load_failed("Network unavailable"),
+                TreeItemDescriptor::new("leaf", "Leaf"),
+            ],
+        );
+
+        let unloaded = state.item_by_value("unloaded").unwrap();
+        let toggle = TreeToggle::from_item(unloaded).expect("unloaded branch should toggle");
+        assert_eq!(toggle.value(), "unloaded");
+        assert!(toggle.expanded());
+        assert_eq!(toggle.loaded_child_count(), 0);
+        assert_eq!(
+            toggle.children_load_state(),
+            &TreeChildrenLoadState::Unloaded
+        );
+
+        let failed = state.item_by_value("failed").unwrap();
+        let toggle = TreeToggle::from_item(failed).expect("failed branch should allow retry");
+        assert_eq!(toggle.children_load_state().as_str(), "failed");
+        assert_eq!(
+            toggle.children_load_state().message(),
+            Some("Network unavailable")
+        );
+
+        let loading = state.item_by_value("loading").unwrap();
+        assert_eq!(TreeToggle::from_item(loading), None);
+
+        let leaf = state.item_by_value("leaf").unwrap();
+        assert_eq!(TreeToggle::from_item(leaf), None);
     }
 }

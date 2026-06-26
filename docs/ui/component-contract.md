@@ -715,7 +715,11 @@ Its adapter owns keyed GPUI runtime state, focus handles, expansion overrides, s
 callbacks, and a persistent inner `ScrollHandle`. `TreeState` remains the renderer-neutral
 hierarchy contract and gallery readout for visible flattening, selected/focused metadata,
 disabled-item skipping, expansion toggle payloads, tree/tree-item roles, and keyboard
-selection/focus/toggle actions.
+selection/focus/toggle actions. `TreeChildrenLoadState` lets callers mark branch children as
+loaded, unloaded, loading, or failed without making `Tree` own asynchronous fetch work.
+`TreeItemDescriptor`, `TreeItemState`, and `TreeToggle` expose loaded-child counts and child-load
+metadata so applications can start fetches or retries from toggle payloads. Loading branches render
+as branches but do not emit repeat toggle requests while the caller reports loading.
 `VirtualizedList` is now an official rendered component. Its adapter resolves a
 `VirtualizedListRenderPlan` from stable descriptors, owns a keyed GPUI runtime plus persistent
 `ScrollHandle`, and keeps row rendering inside its viewport. `VirtualizedListState` remains the

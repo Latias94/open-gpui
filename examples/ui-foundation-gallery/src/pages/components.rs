@@ -983,6 +983,7 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "TreeState::keyboard_action_for_key",
             "tree_runtime_expands_reveals_and_selects_items",
             "components_gallery_smoke_tree_expands_and_selects",
+            "components_gallery_smoke_tree_lazy_branches_emit_load_metadata",
             "components_gallery_smoke_tree_card_wheel_does_not_leak_to_page",
         ],
     },
@@ -1185,6 +1186,12 @@ pub struct TreeSampleToggleEvent {
     pub value: String,
     /// Desired expanded state after the toggle.
     pub expanded: bool,
+    /// Currently loaded child descriptor count at toggle time.
+    pub loaded_child_count: usize,
+    /// Stable child loading state label at toggle time.
+    pub children_load_state: String,
+    /// Loading or failure message at toggle time, when present.
+    pub children_load_message: Option<String>,
 }
 
 /// Runtime interaction log used by gallery Tree smoke tests.
@@ -1229,6 +1236,9 @@ pub fn record_tree_toggle(
     sample_id: impl Into<String>,
     value: impl Into<String>,
     expanded: bool,
+    loaded_child_count: usize,
+    children_load_state: impl Into<String>,
+    children_load_message: Option<String>,
     cx: &mut App,
 ) {
     cx.update_default_global::<TreeSampleRuntimeLog, _>(|log, _| {
@@ -1236,6 +1246,9 @@ pub fn record_tree_toggle(
             sample_id: sample_id.into(),
             value: value.into(),
             expanded,
+            loaded_child_count,
+            children_load_state: children_load_state.into(),
+            children_load_message,
         });
     });
 }
@@ -3370,14 +3383,14 @@ pub fn empty_state_samples(tokens: ThemeTokens) -> [EmptyStateSample; 2] {
     )
 }
 
-static TREE_SAMPLES: LazyLock<[TreeSample; 1]> = LazyLock::new(build_tree_samples);
+static TREE_SAMPLES: LazyLock<[TreeSample; 2]> = LazyLock::new(build_tree_samples);
 
 /// Returns tree samples backed by the concrete renderer and hierarchy contract.
 pub fn tree_samples(_tokens: ThemeTokens) -> &'static [TreeSample] {
     TREE_SAMPLES.as_slice()
 }
 
-fn build_tree_samples() -> [TreeSample; 1] {
+fn build_tree_samples() -> [TreeSample; 2] {
     let size = Size::Small;
     let items = document_outline_tree_sample_items();
     let state = TreeState::resolve(
@@ -3388,15 +3401,35 @@ fn build_tree_samples() -> [TreeSample; 1] {
         items.clone(),
     );
 
-    [TreeSample {
-        id: "document-outline",
-        title: "Document outline",
-        summary: "Expandable hierarchy with roving focus, selection, and an owned scroll viewport.",
-        badge: "tree",
-        items,
-        state,
+    let remote_items = remote_workspace_tree_sample_items();
+    let remote_state = TreeState::resolve(
         size,
-    }]
+        "Remote workspace",
+        Some("remote-src"),
+        Some("remote-src"),
+        remote_items.clone(),
+    );
+
+    [
+        TreeSample {
+            id: "document-outline",
+            title: "Document outline",
+            summary: "Expandable hierarchy with roving focus, selection, and an owned scroll viewport.",
+            badge: "tree",
+            items,
+            state,
+            size,
+        },
+        TreeSample {
+            id: "remote-workspace",
+            title: "Remote workspace",
+            summary: "Loadable branches expose unloaded, loading, loaded, and failed child state.",
+            badge: "lazy tree",
+            items: remote_items,
+            state: remote_state,
+            size,
+        },
+    ]
 }
 
 /// Returns tree state-contract samples for renderer-neutral review.
@@ -3435,6 +3468,27 @@ fn document_outline_tree_sample_items() -> Vec<TreeItemDescriptor> {
             .children(appendix_items),
         TreeItemDescriptor::new("disabled", "Disabled").disabled(true),
         TreeItemDescriptor::new("notes", "Notes"),
+    ]
+}
+
+fn remote_workspace_tree_sample_items() -> Vec<TreeItemDescriptor> {
+    vec![
+        TreeItemDescriptor::new("remote-root", "Remote project")
+            .expanded(true)
+            .child(TreeItemDescriptor::new("remote-src", "src").with_children_unloaded())
+            .child(
+                TreeItemDescriptor::new("remote-crates", "crates")
+                    .with_children_loading("Loading child packages"),
+            )
+            .child(
+                TreeItemDescriptor::new("remote-build", "build artifacts")
+                    .with_children_load_failed("Network unavailable"),
+            )
+            .child(
+                TreeItemDescriptor::new("remote-docs", "docs")
+                    .expanded(true)
+                    .child(TreeItemDescriptor::new("remote-readme", "README.md")),
+            ),
     ]
 }
 

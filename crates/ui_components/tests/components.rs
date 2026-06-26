@@ -38,8 +38,8 @@ use open_gpui_ui_components::{
     TabsItemDescriptor, TabsSelection, TabsState, TextInput, TextInputDisplayMode, Textarea,
     ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
     ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
-    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeChildrenLoadState,
+    TreeItemDescriptor, VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
     VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
     VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
     VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, first_enabled,
@@ -6100,9 +6100,15 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     let prelude_empty_state: prelude::EmptyState = prelude::EmptyState::new("empty", "No results");
     let root_tree_descriptor: root::TreeItemDescriptor =
         root::TreeItemDescriptor::new("root", "Root")
+            .with_children_unloaded()
             .child(root::TreeItemDescriptor::new("child", "Child"));
     let prelude_tree_descriptor: prelude::TreeItemDescriptor =
-        prelude::TreeItemDescriptor::new("root", "Root");
+        prelude::TreeItemDescriptor::new("root", "Root").with_children_load_failed("Offline");
+    let root_tree_load_state: root::TreeChildrenLoadState =
+        root::TreeChildrenLoadState::loading("Loading children");
+    let prelude_tree_load_state: prelude::TreeChildrenLoadState =
+        prelude::TreeChildrenLoadState::unloaded();
+    let direct_tree_load_state: TreeChildrenLoadState = TreeChildrenLoadState::loaded();
     let root_tree: root::Tree =
         root::Tree::new("root-tree", "Root tree", [root_tree_descriptor.clone()])
             .default_selected("root")
@@ -6218,6 +6224,15 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     assert_eq!(prelude_tree_state.items().len(), 1);
     assert_eq!(root_tree_state.role(), Role::Tree);
     assert_eq!(root_tree_state.items()[0].role(), Role::TreeItem);
+    assert!(root_tree_state.items()[0].has_children());
+    assert_eq!(
+        root_tree_state.items()[0].children_load_state().as_str(),
+        "unloaded"
+    );
+    assert!(prelude_tree_state.items()[0].children_load_failed());
+    assert!(root_tree_load_state.is_loading());
+    assert!(prelude_tree_load_state.is_unloaded());
+    assert!(direct_tree_load_state.is_loaded());
     assert_eq!(root::tree_navigation_target("home", 0, &[false]), Some(0));
     assert_eq!(
         prelude::tree_navigation_target("home", 0, &[false]),

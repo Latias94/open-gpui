@@ -2310,6 +2310,9 @@ fn component_tree_samples_section(
                                 sample_id_for_toggle.clone(),
                                 toggle.value().to_owned(),
                                 toggle.expanded(),
+                                toggle.loaded_child_count(),
+                                toggle.children_load_state().as_str().to_owned(),
+                                toggle.children_load_state().message().map(str::to_owned),
                                 cx,
                             );
                         });

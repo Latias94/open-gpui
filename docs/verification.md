@@ -316,14 +316,26 @@ The official Tree gate requires `Tree`, `TreeState`, `TreeMetrics`, tree/tree-it
 and at least one `gallery:component-tree-sample:{id}` selector. Component runtime tests verify
 expansion, reveal, and selection payloads; gallery smokes verify keyboard expansion/selection
 through the sample runtime log and prove Tree wheel input stays inside the sample viewport.
+`TreeChildrenLoadState` adds the lazy-branch gate: unit tests prove expanded unloaded/loading/failed
+branches do not synthesize fake child rows, toggle payloads carry loaded-child and load-state
+metadata, and loading branches do not repeat toggle requests. The `remote-workspace` gallery sample
+proves unloaded, loading, loaded, and failed branch affordances plus runtime payload metadata.
 Tree and virtualized-list state-contract samples are verified through
 `components_page_samples_expose_component_metadata`: Tree readouts assert visible flattening,
 disabled-row position skipping, navigation skipping, toggle payloads, and Enter/Space selection
 actions; virtualized-list state-contract readouts assert active/selected indices, PageUp/PageDown
 clamping, activation payloads, viewport item count, overscan, and semantic scroll strategy labels.
 The same metadata test now also checks the official `Tree` sample's role metadata and keyboard
-toggle payload, plus the official `VirtualizedList` sample's 10k item count, listbox roles,
-active/selected state, visible range, and overscan summary.
+toggle payload, the official `remote-workspace` Tree sample's child-load metadata, plus the
+official `VirtualizedList` sample's 10k item count, listbox roles, active/selected state, visible
+range, and overscan summary.
+
+The focused Tree proof is:
+
+```powershell
+cargo nextest run -p open-gpui-ui-components tree_state_resolves_lazy_branch_load_metadata_without_synthetic_children tree_toggle_payload_includes_child_load_state_and_blocks_loading feedback_tree_and_virtualized_list_public_exports_remain_explicit
+cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_gallery_smoke_tree_expands_and_selects components_gallery_smoke_tree_lazy_branches_emit_load_metadata
+```
 
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left

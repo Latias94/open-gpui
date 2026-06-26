@@ -112,10 +112,23 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_table_samples_expose_virtualized_row_model_contract components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_multiline_table_cell_updates_sample_rows
   - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
   - git diff --check
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components tree_state_resolves_lazy_branch_load_metadata_without_synthetic_children tree_toggle_payload_includes_child_load_state_and_blocks_loading feedback_tree_and_virtualized_list_public_exports_remain_explicit
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_gallery_smoke_tree_expands_and_selects components_gallery_smoke_tree_lazy_branches_emit_load_metadata
 ---
 
 # Current State
 
+- 2026-06-26: Completed the Tree lazy-loading branch contract from
+  `docs/plans/2026-06-26-001-feat-ui-tree-lazy-loading-plan.md` in the working tree.
+  `TreeChildrenLoadState` now distinguishes loaded, unloaded, loading, and failed child states;
+  `TreeItemDescriptor`, `TreeItemState`, and `TreeToggle` expose loaded-child counts and
+  caller-owned child-load metadata without making `Tree` own async fetching. Loading branches keep
+  a disclosure affordance but block repeat toggle requests, while unloaded and failed branches
+  emit normal expansion payloads for app-owned load/retry logic. The Components gallery now has a
+  `remote-workspace` Tree sample and smoke coverage for load-state hints plus toggle payload
+  metadata. Next Tree follow-ups remain typeahead, drag-and-drop hierarchy editing, and
+  virtualized tree data.
 - 2026-06-26: Completed U4 of the text input editor family plan in the working tree.
   `TableCellEditor::MultilineText { rows }` now lets Table compose fixed-height `Textarea`
   editors for editable leaf cells. The contract keeps row data app-owned through the existing

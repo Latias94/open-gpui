@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-06-26: Completed
+  `docs/plans/2026-06-26-001-feat-ui-tree-lazy-loading-plan.md` in the working tree.
+  `TreeChildrenLoadState` now models loaded, unloaded, loading, and failed child states; Tree
+  descriptors, resolved item state, and toggle payloads expose loaded-child counts and load-state
+  metadata while keeping async loading caller-owned. The Components gallery adds the
+  `remote-workspace` Tree sample with unloaded/loading/failed/loaded branches and a focused smoke
+  proving unloaded and failed branches emit load metadata while loading branches do not repeat
+  toggle requests. Next Tree follow-ups are typeahead, drag-and-drop hierarchy editing, and
+  virtualized tree data.
 - 2026-06-26: Completed U4 of
   `docs/plans/2026-06-25-002-feat-ui-text-input-editor-family-plan.md` in the working tree.
   `TableCellEditor::MultilineText { rows }` extends the renderer-neutral Table editor contract,
