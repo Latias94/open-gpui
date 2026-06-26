@@ -115,10 +115,20 @@ verified_by:
   - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-components tree_state_resolves_lazy_branch_load_metadata_without_synthetic_children tree_toggle_payload_includes_child_load_state_and_blocks_loading feedback_tree_and_virtualized_list_public_exports_remain_explicit
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_gallery_smoke_tree_expands_and_selects components_gallery_smoke_tree_lazy_branches_emit_load_metadata
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components tree_typeahead_targets_visible_focusable_items_from_current_focus tree_runtime_typeahead_focuses_visible_matching_row
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_tree_expands_and_selects
 ---
 
 # Current State
 
+- 2026-06-26: Completed the Tree typeahead navigation contract from
+  `docs/plans/2026-06-26-002-feat-ui-tree-typeahead-plan.md` in the working tree.
+  `TreeState::typeahead_target` now resolves prefix matches over visible, focusable rows with
+  wraparound from the current focus, while the GPUI `Tree` adapter owns the printable-key buffer
+  and timeout reset. The Components gallery Tree smoke now proves typed `n o` focuses the visible
+  Notes row without selecting it. Collapsed/unloaded descendants, highlight rendering, app search
+  indexes, drag-and-drop hierarchy editing, and virtualized tree data remain deferred.
 - 2026-06-26: Completed the Tree lazy-loading branch contract from
   `docs/plans/2026-06-26-001-feat-ui-tree-lazy-loading-plan.md` in the working tree.
   `TreeChildrenLoadState` now distinguishes loaded, unloaded, loading, and failed child states;

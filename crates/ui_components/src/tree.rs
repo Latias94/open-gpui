@@ -10,13 +10,18 @@ use open_gpui::{
     Window, div, point, px, rgb,
 };
 use open_gpui_ui_core::{Role, Sizable, Size, UiPx, ui_px};
-use std::collections::BTreeMap;
-use std::rc::Rc;
+use std::{
+    collections::BTreeMap,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use crate::roving_focus::{first_enabled, last_enabled, next_enabled};
 
 type TreeSelectHandler = Rc<dyn Fn(TreeSelection, &mut Window, &mut App)>;
 type TreeToggleHandler = Rc<dyn Fn(TreeToggle, &mut Window, &mut App)>;
+
+const TREE_TYPEAHEAD_RESET: Duration = Duration::from_millis(700);
 
 /// Caller-owned child loading metadata for a tree item.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -647,6 +652,25 @@ impl TreeState {
         self.items.get(target)
     }
 
+    /// Resolves a typeahead target for a caller-owned text buffer.
+    pub fn typeahead_target(&self, query: &str) -> Option<&TreeItemState> {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() {
+            return None;
+        }
+
+        let len = self.items.len();
+        if len == 0 {
+            return None;
+        }
+
+        let start = self.focused_index.map_or(0, |index| (index + 1) % len);
+        (0..len)
+            .map(|step| (start + step) % len)
+            .filter_map(|index| self.items.get(index))
+            .find(|item| item.focusable() && item.label().to_lowercase().starts_with(&query))
+    }
+
     /// Resolves a keyboard action from the current focused item.
     pub fn keyboard_action_for_key(&self, key: &str) -> Option<TreeKeyboardAction> {
         if let Some(target) = self.navigation_target(key) {
@@ -704,6 +728,8 @@ struct TreeRuntime {
     focused_value: Option<String>,
     expanded_values: BTreeMap<String, bool>,
     focus_handles: BTreeMap<String, FocusHandle>,
+    typeahead_buffer: String,
+    last_typeahead_at: Option<Instant>,
 }
 
 impl TreeRuntime {
@@ -745,6 +771,20 @@ impl TreeRuntime {
         if changed {
             cx.notify();
         }
+    }
+
+    fn push_typeahead_key(&mut self, key: &str) -> String {
+        let now = Instant::now();
+        if self
+            .last_typeahead_at
+            .map_or(true, |last| now.duration_since(last) > TREE_TYPEAHEAD_RESET)
+        {
+            self.typeahead_buffer.clear();
+        }
+
+        self.typeahead_buffer.push_str(&key.to_lowercase());
+        self.last_typeahead_at = Some(now);
+        self.typeahead_buffer.clone()
     }
 }
 
@@ -874,6 +914,8 @@ impl RenderOnce for Tree {
                 focused_value: focused_value.clone(),
                 expanded_values: BTreeMap::new(),
                 focus_handles: BTreeMap::new(),
+                typeahead_buffer: String::new(),
+                last_typeahead_at: None,
             });
             let runtime_snapshot = runtime.read(cx).clone();
             let resolved_items =
@@ -1216,49 +1258,90 @@ fn handle_tree_key_down(
     window: &mut Window,
     cx: &mut App,
 ) {
-    if event.keystroke.modifiers.modified() {
-        return;
+    let key = event.keystroke.key.as_str();
+
+    if !event.keystroke.modifiers.modified() {
+        if let Some(action) = state.keyboard_action_for_key(key) {
+            cx.stop_propagation();
+            window.prevent_default();
+
+            match action {
+                TreeKeyboardAction::Focus(target) => {
+                    focus_tree_target(&runtime, &scroll_handle, state, &target, window, cx);
+                }
+                TreeKeyboardAction::Toggle(toggle) => {
+                    runtime.update(cx, |runtime, cx| {
+                        runtime.set_focused(toggle.value(), cx);
+                        runtime.set_expanded(toggle.value(), toggle.expanded(), cx);
+                    });
+                    if let Some(on_toggle) = on_toggle.as_ref() {
+                        on_toggle(toggle, window, cx);
+                    }
+                }
+                TreeKeyboardAction::Select(selection) => {
+                    let selection_index = selection.index();
+                    runtime.update(cx, |runtime, cx| {
+                        runtime.set_focused(selection.value(), cx);
+                        runtime.set_selected(selection.value(), cx);
+                    });
+                    scroll_tree_item_into_view(&scroll_handle, state, selection_index);
+                    if let Some(on_select) = on_select.as_ref() {
+                        on_select(selection, window, cx);
+                    }
+                }
+            }
+            return;
+        }
     }
 
-    let key = event.keystroke.key.as_str();
-    let Some(action) = state.keyboard_action_for_key(key) else {
+    let Some(typeahead_key) = tree_typeahead_key(event) else {
         return;
     };
 
     cx.stop_propagation();
     window.prevent_default();
 
-    match action {
-        TreeKeyboardAction::Focus(target) => {
-            let target_index = target.index();
-            let focus_handle =
-                runtime.update(cx, |runtime, cx| runtime.set_focused(target.value(), cx));
-            if let Some(focus_handle) = focus_handle {
-                focus_handle.focus(window, cx);
-            }
-            scroll_tree_item_into_view(&scroll_handle, state, target_index);
-        }
-        TreeKeyboardAction::Toggle(toggle) => {
-            runtime.update(cx, |runtime, cx| {
-                runtime.set_focused(toggle.value(), cx);
-                runtime.set_expanded(toggle.value(), toggle.expanded(), cx);
-            });
-            if let Some(on_toggle) = on_toggle.as_ref() {
-                on_toggle(toggle, window, cx);
-            }
-        }
-        TreeKeyboardAction::Select(selection) => {
-            let selection_index = selection.index();
-            runtime.update(cx, |runtime, cx| {
-                runtime.set_focused(selection.value(), cx);
-                runtime.set_selected(selection.value(), cx);
-            });
-            scroll_tree_item_into_view(&scroll_handle, state, selection_index);
-            if let Some(on_select) = on_select.as_ref() {
-                on_select(selection, window, cx);
-            }
-        }
+    let query = runtime.update(cx, |runtime, _| runtime.push_typeahead_key(&typeahead_key));
+    if let Some(target) = state.typeahead_target(&query) {
+        let target = TreeFocusTarget::new(target.index(), target.value());
+        focus_tree_target(&runtime, &scroll_handle, state, &target, window, cx);
     }
+}
+
+fn focus_tree_target(
+    runtime: &Entity<TreeRuntime>,
+    scroll_handle: &ScrollHandle,
+    state: &TreeState,
+    target: &TreeFocusTarget,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let target_index = target.index();
+    let focus_handle = runtime.update(cx, |runtime, cx| runtime.set_focused(target.value(), cx));
+    if let Some(focus_handle) = focus_handle {
+        focus_handle.focus(window, cx);
+    }
+    scroll_tree_item_into_view(scroll_handle, state, target_index);
+}
+
+fn tree_typeahead_key(event: &KeyDownEvent) -> Option<String> {
+    let modifiers = event.keystroke.modifiers;
+    if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+        return None;
+    }
+
+    let key = event
+        .keystroke
+        .key_char
+        .as_deref()
+        .unwrap_or(event.keystroke.key.as_str());
+    let mut chars = key.chars();
+    let ch = chars.next()?;
+    if chars.next().is_some() || ch.is_control() {
+        return None;
+    }
+
+    Some(ch.to_string())
 }
 
 fn scroll_tree_item_into_view(scroll_handle: &ScrollHandle, state: &TreeState, index: usize) {
@@ -1434,6 +1517,36 @@ mod tests {
         assert_eq!(
             state.navigation_target("end").map(TreeItemState::value),
             Some("notes")
+        );
+    }
+
+    #[test]
+    fn tree_typeahead_targets_visible_focusable_items_from_current_focus() {
+        let state = TreeState::resolve(
+            Size::Medium,
+            "Document outline",
+            None,
+            Some("intro"),
+            sample_tree(),
+        );
+
+        assert_eq!(
+            state.typeahead_target(" fi").map(TreeItemState::value),
+            Some("figures")
+        );
+        assert_eq!(
+            state.typeahead_target("P").map(TreeItemState::value),
+            Some("paper")
+        );
+        assert_eq!(
+            state.typeahead_target("dis").map(TreeItemState::value),
+            None
+        );
+        assert_eq!(state.typeahead_target("").map(TreeItemState::value), None);
+        assert_eq!(
+            state.typeahead_target("figure 1").map(TreeItemState::value),
+            None,
+            "collapsed descendants should not participate in visible Tree typeahead"
         );
     }
 

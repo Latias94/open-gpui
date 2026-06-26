@@ -5613,6 +5613,72 @@ fn tree_runtime_expands_reveals_and_selects_items(cx: &mut open_gpui::TestAppCon
     assert_eq!(selections.borrow().as_slice(), ["intro".to_owned()]);
 }
 
+#[open_gpui::test]
+fn tree_runtime_typeahead_focuses_visible_matching_row(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+            let tree = Tree::new(
+                "runtime-typeahead-tree",
+                "Runtime typeahead tree",
+                vec![
+                    TreeItemDescriptor::new("paper", "Paper")
+                        .child(TreeItemDescriptor::new("figures", "Figures")),
+                    TreeItemDescriptor::new("disabled", "Disabled").disabled(true),
+                    TreeItemDescriptor::new("notes", "Notes"),
+                ],
+            )
+            .with_size(Size::Small)
+            .default_focused("paper")
+            .on_select(move |selection, _, _| {
+                selections.borrow_mut().push(selection.value().to_owned());
+            });
+
+            div()
+                .size_full()
+                .child(div().w(px(280.0)).h(px(180.0)).child(tree))
+        }
+    }
+
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let root = cx
+        .debug_bounds("tree:runtime-typeahead-tree:root")
+        .expect("tree root should render");
+    cx.simulate_click(
+        point(root.left() + px(2.0), root.top() + px(2.0)),
+        Default::default(),
+    );
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    cx.simulate_keystrokes("n o");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_selector_is_focused("tree:runtime-typeahead-tree:item:notes"),
+        "expected typeahead to focus the visible Notes row; focused={:?}",
+        cx.focused_debug_selector()
+    );
+    assert!(
+        selections.borrow().is_empty(),
+        "typeahead should move focus without selecting a row"
+    );
+}
+
 #[test]
 fn table_header_action_cycles_sorting_without_render_coupling() {
     let unsorted = Table::new("sort-cycle", "Sort cycle", sample_table_state(8))

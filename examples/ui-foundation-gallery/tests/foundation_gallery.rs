@@ -5977,6 +5977,7 @@ fn components_gallery_smoke_tree_expands_and_selects(cx: &mut open_gpui::TestApp
     const SAMPLE: &str = "gallery:component-tree-sample:document-outline";
     const PAPER: &str = "tree:component-tree:document-outline:item:paper";
     const INTRO: &str = "tree:component-tree:document-outline:item:intro";
+    const NOTES: &str = "tree:component-tree:document-outline:item:notes";
 
     let cx = open_components_gallery(cx);
     cx.set_global(pages::components::TreeSampleRuntimeLog::default());
@@ -6048,6 +6049,14 @@ fn components_gallery_smoke_tree_expands_and_selects(cx: &mut open_gpui::TestApp
         selections,
         vec![("document-outline".to_owned(), "intro".to_owned())],
         "expected Enter to select the focused child row"
+    );
+
+    cx.simulate_keystrokes("n o");
+    redraw(cx);
+    assert!(
+        cx.debug_selector_is_focused(NOTES),
+        "expected Tree typeahead to focus the visible Notes row; focused={:?}",
+        cx.focused_debug_selector()
     );
 }
 

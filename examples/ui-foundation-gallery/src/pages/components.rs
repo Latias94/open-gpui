@@ -981,7 +981,9 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
         evidence: &[
             "Tree::state",
             "TreeState::keyboard_action_for_key",
+            "TreeState::typeahead_target",
             "tree_runtime_expands_reveals_and_selects_items",
+            "tree_runtime_typeahead_focuses_visible_matching_row",
             "components_gallery_smoke_tree_expands_and_selects",
             "components_gallery_smoke_tree_lazy_branches_emit_load_metadata",
             "components_gallery_smoke_tree_card_wheel_does_not_leak_to_page",

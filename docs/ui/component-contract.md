@@ -720,6 +720,10 @@ loaded, unloaded, loading, or failed without making `Tree` own asynchronous fetc
 `TreeItemDescriptor`, `TreeItemState`, and `TreeToggle` expose loaded-child counts and child-load
 metadata so applications can start fetches or retries from toggle payloads. Loading branches render
 as branches but do not emit repeat toggle requests while the caller reports loading.
+`TreeState::typeahead_target` provides renderer-neutral prefix matching over the current visible,
+focusable row list; the GPUI adapter owns the printable-key buffer and reset timing, then moves
+focus without selecting the matched row. Typeahead intentionally does not search collapsed,
+unloaded, or virtualized descendants.
 `VirtualizedList` is now an official rendered component. Its adapter resolves a
 `VirtualizedListRenderPlan` from stable descriptors, owns a keyed GPUI runtime plus persistent
 `ScrollHandle`, and keeps row rendering inside its viewport. `VirtualizedListState` remains the

@@ -7,6 +7,13 @@ status: active
 # Log
 
 - 2026-06-26: Completed
+  `docs/plans/2026-06-26-002-feat-ui-tree-typeahead-plan.md` in the working tree.
+  `TreeState::typeahead_target` now performs renderer-neutral prefix matching over visible,
+  focusable rows, and the GPUI Tree adapter owns the printable-key buffer/reset policy. Component
+  runtime coverage proves typeahead moves focus without selecting; the existing Tree gallery smoke
+  now also verifies typing `n o` focuses the visible Notes row. Deferred Tree work remains
+  drag-and-drop hierarchy editing and virtualized tree data.
+- 2026-06-26: Completed
   `docs/plans/2026-06-26-001-feat-ui-tree-lazy-loading-plan.md` in the working tree.
   `TreeChildrenLoadState` now models loaded, unloaded, loading, and failed child states; Tree
   descriptors, resolved item state, and toggle payloads expose loaded-child counts and load-state

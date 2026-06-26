@@ -320,6 +320,10 @@ through the sample runtime log and prove Tree wheel input stays inside the sampl
 branches do not synthesize fake child rows, toggle payloads carry loaded-child and load-state
 metadata, and loading branches do not repeat toggle requests. The `remote-workspace` gallery sample
 proves unloaded, loading, loaded, and failed branch affordances plus runtime payload metadata.
+Tree typeahead is covered by a pure state test and a runtime adapter test: the pure helper matches
+visible, focusable row labels with wraparound and skips disabled/collapsed rows, while the rendered
+adapter buffers printable keys and moves focus without selecting. The `document-outline` gallery
+smoke now verifies typing `n o` focuses the visible Notes row after the expand/select path.
 Tree and virtualized-list state-contract samples are verified through
 `components_page_samples_expose_component_metadata`: Tree readouts assert visible flattening,
 disabled-row position skipping, navigation skipping, toggle payloads, and Enter/Space selection
@@ -334,6 +338,7 @@ The focused Tree proof is:
 
 ```powershell
 cargo nextest run -p open-gpui-ui-components tree_state_resolves_lazy_branch_load_metadata_without_synthetic_children tree_toggle_payload_includes_child_load_state_and_blocks_loading feedback_tree_and_virtualized_list_public_exports_remain_explicit
+cargo nextest run -p open-gpui-ui-components tree_typeahead_targets_visible_focusable_items_from_current_focus tree_runtime_typeahead_focuses_visible_matching_row
 cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_gallery_smoke_tree_expands_and_selects components_gallery_smoke_tree_lazy_branches_emit_load_metadata
 ```
 
