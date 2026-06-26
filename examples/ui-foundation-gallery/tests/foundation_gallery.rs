@@ -1040,7 +1040,8 @@ fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
     assert_eq!(samples[4].state.items()[1].toggled(), Some(Toggled::False));
     assert_eq!(samples[4].state.items()[2].toggled(), Some(Toggled::True));
     assert!(samples[4].state.items()[3].has_submenu());
-    assert!(!samples[4].state.items()[4].focusable());
+    assert!(samples[4].state.items()[4].has_submenu());
+    assert!(!samples[4].state.items()[5].focusable());
 
     assert_eq!(samples[5].id, "typeahead");
     assert_eq!(
@@ -3878,11 +3879,25 @@ fn overlay_gallery_smoke_opens_menu_submenu_from_hover(cx: &mut open_gpui::TestA
         "expected moving into the submenu child to keep the branch open"
     );
 
+    let group = bounds(cx, "menu:overlay-menu-demo:rich-items:item:4:group").center();
+    cx.simulate_mouse_move(group, None, Default::default());
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:4:group/0:kind")
+            .is_some(),
+        "expected hovering another submenu trigger to open its branch"
+    );
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
+            .is_none(),
+        "expected switching submenu triggers to close the previous branch"
+    );
+
     let root_item = bounds(cx, "menu:overlay-menu-demo:rich-items:item:0:show-hidden").center();
     cx.simulate_mouse_move(root_item, None, Default::default());
     redraw(cx);
     assert!(
-        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:4:group/0:kind")
             .is_none(),
         "expected hovering another root item to close the rich menu submenu branch"
     );

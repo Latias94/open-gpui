@@ -3189,6 +3189,99 @@ fn menu_runtime_hover_opens_submenu_and_preserves_child_focus(cx: &mut open_gpui
     );
 }
 
+#[open_gpui::test]
+fn menu_runtime_hover_switches_between_submenu_branches(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                Menu::new("hover-switch-submenu", "Hover switch submenu")
+                    .item(MenuItem::action("open", "Open"))
+                    .item(MenuItem::submenu(
+                        "sort",
+                        "Sort by",
+                        [
+                            MenuItem::action("name", "Name"),
+                            MenuItem::action("modified", "Modified"),
+                        ],
+                    ))
+                    .item(MenuItem::submenu(
+                        "group",
+                        "Group by",
+                        [
+                            MenuItem::action("kind", "Kind"),
+                            MenuItem::action("owner", "Owner"),
+                        ],
+                    ))
+                    .item(MenuItem::action("rename", "Rename")),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let trigger = cx
+        .debug_bounds("menu:hover-switch-submenu:trigger")
+        .expect("hover switch submenu trigger should render");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let sort = cx
+        .debug_bounds("menu:hover-switch-submenu:item:1:sort")
+        .expect("sort submenu trigger should render");
+    cx.simulate_mouse_move(sort.center(), None, Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:1:sort/0:name")
+            .is_some(),
+        "hovering the first submenu trigger should open its branch"
+    );
+    assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:2:group/0:kind")
+            .is_none(),
+        "sibling submenu branch should stay hidden before it is hovered"
+    );
+
+    let group = cx
+        .debug_bounds("menu:hover-switch-submenu:item:2:group")
+        .expect("group submenu trigger should render");
+    cx.simulate_mouse_move(group.center(), None, Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:2:group/0:kind")
+            .is_some(),
+        "hovering a sibling submenu trigger should open the sibling branch"
+    );
+    assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:1:sort/0:name")
+            .is_none(),
+        "switching submenu triggers should close the previous branch"
+    );
+
+    let rename = cx
+        .debug_bounds("menu:hover-switch-submenu:item:3:rename")
+        .expect("next root item should render");
+    cx.simulate_mouse_move(rename.center(), None, Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:2:group/0:kind")
+            .is_none(),
+        "hovering a plain root item should close the open submenu branch"
+    );
+}
+
 #[test]
 fn menu_state_models_default_open_disabled_and_policy_overrides() {
     let state = Menu::new("disabled-menu", "Disabled")

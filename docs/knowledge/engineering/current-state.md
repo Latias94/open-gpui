@@ -130,17 +130,20 @@ verified_by:
   - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-components tree_typeahead_targets_visible_focusable_items_from_current_focus tree_runtime_typeahead_focuses_visible_matching_row
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_tree_expands_and_selects
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components menu_runtime_hover_switches_between_submenu_branches menu_runtime_hover_opens_submenu_and_preserves_child_focus
+  - cargo nextest run -p open-gpui-ui-foundation-gallery overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts overlay_gallery_smoke_opens_menu_submenu_from_hover
 ---
 
 # Current State
 
-- Goal: 深化 open-gpui 的头像家族，补齐 AvatarGroup / AvatarGroupCount 的公开组件、gallery 证明和契约测试。
+- Goal: 深化 open-gpui Overlay Menu 的 hover 子菜单证明，覆盖同级子菜单分支切换。
 - Branch: feat/scroll-surface-containment
-- Last verified: `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components --tests avatar --no-fail-fast`, `cargo nextest run -p open-gpui-ui-foundation-gallery --tests foundation_gallery --no-fail-fast`
-- Done: `AvatarGroup` / `AvatarGroupCount` 已进入 `open-gpui-ui-components` 公共导出和 prelude，主题解析补了 group count 颜色，组件测试覆盖了 group 可见/隐藏计数和 count bubble state，gallery 样例与 smoke 已补到 Components 页面，并已完成当前 Avatar 家族切片的收口。
+- Last verified: `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components menu_runtime_hover_switches_between_submenu_branches menu_runtime_hover_opens_submenu_and_preserves_child_focus`, `cargo nextest run -p open-gpui-ui-foundation-gallery overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts overlay_gallery_smoke_opens_menu_submenu_from_hover`
+- Done: Overlay gallery 的 `rich-items` Menu 样例现在有两个非空子菜单；组件测试和 gallery smoke 都覆盖了 hover 打开第一个子菜单、hover 同级子菜单时切换到新分支并关闭旧分支、hover 普通根项时关闭当前分支。
 - In progress: None.
 - Blocked: None.
-- Next action: 如需继续这个分支，优先挑选下一条 polish boundary；当前头像家族这一刀已可直接提交。
+- Next action: 如需继续 Menu 家族，下一刀应先设计真正浮层子菜单的 placement / safe-hover corridor；当前 inline 子菜单模型不要提前塞几何 corridor。
 
 - 2026-06-26: Completed the Tree drag-and-drop hierarchy editing slice from
   `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md`. `TreeMove`,

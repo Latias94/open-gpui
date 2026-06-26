@@ -1028,6 +1028,14 @@ pub fn menu_samples(tokens: ThemeTokens) -> Vec<MenuSample> {
                         MenuItem::action("modified", "Modified"),
                     ],
                 ),
+                MenuItem::submenu(
+                    "group",
+                    "Group by",
+                    [
+                        MenuItem::action("kind", "Kind"),
+                        MenuItem::action("owner", "Owner"),
+                    ],
+                ),
                 MenuItem::submenu("empty", "Empty submenu", []),
             ];
             MenuSample {

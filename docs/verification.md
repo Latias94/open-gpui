@@ -52,9 +52,10 @@ Select popup outside dismissal, nested ScrollArea wheel scrolling, vertical Tabs
 horizontal plus vertical Splitter pointer dragging, Table column resize dragging, and long Sidebar
 internal navigation scrolling. Run the gallery package tests before relying on manual dogfood for
 those paths.
-Overlay gallery smoke coverage now also includes menu submenu hover-open on the rich-items sample,
-so submenu branch visibility and local hover retention are verified through the real gallery shell
-instead of only through component-state tests.
+Overlay gallery smoke coverage now also includes menu submenu hover-open and sibling branch
+switching on the rich-items sample, so submenu branch visibility, local hover retention, and
+old-branch dismissal are verified through the real gallery shell instead of only through
+component-state tests.
 The Components-page ScrollArea regressions also cover release-queue wheel isolation so scroll
 gestures on the sample card chrome do not leak to the page shell.
 Because the Components page now carries more depth samples, the longer-section smokes also rely on
@@ -570,6 +571,7 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    overlay_page_context_menu_samples_expose_point_anchor_contracts
    overlay_page_catalog_entries_have_signals_and_sample_selectors
    overlay_gallery_smoke_closes_menu_from_escape_and_outside_press
+   overlay_gallery_smoke_opens_menu_submenu_from_hover
    overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses` plus `cargo check -p
    open-gpui-ui-foundation-gallery --tests` after changing the overlay menu family.
 7. Re-run `cargo nextest run -p open-gpui-ui-components` and `cargo nextest run -p

@@ -6,6 +6,13 @@ status: active
 
 # Log
 
+- 2026-06-27: Deepened the Overlay Menu hover-submenu proof on
+  `feat/scroll-surface-containment`. The `rich-items` Menu gallery sample now has two non-empty
+  sibling submenus, and component plus gallery smokes verify hover-open, sibling branch switching,
+  old-branch dismissal, and closing the active branch from a plain root item. Verified with
+  `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`,
+  `cargo nextest run -p open-gpui-ui-components menu_runtime_hover_switches_between_submenu_branches menu_runtime_hover_opens_submenu_and_preserves_child_focus`,
+  and `cargo nextest run -p open-gpui-ui-foundation-gallery overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts overlay_gallery_smoke_opens_menu_submenu_from_hover`.
 - 2026-06-26: Started the Avatar family slice on `feat/scroll-surface-containment`. Added
   `AvatarGroup` and `AvatarGroupCount` to `open-gpui-ui-components`, wired theme colors and root /
   prelude exports, added focused component tests for visible/hidden counts and group count state,
