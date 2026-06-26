@@ -11,8 +11,8 @@ use open_gpui_ui_components::{
     TableColumnFacets, TableColumnId, TableColumnRegion, TableExpansionMode, TableExpansionState,
     TableGlobalFilterChange, TablePredicateFilterChange, TablePredicateFilterOperator,
     TableRangeFilterChange, TableRowChildrenLoadState, TableRowId, TableRowRegion, TableStageMode,
-    TableTextFilterOperator, ThemeMode, ToggleVariant, TooltipOpenIntent, TreeKeyboardAction,
-    VirtualizedListScrollStrategy,
+    TableTextFilterOperator, TextInputDisplayMode, ThemeMode, ToggleVariant, TooltipOpenIntent,
+    TreeKeyboardAction, VirtualizedListScrollStrategy,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state, init_text_input,
     },
@@ -1647,7 +1647,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(labels[2].state.disabled());
     assert!(!labels[3].state.associated());
 
-    assert_eq!(text_inputs.len(), 5);
+    assert_eq!(text_inputs.len(), 6);
     assert_eq!(text_inputs[0].state.role(), Role::TextInput);
     assert!(text_inputs[0].state.controller_driven());
     assert!(
@@ -1663,6 +1663,11 @@ fn components_page_samples_expose_component_metadata() {
     );
     assert!(!text_inputs[3].state.editable());
     assert!(!text_inputs[4].state.editable());
+    assert_eq!(
+        text_inputs[5].state.display_mode(),
+        TextInputDisplayMode::Password
+    );
+    assert_eq!(text_inputs[5].state.display_text().as_ref(), "•••");
 
     assert_eq!(fields.len(), 3);
     assert!(fields[0].state.required());

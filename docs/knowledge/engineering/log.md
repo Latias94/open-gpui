@@ -6,6 +6,20 @@ status: active
 
 # Log
 
+- 2026-06-25: Completed U1/U2 of
+  `docs/plans/2026-06-25-002-feat-ui-text-input-editor-family-plan.md` in the working tree.
+  `TextInput` now has internal value/display projection helpers, public `TextInputDisplayMode`
+  root/prelude exports, password display that masks one glyph per stored grapheme, controller
+  hit-testing / IME geometry mapping between displayed mask offsets and stored value offsets, and a
+  Components gallery password sample. Verified focused TextInput, gallery metadata, and public API
+  / contract guard nextest checks. Next action is U3: add a separate controlled `Textarea`.
+- 2026-06-25: Wrote `docs/plans/2026-06-25-002-feat-ui-text-input-editor-family-plan.md`
+  as the next component-depth boundary after Table content-fit. The plan keeps the current-crate
+  product boundary, starts by splitting stored text from displayed text, then adds password display,
+  a separate controlled `Textarea`, and finally optional Table multiline editor composition after
+  the primitive is stable. References include the existing TextInput controller research,
+  `gpui-component` masked offset handling, Fret's textarea/editor boundaries, and TanStack's
+  app-owned editable table examples. Next action is U1: add text value/display projection helpers.
 - 2026-06-25: Wrote `docs/plans/2026-06-25-001-feat-ui-table-autosize-by-content-plan.md`
   as the next Table maturity boundary. The plan adds a renderer-neutral content-fit column policy
   plus adapter-owned visible-width measurement and keeps manual sizing authoritative. Sticky

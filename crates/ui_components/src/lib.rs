@@ -188,7 +188,9 @@ pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
     TabsSelection, TabsState,
 };
-pub use text_input::{TextInput, TextInputColors, TextInputMetrics, TextInputState};
+pub use text_input::{
+    TextInput, TextInputColors, TextInputDisplayMode, TextInputMetrics, TextInputState,
+};
 pub use theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
 pub use toggle::{Toggle, ToggleColors, ToggleMetrics, ToggleState, ToggleVariant};
 pub use toolbar::{

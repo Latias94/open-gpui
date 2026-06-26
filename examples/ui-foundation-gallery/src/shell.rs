@@ -3325,6 +3325,7 @@ pub(crate) fn component_text_input(
     let input = TextInput::new(id, label)
         .value(state.value())
         .with_size(state.size())
+        .display_mode(state.display_mode())
         .disabled(state.disabled())
         .read_only(state.read_only())
         .required(state.required())
@@ -3400,6 +3401,7 @@ pub(crate) fn component_text_input_state_row(state: &TextInputState) -> impl Int
                 "display value"
             }
         ))
+        .child(format!("display mode: {}", state.display_mode().as_str()))
         .child(if state.controller_driven() {
             "controller"
         } else {

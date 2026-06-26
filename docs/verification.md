@@ -165,9 +165,10 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_vi
 The components package includes runtime smoke coverage for Switch, TextInput, RadioGroup, Listbox,
 Select, Combobox, Command, Tabs, and Toolbar keyboard navigation. The focused Switch test renders
 a controlled switch, clicks its real root selector, verifies `on_change` receives the next checked
-value, and confirms disabled switches do not emit changes. The focused TextInput test renders a
-standalone controller-backed input, clicks its real root, accepts simulated platform text, sanitizes
-single-line input, and verifies the controller caret ends at the inserted text. The focused
+value, and confirms disabled switches do not emit changes. The focused TextInput tests render a
+standalone controller-backed input, click its real root, accept simulated platform text, sanitize
+single-line input, verify the controller caret ends at the inserted text, and assert password
+display mode masks one glyph per grapheme while preserving the stored value. The focused
 RadioGroup test renders real radio
 items, rejects disabled clicks, skips disabled items with arrow navigation, verifies default
 selection seeding, click and arrow-selection payloads, and confirms Space on an already selected radio does not emit a duplicate
@@ -491,9 +492,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    runtime smoke now verifies real Command text-input editing, inline filtering, keyboard
    activation, shortcut payloads, non-dialog content persistence, multi-select toggling, virtualized
    scrolling/reveal behavior, and app-owned index snapshot state. The default TextInput
-    sample should accept real text editing through the
-    controller-backed path, while the gallery remains scrollable and keeps focus visible when the
-    page overflows. The Table samples should expose the `release-queue` 10k-row virtualized window,
+   sample should accept real text editing through the controller-backed path, and the password
+   sample should show masked display metadata while preserving the underlying value contract. The
+   gallery remains scrollable and keeps focus visible when the page overflows. The Table samples
+   should expose the `release-queue` 10k-row virtualized window,
     the filtered/sorted/paginated `filter-board` model with working status `TableFacetedFilter`,
     score `TableRangeFilter`, and name `TablePredicateFilter` controls,
     the controlled `release-resize` sizing

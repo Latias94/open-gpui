@@ -21,7 +21,7 @@ use open_gpui_ui_components::{
     TableRenderPlan, TableRow, TableRowActivation, TableRowChildrenLoadState,
     TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy, TableSort, TableStageMode,
     TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
-    TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
+    TextInputDisplayMode, TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
     ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
     VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
     VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
@@ -112,6 +112,7 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Label",
     "open_gpui_ui_components::LabelState",
     "open_gpui_ui_components::TextInput",
+    "open_gpui_ui_components::TextInputDisplayMode",
     "open_gpui_ui_components::TextInputState",
     "open_gpui_ui_components::gpui_adapter::TextInputController",
     "open_gpui_ui_components::Field",
@@ -3582,7 +3583,7 @@ pub fn label_samples(tokens: ThemeTokens) -> [LabelSample; 4] {
 }
 
 /// Returns text input samples backed by real component state.
-pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
+pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 6] {
     [
         (
             "default",
@@ -3595,6 +3596,7 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             false,
             Size::Medium,
             true,
+            TextInputDisplayMode::Plain,
         ),
         (
             "filled",
@@ -3607,6 +3609,7 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             false,
             Size::Medium,
             false,
+            TextInputDisplayMode::Plain,
         ),
         (
             "invalid",
@@ -3619,6 +3622,7 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             true,
             Size::Medium,
             false,
+            TextInputDisplayMode::Plain,
         ),
         (
             "read-only",
@@ -3631,6 +3635,7 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             false,
             Size::Medium,
             false,
+            TextInputDisplayMode::Plain,
         ),
         (
             "disabled",
@@ -3643,6 +3648,20 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             false,
             Size::Medium,
             false,
+            TextInputDisplayMode::Plain,
+        ),
+        (
+            "password",
+            "Password",
+            "a🙂中",
+            "Password",
+            false,
+            false,
+            false,
+            false,
+            Size::Medium,
+            false,
+            TextInputDisplayMode::Password,
         ),
     ]
     .map(
@@ -3657,8 +3676,9 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             invalid,
             size,
             controller_driven,
+            display_mode,
         )| {
-            let state = TextInputState::resolve(
+            let state = TextInputState::resolve_with_display_mode(
                 value,
                 Some(placeholder),
                 size,
@@ -3667,6 +3687,7 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
                 invalid,
                 required,
                 controller_driven,
+                display_mode,
                 tokens,
             );
 

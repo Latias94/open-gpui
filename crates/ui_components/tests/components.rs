@@ -35,13 +35,14 @@ use open_gpui_ui_components::{
     TableSelectionActivationMode, TableSelectionMode, TableSelectionScope, TableSort,
     TableSortDirection, TableStageMode, TableState, TableTextFilterOperator, TableToolbar,
     TableToolbarState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
-    TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
-    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection,
-    ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree,
-    TreeItemDescriptor, VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
-    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, first_enabled,
+    TabsState, TextInput, TextInputDisplayMode, ThemeColor, ThemeMode, ThemeResolver,
+    ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
+    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
+    TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList,
+    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRenderPlan,
+    VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
+    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
+    VirtualizerState, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -1040,6 +1041,7 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
         "Label" => &["required", "disabled"],
         "TextInput" => &[
             "placeholder",
+            "display_mode",
             "disabled",
             "read_only",
             "invalid",
@@ -1416,6 +1418,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "value",
             "on_change",
             "placeholder",
+            "display_mode",
             "disabled",
             "read_only",
             "invalid",
@@ -9890,6 +9893,8 @@ fn gpui_adapter_exports_group_runtime_specific_surfaces() {
     let _module_state: root::text_input::TextInputState = module_text_input.state();
     let _module_colors: Option<root::text_input::TextInputColors> = None;
     let _module_metrics: Option<root::text_input::TextInputMetrics> = None;
+    let _module_display_mode: root::text_input::TextInputDisplayMode =
+        root::text_input::TextInputDisplayMode::Plain;
 
     let root_overlay = root::gpui_adapter::GpuiOverlayAdapterConfig::new(
         OverlayLayerKind::Tooltip,
@@ -9905,6 +9910,7 @@ fn gpui_adapter_exports_group_runtime_specific_surfaces() {
     let _root_size: fn(UiSize) -> open_gpui::Size<open_gpui::Pixels> =
         root::gpui_adapter::gpui_size_from_ui;
     let _prelude_button: prelude::Button = prelude::Button::new("save", "Save");
+    let _prelude_display_mode: prelude::TextInputDisplayMode = prelude::TextInputDisplayMode::Plain;
 
     assert_eq!(
         root_overlay.deferred_priority(),
@@ -13822,7 +13828,7 @@ fn default_text_input_state_uses_text_input_role_and_placeholder_display() {
     assert_eq!(state.metrics().height(), Size::Medium.input_h());
     assert_eq!(state.metrics().padding_x(), Size::Medium.input_px());
     assert!(!state.has_value());
-    assert_eq!(state.display_text(), "Email address");
+    assert_eq!(state.display_text().as_ref(), "Email address");
     assert!(state.displaying_placeholder());
     assert!(state.editable());
 }
@@ -13836,7 +13842,22 @@ fn filled_text_input_reports_value_state() {
 
     assert!(state.has_value());
     assert_eq!(state.value(), "hello@example.com");
-    assert_eq!(state.display_text(), "hello@example.com");
+    assert_eq!(state.display_text().as_ref(), "hello@example.com");
+    assert!(!state.displaying_placeholder());
+}
+
+#[test]
+fn password_text_input_masks_display_without_hiding_value() {
+    let state = TextInput::new("password", "Password")
+        .placeholder("Password")
+        .value("a🙂中")
+        .display_mode(TextInputDisplayMode::Password)
+        .state();
+
+    assert_eq!(state.value(), "a🙂中");
+    assert_eq!(state.display_mode(), TextInputDisplayMode::Password);
+    assert_eq!(state.display_text().as_ref(), "•••");
+    assert!(state.display_mode().masks_value());
     assert!(!state.displaying_placeholder());
 }
 

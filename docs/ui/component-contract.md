@@ -619,10 +619,13 @@ JSON schema. Single-line editable text input now uses GPUI's `EntityInputHandler
 adapter-owned controller directly or use the standard controlled shape
 `TextInput::value(...).on_change(...)`; the latter creates a keyed adapter controller internally,
 emits sanitized single-line values, and expects callers to feed the accepted value back through
-`value` on the next render. Richer editor behavior such as multiline input, password masking,
-undo/redo, and completion remains out of scope. `Field` still stays separate from the editing
-controller and remains composition-only. `focus_ring_shadow` is GPUI-adapter code and should stay
-out of a future headless crate if `FocusRing` is extracted.
+`value` on the next render. `TextInputDisplayMode` now distinguishes plain display from password
+display: password mode masks one glyph per stored grapheme for render, caret, selection, hit
+testing, and IME geometry while keeping the stored value and `on_change` payload unchanged.
+Password reveal toggles, credential-manager affordances, multiline `Textarea`, undo/redo,
+completion, validation engines, rich text, and code-editor behavior remain out of scope. `Field`
+still stays separate from the editing controller and remains composition-only. `focus_ring_shadow`
+is GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.
 ADR 0008 keeps current-crate productization as the active roadmap. ADR 0006 keeps
 `open-gpui-ui-headless` deferred after the strict boundary checkpoint, and ADR 0007 records the
 post-boundary extraction design without creating the behavior crate.

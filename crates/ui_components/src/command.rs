@@ -26,7 +26,7 @@ use crate::overlay::{
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::text_input::adapter::TextInputController;
-use crate::text_input::{TextInput, TextInputState};
+use crate::text_input::{TextInput, TextInputDisplayMode, TextInputState};
 use crate::theme::ThemeResolver;
 use crate::virtualized_list::{VirtualizedListScrollStrategy, virtualized_list_scroll_target};
 
@@ -2371,6 +2371,7 @@ impl RenderOnce for Command {
                 Some(self.placeholder.clone()),
                 state.disabled(),
                 false,
+                TextInputDisplayMode::Plain,
                 query_change_handler.clone(),
             );
         });

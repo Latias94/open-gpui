@@ -29,7 +29,8 @@
 * [Table global filtering and faceting planning](progress/2026-06-24-table-global-filtering-faceting-plan.md) - Durable handoff for the next Table search / global faceting boundary.
 * [Table column visibility controls](progress/2026-06-24-table-column-visibility-controls.md) - Durable handoff for the active Table column visibility controls slice.
 * [Table filter operators planning](progress/2026-06-24-table-filter-operators.md) - Durable handoff for the built-in predicate operator slice.
-* [Table autosize by content planning](progress/2026-06-25-table-autosize-by-content-plan.md) - Planning note for the next Table content-fit sizing slice.
+* [Table autosize by content completion](progress/2026-06-25-table-autosize-by-content-plan.md) - Completion note for the Table content-fit sizing slice.
+* [Text input editor family planning](progress/2026-06-25-text-input-editor-family-plan.md) - Planning note for password display, controlled textarea, and later Table multiline editor composition.
 * [Table column groups and nested headers](progress/2026-06-24-table-column-groups-nested-headers.md) - Planning note for the next Table header-depth slice.
 * [Table column groups and nested headers verification](verification/table-column-groups-nested-headers-20260625.md) - Verification evidence for the nested header gallery proof and center-window scroll smoke.
 * [Table cell editing completion](progress/2026-06-24-table-cell-editing-plan.md) - Durable handoff for the first text-cell editing slice.

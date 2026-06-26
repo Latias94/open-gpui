@@ -105,18 +105,24 @@ verified_by:
 
 # Current State
 
-- 2026-06-25: The active Codex goal is the long-running Table maturity goal: keep planning,
-  fearless refactoring, implementation, verification, memory updates, and commits going until the
-  Table API, interaction behavior, performance / virtualization, gallery proof, and docs contract
-  are mature enough to serve as the official component-library baseline. The current Table boundary
-  is autosize-by-content, with the plan written at
-  `docs/plans/2026-06-25-001-feat-ui-table-autosize-by-content-plan.md`.
-- 2026-06-25: Completed the content-fit slice in the working tree. `ui_core::TableColumn` now
-  carries a renderer-neutral width policy with `Fixed` and `ContentFit` modes, the policy
-  participates in table cache keys, the GPUI table render plan exposes the policy for each
-  resolved column, the Components gallery proves visible edits widen the `content-fit-release`
-  sample, and focused core/components/table plus gallery nextest checks passed. Next action is to
-  commit the slice and decide the next Table boundary.
+- 2026-06-25: Completed U1/U2 of the text input editor family plan in the working tree.
+  `TextInputDisplayMode` is now a public root/prelude API with `Plain` and `Password`; password
+  mode uses the new value/display projection helpers to mask one glyph per stored grapheme while
+  preserving controller values, `on_change` payloads, caret/selection geometry, hit testing, and
+  IME bounds. The Components gallery now includes a password `TextInput` sample, and the next
+  action is U3: add a separate controlled `Textarea` component.
+- 2026-06-25: The content-fit Table slice is shipped as commit `10ec7b3`
+  (`feat(table): support content-fit width growth`). The next component-depth boundary is the text
+  input editor family plan at
+  `docs/plans/2026-06-25-002-feat-ui-text-input-editor-family-plan.md`, which grows from
+  single-line `TextInput` into value/display projection, password display, controlled `Textarea`,
+  and later opt-in Table multiline editor composition.
+- 2026-06-25: Completed the content-fit Table slice. `ui_core::TableColumn` now carries a
+  renderer-neutral width policy with `Fixed` and `ContentFit` modes, the policy participates in
+  table cache keys, the GPUI table render plan exposes measured content-fit width snapshots, the
+  Components gallery proves visible edits widen the `content-fit-release` sample, and focused
+  core/components/table plus gallery nextest checks passed. Remaining Table follow-ups move through
+  editor-family primitives rather than expanding Table's own editor engine first.
 - 2026-06-25: Completed U4 of
   `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
   tree. `ui_components::Table` now renders nested header groups with multi-row, region-aware GPUI
