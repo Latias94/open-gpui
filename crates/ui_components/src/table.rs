@@ -10,6 +10,7 @@ use crate::popover::{Popover, PopoverState};
 use crate::scroll_area::ScrollArea;
 use crate::select::{Select, SelectState};
 use crate::text_input::{TextInput, TextInputState};
+use crate::textarea::Textarea;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
 use open_gpui::{
@@ -20,9 +21,9 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, GridViewport2D, InitialFocusIntent, OutsidePressPolicy,
-    OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable, Size, TableCellValue,
-    TableColumn, TableColumnFacets, TableColumnId, TableColumnRegion, TableColumnResizeDirection,
-    TableColumnResizeMode, TableColumnResizeState, TableColumnSizing,
+    OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable, Size, TableCellEditor,
+    TableCellValue, TableColumn, TableColumnFacets, TableColumnId, TableColumnRegion,
+    TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState, TableColumnSizing,
     TableColumnVisibilityOverrides, TableColumnWidthPolicy, TableExpansionMode,
     TableExpansionState, TableFacetRange, TableFilter, TableGlobalFacetSummary,
     TableNumericFilterOperator, TableResolvedColumnSizing, TableResolvedRow, TableResolvedState,
@@ -4558,7 +4559,7 @@ pub struct TableColumnRenderPlan {
     region: TableColumnRegion,
     aria_column_index: usize,
     sortable: bool,
-    text_editable: bool,
+    editor: Option<TableCellEditor>,
     width_policy: TableColumnWidthPolicy,
     sort_direction: Option<TableSortDirection>,
     sort_action: Option<TableHeaderAction>,
@@ -4586,7 +4587,7 @@ impl TableColumnRenderPlan {
             region,
             aria_column_index,
             sortable: column.sortable(),
-            text_editable: column.text_editable(),
+            editor: column.editor(),
             width_policy: column.width_policy(),
             sort_direction,
             sort_action: column
@@ -4628,7 +4629,12 @@ impl TableColumnRenderPlan {
 
     /// Returns whether leaf cells in this column render text editors.
     pub const fn text_editable(&self) -> bool {
-        self.text_editable
+        self.editor.is_some()
+    }
+
+    /// Returns the configured editor for leaf cells in this column.
+    pub const fn editor(&self) -> Option<TableCellEditor> {
+        self.editor
     }
 
     /// Returns the configured width policy for this column.
@@ -5810,7 +5816,7 @@ pub struct TableCellRenderPlan {
     aria_column_index: usize,
     role: Role,
     width: UiPx,
-    text_editable: bool,
+    editor: Option<TableCellEditor>,
 }
 
 impl TableCellRenderPlan {
@@ -5819,7 +5825,11 @@ impl TableCellRenderPlan {
         row: &TableResolvedRow,
         value: Option<&TableCellValue>,
     ) -> Self {
-        let text_editable = column.text_editable() && row.is_leaf() && value.is_some();
+        let editor = if row.is_leaf() && value.is_some() {
+            column.editor()
+        } else {
+            None
+        };
         Self {
             column_id: column.id().clone(),
             text: value.map(TableCellValue::filter_text).unwrap_or_default(),
@@ -5827,7 +5837,7 @@ impl TableCellRenderPlan {
             aria_column_index: column.aria_column_index(),
             role: Role::Cell,
             width: column.width(),
-            text_editable,
+            editor,
         }
     }
 
@@ -5863,7 +5873,12 @@ impl TableCellRenderPlan {
 
     /// Returns whether this resolved leaf cell should render a text editor.
     pub const fn text_editable(&self) -> bool {
-        self.text_editable
+        self.editor.is_some()
+    }
+
+    /// Returns the editor configured for this resolved leaf cell.
+    pub const fn editor(&self) -> Option<TableCellEditor> {
+        self.editor
     }
 }
 
@@ -8125,24 +8140,16 @@ fn render_table_body_cell(
         ));
     }
     let cell_text = cell.text().to_owned();
-    if cell.text_editable() && on_cell_edit_change.is_some() {
+    if let (Some(editor), Some(_)) = (cell.editor(), on_cell_edit_change.as_ref()) {
         let action = TableRowAction::from_render_plan(&row, TableInputModifiers::default());
         let column_id_for_change = cell.column_id().clone();
         let previous_text = cell_text.clone();
-        let on_change = on_cell_edit_change.clone();
-        content.push(
-            div()
-                .flex_1()
-                .min_w(px(0.0))
-                .overflow_hidden()
-                .on_mouse_up(MouseButton::Left, |_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .child(
-                    TextInput::new(
-                        format!("table:{table_id}:cell:{render_key}:{column_id}:editor"),
-                        format!("Edit {column_id} for row {}", row.id().as_str()),
-                    )
+        let editor_id = format!("table:{table_id}:cell:{render_key}:{column_id}:editor");
+        let editor_label = format!("Edit {column_id} for row {}", row.id().as_str());
+        let editor_element = match editor {
+            TableCellEditor::Text => {
+                let on_change = on_cell_edit_change.clone();
+                TextInput::new(editor_id, editor_label)
                     .value(cell_text)
                     .on_change(move |next_text, window, cx| {
                         if let Some(on_change) = on_change.as_ref() {
@@ -8158,8 +8165,41 @@ fn render_table_body_cell(
                             );
                         }
                     })
-                    .with_size(metrics.size()),
-                )
+                    .with_size(metrics.size())
+                    .into_any_element()
+            }
+            TableCellEditor::MultilineText { rows } => {
+                let on_change = on_cell_edit_change.clone();
+                Textarea::new(editor_id, editor_label)
+                    .value(cell_text)
+                    .rows(rows)
+                    .on_change(move |next_text, window, cx| {
+                        if let Some(on_change) = on_change.as_ref() {
+                            on_change(
+                                TableCellEditChange::new(
+                                    action.clone(),
+                                    column_id_for_change.clone(),
+                                    previous_text.clone(),
+                                    next_text,
+                                ),
+                                window,
+                                cx,
+                            );
+                        }
+                    })
+                    .with_size(metrics.size())
+                    .into_any_element()
+            }
+        };
+        content.push(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .overflow_hidden()
+                .on_mouse_up(MouseButton::Left, |_, _, cx| {
+                    cx.stop_propagation();
+                })
+                .child(editor_element)
                 .into_any_element(),
         );
     } else {
@@ -8535,7 +8575,7 @@ mod tests {
             region: TableColumnRegion::Center,
             aria_column_index: 1,
             sortable: false,
-            text_editable: false,
+            editor: None,
             width_policy: TableColumnWidthPolicy::ContentFit,
             sort_direction: None,
             sort_action: None,

@@ -106,10 +106,23 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata official_component_catalog_entries_have_signals_and_sample_selectors components_gallery_smoke_textarea_scroll_stays_inside_sample
   - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
   - git diff --check
+  - cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-core multiline_text_editor_rows_are_normalized
+  - cargo nextest run -p open-gpui-ui-components table_render_plan_exposes_text_cell_editability_for_leaf_cells_only table_cell_edit_change_updates_source_row_and_preserves_table_state table_runtime_text_cell_edit_emits_change_without_row_interaction table_runtime_multiline_cell_edit_emits_newline_change_without_row_interaction table_public_exports_include_core_table_and_virtualizer_contracts component_api_inventory_uses_stable_ownership_vocabulary
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_table_samples_expose_virtualized_row_model_contract components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_multiline_table_cell_updates_sample_rows
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
+  - git diff --check
 ---
 
 # Current State
 
+- 2026-06-26: Completed U4 of the text input editor family plan in the working tree.
+  `TableCellEditor::MultilineText { rows }` now lets Table compose fixed-height `Textarea`
+  editors for editable leaf cells. The contract keeps row data app-owned through the existing
+  `TableCellEditChange` payload; `multiline-release` in the Components gallery proves newline
+  edits feed back into sample-owned rows without mounting the wrong editor. Dynamic row-height
+  measurement, validation, dirty tracking, commit/cancel workflows, and server persistence remain
+  deferred. Next action after final verification is to choose the next component-depth boundary.
 - 2026-06-26: Completed U3 of the text input editor family plan in the working tree. `Textarea`
   is now an official separate multiline form editor with renderer-neutral `TextareaState`,
   root/prelude exports, API inventory coverage, newline-preserving `on_change`, local viewport

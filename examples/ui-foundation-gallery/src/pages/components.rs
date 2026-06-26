@@ -940,7 +940,7 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
     ComponentConformanceGate {
         id: "table-virtualization",
         title: "Table row models and scroll ownership",
-        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate metadata, pinned columns, pinned rows, resize handles, content-fit width growth, column visibility controls, and nested scroll ownership.",
+        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate metadata, pinned columns, pinned rows, resize handles, content-fit width growth, single-line and multiline editors, column visibility controls, and nested scroll ownership.",
         evidence: &[
             "TableState::resolve",
             "Table::render_plan",
@@ -949,6 +949,7 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "grouped-custom-aggregation",
             "release-resize",
             "content-fit-release",
+            "multiline-release",
             "row-pinning",
             "filter-board",
             "TableColumnWidthPolicy",
@@ -964,6 +965,7 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "components_gallery_smoke_faceted_filter_updates_table_rows",
             "components_gallery_smoke_range_filter_updates_table_rows",
             "components_gallery_smoke_content_fit_table_cell_edit_widens_name_column",
+            "components_gallery_smoke_multiline_table_cell_updates_sample_rows",
             "components_gallery_smoke_column_visibility_updates_release_matrix",
             "components_gallery_smoke_table_scroll_stays_inside_sample",
             "components_gallery_smoke_grouped_table_scroll_stays_inside_sample",
@@ -4144,6 +4146,7 @@ fn build_table_samples() -> Vec<TableSample> {
     let server_paged_rows = server_paged_rows();
     let release_resize_rows = (0..160).map(release_resize_row).collect::<Vec<_>>();
     let editable_release_rows = (0..32).map(editable_release_row).collect::<Vec<_>>();
+    let multiline_release_rows = (0..24).map(multiline_release_row).collect::<Vec<_>>();
     let grouped_release_rows = (0..320).map(grouped_release_row).collect::<Vec<_>>();
     let grouped_custom_aggregation_rows = (0..8)
         .map(grouped_custom_aggregation_row)
@@ -4276,6 +4279,29 @@ fn build_table_samples() -> Vec<TableSample> {
         viewport_extent: ui_px(196.0),
         row_height: ui_px(34.0),
         overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
+    let multiline_release = TableSample {
+        id: "multiline-release",
+        title: "Multiline release notes",
+        summary: "Fixed-height textarea cell editors preserve newline edits while app-owned rows feed updated values back into Table.",
+        badge: "textarea cells",
+        state: TableState::new(multiline_release_rows)
+            .with_columns(multiline_edit_table_columns())
+            .with_column_order(["name", "notes", "status", "score"])
+            .with_column_sizing(
+                TableColumnSizing::new()
+                    .with_width("name", ui_px(164.0))
+                    .with_width("notes", ui_px(264.0))
+                    .with_width("status", ui_px(112.0))
+                    .with_width("score", ui_px(84.0)),
+            )
+            .with_selected_rows(["multiline-release-row-002"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(220.0),
+        row_height: ui_px(82.0),
+        overscan: 3,
         state_summary: TableSampleStateSummary::default(),
     };
     let grouped_release = TableSample {
@@ -4441,6 +4467,7 @@ fn build_table_samples() -> Vec<TableSample> {
         release_resize.with_state_summary(),
         content_fit_release.with_state_summary(),
         editable_release.with_state_summary(),
+        multiline_release.with_state_summary(),
         grouped_release.with_state_summary(),
         grouped_custom_aggregation.with_state_summary(),
         release_matrix.with_state_summary(),
@@ -4477,6 +4504,28 @@ fn editable_table_columns() -> [TableColumn; 4] {
         TableColumn::new("status", "Status")
             .with_width(ui_px(128.0))
             .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(180.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(84.0))
+            .with_min_width(ui_px(72.0))
+            .with_max_width(ui_px(120.0)),
+    ]
+}
+
+fn multiline_edit_table_columns() -> [TableColumn; 4] {
+    [
+        TableColumn::new("name", "Name")
+            .with_width(ui_px(164.0))
+            .with_min_width(ui_px(132.0))
+            .with_max_width(ui_px(240.0)),
+        TableColumn::new("notes", "Notes")
+            .with_multiline_text_editor(3)
+            .with_width(ui_px(264.0))
+            .with_min_width(ui_px(220.0))
+            .with_max_width(ui_px(360.0)),
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(112.0))
+            .with_min_width(ui_px(96.0))
             .with_max_width(ui_px(180.0)),
         TableColumn::new("score", "Score")
             .with_width(ui_px(84.0))
@@ -4891,6 +4940,20 @@ fn editable_release_row(index: usize) -> TableRow {
         .with_cell("name", format!("Editable release {index:03}"))
         .with_cell("team", teams[index % teams.len()])
         .with_cell("status", statuses[(index / 4) % statuses.len()])
+        .with_cell("score", score)
+}
+
+fn multiline_release_row(index: usize) -> TableRow {
+    let statuses = ["Draft", "Review", "Ready", "Held"];
+    let score = 240_usize.saturating_sub(index % 240);
+
+    TableRow::new(format!("multiline-release-row-{index:03}"))
+        .with_cell("name", format!("Release note {index:03}"))
+        .with_cell(
+            "notes",
+            format!("User-visible summary {index:03}\nRollback: pending"),
+        )
+        .with_cell("status", statuses[(index / 3) % statuses.len()])
         .with_cell("score", score)
 }
 

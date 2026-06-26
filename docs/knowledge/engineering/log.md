@@ -6,6 +6,12 @@ status: active
 
 # Log
 
+- 2026-06-26: Completed U4 of
+  `docs/plans/2026-06-25-002-feat-ui-text-input-editor-family-plan.md` in the working tree.
+  `TableCellEditor::MultilineText { rows }` extends the renderer-neutral Table editor contract,
+  the GPUI adapter maps it to fixed-height `Textarea` cells, and `TableCellEditChange` continues
+  to carry app-owned row/column edit payloads. The Components gallery now has `multiline-release`
+  plus a focused smoke proving newline-preserving textarea edits update sample-owned table rows.
 - 2026-06-26: Completed U3 of
   `docs/plans/2026-06-25-002-feat-ui-text-input-editor-family-plan.md` in the working tree.
   `Textarea` is now a separate controlled multiline component with newline-preserving

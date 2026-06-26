@@ -133,6 +133,12 @@ proof: it enters the Table family view, targets the `editable-release` sample, e
 `(row_id, column_id)` pair, confirms the gallery applies the change to its app-owned `TableState`,
 and proves a read-only `status` cell does not mount an editor.
 
+`components_gallery_smoke_multiline_table_cell_updates_sample_rows` is the focused multiline
+cell-editing proof: it enters the Table family view, targets the `multiline-release` sample, edits
+a rendered `notes` cell through the nested `Textarea`, verifies the same `TableCellEditChange`
+payload preserves newlines, confirms the gallery applies the change to its app-owned
+`TableState`, and proves non-multiline/read-only cells do not mount the wrong editor.
+
 `components_gallery_smoke_content_fit_table_cell_edit_widens_name_column` is the focused
 content-fit proof: it enters the Table family view, targets the `content-fit-release` sample,
 edits the visible `name` cell, verifies the sample keeps the fixed `score` lane anchored, and
@@ -146,8 +152,8 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_exp
 cargo nextest run -p open-gpui-ui-core numeric_range_filters_match_finite_number_cells_inclusively numeric_range_filters_normalize_open_and_reversed_bounds categorical_filters_match_exact_tokens_and_multiple_values
 cargo nextest run -p open-gpui-ui-components table_range_filter_state_resolves_bounds_and_popover_contract table_range_filter_change_updates_filters_and_resets_pagination table_render_plan_exposes_faceting_metadata table_public_exports_include_core_table_and_virtualizer_contracts component_api_inventory_uses_stable_ownership_vocabulary
 cargo nextest run -p open-gpui-ui-components table_predicate_filter
-cargo nextest run -p open-gpui-ui-components table_render_plan_exposes_text_cell_editability_for_leaf_cells_only table_cell_edit_change_updates_source_row_and_preserves_table_state table_runtime_text_cell_edit_emits_change_without_row_interaction controlled_text_input_on_change_accepts_input_without_supplied_controller component_api_inventory_uses_stable_ownership_vocabulary table_public_exports_include_core_table_and_virtualizer_contracts
-cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_editable_table_cell_updates_sample_rows
+cargo nextest run -p open-gpui-ui-components table_render_plan_exposes_text_cell_editability_for_leaf_cells_only table_cell_edit_change_updates_source_row_and_preserves_table_state table_runtime_text_cell_edit_emits_change_without_row_interaction table_runtime_multiline_cell_edit_emits_newline_change_without_row_interaction controlled_text_input_on_change_accepts_input_without_supplied_controller component_api_inventory_uses_stable_ownership_vocabulary table_public_exports_include_core_table_and_virtualizer_contracts
+cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_editable_table_cell_updates_sample_rows components_gallery_smoke_multiline_table_cell_updates_sample_rows
 ```
 
 `VirtualizedList` follows the same split at component scale: `open-gpui-ui-components` tests prove
@@ -508,9 +514,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
     horizontally scrollable center lane, the wide `release-matrix` center-column window with a
     working `TableColumnVisibility` control, the source-tree `dependency-tree` sample with nested
     rows and controlled expansion, stable selected row ids, the editable `editable-release`
-    text-cell sample with app-owned row updates, table/row/cell accessibility metadata, sortable
-    header metadata, resize handle metadata, row activation, expansion, column-visibility, and
-    cell-edit log entries, and internal body viewports that scroll
+    text-cell sample with app-owned row updates, the `multiline-release` textarea-cell sample with
+    newline-preserving app-owned row updates, table/row/cell accessibility metadata, sortable header
+    metadata, resize handle metadata, row activation, expansion, column-visibility, and cell-edit
+    log entries, and internal body viewports that scroll
     without moving the outer Components page.
     The Tree sample should expose `document-outline`,
     tree/tree-item accessibility metadata, expandable `Paper` children, a state readout, an inner

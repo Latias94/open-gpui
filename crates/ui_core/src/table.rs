@@ -186,15 +186,45 @@ impl From<bool> for TableCellValue {
 pub enum TableCellEditor {
     /// Single-line text editing with app-owned values.
     Text,
+    /// Fixed-row multiline text editing with app-owned values.
+    MultilineText {
+        /// Fixed textarea row count requested by the column.
+        rows: usize,
+    },
 }
 
 impl TableCellEditor {
+    /// Returns a normalized fixed row count for multiline text editors.
+    pub const fn multiline(rows: usize) -> Self {
+        Self::MultilineText {
+            rows: normalize_table_multiline_editor_rows(rows),
+        }
+    }
+
     /// Returns a stable label.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Text => "text",
+            Self::MultilineText { .. } => "multiline-text",
         }
     }
+
+    /// Returns true when this editor preserves multiline values.
+    pub const fn multiline_text(self) -> bool {
+        matches!(self, Self::MultilineText { .. })
+    }
+
+    /// Returns the fixed textarea row count for multiline editors.
+    pub const fn rows(self) -> Option<usize> {
+        match self {
+            Self::Text => None,
+            Self::MultilineText { rows } => Some(rows),
+        }
+    }
+}
+
+const fn normalize_table_multiline_editor_rows(rows: usize) -> usize {
+    if rows == 0 { 1 } else { rows }
 }
 
 /// Renderer-neutral column width policy.
@@ -297,7 +327,7 @@ impl TableColumn {
 
     /// Returns whether this column renders text-cell editors for editable leaf cells.
     pub const fn text_editable(&self) -> bool {
-        matches!(self.editor, Some(TableCellEditor::Text))
+        self.editor.is_some()
     }
 
     /// Returns the configured width policy for this column.
@@ -385,6 +415,12 @@ impl TableColumn {
         } else {
             None
         };
+        self
+    }
+
+    /// Enables fixed-row multiline text editing for leaf cells in this column.
+    pub const fn with_multiline_text_editor(mut self, rows: usize) -> Self {
+        self.editor = Some(TableCellEditor::multiline(rows));
         self
     }
 
@@ -5793,6 +5829,19 @@ fn push_expanded_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multiline_text_editor_rows_are_normalized() {
+        let column = TableColumn::new("notes", "Notes").with_multiline_text_editor(0);
+
+        assert_eq!(
+            column.editor(),
+            Some(TableCellEditor::MultilineText { rows: 1 })
+        );
+        assert!(column.text_editable());
+        assert_eq!(TableCellEditor::multiline(4).rows(), Some(4));
+        assert!(TableCellEditor::multiline(4).multiline_text());
+    }
 
     fn sample_rows() -> Vec<TableRow> {
         vec![

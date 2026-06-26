@@ -26,6 +26,10 @@ related_plan: docs/plans/2026-06-25-002-feat-ui-text-input-editor-family-plan.md
   renderer-neutral `TextareaState`, local textarea viewport scrolling, root/prelude exports,
   component API inventory coverage, Components gallery samples, Field+Textarea composition, and a
   focused gallery smoke for inner-scroll containment.
+- U4 is complete in the working tree: `TableCellEditor::MultilineText { rows }` extends the
+  renderer-neutral Table editor contract, the GPUI adapter composes fixed-height `Textarea` editors
+  for editable leaf cells, `TableCellEditChange` remains the app-owned payload, and the Components
+  gallery exposes `multiline-release` with a focused newline-preserving edit smoke.
 - Key references are the existing `TextInputController` research, `gpui-component` masked offset
   handling, Fret textarea/editor boundaries, and TanStack app-owned editable table examples.
 - The plan intentionally defers password reveal toggles, undo/redo, completion, validation
@@ -41,12 +45,15 @@ related_plan: docs/plans/2026-06-25-002-feat-ui-text-input-editor-family-plan.md
 - `cargo nextest run -p open-gpui-ui-components public_contract_extraction_blockers_match_allowlist adapter_only_public_surfaces_match_allowlist adapter_only_helpers_do_not_leak_from_default_exports`
 - `cargo nextest run -p open-gpui-ui-components textarea component_api_inventory crate_root_and_prelude_exports_remain_explicit controlled_textarea_on_change_preserves_newline_input default_textarea_state_uses_text_input_role_and_rows filled_textarea_preserves_newlines_in_state disabled_read_only_and_invalid_textareas_expose_control_state`
 - `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata official_component_catalog_entries_have_signals_and_sample_selectors components_gallery_smoke_textarea_scroll_stays_inside_sample`
+- `cargo nextest run -p open-gpui-ui-core multiline_text_editor_rows_are_normalized`
+- `cargo nextest run -p open-gpui-ui-components table_render_plan_exposes_text_cell_editability_for_leaf_cells_only table_runtime_text_cell_edit_emits_change_without_row_interaction table_runtime_multiline_cell_edit_emits_newline_change_without_row_interaction`
+- `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_table_samples_expose_virtualized_row_model_contract components_gallery_smoke_multiline_table_cell_updates_sample_rows`
 
 # Next Action
 
-- Start U4 only if Table needs multiline cell editing now: compose `Textarea` as an opt-in fixed
-  height Table cell editor while keeping row data and validation app-owned. Otherwise switch to the
-  next component-depth boundary before expanding editor features.
+- Close U5 with final docs/verification validation, then choose the next component-depth boundary.
+  Dynamic textarea auto-grow, Table editor row measurement, validation, dirty tracking, and
+  commit/cancel workflows remain deferred.
 
 # Citations
 

@@ -50,7 +50,13 @@ and finally let Table opt into the richer editor surface only after the primitiv
 - U3 complete in the working tree: `Textarea` is a separate controlled multiline form editor with
   renderer-neutral state, newline-preserving `on_change`, Field composition, Components gallery
   samples, and a focused gallery smoke proving wheel input stays inside the textarea viewport.
-- Current next unit: U4 optional Table multiline cell editor composition.
+- U4 complete in the working tree: `TableCellEditor::MultilineText { rows }` lets leaf cells
+  compose fixed-height `Textarea` editors while keeping row data, validation, and mutation
+  orchestration app-owned. The Components gallery includes `multiline-release` and a focused smoke
+  proving newline-preserving cell edits feed back into app-owned rows.
+- U5 complete in the working tree: component contract, verification docs, and engineering memory
+  record the shipped editor-family boundary and deferred dynamic editor workflows.
+- Current next action: choose the next component-depth boundary.
 
 ## Problem Frame
 

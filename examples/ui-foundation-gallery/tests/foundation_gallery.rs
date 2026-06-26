@@ -7,12 +7,12 @@ use open_gpui_ui_components::{
     CommandIndexSnapshotMode, CommandOpenMode, CommandSelectionMode, DialogOpenMode,
     FeedbackIntent, HoverCardOpenIntent, HoverCardOpenMode, MenuItemKind, MenuOpenMode,
     OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableCellValue,
-    TableColumnFacets, TableColumnId, TableColumnRegion, TableExpansionMode, TableExpansionState,
-    TableGlobalFilterChange, TablePredicateFilterChange, TablePredicateFilterOperator,
-    TableRangeFilterChange, TableRowChildrenLoadState, TableRowId, TableRowRegion, TableStageMode,
-    TableTextFilterOperator, TextInputDisplayMode, ThemeMode, ToggleVariant, TooltipOpenIntent,
-    TreeKeyboardAction, VirtualizedListScrollStrategy,
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableCellEditor,
+    TableCellValue, TableColumnFacets, TableColumnId, TableColumnRegion, TableExpansionMode,
+    TableExpansionState, TableGlobalFilterChange, TablePredicateFilterChange,
+    TablePredicateFilterOperator, TableRangeFilterChange, TableRowChildrenLoadState, TableRowId,
+    TableRowRegion, TableStageMode, TableTextFilterOperator, TextInputDisplayMode, ThemeMode,
+    ToggleVariant, TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state, init_text_input,
     },
@@ -1738,7 +1738,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 
-    assert_eq!(tables.len(), 12);
+    assert_eq!(tables.len(), 13);
     let release_queue = table_sample(tables, "release-queue");
     assert_eq!(release_queue.state.rows().len(), 10_000);
     assert_eq!(
@@ -1900,6 +1900,24 @@ fn components_page_samples_expose_component_metadata() {
     assert!(
         editable_plan.rows()[0].cells()[0].text_editable(),
         "editable-release first visible name cell should render as editable"
+    );
+
+    let multiline_release = table_sample(tables, "multiline-release");
+    let multiline_plan = multiline_release.render_plan();
+    assert_eq!(multiline_release.state.rows().len(), 24);
+    assert_eq!(
+        multiline_plan.columns()[1].editor(),
+        Some(TableCellEditor::MultilineText { rows: 3 }),
+        "multiline-release notes column should expose fixed-row multiline editing metadata"
+    );
+    assert_eq!(
+        multiline_plan.rows()[0].cells()[1].editor(),
+        Some(TableCellEditor::MultilineText { rows: 3 }),
+        "multiline-release first visible notes cell should render as a multiline editor"
+    );
+    assert!(
+        !multiline_plan.columns()[2].text_editable(),
+        "multiline-release status column should stay read-only"
     );
 
     let grouped_release = table_sample(tables, "release-rollup");
@@ -2592,6 +2610,31 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         TableColumnWidthPolicy::ContentFit
     );
     assert_eq!(content_fit_plan.columns()[3].width(), ui_px(84.0));
+
+    let multiline_release = table_sample(samples, "multiline-release");
+    let multiline_plan = multiline_release.render_plan();
+    let multiline_summary = multiline_release.state_summary();
+
+    assert_eq!(multiline_release.id, "multiline-release");
+    assert_eq!(multiline_release.state.rows().len(), 24);
+    assert_eq!(multiline_summary.core_rows, 24);
+    assert_eq!(multiline_summary.selected_rows, 1);
+    assert_eq!(multiline_release.row_height, ui_px(82.0));
+    assert_eq!(
+        multiline_plan.columns()[1].editor(),
+        Some(TableCellEditor::MultilineText { rows: 3 })
+    );
+    assert_eq!(
+        multiline_plan.rows()[0].cells()[1].editor(),
+        Some(TableCellEditor::MultilineText { rows: 3 })
+    );
+    assert_eq!(
+        multiline_plan.table().final_model().rows()[0]
+            .cell(&TableColumnId::new("notes"))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("User-visible summary 000\nRollback: pending")
+    );
 
     let grouped_release = table_sample(samples, "release-rollup");
     let grouped_plan = grouped_release.render_plan();
@@ -4981,6 +5024,88 @@ fn components_gallery_smoke_editable_table_cell_updates_sample_rows(
             .map(TableCellValue::filter_text)
     });
     assert_eq!(edited_name.as_deref(), Some("Editable release 000 Prime"));
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_multiline_table_cell_updates_sample_rows(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE_ID: &str = "multiline-release";
+    const SAMPLE: &str = "gallery:component-table-sample:multiline-release";
+    const NOTES_INPUT: &str = "textarea:table:component-table:multiline-release:cell:multiline-release-row-000:notes:editor:root";
+    const NOTES_TEXT_INPUT: &str = "text-input:table:component-table:multiline-release:cell:multiline-release-row-000:notes:editor:root";
+    const STATUS_TEXTAREA: &str = "textarea:table:component-table:multiline-release:cell:multiline-release-row-000:status:editor:root";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, NOTES_INPUT);
+
+    assert!(
+        cx.debug_bounds(NOTES_TEXT_INPUT).is_none(),
+        "multiline notes column should not mount a single-line text input"
+    );
+    assert!(
+        cx.debug_bounds(STATUS_TEXTAREA).is_none(),
+        "read-only status column should not mount a textarea"
+    );
+    let sample_before = bounds(cx, SAMPLE);
+    let input = bounds(cx, NOTES_INPUT);
+    cx.simulate_click(
+        point(input.right() - px(8.0), input.bottom() - px(12.0)),
+        Default::default(),
+    );
+    settle(cx);
+    cx.simulate_input("\nQA note");
+    settle(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "editing a multiline table cell should not move the sample card"
+    );
+    assert!(
+        cx.debug_bounds(NOTES_INPUT).is_some(),
+        "multiline textarea should remain mounted after app-owned state feedback"
+    );
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_changes().to_vec()
+    });
+    assert!(
+        changes.len() >= 2,
+        "gallery multiline edit should record controlled text changes; changes={changes:?}"
+    );
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one multiline edit change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.row_id, "multiline-release-row-000");
+    assert_eq!(last.column_id, "notes");
+    assert_eq!(last.outcome, "updated");
+    assert!(last.next_text.contains("QA note"));
+    assert!(
+        last.next_text.contains('\n'),
+        "multiline edit payload should preserve newlines"
+    );
+
+    let edited_notes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_override(SAMPLE_ID)
+            .and_then(|state| state.rows().first())
+            .and_then(|row| row.cell(&TableColumnId::new("notes")))
+            .map(TableCellValue::filter_text)
+    });
+    assert!(
+        edited_notes
+            .as_deref()
+            .is_some_and(|notes| notes.contains("QA note") && notes.contains('\n')),
+        "app-owned table state should store the newline-preserving textarea edit; notes={edited_notes:?}"
+    );
 }
 
 #[open_gpui::test]

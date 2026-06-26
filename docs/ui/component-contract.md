@@ -500,13 +500,14 @@ families when visibility or pinning crosses region boundaries, while group heade
 leaf-column-driven for sort, resize, visibility, and selection behavior. Flat tables still resolve
 to a single header row.
 Text cell editing is the official inline-edit recipe over table column metadata:
-`TableCellEditor::Text` and `TableColumn::text_editable` opt columns into editable leaf cells,
-while synthetic group rows and missing source cells stay display-only. The GPUI adapter renders the
-existing controlled `TextInput` path inside rendered body cells and emits
-`TableCellEditChange` through `Table::on_cell_edit_change`; applications keep row data app-owned and
-feed back a changed `TableState`. The helper `TableCellEditChange::apply_to` updates the matching
-stable source row id while preserving unrelated row-model inputs such as sorting, filters,
-pagination, selection, pinning, expansion, faceting, and sizing. Rich editor variants, validation,
+`TableCellEditor::Text` and `TableCellEditor::MultilineText { rows }` opt columns into editable leaf
+cells, while synthetic group rows and missing source cells stay display-only. The GPUI adapter
+renders the existing controlled `TextInput` path for single-line editors and fixed-height
+`Textarea` editors for multiline columns, then emits the same `TableCellEditChange` through
+`Table::on_cell_edit_change`; applications keep row data app-owned and feed back a changed
+`TableState`. The helper `TableCellEditChange::apply_to` updates the matching stable source row id
+while preserving unrelated row-model inputs such as sorting, filters, pagination, selection,
+pinning, expansion, faceting, and sizing. Dynamic row-height measurement, validation,
 dirty-state tracking, commit/cancel workflows, clipboard range editing, and server persistence
 remain application-owned or follow-up work.
 For row-pinned tables, `TableRenderPlan` exposes top, center, and bottom `TableRowRenderPlan`
@@ -524,10 +525,10 @@ exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_
 entry, at least one `gallery:component-table-sample:{id}` rendered selector, state tests for row
 identity, grouping, source-tree expansion, row interaction payloads, and virtualizer behavior, and
 gallery runtime tests for nested scroll containment, faceted-filter row updates, predicate-filter
-row updates, editable text-cell updates, and nested header gallery proof. Sticky headers,
-dataset-wide exact autosizing, data-source fetch/cache orchestration, global faceting, richer editor families,
-and deeper two-axis grid virtualization beyond the pinned center-column window remain follow-up
-capabilities.
+row updates, single-line and multiline editable text-cell updates, and nested header gallery proof.
+Sticky headers, dataset-wide exact autosizing, data-source fetch/cache orchestration, global
+faceting, dynamic editor row measurement, and deeper two-axis grid virtualization beyond the pinned
+center-column window remain follow-up capabilities.
 
 ## Splitter Constraints
 

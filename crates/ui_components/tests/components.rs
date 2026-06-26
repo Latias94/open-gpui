@@ -20,29 +20,29 @@ use open_gpui_ui_components::{
     SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor,
     SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
     Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
-    TableCellEditApplyOutcome, TableCellEditChange, TableCellValue, TableCenterColumnWindowPlan,
-    TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId, TableColumnPinning,
-    TableColumnRegion, TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange,
-    TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
-    TableColumnVisibilityOverrides, TableColumnVisibilityState, TableExpansionMode,
-    TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange, TableFacetedFilterState,
-    TableFilter, TableGlobalFacetSummary, TableGlobalFilter, TableGlobalFilterChange,
-    TableGlobalFilterState, TableHeaderAction, TableNumericFilterOperator, TablePagination,
-    TablePredicateFilter, TablePredicateFilterChange, TablePredicateFilterOperator,
-    TablePredicateFilterOperatorOptionState, TablePredicateFilterState, TableRangeFilter,
-    TableRangeFilterChange, TableRangeFilterState, TableResolvedHeaderKind, TableRow,
-    TableRowChildrenLoadState, TableRowId, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
-    TableSelectionActivationMode, TableSelectionMode, TableSelectionScope, TableSort,
-    TableSortDirection, TableStageMode, TableState, TableTextFilterOperator, TableToolbar,
-    TableToolbarState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
-    TabsState, TextInput, TextInputDisplayMode, Textarea, ThemeColor, ThemeMode, ThemeResolver,
-    ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
-    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
-    TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList,
-    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRenderPlan,
-    VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
-    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
-    VirtualizerState, active_index_from_str_keys, first_enabled,
+    TableCellEditApplyOutcome, TableCellEditChange, TableCellEditor, TableCellValue,
+    TableCenterColumnWindowPlan, TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId,
+    TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
+    TableColumnSizingChange, TableColumnVisibility, TableColumnVisibilityAction,
+    TableColumnVisibilityChange, TableColumnVisibilityOverrides, TableColumnVisibilityState,
+    TableExpansionMode, TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange,
+    TableFacetedFilterState, TableFilter, TableGlobalFacetSummary, TableGlobalFilter,
+    TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction, TableNumericFilterOperator,
+    TablePagination, TablePredicateFilter, TablePredicateFilterChange,
+    TablePredicateFilterOperator, TablePredicateFilterOperatorOptionState,
+    TablePredicateFilterState, TableRangeFilter, TableRangeFilterChange, TableRangeFilterState,
+    TableResolvedHeaderKind, TableRow, TableRowChildrenLoadState, TableRowId, TableRowPinning,
+    TableRowPinningPolicy, TableRowRegion, TableSelectionActivationMode, TableSelectionMode,
+    TableSelectionScope, TableSort, TableSortDirection, TableStageMode, TableState,
+    TableTextFilterOperator, TableToolbar, TableToolbarState, Tabs, TabsActivationMode, TabsItem,
+    TabsItemDescriptor, TabsSelection, TabsState, TextInput, TextInputDisplayMode, Textarea,
+    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
+    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor,
+    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
+    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -4621,11 +4621,13 @@ fn table_render_plan_exposes_text_cell_editability_for_leaf_cells_only() {
     let state = TableState::new([
         TableRow::new("row-a")
             .with_cell("name", "Alpha")
+            .with_cell("notes", "Line 1\nLine 2")
             .with_cell("score", 10_usize),
         TableRow::new("row-b").with_cell("score", 20_usize),
     ])
     .with_columns([
         TableColumn::new("name", "Name").with_text_editable(true),
+        TableColumn::new("notes", "Notes").with_multiline_text_editor(3),
         TableColumn::new("score", "Score"),
     ])
     .with_grouping(["score"])
@@ -4646,8 +4648,20 @@ fn table_render_plan_exposes_text_cell_editability_for_leaf_cells_only() {
         .iter()
         .find(|column| column.id().as_str() == "score")
         .expect("score column should resolve");
+    let notes_column = plan
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "notes")
+        .expect("notes column should resolve");
     assert!(name_column.text_editable());
+    assert_eq!(name_column.editor(), Some(TableCellEditor::Text));
+    assert!(notes_column.text_editable());
+    assert_eq!(
+        notes_column.editor(),
+        Some(TableCellEditor::MultilineText { rows: 3 })
+    );
     assert!(!score_column.text_editable());
+    assert_eq!(score_column.editor(), None);
 
     let group_row = plan
         .rows()
@@ -4663,6 +4677,12 @@ fn table_render_plan_exposes_text_cell_editability_for_leaf_cells_only() {
         !group_name_cell.text_editable(),
         "synthetic grouped rows must stay display-only"
     );
+    let group_notes_cell = group_row
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "notes")
+        .expect("group notes cell should resolve");
+    assert_eq!(group_notes_cell.editor(), None);
 
     let editable_leaf = plan
         .rows()
@@ -4675,6 +4695,15 @@ fn table_render_plan_exposes_text_cell_editability_for_leaf_cells_only() {
         .find(|cell| cell.column_id().as_str() == "name")
         .expect("row-a name cell should resolve");
     assert!(editable_name.text_editable());
+    let editable_notes = editable_leaf
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "notes")
+        .expect("row-a notes cell should resolve");
+    assert_eq!(
+        editable_notes.editor(),
+        Some(TableCellEditor::MultilineText { rows: 3 })
+    );
 
     let missing_leaf = plan
         .rows()
@@ -6628,6 +6657,148 @@ fn table_runtime_text_cell_edit_emits_change_without_row_interaction(
     assert!(
         selections.borrow().is_empty(),
         "typing inside editable cell must not toggle row selection"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_multiline_cell_edit_emits_newline_change_without_row_interaction(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    type EditLog = Vec<(String, String, Option<usize>, String, String)>;
+
+    struct TestView {
+        state: Rc<RefCell<TableState>>,
+        edits: Rc<RefCell<EditLog>>,
+        activations: Rc<RefCell<Vec<String>>>,
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let table_state = self.state.borrow().clone();
+            let state_for_edit = self.state.clone();
+            let edits = self.edits.clone();
+            let activations = self.activations.clone();
+            let selections = self.selections.clone();
+            let table = Table::new(
+                "multiline-edit-table",
+                "Multiline edit runtime",
+                table_state,
+            )
+            .row_height(ui_px(82.0))
+            .viewport_extent(ui_px(120.0))
+            .on_cell_edit_change(move |change, _, _| {
+                edits.borrow_mut().push((
+                    change.row_id().as_str().to_owned(),
+                    change.column_id().as_str().to_owned(),
+                    change.source_index(),
+                    change.previous_text().to_owned(),
+                    change.next_text().to_owned(),
+                ));
+                let (next, outcome) = change.apply_to(state_for_edit.borrow().clone());
+                assert_eq!(outcome, TableCellEditApplyOutcome::Updated);
+                *state_for_edit.borrow_mut() = next;
+            })
+            .on_row_activate(move |activation, _, _| {
+                activations
+                    .borrow_mut()
+                    .push(activation.row_id().as_str().to_owned());
+            })
+            .on_row_selection_change(move |selection, _, _| {
+                selections
+                    .borrow_mut()
+                    .push(selection.row_id().as_str().to_owned());
+            });
+
+            div().w(px(520.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    cx.update(init_text_input);
+    let edits = Rc::new(RefCell::new(Vec::new()));
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let state = Rc::new(RefCell::new(
+        TableState::new([TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("notes", "Line 1")])
+        .with_columns([
+            TableColumn::new("name", "Name").with_width(ui_px(120.0)),
+            TableColumn::new("notes", "Notes")
+                .with_multiline_text_editor(3)
+                .with_width(ui_px(280.0)),
+        ])
+        .with_pagination(TablePagination::disabled())
+        .with_selection_activation_mode(TableSelectionActivationMode::RowClick),
+    ));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        state: state.clone(),
+        edits: edits.clone(),
+        activations: activations.clone(),
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("textarea:table:multiline-edit-table:cell:row-a:notes:editor:root")
+            .is_some(),
+        "multiline editable notes cell should render a nested textarea"
+    );
+    assert!(
+        cx.debug_bounds("text-input:table:multiline-edit-table:cell:row-a:notes:editor:root")
+            .is_none(),
+        "multiline editable notes cell must not render the single-line text input"
+    );
+
+    let textarea = cx
+        .debug_bounds("textarea:table:multiline-edit-table:cell:row-a:notes:editor:root")
+        .expect("multiline notes textarea should expose a stable debug selector");
+    cx.simulate_click(textarea.center(), Default::default());
+    cx.simulate_input("\nLine 2");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let edits = edits.borrow();
+    assert!(
+        edits.len() >= 2,
+        "simulated multiline entry should emit controlled changes as the textarea value evolves"
+    );
+    assert!(
+        edits.iter().all(|(row_id, column_id, source_index, _, _)| {
+            row_id == "row-a" && column_id == "notes" && *source_index == Some(0)
+        }),
+        "every multiline edit payload should stay targeted by stable row and column ids"
+    );
+    assert_eq!(
+        edits.last().cloned(),
+        Some((
+            "row-a".to_owned(),
+            "notes".to_owned(),
+            Some(0),
+            "Line 1\nLine ".to_owned(),
+            "Line 1\nLine 2".to_owned(),
+        ))
+    );
+    assert_eq!(
+        state
+            .borrow()
+            .rows()
+            .first()
+            .and_then(|row| row.cell(&TableColumnId::new("notes")))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("Line 1\nLine 2")
+    );
+    assert!(
+        activations.borrow().is_empty(),
+        "typing inside multiline editable cell must not activate the row"
+    );
+    assert!(
+        selections.borrow().is_empty(),
+        "typing inside multiline editable cell must not toggle row selection"
     );
 }
 
