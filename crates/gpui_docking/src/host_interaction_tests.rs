@@ -1,6 +1,7 @@
 use crate::{
     DockCentralRegion, DockController, DockGraph, DockNode, DockNodeId, DockPanel,
-    DockPanelDescriptor, DockViewportRuntimeHandle, DockWorkspace, DropZone, SplitAxis,
+    DockPanelDescriptor, DockSpaceId, DockViewportRuntimeHandle, DockWorkspace, DropZone,
+    SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_scene_fact,
@@ -628,6 +629,478 @@ fn dragging_tab_to_right_edge_creates_horizontal_split(cx: &mut TestAppContext) 
         assert_eq!(*axis, SplitAxis::Horizontal);
         assert_eq!(children.len(), 2);
     });
+}
+
+#[open_gpui::test]
+fn cross_window_tab_drag_to_bottom_edge_creates_vertical_split(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let (source_window, source_host, mut source_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let (target_window, target_host, mut target_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        target_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let target_bounds = debug_bounds(&mut target_visual, &target_tabs_selector);
+    let end = inner_edge_drop_position(target_bounds, DropZone::Bottom);
+
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
+
+    let preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
+        .expect("target host should render a vertical split preview during cross-window drag");
+    let preview_bounds = debug_bounds(&mut target_visual, &preview);
+    assert!(preview_bounds.size.width > px(0.0));
+    assert!(
+        preview_bounds.size.height < target_bounds.size.height,
+        "bottom-edge preview should occupy only a horizontal band"
+    );
+
+    target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let source_visual = VisualTestContext::from_window(source_window.into(), cx);
+    let target_visual = VisualTestContext::from_window(target_window.into(), cx);
+
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_some(),
+        "panel A should render in the target window after a bottom-edge drop"
+    );
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("b") }
+        )
+        .is_some(),
+        "panel B should remain visible in the target window after the split"
+    );
+    assert!(
+        selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_none(),
+        "panel A should leave the source window after the cross-window split"
+    );
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(controller.graph().root(&source_space), None);
+        let target_root = controller
+            .graph()
+            .root(&target_space)
+            .expect("target space should keep a root after the split");
+        let DockNode::Split { axis, children, .. } = controller
+            .graph()
+            .node(target_root)
+            .expect("target root should exist")
+        else {
+            panic!("target root should become a split after the cross-window drop");
+        };
+        assert_eq!(*axis, SplitAxis::Vertical);
+        assert_eq!(children.len(), 2);
+        assert_eq!(
+            controller.graph().collect_items_in_subtree(children[0]),
+            vec![item("b")],
+            "bottom-edge drop should keep the target tab in the top child"
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_subtree(children[1]),
+            vec![item("a")],
+            "bottom-edge drop should place the moved tab in the bottom child"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn cross_window_tab_drag_into_existing_split_reorients_target_child(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let left_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let right_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let target_root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left_tabs, right_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_root);
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let (source_window, source_host, mut source_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let (target_window, target_host, mut target_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        target_space.clone(),
+        size(px(480.0), px(260.0)),
+    );
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let right_child = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::SplitChild {
+            split: target_root,
+            index: 1,
+        },
+    )
+    .expect("target right child selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let right_child_bounds = debug_bounds(&mut target_visual, &right_child);
+    let end = inner_edge_drop_position(right_child_bounds, DropZone::Bottom);
+
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
+
+    let preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
+        .expect("nested target should render a vertical preview during the drag");
+    let preview_bounds = debug_bounds(&mut target_visual, &preview);
+    assert!(preview_bounds.size.width > px(0.0));
+    assert!(
+        preview_bounds.size.height < right_child_bounds.size.height,
+        "nested bottom-edge preview should occupy only a horizontal band"
+    );
+
+    target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let source_visual = VisualTestContext::from_window(source_window.into(), cx);
+    let target_visual = VisualTestContext::from_window(target_window.into(), cx);
+
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_some(),
+        "panel A should render in the target window after reorienting the child split"
+    );
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("b") }
+        )
+        .is_some(),
+        "panel B should remain in the left child"
+    );
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("c") }
+        )
+        .is_some(),
+        "panel C should remain visible in the target window after the reorientation"
+    );
+    assert!(
+        selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_none(),
+        "panel A should leave the source window after the cross-window drop"
+    );
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(controller.graph().root(&source_space), None);
+        let target_root = controller
+            .graph()
+            .root(&target_space)
+            .expect("target space should keep a root after the nested split");
+        let DockNode::Split { axis, children, .. } = controller
+            .graph()
+            .node(target_root)
+            .expect("target root should still be a split")
+        else {
+            panic!("target root should remain a split");
+        };
+        assert_eq!(*axis, SplitAxis::Horizontal);
+        assert_eq!(children.len(), 2);
+        assert_eq!(
+            controller.graph().collect_items_in_subtree(children[0]),
+            vec![item("b")],
+            "left child should remain unchanged"
+        );
+        let DockNode::Split {
+            axis: child_axis,
+            children: child_children,
+            ..
+        } = controller
+            .graph()
+            .node(children[1])
+            .expect("right child should become a split")
+        else {
+            panic!("right child should be reoriented into a split");
+        };
+        assert_eq!(*child_axis, SplitAxis::Vertical);
+        assert_eq!(child_children.len(), 2);
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_subtree(child_children[0]),
+            vec![item("c")],
+            "top child should keep the original right tab"
+        );
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_subtree(child_children[1]),
+            vec![item("a")],
+            "bottom child should contain the moved tab"
+        );
+    });
+}
+
+fn cross_window_tab_drag_to_edge_creates_split(
+    cx: &mut TestAppContext,
+    zone: DropZone,
+    expected_axis: SplitAxis,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let (source_window, source_host, mut source_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let (target_window, target_host, mut target_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        target_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let target_bounds = debug_bounds(&mut target_visual, &target_tabs_selector);
+    let end = inner_edge_drop_position(target_bounds, zone);
+
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
+
+    let preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
+        .expect("target host should render a split preview during the cross-window drag");
+    let preview_bounds = debug_bounds(&mut target_visual, &preview);
+    assert!(preview_bounds.size.width > px(0.0));
+    assert!(preview_bounds.size.height > px(0.0));
+    match zone {
+        DropZone::Left | DropZone::Right => assert!(
+            preview_bounds.size.width < target_bounds.size.width,
+            "side-edge preview should occupy only a vertical band"
+        ),
+        DropZone::Top | DropZone::Bottom => assert!(
+            preview_bounds.size.height < target_bounds.size.height,
+            "top/bottom-edge preview should occupy only a horizontal band"
+        ),
+        DropZone::Center => unreachable!("center is not an edge drop"),
+    }
+
+    target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let source_visual = VisualTestContext::from_window(source_window.into(), cx);
+    let target_visual = VisualTestContext::from_window(target_window.into(), cx);
+
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_some(),
+        "panel A should render in the target window after the cross-window drop"
+    );
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("b") }
+        )
+        .is_some(),
+        "panel B should remain visible in the target window after the split"
+    );
+    assert!(
+        selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_none(),
+        "panel A should leave the source window after the cross-window split"
+    );
+
+    let (first_expected, second_expected) = match zone {
+        DropZone::Left | DropZone::Top => (item("a"), item("b")),
+        DropZone::Right | DropZone::Bottom => (item("b"), item("a")),
+        DropZone::Center => unreachable!("center is not an edge drop"),
+    };
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(controller.graph().root(&source_space), None);
+        let target_root = controller
+            .graph()
+            .root(&target_space)
+            .expect("target space should keep a root after the split");
+        let DockNode::Split { axis, children, .. } = controller
+            .graph()
+            .node(target_root)
+            .expect("target root should exist")
+        else {
+            panic!("target root should become a split after the cross-window drop");
+        };
+        assert_eq!(*axis, expected_axis);
+        assert_eq!(children.len(), 2);
+        assert_eq!(
+            controller.graph().collect_items_in_subtree(children[0]),
+            vec![first_expected],
+            "edge drop should keep the expected item in the first child"
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_subtree(children[1]),
+            vec![second_expected],
+            "edge drop should place the moved item in the second child"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn cross_window_tab_drag_to_top_edge_creates_vertical_split(cx: &mut TestAppContext) {
+    cross_window_tab_drag_to_edge_creates_split(cx, DropZone::Top, SplitAxis::Vertical);
+}
+
+#[open_gpui::test]
+fn cross_window_tab_drag_to_left_edge_creates_horizontal_split(cx: &mut TestAppContext) {
+    cross_window_tab_drag_to_edge_creates_split(cx, DropZone::Left, SplitAxis::Horizontal);
+}
+
+#[open_gpui::test]
+fn cross_window_tab_drag_to_right_edge_creates_horizontal_split(cx: &mut TestAppContext) {
+    cross_window_tab_drag_to_edge_creates_split(cx, DropZone::Right, SplitAxis::Horizontal);
 }
 
 #[open_gpui::test]

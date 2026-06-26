@@ -1038,7 +1038,7 @@ mod tests {
     use open_gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext};
     use open_gpui_docking::{
         DockActionApplyError, DockActionOutcome, DockClassId, DockGraph, DockHost, DockNode,
-        DockNodeId, DockPolicyError,
+        DockNodeId, DockPolicyError, DropZone, SplitAxis,
     };
 
     fn item(id: &str) -> DockItemId {
@@ -1065,14 +1065,30 @@ mod tests {
         format!("dock:{space}:tabs:{}", tabs.as_u64())
     }
 
+    fn floating_handle_selector(space: &str, floating: DockNodeId) -> String {
+        format!("dock:{space}:floating:{}:handle", floating.as_u64())
+    }
+
     fn drop_preview_selector(space: &str) -> String {
         format!("dock:{space}:drop-preview")
+    }
+
+    fn drop_guide_selector(space: &str, tabs: DockNodeId, zone: DropZone) -> String {
+        format!("dock:{space}:drop-guide:{}:{zone:?}", tabs.as_u64())
     }
 
     fn debug_bounds(cx: &mut VisualTestContext, selector: impl Into<String>) -> Bounds<Pixels> {
         let selector: &'static str = Box::leak(selector.into().into_boxed_str());
         cx.debug_bounds(selector)
             .unwrap_or_else(|| panic!("debug selector {selector} should have bounds"))
+    }
+
+    fn axis_for_zone(zone: DropZone) -> SplitAxis {
+        match zone {
+            DropZone::Left | DropZone::Right => SplitAxis::Horizontal,
+            DropZone::Top | DropZone::Bottom => SplitAxis::Vertical,
+            DropZone::Center => unreachable!("center does not create a split"),
+        }
     }
 
     fn simulate_cross_window_left_drag(
@@ -1561,6 +1577,430 @@ mod tests {
                 .expect("merged stack should keep its active item");
             assert_eq!(items, expected_items);
             assert_eq!(active, expected_active);
+        });
+    }
+
+    #[open_gpui::test]
+    fn runtime_viewports_accept_rendered_cross_window_tab_drag_into_primary_floating_title_bar(
+        cx: &mut TestAppContext,
+    ) {
+        let controller = cx.new(|_| build_controller());
+        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+        let primary = DockSpaceId::from(SPACE);
+        let secondary = DockSpaceId::from(SECONDARY_SPACE);
+        let preview = item("preview");
+        let problems = item("problems");
+        let (secondary_tabs, _) = controller.read_with(cx, |controller, _| {
+            controller
+                .graph()
+                .find_item_in_space(&secondary, &preview)
+                .expect("preview should start in secondary dogfood space")
+        });
+        let (problem_tabs, problem_floating) = controller.read_with(cx, |controller, _| {
+            let (tabs, _) = controller
+                .graph()
+                .find_item_in_space(&primary, &problems)
+                .expect("problems should start in the primary floating stack");
+            let floating = controller
+                .graph()
+                .root_for_node_in_space(&primary, tabs)
+                .expect("primary problems stack should have a floating root");
+            (tabs, floating)
+        });
+
+        let (_primary_host, mut primary_visual) = open_dogfood_viewport(
+            cx,
+            &runtime,
+            SPACE,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(920.0), px(640.0))),
+        );
+        let (_secondary_host, mut secondary_visual) = open_dogfood_viewport(
+            cx,
+            &runtime,
+            SECONDARY_SPACE,
+            Bounds::new(point(px(944.0), px(0.0)), size(px(460.0), px(360.0))),
+        );
+
+        let start = debug_bounds(
+            &mut secondary_visual,
+            tab_selector(SECONDARY_SPACE, secondary_tabs, "preview"),
+        )
+        .center();
+        let end = debug_bounds(
+            &mut primary_visual,
+            floating_handle_selector(SPACE, problem_floating),
+        )
+        .center();
+        let threshold = point(start.x + px(24.0), start.y);
+
+        secondary_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        secondary_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+        primary_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        assert!(
+            debug_bounds(&mut primary_visual, drop_preview_selector(SPACE))
+                .size
+                .width
+                > px(0.0),
+            "primary viewport should render a drop preview on the floating title bar"
+        );
+
+        primary_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        controller.read_with(cx, |controller, _| {
+            assert!(
+                controller
+                    .graph()
+                    .find_item_in_space(&secondary, &preview)
+                    .is_none(),
+                "preview should leave the secondary viewport after floating-title-bar drop"
+            );
+            let (preview_tabs, preview_index) = controller
+                .graph()
+                .find_item_in_space(&primary, &preview)
+                .expect("preview should dock into the primary floating stack");
+            assert_eq!(preview_tabs, problem_tabs);
+            assert_eq!(preview_index, 1);
+            let (items, active) = tabs_items(controller.graph(), problem_tabs);
+            assert_eq!(items, vec![problems, preview]);
+            assert_eq!(active, 1);
+            assert_eq!(
+                controller.graph().floating_containers(&primary).len(),
+                1,
+                "primary should keep a single floating container after merging into the title bar"
+            );
+        });
+    }
+
+    fn assert_cross_window_tab_drag_into_primary_floating_stack_guide(
+        cx: &mut TestAppContext,
+        zone: DropZone,
+    ) {
+        let controller = cx.new(|_| build_controller());
+        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+        let primary = DockSpaceId::from(SPACE);
+        let secondary = DockSpaceId::from(SECONDARY_SPACE);
+        let preview = item("preview");
+        let diff = item("diff");
+        let problems = item("problems");
+        let (secondary_tabs, _) = controller.read_with(cx, |controller, _| {
+            controller
+                .graph()
+                .find_item_in_space(&secondary, &preview)
+                .expect("preview should start in secondary dogfood space")
+        });
+        let (problem_tabs, problem_floating) = controller.read_with(cx, |controller, _| {
+            let (tabs, _) = controller
+                .graph()
+                .find_item_in_space(&primary, &problems)
+                .expect("problems should start in the primary floating stack");
+            let floating = controller
+                .graph()
+                .root_for_node_in_space(&primary, tabs)
+                .expect("primary problems stack should have a floating root");
+            (tabs, floating)
+        });
+
+        let (_primary_host, mut primary_visual) = open_dogfood_viewport(
+            cx,
+            &runtime,
+            SPACE,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(920.0), px(640.0))),
+        );
+        let (_secondary_host, mut secondary_visual) = open_dogfood_viewport(
+            cx,
+            &runtime,
+            SECONDARY_SPACE,
+            Bounds::new(point(px(944.0), px(0.0)), size(px(460.0), px(360.0))),
+        );
+
+        let start = debug_bounds(
+            &mut secondary_visual,
+            tab_selector(SECONDARY_SPACE, secondary_tabs, "preview"),
+        )
+        .center();
+        let target_bounds = debug_bounds(&mut primary_visual, tabs_selector(SPACE, problem_tabs));
+        let target_hover = target_bounds.center();
+        let threshold = point(start.x + px(24.0), start.y);
+
+        secondary_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        secondary_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+        primary_visual.simulate_mouse_move(target_hover, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+        let end = debug_bounds(
+            &mut primary_visual,
+            drop_guide_selector(SPACE, problem_tabs, zone),
+        )
+        .center();
+        primary_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        assert!(
+            debug_bounds(&mut primary_visual, drop_preview_selector(SPACE))
+                .size
+                .width
+                > px(0.0),
+            "primary viewport should render a {zone:?} drop preview inside the floating stack"
+        );
+
+        primary_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        controller.read_with(cx, |controller, _| {
+            assert!(
+                controller
+                    .graph()
+                    .find_item_in_space(&secondary, &preview)
+                    .is_none(),
+                "preview should leave the secondary viewport after a {zone:?} floating-stack drop"
+            );
+            assert!(
+                controller
+                    .graph()
+                    .find_item_in_space(&secondary, &diff)
+                    .is_some(),
+                "diff should remain in the secondary viewport after moving only preview"
+            );
+            assert_eq!(
+                controller.graph().floating_containers(&primary).len(),
+                1,
+                "primary should keep one floating container after a {zone:?} drop"
+            );
+
+            if zone == DropZone::Center {
+                let (preview_tabs, preview_index) = controller
+                    .graph()
+                    .find_item_in_space(&primary, &preview)
+                    .expect("preview should merge into the primary floating stack");
+                assert_eq!(preview_tabs, problem_tabs);
+                assert_eq!(preview_index, 1);
+                let (items, active) = tabs_items(controller.graph(), problem_tabs);
+                assert_eq!(items, vec![problems.clone(), preview.clone()]);
+                assert_eq!(active, 1);
+                return;
+            }
+
+            let DockNode::Floating { child } = controller
+                .graph()
+                .node(problem_floating)
+                .expect("primary floating root should still exist")
+            else {
+                panic!("primary floating root should remain floating after a {zone:?} drop");
+            };
+            let DockNode::Split { axis, children, .. } = controller
+                .graph()
+                .node(*child)
+                .expect("primary floating child should become a split")
+            else {
+                panic!("primary floating child should be split after a {zone:?} drop");
+            };
+            assert_eq!(*axis, axis_for_zone(zone), "{zone:?}");
+            assert_eq!(children.len(), 2, "{zone:?}");
+            let (first_expected, second_expected) = match zone {
+                DropZone::Left | DropZone::Top => (vec![preview.clone()], vec![problems.clone()]),
+                DropZone::Right | DropZone::Bottom => {
+                    (vec![problems.clone()], vec![preview.clone()])
+                }
+                DropZone::Center => unreachable!("center returned earlier"),
+            };
+            assert_eq!(
+                controller.graph().collect_items_in_subtree(children[0]),
+                first_expected,
+                "{zone:?} should place the expected items in the first floating child"
+            );
+            assert_eq!(
+                controller.graph().collect_items_in_subtree(children[1]),
+                second_expected,
+                "{zone:?} should place the expected items in the second floating child"
+            );
+        });
+    }
+
+    #[open_gpui::test]
+    fn runtime_viewports_accept_rendered_cross_window_tab_drag_into_primary_floating_stack_center(
+        cx: &mut TestAppContext,
+    ) {
+        assert_cross_window_tab_drag_into_primary_floating_stack_guide(cx, DropZone::Center);
+    }
+
+    #[open_gpui::test]
+    fn runtime_viewports_accept_rendered_cross_window_tab_drag_into_primary_floating_stack_left(
+        cx: &mut TestAppContext,
+    ) {
+        assert_cross_window_tab_drag_into_primary_floating_stack_guide(cx, DropZone::Left);
+    }
+
+    #[open_gpui::test]
+    fn runtime_viewports_accept_rendered_cross_window_tab_drag_into_primary_floating_stack_right(
+        cx: &mut TestAppContext,
+    ) {
+        assert_cross_window_tab_drag_into_primary_floating_stack_guide(cx, DropZone::Right);
+    }
+
+    #[open_gpui::test]
+    fn runtime_viewports_accept_rendered_cross_window_tab_drag_into_primary_floating_stack_top(
+        cx: &mut TestAppContext,
+    ) {
+        assert_cross_window_tab_drag_into_primary_floating_stack_guide(cx, DropZone::Top);
+    }
+
+    #[open_gpui::test]
+    fn runtime_viewports_accept_rendered_cross_window_tab_drag_into_primary_floating_stack_bottom(
+        cx: &mut TestAppContext,
+    ) {
+        assert_cross_window_tab_drag_into_primary_floating_stack_guide(cx, DropZone::Bottom);
+    }
+
+    #[open_gpui::test]
+    fn runtime_viewports_accept_rendered_cross_window_tab_drag_then_split_primary_floating_stack(
+        cx: &mut TestAppContext,
+    ) {
+        let controller = cx.new(|_| build_controller());
+        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+        let primary = DockSpaceId::from(SPACE);
+        let secondary = DockSpaceId::from(SECONDARY_SPACE);
+        let preview = item("preview");
+        let diff = item("diff");
+        let problems = item("problems");
+        let (secondary_tabs, _) = controller.read_with(cx, |controller, _| {
+            controller
+                .graph()
+                .find_item_in_space(&secondary, &preview)
+                .expect("preview should start in secondary dogfood space")
+        });
+        let (_problem_tabs, problem_floating) = controller.read_with(cx, |controller, _| {
+            let (tabs, _) = controller
+                .graph()
+                .find_item_in_space(&primary, &problems)
+                .expect("problems should start in the primary floating stack");
+            let floating = controller
+                .graph()
+                .root_for_node_in_space(&primary, tabs)
+                .expect("primary problems stack should have a floating root");
+            (tabs, floating)
+        });
+
+        let (_primary_host, mut primary_visual) = open_dogfood_viewport(
+            cx,
+            &runtime,
+            SPACE,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(920.0), px(640.0))),
+        );
+        let (_secondary_host, mut secondary_visual) = open_dogfood_viewport(
+            cx,
+            &runtime,
+            SECONDARY_SPACE,
+            Bounds::new(point(px(944.0), px(0.0)), size(px(460.0), px(360.0))),
+        );
+
+        let start = debug_bounds(
+            &mut secondary_visual,
+            tab_selector(SECONDARY_SPACE, secondary_tabs, "preview"),
+        )
+        .center();
+        let end = debug_bounds(
+            &mut primary_visual,
+            floating_handle_selector(SPACE, problem_floating),
+        )
+        .center();
+        let threshold = point(start.x + px(24.0), start.y);
+
+        secondary_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        secondary_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+        primary_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+        primary_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        let merged_problem_tabs = controller.read_with(cx, |controller, _| {
+            controller
+                .graph()
+                .find_item_in_space(&primary, &problems)
+                .map(|(tabs, _)| tabs)
+                .expect("problems should stay in the primary floating stack after merge")
+        });
+
+        let diff_start = debug_bounds(
+            &mut secondary_visual,
+            tab_selector(SECONDARY_SPACE, secondary_tabs, "diff"),
+        )
+        .center();
+        let diff_end = debug_bounds(
+            &mut primary_visual,
+            tabs_selector(SPACE, merged_problem_tabs),
+        );
+        let diff_hover = diff_end.center();
+        let diff_threshold = point(diff_start.x + px(24.0), diff_start.y);
+
+        secondary_visual.simulate_mouse_down(diff_start, MouseButton::Left, Modifiers::none());
+        secondary_visual.simulate_mouse_move(diff_threshold, MouseButton::Left, Modifiers::none());
+        primary_visual.simulate_mouse_move(diff_hover, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+        let diff_target = debug_bounds(
+            &mut primary_visual,
+            drop_guide_selector(SPACE, merged_problem_tabs, DropZone::Bottom),
+        )
+        .center();
+        primary_visual.simulate_mouse_move(diff_target, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        assert!(
+            debug_bounds(&mut primary_visual, drop_preview_selector(SPACE))
+                .size
+                .width
+                > px(0.0),
+            "primary viewport should render a split preview inside the floating stack"
+        );
+
+        primary_visual.simulate_mouse_up(diff_target, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        controller.read_with(cx, |controller, _| {
+            assert!(
+                controller
+                    .graph()
+                    .find_item_in_space(&secondary, &diff)
+                    .is_none(),
+                "diff should leave the secondary viewport after the nested split"
+            );
+            assert_eq!(
+                controller.graph().root(&secondary),
+                None,
+                "secondary viewport should become empty after moving its last tab"
+            );
+            assert_eq!(
+                controller.graph().floating_containers(&primary).len(),
+                1,
+                "primary should still have one floating container after the nested split"
+            );
+            let DockNode::Floating { child } = controller
+                .graph()
+                .node(problem_floating)
+                .expect("primary floating root should still exist")
+            else {
+                panic!("primary floating root should remain floating");
+            };
+            let DockNode::Split { axis, children, .. } = controller
+                .graph()
+                .node(*child)
+                .expect("primary floating child should become a split")
+            else {
+                panic!("primary floating child should be split after docking diff");
+            };
+            assert_eq!(*axis, SplitAxis::Vertical);
+            assert_eq!(children.len(), 2);
+            assert_eq!(
+                controller.graph().collect_items_in_subtree(children[0]),
+                vec![problems, preview],
+                "top child should preserve the original floating stack"
+            );
+            assert_eq!(
+                controller.graph().collect_items_in_subtree(children[1]),
+                vec![diff],
+                "bottom child should contain the newly docked diff tab"
+            );
         });
     }
 
