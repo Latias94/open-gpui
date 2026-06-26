@@ -17,7 +17,7 @@ use open_gpui_ui_components::{
     Kbd, KbdState, Label, LabelState, Listbox, ListboxGroup, ListboxOption, ListboxState, Menu,
     MenuItem, OverlayResolvedState, Popover, Progress, ProgressState, ScrollArea, Select,
     SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, Skeleton, SkeletonState,
-    SwitchState, TextInput, TextInputState, ToggleState, Tooltip,
+    SwitchState, TextInput, TextInputState, Textarea, TextareaState, ToggleState, Tooltip,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, focus_ring_shadow,
         gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui, init_text_input,
@@ -3409,6 +3409,65 @@ pub(crate) fn component_text_input_state_row(state: &TextInputState) -> impl Int
         })
 }
 
+pub(crate) fn component_textarea(
+    id: String,
+
+    label: impl Into<open_gpui::SharedString>,
+
+    state: &TextareaState,
+
+    tokens: ThemeTokens,
+) -> Textarea {
+    let textarea = Textarea::new(id, label)
+        .value(state.value())
+        .rows(state.rows())
+        .with_size(state.size())
+        .disabled(state.disabled())
+        .read_only(state.read_only())
+        .required(state.required())
+        .invalid(state.invalid())
+        .tokens(tokens);
+
+    if let Some(placeholder) = state.placeholder() {
+        textarea.placeholder(placeholder)
+    } else {
+        textarea
+    }
+}
+
+pub(crate) fn component_textarea_state_row(state: &TextareaState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} rows / {}",
+            state.size().as_str(),
+            state.rows(),
+            if state.editable() {
+                "editable"
+            } else {
+                "locked"
+            }
+        ))
+        .child(format!(
+            "{} / {}",
+            if state.has_value() { "value" } else { "empty" },
+            if state.displaying_placeholder() {
+                "placeholder"
+            } else {
+                "display value"
+            }
+        ))
+        .child(if state.controller_driven() {
+            "controller"
+        } else {
+            "static"
+        })
+}
+
 pub(crate) fn component_field_state_row(
     field: &FieldState,
 
@@ -3442,6 +3501,46 @@ pub(crate) fn component_field_state_row(
             support
         ))
         .child(if input.editable() {
+            "control editable"
+        } else {
+            "control locked"
+        })
+}
+
+pub(crate) fn component_field_textarea_state_row(
+    field: &FieldState,
+
+    textarea: &TextareaState,
+) -> impl IntoElement {
+    let support = field.support_text().unwrap_or("no support text");
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} / {}",
+            field.size().as_str(),
+            if field.required() {
+                "required"
+            } else {
+                "optional"
+            },
+            if field.invalid() { "invalid" } else { "valid" }
+        ))
+        .child(format!(
+            "{} / {}",
+            if field.support_is_error() {
+                "error"
+            } else {
+                "help"
+            },
+            support
+        ))
+        .child(format!("textarea rows: {}", textarea.rows()))
+        .child(if textarea.editable() {
             "control editable"
         } else {
             "control locked"

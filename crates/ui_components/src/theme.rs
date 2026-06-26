@@ -402,6 +402,22 @@ impl ThemeResolver {
         }
     }
 
+    pub(crate) const fn textarea_colors(
+        tokens: ThemeTokens,
+        disabled: bool,
+        read_only: bool,
+        invalid: bool,
+    ) -> crate::textarea::TextareaColors {
+        let colors = Self::text_input_colors(tokens, disabled, read_only, invalid);
+        crate::textarea::TextareaColors {
+            background: colors.background,
+            foreground: colors.foreground,
+            placeholder: colors.placeholder,
+            border: colors.border,
+            focus_ring: colors.focus_ring,
+        }
+    }
+
     pub(crate) const fn field_colors(
         tokens: ThemeTokens,
         disabled: bool,

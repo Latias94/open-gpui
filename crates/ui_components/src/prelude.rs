@@ -103,6 +103,7 @@ pub use crate::tabs::{
 pub use crate::text_input::{
     TextInput, TextInputColors, TextInputDisplayMode, TextInputMetrics, TextInputState,
 };
+pub use crate::textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
 pub use crate::theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
 pub use crate::toggle::{Toggle, ToggleColors, ToggleMetrics, ToggleState, ToggleVariant};
 pub use crate::toolbar::{

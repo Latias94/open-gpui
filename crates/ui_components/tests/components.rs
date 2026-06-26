@@ -35,7 +35,7 @@ use open_gpui_ui_components::{
     TableSelectionActivationMode, TableSelectionMode, TableSelectionScope, TableSort,
     TableSortDirection, TableStageMode, TableState, TableTextFilterOperator, TableToolbar,
     TableToolbarState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
-    TabsState, TextInput, TextInputDisplayMode, ThemeColor, ThemeMode, ThemeResolver,
+    TabsState, TextInput, TextInputDisplayMode, Textarea, ThemeColor, ThemeMode, ThemeResolver,
     ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
     ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
     TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList,
@@ -397,6 +397,19 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         default_seeds: &[],
         legacy_seed_inputs: &[],
         policy_hints: &["controller"],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "String",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Textarea",
+        controlled_inputs: &["value"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["rows"],
         callbacks: &[CallbackApi {
             name: "on_change",
             payload: "String",
@@ -1047,6 +1060,14 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "invalid",
             "required",
         ],
+        "Textarea" => &[
+            "placeholder",
+            "rows",
+            "disabled",
+            "read_only",
+            "invalid",
+            "required",
+        ],
         "Field" => &[
             "help_text",
             "help",
@@ -1177,6 +1198,7 @@ fn component_source_file(component: &str) -> &'static str {
         "Command" => "command.rs",
         "Label" => "label.rs",
         "TextInput" => "text_input.rs",
+        "Textarea" => "textarea.rs",
         "Field" => "field.rs",
         "Tabs" => "tabs.rs",
         "ScrollArea" => "scroll_area.rs",
@@ -1419,6 +1441,19 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "on_change",
             "placeholder",
             "display_mode",
+            "disabled",
+            "read_only",
+            "invalid",
+            "required",
+            "tokens",
+            "state",
+        ],
+        "Textarea" => &[
+            "new",
+            "value",
+            "on_change",
+            "placeholder",
+            "rows",
             "disabled",
             "read_only",
             "invalid",
@@ -9697,6 +9732,8 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
 
     assert_inventory_contains_controlled_input("TextInput", "value");
     assert_inventory_contains_callback("TextInput", "on_change", "String");
+    assert_inventory_contains_controlled_input("Textarea", "value");
+    assert_inventory_contains_callback("Textarea", "on_change", "String");
     assert_inventory_contains_controlled_input("Switch", "checked");
     assert_inventory_contains_callback("Switch", "on_change", "bool");
     assert_inventory_contains_default_seed("Popover", "default_open", "open");
@@ -9861,6 +9898,7 @@ fn adapter_only_public_surfaces_match_allowlist() {
         ("text_input.rs", "Entity<TextInputController>"),
         ("text_input.rs", "EntityInputHandler"),
         ("text_input.rs", "TextInputController"),
+        ("textarea.rs", "EntityInputHandler"),
     ];
     let mut expected = expected
         .into_iter()
@@ -9895,6 +9933,10 @@ fn gpui_adapter_exports_group_runtime_specific_surfaces() {
     let _module_metrics: Option<root::text_input::TextInputMetrics> = None;
     let _module_display_mode: root::text_input::TextInputDisplayMode =
         root::text_input::TextInputDisplayMode::Plain;
+    let module_textarea = root::textarea::Textarea::new("module-textarea", "Module textarea");
+    let _module_textarea_state: root::textarea::TextareaState = module_textarea.state();
+    let _module_textarea_colors: Option<root::textarea::TextareaColors> = None;
+    let _module_textarea_metrics: Option<root::textarea::TextareaMetrics> = None;
 
     let root_overlay = root::gpui_adapter::GpuiOverlayAdapterConfig::new(
         OverlayLayerKind::Tooltip,
@@ -9910,6 +9952,7 @@ fn gpui_adapter_exports_group_runtime_specific_surfaces() {
     let _root_size: fn(UiSize) -> open_gpui::Size<open_gpui::Pixels> =
         root::gpui_adapter::gpui_size_from_ui;
     let _prelude_button: prelude::Button = prelude::Button::new("save", "Save");
+    let _prelude_textarea: prelude::Textarea = prelude::Textarea::new("notes", "Notes");
     let _prelude_display_mode: prelude::TextInputDisplayMode = prelude::TextInputDisplayMode::Plain;
 
     assert_eq!(
@@ -14145,6 +14188,109 @@ fn controller_driven_text_input_state_marks_disabled_editing(cx: &mut open_gpui:
     assert!(state.controller_driven());
     assert!(state.disabled());
     assert!(!state.editable());
+}
+
+#[test]
+fn default_textarea_state_uses_text_input_role_and_rows() {
+    let state = Textarea::new("notes", "Notes")
+        .placeholder("Release notes")
+        .rows(4)
+        .state();
+
+    assert_eq!(state.role(), Role::TextInput);
+    assert_eq!(state.rows(), 4);
+    assert_eq!(state.metrics().rows(), 4);
+    assert!(state.placeholder_visible());
+    assert_eq!(state.display_text(), "Release notes");
+    assert!(state.editable());
+    assert!(!state.controller_driven());
+}
+
+#[test]
+fn filled_textarea_preserves_newlines_in_state() {
+    let state = Textarea::new("notes", "Notes")
+        .value("Line 1\r\nLine 2")
+        .placeholder("Release notes")
+        .state();
+
+    assert!(state.has_value());
+    assert_eq!(state.value(), "Line 1\nLine 2");
+    assert_eq!(state.display_text(), "Line 1\nLine 2");
+    assert!(!state.displaying_placeholder());
+}
+
+#[test]
+fn disabled_read_only_and_invalid_textareas_expose_control_state() {
+    let tokens = custom_tokens();
+    let disabled = Textarea::new("disabled-notes", "Disabled notes")
+        .disabled(true)
+        .tokens(tokens)
+        .state();
+    let read_only = Textarea::new("readonly-notes", "Read-only notes")
+        .read_only(true)
+        .state();
+    let invalid = Textarea::new("invalid-notes", "Invalid notes")
+        .invalid(true)
+        .tokens(tokens)
+        .state();
+
+    assert!(disabled.disabled());
+    assert!(!disabled.editable());
+    assert!(read_only.read_only());
+    assert!(!read_only.editable());
+    assert!(invalid.invalid());
+    assert_eq!(invalid.colors().border().token(), tokens.destructive);
+}
+
+#[open_gpui::test]
+fn controlled_textarea_on_change_preserves_newline_input(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        value: Rc<RefCell<String>>,
+        changes: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let value = self.value.borrow().clone();
+            let next_value = self.value.clone();
+            let changes = self.changes.clone();
+
+            div().size_full().child(
+                Textarea::new("controlled-textarea", "Controlled textarea")
+                    .value(value)
+                    .placeholder("Type notes")
+                    .on_change(move |value, _, _| {
+                        *next_value.borrow_mut() = value.clone();
+                        changes.borrow_mut().push(value);
+                    }),
+            )
+        }
+    }
+
+    let value = Rc::new(RefCell::new(String::new()));
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        value: value.clone(),
+        changes: changes.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let input = cx
+        .debug_bounds("textarea:controlled-textarea:root")
+        .expect("controlled textarea should expose a stable debug selector");
+    cx.simulate_click(input.center(), Default::default());
+    cx.simulate_input("Line 1\nLine 2");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(value.borrow().as_str(), "Line 1\nLine 2");
+    assert_eq!(
+        changes.borrow().last().map(String::as_str),
+        Some("Line 1\nLine 2")
+    );
 }
 
 #[test]

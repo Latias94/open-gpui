@@ -43,6 +43,7 @@ pub mod switch;
 pub mod table;
 pub mod tabs;
 pub mod text_input;
+pub mod textarea;
 pub mod theme;
 pub mod toggle;
 pub mod toolbar;
@@ -191,6 +192,7 @@ pub use tabs::{
 pub use text_input::{
     TextInput, TextInputColors, TextInputDisplayMode, TextInputMetrics, TextInputState,
 };
+pub use textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
 pub use theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
 pub use toggle::{Toggle, ToggleColors, ToggleMetrics, ToggleState, ToggleVariant};
 pub use toolbar::{

@@ -101,10 +101,22 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-foundation-gallery official_component_catalog_entries_have_signals_and_sample_selectors state_contract_catalog_entries_have_signals_and_readout_selectors components_page_table_samples_expose_virtualized_row_model_contract
   - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
   - git diff --check
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components textarea component_api_inventory crate_root_and_prelude_exports_remain_explicit controlled_textarea_on_change_preserves_newline_input default_textarea_state_uses_text_input_role_and_rows filled_textarea_preserves_newlines_in_state disabled_read_only_and_invalid_textareas_expose_control_state public_resolved_state_contracts_avoid_gpui_runtime_types gpui_adapter_exports_group_runtime_specific_surfaces public_contract_extraction_blockers_match_allowlist adapter_only_public_surfaces_match_allowlist adapter_only_helpers_do_not_leak_from_default_exports default_theme_resolves_all_current_component_color_intents
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata official_component_catalog_entries_have_signals_and_sample_selectors components_gallery_smoke_textarea_scroll_stays_inside_sample
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
+  - git diff --check
 ---
 
 # Current State
 
+- 2026-06-26: Completed U3 of the text input editor family plan in the working tree. `Textarea`
+  is now an official separate multiline form editor with renderer-neutral `TextareaState`,
+  root/prelude exports, API inventory coverage, newline-preserving `on_change`, local viewport
+  scrolling, Components gallery samples, Field+Textarea composition, and a focused gallery smoke
+  proving textarea wheel input stays inside the sample. The next optional unit is U4: compose
+  `Textarea` into Table as a fixed-height multiline cell editor only if the current component
+  roadmap needs it before switching to another component-depth boundary.
 - 2026-06-25: Completed U1/U2 of the text input editor family plan in the working tree.
   `TextInputDisplayMode` is now a public root/prelude API with `Plain` and `Password`; password
   mode uses the new value/display projection helpers to mask one glyph per stored grapheme while

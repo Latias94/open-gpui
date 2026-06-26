@@ -162,13 +162,15 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_vi
 cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_virtualized_list_keyboard_reveals_and_activates
 ```
 
-The components package includes runtime smoke coverage for Switch, TextInput, RadioGroup, Listbox,
-Select, Combobox, Command, Tabs, and Toolbar keyboard navigation. The focused Switch test renders
-a controlled switch, clicks its real root selector, verifies `on_change` receives the next checked
-value, and confirms disabled switches do not emit changes. The focused TextInput tests render a
-standalone controller-backed input, click its real root, accept simulated platform text, sanitize
-single-line input, verify the controller caret ends at the inserted text, and assert password
-display mode masks one glyph per grapheme while preserving the stored value. The focused
+The components package includes runtime smoke coverage for Switch, TextInput, Textarea, RadioGroup,
+Listbox, Select, Combobox, Command, Tabs, and Toolbar keyboard navigation. The focused Switch test
+renders a controlled switch, clicks its real root selector, verifies `on_change` receives the next
+checked value, and confirms disabled switches do not emit changes. The focused TextInput tests
+render a standalone controller-backed input, click its real root, accept simulated platform text,
+sanitize single-line input, verify the controller caret ends at the inserted text, and assert
+password display mode masks one glyph per grapheme while preserving the stored value. The focused
+Textarea checks prove newline-preserving controlled payloads in component tests and inner viewport
+wheel containment in the Components gallery. The focused
 RadioGroup test renders real radio
 items, rejects disabled clicks, skips disabled items with arrow navigation, verifies default
 selection seeding, click and arrow-selection payloads, and confirms Space on an already selected radio does not emit a duplicate
@@ -430,8 +432,8 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
 6. Open `Components`, or start there directly with
    `cargo run -p open-gpui-ui-foundation-gallery -- --page components`, and confirm Button, Badge,
    IconButton, Separator, Kbd, Progress, Skeleton, Avatar, ScrollArea, Splitter, Switch, Checkbox,
-   RadioGroup, Toggle, Label, TextInput, Field, Tabs, Toolbar, Sidebar, Listbox, Select, Combobox,
-   Command, Table, and VirtualizedList samples render with enabled, disabled, selected, checked, unchecked,
+   RadioGroup, Toggle, Label, TextInput, Textarea, Field, Tabs, Toolbar, Sidebar, Listbox, Select,
+   Combobox, Command, Table, and VirtualizedList samples render with enabled, disabled, selected, checked, unchecked,
    indeterminate, pressed, invalid, required, read-only, placeholder, value, help, error,
    control-association, decorative, semantic, indeterminate-progress, fallback-initial,
    source-metadata, roving-focus, popup, overflow-axis, scroll-reset, resize-constraint, row-model,
@@ -494,6 +496,9 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    scrolling/reveal behavior, and app-owned index snapshot state. The default TextInput
    sample should accept real text editing through the controller-backed path, and the password
    sample should show masked display metadata while preserving the underlying value contract. The
+   Textarea samples should expose placeholder, filled, overflowing, and invalid states; wheel input
+   inside the overflowing textarea should scroll its multiline content without moving the sample
+   card or outer Components page. The
    gallery remains scrollable and keeps focus visible when the page overflows. The Table samples
    should expose the `release-queue` 10k-row virtualized window,
     the filtered/sorted/paginated `filter-board` model with working status `TableFacetedFilter`,

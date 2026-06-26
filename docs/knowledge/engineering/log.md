@@ -6,6 +6,14 @@ status: active
 
 # Log
 
+- 2026-06-26: Completed U3 of
+  `docs/plans/2026-06-25-002-feat-ui-text-input-editor-family-plan.md` in the working tree.
+  `Textarea` is now a separate controlled multiline component with newline-preserving
+  `on_change`, renderer-neutral `TextareaState`, root/prelude exports, component API inventory
+  coverage, Components gallery samples, Field+Textarea composition, and a focused gallery smoke
+  proving textarea wheel input stays inside the sample instead of moving the page. Next action is
+  to decide whether U4 Table multiline cell editor composition is needed before switching to the
+  next component-depth boundary.
 - 2026-06-25: Completed U1/U2 of
   `docs/plans/2026-06-25-002-feat-ui-text-input-editor-family-plan.md` in the working tree.
   `TextInput` now has internal value/display projection helpers, public `TextInputDisplayMode`

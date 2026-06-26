@@ -622,7 +622,12 @@ emits sanitized single-line values, and expects callers to feed the accepted val
 `value` on the next render. `TextInputDisplayMode` now distinguishes plain display from password
 display: password mode masks one glyph per stored grapheme for render, caret, selection, hit
 testing, and IME geometry while keeping the stored value and `on_change` payload unchanged.
-Password reveal toggles, credential-manager affordances, multiline `Textarea`, undo/redo,
+`Textarea` is a separate controlled multiline form editor rather than a `TextInput` mode. It
+preserves `\n` values and callback payloads, exposes renderer-neutral `TextareaState` rows,
+min-height, placeholder, required, invalid, read-only, disabled, metrics, colors, and role
+metadata, and keeps GPUI focus handles, input handlers, scroll handles, and callbacks inside the
+adapter. Field composition can wrap either `TextInput` or `Textarea` without owning editor values.
+Password reveal toggles, credential-manager affordances, textarea auto-grow/drag-resize, undo/redo,
 completion, validation engines, rich text, and code-editor behavior remain out of scope. `Field`
 still stays separate from the editing controller and remains composition-only. `focus_ring_shadow`
 is GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.

@@ -8,7 +8,14 @@ use open_gpui_ui_components::*;
 use open_gpui_ui_core::{Orientation, Sizable, Size, ThemeTokens};
 
 const SWITCH_SECTION_IDS: &[&str] = &["switch", "checkbox", "radio-group", "toggle"];
-const FIELD_SECTION_IDS: &[&str] = &["field", "tabs", "table", "virtualized-list", "signals"];
+const FIELD_SECTION_IDS: &[&str] = &[
+    "textarea",
+    "field",
+    "tabs",
+    "table",
+    "virtualized-list",
+    "signals",
+];
 
 pub(crate) struct ComponentPageAnchors {
     catalog: ScrollAnchor,
@@ -34,6 +41,7 @@ pub(crate) struct ComponentPageAnchors {
     icon_button: ScrollAnchor,
     label: ScrollAnchor,
     text_input: ScrollAnchor,
+    textarea: ScrollAnchor,
     field: ScrollAnchor,
     tabs: ScrollAnchor,
     table: ScrollAnchor,
@@ -69,6 +77,7 @@ impl ComponentPageAnchors {
             icon_button: anchor(),
             label: anchor(),
             text_input: anchor(),
+            textarea: anchor(),
             field: anchor(),
             tabs: anchor(),
             table: anchor(),
@@ -102,6 +111,7 @@ impl ComponentPageAnchors {
             "icon-button" => self.icon_button.clone(),
             "label" => self.label.clone(),
             "text-input" => self.text_input.clone(),
+            "textarea" => self.textarea.clone(),
             "field" => self.field.clone(),
             "tabs" => self.tabs.clone(),
             "table" => self.table.clone(),
@@ -1315,6 +1325,61 @@ pub(crate) fn render_components_page(
                 ),
         )
         .child(
+            component_page_section("textarea", anchors.textarea.clone())
+                .when(!show_component_section(focus_mode, "textarea"), |this| {
+                    this.hidden()
+                })
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(open_gpui::FontWeight::BOLD)
+                                .child("Textarea"),
+                        )
+                        .child(
+                            div().flex().gap_3().flex_wrap().children(
+                                pages::components::textarea_samples(snapshot.tokens)
+                                    .into_iter()
+                                    .map(|sample| {
+                                        let sample_id = sample.id;
+                                        let debug_selector = sample.debug_selector();
+                                        let state = sample.state.clone();
+                                        div()
+                                            .id(format!("component-textarea-sample:{sample_id}"))
+                                            .debug_selector(move || debug_selector)
+                                            .min_w(px(280.0))
+                                            .flex()
+                                            .flex_col()
+                                            .gap_2()
+                                            .rounded_sm()
+                                            .border_1()
+                                            .border_color(rgb(0xd6d8ce))
+                                            .bg(rgb(0xffffff))
+                                            .p_3()
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                                    .text_color(rgb(0x3f4a57))
+                                                    .child(sample.label),
+                                            )
+                                            .child(component_textarea(
+                                                format!("component-textarea:{}", sample.id),
+                                                sample.label,
+                                                &state,
+                                                snapshot.tokens,
+                                            ))
+                                            .child(component_textarea_state_row(&state))
+                                    }),
+                            ),
+                        ),
+                ),
+        )
+        .child(
             component_page_section("field", anchors.field.clone())
                 .when(
                     !show_component_section_group(focus_mode, FIELD_SECTION_IDS),
@@ -1373,7 +1438,54 @@ pub(crate) fn render_components_page(
                                             ))
                                     }),
                             ),
-                        ),
+                        )
+                        .child(
+                            div().flex().gap_3().flex_wrap().children(
+                                pages::components::field_textarea_samples(snapshot.tokens)
+                                    .into_iter()
+                                    .map(|sample| {
+                                        let sample_id = sample.id;
+                                        let debug_selector = sample.debug_selector();
+                                        let field_state = sample.state.clone();
+                                        let textarea_state = sample.textarea_state.clone();
+                                        div()
+                                            .id(format!(
+                                                "component-field-textarea-sample:{sample_id}"
+                                            ))
+                                            .debug_selector(move || debug_selector)
+                                            .min_w(px(320.0))
+                                            .flex()
+                                            .flex_col()
+                                            .gap_2()
+                                            .rounded_sm()
+                                            .border_1()
+                                            .border_color(rgb(0xd6d8ce))
+                                            .bg(rgb(0xffffff))
+                                            .p_3()
+                                            .child(component_field(
+                                                format!(
+                                                    "component-field-textarea:{}",
+                                                    sample.id
+                                                ),
+                                                &field_state,
+                                                component_textarea(
+                                                    format!(
+                                                        "component-field-textarea-control:{}",
+                                                        sample.id
+                                                    ),
+                                                    field_state.label(),
+                                                    &textarea_state,
+                                                    snapshot.tokens,
+                                                ),
+                                                snapshot.tokens,
+                                            ))
+                                            .child(component_field_textarea_state_row(
+                                                &field_state,
+                                                &textarea_state,
+                                            ))
+                                    }),
+                            ),
+                        )
                 )
                 .child(
                     component_page_section("tabs", anchors.tabs.clone())

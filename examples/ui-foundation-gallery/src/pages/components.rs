@@ -21,10 +21,11 @@ use open_gpui_ui_components::{
     TableRenderPlan, TableRow, TableRowActivation, TableRowChildrenLoadState,
     TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy, TableSort, TableStageMode,
     TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
-    TextInputDisplayMode, TextInputState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeState,
-    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
-    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
+    TextInputDisplayMode, TextInputState, Textarea, TextareaState, Toggle, ToggleState,
+    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
+    Tree, TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListItemDescriptor,
+    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -115,6 +116,8 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::TextInputDisplayMode",
     "open_gpui_ui_components::TextInputState",
     "open_gpui_ui_components::gpui_adapter::TextInputController",
+    "open_gpui_ui_components::Textarea",
+    "open_gpui_ui_components::TextareaState",
     "open_gpui_ui_components::Field",
     "open_gpui_ui_components::FieldState",
     "open_gpui_ui_components::Tabs",
@@ -319,6 +322,10 @@ pub const COMPONENT_PAGE_JUMPS: &[ComponentPageJump] = &[
     ComponentPageJump {
         id: "text-input",
         label: "TextInput",
+    },
+    ComponentPageJump {
+        id: "textarea",
+        label: "Textarea",
     },
     ComponentPageJump {
         id: "field",
@@ -727,6 +734,13 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "TextInputState",
         "exports / gallery / controller tests",
         "gallery:component-text-input-sample:default",
+    ),
+    ComponentCatalogEntry::official(
+        "Textarea",
+        "form",
+        "TextareaState",
+        "exports / gallery / controlled multiline tests",
+        "gallery:component-textarea-sample:default",
     ),
     ComponentCatalogEntry::official(
         "Field",
@@ -2229,6 +2243,17 @@ pub struct TextInputSample {
     pub state: TextInputState,
 }
 
+/// One textarea sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextareaSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample label.
+    pub label: &'static str,
+    /// Resolved state.
+    pub state: TextareaState,
+}
+
 /// One field sample in the gallery.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldSample {
@@ -2238,6 +2263,17 @@ pub struct FieldSample {
     pub state: FieldState,
     /// Resolved control state.
     pub input_state: TextInputState,
+}
+
+/// One field sample that composes a textarea control.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldTextareaSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Resolved field state.
+    pub state: FieldState,
+    /// Resolved textarea control state.
+    pub textarea_state: TextareaState,
 }
 
 /// One tab item sample in the gallery.
@@ -2959,7 +2995,9 @@ impl_component_sample_selectors!(ComboboxSample, "component-combobox-sample");
 impl_component_sample_selectors!(CommandSample, "component-command-sample");
 impl_component_sample_selectors!(LabelSample, "component-label-sample");
 impl_component_sample_selectors!(TextInputSample, "component-text-input-sample");
+impl_component_sample_selectors!(TextareaSample, "component-textarea-sample");
 impl_component_sample_selectors!(FieldSample, "component-field-sample");
+impl_component_sample_selectors!(FieldTextareaSample, "component-field-textarea-sample");
 impl_component_sample_selectors!(TabsSample, "component-tabs-sample");
 impl_component_sample_selectors!(TableSample, "component-table-sample");
 impl_component_sample_selectors!(VirtualizedListSample, "component-virtualized-list-sample");
@@ -3696,6 +3734,94 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 6] {
     )
 }
 
+/// Returns textarea samples backed by real component state.
+pub fn textarea_samples(tokens: ThemeTokens) -> [TextareaSample; 4] {
+    [
+        (
+            "default",
+            "Default",
+            "",
+            "Write release notes...",
+            3,
+            false,
+            false,
+            false,
+            false,
+            Size::Medium,
+            false,
+        ),
+        (
+            "filled",
+            "Filled",
+            "Line 1\nLine 2",
+            "Write release notes...",
+            4,
+            false,
+            false,
+            false,
+            false,
+            Size::Medium,
+            false,
+        ),
+        (
+            "overflow",
+            "Overflow",
+            "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8",
+            "Write release notes...",
+            3,
+            false,
+            false,
+            false,
+            false,
+            Size::Medium,
+            false,
+        ),
+        (
+            "invalid",
+            "Invalid",
+            "Needs a rollback note.",
+            "Write release notes...",
+            3,
+            false,
+            false,
+            true,
+            true,
+            Size::Medium,
+            false,
+        ),
+    ]
+    .map(
+        |(
+            id,
+            label,
+            value,
+            placeholder,
+            rows,
+            disabled,
+            read_only,
+            required,
+            invalid,
+            size,
+            controller_driven,
+        )| {
+            let state = TextareaState::resolve(
+                value,
+                Some(placeholder),
+                size,
+                rows,
+                disabled,
+                read_only,
+                invalid,
+                required,
+                controller_driven,
+                tokens,
+            );
+
+            TextareaSample { id, label, state }
+        },
+    )
+}
+
 /// Returns field samples backed by real component state.
 pub fn field_samples(tokens: ThemeTokens) -> [FieldSample; 3] {
     [
@@ -3758,6 +3884,51 @@ pub fn field_samples(tokens: ThemeTokens) -> [FieldSample; 3] {
                 id,
                 state: field.state(),
                 input_state: input.state(),
+            }
+        },
+    )
+}
+
+/// Returns field samples that compose a textarea control.
+pub fn field_textarea_samples(tokens: ThemeTokens) -> [FieldTextareaSample; 1] {
+    [(
+        "release-notes",
+        "Release notes",
+        "Summarize user-visible changes.",
+        Some("Add a concise release note."),
+        "",
+        "Write release notes...",
+        4,
+        true,
+        false,
+        true,
+    )]
+    .map(
+        |(id, label, help, error, value, placeholder, rows, required, disabled, invalid)| {
+            let textarea = Textarea::new(format!("{id}-textarea"), label)
+                .value(value)
+                .placeholder(placeholder)
+                .rows(rows)
+                .required(required)
+                .disabled(disabled)
+                .invalid(invalid)
+                .tokens(tokens);
+            let field = Field::new(id, format!("{id}-textarea"), label)
+                .help(help)
+                .required(required)
+                .disabled(disabled)
+                .invalid(invalid)
+                .tokens(tokens);
+            let field = if let Some(error) = error {
+                field.error(error)
+            } else {
+                field
+            };
+
+            FieldTextareaSample {
+                id,
+                state: field.state(),
+                textarea_state: textarea.state(),
             }
         },
     )

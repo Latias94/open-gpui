@@ -1266,7 +1266,9 @@ fn components_page_samples_expose_component_metadata() {
     let commands = pages::components::command_samples(tokens);
     let labels = pages::components::label_samples(tokens);
     let text_inputs = pages::components::text_input_samples(tokens);
+    let textareas = pages::components::textarea_samples(tokens);
     let fields = pages::components::field_samples(tokens);
+    let field_textareas = pages::components::field_textarea_samples(tokens);
     let scroll_areas = pages::components::scroll_area_samples(tokens);
     let splitters = pages::components::splitter_samples(tokens);
     let tables = pages::components::table_samples(tokens);
@@ -1296,6 +1298,7 @@ fn components_page_samples_expose_component_metadata() {
             "Command",
             "Label",
             "TextInput",
+            "Textarea",
             "Field",
             "Tabs",
             "ScrollArea",
@@ -1669,6 +1672,17 @@ fn components_page_samples_expose_component_metadata() {
     );
     assert_eq!(text_inputs[5].state.display_text().as_ref(), "•••");
 
+    assert_eq!(textareas.len(), 4);
+    assert_eq!(textareas[0].state.role(), Role::TextInput);
+    assert!(textareas[0].state.displaying_placeholder());
+    assert!(!textareas[0].state.controller_driven());
+    assert_eq!(textareas[1].state.value(), "Line 1\nLine 2");
+    assert_eq!(textareas[1].state.rows(), 4);
+    assert_eq!(textareas[2].state.rows(), 3);
+    assert!(textareas[2].state.value().contains("Line 8"));
+    assert!(textareas[3].state.required());
+    assert!(textareas[3].state.invalid());
+
     assert_eq!(fields.len(), 3);
     assert!(fields[0].state.required());
     assert_eq!(
@@ -1682,6 +1696,12 @@ fn components_page_samples_expose_component_metadata() {
     );
     assert!(fields[2].state.disabled());
     assert!(!fields[2].input_state.editable());
+
+    assert_eq!(field_textareas.len(), 1);
+    assert!(field_textareas[0].state.required());
+    assert!(field_textareas[0].state.invalid());
+    assert_eq!(field_textareas[0].textarea_state.rows(), 4);
+    assert_eq!(field_textareas[0].textarea_state.role(), Role::TextInput);
 
     assert_eq!(scroll_areas.len(), 3);
     assert_eq!(scroll_areas[0].id, "activity-log");
@@ -4049,6 +4069,46 @@ fn components_gallery_smoke_focused_table_scroll_stays_inside_sample(
         cx.debug_bounds("table:component-table:release-queue:row:release-queue-row-0010")
             .is_some(),
         "expected focused virtualized Table row 0010 to enter the rendered window after internal scroll"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_textarea_scroll_stays_inside_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE: &str = "gallery:component-textarea-sample:overflow";
+    const VIEWPORT: &str = "textarea:component-textarea:overflow:root";
+    const LINE: &str = "textarea:component-textarea:overflow:line:2";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+
+    scroll_page_selector_into_view(&shell, cx, "component-catalog:Textarea");
+    click(cx, "component-catalog:Textarea");
+    settle(cx);
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+
+    let sample_before = bounds(cx, SAMPLE);
+    let line_before = bounds(cx, LINE);
+    let viewport = bounds(cx, VIEWPORT);
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    let line_after = bounds(cx, LINE);
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected Textarea wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert!(
+        line_after.top() < line_before.top(),
+        "expected Textarea wheel input to move the inner multiline content; before={line_before:?} after={line_after:?}"
     );
 }
 

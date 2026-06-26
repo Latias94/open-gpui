@@ -47,7 +47,10 @@ and finally let Table opt into the richer editor surface only after the primitiv
 - U2 complete in the working tree: `TextInputDisplayMode` is public, password mode masks one glyph
   per stored grapheme for static and controller-backed rendering, and the controller maps displayed
   mask offsets back to stored value offsets for hit testing and IME geometry.
-- Current next unit: U3 controlled `Textarea`.
+- U3 complete in the working tree: `Textarea` is a separate controlled multiline form editor with
+  renderer-neutral state, newline-preserving `on_change`, Field composition, Components gallery
+  samples, and a focused gallery smoke proving wheel input stays inside the textarea viewport.
+- Current next unit: U4 optional Table multiline cell editor composition.
 
 ## Problem Frame
 
