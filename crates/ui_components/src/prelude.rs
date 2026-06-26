@@ -45,7 +45,8 @@ pub use crate::listbox::{
 };
 pub use crate::menu::{
     Menu, MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuItemState, MenuMetrics,
-    MenuOpenMode, MenuSelection, MenuState, MenuSubmenuNavigation, menu_navigation_target,
+    MenuOpenMode, MenuSafeHoverCorridor, MenuSelection, MenuState, MenuSubmenuNavigation,
+    MenuSubmenuSurface, menu_navigation_target,
 };
 pub use crate::overlay::OverlayResolvedState;
 pub use crate::popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};

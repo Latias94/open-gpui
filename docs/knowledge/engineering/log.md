@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-06-27: Added the renderer-neutral Menu submenu floating-surface contract on
+  `feat/scroll-surface-containment`. `MenuSubmenuSurface` resolves placement input, preferred
+  submenu bounds, and `MenuSafeHoverCorridor` from trigger bounds plus content size;
+  `MenuState::submenu_surface_for_trigger` exposes the plan for submenu triggers without changing
+  the current inline GPUI submenu renderer. Root/prelude exports and docs now record the contract.
+  Verified with `cargo fmt -p open-gpui-ui-components`,
+  `cargo check -p open-gpui-ui-components --tests`,
+  `cargo nextest run -p open-gpui-ui-components menu_state_resolves_submenu_surface_and_safe_hover_contract menu_submenu_surface_resolves_left_placement_without_renderer_state`,
+  and `cargo nextest run -p open-gpui-ui-components crate_root_and_prelude_exports_remain_explicit component_api_inventory_uses_stable_ownership_vocabulary public_resolved_state_contracts_avoid_gpui_runtime_types`.
 - 2026-06-27: Deepened the Overlay Menu hover-submenu proof on
   `feat/scroll-surface-containment`. The `rich-items` Menu gallery sample now has two non-empty
   sibling submenus, and component plus gallery smokes verify hover-open, sibling branch switching,

@@ -133,17 +133,21 @@ verified_by:
   - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-components menu_runtime_hover_switches_between_submenu_branches menu_runtime_hover_opens_submenu_and_preserves_child_focus
   - cargo nextest run -p open-gpui-ui-foundation-gallery overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts overlay_gallery_smoke_opens_menu_submenu_from_hover
+  - cargo fmt -p open-gpui-ui-components
+  - cargo check -p open-gpui-ui-components --tests
+  - cargo nextest run -p open-gpui-ui-components menu_state_resolves_submenu_surface_and_safe_hover_contract menu_submenu_surface_resolves_left_placement_without_renderer_state
+  - cargo nextest run -p open-gpui-ui-components crate_root_and_prelude_exports_remain_explicit component_api_inventory_uses_stable_ownership_vocabulary public_resolved_state_contracts_avoid_gpui_runtime_types
 ---
 
 # Current State
 
-- Goal: 深化 open-gpui Overlay Menu 的 hover 子菜单证明，覆盖同级子菜单分支切换。
+- Goal: 深化 open-gpui Overlay Menu 的子菜单浮层几何契约。
 - Branch: feat/scroll-surface-containment
-- Last verified: `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components menu_runtime_hover_switches_between_submenu_branches menu_runtime_hover_opens_submenu_and_preserves_child_focus`, `cargo nextest run -p open-gpui-ui-foundation-gallery overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts overlay_gallery_smoke_opens_menu_submenu_from_hover`
-- Done: Overlay gallery 的 `rich-items` Menu 样例现在有两个非空子菜单；组件测试和 gallery smoke 都覆盖了 hover 打开第一个子菜单、hover 同级子菜单时切换到新分支并关闭旧分支、hover 普通根项时关闭当前分支。
+- Last verified: `cargo fmt -p open-gpui-ui-components`, `cargo check -p open-gpui-ui-components --tests`, `cargo nextest run -p open-gpui-ui-components menu_state_resolves_submenu_surface_and_safe_hover_contract menu_submenu_surface_resolves_left_placement_without_renderer_state`, `cargo nextest run -p open-gpui-ui-components crate_root_and_prelude_exports_remain_explicit component_api_inventory_uses_stable_ownership_vocabulary public_resolved_state_contracts_avoid_gpui_runtime_types`
+- Done: `MenuSubmenuSurface` 和 `MenuSafeHoverCorridor` 已进入公开组件契约与 prelude/root 导出。`MenuState::submenu_surface_for_trigger` 现在能根据子菜单触发项 path、触发项 bounds、内容尺寸和 safe bounds 产出 renderer-neutral placement input、preferred content bounds 与 safe-hover corridor；GPUI adapter 仍保持 inline 子菜单渲染。
 - In progress: None.
 - Blocked: None.
-- Next action: 如需继续 Menu 家族，下一刀应先设计真正浮层子菜单的 placement / safe-hover corridor；当前 inline 子菜单模型不要提前塞几何 corridor。
+- Next action: 如需继续 Menu 家族，下一刀才适合把 `MenuSubmenuSurface` 接到 GPUI deferred submenu panel 渲染，并让 adapter 拥有 hover delay / close timer。
 
 - 2026-06-26: Completed the Tree drag-and-drop hierarchy editing slice from
   `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md`. `TreeMove`,

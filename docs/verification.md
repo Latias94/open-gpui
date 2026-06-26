@@ -56,6 +56,9 @@ Overlay gallery smoke coverage now also includes menu submenu hover-open and sib
 switching on the rich-items sample, so submenu branch visibility, local hover retention, and
 old-branch dismissal are verified through the real gallery shell instead of only through
 component-state tests.
+Component-state coverage also includes `MenuSubmenuSurface` and `MenuSafeHoverCorridor`, which
+prove renderer-neutral submenu placement inputs and safe-hover transition bounds before the GPUI
+adapter grows true floating submenu panels.
 The Components-page ScrollArea regressions also cover release-queue wheel isolation so scroll
 gestures on the sample card chrome do not leak to the page shell.
 Because the Components page now carries more depth samples, the longer-section smokes also rely on

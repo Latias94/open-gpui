@@ -14,16 +14,17 @@ use open_gpui_ui_components::{
     HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton, Kbd, Label, Listbox,
     ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
     ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode,
-    MenuSelection, Popover, PopoverOpenMode, Progress, ProgressVisualMode, RadioGroup,
-    RadioGroupState, RadioItem, RadioItemDescriptor, RadioSelection, ScrollArea, ScrollAreaAxis,
-    ScrollAreaState, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, Separator, Sheet,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
-    SidebarItem, SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide,
-    SidebarState, SidebarVariant, Skeleton, Splitter, SplitterPanel, SplitterPanelDescriptor,
-    SplitterState, StatusCue, Switch, Table, TableCellEditApplyOutcome, TableCellEditChange,
-    TableCellEditor, TableCellValue, TableCenterColumnWindowPlan, TableColumn, TableColumnFacets,
-    TableColumnGroup, TableColumnId, TableColumnPinning, TableColumnRegion, TableColumnResizeMode,
-    TableColumnSizing, TableColumnSizingChange, TableColumnVisibility, TableColumnVisibilityAction,
+    MenuSelection, MenuSubmenuSurface, Popover, PopoverOpenMode, Progress, ProgressVisualMode,
+    RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor, RadioSelection, ScrollArea,
+    ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection,
+    Separator, Sheet, SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar,
+    SidebarCollapseMode, SidebarItem, SidebarItemDescriptor, SidebarSection,
+    SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton, Splitter,
+    SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
+    TableCellEditApplyOutcome, TableCellEditChange, TableCellEditor, TableCellValue,
+    TableCenterColumnWindowPlan, TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId,
+    TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
+    TableColumnSizingChange, TableColumnVisibility, TableColumnVisibilityAction,
     TableColumnVisibilityChange, TableColumnVisibilityOverrides, TableColumnVisibilityState,
     TableExpansionMode, TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange,
     TableFacetedFilterState, TableFilter, TableGlobalFacetSummary, TableGlobalFilter,
@@ -2904,6 +2905,155 @@ fn menu_state_resolves_visible_submenu_navigation_and_local_scroll_contract() {
         .state();
     assert!(long_state.scrollable_content());
     assert_eq!(long_state.visible_items().len(), 10);
+}
+
+#[test]
+fn menu_state_resolves_submenu_surface_and_safe_hover_contract() {
+    let state = Menu::new("nested-menu", "Nested")
+        .open(true)
+        .default_focused_value("sort")
+        .items([
+            MenuItem::action("open", "Open"),
+            MenuItem::submenu(
+                "sort",
+                "Sort by",
+                [
+                    MenuItem::action("name", "Name"),
+                    MenuItem::action("modified", "Modified"),
+                ],
+            ),
+            MenuItem::action("close", "Close"),
+        ])
+        .state();
+    let trigger_path = state
+        .submenu_navigation_target("right")
+        .expect("submenu navigation should resolve")
+        .open_path()
+        .to_vec();
+    let trigger_bounds = rect(
+        ui_point(ui_px(40.0), ui_px(48.0)),
+        ui_size(ui_px(160.0), ui_px(32.0)),
+    );
+    let content_size = ui_size(ui_px(200.0), ui_px(96.0));
+    let safe_bounds = rect(
+        ui_point(ui_px(0.0), ui_px(0.0)),
+        ui_size(ui_px(640.0), ui_px(360.0)),
+    );
+
+    let surface = state
+        .submenu_surface_for_trigger(
+            &trigger_path,
+            trigger_bounds,
+            content_size,
+            Some(safe_bounds),
+        )
+        .expect("open menu submenu trigger should resolve a floating surface plan");
+    let _: open_gpui_ui_components::MenuSubmenuSurface = surface;
+    let _: open_gpui_ui_components::MenuSafeHoverCorridor = surface.hover_corridor();
+    assert_eq!(surface.trigger_bounds(), trigger_bounds);
+    assert_eq!(
+        surface.placement_input().preferred_anchor_bounds(),
+        Some(trigger_bounds)
+    );
+    assert_eq!(
+        surface.placement_input().side(),
+        OverlayPlacementSide::Right
+    );
+    assert_eq!(
+        surface.placement_input().alignment(),
+        OverlayPlacementAlignment::Start
+    );
+    assert_eq!(surface.placement_input().safe_bounds(), Some(safe_bounds));
+    assert_eq!(
+        surface.content_bounds(),
+        rect(
+            ui_point(ui_px(200.0), ui_px(48.0)),
+            ui_size(ui_px(200.0), ui_px(96.0)),
+        )
+    );
+    assert!(
+        surface
+            .hover_corridor()
+            .contains_point(ui_point(ui_px(210.0), ui_px(60.0)))
+    );
+    assert!(
+        !surface
+            .hover_corridor()
+            .contains_point(ui_point(ui_px(20.0), ui_px(20.0)))
+    );
+    assert!(
+        state
+            .submenu_surface_for_trigger(
+                &[String::from("2:close")],
+                trigger_bounds,
+                content_size,
+                None
+            )
+            .is_none()
+    );
+
+    let closed_nested_submenu = Menu::new("closed-nested-menu", "Closed nested")
+        .open(true)
+        .default_focused_value("sort")
+        .items([MenuItem::submenu(
+            "sort",
+            "Sort by",
+            [MenuItem::submenu(
+                "then",
+                "Then by",
+                [MenuItem::action("owner", "Owner")],
+            )],
+        )])
+        .state();
+    assert!(
+        closed_nested_submenu
+            .submenu_surface_for_trigger(
+                &[String::from("0:sort"), String::from("0:then")],
+                trigger_bounds,
+                content_size,
+                None
+            )
+            .is_none(),
+        "hidden nested submenu triggers should not resolve floating surfaces"
+    );
+}
+
+#[test]
+fn menu_submenu_surface_resolves_left_placement_without_renderer_state() {
+    let trigger_bounds = rect(
+        ui_point(ui_px(240.0), ui_px(80.0)),
+        ui_size(ui_px(120.0), ui_px(32.0)),
+    );
+    let content_size = ui_size(ui_px(180.0), ui_px(120.0));
+
+    let surface = MenuSubmenuSurface::resolve(
+        trigger_bounds,
+        content_size,
+        OverlayPlacementSide::Left,
+        OverlayPlacementAlignment::End,
+        ui_px(4.0),
+        None,
+    );
+
+    assert_eq!(surface.placement_input().side(), OverlayPlacementSide::Left);
+    assert_eq!(
+        surface.placement_input().alignment(),
+        OverlayPlacementAlignment::End
+    );
+    assert_eq!(surface.placement_input().offset(), ui_px(4.0));
+    assert_eq!(
+        surface.content_bounds(),
+        rect(
+            ui_point(ui_px(56.0), ui_px(-8.0)),
+            ui_size(ui_px(180.0), ui_px(120.0)),
+        )
+    );
+    assert!(
+        surface
+            .hover_corridor()
+            .contains_point(ui_point(ui_px(238.0), ui_px(84.0))),
+        "corridor should include the horizontal gap between trigger and left submenu"
+    );
 }
 
 #[test]
@@ -10016,6 +10166,19 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_menu_submenu_navigation: root::MenuSubmenuNavigation = root_menu_state
         .submenu_navigation_target("right")
         .expect("root MenuSubmenuNavigation should be exported");
+    let root_menu_submenu_surface: root::MenuSubmenuSurface = root::MenuSubmenuSurface::resolve(
+        rect(
+            ui_point(ui_px(0.0), ui_px(0.0)),
+            ui_size(ui_px(120.0), ui_px(32.0)),
+        ),
+        ui_size(ui_px(180.0), ui_px(96.0)),
+        OverlayPlacementSide::Right,
+        OverlayPlacementAlignment::Start,
+        UiPx::ZERO,
+        None,
+    );
+    let root_menu_safe_hover_corridor: root::MenuSafeHoverCorridor =
+        root_menu_submenu_surface.hover_corridor();
     let root_scroll = root::ScrollArea::new("scroll", div());
     let root_splitter = root::Splitter::new("split");
     let root_tabs = root::Tabs::new("tabs");
@@ -10072,6 +10235,20 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_menu_submenu_navigation: prelude::MenuSubmenuNavigation = prelude_menu_state
         .submenu_navigation_target("right")
         .expect("prelude MenuSubmenuNavigation should be exported");
+    let prelude_menu_submenu_surface: prelude::MenuSubmenuSurface =
+        prelude::MenuSubmenuSurface::resolve(
+            rect(
+                ui_point(ui_px(0.0), ui_px(0.0)),
+                ui_size(ui_px(120.0), ui_px(32.0)),
+            ),
+            ui_size(ui_px(180.0), ui_px(96.0)),
+            OverlayPlacementSide::Right,
+            OverlayPlacementAlignment::Start,
+            UiPx::ZERO,
+            None,
+        );
+    let prelude_menu_safe_hover_corridor: prelude::MenuSafeHoverCorridor =
+        prelude_menu_submenu_surface.hover_corridor();
     let prelude_scroll = prelude::ScrollArea::new("scroll", div());
     let prelude_splitter = prelude::Splitter::new("split");
     let prelude_tabs = prelude::Tabs::new("tabs");
@@ -10106,6 +10283,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_command.state(),
         root_command_plan.role(),
         root_menu_submenu_navigation.focused_value(),
+        root_menu_safe_hover_corridor.bounds(),
         root_scroll.state(),
         root_splitter.state(),
         root_tabs.state(),
@@ -10133,6 +10311,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_command.state(),
         prelude_command_plan.row_role(),
         prelude_menu_submenu_navigation.focused_value(),
+        prelude_menu_safe_hover_corridor.bounds(),
         prelude_scroll.state(),
         prelude_splitter.state(),
         prelude_tabs.state(),

@@ -115,7 +115,8 @@ pub use listbox::{
 };
 pub use menu::{
     Menu, MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuItemState, MenuMetrics,
-    MenuOpenMode, MenuSelection, MenuState, MenuSubmenuNavigation, menu_navigation_target,
+    MenuOpenMode, MenuSafeHoverCorridor, MenuSelection, MenuState, MenuSubmenuNavigation,
+    MenuSubmenuSurface, menu_navigation_target,
 };
 pub use open_gpui_ui_core::{
     GridViewport2D, TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
