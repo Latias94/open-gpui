@@ -193,6 +193,10 @@ impl DockViewportPlatformSignals {
         self.global_window_bounds
     }
 
+    pub(crate) fn target_context_resampling_is_live_app_backend(&self) -> bool {
+        self.target_context_resampling.allows_live_app_backend()
+    }
+
     pub(crate) fn event_receiver_window(&self) -> Option<WindowId> {
         self.event_receiver_window
     }

@@ -6842,7 +6842,7 @@ fn viewport_runtime_rejected_preview_records_last_routed_viewport_identity(
 
     let source_window_bounds = WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
     let target_window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-    let source_opened = cx
+    let _ = cx
         .update(|app| {
             runtime.open_viewport(
                 source_space.clone(),
@@ -6916,7 +6916,6 @@ fn viewport_runtime_rejected_preview_records_last_routed_viewport_identity(
         Some(target_opened.window().window_id()),
         "policy-rejected hover should still record the last routed viewport during the drag"
     );
-    let _ = source_opened;
 }
 
 #[open_gpui::test]
@@ -7054,7 +7053,6 @@ fn viewport_runtime_unavailable_preview_does_not_clear_last_routed_viewport_iden
         Some(target_opened.window().window_id()),
         "unavailable preview should not erase the previously recorded routed viewport identity"
     );
-    let _ = source_opened;
 }
 
 #[open_gpui::test]
@@ -7734,7 +7732,7 @@ fn viewport_runtime_hovered_host_release_uses_backend_focus_stamp_when_stack_una
     let source_window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
     let target_window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
     let decoy_window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-    let source_opened = cx
+    let _ = cx
         .update(|app| {
             runtime.open_viewport(
                 source_space.clone(),
@@ -7834,8 +7832,6 @@ fn viewport_runtime_hovered_host_release_uses_backend_focus_stamp_when_stack_una
         resolution.delivery().is_none(),
         "fallback preview route selection must still wait for target render acceptance before delivery"
     );
-    let _ = source_opened;
-    let _ = decoy_opened;
 }
 
 #[open_gpui::test]
@@ -9466,7 +9462,148 @@ fn viewport_runtime_source_only_known_empty_hover_does_not_replay_accepted_route
 }
 
 #[open_gpui::test]
-fn viewport_runtime_resampled_known_empty_hover_vetoes_stale_accepted_routed_preview(
+fn viewport_runtime_source_only_live_backend_hover_none_replays_accepted_routed_preview_after_cross_window_acceptance(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let source_window_bounds = WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
+    let target_window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let _source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(source_window_bounds),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("source viewport should open");
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(target_window_bounds),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("target viewport should open");
+
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_opened.window().window_id(),
+        DockViewportWindowFacts::from_window_bounds(target_window_bounds),
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        point(px(120.0), px(100.0)),
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_opened.window().window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let session = runtime.begin_payload_drag(&payload);
+    let preview_request = DockViewportDropRouteRequest::from_target_context(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        point(px(220.0), px(200.0)),
+        None,
+        DockViewportTargetContext::new().with_trusted_hovered_window(target_opened.window()),
+    )
+    .with_drag_session(Some(session.clone()));
+    let preview_resolution =
+        cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
+    assert!(cx.update(|app| runtime.update_routed_drop_preview(
+        &preview_resolution,
+        "Panel A",
+        app
+    )));
+    assert!(
+        runtime
+            .finish_routed_drop_acceptance_pass(&target_space, target_opened.window().window_id())
+    );
+
+    cx.set_platform_hovered_window(None);
+    let release_signals = cx.update(|app| crate::DockViewportPlatformSignals::from_app(app));
+    assert_eq!(
+        release_signals.target_context().trusted_hovered_signal(),
+        crate::DockViewportTrustedHoveredSignal::TrustedNone,
+        "test setup should capture a live backend source-only release snapshot with hovered=None"
+    );
+
+    let release_request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
+        source_space,
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        point(px(220.0), px(200.0)),
+        None,
+        release_signals,
+        DockPayloadDropReleaseOrigin::SourceOnly,
+    )
+    .with_drag_session(Some(session));
+    let release_resolution =
+        cx.update(|app| runtime.resolve_payload_drop_delivery(&release_request, app));
+
+    let status = runtime.runtime_status();
+    assert!(
+        matches!(
+            status.last_route.as_ref(),
+            Some(route) if matches!(
+                route.selection_source,
+                Some(crate::DockViewportRouteSelectionRecord::AcceptedRoutedPreview)
+            )
+        ),
+        "release should record AcceptedRoutedPreview before delivery"
+    );
+    assert!(
+        matches!(
+            release_resolution.route(),
+            DockViewportDropRoute::KnownViewport { target, source }
+                if target.window_id() == target_opened.window().window_id()
+                    && *source
+                        == crate::DockViewportRouteSelectionSource::AcceptedRoutedPreview
+        ),
+        "cross-window source-only releases with an accepted routed preview should replay that target, got {:?}",
+        release_resolution.route()
+    );
+    assert!(
+        release_resolution.delivery().is_some(),
+        "accepted routed preview should authorize delivery across windows"
+    );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_source_only_live_backend_hover_none_replays_accepted_routed_preview(
     cx: &mut TestAppContext,
 ) {
     let source_space = DockSpaceId::from("source");
@@ -9491,7 +9628,7 @@ fn viewport_runtime_resampled_known_empty_hover_vetoes_stale_accepted_routed_pre
 
     let source_window_bounds = WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
     let target_window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-    let source_opened = cx
+    let _source_opened = cx
         .update(|app| {
             runtime.open_viewport(
                 source_space.clone(),
@@ -9559,16 +9696,13 @@ fn viewport_runtime_resampled_known_empty_hover_vetoes_stale_accepted_routed_pre
             .finish_routed_drop_acceptance_pass(&target_space, target_opened.window().window_id())
     );
 
-    cx.set_platform_hovered_window(Some(target_opened.window()));
-    let stale_release_signals = cx.update(|app| crate::DockViewportPlatformSignals::from_app(app));
-    assert_eq!(
-        stale_release_signals
-            .target_context()
-            .trusted_hovered_window(),
-        Some(target_opened.window().window_id()),
-        "test setup should capture a stale hovered-target release snapshot"
-    );
     cx.set_platform_hovered_window(None);
+    let release_signals = cx.update(|app| crate::DockViewportPlatformSignals::from_app(app));
+    assert_eq!(
+        release_signals.target_context().trusted_hovered_signal(),
+        crate::DockViewportTrustedHoveredSignal::TrustedNone,
+        "test setup should capture a live backend source-only release snapshot with hovered=None"
+    );
 
     let release_request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
         source_space,
@@ -9576,23 +9710,28 @@ fn viewport_runtime_resampled_known_empty_hover_vetoes_stale_accepted_routed_pre
         DockViewportDropPayload::Item(item("a")),
         point(px(220.0), px(200.0)),
         None,
-        stale_release_signals,
+        release_signals,
         DockPayloadDropReleaseOrigin::SourceOnly,
     )
     .with_drag_session(Some(session));
     let release_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&release_request, app));
 
-    assert_eq!(
-        release_resolution.route(),
-        &DockViewportDropRoute::Unavailable,
-        "current hovered=None must be resampled before replaying a stale accepted preview"
+    assert!(
+        matches!(
+            release_resolution.route(),
+            DockViewportDropRoute::KnownViewport { target, source }
+                if target.window_id() == target_opened.window().window_id()
+                    && *source
+                        == crate::DockViewportRouteSelectionSource::AcceptedRoutedPreview
+        ),
+        "source-only releases should replay the accepted routed preview when the live backend reports hovered=None, got {:?}",
+        release_resolution.route()
     );
     assert!(
-        release_resolution.delivery().is_none(),
-        "current hovered=None must not mint delivery from a stale accepted preview"
+        release_resolution.delivery().is_some(),
+        "accepted routed preview should authorize delivery when the live backend reports hovered=None"
     );
-    let _ = source_opened;
 }
 
 #[open_gpui::test]

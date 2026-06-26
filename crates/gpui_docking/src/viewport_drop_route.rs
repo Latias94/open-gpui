@@ -492,6 +492,11 @@ impl DockViewportDropRouteRequest {
         self.platform_signals.allows_focus_stamp_fallback()
     }
 
+    pub(crate) fn target_context_resampling_is_live_app_backend(&self) -> bool {
+        self.platform_signals
+            .target_context_resampling_is_live_app_backend()
+    }
+
     pub(crate) fn coordinate_space(&self) -> DockViewportPointerCoordinateSpace {
         self.coordinate_space
     }

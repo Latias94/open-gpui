@@ -2164,7 +2164,7 @@ impl DockViewportRuntime {
         let target_space = target.target_space().clone();
         let target_window_id = target.target_window_id()?;
         let accepted_target_key = accepted.target_key().clone();
-        let host_position = self.accepted_routed_preview_host_position(request, &target_space)?;
+        let host_position = target.host_position();
         let facts_generation = self
             .adapter
             .snapshot_facts_generation(&target_space, target_window_id)?;
@@ -2225,6 +2225,13 @@ impl DockViewportRuntime {
         if !replayable_coordinate_space {
             return false;
         }
+        let live_backend_source_only_hover_none = request.release_origin()
+            == crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly
+            && request.target_context_resampling_is_live_app_backend()
+            && matches!(
+                request.target_context().trusted_hovered_signal(),
+                crate::DockViewportTrustedHoveredSignal::TrustedNone
+            );
         let Some(drag_session) = request.drag_session() else {
             return false;
         };
@@ -2236,8 +2243,19 @@ impl DockViewportRuntime {
         };
         match route_resolution.route_ref() {
             DockViewportDropRoute::Unavailable => {
-                route_resolution.unavailable_reason()
-                    == Some(crate::DockViewportDropRouteUnavailableReason::NoViewportRouteSelection)
+                if live_backend_source_only_hover_none {
+                    matches!(
+                        route_resolution.unavailable_reason(),
+                        Some(crate::DockViewportDropRouteUnavailableReason::TrustedHoveredNone)
+                    )
+                } else {
+                    matches!(
+                        route_resolution.unavailable_reason(),
+                        Some(
+                            crate::DockViewportDropRouteUnavailableReason::NoViewportRouteSelection
+                        )
+                    )
+                }
             }
             DockViewportDropRoute::TearOff => false,
             DockViewportDropRoute::Rejected(_) => false,
@@ -2247,29 +2265,6 @@ impl DockViewportRuntime {
             DockViewportDropRoute::KnownViewport { target, .. } => {
                 accepted.matches_target(target.space(), target.window_id())
             }
-        }
-    }
-
-    fn accepted_routed_preview_host_position(
-        &self,
-        request: &DockViewportDropRouteRequest,
-        target_space: &DockSpaceId,
-    ) -> Option<Point<Pixels>> {
-        match request.coordinate_space() {
-            crate::DockViewportPointerCoordinateSpace::GlobalScreen => self
-                .adapter
-                .global_screen_to_host(target_space, request.release_position()),
-            crate::DockViewportPointerCoordinateSpace::SourceLocalOnly
-                if request.release_origin()
-                    == crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly
-                    && target_space == request.source_space() =>
-            {
-                self.adapter
-                    .window_to_host(target_space, request.release_position())
-            }
-            crate::DockViewportPointerCoordinateSpace::TrustedHoveredWindowLocal
-            | crate::DockViewportPointerCoordinateSpace::EventReceiverLocal
-            | crate::DockViewportPointerCoordinateSpace::SourceLocalOnly => None,
         }
     }
 
