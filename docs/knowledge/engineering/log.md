@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-06-26: Finished the scroll-surface local containment slice on
+  `feat/scroll-surface-containment`. Vertical `Tabs` now route their rail through the shared
+  `ScrollArea` primitive, long `Sidebar` navigation keeps the same shared scroll ownership, and
+  the focused component/gallery smokes now assert the local viewport directly. Verification
+  passed with `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`,
+  `cargo nextest run -p open-gpui-ui-components tabs_vertical_tablist_scrolls_when_constrained sidebar_long_navigation_scrolls_inside_shared_scroll_area scroll_area_nested_scroll_keeps_parent_static`,
+  `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_vertical_tabs_scroll_inside_sample components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample`,
+  `git diff --check`, and
+  `python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering`.
 - 2026-06-26: Synced engineering memory after the Table content-fit slice and the text input
   editor family both shipped. The stale autosize and textarea next-action markers in
   `current-state.md` now point at the next open component-depth boundary instead of a finished

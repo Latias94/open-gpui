@@ -3,12 +3,17 @@ type: Current State
 title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
-git_branch: feat/table-nested-headers
+git_branch: feat/scroll-surface-containment
 verified_by:
   - cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components
   - cargo nextest run -p open-gpui-ui-core table
   - cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit public_resolved_state_contracts_avoid_gpui_runtime_types table_public_exports_include_core_table_and_virtualizer_contracts
   - cargo nextest run -p open-gpui-ui-foundation-gallery table
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components tabs_vertical_tablist_scrolls_when_constrained sidebar_long_navigation_scrolls_inside_shared_scroll_area scroll_area_nested_scroll_keeps_parent_static
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_vertical_tabs_scroll_inside_sample components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample
+  - git diff --check
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
   - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
   - git diff --check
   - cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components
@@ -310,19 +315,16 @@ verified_by:
   chrome in `ui_components`, and defers cell editing, server-synced selection persistence, and a
   general feature plugin system.
 
-- Goal: Keep the long-running Table maturity goal active by preserving the shipped column sizing,
-  nested headers, content-fit width growth, and text-cell editing slices, then keep widening the
-  table surface with follow-up recipes, gallery proofs, and verification coverage until it is
-  mature enough to serve as the default component-library baseline.
+- Goal: Finish the scroll-surface local containment slice by keeping vertical `Tabs` and long
+  `Sidebar` navigation backed by the shared `ScrollArea` viewport, then tighten the remaining
+  gallery contract and verification wording for local scroll surfaces.
 - Branch: `main`
-- Last verified: 2026-06-24, `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`,
-  `cargo nextest run -p open-gpui-ui-core table`, and
-  `cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit public_resolved_state_contracts_avoid_gpui_runtime_types`
-  passed for U1/U2 of the column visibility slice. U3/U4 focused gallery proof passed with
-  `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`,
-  `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_column_visibility_updates_release_matrix components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_page_table_samples_expose_virtualized_row_model_contract`,
-  `cargo nextest run -p open-gpui-ui-components table_column_visibility component_api_inventory crate_root_and_prelude_exports_remain_explicit public_resolved_state_contracts_avoid_gpui_runtime_types`,
-  and `cargo nextest run -p open-gpui-ui-foundation-gallery table`.
+- Last verified: 2026-06-26, `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`,
+  `cargo nextest run -p open-gpui-ui-components tabs_vertical_tablist_scrolls_when_constrained sidebar_long_navigation_scrolls_inside_shared_scroll_area scroll_area_nested_scroll_keeps_parent_static`,
+  `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_vertical_tabs_scroll_inside_sample components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample`,
+  `git diff --check`, and
+  `python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering`
+  passed for the scroll-surface slice.
 - Done: Completed U1 of `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md`
   in the working tree by adding core `TableColumnVisibilityOverrides` runtime state and hideability policy.
 - Done: Completed U2 of `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md`
@@ -343,7 +345,8 @@ verified_by:
   shipped; the long-running Table maturity goal remains active, and the next boundary will be
   chosen from the remaining polish track.
 - Blocked: None.
-- Next action: Start the scroll-surface local containment plan for ScrollArea, Tabs, and Sidebar.
+- Next action: Continue the scroll-surface local containment plan by tightening the remaining
+  gallery contract and verification wording for local scroll surfaces.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
   with depth/parent/branch/descendant metadata, source-tree expansion reuses
@@ -358,6 +361,10 @@ verified_by:
   Table slice. The plan keeps manual expansion separate from the client-expanded path, adds
   expandable unloaded branches plus child-load metadata, and keeps real async fetching owned by the
   application.
+- Done: Started the `docs/plans/2026-06-26-005-feat-ui-scroll-surface-local-containment-plan.md`
+  slice on `feat/scroll-surface-containment`. Vertical `Tabs` now route their tab rail through the
+  shared `ScrollArea` viewport, long `Sidebar` navigation keeps using the same shared scroll
+  primitive, and component/gallery smokes prove the local viewport stays inside the sample shell.
 - Done: Implemented the manual expansion / async child metadata slice in the working tree.
   `TableRowChildrenLoadState` records idle/loading/failed child metadata, `TableRow` can be
   expandable without loaded children, and `TableExpansionMode::Manual` preserves app-supplied

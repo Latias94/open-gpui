@@ -476,7 +476,8 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    keep moving instead of snapping back to the origin after the redraw caused by the first scroll.
    The gallery navigation rail should also scroll independently inside its own viewport so deep
    sections remain reachable on compact windows. The vertical Tabs sample should keep its tab rail
-   scrollable inside the constrained gallery card.
+   scrollable inside the constrained gallery card, and the focused component smoke now verifies the
+   shared `ScrollArea` viewport directly through `tabs_vertical_tablist_scrolls_when_constrained`.
    The Splitter samples should
    show horizontal and vertical panel groups, stable handle affordances, min/max fraction readouts,
    collapsed-panel metadata, and pointer-drag resizing without changing surrounding layout. Drag the
@@ -494,8 +495,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    expanded, icon-collapsed, and long scrollable navigation; icon collapse should hide visible labels
    while keeping item labels
    explicit, disabled items should be skipped, and the long sidebar should scroll inside its sample
-   frame. The gallery smoke now verifies the long sidebar's internal viewport moves relative to its
-   sample card. The Listbox samples should expose
+   frame. The component smoke now verifies the shared `ScrollArea` viewport directly through
+   `sidebar_long_navigation_scrolls_inside_shared_scroll_area`, and the gallery smoke verifies the
+   long sidebar's internal viewport moves relative to its sample card. The Listbox samples should
+   expose
    grouped options, disabled option skipping, selected and active descendant metadata, empty-state
    behavior, and keyboard navigation/activation with Up/Down/Home/End plus Enter/Space. The
    component runtime smoke now verifies rendered Listbox disabled clicks, selection-free arrow

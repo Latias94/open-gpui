@@ -6648,18 +6648,33 @@ fn components_gallery_smoke_vertical_tabs_scroll_inside_sample(cx: &mut open_gpu
         cx,
         "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
     );
+    let sample_before = bounds(cx, "gallery:component-tabs-sample:workspace-tabs");
     let tablist = bounds(cx, "tabs:component-tabs:workspace-tabs:tablist");
+    let tablist_viewport = bounds(
+        cx,
+        "scroll-area:tabs:component-tabs:workspace-tabs:tablist-scroll",
+    );
+    assert!(
+        tablist.contains(&tablist_viewport.center()),
+        "expected vertical Tabs ScrollArea viewport to stay inside the tablist shell; tablist={tablist:?} viewport={tablist_viewport:?}"
+    );
 
     cx.simulate_event(ScrollWheelEvent {
-        position: tablist.center(),
+        position: tablist_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-72.0))),
         ..Default::default()
     });
     redraw(cx);
 
+    let sample_after = bounds(cx, "gallery:component-tabs-sample:workspace-tabs");
     let after = bounds(
         cx,
         "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
+    );
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected vertical Tabs rail wheel input to stay inside the sample instead of moving the Components page; before={sample_before:?} after={sample_after:?}"
     );
     assert!(
         after.top() < before.top(),

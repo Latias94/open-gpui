@@ -9014,9 +9014,17 @@ fn tabs_vertical_tablist_scrolls_when_constrained(cx: &mut open_gpui::TestAppCon
     let tablist = cx
         .debug_bounds("tabs:overflow-tabs:tablist")
         .expect("tablist should be rendered");
+    let tablist_viewport = cx
+        .debug_bounds("scroll-area:tabs:overflow-tabs:tablist-scroll")
+        .expect("vertical tablist should use the shared ScrollArea viewport");
+
+    assert!(
+        tablist.contains(&tablist_viewport.center()),
+        "expected ScrollArea viewport to stay inside the tablist shell; tablist={tablist:?} viewport={tablist_viewport:?}"
+    );
 
     cx.simulate_event(ScrollWheelEvent {
-        position: tablist.center(),
+        position: tablist_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-64.0))),
         ..Default::default()
     });
@@ -10859,6 +10867,66 @@ fn sidebar_offcanvas_collapse_removes_items_from_roving_focus() {
     assert!(!state.scrollable());
     assert!(!state.items()[0].focusable());
     assert!(state.activation_for_key("space").is_none());
+}
+
+#[open_gpui::test]
+fn sidebar_long_navigation_scrolls_inside_shared_scroll_area(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let section = (0..14).fold(SidebarSection::new("main", "Main"), |section, index| {
+                section.item(
+                    SidebarItem::new(format!("item-{index}"), format!("Item {index}"))
+                        .icon(index.to_string()),
+                )
+            });
+
+            div().size_full().child(
+                div()
+                    .h(px(120.0))
+                    .child(Sidebar::new("long-sidebar", "Long navigation").section(section)),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let item_before = cx
+        .debug_bounds("sidebar:long-sidebar:item:item-2")
+        .expect("sidebar item should be rendered before scrolling");
+    let sidebar = cx
+        .debug_bounds("sidebar:long-sidebar")
+        .expect("sidebar shell should be rendered");
+    let sidebar_viewport = cx
+        .debug_bounds("scroll-area:long-sidebar-scroll")
+        .expect("long Sidebar should use the shared ScrollArea viewport");
+
+    assert!(
+        sidebar.contains(&sidebar_viewport.center()),
+        "expected Sidebar ScrollArea viewport to stay inside the sidebar shell; sidebar={sidebar:?} viewport={sidebar_viewport:?}"
+    );
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: sidebar_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-72.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let item_after = cx
+        .debug_bounds("sidebar:long-sidebar:item:item-2")
+        .expect("sidebar item should remain rendered after scrolling");
+
+    assert!(
+        item_after.top() < item_before.top(),
+        "expected long Sidebar navigation to scroll inside its ScrollArea; before={item_before:?} after={item_after:?}"
+    );
 }
 
 #[test]

@@ -365,6 +365,8 @@ The GPUI `Sidebar` adapter owns focus handles, click and keyboard dispatch, conc
 scroll handles through `ScrollArea`, and AccessKit mapping. It should expose `Role::Navigation` on
 the container, `Role::Section` for groups, explicit item labels, selected and disabled metadata,
 and set-position metadata for focusable items.
+Long Sidebar navigation uses the shared local scroll primitive so wheel input stays inside the
+sidebar viewport instead of leaking to the outer Components page.
 
 Sidebar v1 is a bounded navigation primitive, not a full application shell. Provider contexts,
 mobile sheet routing, nested submenus, route integration, keyboard shortcut toggles, persisted
@@ -675,6 +677,9 @@ arrows, text-selection leases, and richer focus-scope traversal remain deferred.
 `ScrollArea` covers viewport overflow, axis metadata, scrollbar width metrics, and explicit
 reset-on-key-change semantics. It intentionally does not yet expose custom scrollbar anatomy,
 nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.
+`Tabs` keeps the roving-focus contract in resolved state, and the GPUI adapter routes vertical
+tablists through the shared `ScrollArea` primitive so the rail owns its own viewport instead of
+relying on ad hoc overflow handling.
 `Table` covers stable row ids, row-model ordering, grouping, expansion, built-in group-row
 aggregate cells, source-tree branches with manual expansion and child-load metadata, pinned
 left/center/right column regions, runtime column visibility overrides, locked column hideability,
