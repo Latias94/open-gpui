@@ -180,9 +180,9 @@ verified_by:
   IME bounds. The Components gallery now includes a password `TextInput` sample, and the next
   action is U3: add a separate controlled `Textarea` component.
 - 2026-06-25: The content-fit Table slice is shipped as commit `10ec7b3`
-  (`feat(table): support content-fit width growth`). The next component-depth boundary is the text
-  input editor family plan at
-  `docs/plans/2026-06-25-002-feat-ui-text-input-editor-family-plan.md`, which grows from
+  (`feat(table): support content-fit width growth`). The next component-depth boundary was the
+  text input editor family plan at
+  `docs/plans/2026-06-25-002-feat-ui-text-input-editor-family-plan.md`, which grew from
   single-line `TextInput` into value/display projection, password display, controlled `Textarea`,
   and later opt-in Table multiline editor composition.
 - 2026-06-25: Completed the content-fit Table slice. `ui_core::TableColumn` now carries a
@@ -310,10 +310,10 @@ verified_by:
   chrome in `ui_components`, and defers cell editing, server-synced selection persistence, and a
   general feature plugin system.
 
-- Goal: Continue the long-running Table maturity goal by shipping the autosize-by-content slice
-  next, then keep widening the table surface with follow-up recipes, gallery proofs, and
-  verification coverage until the table surface is mature enough to serve as the default
-  component-library baseline.
+- Goal: Keep the long-running Table maturity goal active by preserving the shipped column sizing,
+  nested headers, content-fit width growth, and text-cell editing slices, then keep widening the
+  table surface with follow-up recipes, gallery proofs, and verification coverage until it is
+  mature enough to serve as the default component-library baseline.
 - Branch: `main`
 - Last verified: 2026-06-24, `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`,
   `cargo nextest run -p open-gpui-ui-core table`, and
@@ -339,11 +339,11 @@ verified_by:
 - Done: Completed the Table custom aggregation callbacks slice as `dded73b`. `TableState` now stores named custom aggregation callbacks, grouped rows resolve named custom aggregates through the renderer-neutral pipeline, `TableRenderPlan` exposes the callback count, and the Components gallery includes `grouped-custom-aggregation`.
 - Done: Completed the Table row-selection variants slice as `ea3785f`. `ui_core::TableState` now carries explicit selection policy knobs for single vs multiple selection, explicit-control vs row-click activation, and descendant propagation, plus renderer-neutral selection summaries for full-model and current-page scopes. `ui_components::Table` emits controlled `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when the policy is explicit-control.
 - Done: A combined two-axis viewport contract is already on `main` as `725f859`.
-- In progress: The column visibility and nested-header slices are complete; the long-running Table
-  maturity goal remains active and autosize-by-content is the next boundary.
+- In progress: The column visibility, nested-header, content-fit, and editor-family slices are
+  shipped; the long-running Table maturity goal remains active, and the next boundary will be
+  chosen from the remaining polish track.
 - Blocked: None.
-- Next action: Start U1 of
-  `docs/plans/2026-06-25-001-feat-ui-table-autosize-by-content-plan.md`.
+- Next action: Start the scroll-surface local containment plan for ScrollArea, Tabs, and Sidebar.
 - Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
   working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
   with depth/parent/branch/descendant metadata, source-tree expansion reuses

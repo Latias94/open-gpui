@@ -6,6 +6,14 @@ status: active
 
 # Log
 
+- 2026-06-26: Synced engineering memory after the Table content-fit slice and the text input
+  editor family both shipped. The stale autosize and textarea next-action markers in
+  `current-state.md` now point at the next open component-depth boundary instead of a finished
+  slice.
+- 2026-06-26: Wrote `docs/plans/2026-06-26-005-feat-ui-scroll-surface-local-containment-plan.md`
+  as the next scroll-surface boundary. The plan tightens the shared `ScrollArea` contract and
+  routes constrained vertical `Tabs` and long `Sidebar` surfaces through the same local scroll
+  ownership model so wheel input stays inside the sample viewport.
 - 2026-06-26: Completed the first Tree drag-and-drop hierarchy slice from
   `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md`. The Tree contract now
   exposes controlled move payloads and pure move application helpers, the GPUI adapter owns the
