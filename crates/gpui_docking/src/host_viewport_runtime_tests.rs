@@ -272,7 +272,7 @@ fn viewport_runtime_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
     workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
     let controller = cx.new(|_| DockController::new(workspace));
-    let runtime = DockViewportRuntimeHandle::new(controller);
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
 
     let opened = cx
         .update(|app| {
@@ -326,7 +326,7 @@ fn viewport_runtime_syncs_supported_options_when_reusing_window(cx: &mut TestApp
     workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
     let controller = cx.new(|_| DockController::new(workspace));
-    let runtime = DockViewportRuntimeHandle::new(controller);
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
 
     let opened = cx
         .update(|app| {
@@ -9323,6 +9323,113 @@ fn viewport_runtime_source_only_release_replays_after_explicit_acceptance_despit
         "accepted routed preview should replay through the stable target key even if scene fact generation changed"
     );
     assert!(release_after_render_acceptance.delivery().is_some());
+}
+
+#[open_gpui::test]
+fn viewport_runtime_republishing_same_routed_preview_keeps_acceptance_active(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let target_window = handle(94);
+    let mut adapter = DockViewportAdapter::new();
+    register_viewport(&mut adapter, target_space.clone(), target_window);
+    let mut runtime = DockViewportRuntime::from_adapter(
+        controller,
+        adapter,
+        DockViewportClosePolicy::RetainLayout,
+    );
+
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+    let host_position = center_drop_position(host_bounds);
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_window.window_id(),
+        DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
+            100.0, 100.0, 360.0, 220.0,
+        ))),
+        host_bounds,
+        host_position,
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_window.window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let session = runtime.begin_payload_drag(&payload);
+    let preview_request = DockViewportDropRouteRequest::from_target_context(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        point(px(220.0), px(200.0)),
+        None,
+        DockViewportTargetContext::new().with_trusted_hovered_window(target_window),
+    )
+    .with_drag_session(Some(session.clone()));
+    let preview_resolution =
+        cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
+    let update = runtime.update_routed_drop_preview(&preview_resolution, "Panel A");
+    assert!(update.changed());
+    assert!(runtime.finish_routed_drop_acceptance_pass(&target_space, target_window.window_id()));
+    assert!(runtime.routed_drop_preview_is_accepted());
+
+    let repeat_update = runtime.update_routed_drop_preview(&preview_resolution, "Panel A");
+    assert!(
+        !repeat_update.changed(),
+        "re-publishing the same target key should not churn preview visuals"
+    );
+    assert!(
+        runtime.routed_drop_preview_is_accepted(),
+        "re-publishing the same target key should keep acceptance active"
+    );
+
+    let release_request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
+        source_space,
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        point(px(220.0), px(200.0)),
+        None,
+        crate::DockViewportPlatformSignals::from_target_context(DockViewportTargetContext::new()),
+        DockPayloadDropReleaseOrigin::SourceOnly,
+    )
+    .with_drag_session(Some(session));
+    let release_resolution =
+        cx.update(|app| runtime.resolve_payload_drop_delivery(&release_request, app));
+
+    assert!(
+        matches!(
+            release_resolution.route(),
+            DockViewportDropRoute::KnownViewport { source, .. }
+                if *source == crate::DockViewportRouteSelectionSource::AcceptedRoutedPreview
+        ),
+        "same target key refresh should keep the accepted preview eligible for source-only replay, got {:?}",
+        release_resolution.route()
+    );
+    assert!(release_resolution.delivery().is_some());
 }
 
 #[open_gpui::test]

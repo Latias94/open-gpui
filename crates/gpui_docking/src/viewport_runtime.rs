@@ -1097,22 +1097,12 @@ impl DockViewportRuntime {
             DockViewportDropRoute::Unavailable => None,
             _ => Some(resolution.clone()),
         };
-        let starts_acceptance_pass = matches!(
-            resolution.route(),
-            DockViewportDropRoute::Local { .. } | DockViewportDropRoute::KnownViewport { .. }
-        ) && next.is_some();
-        if starts_acceptance_pass {
-            self.routed_drop_preview.start_acceptance_pass();
-        }
-        let mut target_window = None;
-        if starts_acceptance_pass && let Some(preview) = next.as_ref() {
-            target_window = self.adapter.window_for_space(preview.space());
-        }
+        let target_window = next
+            .as_ref()
+            .and_then(|preview| self.adapter.window_for_space(preview.space()));
         let mut update =
             self.replace_routed_drop_preview(next, next_route_preview, next_resolution);
-        if starts_acceptance_pass {
-            update.extend_windows(target_window);
-        }
+        update.extend_windows(target_window);
         update
     }
 

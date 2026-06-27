@@ -13,6 +13,7 @@ use crate::{
     drag::DockDragPayload,
     drop_preview::DockDropRoutePreviewKind,
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
+    drop_scene_fact,
     drop_target::{DockDropResolveSource, DockLeafDropTarget, DockResolvedDropTargetKind},
     host_test_support::*,
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
@@ -5762,6 +5763,202 @@ fn source_only_release_with_live_backend_hover_none_commits_accepted_routed_prev
             vec![item("c"), item("a")],
             "source-only release should replay the accepted routed preview even when live backend hovered=None"
         );
+    });
+}
+
+#[open_gpui::test]
+fn source_only_release_with_live_backend_hover_none_replays_accepted_floating_title_bar_preview(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("root")],
+        selected: Some(item("root")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let target_floating = graph.insert_node(DockNode::Floating { child: target_tabs });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_root);
+    graph
+        .floating_containers_mut(target_space.clone())
+        .push(crate::DockFloatingContainer {
+            node: target_floating,
+            bounds: floating_bounds(32.0, 40.0, 240.0, 150.0),
+        });
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("root"), "Root", test_view(cx, "Root"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let source_bounds = WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
+    let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(source_bounds),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("source viewport should open");
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(target_bounds),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("target viewport should open");
+
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+    let title_bounds = floating_bounds(32.0, 40.0, 240.0, 28.0);
+    let preview_bounds = floating_bounds(32.0, 40.0, 240.0, 150.0);
+    let host_position = center_drop_position(title_bounds);
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_opened.window().window_id(),
+        DockViewportWindowFacts::from_window_bounds(target_bounds),
+        host_bounds,
+        host_position,
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_opened.window().window_id(),
+        drop_scene_fact::floating_title_bar(
+            target_floating,
+            target_tabs,
+            title_bounds,
+            preview_bounds,
+        ),
+    ));
+
+    let release_screen_position = point(
+        target_bounds.get_bounds().origin.x + host_position.x,
+        target_bounds.get_bounds().origin.y + host_position.y,
+    );
+    let source_window = source_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("source viewport should render DockHost");
+    let source_window_bounds = source_window
+        .update(cx, |_, window, _| window.window_bounds().get_bounds())
+        .expect("source window should be live");
+    let release_in_source_window = point(
+        release_screen_position.x - source_window_bounds.origin.x,
+        release_screen_position.y - source_window_bounds.origin.y,
+    );
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let session = runtime.begin_payload_drag(&payload);
+    let preview_resolution = cache_known_viewport_preview(
+        cx,
+        &runtime,
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        release_screen_position,
+        target_opened.window(),
+        Some(session.clone()),
+        "Panel A",
+    );
+    assert!(
+        preview_resolution
+            .routed_preview_target_snapshot()
+            .is_some_and(
+                |target| target.target_window_id() == Some(target_opened.window().window_id())
+            ),
+        "floating title-bar preview should cache a target-window snapshot"
+    );
+
+    cx.set_platform_hovered_window(None);
+    let changed = source_window
+        .update(cx, |host, window, cx| {
+            let changed = host.drop_payload_release_from_render(
+                DockPayloadDropRelease::source_only_with_session(
+                    payload.clone(),
+                    source_space.clone(),
+                    release_in_source_window,
+                    Some(session.clone()),
+                ),
+                window,
+                cx,
+            );
+            cx.stop_active_drag(window);
+            changed
+        })
+        .expect("source host should commit source-only routed release");
+    assert!(changed, "source-only release should change the graph");
+    cx.set_platform_hovered_window(None);
+
+    let status = runtime.runtime_status();
+    assert_eq!(
+        status
+            .last_route
+            .as_ref()
+            .and_then(|route| route.target.window_id()),
+        Some(target_opened.window().window_id()),
+        "source-only release should replay the accepted floating target instead of tearing off"
+    );
+    assert_eq!(
+        status
+            .last_drop_outcome
+            .as_ref()
+            .map(|outcome| outcome.kind),
+        Some(DockViewportDropOutcomeKind::Action),
+        "replayed floating title-bar preview should commit as a workspace action"
+    );
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            Vec::<DockItemId>::new(),
+            "source space should be empty after moving its only tab"
+        );
+        assert_eq!(
+            controller.graph().floating_containers(&target_space).len(),
+            1,
+            "target should keep one floating container after title-bar merge"
+        );
+        let DockNode::Floating { child } = controller
+            .graph()
+            .node(target_floating)
+            .expect("target floating root should remain")
+        else {
+            panic!("target floating root should remain floating");
+        };
+        assert_eq!(*child, target_tabs);
+        let DockNode::Tabs { items, selected } = controller
+            .graph()
+            .node(target_tabs)
+            .expect("target floating tabs should remain")
+        else {
+            panic!("target floating child should remain tabs");
+        };
+        assert_eq!(items, &vec![item("b"), item("a")]);
+        assert_eq!(selected.as_ref(), items.get(1));
     });
 }
 
