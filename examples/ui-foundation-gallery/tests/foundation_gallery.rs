@@ -1319,6 +1319,7 @@ fn components_page_samples_expose_component_metadata() {
             "Progress",
             "Skeleton",
             "Avatar",
+            "AvatarGroup",
         ]
     );
     assert!(catalog.iter().all(|entry| !entry.name.trim().is_empty()));
@@ -1788,7 +1789,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 
-    assert_eq!(tables.len(), 13);
+    assert_eq!(tables.len(), 14);
     let release_queue = table_sample(tables, "release-queue");
     assert_eq!(release_queue.state.rows().len(), 10_000);
     assert_eq!(
@@ -1950,6 +1951,27 @@ fn components_page_samples_expose_component_metadata() {
     assert!(
         editable_plan.rows()[0].cells()[0].text_editable(),
         "editable-release first visible name cell should render as editable"
+    );
+
+    let toggle_release = table_sample(tables, "toggle-release");
+    let toggle_plan = toggle_release.render_plan();
+    assert_eq!(toggle_release.state.rows().len(), 28);
+    assert_eq!(
+        toggle_plan.columns()[1].editor(),
+        Some(TableCellEditor::Checkbox),
+        "toggle-release enabled column should expose checkbox editing metadata"
+    );
+    assert_eq!(
+        toggle_plan.rows()[0].cells()[1].editor(),
+        Some(TableCellEditor::Checkbox),
+        "toggle-release first visible enabled cell should render as a checkbox editor"
+    );
+    assert_eq!(
+        toggle_plan.table().final_model().rows()[0]
+            .cell(&TableColumnId::new("enabled"))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("true")
     );
 
     let multiline_release = table_sample(tables, "multiline-release");
@@ -2660,6 +2682,30 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         TableColumnWidthPolicy::ContentFit
     );
     assert_eq!(content_fit_plan.columns()[3].width(), ui_px(84.0));
+
+    let toggle_release = table_sample(samples, "toggle-release");
+    let toggle_plan = toggle_release.render_plan();
+    let toggle_summary = toggle_release.state_summary();
+
+    assert_eq!(toggle_release.id, "toggle-release");
+    assert_eq!(toggle_release.state.rows().len(), 28);
+    assert_eq!(toggle_summary.core_rows, 28);
+    assert_eq!(toggle_summary.selected_rows, 1);
+    assert_eq!(
+        toggle_plan.columns()[1].editor(),
+        Some(TableCellEditor::Checkbox)
+    );
+    assert_eq!(
+        toggle_plan.rows()[0].cells()[1].editor(),
+        Some(TableCellEditor::Checkbox)
+    );
+    assert_eq!(
+        toggle_plan.table().final_model().rows()[0]
+            .cell(&TableColumnId::new("enabled"))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("true")
+    );
 
     let multiline_release = table_sample(samples, "multiline-release");
     let multiline_plan = multiline_release.render_plan();
@@ -3473,6 +3519,7 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(table_gate.evidence.contains(&"TableRangeFilter"));
     assert!(table_gate.evidence.contains(&"TableColumnWidthPolicy"));
     assert!(table_gate.evidence.contains(&"content-fit-release"));
+    assert!(table_gate.evidence.contains(&"toggle-release"));
     assert!(
         table_gate
             .evidence
@@ -3497,6 +3544,11 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
         table_gate
             .evidence
             .contains(&"components_gallery_smoke_content_fit_table_cell_edit_widens_name_column")
+    );
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_checkbox_table_cell_updates_sample_rows")
     );
 }
 
@@ -4103,6 +4155,11 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
         cx.debug_bounds("gallery:component-table-sample:editable-release")
             .is_some(),
         "expected focused Table mode to render the editable Table sample"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-table-sample:toggle-release")
+            .is_some(),
+        "expected focused Table mode to render the checkbox Table sample"
     );
     assert!(
         cx.debug_bounds("gallery:component-table-sample:content-fit-release")
@@ -5172,6 +5229,62 @@ fn components_gallery_smoke_editable_table_cell_updates_sample_rows(
             .map(TableCellValue::filter_text)
     });
     assert_eq!(edited_name.as_deref(), Some("Editable release 000 Prime"));
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_checkbox_table_cell_updates_sample_rows(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE_ID: &str = "toggle-release";
+    const SAMPLE: &str = "gallery:component-table-sample:toggle-release";
+    const ENABLED_CHECKBOX: &str = "checkbox:table:component-table:toggle-release:cell:toggle-release-row-000:enabled:editor:root";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, ENABLED_CHECKBOX);
+
+    let sample_before = bounds(cx, SAMPLE);
+    let checkbox = bounds(cx, ENABLED_CHECKBOX);
+    cx.simulate_click(checkbox.center(), Default::default());
+    settle(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "toggling a table cell should not move the sample card"
+    );
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_changes().to_vec()
+    });
+    assert_eq!(
+        changes.len(),
+        1,
+        "checkbox toggle should record one controlled change"
+    );
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one checkbox edit change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.row_id, "toggle-release-row-000");
+    assert_eq!(last.column_id, "enabled");
+    assert_eq!(last.outcome, "updated");
+    assert_eq!(last.previous_text, "true");
+    assert_eq!(last.next_text, "false");
+
+    let edited_enabled = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_override(SAMPLE_ID)
+            .and_then(|state| state.rows().first())
+            .and_then(|row| row.cell(&TableColumnId::new("enabled")))
+            .cloned()
+    });
+    assert_eq!(edited_enabled, Some(TableCellValue::Bool(false)));
 }
 
 #[open_gpui::test]

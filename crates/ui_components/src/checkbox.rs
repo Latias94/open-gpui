@@ -244,6 +244,7 @@ impl CheckboxState {
 pub struct Checkbox {
     id: ElementId,
     label: Option<SharedString>,
+    aria_label: Option<SharedString>,
     checked: bool,
     indeterminate: bool,
     disabled: bool,
@@ -260,6 +261,7 @@ impl Checkbox {
         Self {
             id: id.into(),
             label: None,
+            aria_label: None,
             checked: false,
             indeterminate: false,
             disabled: false,
@@ -274,6 +276,12 @@ impl Checkbox {
     /// Sets the visible label.
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    /// Sets the accessible label without rendering visible text.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
         self
     }
 
@@ -370,6 +378,7 @@ impl RenderOnce for Checkbox {
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
         let label = self.label.clone();
+        let aria_label = self.aria_label.clone();
         let next_toggled = if state.indeterminate() {
             Toggled::True
         } else if state.checked() {
@@ -377,12 +386,15 @@ impl RenderOnce for Checkbox {
         } else {
             Toggled::True
         };
-        let label_text = label
+        let label_text = aria_label
             .clone()
+            .or_else(|| label.clone())
             .unwrap_or_else(|| SharedString::from("Checkbox"));
+        let debug_id = self.id.to_string();
 
         div()
             .id(self.id)
+            .debug_selector(move || format!("checkbox:{debug_id}:root"))
             .flex()
             .items_center()
             .gap_2()

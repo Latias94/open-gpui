@@ -191,6 +191,8 @@ pub enum TableCellEditor {
         /// Fixed textarea row count requested by the column.
         rows: usize,
     },
+    /// Boolean checkbox editing with app-owned values.
+    Checkbox,
 }
 
 impl TableCellEditor {
@@ -201,11 +203,17 @@ impl TableCellEditor {
         }
     }
 
+    /// Returns a checkbox editor.
+    pub const fn checkbox() -> Self {
+        Self::Checkbox
+    }
+
     /// Returns a stable label.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Text => "text",
             Self::MultilineText { .. } => "multiline-text",
+            Self::Checkbox => "checkbox",
         }
     }
 
@@ -219,6 +227,7 @@ impl TableCellEditor {
         match self {
             Self::Text => None,
             Self::MultilineText { rows } => Some(rows),
+            Self::Checkbox => None,
         }
     }
 }
@@ -421,6 +430,12 @@ impl TableColumn {
     /// Enables fixed-row multiline text editing for leaf cells in this column.
     pub const fn with_multiline_text_editor(mut self, rows: usize) -> Self {
         self.editor = Some(TableCellEditor::multiline(rows));
+        self
+    }
+
+    /// Enables checkbox editing for leaf cells in this column.
+    pub const fn with_checkbox_editor(mut self) -> Self {
+        self.editor = Some(TableCellEditor::checkbox());
         self
     }
 
@@ -5841,6 +5856,15 @@ mod tests {
         assert!(column.text_editable());
         assert_eq!(TableCellEditor::multiline(4).rows(), Some(4));
         assert!(TableCellEditor::multiline(4).multiline_text());
+    }
+
+    #[test]
+    fn checkbox_editor_is_exposed_as_a_stable_variant() {
+        let column = TableColumn::new("enabled", "Enabled").with_checkbox_editor();
+
+        assert_eq!(column.editor(), Some(TableCellEditor::Checkbox));
+        assert!(column.text_editable());
+        assert_eq!(TableCellEditor::checkbox().as_str(), "checkbox");
     }
 
     fn sample_rows() -> Vec<TableRow> {

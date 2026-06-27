@@ -1032,7 +1032,14 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
         "Badge" => &["variant"],
         "IconButton" => &["variant", "disabled"],
         "Switch" => &["label", "disabled"],
-        "Checkbox" => &["label", "indeterminate", "disabled", "required", "invalid"],
+        "Checkbox" => &[
+            "label",
+            "aria_label",
+            "indeterminate",
+            "disabled",
+            "required",
+            "invalid",
+        ],
         "RadioGroup" => &["label", "disabled", "required", "item"],
         "Toggle" => &["variant", "disabled"],
         "Toolbar" => &["disabled", "item", "items"],
@@ -1293,6 +1300,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
         "Checkbox" => &[
             "new",
             "label",
+            "aria_label",
             "checked",
             "indeterminate",
             "checked_state",
@@ -5084,17 +5092,19 @@ fn table_predicate_filter_change_updates_only_target_predicate_filters() {
 }
 
 #[test]
-fn table_render_plan_exposes_text_cell_editability_for_leaf_cells_only() {
+fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
     let state = TableState::new([
         TableRow::new("row-a")
             .with_cell("name", "Alpha")
             .with_cell("notes", "Line 1\nLine 2")
+            .with_cell("enabled", true)
             .with_cell("score", 10_usize),
         TableRow::new("row-b").with_cell("score", 20_usize),
     ])
     .with_columns([
         TableColumn::new("name", "Name").with_text_editable(true),
         TableColumn::new("notes", "Notes").with_multiline_text_editor(3),
+        TableColumn::new("enabled", "Enabled").with_checkbox_editor(),
         TableColumn::new("score", "Score"),
     ])
     .with_grouping(["score"])
@@ -5120,6 +5130,11 @@ fn table_render_plan_exposes_text_cell_editability_for_leaf_cells_only() {
         .iter()
         .find(|column| column.id().as_str() == "notes")
         .expect("notes column should resolve");
+    let enabled_column = plan
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "enabled")
+        .expect("enabled column should resolve");
     assert!(name_column.text_editable());
     assert_eq!(name_column.editor(), Some(TableCellEditor::Text));
     assert!(notes_column.text_editable());
@@ -5127,6 +5142,8 @@ fn table_render_plan_exposes_text_cell_editability_for_leaf_cells_only() {
         notes_column.editor(),
         Some(TableCellEditor::MultilineText { rows: 3 })
     );
+    assert!(enabled_column.text_editable());
+    assert_eq!(enabled_column.editor(), Some(TableCellEditor::Checkbox));
     assert!(!score_column.text_editable());
     assert_eq!(score_column.editor(), None);
 
@@ -5150,6 +5167,12 @@ fn table_render_plan_exposes_text_cell_editability_for_leaf_cells_only() {
         .find(|cell| cell.column_id().as_str() == "notes")
         .expect("group notes cell should resolve");
     assert_eq!(group_notes_cell.editor(), None);
+    let group_enabled_cell = group_row
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "enabled")
+        .expect("group enabled cell should resolve");
+    assert_eq!(group_enabled_cell.editor(), None);
 
     let editable_leaf = plan
         .rows()
@@ -5171,6 +5194,13 @@ fn table_render_plan_exposes_text_cell_editability_for_leaf_cells_only() {
         editable_notes.editor(),
         Some(TableCellEditor::MultilineText { rows: 3 })
     );
+    let editable_enabled = editable_leaf
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "enabled")
+        .expect("row-a enabled cell should resolve");
+    assert_eq!(editable_enabled.editor(), Some(TableCellEditor::Checkbox));
+    assert_eq!(editable_enabled.value(), Some(&TableCellValue::Bool(true)));
 
     let missing_leaf = plan
         .rows()
@@ -5183,6 +5213,12 @@ fn table_render_plan_exposes_text_cell_editability_for_leaf_cells_only() {
         .find(|cell| cell.column_id().as_str() == "name")
         .expect("row-b missing name cell should resolve");
     assert!(!missing_name.text_editable());
+    let missing_enabled = missing_leaf
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "enabled")
+        .expect("row-b missing enabled cell should resolve");
+    assert_eq!(missing_enabled.editor(), None);
 }
 
 #[test]
@@ -5257,6 +5293,75 @@ fn table_cell_edit_change_updates_source_row_and_preserves_table_state() {
         next.cache_key().rows_identity(),
         "missing row edits should be inspectable no-ops"
     );
+}
+
+#[test]
+fn table_cell_edit_change_updates_boolean_source_row_and_preserves_table_state() {
+    let state = TableState::new([
+        TableRow::new("root")
+            .with_cell("name", "Root")
+            .with_cell("team", "Platform")
+            .with_cell("enabled", true)
+            .with_child(
+                TableRow::new("child")
+                    .with_cell("name", "Child")
+                    .with_cell("team", "UI")
+                    .with_cell("enabled", true),
+            ),
+        TableRow::new("other")
+            .with_cell("name", "Other")
+            .with_cell("team", "Ops")
+            .with_cell("enabled", false),
+    ])
+    .with_columns([
+        TableColumn::new("name", "Name").with_text_editable(true),
+        TableColumn::new("team", "Team"),
+        TableColumn::new("enabled", "Enabled").with_checkbox_editor(),
+    ])
+    .with_column_order(["team", "enabled", "name"])
+    .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
+    .with_filters([TableFilter::contains("team", "UI")])
+    .with_sorting([TableSort::ascending("name")])
+    .with_expanded_rows(["root"])
+    .with_selected_rows(["child"])
+    .with_pagination(TablePagination::new(2, 25));
+
+    let change = TableCellEditChange::for_row("child", "enabled", true, false);
+
+    let (next, outcome) = change.apply_to(state.clone());
+    assert_eq!(outcome, TableCellEditApplyOutcome::Updated);
+    assert_eq!(change.previous_value(), &TableCellValue::Bool(true));
+    assert_eq!(change.next_value(), &TableCellValue::Bool(false));
+    assert_eq!(change.previous_text(), "true");
+    assert_eq!(change.next_text(), "false");
+    assert_eq!(next.column_order()[0].as_str(), "team");
+    assert_eq!(next.column_pinning().left()[0].as_str(), "name");
+    assert_eq!(next.filters()[0].query(), "UI");
+    assert_eq!(next.sorting()[0].column().as_str(), "name");
+    assert_eq!(next.expansion(), state.expansion());
+    assert!(next.selected_rows().contains(&TableRowId::new("child")));
+    assert_eq!(next.pagination().page_index(), 2);
+
+    let updated = next
+        .rows()
+        .iter()
+        .find(|row| row.id().as_str() == "root")
+        .and_then(|row| row.children().first())
+        .expect("nested child should remain nested");
+    assert_eq!(
+        updated.cell(&TableColumnId::new("enabled")),
+        Some(&TableCellValue::Bool(false))
+    );
+
+    let missing_column = TableCellEditChange::for_row("child", "missing", true, false);
+    let (missing_column_state, missing_outcome) = missing_column.apply_to(next.clone());
+    assert_eq!(missing_outcome, TableCellEditApplyOutcome::CellNotFound);
+    assert_eq!(missing_column_state, next);
+
+    let missing_row = TableCellEditChange::for_row("missing-row", "enabled", true, false);
+    let (missing_row_state, missing_row_outcome) = missing_row.apply_to(next.clone());
+    assert_eq!(missing_row_outcome, TableCellEditApplyOutcome::RowNotFound);
+    assert_eq!(missing_row_state, next);
 }
 
 #[test]
@@ -7531,6 +7636,142 @@ fn table_runtime_multiline_cell_edit_emits_newline_change_without_row_interactio
     assert!(
         selections.borrow().is_empty(),
         "typing inside multiline editable cell must not toggle row selection"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_boolean_cell_edit_emits_toggle_change_without_row_interaction(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    type EditLog = Vec<(String, String, Option<usize>, String, String)>;
+
+    struct TestView {
+        state: Rc<RefCell<TableState>>,
+        edits: Rc<RefCell<EditLog>>,
+        activations: Rc<RefCell<Vec<String>>>,
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let state = self.state.borrow().clone();
+            let state_for_edit = self.state.clone();
+            let edits = self.edits.clone();
+            let activations = self.activations.clone();
+            let selections = self.selections.clone();
+            let table = Table::new("bool-edit-runtime-table", "Bool edit runtime", state)
+                .row_height(ui_px(32.0))
+                .viewport_extent(ui_px(96.0))
+                .on_cell_edit_change(move |change, _, _| {
+                    edits.borrow_mut().push((
+                        change.row_id().as_str().to_owned(),
+                        change.column_id().as_str().to_owned(),
+                        change.source_index(),
+                        change.previous_text().to_owned(),
+                        change.next_text().to_owned(),
+                    ));
+                    let (next, outcome) = change.apply_to(state_for_edit.borrow().clone());
+                    assert_eq!(outcome, TableCellEditApplyOutcome::Updated);
+                    *state_for_edit.borrow_mut() = next;
+                })
+                .on_row_activate(move |activation, _, _| {
+                    activations
+                        .borrow_mut()
+                        .push(activation.row_id().as_str().to_owned());
+                })
+                .on_row_selection_change(move |selection, _, _| {
+                    selections
+                        .borrow_mut()
+                        .push(selection.row_id().as_str().to_owned());
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let edits = Rc::new(RefCell::new(Vec::new()));
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let state = Rc::new(RefCell::new(
+        TableState::new([TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("enabled", true)
+            .with_cell("status", "Ready")])
+        .with_columns([
+            TableColumn::new("name", "Name").with_width(ui_px(180.0)),
+            TableColumn::new("enabled", "Enabled")
+                .with_checkbox_editor()
+                .with_width(ui_px(96.0)),
+            TableColumn::new("status", "Status").with_width(ui_px(120.0)),
+        ])
+        .with_pagination(TablePagination::disabled())
+        .with_selection_activation_mode(TableSelectionActivationMode::RowClick),
+    ));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        state: state.clone(),
+        edits: edits.clone(),
+        activations: activations.clone(),
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("checkbox:table:bool-edit-runtime-table:cell:row-a:enabled:editor:root")
+            .is_some(),
+        "editable enabled cell should render a nested checkbox with a stable selector"
+    );
+    assert!(
+        cx.debug_bounds("text-input:table:bool-edit-runtime-table:cell:row-a:enabled:editor:root")
+            .is_none(),
+        "boolean checkbox cell must not mount a text input"
+    );
+    assert!(
+        cx.debug_bounds("textarea:table:bool-edit-runtime-table:cell:row-a:enabled:editor:root")
+            .is_none(),
+        "boolean checkbox cell must not mount a textarea"
+    );
+
+    let checkbox = cx
+        .debug_bounds("checkbox:table:bool-edit-runtime-table:cell:row-a:enabled:editor:root")
+        .expect("editable enabled checkbox should expose a stable debug selector");
+    cx.simulate_click(checkbox.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let edits = edits.borrow();
+    assert_eq!(
+        edits.len(),
+        1,
+        "checkbox toggle should emit one controlled change"
+    );
+    assert_eq!(
+        edits.first().cloned(),
+        Some((
+            "row-a".to_owned(),
+            "enabled".to_owned(),
+            Some(0),
+            "true".to_owned(),
+            "false".to_owned(),
+        ))
+    );
+    assert_eq!(
+        state
+            .borrow()
+            .rows()
+            .first()
+            .and_then(|row| row.cell(&TableColumnId::new("enabled"))),
+        Some(&TableCellValue::Bool(false))
+    );
+    assert!(
+        activations.borrow().is_empty(),
+        "toggling a checkbox cell must not activate the row"
+    );
+    assert!(
+        selections.borrow().is_empty(),
+        "toggling a checkbox cell must not toggle row selection"
     );
 }
 

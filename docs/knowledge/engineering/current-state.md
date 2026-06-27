@@ -531,10 +531,15 @@ verified_by:
   tree-data, row-interaction, manual-expansion, manual row-model control, per-column faceting
   metadata, single-column categorical faceted filter controls, single-column numeric range filter
   controls, row selection variants, row pinning, custom aggregation callbacks, two-axis viewport,
-  text cell editing, global filtering, column visibility, and richer filter-operator core slices
+  value cell editing, global filtering, column visibility, and richer filter-operator core slices
   are complete in the current working tree.
   Remaining Table follow-ups are richer editor families, column-group / nested-header polish, and
   standalone headless extraction if cross-framework pressure appears.
+- 2026-06-27: Completed the Table checkbox editor slice in the working tree.
+  `TableCellEditor::Checkbox` now composes controlled `Checkbox` editors for bool leaf cells,
+  `TableCellEditChange` carries value-shaped payloads while preserving text accessors, and
+  `toggle-release` in the Components gallery proves bool edits round-trip through the sample
+  runtime log without triggering row activation or selection.
 - Done: Completed `docs/plans/2026-06-24-005-feat-ui-table-cell-editing-plan.md` in the working
   tree. Table columns can opt into `TableCellEditor::Text`, editable leaf cells render controlled
   `TextInput` editors through the GPUI adapter, `TableCellEditChange` targets stable row and column

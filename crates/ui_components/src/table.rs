@@ -661,11 +661,13 @@ impl TableCellEditApplyOutcome {
     }
 }
 
-/// Controlled payload emitted when an editable table text cell changes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Controlled payload emitted when an editable table cell changes.
+#[derive(Debug, Clone, PartialEq)]
 pub struct TableCellEditChange {
     action: TableRowAction,
     column_id: TableColumnId,
+    previous_value: TableCellValue,
+    next_value: TableCellValue,
     previous_text: String,
     next_text: String,
 }
@@ -674,25 +676,31 @@ impl TableCellEditChange {
     fn new(
         action: TableRowAction,
         column_id: impl Into<TableColumnId>,
-        previous_text: impl Into<String>,
-        next_text: impl Into<String>,
+        previous_value: impl Into<TableCellValue>,
+        next_value: impl Into<TableCellValue>,
     ) -> Self {
+        let previous_value = previous_value.into();
+        let next_value = next_value.into();
         Self {
             action,
             column_id: column_id.into(),
-            previous_text: previous_text.into(),
-            next_text: next_text.into(),
+            previous_text: previous_value.filter_text(),
+            next_text: next_value.filter_text(),
+            previous_value,
+            next_value,
         }
     }
 
-    /// Creates a text-cell edit payload from stable row and column ids.
+    /// Creates an editable cell payload from stable row and column ids.
     pub fn for_row(
         row_id: impl Into<TableRowId>,
         column_id: impl Into<TableColumnId>,
-        previous_text: impl Into<String>,
-        next_text: impl Into<String>,
+        previous_value: impl Into<TableCellValue>,
+        next_value: impl Into<TableCellValue>,
     ) -> Self {
         let row_id = row_id.into();
+        let previous_value = previous_value.into();
+        let next_value = next_value.into();
         Self {
             action: TableRowAction {
                 row_id,
@@ -708,8 +716,10 @@ impl TableCellEditChange {
                 modifiers: TableInputModifiers::default(),
             },
             column_id: column_id.into(),
-            previous_text: previous_text.into(),
-            next_text: next_text.into(),
+            previous_text: previous_value.filter_text(),
+            next_text: next_value.filter_text(),
+            previous_value,
+            next_value,
         }
     }
 
@@ -743,9 +753,19 @@ impl TableCellEditChange {
         &self.column_id
     }
 
+    /// Returns the resolved value before the edit.
+    pub const fn previous_value(&self) -> &TableCellValue {
+        &self.previous_value
+    }
+
     /// Returns the resolved text before the edit.
     pub fn previous_text(&self) -> &str {
         &self.previous_text
+    }
+
+    /// Returns the resolved value after the edit.
+    pub const fn next_value(&self) -> &TableCellValue {
+        &self.next_value
     }
 
     /// Returns the next controlled text value.
@@ -765,7 +785,7 @@ impl TableCellEditChange {
                     row,
                     self.row_id(),
                     &self.column_id,
-                    &self.next_text,
+                    &self.next_value,
                     &mut outcome,
                 )
             })
@@ -783,7 +803,7 @@ fn apply_table_cell_edit_to_row(
     mut row: open_gpui_ui_core::TableRow,
     row_id: &TableRowId,
     column_id: &TableColumnId,
-    next_text: &str,
+    next_value: &TableCellValue,
     outcome: &mut TableCellEditApplyOutcome,
 ) -> open_gpui_ui_core::TableRow {
     if row.id() == row_id {
@@ -794,7 +814,7 @@ fn apply_table_cell_edit_to_row(
         };
 
         if outcome.updated() {
-            return row.with_cell(column_id.clone(), next_text.to_owned());
+            return row.with_cell(column_id.clone(), next_value.clone());
         }
         return row;
     }
@@ -803,7 +823,7 @@ fn apply_table_cell_edit_to_row(
         .children()
         .iter()
         .cloned()
-        .map(|child| apply_table_cell_edit_to_row(child, row_id, column_id, next_text, outcome))
+        .map(|child| apply_table_cell_edit_to_row(child, row_id, column_id, next_value, outcome))
         .collect::<Vec<_>>();
     row = row.with_replaced_children(children);
     row
@@ -5932,6 +5952,7 @@ fn request_table_row_selection_change(
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableCellRenderPlan {
     column_id: TableColumnId,
+    value: Option<TableCellValue>,
     text: String,
     region: TableColumnRegion,
     aria_column_index: usize,
@@ -5946,14 +5967,27 @@ impl TableCellRenderPlan {
         row: &TableResolvedRow,
         value: Option<&TableCellValue>,
     ) -> Self {
-        let editor = if row.is_leaf() && value.is_some() {
-            column.editor()
+        let value = value.cloned();
+        let text = value
+            .as_ref()
+            .map(TableCellValue::filter_text)
+            .unwrap_or_default();
+        let editor = if row.is_leaf() {
+            match (column.editor(), value.as_ref()) {
+                (Some(TableCellEditor::Checkbox), Some(TableCellValue::Bool(_))) => {
+                    Some(TableCellEditor::Checkbox)
+                }
+                (Some(TableCellEditor::Text), Some(_))
+                | (Some(TableCellEditor::MultilineText { .. }), Some(_)) => column.editor(),
+                _ => None,
+            }
         } else {
             None
         };
         Self {
             column_id: column.id().clone(),
-            text: value.map(TableCellValue::filter_text).unwrap_or_default(),
+            value,
+            text,
             region: column.region(),
             aria_column_index: column.aria_column_index(),
             role: Role::Cell,
@@ -5970,6 +6004,11 @@ impl TableCellRenderPlan {
     /// Returns the display text resolved from the core cell value.
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// Returns the resolved scalar value for this cell, when present.
+    pub fn value(&self) -> Option<&TableCellValue> {
+        self.value.as_ref()
     }
 
     /// Returns the resolved pinning region for this cell.
@@ -5992,7 +6031,7 @@ impl TableCellRenderPlan {
         self.width
     }
 
-    /// Returns whether this resolved leaf cell should render a text editor.
+    /// Returns whether this resolved leaf cell should render an editor.
     pub const fn text_editable(&self) -> bool {
         self.editor.is_some()
     }
@@ -8453,11 +8492,14 @@ fn render_table_body_cell(
             on_row_expansion_request,
         ));
     }
+    let cell_value = cell.value().cloned();
     let cell_text = cell.text().to_owned();
     if let (Some(editor), Some(_)) = (cell.editor(), on_cell_edit_change.as_ref()) {
         let action = TableRowAction::from_render_plan(&row, TableInputModifiers::default());
         let column_id_for_change = cell.column_id().clone();
-        let previous_text = cell_text.clone();
+        let previous_value = cell_value
+            .clone()
+            .unwrap_or_else(|| TableCellValue::Text(cell_text.clone()));
         let editor_id = format!("table:{table_id}:cell:{render_key}:{column_id}:editor");
         let editor_label = format!("Edit {column_id} for row {}", row.id().as_str());
         let editor_element = match editor {
@@ -8471,7 +8513,7 @@ fn render_table_body_cell(
                                 TableCellEditChange::new(
                                     action.clone(),
                                     column_id_for_change.clone(),
-                                    previous_text.clone(),
+                                    previous_value.clone(),
                                     next_text,
                                 ),
                                 window,
@@ -8493,7 +8535,7 @@ fn render_table_body_cell(
                                 TableCellEditChange::new(
                                     action.clone(),
                                     column_id_for_change.clone(),
-                                    previous_text.clone(),
+                                    previous_value.clone(),
                                     next_text,
                                 ),
                                 window,
@@ -8504,12 +8546,38 @@ fn render_table_body_cell(
                     .with_size(metrics.size())
                     .into_any_element()
             }
+            TableCellEditor::Checkbox => {
+                let on_change = on_cell_edit_change.clone();
+                let checked = matches!(cell_value.as_ref(), Some(TableCellValue::Bool(true)));
+                let editor_label = format!("Toggle {column_id} for row {}", row.id().as_str());
+                Checkbox::new(editor_id)
+                    .aria_label(editor_label)
+                    .checked(checked)
+                    .on_toggle(move |next_toggled, _, window, cx| {
+                        if let Some(on_change) = on_change.as_ref() {
+                            on_change(
+                                TableCellEditChange::new(
+                                    action.clone(),
+                                    column_id_for_change.clone(),
+                                    previous_value.clone(),
+                                    matches!(next_toggled, Toggled::True),
+                                ),
+                                window,
+                                cx,
+                            );
+                        }
+                    })
+                    .into_any_element()
+            }
         };
         content.push(
             div()
                 .flex_1()
                 .min_w(px(0.0))
                 .overflow_hidden()
+                .when(matches!(editor, TableCellEditor::Checkbox), |this| {
+                    this.flex().justify_center().items_center()
+                })
                 .on_mouse_up(MouseButton::Left, |_, _, cx| {
                     cx.stop_propagation();
                 })
