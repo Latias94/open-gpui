@@ -6,6 +6,11 @@ status: active
 
 # Log
 
+- 2026-06-27: Refreshed the engineering memory after confirming the
+  `feat/scroll-surface-containment` branch is clean and the scroll-surface / context-menu / sidebar
+  / tabs work is fully shipped. The current durable state now points at the next Table follow-up
+  boundary instead of the finished containment slice, and the repo-local memory bundle stays
+  aligned with the clean checkout.
 - 2026-06-27: Added adapter-owned submenu hover timers and close timing on
   `feat/scroll-surface-containment`. `MenuRuntime` now tracks submenu hover epoch, a task handle,
   hovered path, and submenu surface hover state; submenu trigger and submenu surface hover events

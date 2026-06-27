@@ -142,13 +142,13 @@ verified_by:
 
 # Current State
 
-- Goal: 深化 open-gpui Overlay Menu 的子菜单 hover 定时与浮层契约。
+- Goal: 继续 Table 成熟度边界梳理，并为下一块实现切片建立清晰的计划和记忆。
 - Branch: feat/scroll-surface-containment
-- Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p open-gpui-ui-components menu_runtime_hover_opens_submenu_and_preserves_child_focus menu_runtime_hover_switches_between_submenu_branches`, `cargo nextest run -p open-gpui-ui-foundation-gallery overlay_gallery_smoke_opens_menu_submenu_from_hover`, `git diff --check`
-- Done: `MenuRuntime` 现在拥有 submenu hover 定时、epoch 和浮层 hover 状态；submenu trigger 与 submenu surface 的 hover 事件会延迟打开 / 关闭子菜单分支，且组件测试与 overlay gallery smoke 已覆盖延迟打开、分支切换和离开 root item 的关闭时序。
+- Last verified: `git status --short --branch` shows a clean `feat/scroll-surface-containment` checkout; the latest code verification on this branch remains the committed scroll-surface / context-menu / sidebar / tabs containment trail already recorded below.
+- Done: `feat/scroll-surface-containment` 的 scroll-surface containment 已经收口并提交，vertical `Tabs` 走共享 `ScrollArea`，long `Sidebar` 保持在共享 viewport 内，ContextMenu 的长列表 wheel 输入也停留在自己的 surface 里。
 - In progress: None.
 - Blocked: None.
-- Next action: 继续 U4 ContextMenu 的点位 placement / local scroll containment，随后再回到 Menu 家族做更细的 pointer corridor 与 menubar follow-up。
+- Next action: 选定下一个 Table follow-up boundary，优先级仍然是 richer editor families 或 column-group / nested-header polish；standalone headless extraction 继续保持 deferred。
 
 - 2026-06-26: Completed the Tree drag-and-drop hierarchy editing slice from
   `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md`. `TreeMove`,
