@@ -11,6 +11,15 @@ status: active
   / tabs work is fully shipped. The current durable state now points at the next Table follow-up
   boundary instead of the finished containment slice, and the repo-local memory bundle stays
   aligned with the clean checkout.
+- 2026-06-27: Completed the Table sticky-header slice on `feat/scroll-surface-containment`. The
+  GPUI Table adapter now renders the header band as an absolute overlay at the top of the table
+  root, pads the body by the same band height, and keeps vertical wheel input inside the table
+  body while the header stays fixed. Updated the runtime and gallery proofs so the pinned body
+  scroll test and the `release-rollup` smoke both assert stable header bounds across vertical
+  scroll. Verified with `cargo fmt --all -- crates/ui_components/src/table.rs
+  crates/ui_components/tests/components.rs examples/ui-foundation-gallery/tests/foundation_gallery.rs`,
+  `cargo nextest run -p open-gpui-ui-components table`,
+  `cargo nextest run -p open-gpui-ui-foundation-gallery table`, and `git diff --check`.
 - 2026-06-27: Added adapter-owned submenu hover timers and close timing on
   `feat/scroll-surface-containment`. `MenuRuntime` now tracks submenu hover epoch, a task handle,
   hovered path, and submenu surface hover state; submenu trigger and submenu surface hover events

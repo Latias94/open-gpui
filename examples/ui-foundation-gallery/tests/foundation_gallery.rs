@@ -5365,6 +5365,7 @@ fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
         "scroll-area:table:component-table:release-rollup:body-scroll",
     );
     let sample_before = bounds(cx, "gallery:component-table-sample:release-rollup");
+    let header_before = bounds(cx, "table:component-table:release-rollup:header-row");
     let scroll_target = bounds(
         cx,
         &format!("table:component-table:release-rollup:cell:{first_row_id}:name"),
@@ -5388,11 +5389,17 @@ fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
     redraw(cx);
 
     let sample_after = bounds(cx, "gallery:component-table-sample:release-rollup");
+    let header_after = bounds(cx, "table:component-table:release-rollup:header-row");
 
     assert_eq!(
         sample_after.top(),
         sample_before.top(),
         "expected grouped Table viewport wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert_eq!(
+        header_after.top(),
+        header_before.top(),
+        "expected grouped Table header to stay fixed while the body scrolls; before={header_before:?} after={header_after:?}"
     );
     if let Some(first_row_after) = cx.debug_bounds(&first_row_selector) {
         assert!(

@@ -8254,6 +8254,9 @@ fn table_runtime_pinned_body_scrolls_without_moving_parent(cx: &mut open_gpui::T
     let first_row_before = cx
         .debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0000")
         .expect("first pinned body row should render before vertical scrolling");
+    let header_before = cx
+        .debug_bounds("table:pinned-body-scroll-runtime-table:header-row")
+        .expect("pinned table header should render before vertical scrolling");
     assert!(
         cx.debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0010")
             .is_none(),
@@ -8281,10 +8284,18 @@ fn table_runtime_pinned_body_scrolls_without_moving_parent(cx: &mut open_gpui::T
     let parent_bottom_after = cx
         .debug_bounds("table-parent-bottom")
         .expect("parent bottom should still be rendered after table scrolling");
+    let header_after = cx
+        .debug_bounds("table:pinned-body-scroll-runtime-table:header-row")
+        .expect("pinned table header should still be rendered after vertical scrolling");
     assert_eq!(
         parent_bottom_after.top(),
         parent_bottom_before.top(),
         "expected wheel input inside pinned Table to stay inside the table body; before={parent_bottom_before:?} after={parent_bottom_after:?}"
+    );
+    assert_eq!(
+        header_after.top(),
+        header_before.top(),
+        "expected the table header to stay fixed while the body scrolls; before={header_before:?} after={header_after:?}"
     );
     assert!(
         cx.debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0000")

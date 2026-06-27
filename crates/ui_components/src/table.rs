@@ -6281,6 +6281,11 @@ impl TableRenderPlan {
         self.header_groups.row_count()
     }
 
+    /// Returns the total height reserved for the table header band.
+    pub fn sticky_header_band_height(&self) -> UiPx {
+        self.metrics.header_height() * self.header_row_count().max(1) as f32
+    }
+
     /// Returns sticky pinned-column layout metadata, when a split layout is needed.
     pub fn pinned_layout(&self) -> Option<&TablePinnedLayoutPlan> {
         self.pinned_layout.as_ref()
@@ -7049,6 +7054,7 @@ impl RenderOnce for Table {
             .size_full()
             .min_w(px(0.0))
             .min_h(px(0.0))
+            .relative()
             .flex()
             .flex_col()
             .overflow_hidden()
@@ -7083,17 +7089,12 @@ impl RenderOnce for Table {
                     },
                 )
             })
-            .child(render_table_header(
-                &plan,
-                on_sort_requested,
-                resize_config,
-                horizontal_scroll_handle.clone(),
-            ))
             .child(render_table_body(
                 &plan,
                 scroll_viewport_id,
-                horizontal_scroll_handle,
+                horizontal_scroll_handle.clone(),
                 scroll_handle.clone(),
+                plan.sticky_header_band_height(),
                 runtime.clone(),
                 runtime_snapshot,
                 current_expansion,
@@ -7104,6 +7105,13 @@ impl RenderOnce for Table {
                 on_row_expansion_request,
                 on_cell_edit_change,
             ))
+            .child(render_table_header(
+                &plan,
+                on_sort_requested,
+                resize_config,
+                horizontal_scroll_handle.clone(),
+                plan.sticky_header_band_height(),
+            ))
     }
 }
 
@@ -7112,6 +7120,7 @@ fn render_table_header(
     on_sort_requested: Option<TableSortHandler>,
     resize_config: TableResizeRenderConfig,
     horizontal_scroll_handle: ScrollHandle,
+    header_band_height: UiPx,
 ) -> impl IntoElement {
     let table_id = plan.table_id().to_owned();
     let metrics = plan.metrics();
@@ -7138,18 +7147,17 @@ fn render_table_header(
             .map(|column| column.id().clone())
             .collect::<BTreeSet<_>>()
     });
-    let header_row_count = plan.header_row_count().max(1);
-    let header_height = metrics.header_height() * header_row_count as f32;
-
     div()
         .id(format!("table:{table_id}:header-row"))
         .debug_selector({
             let table_id = table_id.clone();
             move || format!("table:{table_id}:header-row")
         })
-        .h(gpui_px_from_ui(header_height))
-        .flex_none()
-        .relative()
+        .absolute()
+        .top(px(0.0))
+        .left(px(0.0))
+        .right(px(0.0))
+        .h(gpui_px_from_ui(header_band_height))
         .flex()
         .items_center()
         .overflow_hidden()
@@ -7609,6 +7617,7 @@ fn render_table_body(
     scroll_viewport_id: String,
     horizontal_scroll_handle: ScrollHandle,
     vertical_scroll_handle: ScrollHandle,
+    header_band_height: UiPx,
     runtime: Entity<TableRuntime>,
     runtime_snapshot: TableRuntime,
     current_expansion: TableExpansionState,
@@ -7641,6 +7650,7 @@ fn render_table_body(
         .flex_1()
         .min_h(px(0.0))
         .overflow_hidden()
+        .pt(gpui_px_from_ui(header_band_height))
         .flex()
         .flex_col()
         .when(!top_rows.is_empty(), |this| {

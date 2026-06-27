@@ -269,7 +269,7 @@ unloaded/loading/failed child metadata, row-pinning regions split top/center/bot
 keep-pinned and page-only policies, and grouped / expanded row models keep collapsed descendants
 addressable by stable row id. The Components gallery now carries `release-rollup`, a grouped Table
 sample that mixes expanded and collapsed team groups, exposes aggregate count and score cells,
-pins the identifier and status columns, and has its own inner-scroll smoke. It also carries
+pins the identifier and status columns, and has its own sticky-header plus inner-scroll smoke. It also carries
 `server-paged`, a manual filtering/sorting/pagination sample that renders only the current
 app-supplied page snapshot while exposing server-known total row and page counts through the
 gallery summary and `TableRenderPlan`. It also carries `release-resize`, a controlled
@@ -288,6 +288,9 @@ core filtered row model. `release-matrix` also renders a `TableColumnVisibility`
 control, records `TableColumnVisibilityChange` payloads in the sample runtime log, applies
 visibility overrides to the sample-owned `TableState`, proves hiding a metric column removes its
 header and cells, proves show-all restores the column, and confirms popup wheel input stays local.
+`components_gallery_smoke_grouped_table_scroll_stays_inside_sample` is the focused vertical
+sticky-header proof: it enters the Table family view, wheels the `release-rollup` body, and
+asserts the header band stays fixed while the body row window advances.
 `editable-release` is the text-cell editing proof: it renders editable `name` and `team` columns,
 keeps `status` read-only, records `TableCellEditChange` payloads in the sample runtime log, applies
 changes to a sample-owned `TableState` override, and proves the changed row text re-renders through

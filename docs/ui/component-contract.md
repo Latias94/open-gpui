@@ -455,11 +455,11 @@ scroll offset from the adapter runtime wins during render, and one-shot scroll-p
 remains a future adapter-runtime policy.
 
 The GPUI `Table` adapter resolves table state and virtualizer ranges before rendering. The adapter
-owns the element tree, concrete scroll viewport, wheel containment, header/body drawing, sortable
-header activation callbacks, row focus handles, source-tree disclosure affordances for loaded,
-unloaded, loading, and failed branches, controlled row activation / expansion-request payloads,
-callback-backed column resize handles, and AccessKit mapping. Table accessibility metadata includes
-table, row, column-header, and cell roles, row and
+owns the element tree, concrete scroll viewport, wheel containment, sticky header overlay,
+body drawing, sortable header activation callbacks, row focus handles, source-tree disclosure
+affordances for loaded, unloaded, loading, and failed branches, controlled row activation /
+expansion-request payloads, callback-backed column resize handles, and AccessKit mapping. Table
+accessibility metadata includes table, row, column-header, and cell roles, row and
 column position metadata, sort metadata for sortable headers, grouped-row and source-tree depth /
 parent metadata, selected state, and branch `aria-expanded` state keyed by stable row id. The
 adapter keeps row activation independent from selection and expansion; callers decide whether a
@@ -471,8 +471,10 @@ widths. For pinned tables, `TableCenterColumnWindowPlan` virtualizes the shared 
 lane from adapter-owned horizontal scroll input: it exposes visible and overscan ranges, rendered
 center columns, total center width, and leading/trailing spacer widths. The adapter keeps left/right
 pinned lanes fully mounted while mounting only the rendered center-column window, so the center can
-scroll without moving pinned columns or the outer page. `TableRenderPlan` also exposes the current
-filtering, sorting, pagination, and faceting ownership modes plus pagination row/page totals and
+scroll without moving pinned columns or the outer page. The header band is rendered as an absolute
+overlay at the top of the table root, and the body receives matching top padding so vertical scroll
+does not move the header. `TableRenderPlan` also exposes the current filtering, sorting, pagination,
+and faceting ownership modes plus pagination row/page totals and
 per-column facet metadata so gallery readouts and consumers can distinguish local row-model
 transforms from app-owned server snapshots. Facet metadata covers deterministic unique value/count
 entries, numeric min/max ranges, and explicit manual/server payloads keyed by column id; concrete
@@ -531,9 +533,9 @@ entry, at least one `gallery:component-table-sample:{id}` rendered selector, sta
 identity, grouping, source-tree expansion, row interaction payloads, and virtualizer behavior, and
 gallery runtime tests for nested scroll containment, faceted-filter row updates, predicate-filter
 row updates, single-line and multiline editable text-cell updates, and nested header gallery proof.
-Sticky headers, dataset-wide exact autosizing, data-source fetch/cache orchestration, global
-faceting, dynamic editor row measurement, and deeper two-axis grid virtualization beyond the pinned
-center-column window remain follow-up capabilities.
+Dataset-wide exact autosizing, data-source fetch/cache orchestration, global faceting, dynamic
+editor row measurement, and deeper two-axis grid virtualization beyond the pinned center-column
+window remain follow-up capabilities.
 
 ## Splitter Constraints
 
