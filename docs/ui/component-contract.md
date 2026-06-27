@@ -512,16 +512,19 @@ families when visibility or pinning crosses region boundaries, while group heade
 leaf-column-driven for sort, resize, visibility, and selection behavior. Flat tables still resolve
 to a single header row.
 Value cell editing is the official inline-edit recipe over table column metadata:
-`TableCellEditor::Text`, `TableCellEditor::MultilineText { rows }`, and
-`TableCellEditor::Checkbox` opt columns into editable leaf cells, while synthetic group rows and
-missing source cells stay display-only. The GPUI adapter renders controlled `TextInput`,
-`Textarea`, or `Checkbox` paths for those editors, then emits the same `TableCellEditChange`
-through `Table::on_cell_edit_change`; applications keep row data app-owned and feed back a changed
-`TableState`. The helper `TableCellEditChange::apply_to` updates the matching stable source row id
-while preserving unrelated row-model inputs such as sorting, filters, pagination, selection,
-pinning, expansion, faceting, and sizing. Dynamic row-height measurement, validation,
-dirty-state tracking, commit/cancel workflows, clipboard range editing, and server persistence
-remain application-owned or follow-up work.
+`TableCellEditor::Text`, `TableCellEditor::MultilineText { rows }`,
+`TableCellEditor::Checkbox`, and `TableCellEditor::Select` opt columns into editable leaf cells,
+while synthetic group rows and missing source cells stay display-only. The GPUI adapter renders
+controlled `TextInput`, `Textarea`, `Checkbox`, or fixed-option `Select` paths for those editors,
+then emits the same `TableCellEditChange` through `Table::on_cell_edit_change`; applications keep
+row data app-owned and feed back a changed `TableState`. The helper `TableCellEditChange::apply_to`
+updates the matching stable source row id while preserving unrelated row-model inputs such as
+sorting, filters, pagination, selection, pinning, expansion, faceting, and sizing. Dynamic
+row-height measurement, validation, dirty-state tracking, commit/cancel workflows, clipboard range
+editing, and server persistence remain application-owned or follow-up work.
+The fixed-option select path uses the same leaf-cell contract as text and checkbox editing: it is
+adapter-owned, keeps row activation suppressed when the editor consumes the click, and preserves
+the stable `(row_id, column_id)` edit payload shape.
 For row-pinned tables, `TableRenderPlan` exposes top, center, and bottom `TableRowRenderPlan`
 regions with neutral `TableRowRegion` metadata, while the vertical virtualizer consumes only the
 center region. The GPUI adapter renders top and bottom row bands outside the center body

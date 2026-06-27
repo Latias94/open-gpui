@@ -151,7 +151,7 @@ verified_by:
 - Done: `feat/scroll-surface-containment` 的 scroll-surface containment 已经收口并提交，vertical `Tabs` 走共享 `ScrollArea`，long `Sidebar` 保持在共享 viewport 内，ContextMenu 的长列表 wheel 输入也停留在自己的 surface 里。
 - In progress: None.
 - Blocked: None.
-- Next action: Table sticky headers 已完成，继续选定下一个 Table follow-up boundary，优先级仍然是 richer editor families 或 column-group / nested-header polish；standalone headless extraction 继续保持 deferred。
+- Next action: Table 的 select editor slice 已经收口完成，下一步转向 sticky headers 或其它明确的 Table 成熟度边界；standalone headless extraction 继续保持 deferred。
 
 - 2026-06-26: Completed the Tree drag-and-drop hierarchy editing slice from
   `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md`. `TreeMove`,

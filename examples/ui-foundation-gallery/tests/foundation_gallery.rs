@@ -1992,6 +1992,30 @@ fn components_page_samples_expose_component_metadata() {
         "multiline-release status column should stay read-only"
     );
 
+    let select_release = table_sample(tables, "select-release");
+    let select_plan = select_release.render_plan();
+    assert_eq!(select_release.state.rows().len(), 28);
+    assert_eq!(
+        select_plan.columns()[1].editor(),
+        Some(TableCellEditor::Select),
+        "select-release status column should expose fixed-option select editing metadata"
+    );
+    assert_eq!(
+        select_plan.rows()[0].cells()[1].editor(),
+        Some(TableCellEditor::Select),
+        "select-release first visible status cell should render as a select editor"
+    );
+    assert_eq!(
+        select_plan.rows()[0].cells()[1].text(),
+        "Ready",
+        "select-release first visible status cell should resolve the display label from select options"
+    );
+    assert_eq!(
+        select_plan.rows()[0].cells()[1].select_options().len(),
+        2,
+        "select-release visible select cell should carry the fixed option list"
+    );
+
     let grouped_release = table_sample(tables, "release-rollup");
     let grouped_plan = grouped_release.render_plan();
     assert_eq!(grouped_release.state.grouping()[0].as_str(), "team");
@@ -2706,6 +2730,25 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
             .as_deref(),
         Some("true")
     );
+
+    let select_release = table_sample(samples, "select-release");
+    let select_plan = select_release.render_plan();
+    let select_summary = select_release.state_summary();
+
+    assert_eq!(select_release.id, "select-release");
+    assert_eq!(select_release.state.rows().len(), 28);
+    assert_eq!(select_summary.core_rows, 28);
+    assert_eq!(select_summary.selected_rows, 1);
+    assert_eq!(
+        select_plan.columns()[1].editor(),
+        Some(TableCellEditor::Select)
+    );
+    assert_eq!(
+        select_plan.rows()[0].cells()[1].editor(),
+        Some(TableCellEditor::Select)
+    );
+    assert_eq!(select_plan.rows()[0].cells()[1].text(), "Ready");
+    assert_eq!(select_plan.rows()[0].cells()[1].select_options().len(), 2);
 
     let multiline_release = table_sample(samples, "multiline-release");
     let multiline_plan = multiline_release.render_plan();
@@ -3520,6 +3563,7 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(table_gate.evidence.contains(&"TableColumnWidthPolicy"));
     assert!(table_gate.evidence.contains(&"content-fit-release"));
     assert!(table_gate.evidence.contains(&"toggle-release"));
+    assert!(table_gate.evidence.contains(&"select-release"));
     assert!(
         table_gate
             .evidence
@@ -3550,6 +3594,12 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
             .evidence
             .contains(&"components_gallery_smoke_checkbox_table_cell_updates_sample_rows")
     );
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_select_table_cell_updates_sample_rows")
+    );
+    assert!(table_gate.evidence.contains(&"select-release"));
 }
 
 #[open_gpui::test]
@@ -4160,6 +4210,11 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
         cx.debug_bounds("gallery:component-table-sample:toggle-release")
             .is_some(),
         "expected focused Table mode to render the checkbox Table sample"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-table-sample:select-release")
+            .is_some(),
+        "expected focused Table mode to render the select Table sample"
     );
     assert!(
         cx.debug_bounds("gallery:component-table-sample:content-fit-release")
@@ -5285,6 +5340,86 @@ fn components_gallery_smoke_checkbox_table_cell_updates_sample_rows(
             .cloned()
     });
     assert_eq!(edited_enabled, Some(TableCellValue::Bool(false)));
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_select_table_cell_updates_sample_rows(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE_ID: &str = "select-release";
+    const SAMPLE: &str = "gallery:component-table-sample:select-release";
+    const STATUS_SELECT: &str = "select:table:component-table:select-release:cell:select-release-row-000:status:editor:trigger";
+    const STATUS_CONTENT: &str =
+        "select:Edit status for row select-release-row-000:select-content-scroll:content";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, STATUS_SELECT);
+
+    let sample_before = bounds(cx, SAMPLE);
+    let trigger = bounds(cx, STATUS_SELECT);
+    cx.simulate_click(trigger.center(), Default::default());
+    settle(cx);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    if cx.debug_bounds(STATUS_CONTENT).is_none() {
+        cx.simulate_keystrokes("space");
+        settle(cx);
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+    }
+
+    assert!(
+        cx.debug_bounds(STATUS_CONTENT).is_some(),
+        "select content should open from the table trigger"
+    );
+    let blocked = bounds(
+        cx,
+        "listbox:table:component-table:select-release:cell:select-release-row-000:status:editor-listbox:option:blocked",
+    );
+    cx.simulate_click(blocked.center(), Default::default());
+    settle(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "selecting a table cell should not move the sample card"
+    );
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_changes().to_vec()
+    });
+    assert_eq!(
+        changes.len(),
+        1,
+        "select choice should record one controlled change"
+    );
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one select edit change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.row_id, "select-release-row-000");
+    assert_eq!(last.column_id, "status");
+    assert_eq!(last.outcome, "updated");
+    assert_eq!(last.previous_text, "ready");
+    assert_eq!(last.next_text, "blocked");
+
+    let edited_status = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_override(SAMPLE_ID)
+            .and_then(|state| state.rows().first())
+            .and_then(|row| row.cell(&TableColumnId::new("status")))
+            .map(TableCellValue::filter_text)
+    });
+    assert_eq!(edited_status.as_deref(), Some("blocked"));
 }
 
 #[open_gpui::test]

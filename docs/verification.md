@@ -157,6 +157,18 @@ content-fit proof: it enters the Table family view, targets the `content-fit-rel
 edits the visible `name` cell, verifies the sample keeps the fixed `score` lane anchored, and
 proves the adapter-measured `name` column widens while header and body stay aligned.
 
+`components_gallery_smoke_select_table_cell_updates_sample_rows` is the focused select-edit
+proof: it enters the Table family view, targets the `select-release` sample, opens a fixed-option
+`Select` editor, picks `blocked`, verifies `TableCellEditChange` targets the stable
+`(row_id, column_id)` pair, confirms the gallery applies the text change to its app-owned
+`TableState`, and proves the select cell does not activate or select the row.
+
+`open-gpui-ui-components` table tests also cover the select editor adapter path directly:
+`table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only`,
+`table_runtime_select_cell_edit_emits_change_without_row_interaction`, and the other table cell
+edit gates prove the fixed-option `Select` editor stays a leaf-cell recipe rather than a new row
+interaction path.
+
 ```powershell
 cargo nextest run -p open-gpui-ui-core table
 cargo nextest run -p open-gpui-ui-components table
@@ -166,7 +178,7 @@ cargo nextest run -p open-gpui-ui-core numeric_range_filters_match_finite_number
 cargo nextest run -p open-gpui-ui-components table_range_filter_state_resolves_bounds_and_popover_contract table_range_filter_change_updates_filters_and_resets_pagination table_render_plan_exposes_faceting_metadata table_public_exports_include_core_table_and_virtualizer_contracts component_api_inventory_uses_stable_ownership_vocabulary
 cargo nextest run -p open-gpui-ui-components table_predicate_filter
 cargo nextest run -p open-gpui-ui-components table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only table_cell_edit_change_updates_source_row_and_preserves_table_state table_cell_edit_change_updates_boolean_source_row_and_preserves_table_state table_runtime_text_cell_edit_emits_change_without_row_interaction table_runtime_boolean_cell_edit_emits_toggle_change_without_row_interaction table_runtime_multiline_cell_edit_emits_newline_change_without_row_interaction controlled_text_input_on_change_accepts_input_without_supplied_controller component_api_inventory_uses_stable_ownership_vocabulary table_public_exports_include_core_table_and_virtualizer_contracts
-cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_editable_table_cell_updates_sample_rows components_gallery_smoke_checkbox_table_cell_updates_sample_rows components_gallery_smoke_multiline_table_cell_updates_sample_rows
+cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_editable_table_cell_updates_sample_rows components_gallery_smoke_checkbox_table_cell_updates_sample_rows components_gallery_smoke_select_table_cell_updates_sample_rows components_gallery_smoke_multiline_table_cell_updates_sample_rows
 ```
 
 `VirtualizedList` follows the same split at component scale: `open-gpui-ui-components` tests prove

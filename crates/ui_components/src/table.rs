@@ -27,7 +27,7 @@ use open_gpui_ui_core::{
     TableColumnVisibilityOverrides, TableColumnWidthPolicy, TableExpansionMode,
     TableExpansionState, TableFacetRange, TableFilter, TableGlobalFacetSummary,
     TableNumericFilterOperator, TableResolvedColumnSizing, TableResolvedRow, TableResolvedState,
-    TableRowChildrenLoadState, TableRowId, TableRowRegion, TableSelectionMode,
+    TableRowChildrenLoadState, TableRowId, TableRowRegion, TableSelectOption, TableSelectionMode,
     TableSelectionPolicy, TableSelectionSummary, TableSort, TableSortDirection, TableStageMode,
     TableState, TableStateCacheKey, TableTextFilterOperator, TableTreeRow, ThemeTokens, Toggled,
     UiPx, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
@@ -4581,6 +4581,7 @@ pub struct TableColumnRenderPlan {
     aria_column_index: usize,
     sortable: bool,
     editor: Option<TableCellEditor>,
+    select_options: Vec<TableSelectOption>,
     width_policy: TableColumnWidthPolicy,
     sort_direction: Option<TableSortDirection>,
     sort_action: Option<TableHeaderAction>,
@@ -4609,6 +4610,7 @@ impl TableColumnRenderPlan {
             aria_column_index,
             sortable: column.sortable(),
             editor: column.editor(),
+            select_options: column.select_options().to_vec(),
             width_policy: column.width_policy(),
             sort_direction,
             sort_action: column
@@ -4656,6 +4658,11 @@ impl TableColumnRenderPlan {
     /// Returns the configured editor for leaf cells in this column.
     pub const fn editor(&self) -> Option<TableCellEditor> {
         self.editor
+    }
+
+    /// Returns the fixed select options configured for this column.
+    pub fn select_options(&self) -> &[TableSelectOption] {
+        &self.select_options
     }
 
     /// Returns the configured width policy for this column.
@@ -5954,6 +5961,7 @@ pub struct TableCellRenderPlan {
     column_id: TableColumnId,
     value: Option<TableCellValue>,
     text: String,
+    select_options: Vec<TableSelectOption>,
     region: TableColumnRegion,
     aria_column_index: usize,
     role: Role,
@@ -5968,15 +5976,12 @@ impl TableCellRenderPlan {
         value: Option<&TableCellValue>,
     ) -> Self {
         let value = value.cloned();
-        let text = value
-            .as_ref()
-            .map(TableCellValue::filter_text)
-            .unwrap_or_default();
         let editor = if row.is_leaf() {
             match (column.editor(), value.as_ref()) {
                 (Some(TableCellEditor::Checkbox), Some(TableCellValue::Bool(_))) => {
                     Some(TableCellEditor::Checkbox)
                 }
+                (Some(TableCellEditor::Select), Some(_)) => Some(TableCellEditor::Select),
                 (Some(TableCellEditor::Text), Some(_))
                 | (Some(TableCellEditor::MultilineText { .. }), Some(_)) => column.editor(),
                 _ => None,
@@ -5984,10 +5989,17 @@ impl TableCellRenderPlan {
         } else {
             None
         };
+        let select_options = if matches!(editor, Some(TableCellEditor::Select)) {
+            column.select_options().to_vec()
+        } else {
+            Vec::new()
+        };
+        let text = resolved_table_cell_text(value.as_ref(), &select_options);
         Self {
             column_id: column.id().clone(),
             value,
             text,
+            select_options,
             region: column.region(),
             aria_column_index: column.aria_column_index(),
             role: Role::Cell,
@@ -6004,6 +6016,11 @@ impl TableCellRenderPlan {
     /// Returns the display text resolved from the core cell value.
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// Returns the select options configured for this resolved leaf cell.
+    pub fn select_options(&self) -> &[TableSelectOption] {
+        &self.select_options
     }
 
     /// Returns the resolved scalar value for this cell, when present.
@@ -6040,6 +6057,26 @@ impl TableCellRenderPlan {
     pub const fn editor(&self) -> Option<TableCellEditor> {
         self.editor
     }
+}
+
+fn resolved_table_cell_text(
+    value: Option<&TableCellValue>,
+    select_options: &[TableSelectOption],
+) -> String {
+    let Some(value) = value else {
+        return String::new();
+    };
+
+    let raw_text = value.filter_text();
+    if select_options.is_empty() {
+        return raw_text;
+    }
+
+    select_options
+        .iter()
+        .find(|option| option.value() == raw_text)
+        .map(|option| option.label().to_owned())
+        .unwrap_or(raw_text)
 }
 
 /// One resolved virtualized row to render.
@@ -8265,7 +8302,7 @@ fn render_table_row(
             let on_row_selection_change = on_row_selection_change.clone();
             let on_row_activate = on_row_activate.clone();
             move |event: &ClickEvent, window, cx| {
-                if !event.standard_click() {
+                if !event.standard_click() || window.default_prevented() {
                     return;
                 }
 
@@ -8497,9 +8534,16 @@ fn render_table_body_cell(
     if let (Some(editor), Some(_)) = (cell.editor(), on_cell_edit_change.as_ref()) {
         let action = TableRowAction::from_render_plan(&row, TableInputModifiers::default());
         let column_id_for_change = cell.column_id().clone();
-        let previous_value = cell_value
-            .clone()
-            .unwrap_or_else(|| TableCellValue::Text(cell_text.clone()));
+        let previous_value = cell_value.clone().unwrap_or_default();
+        let select_options = cell
+            .select_options()
+            .iter()
+            .map(|option| ListboxOption::new(option.value().to_owned(), option.label().to_owned()))
+            .collect::<Vec<_>>();
+        let selected_value = cell_value
+            .as_ref()
+            .map(TableCellValue::filter_text)
+            .unwrap_or_default();
         let editor_id = format!("table:{table_id}:cell:{render_key}:{column_id}:editor");
         let editor_label = format!("Edit {column_id} for row {}", row.id().as_str());
         let editor_element = match editor {
@@ -8569,17 +8613,48 @@ fn render_table_body_cell(
                     })
                     .into_any_element()
             }
+            TableCellEditor::Select => {
+                let on_change = on_cell_edit_change.clone();
+                Select::new(editor_id, editor_label)
+                    .full_width(true)
+                    .placeholder(cell_text.clone())
+                    .selected(selected_value)
+                    .options(select_options)
+                    .on_select(move |selection, window, cx| {
+                        if let Some(on_change) = on_change.as_ref() {
+                            on_change(
+                                TableCellEditChange::new(
+                                    action.clone(),
+                                    column_id_for_change.clone(),
+                                    previous_value.clone(),
+                                    TableCellValue::Text(selection.value().to_owned()),
+                                ),
+                                window,
+                                cx,
+                            );
+                        }
+                    })
+                    .into_any_element()
+            }
         };
         content.push(
             div()
+                .id(format!(
+                    "table:{table_id}:cell:{render_key}:{column_id}:editor-shell"
+                ))
+                .debug_selector({
+                    let table_id = table_id.clone();
+                    let render_key = render_key.clone();
+                    let column_id = column_id.clone();
+                    move || format!("table:{table_id}:cell:{render_key}:{column_id}:editor-shell")
+                })
                 .flex_1()
+                .w_full()
                 .min_w(px(0.0))
                 .overflow_hidden()
+                .block_mouse_except_scroll()
                 .when(matches!(editor, TableCellEditor::Checkbox), |this| {
                     this.flex().justify_center().items_center()
-                })
-                .on_mouse_up(MouseButton::Left, |_, _, cx| {
-                    cx.stop_propagation();
                 })
                 .child(editor_element)
                 .into_any_element(),
@@ -8678,7 +8753,7 @@ fn render_table_tree_toggle(
         .cursor_pointer()
         .hover(|style| style.bg(rgb(0xe8ede6)))
         .on_click(move |event: &ClickEvent, window, cx| {
-            if !event.standard_click() {
+            if !event.standard_click() || window.default_prevented() {
                 return;
             }
 
@@ -8959,6 +9034,7 @@ mod tests {
             aria_column_index: 1,
             sortable: false,
             editor: None,
+            select_options: Vec::new(),
             width_policy: TableColumnWidthPolicy::ContentFit,
             sort_direction: None,
             sort_action: None,

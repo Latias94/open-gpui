@@ -33,11 +33,11 @@ use open_gpui_ui_components::{
     TablePredicateFilterOperator, TablePredicateFilterOperatorOptionState,
     TablePredicateFilterState, TableRangeFilter, TableRangeFilterChange, TableRangeFilterState,
     TableResolvedHeaderKind, TableRow, TableRowChildrenLoadState, TableRowId, TableRowPinning,
-    TableRowPinningPolicy, TableRowRegion, TableSelectionActivationMode, TableSelectionMode,
-    TableSelectionScope, TableSort, TableSortDirection, TableStageMode, TableState,
-    TableTextFilterOperator, TableToolbar, TableToolbarState, Tabs, TabsActivationMode, TabsItem,
-    TabsItemDescriptor, TabsSelection, TabsState, TextInput, TextInputDisplayMode, Textarea,
-    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
+    TableRowPinningPolicy, TableRowRegion, TableSelectOption, TableSelectionActivationMode,
+    TableSelectionMode, TableSelectionScope, TableSort, TableSortDirection, TableStageMode,
+    TableState, TableTextFilterOperator, TableToolbar, TableToolbarState, Tabs, TabsActivationMode,
+    TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput, TextInputDisplayMode,
+    Textarea, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
     ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
     TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeChildrenLoadState,
     TreeDropPosition, TreeItemDescriptor, TreeMove, TreeMoveTarget, TreeRenderPlan,
@@ -5098,6 +5098,7 @@ fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
             .with_cell("name", "Alpha")
             .with_cell("notes", "Line 1\nLine 2")
             .with_cell("enabled", true)
+            .with_cell("status", "ready")
             .with_cell("score", 10_usize),
         TableRow::new("row-b").with_cell("score", 20_usize),
     ])
@@ -5105,6 +5106,12 @@ fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
         TableColumn::new("name", "Name").with_text_editable(true),
         TableColumn::new("notes", "Notes").with_multiline_text_editor(3),
         TableColumn::new("enabled", "Enabled").with_checkbox_editor(),
+        TableColumn::new("status", "Status")
+            .with_select_editor([
+                TableSelectOption::new("ready", "Ready"),
+                TableSelectOption::new("blocked", "Blocked"),
+            ])
+            .with_width(ui_px(120.0)),
         TableColumn::new("score", "Score"),
     ])
     .with_grouping(["score"])
@@ -5135,6 +5142,11 @@ fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
         .iter()
         .find(|column| column.id().as_str() == "enabled")
         .expect("enabled column should resolve");
+    let status_column = plan
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "status")
+        .expect("status column should resolve");
     assert!(name_column.text_editable());
     assert_eq!(name_column.editor(), Some(TableCellEditor::Text));
     assert!(notes_column.text_editable());
@@ -5144,6 +5156,10 @@ fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
     );
     assert!(enabled_column.text_editable());
     assert_eq!(enabled_column.editor(), Some(TableCellEditor::Checkbox));
+    assert_eq!(status_column.editor(), Some(TableCellEditor::Select));
+    assert_eq!(status_column.select_options().len(), 2);
+    assert_eq!(status_column.select_options()[0].value(), "ready");
+    assert_eq!(status_column.select_options()[0].label(), "Ready");
     assert!(!score_column.text_editable());
     assert_eq!(score_column.editor(), None);
 
@@ -5173,6 +5189,12 @@ fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
         .find(|cell| cell.column_id().as_str() == "enabled")
         .expect("group enabled cell should resolve");
     assert_eq!(group_enabled_cell.editor(), None);
+    let group_status_cell = group_row
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "status")
+        .expect("group status cell should resolve");
+    assert_eq!(group_status_cell.editor(), None);
 
     let editable_leaf = plan
         .rows()
@@ -5201,6 +5223,15 @@ fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
         .expect("row-a enabled cell should resolve");
     assert_eq!(editable_enabled.editor(), Some(TableCellEditor::Checkbox));
     assert_eq!(editable_enabled.value(), Some(&TableCellValue::Bool(true)));
+    let editable_status = editable_leaf
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "status")
+        .expect("row-a status cell should resolve");
+    assert_eq!(editable_status.editor(), Some(TableCellEditor::Select));
+    assert_eq!(editable_status.text(), "Ready");
+    assert_eq!(editable_status.select_options().len(), 2);
+    assert_eq!(editable_status.select_options()[1].value(), "blocked");
 
     let missing_leaf = plan
         .rows()
@@ -5219,6 +5250,12 @@ fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
         .find(|cell| cell.column_id().as_str() == "enabled")
         .expect("row-b missing enabled cell should resolve");
     assert_eq!(missing_enabled.editor(), None);
+    let missing_status = missing_leaf
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "status")
+        .expect("row-b missing status cell should resolve");
+    assert_eq!(missing_status.editor(), None);
 }
 
 #[test]
@@ -7776,6 +7813,162 @@ fn table_runtime_boolean_cell_edit_emits_toggle_change_without_row_interaction(
 }
 
 #[open_gpui::test]
+fn table_runtime_select_cell_edit_emits_change_without_row_interaction(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    type EditLog = Vec<(String, String, Option<usize>, String, String)>;
+
+    struct TestView {
+        state: Rc<RefCell<TableState>>,
+        edits: Rc<RefCell<EditLog>>,
+        activations: Rc<RefCell<Vec<String>>>,
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let state = self.state.borrow().clone();
+            let state_for_edit = self.state.clone();
+            let edits = self.edits.clone();
+            let activations = self.activations.clone();
+            let selections = self.selections.clone();
+            let table = Table::new("select-edit-runtime-table", "Select edit runtime", state)
+                .row_height(ui_px(32.0))
+                .viewport_extent(ui_px(96.0))
+                .on_cell_edit_change(move |change, _, _| {
+                    edits.borrow_mut().push((
+                        change.row_id().as_str().to_owned(),
+                        change.column_id().as_str().to_owned(),
+                        change.source_index(),
+                        change.previous_text().to_owned(),
+                        change.next_text().to_owned(),
+                    ));
+                    let (next, outcome) = change.apply_to(state_for_edit.borrow().clone());
+                    assert_eq!(outcome, TableCellEditApplyOutcome::Updated);
+                    *state_for_edit.borrow_mut() = next;
+                })
+                .on_row_activate(move |activation, _, _| {
+                    activations
+                        .borrow_mut()
+                        .push(activation.row_id().as_str().to_owned());
+                })
+                .on_row_selection_change(move |selection, _, _| {
+                    selections
+                        .borrow_mut()
+                        .push(selection.row_id().as_str().to_owned());
+                });
+
+            div().w(px(460.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    cx.update(init_text_input);
+    let edits = Rc::new(RefCell::new(Vec::new()));
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let state = Rc::new(RefCell::new(
+        TableState::new([TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("status", "ready")])
+        .with_columns([
+            TableColumn::new("name", "Name").with_width(ui_px(180.0)),
+            TableColumn::new("status", "Status")
+                .with_select_editor([
+                    TableSelectOption::new("ready", "Ready"),
+                    TableSelectOption::new("blocked", "Blocked"),
+                ])
+                .with_width(ui_px(120.0)),
+        ])
+        .with_pagination(TablePagination::disabled())
+        .with_selection_activation_mode(TableSelectionActivationMode::RowClick),
+    ));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        state: state.clone(),
+        edits: edits.clone(),
+        activations: activations.clone(),
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let trigger_selector =
+        "select:table:select-edit-runtime-table:cell:row-a:status:editor:trigger";
+    let content_selector = "select:Edit status for row row-a:select-content-scroll:content";
+    let trigger = cx
+        .debug_bounds(trigger_selector)
+        .expect("table select trigger should be rendered");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        activations.borrow().is_empty(),
+        "clicking the select trigger should not activate the row"
+    );
+    assert!(
+        selections.borrow().is_empty(),
+        "clicking the select trigger should not toggle row selection"
+    );
+
+    if cx.debug_bounds(content_selector).is_none() {
+        cx.simulate_keystrokes("space");
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+    }
+
+    assert!(
+        cx.debug_bounds(content_selector).is_some(),
+        "select content should open from the table trigger"
+    );
+
+    let blocked = cx
+        .debug_bounds("listbox:table:select-edit-runtime-table:cell:row-a:status:editor-listbox:option:blocked")
+        .expect("blocked option should be rendered in the table select popup");
+    cx.simulate_click(blocked.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let edits = edits.borrow();
+    assert_eq!(
+        edits.len(),
+        1,
+        "select choice should emit one controlled change"
+    );
+    assert_eq!(
+        edits.first().cloned(),
+        Some((
+            "row-a".to_owned(),
+            "status".to_owned(),
+            Some(0),
+            "ready".to_owned(),
+            "blocked".to_owned(),
+        ))
+    );
+    assert_eq!(
+        state
+            .borrow()
+            .rows()
+            .first()
+            .and_then(|row| row.cell(&TableColumnId::new("status")))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("blocked")
+    );
+    assert!(
+        activations.borrow().is_empty(),
+        "changing a select cell must not activate the row"
+    );
+    assert!(
+        selections.borrow().is_empty(),
+        "changing a select cell must not toggle row selection"
+    );
+}
+
+#[open_gpui::test]
 fn table_runtime_explicit_control_selection_ignores_row_click(cx: &mut open_gpui::TestAppContext) {
     struct TestView {
         selections: Rc<RefCell<Vec<String>>>,
@@ -9070,7 +9263,7 @@ fn table_runtime_pinned_header_drag_emits_controlled_column_order_change(
     let score_before = cx
         .debug_bounds("table:pinned-order-runtime-table:header:score")
         .expect("center score header should remain visible after scrolling");
-    let team_before = cx
+    let _team_before = cx
         .debug_bounds("table:pinned-order-runtime-table:header:team")
         .expect("center team header should remain visible after scrolling");
     let drop_before = cx
@@ -10756,6 +10949,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_toolbar = root::Toolbar::new("toolbar", "Editor");
     let root_listbox = root::Listbox::new("listbox", "Choices");
     let root_select = root::Select::new("select", "Choice");
+    let root_select_option = root::TableSelectOption::new("ready", "Ready");
     let root_combobox = root::Combobox::new("combobox", "Search");
     let root_command = root::Command::new("command", "Commands");
     let root_command_items = vec![root::CommandItem::new("open", "Open")];
@@ -10824,6 +11018,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_toolbar = prelude::Toolbar::new("toolbar", "Editor");
     let prelude_listbox = prelude::Listbox::new("listbox", "Choices");
     let prelude_select = prelude::Select::new("select", "Choice");
+    let prelude_select_option = prelude::TableSelectOption::new("blocked", "Blocked");
     let prelude_combobox = prelude::Combobox::new("combobox", "Search");
     let prelude_command = prelude::Command::new("command", "Commands");
     let prelude_command_items = vec![prelude::CommandItem::new("open", "Open")];
@@ -10893,6 +11088,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_toolbar.state(),
         root_listbox.state(),
         root_select.state(),
+        root_select_option.value(),
         root_combobox.state(),
         root_command.state(),
         root_command_plan.role(),
@@ -10921,6 +11117,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_toolbar.state(),
         prelude_listbox.state(),
         prelude_select.state(),
+        prelude_select_option.value(),
         prelude_combobox.state(),
         prelude_command.state(),
         prelude_command_plan.row_role(),

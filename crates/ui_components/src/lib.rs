@@ -132,11 +132,11 @@ pub use open_gpui_ui_core::{
     TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions, TableResolvedHeaderKind,
     TableResolvedRow, TableResolvedRowKind, TableResolvedState, TableRow,
     TableRowChildrenLoadState, TableRowId, TableRowModel, TableRowModelStage, TableRowPinning,
-    TableRowPinningPolicy, TableRowRegion, TableRowRegions, TableSort, TableSortDirection,
-    TableStageMode, TableState, TableStateCacheKey, TableTextFilterOperator, TableTreeRow,
-    VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState,
-    VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState, drag_table_column_resize,
-    end_table_column_resize, resolve_grid_viewport_2d,
+    TableRowPinningPolicy, TableRowRegion, TableRowRegions, TableSelectOption, TableSort,
+    TableSortDirection, TableStageMode, TableState, TableStateCacheKey, TableTextFilterOperator,
+    TableTreeRow, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
+    VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState,
+    drag_table_column_resize, end_table_column_resize, resolve_grid_viewport_2d,
 };
 pub use open_gpui_ui_core::{
     TableSelectionActivationMode, TableSelectionMode, TableSelectionPolicy, TableSelectionSummary,

@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-06-27: Completed the Table select editor slice in the working tree. `TableCellEditor::Select`
+  and `TableSelectOption` are now public in core and components, the GPUI Table adapter renders
+  fixed-option `Select` editors for leaf cells, the row-click path now respects prevented events so
+  embedded editors do not wake row activation, the Components gallery gained a `select-release`
+  sample plus a dedicated select smoke, and the component contract / verification notes now call
+  out the new inline-edit recipe. Verified with targeted `cargo test -p open-gpui-ui-components`
+  runs for the select cell regression, the standalone select runtime smoke, and the explicit root /
+  prelude export gate. Next action is to pick the next Table maturity boundary, with sticky headers
+  currently the clearest follow-up.
 - 2026-06-27: Refreshed the engineering memory after confirming the
   `feat/scroll-surface-containment` branch is clean and the scroll-surface / context-menu / sidebar
   / tabs work is fully shipped. The current durable state now points at the next Table follow-up

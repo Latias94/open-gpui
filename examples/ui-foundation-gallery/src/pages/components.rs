@@ -20,12 +20,13 @@ use open_gpui_ui_components::{
     TableFilter, TableGlobalFilterChange, TablePagination, TablePredicateFilterChange,
     TableRangeFilterChange, TableRenderPlan, TableRow, TableRowActivation,
     TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy,
-    TableSort, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
-    TabsState, TextInput, TextInputDisplayMode, TextInputState, Textarea, TextareaState, Toggle,
-    ToggleState, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
-    ToolbarState, Tree, TreeItemDescriptor, TreeMove, TreeRenderPlan, TreeState, VirtualizedList,
-    VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRenderPlan,
-    VirtualizedListScrollStrategy, VirtualizedListState, apply_tree_move,
+    TableSelectOption, TableSort, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem,
+    TabsItemDescriptor, TabsState, TextInput, TextInputDisplayMode, TextInputState, Textarea,
+    TextareaState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
+    ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeMove, TreeRenderPlan, TreeState,
+    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
+    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
+    apply_tree_move,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -4570,6 +4571,7 @@ fn build_table_samples() -> Vec<TableSample> {
     let release_resize_rows = (0..160).map(release_resize_row).collect::<Vec<_>>();
     let editable_release_rows = (0..32).map(editable_release_row).collect::<Vec<_>>();
     let toggle_release_rows = (0..28).map(toggle_release_row).collect::<Vec<_>>();
+    let select_release_rows = (0..28).map(select_release_row).collect::<Vec<_>>();
     let multiline_release_rows = (0..24).map(multiline_release_row).collect::<Vec<_>>();
     let grouped_release_rows = (0..320).map(grouped_release_row).collect::<Vec<_>>();
     let grouped_custom_aggregation_rows = (0..8)
@@ -4721,6 +4723,29 @@ fn build_table_samples() -> Vec<TableSample> {
                     .with_width("score", ui_px(84.0)),
             )
             .with_selected_rows(["toggle-release-row-002"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(34.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
+    let select_release = TableSample {
+        id: "select-release",
+        title: "Select release cells",
+        summary: "Fixed-option select editors emit controlled choice payloads while app-owned rows feed updated values back into Table.",
+        badge: "select cells",
+        state: TableState::new(select_release_rows)
+            .with_columns(select_release_table_columns())
+            .with_column_order(["name", "status", "team", "score"])
+            .with_column_sizing(
+                TableColumnSizing::new()
+                    .with_width("name", ui_px(196.0))
+                    .with_width("status", ui_px(132.0))
+                    .with_width("team", ui_px(128.0))
+                    .with_width("score", ui_px(84.0)),
+            )
+            .with_selected_rows(["select-release-row-002"])
             .with_pagination(TablePagination::disabled()),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
@@ -4915,6 +4940,7 @@ fn build_table_samples() -> Vec<TableSample> {
         content_fit_release.with_state_summary(),
         editable_release.with_state_summary(),
         toggle_release.with_state_summary(),
+        select_release.with_state_summary(),
         multiline_release.with_state_summary(),
         grouped_release.with_state_summary(),
         grouped_custom_aggregation.with_state_summary(),
@@ -4975,6 +5001,31 @@ fn toggle_release_table_columns() -> [TableColumn; 4] {
             .with_width(ui_px(128.0))
             .with_min_width(ui_px(104.0))
             .with_max_width(ui_px(180.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(84.0))
+            .with_min_width(ui_px(72.0))
+            .with_max_width(ui_px(120.0)),
+    ]
+}
+
+fn select_release_table_columns() -> [TableColumn; 4] {
+    [
+        TableColumn::new("name", "Name")
+            .with_width(ui_px(196.0))
+            .with_min_width(ui_px(160.0))
+            .with_max_width(ui_px(260.0)),
+        TableColumn::new("status", "Status")
+            .with_select_editor([
+                TableSelectOption::new("ready", "Ready"),
+                TableSelectOption::new("blocked", "Blocked"),
+            ])
+            .with_width(ui_px(132.0))
+            .with_min_width(ui_px(108.0))
+            .with_max_width(ui_px(184.0)),
+        TableColumn::new("team", "Team")
+            .with_width(ui_px(128.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(220.0)),
         TableColumn::new("score", "Score")
             .with_width(ui_px(84.0))
             .with_min_width(ui_px(72.0))
@@ -5421,6 +5472,18 @@ fn toggle_release_row(index: usize) -> TableRow {
         .with_cell("name", format!("Toggle release {index:03}"))
         .with_cell("enabled", index.is_multiple_of(2))
         .with_cell("status", statuses[(index / 4) % statuses.len()])
+        .with_cell("score", score)
+}
+
+fn select_release_row(index: usize) -> TableRow {
+    let statuses = ["ready", "blocked"];
+    let teams = ["UI", "Runtime", "Platform", "QA"];
+    let score = 260_usize.saturating_sub(index % 260);
+
+    TableRow::new(format!("select-release-row-{index:03}"))
+        .with_cell("name", format!("Select release {index:03}"))
+        .with_cell("status", statuses[index % statuses.len()])
+        .with_cell("team", teams[(index / 3) % teams.len()])
         .with_cell("score", score)
 }
 

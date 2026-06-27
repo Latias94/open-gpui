@@ -181,6 +181,33 @@ impl From<bool> for TableCellValue {
     }
 }
 
+/// Renderer-neutral select option used by table select editors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSelectOption {
+    value: String,
+    label: String,
+}
+
+impl TableSelectOption {
+    /// Creates a select option from a stable value and visible label.
+    pub fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            label: label.into(),
+        }
+    }
+
+    /// Returns the stable option value.
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// Returns the visible option label.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+}
+
 /// Renderer-neutral cell editor kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableCellEditor {
@@ -193,6 +220,8 @@ pub enum TableCellEditor {
     },
     /// Boolean checkbox editing with app-owned values.
     Checkbox,
+    /// Fixed-option select editing with app-owned values.
+    Select,
 }
 
 impl TableCellEditor {
@@ -208,12 +237,18 @@ impl TableCellEditor {
         Self::Checkbox
     }
 
+    /// Returns a select editor.
+    pub const fn select() -> Self {
+        Self::Select
+    }
+
     /// Returns a stable label.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Text => "text",
             Self::MultilineText { .. } => "multiline-text",
             Self::Checkbox => "checkbox",
+            Self::Select => "select",
         }
     }
 
@@ -228,6 +263,7 @@ impl TableCellEditor {
             Self::Text => None,
             Self::MultilineText { rows } => Some(rows),
             Self::Checkbox => None,
+            Self::Select => None,
         }
     }
 }
@@ -267,6 +303,7 @@ pub struct TableColumn {
     filterable: bool,
     global_filterable: bool,
     editor: Option<TableCellEditor>,
+    select_options: Vec<TableSelectOption>,
     width_policy: TableColumnWidthPolicy,
     width: UiPx,
     min_width: UiPx,
@@ -286,6 +323,7 @@ impl TableColumn {
             filterable: true,
             global_filterable: true,
             editor: None,
+            select_options: Vec::new(),
             width_policy: TableColumnWidthPolicy::default(),
             width: TABLE_DEFAULT_COLUMN_WIDTH,
             min_width: TABLE_MIN_COLUMN_WIDTH,
@@ -332,6 +370,11 @@ impl TableColumn {
     /// Returns the cell editor configured for this column, if any.
     pub const fn editor(&self) -> Option<TableCellEditor> {
         self.editor
+    }
+
+    /// Returns the fixed select options configured for this column.
+    pub fn select_options(&self) -> &[TableSelectOption] {
+        &self.select_options
     }
 
     /// Returns whether this column renders text-cell editors for editable leaf cells.
@@ -400,8 +443,11 @@ impl TableColumn {
     }
 
     /// Applies cell editor metadata.
-    pub const fn with_editor(mut self, editor: Option<TableCellEditor>) -> Self {
+    pub fn with_editor(mut self, editor: Option<TableCellEditor>) -> Self {
         self.editor = editor;
+        if !matches!(editor, Some(TableCellEditor::Select)) {
+            self.select_options = Vec::new();
+        }
         self
     }
 
@@ -418,24 +464,37 @@ impl TableColumn {
     }
 
     /// Enables or disables single-line text editing for leaf cells in this column.
-    pub const fn with_text_editable(mut self, editable: bool) -> Self {
+    pub fn with_text_editable(mut self, editable: bool) -> Self {
         self.editor = if editable {
             Some(TableCellEditor::Text)
         } else {
             None
         };
+        self.select_options = Vec::new();
         self
     }
 
     /// Enables fixed-row multiline text editing for leaf cells in this column.
-    pub const fn with_multiline_text_editor(mut self, rows: usize) -> Self {
+    pub fn with_multiline_text_editor(mut self, rows: usize) -> Self {
         self.editor = Some(TableCellEditor::multiline(rows));
+        self.select_options = Vec::new();
         self
     }
 
     /// Enables checkbox editing for leaf cells in this column.
-    pub const fn with_checkbox_editor(mut self) -> Self {
+    pub fn with_checkbox_editor(mut self) -> Self {
         self.editor = Some(TableCellEditor::checkbox());
+        self.select_options = Vec::new();
+        self
+    }
+
+    /// Enables fixed-option select editing for leaf cells in this column.
+    pub fn with_select_editor(
+        mut self,
+        options: impl IntoIterator<Item = TableSelectOption>,
+    ) -> Self {
+        self.editor = Some(TableCellEditor::select());
+        self.select_options = options.into_iter().collect();
         self
     }
 
@@ -5865,6 +5924,21 @@ mod tests {
         assert_eq!(column.editor(), Some(TableCellEditor::Checkbox));
         assert!(column.text_editable());
         assert_eq!(TableCellEditor::checkbox().as_str(), "checkbox");
+    }
+
+    #[test]
+    fn select_editor_exposes_options_and_stable_labels() {
+        let column = TableColumn::new("status", "Status").with_select_editor([
+            TableSelectOption::new("ready", "Ready"),
+            TableSelectOption::new("blocked", "Blocked"),
+        ]);
+
+        assert_eq!(column.editor(), Some(TableCellEditor::Select));
+        assert_eq!(column.select_options().len(), 2);
+        assert_eq!(column.select_options()[0].value(), "ready");
+        assert_eq!(column.select_options()[0].label(), "Ready");
+        assert_eq!(TableCellEditor::select().as_str(), "select");
+        assert_eq!(TableCellEditor::select().rows(), None);
     }
 
     fn sample_rows() -> Vec<TableRow> {
