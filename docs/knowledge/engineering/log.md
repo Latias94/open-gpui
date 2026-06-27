@@ -6,6 +6,16 @@ status: active
 
 # Log
 
+- 2026-06-27: Completed the Menu floating submenu panel slice on
+  `feat/scroll-surface-containment`. `Menu` now renders branch-local menu content inside a
+  focusable shell, keeps the current branch scrollable, records trigger bounds during paint, and
+  resolves open child branches into deferred floating submenu panels to the right using the
+  renderer-neutral submenu surface contract. Added focused component coverage proving submenu
+  panels open to the right instead of stacking under the trigger, and kept the existing hover-open
+  / sibling-branch-switching proofs green. Verified with `cargo fmt -p open-gpui-ui-components`,
+  `cargo check -p open-gpui-ui-components --tests`,
+  `cargo nextest run -p open-gpui-ui-components menu_runtime_keyboard_submenu_opens_and_selects_child menu_runtime_hover_opens_submenu_and_preserves_child_focus menu_runtime_hover_switches_between_submenu_branches menu_state_resolves_submenu_surface_and_safe_hover_contract menu_submenu_surface_resolves_left_placement_without_renderer_state`, and
+  `git diff --check`.
 - 2026-06-27: Added the renderer-neutral Menu submenu floating-surface contract on
   `feat/scroll-surface-containment`. `MenuSubmenuSurface` resolves placement input, preferred
   submenu bounds, and `MenuSafeHoverCorridor` from trigger bounds plus content size;

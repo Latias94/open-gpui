@@ -143,11 +143,11 @@ verified_by:
 
 - Goal: 深化 open-gpui Overlay Menu 的子菜单浮层几何契约。
 - Branch: feat/scroll-surface-containment
-- Last verified: `cargo fmt -p open-gpui-ui-components`, `cargo check -p open-gpui-ui-components --tests`, `cargo nextest run -p open-gpui-ui-components menu_state_resolves_submenu_surface_and_safe_hover_contract menu_submenu_surface_resolves_left_placement_without_renderer_state`, `cargo nextest run -p open-gpui-ui-components crate_root_and_prelude_exports_remain_explicit component_api_inventory_uses_stable_ownership_vocabulary public_resolved_state_contracts_avoid_gpui_runtime_types`
-- Done: `MenuSubmenuSurface` 和 `MenuSafeHoverCorridor` 已进入公开组件契约与 prelude/root 导出。`MenuState::submenu_surface_for_trigger` 现在能根据子菜单触发项 path、触发项 bounds、内容尺寸和 safe bounds 产出 renderer-neutral placement input、preferred content bounds 与 safe-hover corridor；GPUI adapter 仍保持 inline 子菜单渲染。
+- Last verified: `cargo fmt -p open-gpui-ui-components`, `cargo check -p open-gpui-ui-components --tests`, `cargo nextest run -p open-gpui-ui-components menu_runtime_keyboard_submenu_opens_and_selects_child menu_runtime_hover_opens_submenu_and_preserves_child_focus menu_runtime_hover_switches_between_submenu_branches menu_state_resolves_submenu_surface_and_safe_hover_contract menu_submenu_surface_resolves_left_placement_without_renderer_state`
+- Done: `MenuSubmenuSurface` 和 `MenuSafeHoverCorridor` 已进入公开组件契约与 prelude/root 导出。`MenuState::submenu_surface_for_trigger` 现在能根据子菜单触发项 path、触发项 bounds、内容尺寸和 safe bounds 产出 renderer-neutral placement input、preferred content bounds 与 safe-hover corridor；GPUI adapter 也已改成浮层子菜单面板渲染。
 - In progress: None.
 - Blocked: None.
-- Next action: 如需继续 Menu 家族，下一刀才适合把 `MenuSubmenuSurface` 接到 GPUI deferred submenu panel 渲染，并让 adapter 拥有 hover delay / close timer。
+- Next action: 如需继续 Menu 家族，下一刀适合把 hover delay / close timer 收进 adapter runtime，再继续补 ContextMenu 与 menubar 的后续切片。
 
 - 2026-06-26: Completed the Tree drag-and-drop hierarchy editing slice from
   `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md`. `TreeMove`,

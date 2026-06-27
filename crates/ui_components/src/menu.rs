@@ -1,6 +1,8 @@
 //! Menu component and shared menu state.
 
 use crate::geometry::gpui_px_from_ui;
+use crate::geometry::{ui_point_from_gpui, ui_size_from_gpui_size};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
@@ -1407,8 +1409,7 @@ fn menu_item_element(
             let global_handler = on_select.clone();
             let item_label = item_state.label().to_owned();
             let item_path_key = item_state.path_key();
-            let left_padding =
-                metrics.item_padding_x() + metrics.submenu_indent() * item_state.depth() as f32;
+            let left_padding = metrics.item_padding_x();
             let focused = item_state.focused();
             let disabled = item_state.disabled();
             let toggled = item_state.toggled();
@@ -1738,7 +1739,18 @@ struct MenuRuntime {
     focused_path: Option<Vec<String>>,
     open_path: Vec<String>,
     scroll_handle: ScrollHandle,
+    submenu_scroll_handles: HashMap<String, ScrollHandle>,
+    submenu_trigger_bounds: HashMap<String, Rect>,
     content_focus: FocusHandle,
+}
+
+impl MenuRuntime {
+    fn submenu_scroll_handle(&mut self, branch_key: &str) -> ScrollHandle {
+        self.submenu_scroll_handles
+            .entry(branch_key.to_owned())
+            .or_insert_with(ScrollHandle::new)
+            .clone()
+    }
 }
 
 impl Menu {
@@ -1903,6 +1915,8 @@ impl RenderOnce for Menu {
             focused_path: None,
             open_path: Vec::new(),
             scroll_handle: ScrollHandle::new(),
+            submenu_scroll_handles: HashMap::new(),
+            submenu_trigger_bounds: HashMap::new(),
         });
         let runtime_state = runtime.read(cx).clone();
         let controlled_open = self.open;
@@ -1916,6 +1930,8 @@ impl RenderOnce for Menu {
                     runtime.focused_value = None;
                     runtime.focused_path = None;
                     runtime.open_path.clear();
+                    runtime.submenu_scroll_handles.clear();
+                    runtime.submenu_trigger_bounds.clear();
                 }
             });
         }
@@ -2065,6 +2081,8 @@ impl RenderOnce for Menu {
                                         runtime.focused_value = None;
                                         runtime.focused_path = None;
                                         runtime.open_path.clear();
+                                        runtime.submenu_scroll_handles.clear();
+                                        runtime.submenu_trigger_bounds.clear();
                                     }
                                 });
                                 if let Some(on_open_change) = on_open_change.as_ref() {
@@ -2093,6 +2111,9 @@ impl RenderOnce for Menu {
                                 focus_restore_for_content.clone(),
                                 on_open_change.clone(),
                                 on_select.clone(),
+                                cx,
+                                overlay_adapter.snap_margin(),
+                                overlay_adapter.deferred_priority(),
                             )),
                     )
                     .priority(overlay_adapter.deferred_priority()),
@@ -2113,6 +2134,9 @@ fn menu_content_element(
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
+    cx: &mut App,
+    snap_margin: open_gpui::Pixels,
+    deferred_priority: usize,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
@@ -2125,19 +2149,23 @@ fn menu_content_element(
     let focus_restore_for_keydown = focus_restore.clone();
     let trigger_focus_for_outside = trigger_focus.clone();
     let focus_restore_for_outside = focus_restore.clone();
-    let scroll_viewport_id = format!("menu:{debug_id}:content-scroll");
-    let scrollable_content = state.scrollable_content();
     let key_items = visible_menu_items(&items, state.open_path());
-    let rows = div().flex().flex_col().gap_1().children(menu_item_elements(
-        items,
-        state.clone(),
+    let root_branch = menu_branch_surface(
+        &items,
+        &state,
+        &[],
+        None,
         debug_id.clone(),
         runtime.clone(),
         trigger_focus.clone(),
         focus_restore.clone(),
         on_open_change.clone(),
         on_select.clone(),
-    ));
+        Some(scroll_handle),
+        cx,
+        snap_margin,
+        deferred_priority,
+    );
 
     div()
         .id(content_id)
@@ -2145,31 +2173,14 @@ fn menu_content_element(
             let content_debug_id = debug_id.clone();
             move || format!("menu:{content_debug_id}:content")
         })
-        .min_w(gpui_px_from_ui(metrics.min_width()))
-        .max_w(gpui_px_from_ui(metrics.max_width()))
-        .when(scrollable_content, |this| {
-            this.h(gpui_px_from_ui(metrics.max_height()))
-        })
-        .when(!scrollable_content, |this| {
-            this.max_h(gpui_px_from_ui(metrics.max_height()))
-        })
-        .p(gpui_px_from_ui(metrics.surface_padding()))
-        .flex()
-        .flex_col()
-        .gap_1()
-        .rounded(gpui_px_from_ui(metrics.radius()))
-        .border_1()
-        .border_color(ThemeResolver::resolve(colors.border()))
-        .bg(ThemeResolver::resolve(colors.surface()))
+        .focusable()
+        .relative()
+        .tab_group()
+        .track_focus(&content_focus)
+        .ui_role(state.content_role())
         .text_color(ThemeResolver::resolve(colors.foreground()))
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
-        .shadow_lg()
-        .occlude()
-        .tab_group()
-        .focusable()
-        .track_focus(&content_focus)
-        .ui_role(state.content_role())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             let key = event.keystroke.key.as_str();
             if key == "escape" {
@@ -2256,6 +2267,120 @@ fn menu_content_element(
                 );
             })
         })
+        .child(root_branch)
+}
+
+fn menu_branch_surface(
+    items: &[MenuItem],
+    state: &MenuState,
+    branch_path: &[String],
+    surface_id: Option<ElementId>,
+    debug_id: String,
+    runtime: open_gpui::Entity<MenuRuntime>,
+    trigger_focus: FocusHandle,
+    focus_restore: FocusRestoreIntent,
+    on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
+    on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
+    scroll_handle: Option<ScrollHandle>,
+    cx: &mut App,
+    snap_margin: open_gpui::Pixels,
+    deferred_priority: usize,
+) -> AnyElement {
+    let metrics = state.metrics();
+    let colors = state.colors();
+    let branch_key = if branch_path.is_empty() {
+        "root".to_string()
+    } else {
+        branch_path.join("/")
+    };
+    let Some((branch_items, branch_states)) =
+        menu_branch_items_and_states(items, state.items(), branch_path)
+    else {
+        return div().into_any_element();
+    };
+    let scroll_handle = match (branch_path.is_empty(), scroll_handle) {
+        (true, Some(scroll_handle)) => scroll_handle,
+        (true, None) => ScrollHandle::new(),
+        (false, _) => runtime.update(cx, |runtime, _| runtime.submenu_scroll_handle(&branch_key)),
+    };
+    let branch_scrollable_content =
+        branch_states.len() > DEFAULT_SCROLLABLE_MENU_ITEM_COUNT_THRESHOLD;
+    let scroll_viewport_id = if branch_path.is_empty() {
+        format!("menu:{debug_id}:content-scroll")
+    } else {
+        format!("menu:{debug_id}:submenu:{branch_key}:scroll")
+    };
+    let row_path_keys: Vec<String> = branch_states.iter().map(MenuItemState::path_key).collect();
+    let rows = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .on_children_prepainted({
+            let runtime = runtime.clone();
+            let row_path_keys = row_path_keys.clone();
+            move |row_bounds, _window, cx| {
+                runtime.update(cx, |runtime, _| {
+                    for (path_key, bounds) in row_path_keys.iter().zip(row_bounds.into_iter()) {
+                        runtime
+                            .submenu_trigger_bounds
+                            .insert(path_key.clone(), menu_bounds_to_rect(bounds));
+                    }
+                });
+            }
+        })
+        .children(menu_item_elements(
+            branch_items,
+            branch_states.clone(),
+            debug_id.clone(),
+            metrics,
+            colors,
+            runtime.clone(),
+            trigger_focus.clone(),
+            focus_restore.clone(),
+            on_open_change.clone(),
+            on_select.clone(),
+        ));
+    let submenu_layer = menu_submenu_layer(
+        items,
+        state,
+        &branch_states,
+        debug_id.clone(),
+        runtime.clone(),
+        trigger_focus.clone(),
+        focus_restore.clone(),
+        on_open_change.clone(),
+        on_select.clone(),
+        cx,
+        snap_margin,
+        deferred_priority,
+    );
+    let surface_id =
+        surface_id.unwrap_or_else(|| format!("menu:{debug_id}:panel:{branch_key}").into());
+    let shell = div()
+        .id(surface_id)
+        .debug_selector({
+            let branch_debug_id = debug_id.clone();
+            let branch_key = branch_key.clone();
+            move || format!("menu:{branch_debug_id}:panel:{branch_key}")
+        })
+        .min_w(gpui_px_from_ui(metrics.min_width()))
+        .max_w(gpui_px_from_ui(metrics.max_width()))
+        .when(branch_scrollable_content, |this| {
+            this.h(gpui_px_from_ui(metrics.max_height()))
+        })
+        .when(!branch_scrollable_content, |this| {
+            this.max_h(gpui_px_from_ui(metrics.max_height()))
+        })
+        .p(gpui_px_from_ui(metrics.surface_padding()))
+        .flex()
+        .flex_col()
+        .gap_1()
+        .rounded(gpui_px_from_ui(metrics.radius()))
+        .border_1()
+        .border_color(ThemeResolver::resolve(colors.border()))
+        .bg(ThemeResolver::resolve(colors.surface()))
+        .shadow_lg()
+        .occlude()
         .overflow_hidden()
         .child(
             ScrollArea::new(scroll_viewport_id, rows)
@@ -2263,24 +2388,96 @@ fn menu_content_element(
                 .preserve_scroll()
                 .scroll_handle(&scroll_handle)
                 .with_size(state.size()),
-        )
+        );
+
+    div()
+        .relative()
+        .child(shell)
+        .when_some(submenu_layer, |this, submenu_layer| {
+            this.child(submenu_layer)
+        })
+        .into_any_element()
 }
 
-fn menu_item_elements(
-    items: Vec<MenuItem>,
-    state: MenuState,
+fn menu_submenu_layer(
+    items: &[MenuItem],
+    state: &MenuState,
+    branch_states: &[MenuItemState],
     debug_id: String,
     runtime: open_gpui::Entity<MenuRuntime>,
     trigger_focus: FocusHandle,
     focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
-) -> Vec<AnyElement> {
-    let metrics = state.metrics();
-    let colors = state.colors();
-    let states = state.visible_items().to_vec();
-    let items = visible_menu_items(&items, state.open_path());
+    cx: &mut App,
+    snap_margin: open_gpui::Pixels,
+    deferred_priority: usize,
+) -> Option<AnyElement> {
+    let open_child = branch_states
+        .iter()
+        .find(|item| item.submenu_open() && item.has_submenu())?;
+    let trigger_bounds = runtime
+        .read(cx)
+        .submenu_trigger_bounds
+        .get(&open_child.path_key())
+        .copied()?;
+    let placement = GpuiOverlayPlacement::resolve(
+        OverlayPlacementInput::new(
+            OverlayAnchorInput::from_layout_bounds(trigger_bounds),
+            ui_size(
+                state.metrics().min_width(),
+                state.metrics().trigger_height(),
+            ),
+        )
+        .with_side(OverlayPlacementSide::Right)
+        .with_alignment(OverlayPlacementAlignment::Start)
+        .with_offset(UiPx::ZERO),
+        snap_margin,
+    );
+    let child_branch_path = open_child.path().to_vec();
+    let submenu_surface = menu_branch_surface(
+        items,
+        state,
+        &child_branch_path,
+        None,
+        debug_id,
+        runtime,
+        trigger_focus,
+        focus_restore,
+        on_open_change,
+        on_select,
+        None,
+        cx,
+        snap_margin,
+        deferred_priority,
+    );
 
+    Some(
+        deferred(
+            anchored()
+                .position(placement.position().unwrap_or_default())
+                .anchor(placement.anchor())
+                .offset(placement.offset())
+                .snap_to_window_with_margin(placement.snap_margin())
+                .child(submenu_surface),
+        )
+        .priority(deferred_priority)
+        .into_any_element(),
+    )
+}
+
+fn menu_item_elements(
+    items: Vec<MenuItem>,
+    states: Vec<MenuItemState>,
+    debug_id: String,
+    metrics: MenuMetrics,
+    colors: MenuColors,
+    runtime: open_gpui::Entity<MenuRuntime>,
+    trigger_focus: FocusHandle,
+    focus_restore: FocusRestoreIntent,
+    on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
+    on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
+) -> Vec<AnyElement> {
     items
         .into_iter()
         .zip(states)
@@ -2300,6 +2497,45 @@ fn menu_item_elements(
             )
         })
         .collect()
+}
+
+fn menu_branch_items_and_states(
+    items: &[MenuItem],
+    states: &[MenuItemState],
+    branch_path: &[String],
+) -> Option<(Vec<MenuItem>, Vec<MenuItemState>)> {
+    if branch_path.is_empty() {
+        return Some((items.to_vec(), states.to_vec()));
+    }
+
+    let branch_item = find_menu_item_by_path(items, branch_path)?;
+    let branch_state = find_menu_item_state_by_path(states, branch_path)?;
+
+    Some((
+        branch_item.child_items().to_vec(),
+        branch_state.children().to_vec(),
+    ))
+}
+
+fn find_menu_item_by_path<'a>(items: &'a [MenuItem], path: &[String]) -> Option<&'a MenuItem> {
+    let mut current = items;
+    let mut resolved = None;
+
+    for segment in path {
+        let index = segment.split_once(':')?.0.parse::<usize>().ok()?;
+        let item = current.get(index)?;
+        resolved = Some(item);
+        current = item.child_items();
+    }
+
+    resolved
+}
+
+fn menu_bounds_to_rect(bounds: open_gpui::Bounds<open_gpui::Pixels>) -> Rect {
+    open_gpui_ui_core::rect(
+        ui_point_from_gpui(bounds.origin),
+        ui_size_from_gpui_size(bounds.size),
+    )
 }
 
 /// Returns concrete menu items that are visible for the current submenu path.
@@ -2343,6 +2579,8 @@ fn close_menu(
         runtime.focused_value = None;
         runtime.focused_path = None;
         runtime.open_path.clear();
+        runtime.submenu_scroll_handles.clear();
+        runtime.submenu_trigger_bounds.clear();
     });
     if let Some(on_open_change) = on_open_change.as_ref() {
         on_open_change(false, window, cx);

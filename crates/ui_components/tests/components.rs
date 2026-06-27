@@ -3315,6 +3315,14 @@ fn menu_runtime_hover_opens_submenu_and_preserves_child_focus(cx: &mut open_gpui
     let child = cx
         .debug_bounds("menu:hover-submenu:item:1:sort/0:name")
         .expect("submenu child should render after hover");
+    assert!(
+        child.origin.x > sort.bottom_right().x,
+        "submenu child should open in a floating panel to the right"
+    );
+    assert!(
+        child.origin.y < sort.bottom_right().y,
+        "submenu child should not be stacked below the trigger row"
+    );
     cx.simulate_mouse_move(child.center(), None, Default::default());
     cx.update(|window, cx| {
         window.draw(cx).clear();
