@@ -27,11 +27,17 @@ use open_gpui_ui_foundation_gallery::{
     DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, GalleryShell, GalleryShellSnapshot,
     foundation_snapshot, pages,
 };
+use std::time::Duration;
 
 fn redraw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
+}
+
+fn advance_and_redraw(cx: &mut VisualTestContext, duration: Duration) {
+    cx.executor().advance_clock(duration);
+    redraw(cx);
 }
 
 fn set_short_gallery_viewport(cx: &mut VisualTestContext) {
@@ -3866,8 +3872,15 @@ fn overlay_gallery_smoke_opens_menu_submenu_from_hover(cx: &mut open_gpui::TestA
 
     assert!(
         cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
+            .is_none(),
+        "expected hovering the rich menu submenu trigger to keep its child rows hidden before the hover delay"
+    );
+
+    advance_and_redraw(cx, Duration::from_millis(200));
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
             .is_some(),
-        "expected hovering the rich menu submenu trigger to open its child rows"
+        "expected the rich menu submenu child to render after the hover delay"
     );
 
     let child = bounds(cx, "menu:overlay-menu-demo:rich-items:item:3:sort/0:name").center();
@@ -3884,13 +3897,25 @@ fn overlay_gallery_smoke_opens_menu_submenu_from_hover(cx: &mut open_gpui::TestA
     redraw(cx);
     assert!(
         cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:4:group/0:kind")
+            .is_none(),
+        "expected hovering another submenu trigger to keep its child rows hidden before the hover delay"
+    );
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
             .is_some(),
-        "expected hovering another submenu trigger to open its branch"
+        "expected switching submenu triggers to keep the previous branch visible until the new hover delay elapses"
+    );
+
+    advance_and_redraw(cx, Duration::from_millis(200));
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:4:group/0:kind")
+            .is_some(),
+        "expected hovering another submenu trigger to open its branch after the hover delay"
     );
     assert!(
         cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
             .is_none(),
-        "expected switching submenu triggers to close the previous branch"
+        "expected switching submenu triggers to close the previous branch after the hover delay"
     );
 
     let root_item = bounds(cx, "menu:overlay-menu-demo:rich-items:item:0:show-hidden").center();
@@ -3898,8 +3923,15 @@ fn overlay_gallery_smoke_opens_menu_submenu_from_hover(cx: &mut open_gpui::TestA
     redraw(cx);
     assert!(
         cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:4:group/0:kind")
+            .is_some(),
+        "expected hovering another root item to keep the rich menu submenu branch visible until the close delay elapses"
+    );
+
+    advance_and_redraw(cx, Duration::from_millis(200));
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:4:group/0:kind")
             .is_none(),
-        "expected hovering another root item to close the rich menu submenu branch"
+        "expected hovering another root item to close the rich menu submenu branch after the close delay"
     );
 }
 

@@ -6,6 +6,16 @@ status: active
 
 # Log
 
+- 2026-06-27: Added adapter-owned submenu hover timers and close timing on
+  `feat/scroll-surface-containment`. `MenuRuntime` now tracks submenu hover epoch, a task handle,
+  hovered path, and submenu surface hover state; submenu trigger and submenu surface hover events
+  schedule delayed open/close transitions without moving timer state into resolved contract types.
+  Updated the component and gallery tests to advance the test clock before asserting submenu
+  visibility, and refreshed the component contract, verification notes, and current-state memory.
+  Verified with `cargo fmt --all`, `cargo check -p open-gpui-ui-components --tests`,
+  `cargo check -p open-gpui-ui-foundation-gallery --tests`,
+  `cargo nextest run -p open-gpui-ui-components menu_runtime_hover_opens_submenu_and_preserves_child_focus menu_runtime_hover_switches_between_submenu_branches`,
+  and `cargo nextest run -p open-gpui-ui-foundation-gallery overlay_gallery_smoke_opens_menu_submenu_from_hover`.
 - 2026-06-27: Completed the Menu floating submenu panel slice on
   `feat/scroll-surface-containment`. `Menu` now renders branch-local menu content inside a
   focusable shell, keeps the current branch scrollable, records trigger bounds during paint, and

@@ -568,7 +568,11 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    disabled, submenu, typeahead, controlled-open, outside-policy, and point-anchor variants. Use
    `cargo nextest run -p open-gpui-ui-components menu` and `cargo nextest run -p
    open-gpui-ui-components context_menu` to verify rich item payloads, pure typeahead,
-   visible-submenu keyboard navigation, local menu scrollability, and context-menu reuse. Use
+   visible-submenu keyboard navigation, submenu hover delay / close timing, local menu scrollability,
+   and context-menu reuse. Use `cargo nextest run -p open-gpui-ui-components
+   menu_runtime_hover_opens_submenu_and_preserves_child_focus
+   menu_runtime_hover_switches_between_submenu_branches` together with the menu family command to
+   cover the hover-delay runtime. Use
    `cargo nextest run -p open-gpui-ui-foundation-gallery
    overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts
    overlay_page_context_menu_samples_expose_point_anchor_contracts

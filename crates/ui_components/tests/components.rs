@@ -3303,13 +3303,14 @@ fn menu_runtime_hover_opens_submenu_and_preserves_child_focus(cx: &mut open_gpui
         .debug_bounds("menu:hover-submenu:item:1:sort")
         .expect("submenu trigger item should render");
     cx.simulate_mouse_move(sort.center(), None, Default::default());
+    cx.executor().advance_clock(Duration::from_millis(200));
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
     assert!(
         cx.debug_bounds("menu:hover-submenu:item:1:sort/0:name")
             .is_some(),
-        "hovering a submenu trigger should open its branch"
+        "hovering a submenu trigger should open its branch after the hover delay"
     );
 
     let child = cx
@@ -3342,8 +3343,17 @@ fn menu_runtime_hover_opens_submenu_and_preserves_child_focus(cx: &mut open_gpui
     });
     assert!(
         cx.debug_bounds("menu:hover-submenu:item:1:sort/0:name")
+            .is_some(),
+        "hovering another root item should not close the submenu before the close delay"
+    );
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:hover-submenu:item:1:sort/0:name")
             .is_none(),
-        "hovering another root item should close the previous submenu branch"
+        "hovering another root item should close the previous submenu branch after the close delay"
     );
 }
 
@@ -3394,13 +3404,14 @@ fn menu_runtime_hover_switches_between_submenu_branches(cx: &mut open_gpui::Test
         .debug_bounds("menu:hover-switch-submenu:item:1:sort")
         .expect("sort submenu trigger should render");
     cx.simulate_mouse_move(sort.center(), None, Default::default());
+    cx.executor().advance_clock(Duration::from_millis(200));
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
     assert!(
         cx.debug_bounds("menu:hover-switch-submenu:item:1:sort/0:name")
             .is_some(),
-        "hovering the first submenu trigger should open its branch"
+        "hovering the first submenu trigger should open its branch after the hover delay"
     );
     assert!(
         cx.debug_bounds("menu:hover-switch-submenu:item:2:group/0:kind")
@@ -3416,9 +3427,23 @@ fn menu_runtime_hover_switches_between_submenu_branches(cx: &mut open_gpui::Test
         window.draw(cx).clear();
     });
     assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:1:sort/0:name")
+            .is_some(),
+        "switching submenu triggers should keep the previous branch visible until the new hover delay elapses"
+    );
+    assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:2:group/0:kind")
+            .is_none(),
+        "sibling submenu branch should still be hidden before the hover delay elapses"
+    );
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
         cx.debug_bounds("menu:hover-switch-submenu:item:2:group/0:kind")
             .is_some(),
-        "hovering a sibling submenu trigger should open the sibling branch"
+        "hovering a sibling submenu trigger should open the sibling branch after the hover delay"
     );
     assert!(
         cx.debug_bounds("menu:hover-switch-submenu:item:1:sort/0:name")
@@ -3435,8 +3460,17 @@ fn menu_runtime_hover_switches_between_submenu_branches(cx: &mut open_gpui::Test
     });
     assert!(
         cx.debug_bounds("menu:hover-switch-submenu:item:2:group/0:kind")
+            .is_some(),
+        "hovering a plain root item should keep the open submenu visible until the close delay elapses"
+    );
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:2:group/0:kind")
             .is_none(),
-        "hovering a plain root item should close the open submenu branch"
+        "hovering a plain root item should close the open submenu branch after the close delay"
     );
 }
 

@@ -141,13 +141,13 @@ verified_by:
 
 # Current State
 
-- Goal: 深化 open-gpui Overlay Menu 的子菜单浮层几何契约。
+- Goal: 深化 open-gpui Overlay Menu 的子菜单 hover 定时与浮层契约。
 - Branch: feat/scroll-surface-containment
-- Last verified: `cargo fmt -p open-gpui-ui-components`, `cargo check -p open-gpui-ui-components --tests`, `cargo nextest run -p open-gpui-ui-components menu_runtime_keyboard_submenu_opens_and_selects_child menu_runtime_hover_opens_submenu_and_preserves_child_focus menu_runtime_hover_switches_between_submenu_branches menu_state_resolves_submenu_surface_and_safe_hover_contract menu_submenu_surface_resolves_left_placement_without_renderer_state`
-- Done: `MenuSubmenuSurface` 和 `MenuSafeHoverCorridor` 已进入公开组件契约与 prelude/root 导出。`MenuState::submenu_surface_for_trigger` 现在能根据子菜单触发项 path、触发项 bounds、内容尺寸和 safe bounds 产出 renderer-neutral placement input、preferred content bounds 与 safe-hover corridor；GPUI adapter 也已改成浮层子菜单面板渲染。
+- Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p open-gpui-ui-components menu_runtime_hover_opens_submenu_and_preserves_child_focus menu_runtime_hover_switches_between_submenu_branches`, `cargo nextest run -p open-gpui-ui-foundation-gallery overlay_gallery_smoke_opens_menu_submenu_from_hover`, `git diff --check`
+- Done: `MenuRuntime` 现在拥有 submenu hover 定时、epoch 和浮层 hover 状态；submenu trigger 与 submenu surface 的 hover 事件会延迟打开 / 关闭子菜单分支，且组件测试与 overlay gallery smoke 已覆盖延迟打开、分支切换和离开 root item 的关闭时序。
 - In progress: None.
 - Blocked: None.
-- Next action: 如需继续 Menu 家族，下一刀适合把 hover delay / close timer 收进 adapter runtime，再继续补 ContextMenu 与 menubar 的后续切片。
+- Next action: 继续 U4 ContextMenu 的点位 placement / local scroll containment，随后再回到 Menu 家族做更细的 pointer corridor 与 menubar follow-up。
 
 - 2026-06-26: Completed the Tree drag-and-drop hierarchy editing slice from
   `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md`. `TreeMove`,
