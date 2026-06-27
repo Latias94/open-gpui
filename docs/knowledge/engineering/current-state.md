@@ -18,6 +18,7 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-foundation-gallery table
   - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-components tabs_vertical_tablist_scrolls_when_constrained sidebar_long_navigation_scrolls_inside_shared_scroll_area scroll_area_nested_scroll_keeps_parent_static
+  - cargo nextest run -p open-gpui-ui-components context_menu_runtime_long_menu_scroll_stays_inside_surface
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_vertical_tabs_scroll_inside_sample components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample
   - git diff --check
   - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
@@ -383,10 +384,13 @@ verified_by:
   Table slice. The plan keeps manual expansion separate from the client-expanded path, adds
   expandable unloaded branches plus child-load metadata, and keeps real async fetching owned by the
   application.
-- Done: Started the `docs/plans/2026-06-26-005-feat-ui-scroll-surface-local-containment-plan.md`
+- Done: Completed the `docs/plans/2026-06-26-005-feat-ui-scroll-surface-local-containment-plan.md`
   slice on `feat/scroll-surface-containment`. Vertical `Tabs` now route their tab rail through the
   shared `ScrollArea` viewport, long `Sidebar` navigation keeps using the same shared scroll
   primitive, and component/gallery smokes prove the local viewport stays inside the sample shell.
+  The current verification trail includes the focused `tabs_vertical_tablist_scrolls_when_constrained`,
+  `sidebar_long_navigation_scrolls_inside_shared_scroll_area`, and
+  `scroll_area_nested_scroll_keeps_parent_static` component gates plus the matching gallery smokes.
 - Done: Implemented the manual expansion / async child metadata slice in the working tree.
   `TableRowChildrenLoadState` records idle/loading/failed child metadata, `TableRow` can be
   expandable without loaded children, and `TableExpansionMode::Manual` preserves app-supplied
