@@ -11,6 +11,13 @@ status: active
   / tabs work is fully shipped. The current durable state now points at the next Table follow-up
   boundary instead of the finished containment slice, and the repo-local memory bundle stays
   aligned with the clean checkout.
+- 2026-06-27: Completed the Table column-order slice on `feat/scroll-surface-containment`.
+  `ui_components::Table` now emits controlled `TableColumnOrderChange` payloads through
+  `on_column_order_change`, the gallery runtime log stores per-sample column-order overrides, and
+  the `release-rollup` sample re-renders the reordered center columns without disturbing the rest
+  of `TableState`. Verified with `cargo fmt --all`, the targeted `open-gpui-ui-components` Table
+  component gates, and `cargo nextest run -p open-gpui-ui-foundation-gallery
+  components_gallery_smoke_grouped_table_column_reorder_updates_sample`.
 - 2026-06-27: Completed the Table sticky-header slice on `feat/scroll-surface-containment`. The
   GPUI Table adapter now renders the header band as an absolute overlay at the top of the table
   root, pads the body by the same band height, and keeps vertical wheel input inside the table

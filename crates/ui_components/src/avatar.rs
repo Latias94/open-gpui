@@ -392,6 +392,15 @@ impl AvatarGroup {
         self.tokens = tokens;
         self
     }
+
+    /// Returns the resolved avatar group state.
+    pub fn state(&self) -> AvatarGroupState {
+        AvatarGroupState {
+            size: self.size,
+            total_count: self.avatars.len(),
+            visible_count: self.max_visible.min(self.avatars.len()),
+        }
+    }
 }
 
 impl Sizable for AvatarGroup {
@@ -481,17 +490,6 @@ impl AvatarGroupState {
     /// Returns the resolved metrics.
     pub const fn metrics(&self) -> AvatarMetrics {
         AvatarMetrics::from_size(self.size)
-    }
-}
-
-impl AvatarGroup {
-    /// Returns the resolved avatar group state.
-    pub fn state(&self) -> AvatarGroupState {
-        AvatarGroupState {
-            size: self.size,
-            total_count: self.avatars.len(),
-            visible_count: self.max_visible.min(self.avatars.len()),
-        }
     }
 }
 

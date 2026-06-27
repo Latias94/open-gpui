@@ -14,16 +14,16 @@ use open_gpui_ui_components::{
     Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
     Switch, SwitchState, Table, TableAggregation, TableCellEditApplyOutcome, TableCellEditChange,
     TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId,
-    TableColumnPinning, TableColumnRegion, TableColumnSizing, TableColumnSizingChange,
-    TableColumnVisibilityChange, TableColumnVisibilityOverrides, TableExpansionMode,
-    TableExpansionState, TableFacetValueCount, TableFacetedFilterChange, TableFilter,
-    TableGlobalFilterChange, TablePagination, TablePredicateFilterChange, TableRangeFilterChange,
-    TableRenderPlan, TableRow, TableRowActivation, TableRowChildrenLoadState,
-    TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy, TableSort, TableStageMode,
-    TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
-    TextInputDisplayMode, TextInputState, Textarea, TextareaState, Toggle, ToggleState,
-    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
-    Tree, TreeItemDescriptor, TreeMove, TreeRenderPlan, TreeState, VirtualizedList,
+    TableColumnOrderChange, TableColumnPinning, TableColumnRegion, TableColumnSizing,
+    TableColumnSizingChange, TableColumnVisibilityChange, TableColumnVisibilityOverrides,
+    TableExpansionMode, TableExpansionState, TableFacetValueCount, TableFacetedFilterChange,
+    TableFilter, TableGlobalFilterChange, TablePagination, TablePredicateFilterChange,
+    TableRangeFilterChange, TableRenderPlan, TableRow, TableRowActivation,
+    TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy,
+    TableSort, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor,
+    TabsState, TextInput, TextInputDisplayMode, TextInputState, Textarea, TextareaState, Toggle,
+    ToggleState, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
+    ToolbarState, Tree, TreeItemDescriptor, TreeMove, TreeRenderPlan, TreeState, VirtualizedList,
     VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRenderPlan,
     VirtualizedListScrollStrategy, VirtualizedListState, apply_tree_move,
 };
@@ -1441,6 +1441,8 @@ pub struct TableSampleRuntimeLog {
     filter_overrides: BTreeMap<String, TableState>,
     visibility_changes: Vec<TableSampleColumnVisibilityChange>,
     visibility_overrides: BTreeMap<String, TableColumnVisibilityOverrides>,
+    column_order_changes: Vec<TableSampleColumnOrderChange>,
+    column_order_overrides: BTreeMap<String, Vec<TableColumnId>>,
     faceted_filter_changes: Vec<TableSampleFacetedFilterChange>,
     range_filter_changes: Vec<TableSampleRangeFilterChange>,
     cell_edit_changes: Vec<TableSampleCellEditChange>,
@@ -1497,6 +1499,23 @@ pub struct TableSampleColumnVisibilityChange {
     pub visible_columns: usize,
     /// Hidden column count after the change.
     pub hidden_columns: usize,
+}
+
+/// One column-order change captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSampleColumnOrderChange {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Moved column id.
+    pub column_id: String,
+    /// Target column id.
+    pub target_column_id: String,
+    /// Stable insertion placement label.
+    pub placement: String,
+    /// Shared column region for the move.
+    pub region: String,
+    /// Full column order after the change.
+    pub column_order: Vec<String>,
 }
 
 /// One faceted-filter change captured from the rendered gallery `Table` sample.
@@ -1599,6 +1618,18 @@ impl TableSampleRuntimeLog {
         self.visibility_overrides.get(sample_id)
     }
 
+    /// Returns captured column-order changes in event order.
+    pub fn column_order_changes(&self) -> &[TableSampleColumnOrderChange] {
+        &self.column_order_changes
+    }
+
+    /// Returns the current controlled column-order state for a sample, if any.
+    pub fn column_order_override(&self, sample_id: &str) -> Option<&[TableColumnId]> {
+        self.column_order_overrides
+            .get(sample_id)
+            .map(Vec::as_slice)
+    }
+
     /// Returns captured faceted filter changes in event order.
     pub fn faceted_filter_changes(&self) -> &[TableSampleFacetedFilterChange] {
         &self.faceted_filter_changes
@@ -1641,6 +1672,8 @@ impl TableSampleRuntimeLog {
         self.filter_overrides.clear();
         self.visibility_changes.clear();
         self.visibility_overrides.clear();
+        self.column_order_changes.clear();
+        self.column_order_overrides.clear();
         self.faceted_filter_changes.clear();
         self.range_filter_changes.clear();
         self.cell_edit_changes.clear();
@@ -1754,6 +1787,33 @@ pub fn current_table_sample_column_visibility_overrides(
     })
 }
 
+fn table_state_effective_column_order(state: &TableState) -> Vec<TableColumnId> {
+    if state.column_order().is_empty() {
+        state
+            .columns()
+            .iter()
+            .map(|column| column.id().clone())
+            .collect()
+    } else {
+        state.column_order().to_vec()
+    }
+}
+
+/// Returns the current controlled column-order state for a gallery `Table` sample.
+pub fn current_table_sample_column_order(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    cx: &impl AppContext,
+) -> Vec<TableColumnId> {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.column_order_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| table_state_effective_column_order(fallback))
+    })
+}
+
 /// Returns the current controlled text-cell edit state for a gallery `Table` sample.
 pub fn current_table_sample_cell_edit_state(
     sample_id: impl Into<String>,
@@ -1800,6 +1860,8 @@ pub fn table_sample_state_with_runtime(
     } else {
         state
     };
+    let column_order = current_table_sample_column_order(sample.id, &state, cx);
+    let state = state.with_column_order(column_order);
     let visibility =
         current_table_sample_column_visibility_overrides(sample.id, state.column_visibility(), cx);
     let state = state.with_column_visibility(visibility);
@@ -1822,6 +1884,40 @@ pub fn record_table_sizing_change(
         });
         log.committed_sizing
             .insert(sample_id, change.sizing().clone());
+    });
+}
+
+/// Records and applies a controlled gallery `Table` column-order change.
+pub fn record_table_column_order_change(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    change: &TableColumnOrderChange,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = table_state_effective_column_order(fallback);
+    let next = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        let current = log
+            .column_order_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone());
+        change.apply_to_order(current)
+    });
+
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.column_order_changes.push(TableSampleColumnOrderChange {
+            sample_id: sample_id.clone(),
+            column_id: change.column_id().as_str().to_owned(),
+            target_column_id: change.target_column_id().as_str().to_owned(),
+            placement: change.placement().as_str().to_owned(),
+            region: change.target_region().as_str().to_owned(),
+            column_order: next
+                .iter()
+                .map(|column_id| column_id.as_str().to_owned())
+                .collect(),
+        });
+        log.column_order_overrides.insert(sample_id, next);
     });
 }
 

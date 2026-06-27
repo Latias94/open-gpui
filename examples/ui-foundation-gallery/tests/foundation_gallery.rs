@@ -8,8 +8,8 @@ use open_gpui_ui_components::{
     FeedbackIntent, HoverCardOpenIntent, HoverCardOpenMode, MenuItemKind, MenuOpenMode,
     OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
     SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableCellEditor,
-    TableCellValue, TableColumnFacets, TableColumnId, TableColumnRegion, TableExpansionMode,
-    TableExpansionState, TableGlobalFilterChange, TablePredicateFilterChange,
+    TableCellValue, TableColumnFacets, TableColumnId, TableColumnOrderChange, TableColumnRegion,
+    TableExpansionMode, TableExpansionState, TableGlobalFilterChange, TablePredicateFilterChange,
     TablePredicateFilterOperator, TableRangeFilterChange, TableRowChildrenLoadState, TableRowId,
     TableRowRegion, TableStageMode, TableTextFilterOperator, TextInputDisplayMode, ThemeMode,
     ToggleVariant, TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
@@ -5521,6 +5521,82 @@ fn components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_samp
     assert!(
         center_cell_after.left() < center_cell_before.left(),
         "expected horizontal body center lane to move left; before={center_cell_before:?} after={center_cell_after:?}"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_grouped_table_column_reorder_updates_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE: &str = "gallery:component-table-sample:release-rollup";
+    const SCORE: &str = "table:component-table:release-rollup:header:score";
+
+    let sample = pages::components::table_samples(ThemeTokens::default())
+        .iter()
+        .find(|sample| sample.id == "release-rollup")
+        .expect("release-rollup table sample should exist");
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    let center_viewport = bounds(
+        cx,
+        "scroll-area:table:component-table:release-rollup:header-center-scroll",
+    );
+    cx.simulate_event(ScrollWheelEvent {
+        position: center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-180.0), px(0.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_before = bounds(cx, SAMPLE);
+    let score_before = bounds(cx, SCORE);
+    let team_before = bounds(cx, "table:component-table:release-rollup:header:team");
+    let change = TableColumnOrderChange::move_before("score", "team", TableColumnRegion::Center);
+    cx.update(|_, app| {
+        pages::components::record_table_column_order_change(
+            "release-rollup",
+            &sample.state,
+            &change,
+            app,
+        );
+    });
+    cx.run_until_parked();
+    redraw(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    let score_after = bounds(cx, SCORE);
+    let team_after = bounds(cx, "table:component-table:release-rollup:header:team");
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.column_order_changes().to_vec()
+    });
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected release-rollup reorder update to keep the sample card anchored"
+    );
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].sample_id, "release-rollup");
+    assert_eq!(changes[0].column_id, "score");
+    assert_eq!(changes[0].target_column_id, "team");
+    assert_eq!(changes[0].placement, "before");
+    assert_eq!(changes[0].region, "center");
+    assert_eq!(
+        changes[0].column_order,
+        ["name", "score", "team", "status"]
+            .iter()
+            .map(|column| column.to_string())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        score_after.left() < team_after.left(),
+        "expected score to render before team after the reorder; before=({score_before:?}, {team_before:?}) after=({score_after:?}, {team_after:?})"
     );
 }
 

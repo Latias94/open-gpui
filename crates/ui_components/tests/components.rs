@@ -23,13 +23,13 @@ use open_gpui_ui_components::{
     SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
     TableCellEditApplyOutcome, TableCellEditChange, TableCellEditor, TableCellValue,
     TableCenterColumnWindowPlan, TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId,
-    TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
-    TableColumnSizingChange, TableColumnVisibility, TableColumnVisibilityAction,
-    TableColumnVisibilityChange, TableColumnVisibilityOverrides, TableColumnVisibilityState,
-    TableExpansionMode, TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange,
-    TableFacetedFilterState, TableFilter, TableGlobalFacetSummary, TableGlobalFilter,
-    TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction, TableNumericFilterOperator,
-    TablePagination, TablePredicateFilter, TablePredicateFilterChange,
+    TableColumnOrderChange, TableColumnOrderPlacement, TableColumnPinning, TableColumnRegion,
+    TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableColumnVisibility,
+    TableColumnVisibilityAction, TableColumnVisibilityChange, TableColumnVisibilityOverrides,
+    TableColumnVisibilityState, TableExpansionMode, TableFacetValueCount, TableFacetedFilter,
+    TableFacetedFilterChange, TableFacetedFilterState, TableFilter, TableGlobalFacetSummary,
+    TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction,
+    TableNumericFilterOperator, TablePagination, TablePredicateFilter, TablePredicateFilterChange,
     TablePredicateFilterOperator, TablePredicateFilterOperatorOptionState,
     TablePredicateFilterState, TableRangeFilter, TableRangeFilterChange, TableRangeFilterState,
     TableResolvedHeaderKind, TableRow, TableRowChildrenLoadState, TableRowId, TableRowPinning,
@@ -477,7 +477,7 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Table",
-        controlled_inputs: &["state", "column_sizing"],
+        controlled_inputs: &["state", "column_sizing", "column_order"],
         default_seeds: &[DefaultSeedApi {
             builder: "default_focused_row",
             runtime_value: "focused_row",
@@ -496,6 +496,7 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             "enable_column_resizing",
             "column_resize_mode",
             "column_resize_direction",
+            "column_order",
         ],
         callbacks: &[
             CallbackApi {
@@ -505,6 +506,10 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             CallbackApi {
                 name: "on_column_sizing_change",
                 payload: "TableColumnSizingChange",
+            },
+            CallbackApi {
+                name: "on_column_order_change",
+                payload: "TableColumnOrderChange",
             },
             CallbackApi {
                 name: "on_row_activate",
@@ -797,6 +802,16 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         callbacks: &[],
         renderer_neutral_state: true,
         no_interaction_note: Some("identity readout"),
+    },
+    ComponentApiInventoryEntry {
+        component: "AvatarGroup",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["avatar", "max_visible"],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: Some("identity readout collection"),
     },
     ComponentApiInventoryEntry {
         component: "Tooltip",
@@ -1543,6 +1558,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "virtualizer_snapshot",
             "default_focused_row",
             "on_sort_requested",
+            "on_column_order_change",
             "enable_column_resizing",
             "column_resize_mode",
             "column_resize_direction",
@@ -6560,6 +6576,10 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         root::TableColumnVisibilityChange::new("status", false);
     let _root_column_visibility_action: root::TableColumnVisibilityAction =
         root_column_visibility_change.action();
+    let root_column_order_change: root::TableColumnOrderChange =
+        root::TableColumnOrderChange::move_before("score", "team", root::TableColumnRegion::Center);
+    let _root_column_order_placement: root::TableColumnOrderPlacement =
+        root_column_order_change.placement();
     let prelude_column_visibility: prelude::TableColumnVisibility =
         prelude::TableColumnVisibility::new("prelude-columns", "Columns")
             .columns([prelude::TableColumn::new("status", "Status")])
@@ -6572,6 +6592,9 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         prelude::TableColumnVisibilityChange::reset();
     let _prelude_column_visibility_action: prelude::TableColumnVisibilityAction =
         prelude_column_visibility_change.action();
+    let _prelude_column_order_change: prelude::TableColumnOrderChange = root_column_order_change;
+    let _prelude_column_order_placement: prelude::TableColumnOrderPlacement =
+        prelude::TableColumnOrderPlacement::After;
     let _root_facet_range: Option<root::TableFacetRange> = root::TableFacetRange::new(1.0, 2.0);
     let root_range_facets =
         root::TableColumnFacets::manual("score", 2).with_numeric_range(1.0, 20.0);
@@ -7709,6 +7732,115 @@ fn table_runtime_resize_emits_controlled_sizing_change(cx: &mut open_gpui::TestA
 }
 
 #[open_gpui::test]
+fn table_runtime_header_drag_emits_controlled_column_order_change(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        changes: Rc<RefCell<Vec<TableColumnOrderChange>>>,
+        state: Rc<RefCell<TableState>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let changes = self.changes.clone();
+            let state = self.state.borrow().clone();
+            let state_for_order = self.state.clone();
+            let table = Table::new("order-runtime-table", "Order runtime", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .on_column_order_change(move |change, _, _| {
+                    changes.borrow_mut().push(change.clone());
+                    let next = change.apply_to(state_for_order.borrow().clone());
+                    *state_for_order.borrow_mut() = next;
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let state = Rc::new(RefCell::new(
+        TableState::new([TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("team", "UI")
+            .with_cell("score", 42_usize)])
+        .with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+            TableColumn::new("score", "Score"),
+        ])
+        .with_column_order(["name", "team", "score"])
+        .with_pagination(TablePagination::disabled()),
+    ));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        changes: changes.clone(),
+        state: state.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let start = cx
+        .debug_bounds("table:order-runtime-table:header:score")
+        .expect("score header should render")
+        .center();
+    let end = cx
+        .debug_bounds("table:order-runtime-table:header-order-drop:before:team")
+        .expect("team before-drop zone should render")
+        .center();
+
+    cx.simulate_mouse_down(start, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(
+            start.x + (end.x - start.x) * 0.2,
+            start.y + (end.y - start.y) * 0.2,
+        ),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(
+        point(
+            start.x + (end.x - start.x) * 0.6,
+            start.y + (end.y - start.y) * 0.6,
+        ),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_up(end, MouseButton::Left, Default::default());
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let changes = changes.borrow();
+    assert_eq!(changes.len(), 1);
+    let change = &changes[0];
+    assert_eq!(change.column_id().as_str(), "score");
+    assert_eq!(change.target_column_id().as_str(), "team");
+    assert_eq!(change.placement(), TableColumnOrderPlacement::Before);
+    assert_eq!(change.source_region(), TableColumnRegion::Center);
+    assert_eq!(change.target_region(), TableColumnRegion::Center);
+    assert_eq!(
+        state
+            .borrow()
+            .column_order()
+            .iter()
+            .map(|column_id| column_id.as_str())
+            .collect::<Vec<_>>(),
+        ["name", "score", "team"]
+    );
+    assert!(
+        cx.debug_bounds("table:order-runtime-table:header:score")
+            .expect("score header should still render")
+            .left()
+            < cx.debug_bounds("table:order-runtime-table:header:team")
+                .expect("team header should still render")
+                .left(),
+        "score should render before team after the reorder"
+    );
+}
+
+#[open_gpui::test]
 fn table_runtime_exposes_pinned_region_debug_selectors(cx: &mut open_gpui::TestAppContext) {
     struct TestView;
 
@@ -8622,6 +8754,135 @@ fn table_runtime_pinned_headers_still_sort_after_center_scroll(cx: &mut open_gpu
     assert_eq!(actions[0].column_id().as_str(), "team");
     assert_eq!(actions[1].column_id().as_str(), "score");
     assert_eq!(actions[2].column_id().as_str(), "status");
+}
+
+#[open_gpui::test]
+fn table_runtime_pinned_header_drag_emits_controlled_column_order_change(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        changes: Rc<RefCell<Vec<TableColumnOrderChange>>>,
+        state: Rc<RefCell<TableState>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let changes = self.changes.clone();
+            let state = self.state.borrow().clone();
+            let state_for_order = self.state.clone();
+            let table = Table::new("pinned-order-runtime-table", "Pinned order table", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .on_column_order_change(move |change, _, _| {
+                    changes.borrow_mut().push(change.clone());
+                    let next = change.apply_to(state_for_order.borrow().clone());
+                    *state_for_order.borrow_mut() = next;
+                });
+
+            div()
+                .size_full()
+                .child(div().w(px(560.0)).h(px(180.0)).child(table))
+        }
+    }
+
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let state = Rc::new(RefCell::new(
+        TableState::new([TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("team", "UI")
+            .with_cell("score", 42_usize)
+            .with_cell("status", "Ready")])
+        .with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+            TableColumn::new("score", "Score"),
+            TableColumn::new("status", "Status"),
+        ])
+        .with_column_order(["name", "team", "score", "status"])
+        .with_column_pinning(
+            TableColumnPinning::new()
+                .pinned_left(["name"])
+                .pinned_right(["status"]),
+        )
+        .with_pagination(TablePagination::disabled()),
+    ));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        changes: changes.clone(),
+        state: state.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let center_viewport = cx
+        .debug_bounds("scroll-area:table:pinned-order-runtime-table:header-center-scroll")
+        .expect("center header should expose a horizontal scroll viewport");
+    cx.simulate_event(ScrollWheelEvent {
+        position: center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-180.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let score_before = cx
+        .debug_bounds("table:pinned-order-runtime-table:header:score")
+        .expect("center score header should remain visible after scrolling");
+    let team_before = cx
+        .debug_bounds("table:pinned-order-runtime-table:header:team")
+        .expect("center team header should remain visible after scrolling");
+    let drop_before = cx
+        .debug_bounds("table:pinned-order-runtime-table:header-order-drop:before:team")
+        .expect("team before-drop zone should render in split pinned layout");
+
+    cx.simulate_mouse_down(score_before.center(), MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(score_before.center().x + px(18.0), score_before.center().y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(
+        point(
+            score_before.center().x + px(42.0),
+            score_before.center().y + px(2.0),
+        ),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(drop_before.center(), MouseButton::Left, Default::default());
+    cx.simulate_mouse_up(drop_before.center(), MouseButton::Left, Default::default());
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let changes = changes.borrow();
+    assert_eq!(changes.len(), 1);
+    let change = &changes[0];
+    assert_eq!(change.column_id().as_str(), "score");
+    assert_eq!(change.target_column_id().as_str(), "team");
+    assert_eq!(change.placement(), TableColumnOrderPlacement::Before);
+    assert_eq!(change.source_region(), TableColumnRegion::Center);
+    assert_eq!(change.target_region(), TableColumnRegion::Center);
+    assert_eq!(
+        state
+            .borrow()
+            .column_order()
+            .iter()
+            .map(|column_id| column_id.as_str())
+            .collect::<Vec<_>>(),
+        ["name", "score", "team", "status"]
+    );
+    assert!(
+        cx.debug_bounds("table:pinned-order-runtime-table:header:score")
+            .expect("score header should still render")
+            .left()
+            < cx.debug_bounds("table:pinned-order-runtime-table:header:team")
+                .expect("team header should still render")
+                .left(),
+        "score should render before team after the reorder"
+    );
 }
 
 #[open_gpui::test]
@@ -10576,6 +10837,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_click",
         "on_close",
         "on_cell_edit_change",
+        "on_column_order_change",
         "on_column_sizing_change",
         "on_move",
         "on_open_change",
@@ -10743,6 +11005,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_row_expansion_request",
         "TableRowExpansionToggle",
     );
+    assert_inventory_contains_callback("Table", "on_column_order_change", "TableColumnOrderChange");
 }
 
 #[test]

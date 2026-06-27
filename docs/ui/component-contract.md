@@ -500,6 +500,11 @@ with checkbox rows and show-all / reset actions, keeps locked identity columns d
 controlled `TableColumnVisibilityChange` payloads whose `apply_to` helper updates only visibility
 overrides while preserving the rest of `TableState`. Saved views, URL sync, persistence, and
 server-side capability negotiation remain application-owned or follow-up work.
+`TableColumnOrderChange` is the sibling official column-order recipe: it emits controlled
+before/after placement payloads through `Table::on_column_order_change`, applies only the caller-
+owned column-order slice, and keeps sorting, filtering, pinning, sizing, and row-model state
+untouched. The Components gallery uses `release-rollup` as the proof sample for that controlled
+reorder path.
 Nested header groups are resolved as renderer-neutral row families rather than data columns.
 `TableRenderPlan` exposes nested header-group rows for the left, center, and right regions, with
 stable row counts, summed widths, and depth-specific group metadata. Pinned regions split group

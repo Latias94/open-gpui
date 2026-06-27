@@ -1979,6 +1979,20 @@ pub(crate) fn render_components_page(
                                                 },
                                             );
                                         }
+                                        if sample_id == "release-rollup" {
+                                            let sample_id_for_order = sample_id.to_owned();
+                                            let base_state_for_order = sample.state.clone();
+                                            table = table.on_column_order_change(
+                                                move |change, _, cx| {
+                                                    pages::components::record_table_column_order_change(
+                                                        sample_id_for_order.clone(),
+                                                        &base_state_for_order,
+                                                        &change,
+                                                        cx,
+                                                    );
+                                                },
+                                            );
+                                        }
                                         let sample_id_for_activation = sample_id.to_owned();
                                         table = table.on_row_activate(move |activation, _, cx| {
                                             pages::components::record_table_row_activation(

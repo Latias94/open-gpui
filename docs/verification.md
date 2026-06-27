@@ -267,9 +267,11 @@ source-tree row
 models keep nested descendants addressable by stable row id, manual source-tree snapshots expose
 unloaded/loading/failed child metadata, row-pinning regions split top/center/bottom rows with
 keep-pinned and page-only policies, and grouped / expanded row models keep collapsed descendants
-addressable by stable row id. The Components gallery now carries `release-rollup`, a grouped Table
-sample that mixes expanded and collapsed team groups, exposes aggregate count and score cells,
-pins the identifier and status columns, and has its own sticky-header plus inner-scroll smoke. It also carries
+addressable by stable row id, controlled column order changes emit stable before/after placement
+payloads, and the reorder helpers keep the rest of `TableState` untouched. The Components gallery
+now carries `release-rollup`, a grouped Table sample that mixes expanded and collapsed team groups,
+exposes aggregate count and score cells, pins the identifier and status columns, and has its own
+sticky-header plus inner-scroll smoke. It also carries
 `server-paged`, a manual filtering/sorting/pagination sample that renders only the current
 app-supplied page snapshot while exposing server-known total row and page counts through the
 gallery summary and `TableRenderPlan`. It also carries `release-resize`, a controlled
@@ -288,6 +290,9 @@ core filtered row model. `release-matrix` also renders a `TableColumnVisibility`
 control, records `TableColumnVisibilityChange` payloads in the sample runtime log, applies
 visibility overrides to the sample-owned `TableState`, proves hiding a metric column removes its
 header and cells, proves show-all restores the column, and confirms popup wheel input stays local.
+`release-rollup` now also proves controlled column-order changes: the sample runtime log records
+`TableColumnOrderChange` payloads, applies the app-owned override to the sample `TableState`, and
+shows the score column re-rendering before team while the sample card stays anchored.
 `components_gallery_smoke_grouped_table_scroll_stays_inside_sample` is the focused vertical
 sticky-header proof: it enters the Table family view, wheels the `release-rollup` body, and
 asserts the header band stays fixed while the body row window advances.

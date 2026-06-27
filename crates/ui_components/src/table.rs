@@ -43,6 +43,7 @@ use std::rc::Rc;
 
 type TableSortHandler = Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>;
 type TableColumnSizingHandler = Rc<dyn Fn(TableColumnSizingChange, &mut Window, &mut App)>;
+type TableColumnOrderHandler = Rc<dyn Fn(TableColumnOrderChange, &mut Window, &mut App)>;
 type TableRowActivationHandler = Rc<dyn Fn(TableRowActivation, &mut Window, &mut App)>;
 type TableRowExpansionHandler = Rc<dyn Fn(TableRowExpansionToggle, &mut Window, &mut App)>;
 type TableRowSelectionHandler = Rc<dyn Fn(TableRowSelectionChange, &mut Window, &mut App)>;
@@ -5340,6 +5341,126 @@ fn header_cell_render_id(table_id: &str, cell: &TableResolvedHeaderCell) -> Stri
     }
 }
 
+/// Relative placement for a controlled table column reorder change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableColumnOrderPlacement {
+    /// Place the moved column before the target column.
+    Before,
+    /// Place the moved column after the target column.
+    After,
+}
+
+impl TableColumnOrderPlacement {
+    /// Returns a stable placement label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Before => "before",
+            Self::After => "after",
+        }
+    }
+}
+
+/// Controlled payload emitted when a table column reorder is committed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableColumnOrderChange {
+    column_id: TableColumnId,
+    target_column_id: TableColumnId,
+    placement: TableColumnOrderPlacement,
+    source_region: TableColumnRegion,
+    target_region: TableColumnRegion,
+}
+
+impl TableColumnOrderChange {
+    /// Creates a payload that moves one column before another within the same region.
+    pub fn move_before(
+        column_id: impl Into<TableColumnId>,
+        target_column_id: impl Into<TableColumnId>,
+        region: TableColumnRegion,
+    ) -> Self {
+        Self {
+            column_id: column_id.into(),
+            target_column_id: target_column_id.into(),
+            placement: TableColumnOrderPlacement::Before,
+            source_region: region,
+            target_region: region,
+        }
+    }
+
+    /// Creates a payload that moves one column after another within the same region.
+    pub fn move_after(
+        column_id: impl Into<TableColumnId>,
+        target_column_id: impl Into<TableColumnId>,
+        region: TableColumnRegion,
+    ) -> Self {
+        Self {
+            column_id: column_id.into(),
+            target_column_id: target_column_id.into(),
+            placement: TableColumnOrderPlacement::After,
+            source_region: region,
+            target_region: region,
+        }
+    }
+
+    /// Returns the moved column identity.
+    pub const fn column_id(&self) -> &TableColumnId {
+        &self.column_id
+    }
+
+    /// Returns the target column identity.
+    pub const fn target_column_id(&self) -> &TableColumnId {
+        &self.target_column_id
+    }
+
+    /// Returns the requested insertion placement.
+    pub const fn placement(&self) -> TableColumnOrderPlacement {
+        self.placement
+    }
+
+    /// Returns the source column region at drag start.
+    pub const fn source_region(&self) -> TableColumnRegion {
+        self.source_region
+    }
+
+    /// Returns the target column region at drop time.
+    pub const fn target_region(&self) -> TableColumnRegion {
+        self.target_region
+    }
+
+    /// Applies this reorder request to a table state.
+    pub fn apply_to(&self, state: TableState) -> TableState {
+        if self.source_region != self.target_region {
+            return state;
+        }
+
+        let current_order = effective_table_column_order(&state);
+        let Some(next_order) = reorder_table_column_order(
+            current_order,
+            self.column_id.clone(),
+            self.target_column_id.clone(),
+            self.placement,
+        ) else {
+            return state;
+        };
+
+        state.with_column_order(next_order)
+    }
+
+    /// Applies this reorder request to an explicit column-order list.
+    pub fn apply_to_order<I>(&self, column_order: I) -> Vec<TableColumnId>
+    where
+        I: IntoIterator<Item = TableColumnId>,
+    {
+        let column_order = column_order.into_iter().collect::<Vec<_>>();
+        reorder_table_column_order(
+            column_order.clone(),
+            self.column_id.clone(),
+            self.target_column_id.clone(),
+            self.placement,
+        )
+        .unwrap_or(column_order)
+    }
+}
+
 /// Sort request emitted by an interactive table column header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableHeaderAction {
@@ -6528,6 +6649,13 @@ struct TableColumnResizeDrag {
     direction: TableColumnResizeDirection,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TableColumnOrderDrag {
+    table_id: String,
+    column_id: TableColumnId,
+    region: TableColumnRegion,
+}
+
 /// A concrete GPUI table renderer using the Open GPUI row-model and virtualizer contracts.
 #[derive(IntoElement)]
 pub struct Table {
@@ -6538,6 +6666,7 @@ pub struct Table {
     snapshot: Option<VirtualizerSnapshot>,
     default_focused_row: Option<TableRowId>,
     on_sort_requested: Option<TableSortHandler>,
+    on_column_order_change: Option<TableColumnOrderHandler>,
     enable_column_resizing: bool,
     column_resize_mode: TableColumnResizeMode,
     column_resize_direction: TableColumnResizeDirection,
@@ -6559,6 +6688,7 @@ impl Table {
             snapshot: None,
             default_focused_row: None,
             on_sort_requested: None,
+            on_column_order_change: None,
             enable_column_resizing: true,
             column_resize_mode: TableColumnResizeMode::default(),
             column_resize_direction: TableColumnResizeDirection::default(),
@@ -6633,6 +6763,15 @@ impl Table {
         handler: impl Fn(TableHeaderAction, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_sort_requested = Some(Rc::new(handler));
+        self
+    }
+
+    /// Registers a handler for controlled column reorder changes.
+    pub fn on_column_order_change(
+        mut self,
+        handler: impl Fn(TableColumnOrderChange, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_column_order_change = Some(Rc::new(handler));
         self
     }
 
@@ -6997,6 +7136,7 @@ impl RenderOnce for Table {
         let viewport_extent = ui_px_from_gpui(scroll_handle.bounds().size.height);
         let scroll_offset = ui_px((-ui_px_from_gpui(scroll_handle.offset().y).as_f32()).max(0.0));
         let on_sort_requested = self.on_sort_requested.clone();
+        let on_column_order_change = self.on_column_order_change.clone();
         let column_resizing_enabled =
             self.enable_column_resizing && self.on_column_sizing_change.is_some();
         let resize_config = TableResizeRenderConfig {
@@ -7108,6 +7248,7 @@ impl RenderOnce for Table {
             .child(render_table_header(
                 &plan,
                 on_sort_requested,
+                on_column_order_change,
                 resize_config,
                 horizontal_scroll_handle.clone(),
                 plan.sticky_header_band_height(),
@@ -7118,6 +7259,7 @@ impl RenderOnce for Table {
 fn render_table_header(
     plan: &TableRenderPlan,
     on_sort_requested: Option<TableSortHandler>,
+    on_column_order_change: Option<TableColumnOrderHandler>,
     resize_config: TableResizeRenderConfig,
     horizontal_scroll_handle: ScrollHandle,
     header_band_height: UiPx,
@@ -7171,6 +7313,7 @@ fn render_table_header(
             let pinned_layout = pinned_layout.clone();
             let center_window = center_window.clone();
             let on_sort_requested = on_sort_requested.clone();
+            let on_column_order_change = on_column_order_change.clone();
             let resize_config = resize_config.clone();
             let header_groups = header_groups.clone();
             let columns_by_id = columns_by_id.clone();
@@ -7186,6 +7329,8 @@ fn render_table_header(
                 .map(TableCenterColumnWindowPlan::center_width)
                 .unwrap_or_else(|| region_plan.total_width());
             let header_region = header_groups.region(region);
+            let reorder_enabled =
+                on_column_order_change.is_some() && region_plan.columns().len() > 1;
             let mut occupied_leaf_ids = BTreeSet::new();
             let mut header_children = Vec::new();
             for group in header_region.groups() {
@@ -7224,6 +7369,8 @@ fn render_table_header(
                             effective_leaf_ids.clone(),
                             columns_by_id.clone(),
                             on_sort_requested.clone(),
+                            on_column_order_change.clone(),
+                            reorder_enabled,
                             resize_config.clone(),
                         )
                         .into_any_element(),
@@ -7280,6 +7427,8 @@ fn render_table_header_group_cell(
     effective_leaf_ids: Vec<TableColumnId>,
     columns_by_id: Rc<BTreeMap<TableColumnId, TableColumnRenderPlan>>,
     on_sort_requested: Option<TableSortHandler>,
+    on_column_order_change: Option<TableColumnOrderHandler>,
+    reorder_enabled: bool,
     resize_config: TableResizeRenderConfig,
 ) -> AnyElement {
     let header_id = header.id().to_owned();
@@ -7297,6 +7446,17 @@ fn render_table_header_group_cell(
                 .cloned()
         })
         .flatten();
+    let order_drag = reorder_enabled
+        .then(|| {
+            leaf_column.clone().map(|column| TableColumnOrderDrag {
+                table_id: table_id.clone(),
+                column_id: column.id().clone(),
+                region: column.region(),
+            })
+        })
+        .flatten();
+    let order_drop_target = reorder_enabled.then(|| leaf_column.clone()).flatten();
+    let order_drop_handler = reorder_enabled.then_some(on_column_order_change).flatten();
     let show_resize_handle = resize_config.enabled && header.resizable();
     let row_span = header.row_span().max(1) as f32;
     let width = effective_leaf_ids
@@ -7378,6 +7538,37 @@ fn render_table_header_group_cell(
                 })
         })
         .child(format!("{}{}", header_label, sort_suffix))
+        .when_some(order_drag, |this, drag| {
+            this.cursor(CursorStyle::OpenHand)
+                .on_drag(drag, |_, _, _, _, cx| cx.new(|_| Empty))
+        })
+        .when_some(order_drop_target, |this, column| {
+            this.when_some(order_drop_handler.clone(), |this, handler| {
+                let drop_handle_inset = if show_resize_handle {
+                    px(10.0)
+                } else {
+                    px(0.0)
+                };
+                let drop_zone_width = px((width.as_f32() * 0.5).max(12.0));
+
+                this.child(render_table_column_order_drop_zone(
+                    table_id.clone(),
+                    column.clone(),
+                    TableColumnOrderPlacement::Before,
+                    handler.clone(),
+                    drop_zone_width,
+                    drop_handle_inset,
+                ))
+                .child(render_table_column_order_drop_zone(
+                    table_id.clone(),
+                    column,
+                    TableColumnOrderPlacement::After,
+                    handler,
+                    drop_zone_width,
+                    drop_handle_inset,
+                ))
+            })
+        })
         .when(show_resize_handle, |this| {
             this.when_some(leaf_column.clone(), |this, column| {
                 this.child(render_table_resize_handle(
@@ -7480,6 +7671,119 @@ fn render_table_resize_handle(
                 .w(px(1.0))
                 .bg(rgb(0xc8cdc2)),
         )
+}
+
+fn render_table_column_order_drop_zone(
+    table_id: String,
+    target_column: TableColumnRenderPlan,
+    placement: TableColumnOrderPlacement,
+    handler: TableColumnOrderHandler,
+    zone_width: Pixels,
+    right_inset: Pixels,
+) -> impl IntoElement {
+    let target_column_id = target_column.id().clone();
+    let target_region = target_column.region();
+    let zone_key = target_column_id.as_str().to_owned();
+    let placement_key = placement.as_str().to_owned();
+    let table_for_can_drop = table_id.clone();
+    let table_for_drag_over = table_id.clone();
+    let table_for_drop = table_id.clone();
+    let target_for_can_drop = target_column_id.clone();
+    let target_for_drag_over = target_column_id.clone();
+    let target_for_drop = target_column_id.clone();
+
+    div()
+        .id(format!(
+            "table:{table_id}:header-order-drop:{placement_key}:{zone_key}"
+        ))
+        .debug_selector(move || {
+            format!("table:{table_id}:header-order-drop:{placement_key}:{zone_key}")
+        })
+        .absolute()
+        .top(px(0.0))
+        .bottom(px(0.0))
+        .when(placement == TableColumnOrderPlacement::Before, |this| {
+            this.left(px(0.0)).w(zone_width)
+        })
+        .when(placement == TableColumnOrderPlacement::After, |this| {
+            this.right(right_inset).w(zone_width)
+        })
+        .can_drop(move |dragged, _, _| {
+            dragged
+                .downcast_ref::<TableColumnOrderDrag>()
+                .is_some_and(|drag| {
+                    drag.table_id == table_for_can_drop
+                        && drag.region == target_region
+                        && drag.column_id != target_for_can_drop
+                })
+        })
+        .drag_over::<TableColumnOrderDrag>(move |style, drag, _, _| {
+            if drag.table_id != table_for_drag_over
+                || drag.region != target_region
+                || drag.column_id == target_for_drag_over
+            {
+                return style;
+            }
+
+            style.bg(rgba(0x1f7a662e))
+        })
+        .on_drop(move |drag: &TableColumnOrderDrag, window, cx| {
+            if drag.table_id != table_for_drop
+                || drag.region != target_region
+                || drag.column_id == target_for_drop
+            {
+                return;
+            }
+
+            let change = match placement {
+                TableColumnOrderPlacement::Before => TableColumnOrderChange::move_before(
+                    drag.column_id.clone(),
+                    target_column_id.clone(),
+                    drag.region,
+                ),
+                TableColumnOrderPlacement::After => TableColumnOrderChange::move_after(
+                    drag.column_id.clone(),
+                    target_column_id.clone(),
+                    drag.region,
+                ),
+            };
+            handler(change, window, cx);
+        })
+        .into_any_element()
+}
+
+fn effective_table_column_order(state: &TableState) -> Vec<TableColumnId> {
+    if state.column_order().is_empty() {
+        state
+            .columns()
+            .iter()
+            .map(|column| column.id().clone())
+            .collect()
+    } else {
+        state.column_order().to_vec()
+    }
+}
+
+fn reorder_table_column_order(
+    mut column_order: Vec<TableColumnId>,
+    column_id: TableColumnId,
+    target_column_id: TableColumnId,
+    placement: TableColumnOrderPlacement,
+) -> Option<Vec<TableColumnId>> {
+    if column_id == target_column_id {
+        return None;
+    }
+
+    let source_index = column_order.iter().position(|id| id == &column_id)?;
+    let _ = column_order.remove(source_index);
+    let target_index = column_order.iter().position(|id| id == &target_column_id)?;
+    let insert_index = match placement {
+        TableColumnOrderPlacement::Before => target_index,
+        TableColumnOrderPlacement::After => target_index + 1,
+    };
+    column_order.insert(insert_index, column_id);
+
+    Some(column_order)
 }
 
 fn handle_table_column_resize_drag(
@@ -8575,6 +8879,7 @@ const fn nonnegative_px(value: UiPx) -> UiPx {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use open_gpui_ui_core::{TableColumnPinning, TableRow};
 
     #[test]
     fn apply_table_content_fit_widths_keeps_committed_widths_authoritative() {
@@ -8605,5 +8910,43 @@ mod tests {
         assert_eq!(columns[0].width(), committed_width);
         assert_eq!(columns[0].start(), UiPx::ZERO);
         assert_eq!(columns[0].after(), UiPx::ZERO);
+    }
+
+    #[test]
+    fn table_column_order_change_reorders_leaf_columns_without_touching_other_state() {
+        let state = TableState::new([TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("team", "UI")
+            .with_cell("score", 42_usize)])
+        .with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+            TableColumn::new("score", "Score"),
+        ])
+        .with_column_order(["name", "team", "score"])
+        .with_sorting([TableSort::descending("score")])
+        .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]));
+
+        let change =
+            TableColumnOrderChange::move_before("score", "team", TableColumnRegion::Center);
+        let next = change.apply_to(state.clone());
+
+        assert_eq!(
+            next.column_order()
+                .iter()
+                .map(|column_id| column_id.as_str())
+                .collect::<Vec<_>>(),
+            ["name", "score", "team"]
+        );
+        assert_eq!(next.sorting(), state.sorting());
+        assert_eq!(next.column_pinning(), state.column_pinning());
+        assert_eq!(
+            change.apply_to_order(state.column_order().iter().cloned()),
+            vec![
+                TableColumnId::new("name"),
+                TableColumnId::new("score"),
+                TableColumnId::new("team"),
+            ]
+        );
     }
 }
