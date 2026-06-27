@@ -3715,6 +3715,65 @@ fn context_menu_runtime_keyboard_navigation_preserves_focused_value_after_rerend
     assert_eq!(after_item_enter[0].path_key(), "2:select-all");
 }
 
+#[open_gpui::test]
+fn context_menu_runtime_long_menu_scroll_stays_inside_surface(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                ContextMenu::new("runtime-long-context-menu", "Runtime long context menu")
+                    .default_open(true)
+                    .anchor_point(point(px(280.0), px(160.0)))
+                    .default_focused_value("item-00")
+                    .items((0..12).map(|index| {
+                        MenuItem::action(format!("item-{index:02}"), format!("Item {index:02}"))
+                    })),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let surface_before = cx
+        .debug_bounds("context-menu:runtime-long-context-menu:surface")
+        .expect("runtime long context menu surface should render");
+    let viewport = cx
+        .debug_bounds("scroll-area:context-menu:runtime-long-context-menu:surface-scroll")
+        .expect("runtime long context menu scroll viewport should render");
+    let item_before = cx
+        .debug_bounds("context-menu:runtime-long-context-menu:item:0:item-00")
+        .expect("runtime long context menu first item should render");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let surface_after = cx
+        .debug_bounds("context-menu:runtime-long-context-menu:surface")
+        .expect("runtime long context menu surface should still render");
+    let item_after = cx
+        .debug_bounds("context-menu:runtime-long-context-menu:item:0:item-00")
+        .expect("runtime long context menu first item should still render");
+
+    assert_eq!(
+        surface_after, surface_before,
+        "expected wheel input on the long ContextMenu to keep the surface fixed; before={surface_before:?} after={surface_after:?}"
+    );
+    assert!(
+        item_after.top() < item_before.top(),
+        "expected wheel input on the long ContextMenu to move the inner scroll viewport; before={item_before:?} after={item_after:?}"
+    );
+}
+
 #[test]
 fn default_button_state_uses_button_role_and_medium_metrics() {
     let state = Button::new("save", "Save").state();

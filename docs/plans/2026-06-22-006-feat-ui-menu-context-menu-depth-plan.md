@@ -177,7 +177,7 @@ The state layer answers what rows exist, which rows are enabled, which pure item
   - Right-click opens the context menu at the requested anchor point.
   - Pure placement input preserves point anchor, side, alignment, offset, and content size.
   - Near-edge gallery runtime keeps the surface visible after snap.
-  - Wheel input inside a long menu stays local to the menu/gallery sample.
+  - Wheel input inside a long menu stays local to the component surface; gallery default-open samples remain metadata-only.
 
 ### U5. Overlay gallery depth samples
 
