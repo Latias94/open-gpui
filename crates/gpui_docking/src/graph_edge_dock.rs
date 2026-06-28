@@ -63,28 +63,31 @@ impl DockGraph {
                 continue;
             };
 
-            if *split_axis == axis && !children.is_empty() && children.len() == fractions.len() {
-                let Some(anchor_index) = index.split_child_index.get(&cur).copied() else {
-                    break;
-                };
-                let insert_index = match zone {
-                    DropZone::Left | DropZone::Top => anchor_index,
-                    DropZone::Right | DropZone::Bottom => anchor_index.saturating_add(1),
-                    DropZone::Center => unreachable!(),
-                };
-                let anchor_child = children[anchor_index];
-                return Some(DockEdgeDockPlan::InsertIntoSplit {
-                    split: parent,
-                    zone,
-                    anchor_child,
-                    anchor_index,
-                    insert_index,
-                    sizing: DockEdgeDockSizing::fallback(),
-                    sizing_scope: DockEdgeDockSizingScope::AnchorChild,
-                });
+            // Inner edge docking is scoped to the hit node. Reusing an ancestor split is only
+            // valid until the first real split boundary; crossing an opposing-axis split would
+            // dock beside that subtree instead of inside the hit leaf.
+            if *split_axis != axis || children.is_empty() || children.len() != fractions.len() {
+                break;
             }
 
-            cur = parent;
+            let Some(anchor_index) = index.split_child_index.get(&cur).copied() else {
+                break;
+            };
+            let insert_index = match zone {
+                DropZone::Left | DropZone::Top => anchor_index,
+                DropZone::Right | DropZone::Bottom => anchor_index.saturating_add(1),
+                DropZone::Center => unreachable!(),
+            };
+            let anchor_child = children[anchor_index];
+            return Some(DockEdgeDockPlan::InsertIntoSplit {
+                split: parent,
+                zone,
+                anchor_child,
+                anchor_index,
+                insert_index,
+                sizing: DockEdgeDockSizing::fallback(),
+                sizing_scope: DockEdgeDockSizingScope::AnchorChild,
+            });
         }
 
         Some(DockEdgeDockPlan::WrapTarget {

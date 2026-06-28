@@ -252,3 +252,95 @@ fn cross_axis_edge_dock_wraps_target_without_flattening_parent_axis() {
     assert_eq!(children.len(), fractions.len());
     graph.assert_canonical_space(&space());
 }
+
+#[test]
+fn inner_edge_dock_does_not_cross_opposing_axis_ancestor() {
+    let (mut graph, _root) = root_tabs_graph(&["a"]);
+    let left_tabs = graph
+        .find_item_in_space(&space(), &item("a"))
+        .expect("left item should remain findable")
+        .0;
+    let top_right_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let bottom_right_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let right_vertical_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![top_right_tabs, bottom_right_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left_tabs, right_vertical_split],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root);
+
+    for (target, zone) in [
+        (top_right_tabs, DropZone::Left),
+        (top_right_tabs, DropZone::Right),
+        (bottom_right_tabs, DropZone::Left),
+        (bottom_right_tabs, DropZone::Right),
+    ] {
+        assert_eq!(
+            graph.edge_dock_plan(&space(), target, zone),
+            Some(DockEdgeDockPlan::WrapTarget {
+                target,
+                axis: SplitAxis::Horizontal,
+                zone,
+                sizing: DockEdgeDockSizing::fallback(),
+            }),
+            "{zone:?} docking inside a right-side leaf must wrap that leaf, not cross the vertical split and insert beside the whole right region"
+        );
+    }
+}
+
+#[test]
+fn inner_edge_dock_does_not_cross_opposing_axis_ancestor_mirrored() {
+    let (mut graph, _root) = root_tabs_graph(&["a"]);
+    let top_tabs = graph
+        .find_item_in_space(&space(), &item("a"))
+        .expect("top item should remain findable")
+        .0;
+    let bottom_left_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let bottom_right_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let bottom_horizontal_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![bottom_left_tabs, bottom_right_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![top_tabs, bottom_horizontal_split],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root);
+
+    for (target, zone) in [
+        (bottom_left_tabs, DropZone::Top),
+        (bottom_left_tabs, DropZone::Bottom),
+        (bottom_right_tabs, DropZone::Top),
+        (bottom_right_tabs, DropZone::Bottom),
+    ] {
+        assert_eq!(
+            graph.edge_dock_plan(&space(), target, zone),
+            Some(DockEdgeDockPlan::WrapTarget {
+                target,
+                axis: SplitAxis::Vertical,
+                zone,
+                sizing: DockEdgeDockSizing::fallback(),
+            }),
+            "{zone:?} docking inside a bottom leaf must wrap that leaf, not cross the horizontal split and insert beside the whole bottom region"
+        );
+    }
+}

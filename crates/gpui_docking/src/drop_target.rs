@@ -693,7 +693,7 @@ fn best_leaf_for_root_containing(
 mod tests {
     use super::*;
     use crate::{
-        DockGraph, DockItemId, DockNode, SplitAxis,
+        DockGraph, DockItemId, DockNode, DockSpaceId, DropZone, SplitAxis,
         geometry::{DockDropBoxKind, DockDropBoxSet},
     };
     use open_gpui::{point, px, size};
@@ -1321,6 +1321,76 @@ mod tests {
                 target_tabs: root,
                 zone: DropZone::Left,
             }
+        );
+    }
+
+    #[test]
+    fn leaf_edge_plan_wraps_leaf_below_opposing_axis_parent() {
+        let space = DockSpaceId::from("main");
+        let mut graph = DockGraph::new();
+        let left_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("left")],
+            selected: Some(DockItemId::from("left")),
+        });
+        let top_right_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("top-right")],
+            selected: Some(DockItemId::from("top-right")),
+        });
+        let bottom_right_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("bottom-right")],
+            selected: Some(DockItemId::from("bottom-right")),
+        });
+        let right_split = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Vertical,
+            children: vec![top_right_tabs, bottom_right_tabs],
+            fractions: vec![0.5, 0.5],
+        });
+        let root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![left_tabs, right_split],
+            fractions: vec![0.5, 0.5],
+        });
+        graph.set_root(space.clone(), root);
+
+        let bounds = bounds(300.0, 200.0);
+        let target = resolve_layout_drop(DockDropResolverInput {
+            leaves: &[DockLeafDropTarget {
+                root,
+                target_tabs: bottom_right_tabs,
+                bounds,
+                is_central: false,
+            }],
+            edge_plan_resolver: Some(&|target, zone, sizing| {
+                graph.edge_dock_plan_with_sizing(&space, target, zone, sizing)
+            }),
+            ..DockDropResolverInput::new(
+                drop_box_center(
+                    bounds,
+                    DockDropBoxSet::Inner,
+                    DockDropBoxKind::InnerEdge(DropZone::Left),
+                ),
+                &policy(),
+            )
+        })
+        .and_then(DockDropResolution::target)
+        .expect("leaf edge should resolve");
+
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::InnerEdge {
+                root,
+                target_tabs: bottom_right_tabs,
+                zone: DropZone::Left,
+            }
+        );
+        assert_eq!(
+            target.edge_plan,
+            Some(DockEdgeDockPlan::WrapTarget {
+                target: bottom_right_tabs,
+                axis: SplitAxis::Horizontal,
+                zone: DropZone::Left,
+                sizing: target.edge_sizing.expect("edge target should carry sizing"),
+            })
         );
     }
 

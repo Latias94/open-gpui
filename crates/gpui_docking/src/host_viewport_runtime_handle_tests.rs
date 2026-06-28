@@ -6458,6 +6458,12 @@ fn runtime_opened_cross_window_inner_edge_drag_then_re_docks_nested_mixed_axes(
         cx.read_entity(&controller, |controller, _| {
             assert_eq!(controller.graph().root(&source_space), None);
             assert_eq!(controller.graph().collect_items_in_space(&source_space), []);
+            assert_tabs_node_items(
+                controller.graph(),
+                target_left_tabs,
+                &[item("b")],
+                &format!("{first_zone:?}: left target tabs should stay intact"),
+            );
             let DockNode::Split { axis, children, .. } = controller
                 .graph()
                 .node(target_root)
@@ -6466,50 +6472,9 @@ fn runtime_opened_cross_window_inner_edge_drag_then_re_docks_nested_mixed_axes(
                 panic!("{first_zone:?}: target root should remain a split");
             };
             assert_eq!(*axis, SplitAxis::Horizontal, "{first_zone:?}");
-            assert_eq!(children.len(), 3, "{first_zone:?}");
-
-            let mut found_left = None;
-            let mut found_inserted = None;
-            let mut found_vertical_split = None;
-            for child in children.iter().copied() {
-                match controller
-                    .graph()
-                    .node(child)
-                    .unwrap_or_else(|| panic!("{first_zone:?}: child node should still exist"))
-                {
-                    DockNode::Tabs { items, .. } if items.as_slice() == &[item("b")] => {
-                        found_left = Some(child);
-                    }
-                    DockNode::Tabs { items, .. } if items.as_slice() == &[item("d")] => {
-                        found_inserted = Some(child);
-                    }
-                    DockNode::Split {
-                        axis: SplitAxis::Vertical,
-                        ..
-                    } => {
-                        found_vertical_split = Some(child);
-                    }
-                    other => {
-                        panic!(
-                            "{first_zone:?}: unexpected root child after second release: {other:?}"
-                        )
-                    }
-                }
-            }
-
-            assert_eq!(found_left, Some(target_left_tabs), "{first_zone:?}");
-            let inserted_tabs = found_inserted
-                .unwrap_or_else(|| panic!("{first_zone:?}: inserted tab d should be present"));
-            assert_tabs_node_items(
-                controller.graph(),
-                inserted_tabs,
-                &[item("d")],
-                &format!("{first_zone:?}: second-stage moved tab should be a sibling"),
-            );
-
-            let split_child = found_vertical_split.unwrap_or_else(|| {
-                panic!("{first_zone:?}: first-stage vertical split should remain")
-            });
+            assert_eq!(children.len(), 2, "{first_zone:?}");
+            assert_eq!(children[0], target_left_tabs, "{first_zone:?}");
+            let split_child = children[1];
             let DockNode::Split {
                 axis: nested_axis,
                 children: nested_children,
@@ -6523,11 +6488,48 @@ fn runtime_opened_cross_window_inner_edge_drag_then_re_docks_nested_mixed_axes(
             };
             assert_eq!(*nested_axis, SplitAxis::Vertical, "{first_zone:?}");
             assert_eq!(nested_children.len(), 2, "{first_zone:?}");
-            assert!(
-                nested_children.contains(&target_right_tabs),
+            let (moved_index, wrapped_index) = match first_zone {
+                DropZone::Top => (0, 1),
+                DropZone::Bottom => (1, 0),
+                _ => unreachable!(),
+            };
+            assert_eq!(nested_children[moved_index], moved_tabs, "{first_zone:?}");
+            assert_tabs_node_items(
+                controller.graph(),
+                moved_tabs,
+                &[item("a")],
+                &format!("{first_zone:?}: first-stage moved tab should stay in the nested split"),
+            );
+            let wrapped_leaf = nested_children[wrapped_index];
+            let DockNode::Split {
+                axis: wrapped_axis,
+                children: wrapped_children,
+                ..
+            } = controller.graph().node(wrapped_leaf).unwrap_or_else(|| {
+                panic!("{first_zone:?}: target leaf should be wrapped inside the nested split")
+            })
+            else {
+                panic!("{first_zone:?}: target leaf should become a horizontal split");
+            };
+            assert_eq!(*wrapped_axis, SplitAxis::Horizontal, "{first_zone:?}");
+            assert_eq!(wrapped_children.len(), 2, "{first_zone:?}");
+            let (inserted_index, old_index) = match second_zone {
+                DropZone::Left => (0, 1),
+                DropZone::Right => (1, 0),
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                wrapped_children[old_index], target_right_tabs,
                 "{first_zone:?}"
             );
-            assert!(nested_children.contains(&moved_tabs), "{first_zone:?}");
+            assert_tabs_node_items(
+                controller.graph(),
+                wrapped_children[inserted_index],
+                &[item("d")],
+                &format!(
+                    "{first_zone:?}: second-stage moved tab should dock inside the target leaf"
+                ),
+            );
         });
 
         cx.update(|app| app.refresh_windows());
