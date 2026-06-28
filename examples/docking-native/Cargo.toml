@@ -16,6 +16,8 @@ name = "open-gpui-docking-native"
 path = "src/main.rs"
 
 [dependencies]
+env_logger.workspace = true
+log.workspace = true
 open_gpui.workspace = true
 open_gpui_docking.workspace = true
 open_gpui_platform.workspace = true

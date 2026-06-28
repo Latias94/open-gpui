@@ -581,7 +581,7 @@ impl DockInteractionRuntime {
         if release.origin() == DockPayloadDropReleaseOrigin::SourceOnly {
             return None;
         }
-        let target = self.drop.take_accepted_target_at(
+        let target = self.drop.take_release_target_at(
             release.release_position(),
             policy,
             target_validator,
@@ -590,7 +590,7 @@ impl DockInteractionRuntime {
         Some(DockLocalDropDelivery::from_release(release, target))
     }
 
-    pub(crate) fn clear_drop_acceptance(&mut self) -> bool {
+    pub(crate) fn clear_drop_resolution(&mut self) -> bool {
         self.drop.clear()
     }
 
@@ -769,10 +769,6 @@ impl DockInteractionRuntime {
             .and_then(DockDropPreview::from_resolution)
     }
 
-    pub(crate) fn finish_drop_acceptance_pass(&mut self) -> bool {
-        self.drop.finish_acceptance_pass()
-    }
-
     #[cfg(test)]
     pub(crate) fn splitter_drag(&self) -> Option<&SplitterDrag> {
         self.splitter_drag.as_ref()
@@ -896,7 +892,7 @@ mod tests {
     }
 
     #[test]
-    fn local_drop_delivery_packages_previously_accepted_target_for_workspace_commit() {
+    fn local_drop_delivery_packages_current_resolved_target_for_workspace_commit() {
         let tabs = DockNodeId::null();
         let position = point(px(120.0), px(90.0));
         let mut runtime = DockInteractionRuntime::default();
@@ -912,7 +908,6 @@ mod tests {
             }),
             &DockPolicy::default(),
         );
-        assert!(runtime.finish_drop_acceptance_pass());
 
         let release = DockPayloadDropRelease::hovered_host(
             item_payload("a", "Panel A"),
@@ -921,7 +916,7 @@ mod tests {
         );
         let delivery = runtime
             .take_local_drop_delivery(&release, &DockPolicy::default(), None, None)
-            .expect("previously accepted target should produce a local delivery");
+            .expect("current resolved target should produce a local delivery");
         let request = delivery.workspace_request();
 
         assert_eq!(request.source_space, &DockSpaceId::from("main"));
@@ -956,7 +951,6 @@ mod tests {
             }),
             &DockPolicy::default(),
         );
-        assert!(runtime.finish_drop_acceptance_pass());
 
         let payload =
             DockDragPayload::new_tabs(DockSpaceId::from("main"), tabs, "Tabs".to_string());
@@ -973,7 +967,7 @@ mod tests {
         );
         let delivery = runtime
             .take_local_drop_delivery(&release, &DockPolicy::default(), None, None)
-            .expect("previously accepted target should produce a local delivery");
+            .expect("current resolved target should produce a local delivery");
         let request = delivery.workspace_request();
 
         assert_eq!(request.frozen_focus_item, Some(&focus_item));
@@ -1000,7 +994,6 @@ mod tests {
             }),
             &DockPolicy::default(),
         );
-        assert!(runtime.finish_drop_acceptance_pass());
 
         let release = DockPayloadDropRelease::source_only(
             item_payload("a", "Panel A"),

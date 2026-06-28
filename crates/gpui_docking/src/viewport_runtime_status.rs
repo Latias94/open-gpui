@@ -167,8 +167,6 @@ pub enum DockViewportRouteSelectionRecord {
     FocusStampWindowStackFallback,
     /// Active drag state reused the last hovered viewport as the mouse reference viewport.
     DragLastHoveredViewportFallback,
-    /// A rendered routed preview accepted this target before delivery.
-    AcceptedRoutedPreview,
 }
 
 /// Runtime route selected for a rendered drop release.
@@ -778,7 +776,6 @@ impl DockViewportRouteSelectionRecord {
             DockViewportRouteSelectionSource::DragLastHoveredViewportFallback => {
                 Self::DragLastHoveredViewportFallback
             }
-            DockViewportRouteSelectionSource::AcceptedRoutedPreview => Self::AcceptedRoutedPreview,
         }
     }
 }
@@ -1210,7 +1207,7 @@ mod tests {
     }
 
     #[test]
-    fn route_record_exposes_accepted_preview_selection_source() {
+    fn route_record_exposes_current_facts_selection_source() {
         let source = DockSpaceId::from("source");
         let target = DockSpaceId::from("target");
         let source_tabs = DockNodeId::null();
@@ -1235,7 +1232,7 @@ mod tests {
                     target_window,
                     host_position,
                 ),
-                source: crate::DockViewportRouteSelectionSource::AcceptedRoutedPreview,
+                source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
             },
         );
 
@@ -1246,7 +1243,7 @@ mod tests {
         assert_eq!(route.target.space(), Some(&target));
         assert_eq!(
             route.selection_source,
-            Some(DockViewportRouteSelectionRecord::AcceptedRoutedPreview)
+            Some(DockViewportRouteSelectionRecord::TrustedHoveredWindow)
         );
     }
 

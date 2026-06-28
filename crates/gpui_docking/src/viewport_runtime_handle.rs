@@ -1077,10 +1077,24 @@ impl DockViewportRuntimeHandle {
         request: &DockViewportDropRouteRequest,
         cx: &mut C,
     ) -> DockViewportResolvedDropRouteOutcome {
+        log::info!(
+            "[DEBUG-docking-native] begin resolve drop delivery source_space={} source_node={:?} origin={:?} drag_session={:?}",
+            request.source_space().as_str(),
+            request.source_node(),
+            request.release_origin(),
+            request.drag_session().as_ref().map(|session| session.id())
+        );
         let refresh = self
             .runtime
             .borrow_mut()
             .resolve_payload_drop_delivery_with_outcome(request, cx);
+        log::info!(
+            "[DEBUG-docking-native] finish resolve drop delivery source_space={} source_node={:?} route={:?} changed={}",
+            request.source_space().as_str(),
+            request.source_node(),
+            refresh.outcome.resolution().route(),
+            refresh.outcome.changed()
+        );
         refresh_viewport_window_effects(refresh.window_effects(), cx);
         refresh.outcome
     }
@@ -1160,16 +1174,6 @@ impl DockViewportRuntimeHandle {
         changed
     }
 
-    pub(crate) fn finish_routed_drop_acceptance_pass(
-        &self,
-        space: &DockSpaceId,
-        window_id: WindowId,
-    ) -> bool {
-        self.runtime
-            .borrow_mut()
-            .finish_routed_drop_acceptance_pass(space, window_id)
-    }
-
     pub(crate) fn routed_drop_preview_for(
         &self,
         space: &DockSpaceId,
@@ -1202,11 +1206,6 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow()
             .has_routed_drop_preview_for_drag_session(session)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn routed_drop_preview_is_accepted(&self) -> bool {
-        self.runtime.borrow().routed_drop_preview_is_accepted()
     }
 
     #[cfg(test)]
@@ -1246,10 +1245,32 @@ impl DockViewportRuntimeHandle {
         request: &DockViewportDropRouteRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        log::info!(
+            "[DEBUG-docking-native] resolve commit request source_space={} source_node={:?} release_origin={:?} drag_session={:?} release_position=({}, {})",
+            request.source_space().as_str(),
+            request.source_node(),
+            request.release_origin(),
+            request.drag_session().as_ref().map(|session| session.id()),
+            request.release_position().x,
+            request.release_position().y
+        );
         let resolution = self.resolve_payload_drop_delivery_for_request(request, cx);
+        log::info!(
+            "[DEBUG-docking-native] resolved commit route source_space={} source_node={:?} route={:?} preview_target={:?}",
+            request.source_space().as_str(),
+            request.source_node(),
+            resolution.route(),
+            resolution.routed_preview_target_snapshot()
+        );
         let delivery = match DockDropDelivery::from_resolution(resolution) {
             Ok(delivery) => delivery,
             Err(error) => {
+                log::info!(
+                    "[DEBUG-docking-native] commit rejected before delivery source_space={} source_node={:?} error={:?}",
+                    request.source_space().as_str(),
+                    request.source_node(),
+                    error
+                );
                 let result = Err(error);
                 self.runtime.borrow_mut().record_drop_route_result(&result);
                 return result;

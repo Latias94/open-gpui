@@ -498,8 +498,8 @@ The docking native example exercises the public multi-window setup: applications
 `DockController`, wrap it in a `DockViewportRuntimeHandle`, register window-close cleanup, and open
 controller-backed primary and secondary `DockHost` viewports. The runtime panel reports both the
 last route target and the route selection source, so dogfood runs can distinguish trusted hovered
-window routes, window-stack fallback routes, focus-stamp fallback routes, and accepted routed-preview
-replays. It also reports the current platform viewport capability snapshot, splitting route facts
+window routes, window-stack fallback routes, focus-stamp fallback routes, and current-facts
+rejections. It also reports the current platform viewport capability snapshot, splitting route facts
 from placement facts so platform-boundary regressions are visible during native dogfood. The
 placement restore line reports matched and missing restored windows, and the tear-off status line
 reports whether a viewport opened from suggested bounds or drag-source geometry, so placement

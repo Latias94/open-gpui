@@ -311,7 +311,6 @@ fn local_release_after_preview_miss_does_not_commit(cx: &mut TestAppContext) {
                 window,
                 cx,
             );
-            host.interaction_mut().finish_drop_acceptance_pass();
             host.drop_payload_release_from_render(
                 DockPayloadDropRelease::hovered_host(payload.clone(), space(), release_position),
                 window,
@@ -368,7 +367,6 @@ fn source_only_release_does_not_commit_cached_local_delivery_without_hover_signa
                 window,
                 cx,
             );
-            host.interaction_mut().finish_drop_acceptance_pass();
             host.drop_payload_release_from_render(
                 DockPayloadDropRelease::source_only(payload.clone(), space(), release_position),
                 window,

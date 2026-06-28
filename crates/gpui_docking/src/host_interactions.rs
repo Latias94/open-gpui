@@ -26,7 +26,7 @@ struct DockHostResolvedDropCommit {
 
 impl DockHost {
     pub(crate) fn clear_drop_preview_interaction(&mut self) -> bool {
-        self.interaction_mut().clear_drop_acceptance()
+        self.interaction_mut().clear_drop_resolution()
     }
 
     pub(crate) fn select_tab_interaction(

@@ -1,4 +1,4 @@
-use open_gpui::{AnyWindowHandle, AppContext, WindowId};
+use open_gpui::WindowId;
 use std::collections::HashSet;
 
 #[derive(Debug, Default)]
@@ -50,25 +50,9 @@ impl DockViewportWindowOwnership {
         self.retired_windows.contains(&window_id)
     }
 
+    #[cfg(test)]
     pub(crate) fn is_owned(&self, window_id: WindowId) -> bool {
         self.owned_windows.contains(&window_id)
-    }
-
-    pub(crate) fn window_allows_runtime_snapshot_resample<C: AppContext>(
-        &self,
-        window: AnyWindowHandle,
-        cx: &mut C,
-    ) -> bool {
-        window.update(cx, |_, _, _| ()).is_ok()
-    }
-
-    pub(crate) fn unowned_window_blocks_runtime_snapshot_resample<C: AppContext>(
-        &self,
-        window: AnyWindowHandle,
-        cx: &mut C,
-    ) -> bool {
-        !self.is_owned(window.window_id())
-            && !self.window_allows_runtime_snapshot_resample(window, cx)
     }
 
     pub(crate) fn record_render_passthrough_pointer_input(&mut self, window_id: WindowId) -> bool {

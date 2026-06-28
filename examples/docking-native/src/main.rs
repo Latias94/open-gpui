@@ -18,6 +18,7 @@ const CENTRAL_SPACE: &str = "docking-empty-central";
 const PRIMARY_DOCK_CLASS: &str = "primary-demo";
 const SECONDARY_DOCK_CLASS: &str = "secondary-demo";
 const CENTRAL_DOCK_CLASS: &str = "central-demo";
+const DOCKING_DEBUG_PREFIX: &str = "[DEBUG-docking-native]";
 
 struct DemoPanel {
     title: &'static str,
@@ -970,6 +971,13 @@ fn viewport_title(space: &DockSpaceId) -> &'static str {
 }
 
 fn main() {
+    env_logger::builder()
+        .format_timestamp_millis()
+        .filter_level(log::LevelFilter::Info)
+        .filter_module("open_gpui_docking", log::LevelFilter::Debug)
+        .filter_module("open_gpui", log::LevelFilter::Info)
+        .init();
+    log::info!("{DOCKING_DEBUG_PREFIX} starting docking native example");
     application().run(|cx: &mut App| {
         let controller = cx.new(|_| build_controller());
         let runtime = DockViewportRuntimeHandle::new(controller.clone());
@@ -1004,14 +1012,24 @@ fn main() {
                 .attach_panel_view("runtime", runtime_panel)
                 .expect("runtime panel descriptor should exist");
         });
+        log::info!("{DOCKING_DEBUG_PREFIX} opened runtime panel and attached dock layout");
 
         let primary_options = restored_viewport_options(&placement, SPACE, primary_bounds);
         let primary_opened = runtime
             .open_viewport(SPACE, primary_options, cx)
             .expect("failed to open primary docking viewport");
+        log::info!(
+            "{DOCKING_DEBUG_PREFIX} opened primary viewport space={} window_id={:?}",
+            SPACE,
+            primary_opened.window().window_id()
+        );
         let primary_window_id = primary_opened.window().window_id();
         cx.on_window_closed(move |cx, window_id| {
             if window_id == primary_window_id {
+                log::info!(
+                    "{DOCKING_DEBUG_PREFIX} primary window closed, quitting app window_id={:?}",
+                    window_id
+                );
                 cx.quit();
             }
         })
@@ -1022,13 +1040,16 @@ fn main() {
         runtime
             .open_viewport(SECONDARY_SPACE, secondary_options, cx)
             .expect("failed to open secondary docking viewport");
+        log::info!("{DOCKING_DEBUG_PREFIX} opened secondary viewport space={SECONDARY_SPACE}");
 
         let central_options = restored_viewport_options(&placement, CENTRAL_SPACE, central_bounds);
         runtime
             .open_viewport(CENTRAL_SPACE, central_options, cx)
             .expect("failed to open empty central docking viewport");
+        log::info!("{DOCKING_DEBUG_PREFIX} opened central viewport space={CENTRAL_SPACE}");
 
         cx.activate(true);
+        log::info!("{DOCKING_DEBUG_PREFIX} application activated");
     });
 }
 

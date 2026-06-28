@@ -7,6 +7,7 @@ use crate::{
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
+const DOCKING_DEBUG_PREFIX: &str = "[DEBUG-docking-native]";
 
 impl DockHost {
     pub(crate) fn publish_viewport_host_scene_interaction(
@@ -61,6 +62,14 @@ impl DockHost {
         )
         .with_event_receiver_local_scene_proof(event_receiver_local_scene_proof);
         let resolution_outcome = runtime.resolve_payload_drop_delivery_outcome(&request, cx);
+        log::info!(
+            "{DOCKING_DEBUG_PREFIX} hover preview route outcome space={} window_id={:?} origin={:?} route={:?} changed={}",
+            self.space().as_str(),
+            window.window_handle().window_id(),
+            DockPayloadDropReleaseOrigin::HoveredHost,
+            resolution_outcome.resolution().route(),
+            resolution_outcome.changed()
+        );
         let route_resolution_changed = resolution_outcome.changed();
         let resolution = resolution_outcome.resolution();
         let routed_preview_changed = runtime.update_host_routed_drop_preview(
@@ -84,7 +93,22 @@ impl DockHost {
     ) -> Option<DockHostInteractionOutcome> {
         let runtime = self.viewport_runtime().clone();
         let release_request = self.viewport_drop_route_request_from_release(release, window, cx);
+        log::info!(
+            "{DOCKING_DEBUG_PREFIX} commit routed payload release space={} window_id={:?} origin={:?} drag_session={:?} release_position=({}, {})",
+            self.space().as_str(),
+            window.window_handle().window_id(),
+            release.origin(),
+            release.drag_session().as_ref().map(|session| session.id()),
+            release.release_position().x,
+            release.release_position().y
+        );
         let result = runtime.commit_payload_drop_from_screen(&release_request, cx);
+        log::info!(
+            "{DOCKING_DEBUG_PREFIX} commit result space={} window_id={:?} success={}",
+            self.space().as_str(),
+            window.window_handle().window_id(),
+            result.is_ok()
+        );
         Some(DockHostInteractionOutcome::from_routed_drop_result(result))
     }
 

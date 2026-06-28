@@ -179,8 +179,7 @@ impl From<DockViewportTargetHit> for DockViewportWindowHit {
 
 /// Source that selected a viewport route candidate.
 ///
-/// This does not imply release delivery permit. Most variants below can route a preview or
-/// diagnostic target; only accepted routed previews and tear-off routes may become delivery.
+/// This does not imply release delivery authority. The current route facts decide delivery later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockViewportRouteSelectionSource {
     /// Current backend hovered-window signal selected this viewport.
@@ -198,9 +197,6 @@ pub(crate) enum DockViewportRouteSelectionSource {
     /// Drag/drop is active, hovered-window signal is unavailable, and the runtime reused the last
     /// hovered viewport as ImGui's mouse reference viewport.
     DragLastHoveredViewportFallback,
-    /// A previously rendered routed preview accepted this target, so release may replay that
-    /// accepted target without asking the window-stack fallback to pick a new viewport.
-    AcceptedRoutedPreview,
 }
 
 /// A viewport target selected by a concrete route selection source.

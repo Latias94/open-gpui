@@ -1,7 +1,7 @@
 use crate::{
-    DockSpaceId, DockViewportDropRoute, DockViewportIdentity, DockViewportResolvedDropRoute,
+    DockSpaceId, DockViewportIdentity, DockViewportResolvedDropRoute,
     DockViewportResolvedDropTargetSnapshot, drop_preview::DockDropRoutePreview,
-    drop_target::DockDropTargetKey, interaction::DockRuntimeDragSession,
+    interaction::DockRuntimeDragSession,
 };
 use open_gpui::{AnyWindowHandle, Point, WindowId};
 
@@ -10,7 +10,6 @@ pub(crate) struct DockViewportRoutedDropPreviewState {
     preview: Option<DockViewportRoutedDropPreview>,
     route_preview: Option<DockViewportRoutePreview>,
     resolution: Option<DockViewportResolvedDropRoute>,
-    accepted: Option<DockViewportAcceptedRoutedPreview>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,41 +42,6 @@ impl DockViewportRoutedDropPreviewReplacement {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockViewportAcceptedRoutedPreview {
-    target: DockViewportResolvedDropTargetSnapshot,
-    drag_session_id: Option<u64>,
-}
-
-impl DockViewportAcceptedRoutedPreview {
-    fn new(
-        target: &DockViewportResolvedDropTargetSnapshot,
-        drag_session_id: Option<u64>,
-    ) -> Option<Self> {
-        target.target_window_id()?;
-        Some(Self {
-            target: target.clone(),
-            drag_session_id,
-        })
-    }
-
-    pub(crate) fn target(&self) -> &DockViewportResolvedDropTargetSnapshot {
-        &self.target
-    }
-
-    pub(crate) fn target_key(&self) -> &DockDropTargetKey {
-        self.target.target_key()
-    }
-
-    pub(crate) fn target_window_id(&self) -> Option<WindowId> {
-        self.target.target_window_id()
-    }
-
-    pub(crate) fn matches_target(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
-        self.target.target_space() == space && self.target.target_window_id() == Some(window_id)
-    }
-}
-
 impl DockViewportRoutedDropPreviewState {
     pub(crate) fn has_preview(&self) -> bool {
         self.preview.is_some() || self.route_preview.is_some()
@@ -103,14 +67,6 @@ impl DockViewportRoutedDropPreviewState {
             .as_ref()
             .filter(|preview| preview.matches(space, window_id))
             .map(|preview| preview.preview.clone())
-    }
-
-    pub(crate) fn resolution_target_snapshot(
-        &self,
-    ) -> Option<&DockViewportResolvedDropTargetSnapshot> {
-        self.resolution
-            .as_ref()
-            .and_then(DockViewportResolvedDropRoute::routed_preview_target_snapshot)
     }
 
     pub(crate) fn replace(
@@ -144,65 +100,10 @@ impl DockViewportRoutedDropPreviewState {
             }
         }
 
-        let accepted_invalidated = self.accepted.as_ref().is_some_and(|accepted| {
-            next_resolution
-                .as_ref()
-                .and_then(DockViewportResolvedDropRoute::routed_preview_target_snapshot)
-                .map(|next_target| accepted.target_key() != next_target.target_key())
-                .unwrap_or(true)
-        });
         self.preview = next_preview;
         self.route_preview = next_route_preview;
         self.resolution = next_resolution;
-        if accepted_invalidated {
-            self.accepted = None;
-        }
         DockViewportRoutedDropPreviewReplacement::changed(affected_spaces)
-    }
-
-    pub(crate) fn finish_acceptance_pass(
-        &mut self,
-        space: &DockSpaceId,
-        window_id: WindowId,
-    ) -> bool {
-        // Mirrors ImGui's AcceptBeforeDelivery path: preview creates a candidate, target render
-        // accepts it, and release may only replay the accepted candidate.
-        let Some(preview) = self.preview.as_ref() else {
-            return false;
-        };
-        if !preview.matches(space, window_id) {
-            return false;
-        }
-        let Some(resolution) = self.resolution.as_ref() else {
-            return false;
-        };
-        if !matches!(
-            resolution.route(),
-            DockViewportDropRoute::Local { .. } | DockViewportDropRoute::KnownViewport { .. }
-        ) {
-            return false;
-        }
-        let Some(target) = resolution.routed_preview_target_snapshot() else {
-            return false;
-        };
-        if target.target_space() != space || target.target_window_id() != Some(window_id) {
-            return false;
-        }
-        let Some(token) = DockViewportAcceptedRoutedPreview::new(target, preview.drag_session_id())
-        else {
-            return false;
-        };
-        self.accepted = Some(token);
-        true
-    }
-
-    pub(crate) fn accepted_for_drag_session(
-        &self,
-        drag_session_id: u64,
-    ) -> Option<&DockViewportAcceptedRoutedPreview> {
-        self.accepted
-            .as_ref()
-            .filter(|accepted| accepted.drag_session_id == Some(drag_session_id))
     }
 
     pub(crate) fn targets_window(&self, window_id: WindowId) -> bool {
@@ -253,11 +154,6 @@ impl DockViewportRoutedDropPreviewState {
             .as_ref()
             .and_then(DockViewportRoutedDropPreview::drag_session_id)
             == Some(session.id())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn is_currently_accepted(&self) -> bool {
-        self.accepted.is_some()
     }
 }
 

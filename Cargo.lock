@@ -4372,6 +4372,7 @@ dependencies = [
 name = "open-gpui-docking"
 version = "0.1.0"
 dependencies = [
+ "log",
  "open-gpui",
  "serde",
  "serde_json",
@@ -4383,6 +4384,8 @@ dependencies = [
 name = "open-gpui-docking-native"
 version = "0.1.0"
 dependencies = [
+ "env_logger",
+ "log",
  "open-gpui",
  "open-gpui-docking",
  "open-gpui-platform",
