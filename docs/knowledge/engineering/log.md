@@ -6,6 +6,13 @@ status: active
 
 # Log
 
+- 2026-06-28: Fixed the mixed-axis docking regression as `d8656b6`. Nested inner-edge drops now
+  align with ImGui's target-node split behavior: the planner may reuse an ancestor split only until
+  the first real split boundary, and it wraps the hit leaf instead of crossing an opposing-axis
+  parent to insert beside a larger subtree. Added graph, drop-target, and runtime coverage for the
+  reported child-window tab dragged into the main window's lower-right leaf. Verified focused
+  docking tests, `cargo fmt --all -- --check`, `git diff --check`, `cargo check -p
+  open-gpui-docking`, and `cargo nextest run -p open-gpui-docking --no-fail-fast`.
 - 2026-06-23: Wrote `docs/plans/2026-06-23-009-feat-ui-table-row-pinning-plan.md` as the next
   Table follow-up. The plan uses TanStack Table's `top` / `center` / `bottom` row pinning model and
   Fret's Rust row-pinning helpers as the main references. Scope is limited to core row pinning
