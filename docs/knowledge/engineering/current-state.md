@@ -145,13 +145,13 @@ verified_by:
 
 # Current State
 
-- Goal: 继续 Table 成熟度边界梳理，并为下一块实现切片建立清晰的计划和记忆。
+- Goal: 继续 Table 成熟度边界梳理，并把 measured-row 这条切片收口成可提交的状态。
 - Branch: feat/scroll-surface-containment
-- Last verified: `git status --short --branch` shows a clean `feat/scroll-surface-containment` checkout; the latest code verification on this branch remains the committed scroll-surface / context-menu / sidebar / tabs containment trail already recorded below.
+- Last verified: `cargo nextest run -p open-gpui-ui-components table component_api_inventory`, `cargo nextest run -p open-gpui-ui-foundation-gallery table`, `cargo nextest run -p open-gpui-ui-components table::tests::measured_virtualizer_uses_cached_row_heights_for_known_rows`, and `git diff --check` all passed on the current working tree.
 - Done: `feat/scroll-surface-containment` 的 scroll-surface containment 已经收口并提交，vertical `Tabs` 走共享 `ScrollArea`，long `Sidebar` 保持在共享 viewport 内，ContextMenu 的长列表 wheel 输入也停留在自己的 surface 里。
-- In progress: None.
+- Done: The Table row-measurement slice is complete in the working tree. `Table` now exposes `row_measure_mode`, measures rendered body row heights when opted in, and feeds the results back into the row virtualizer cache.
 - Blocked: None.
-- Next action: Table 的 select editor slice 已经收口完成，下一步转向 sticky headers 或其它明确的 Table 成熟度边界；standalone headless extraction 继续保持 deferred。
+- Next action: Commit the measured-row Table slice, then move to the next clear Table maturity boundary; standalone headless extraction continues to stay deferred.
 
 - 2026-06-26: Completed the Tree drag-and-drop hierarchy editing slice from
   `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md`. `TreeMove`,

@@ -429,6 +429,10 @@ Content-fit width growth is also renderer-neutral: `TableColumn::with_content_fi
 as adapter-measured, `TableRenderPlan` exposes the measured widths, and the GPUI table adapter
 keeps header/body alignment stable while visible content changes. The Components gallery surfaces
 this behavior through the focused `content-fit-release` sample.
+`Table::row_measure_mode(TableRowMeasureMode::Measured)` is the sibling body-row height recipe:
+the adapter measures rendered row heights, feeds them back into the row virtualizer cache, and
+keeps wrapped body content from overlapping the following row. `Fixed` remains the default
+constant-height contract.
 `TableColumnPinning` is caller-owned state that splits
 resolved visible columns into `left`, `center`, and `right` `TableColumnRegions` after visibility
 and explicit ordering have been applied; unknown or invisible pinned ids are ignored. `TableColumn`

@@ -186,8 +186,9 @@ pub use table::{
     TablePredicateFilter, TablePredicateFilterChange, TablePredicateFilterOperator,
     TablePredicateFilterOperatorOptionState, TablePredicateFilterState, TableRangeFilter,
     TableRangeFilterChange, TableRangeFilterState, TableRenderPlan, TableRowAction,
-    TableRowActivation, TableRowActivationKind, TableRowExpansionToggle, TableRowRenderPlan,
-    TableRowSelectionChange, TableSelectionScope, TableToolbar, TableToolbarState,
+    TableRowActivation, TableRowActivationKind, TableRowExpansionToggle, TableRowMeasureMode,
+    TableRowRenderPlan, TableRowSelectionChange, TableSelectionScope, TableToolbar,
+    TableToolbarState,
 };
 pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

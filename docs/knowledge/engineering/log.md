@@ -6,15 +6,8 @@ status: active
 
 # Log
 
-- 2026-06-27: Completed the Table select editor slice in the working tree. `TableCellEditor::Select`
-  and `TableSelectOption` are now public in core and components, the GPUI Table adapter renders
-  fixed-option `Select` editors for leaf cells, the row-click path now respects prevented events so
-  embedded editors do not wake row activation, the Components gallery gained a `select-release`
-  sample plus a dedicated select smoke, and the component contract / verification notes now call
-  out the new inline-edit recipe. Verified with targeted `cargo test -p open-gpui-ui-components`
-  runs for the select cell regression, the standalone select runtime smoke, and the explicit root /
-  prelude export gate. Next action is to pick the next Table maturity boundary, with sticky headers
-  currently the clearest follow-up.
+- 2026-06-28: Completed the measured-row Table slice in the working tree. `ui_components::Table` now exposes `row_measure_mode`, the GPUI adapter can measure rendered body row heights and feed them back into the row virtualizer cache, and the render path keeps fixed-height rows unchanged when the mode stays at `Fixed`. Focused component and gallery verification passed after syncing the component API inventory for the new `Table` builder and the existing `Select::full_width` baseline drift.
+- 2026-06-27: Completed the Table select editor slice in the working tree. `TableCellEditor::Select` and `TableSelectOption` are now public in core and components, the GPUI Table adapter renders fixed-option `Select` editors for leaf cells, the row-click path now respects prevented events so embedded editors do not wake row activation, the Components gallery gained a `select-release` sample plus a dedicated select smoke, and the component contract / verification notes now call out the new inline-edit recipe. Verified with targeted `cargo test -p open-gpui-ui-components` runs for the select cell regression, the standalone select runtime smoke, and the explicit root / prelude export gate. Next action is to pick the next Table maturity boundary, with sticky headers currently the clearest follow-up.
 - 2026-06-27: Refreshed the engineering memory after confirming the
   `feat/scroll-surface-containment` branch is clean and the scroll-surface / context-menu / sidebar
   / tabs work is fully shipped. The current durable state now points at the next Table follow-up

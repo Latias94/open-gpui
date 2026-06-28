@@ -98,8 +98,8 @@ pub use crate::table::{
     TableRangeFilterChange, TableRangeFilterState, TableRenderPlan, TableResolvedHeaderCell,
     TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions, TableResolvedHeaderKind,
     TableRowAction, TableRowActivation, TableRowActivationKind, TableRowExpansionToggle,
-    TableRowRenderPlan, TableRowSelectionChange, TableSelectionScope, TableToolbar,
-    TableToolbarState,
+    TableRowMeasureMode, TableRowRenderPlan, TableRowSelectionChange, TableSelectionScope,
+    TableToolbar, TableToolbarState,
 };
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

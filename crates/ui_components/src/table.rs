@@ -6220,6 +6220,7 @@ pub struct TableRenderPlan {
     table_id: String,
     label: String,
     metrics: TableMetrics,
+    row_measure_mode: TableRowMeasureMode,
     table: Rc<TableResolvedState>,
     virtualizer: VirtualizerResolvedState,
     content_fit_widths: BTreeMap<TableColumnId, UiPx>,
@@ -6253,6 +6254,7 @@ impl TableRenderPlan {
         table_id: String,
         label: String,
         metrics: TableMetrics,
+        row_measure_mode: TableRowMeasureMode,
         state: &TableState,
         table: Rc<TableResolvedState>,
         virtualizer: VirtualizerResolvedState,
@@ -6260,6 +6262,7 @@ impl TableRenderPlan {
         content_fit_widths: BTreeMap<TableColumnId, UiPx>,
         center_scroll_offset: Option<UiPx>,
         center_viewport_extent: Option<UiPx>,
+        row_measurements: &BTreeMap<String, UiPx>,
     ) -> Self {
         let columns =
             apply_table_content_fit_widths(columns, &content_fit_widths, state.column_sizing());
@@ -6294,13 +6297,16 @@ impl TableRenderPlan {
             .collect::<BTreeSet<_>>();
         let top_row_count = table.top_rows().len();
         let center_total_row_count = table.center_rows().len();
-        let top_rows = static_row_render_plans(
+        let top_rows = row_render_plans(
             table.top_rows(),
             TableRowRegion::Top,
+            row_measure_mode,
+            row_measurements,
             metrics.row_height(),
             &columns,
             &duplicate_row_ids,
             0,
+            UiPx::ZERO,
         );
         let rows = virtualized_center_row_render_plans(
             table.center_rows(),
@@ -6309,13 +6315,19 @@ impl TableRenderPlan {
             &duplicate_row_ids,
             top_row_count,
         );
-        let bottom_rows = static_row_render_plans(
+        let top_height = top_rows
+            .iter()
+            .fold(UiPx::ZERO, |total, row| total + row.virtual_size());
+        let bottom_rows = row_render_plans(
             table.bottom_rows(),
             TableRowRegion::Bottom,
+            row_measure_mode,
+            row_measurements,
             metrics.row_height(),
             &columns,
             &duplicate_row_ids,
             top_row_count + center_total_row_count,
+            top_height + virtualizer.total_size(),
         );
         let pagination = state.pagination();
         let selection_summary = table.final_selection_summary();
@@ -6324,6 +6336,7 @@ impl TableRenderPlan {
             table_id,
             label,
             metrics,
+            row_measure_mode,
             table,
             virtualizer,
             content_fit_widths,
@@ -6366,6 +6379,11 @@ impl TableRenderPlan {
     /// Returns resolved metrics.
     pub const fn metrics(&self) -> TableMetrics {
         self.metrics
+    }
+
+    /// Returns the row height ownership mode.
+    pub const fn row_measure_mode(&self) -> TableRowMeasureMode {
+        self.row_measure_mode
     }
 
     /// Returns the resolved renderer-neutral table state.
@@ -6586,32 +6604,6 @@ impl TableRenderPlan {
     }
 }
 
-fn static_row_render_plans(
-    rows: &[TableResolvedRow],
-    region: TableRowRegion,
-    row_height: UiPx,
-    columns: &[TableColumnRenderPlan],
-    duplicate_row_ids: &BTreeSet<TableRowId>,
-    model_index_start: usize,
-) -> Vec<TableRowRenderPlan> {
-    rows.iter()
-        .enumerate()
-        .map(|(region_index, row)| {
-            let row = row.clone();
-            let render_key = row_render_key(&row, duplicate_row_ids);
-            let model_index = model_index_start + region_index;
-            let measurement = VirtualizerItemMeasurement::new(
-                region_index,
-                VirtualizerItemKey::new(render_key.clone()),
-                row_height * region_index as f32,
-                row_height,
-                false,
-            );
-            TableRowRenderPlan::new(row, region, render_key, model_index, measurement, columns)
-        })
-        .collect()
-}
-
 fn virtualized_center_row_render_plans(
     rows: &[TableResolvedRow],
     measurements: &[VirtualizerItemMeasurement],
@@ -6638,6 +6630,93 @@ fn virtualized_center_row_render_plans(
         .collect()
 }
 
+fn row_render_plans(
+    rows: &[TableResolvedRow],
+    region: TableRowRegion,
+    row_measure_mode: TableRowMeasureMode,
+    row_measurements: &BTreeMap<String, UiPx>,
+    fallback_row_height: UiPx,
+    columns: &[TableColumnRenderPlan],
+    duplicate_row_ids: &BTreeSet<TableRowId>,
+    model_index_start: usize,
+    start_offset: UiPx,
+) -> Vec<TableRowRenderPlan> {
+    let mut cursor = start_offset;
+    rows.iter()
+        .enumerate()
+        .map(|(region_index, row)| {
+            let row = row.clone();
+            let render_key = row_render_key(&row, duplicate_row_ids);
+            let model_index = model_index_start + region_index;
+            let row_height = if row_measure_mode.measured() {
+                row_measurements
+                    .get(&render_key)
+                    .copied()
+                    .unwrap_or(fallback_row_height)
+            } else {
+                fallback_row_height
+            };
+            let measured =
+                row_measure_mode.measured() && row_measurements.contains_key(&render_key);
+            let measurement = VirtualizerItemMeasurement::new(
+                region_index,
+                VirtualizerItemKey::new(render_key.clone()),
+                cursor,
+                row_height,
+                measured,
+            );
+            cursor = measurement.end();
+            TableRowRenderPlan::new(row, region, render_key, model_index, measurement, columns)
+        })
+        .collect()
+}
+
+fn measured_virtualizer_state(
+    rows: &[TableResolvedRow],
+    row_measure_mode: TableRowMeasureMode,
+    row_measurements: &BTreeMap<String, UiPx>,
+    fallback_row_height: UiPx,
+    overscan: usize,
+    scroll_offset: UiPx,
+    viewport_extent: UiPx,
+    duplicate_row_ids: &BTreeSet<TableRowId>,
+) -> VirtualizerResolvedState {
+    let mut state = VirtualizerState::new(rows.len(), fallback_row_height)
+        .with_viewport_extent(viewport_extent)
+        .with_overscan(overscan)
+        .with_scroll_offset(scroll_offset);
+
+    let item_keys = rows
+        .iter()
+        .map(|row| VirtualizerItemKey::new(row_render_key(row, duplicate_row_ids)))
+        .collect::<Vec<_>>();
+    state = state.with_item_keys(item_keys);
+
+    if row_measure_mode.measured() {
+        return state.resolve_known_size_window(|index| {
+            let row = &rows[index];
+            let render_key = row_render_key(row, duplicate_row_ids);
+            (
+                VirtualizerItemKey::new(render_key.clone()),
+                row_measurements
+                    .get(&render_key)
+                    .copied()
+                    .unwrap_or(fallback_row_height),
+            )
+        });
+    }
+
+    state.resolve_fixed_window(|index| {
+        let row = &rows[index];
+        VirtualizerItemKey::new(row_render_key(row, duplicate_row_ids))
+    })
+}
+
+fn table_rows_virtual_size(rows: &[TableRowRenderPlan]) -> UiPx {
+    rows.iter()
+        .fold(UiPx::ZERO, |total, row| total + row.virtual_size())
+}
+
 #[derive(Debug, Clone)]
 struct TableResolvedCache {
     key: TableStateCacheKey,
@@ -6651,6 +6730,7 @@ struct TableRuntime {
     horizontal_scroll_handle: ScrollHandle,
     resolved: Option<TableResolvedCache>,
     content_fit: TableContentFitMeasureCache,
+    row_measurements: BTreeMap<String, UiPx>,
     column_resize: TableColumnResizeState,
     focused_row: Option<TableRowId>,
     focus_handles: BTreeMap<TableRowId, FocusHandle>,
@@ -6695,6 +6775,18 @@ impl TableRuntime {
         }
     }
 
+    fn set_row_measurement(&mut self, render_key: String, height: UiPx, cx: &mut Context<Self>) {
+        let height = nonnegative_px(height);
+        if self.row_measurements.get(&render_key).copied() != Some(height) {
+            self.row_measurements.insert(render_key, height);
+            cx.notify();
+        }
+    }
+
+    fn clear_row_measurements(&mut self) {
+        self.row_measurements.clear();
+    }
+
     fn set_selection_anchor(&mut self, row_id: Option<TableRowId>, cx: &mut Context<Self>) {
         if self.selection_anchor != row_id {
             self.selection_anchor = row_id;
@@ -6732,6 +6824,23 @@ struct TableColumnOrderDrag {
     region: TableColumnRegion,
 }
 
+/// Body row height ownership for table rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableRowMeasureMode {
+    /// Body rows keep the shared fixed height contract.
+    #[default]
+    Fixed,
+    /// Body rows may grow to fit their rendered content and feed measurements back into the virtualizer.
+    Measured,
+}
+
+impl TableRowMeasureMode {
+    /// Returns whether the table should measure row heights from rendered content.
+    pub const fn measured(self) -> bool {
+        matches!(self, Self::Measured)
+    }
+}
+
 /// A concrete GPUI table renderer using the Open GPUI row-model and virtualizer contracts.
 #[derive(IntoElement)]
 pub struct Table {
@@ -6739,6 +6848,7 @@ pub struct Table {
     label: SharedString,
     state: TableState,
     metrics: TableMetrics,
+    row_measure_mode: TableRowMeasureMode,
     snapshot: Option<VirtualizerSnapshot>,
     default_focused_row: Option<TableRowId>,
     on_sort_requested: Option<TableSortHandler>,
@@ -6761,6 +6871,7 @@ impl Table {
             label: label.into(),
             state,
             metrics: TableMetrics::from_size(Size::Medium),
+            row_measure_mode: TableRowMeasureMode::default(),
             snapshot: None,
             default_focused_row: None,
             on_sort_requested: None,
@@ -6779,6 +6890,12 @@ impl Table {
     /// Applies the accessible table label.
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = label.into();
+        self
+    }
+
+    /// Applies the body row height ownership mode.
+    pub fn row_measure_mode(mut self, row_measure_mode: TableRowMeasureMode) -> Self {
+        self.row_measure_mode = row_measure_mode;
         self
     }
 
@@ -6929,12 +7046,31 @@ impl Table {
         let metrics = self.metrics_for_viewport(viewport_extent);
         let table = Rc::new(self.state.resolve());
         let columns = self.resolve_columns(&table);
-        let virtualizer = self.resolve_virtualizer(&table, metrics, scroll_offset);
+        let duplicate_row_ids = table
+            .duplicate_row_ids()
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let virtualizer = if self.row_measure_mode.measured() {
+            measured_virtualizer_state(
+                table.center_rows(),
+                self.row_measure_mode,
+                &BTreeMap::new(),
+                metrics.row_height(),
+                metrics.overscan(),
+                nonnegative_px(scroll_offset),
+                metrics.viewport_extent(),
+                &duplicate_row_ids,
+            )
+        } else {
+            self.resolve_virtualizer(&table, metrics, scroll_offset)
+        };
 
         TableRenderPlan::resolve(
             self.id.clone(),
             self.label.to_string(),
             metrics,
+            self.row_measure_mode,
             &self.state,
             table,
             virtualizer,
@@ -6942,6 +7078,7 @@ impl Table {
             BTreeMap::new(),
             None,
             None,
+            &BTreeMap::new(),
         )
     }
 
@@ -6966,10 +7103,10 @@ impl Table {
             .as_ref()
             .map(|cache| cache.key != cache_key)
             .unwrap_or(true);
-
         if needs_resolve {
             let table = Rc::new(state.resolve());
             let columns = self.resolve_columns(&table);
+            runtime.clear_row_measurements();
             runtime.resolved = Some(TableResolvedCache {
                 key: cache_key,
                 table,
@@ -6981,7 +7118,20 @@ impl Table {
             .resolved
             .as_ref()
             .expect("table runtime cache should be initialized");
-        let virtualizer = self.resolve_virtualizer(&cache.table, metrics, scroll_offset);
+        let virtualizer = if self.row_measure_mode.measured() {
+            measured_virtualizer_state(
+                cache.table.center_rows(),
+                self.row_measure_mode,
+                &runtime.row_measurements,
+                metrics.row_height(),
+                metrics.overscan(),
+                nonnegative_px(scroll_offset),
+                metrics.viewport_extent(),
+                &cache.table.duplicate_row_ids().iter().cloned().collect(),
+            )
+        } else {
+            self.resolve_virtualizer(&cache.table, metrics, scroll_offset)
+        };
         let rendered_rows = table_content_fit_rendered_rows(&cache.table, &virtualizer);
         let center_scroll_offset =
             ui_px((-ui_px_from_gpui(horizontal_scroll_handle.offset().x).as_f32()).max(0.0));
@@ -7010,6 +7160,7 @@ impl Table {
             self.id.clone(),
             self.label.to_string(),
             metrics,
+            self.row_measure_mode,
             &state,
             cache.table.clone(),
             virtualizer,
@@ -7017,6 +7168,7 @@ impl Table {
             content_fit_widths,
             center_scroll_offset,
             center_viewport_extent,
+            &runtime.row_measurements,
         )
     }
 
@@ -7201,6 +7353,7 @@ impl RenderOnce for Table {
             horizontal_scroll_handle: ScrollHandle::new(),
             resolved: None,
             content_fit: TableContentFitMeasureCache::default(),
+            row_measurements: BTreeMap::new(),
             column_resize: TableColumnResizeState::default(),
             focused_row: default_focused_row,
             focus_handles: BTreeMap::new(),
@@ -8022,9 +8175,10 @@ fn render_table_body(
     let bottom_rows = plan.bottom_rows().to_vec();
     let top_row_count = top_rows.len();
     let center_total_row_count = plan.virtualizer().count();
-    let top_height = metrics.row_height() * top_rows.len() as f32;
+    let top_height = table_rows_virtual_size(&top_rows);
     let center_height = plan.virtualizer().total_size();
-    let bottom_height = metrics.row_height() * bottom_rows.len() as f32;
+    let bottom_height = table_rows_virtual_size(&bottom_rows);
+    let measured_rows = plan.row_measure_mode().measured();
 
     div()
         .flex_1()
@@ -8056,6 +8210,7 @@ fn render_table_body(
                 on_row_activate.clone(),
                 on_row_expansion_request.clone(),
                 on_cell_edit_change.clone(),
+                measured_rows,
             ))
         })
         .child(
@@ -8084,6 +8239,7 @@ fn render_table_body(
                         on_row_activate.clone(),
                         on_row_expansion_request.clone(),
                         on_cell_edit_change.clone(),
+                        measured_rows,
                     ),
                 )
                 .vertical()
@@ -8114,6 +8270,7 @@ fn render_table_body(
                 on_row_activate,
                 on_row_expansion_request,
                 on_cell_edit_change,
+                measured_rows,
             ))
         })
 }
@@ -8140,6 +8297,7 @@ fn render_table_row_band(
     on_row_activate: Option<TableRowActivationHandler>,
     on_row_expansion_request: Option<TableRowExpansionHandler>,
     on_cell_edit_change: Option<TableCellEditHandler>,
+    measured_rows: bool,
 ) -> AnyElement {
     let table_id = table_id.to_owned();
     let region_name = region.as_str();
@@ -8179,6 +8337,7 @@ fn render_table_row_band(
                 on_row_activate.clone(),
                 on_row_expansion_request.clone(),
                 on_cell_edit_change.clone(),
+                measured_rows,
             )
         }))
         .into_any_element()
@@ -8205,9 +8364,11 @@ fn render_table_row(
     on_row_activate: Option<TableRowActivationHandler>,
     on_row_expansion_request: Option<TableRowExpansionHandler>,
     on_cell_edit_change: Option<TableCellEditHandler>,
+    measured_rows: bool,
 ) -> impl IntoElement {
     let render_key = row.render_key().to_owned();
     let row_id = row.id().clone();
+    let row_for_layout = row.clone();
     let row_for_click = row.clone();
     let row_for_key = row.clone();
     let tree = row.row().tree().cloned();
@@ -8261,7 +8422,27 @@ fn render_table_row(
         })
     });
 
-    div()
+    let row_element = div()
+        .on_children_prepainted({
+            let runtime = runtime.clone();
+            let row_key = render_key.clone();
+            move |row_bounds, _window, cx| {
+                if measured_rows {
+                    let measured_height = row_bounds
+                        .iter()
+                        .map(|bounds| bounds.size.height)
+                        .fold(Pixels::ZERO, Pixels::max);
+                    let measured_height = measured_height.ceil();
+                    runtime.update(cx, |runtime, cx| {
+                        runtime.set_row_measurement(
+                            row_key.clone(),
+                            ui_px_from_gpui(measured_height),
+                            cx,
+                        );
+                    });
+                }
+            }
+        })
         .id(format!("table:{table_id}:row:{render_key}"))
         .debug_selector({
             let table_id = table_id.clone();
@@ -8272,10 +8453,8 @@ fn render_table_row(
         .top(gpui_px_from_ui(row.virtual_start()))
         .left(px(0.0))
         .right(px(0.0))
-        .h(gpui_px_from_ui(row.virtual_size()))
         .min_w(px(0.0))
         .flex()
-        .items_center()
         .overflow_hidden()
         .border_b_1()
         .border_color(rgb(0xe2e4dc))
@@ -8417,6 +8596,7 @@ fn render_table_row(
                             current_expansion_for_cells.clone(),
                             on_row_expansion_request.clone(),
                             on_cell_edit_change.clone(),
+                            measured_rows,
                         )
                         .into_any_element()
                     }
@@ -8425,11 +8605,9 @@ fn render_table_row(
                     region_children.push(render_table_lane_spacer(trailing_spacer_width));
                 }
 
-                let region_lane = div()
-                    .h_full()
+                let mut region_lane = div()
                     .min_w(px(0.0))
                     .flex()
-                    .items_center()
                     .overflow_hidden()
                     .id(format!(
                         "table:{table_id}:row-region:{render_key}:{region_name}"
@@ -8442,12 +8620,18 @@ fn render_table_row(
                     })
                     .w(gpui_px_from_ui(region_width))
                     .flex_none()
-                    .children(region_children)
-                    .into_any_element();
+                    .children(region_children);
+
+                region_lane = if measured_rows {
+                    region_lane.items_start()
+                } else {
+                    region_lane.h_full().items_center()
+                };
+
+                let region_lane = region_lane.into_any_element();
 
                 if let Some(center_scroll_id) = center_scroll_id {
                     div()
-                        .h_full()
                         .min_w(px(0.0))
                         .flex_1()
                         .child(
@@ -8462,6 +8646,11 @@ fn render_table_row(
                 }
             },
         ))
+        .when(!measured_rows, |this| {
+            this.h(gpui_px_from_ui(row_for_layout.virtual_size()))
+        })
+        .into_any_element();
+    row_element
 }
 
 fn table_row_region_cells_for_window(
@@ -8504,6 +8693,7 @@ fn render_table_body_cell(
     current_expansion: TableExpansionState,
     on_row_expansion_request: Option<TableRowExpansionHandler>,
     on_cell_edit_change: Option<TableCellEditHandler>,
+    measured_rows: bool,
 ) -> impl IntoElement {
     let column_id = cell.column_id().as_str().to_owned();
     let show_tree_affordance = tree_affordance && tree.is_some();
@@ -8513,7 +8703,7 @@ fn render_table_body_cell(
         content.push(
             div()
                 .w(gpui_px_from_ui(indent))
-                .h_full()
+                .when(!measured_rows, |this| this.h_full())
                 .flex_none()
                 .into_any_element(),
         );
@@ -8665,31 +8855,32 @@ fn render_table_body_cell(
                 .flex_1()
                 .min_w(px(0.0))
                 .overflow_hidden()
-                .truncate()
-                .whitespace_nowrap()
+                .when(measured_rows, |this| this.whitespace_normal())
+                .when(!measured_rows, |this| this.truncate())
                 .child(cell_text)
                 .into_any_element(),
         );
     }
 
-    div()
+    let cell = div()
         .id(format!("table:{table_id}:cell:{render_key}:{column_id}"))
         .debug_selector(move || format!("table:{table_id}:cell:{render_key}:{column_id}"))
         .w(gpui_px_from_ui(cell.width()))
         .flex_none()
-        .h_full()
         .flex()
-        .items_center()
+        .when(!measured_rows, |this| this.h_full().items_center())
         .px(gpui_px_from_ui(metrics.cell_padding_x()))
         .border_r_1()
         .border_color(rgb(0xe7e9e1))
-        .truncate()
-        .whitespace_nowrap()
         .text_xs()
         .text_color(rgb(0x2f3845))
         .ui_role(cell.role())
         .aria_column_index(cell.aria_column_index())
         .children(content)
+        .when(measured_rows, |this| this.whitespace_normal())
+        .when(!measured_rows, |this| this.truncate().whitespace_nowrap());
+
+    cell.into_any_element()
 }
 
 fn render_table_tree_toggle(
@@ -9092,5 +9283,47 @@ mod tests {
                 TableColumnId::new("team"),
             ]
         );
+    }
+
+    #[test]
+    fn measured_virtualizer_uses_cached_row_heights_for_known_rows() {
+        let resolved = TableState::new([
+            TableRow::new("row-a").with_cell("name", "Alpha"),
+            TableRow::new("row-b").with_cell("name", "Beta"),
+            TableRow::new("row-c").with_cell("name", "Gamma"),
+        ])
+        .with_columns([TableColumn::new("name", "Name")])
+        .resolve();
+        let rows = resolved.center_rows();
+        let duplicate_row_ids = resolved
+            .duplicate_row_ids()
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let measurements = BTreeMap::from([
+            (rows[0].id().as_str().to_owned(), ui_px(18.0)),
+            (rows[1].id().as_str().to_owned(), ui_px(28.0)),
+        ]);
+
+        let resolved = measured_virtualizer_state(
+            &rows,
+            TableRowMeasureMode::Measured,
+            &measurements,
+            ui_px(20.0),
+            2,
+            ui_px(0.0),
+            ui_px(60.0),
+            &duplicate_row_ids,
+        );
+
+        assert_eq!(resolved.total_size(), ui_px(66.0));
+        assert_eq!(*resolved.visible_range(), VirtualizerRange::new(0, 3));
+        assert_eq!(resolved.items().len(), 3);
+        assert_eq!(resolved.measurements()[0].size(), ui_px(18.0));
+        assert_eq!(resolved.measurements()[1].size(), ui_px(28.0));
+        assert_eq!(resolved.measurements()[2].size(), ui_px(20.0));
+        assert_eq!(resolved.measurements()[0].start(), ui_px(0.0));
+        assert_eq!(resolved.measurements()[1].start(), ui_px(18.0));
+        assert_eq!(resolved.measurements()[2].start(), ui_px(46.0));
     }
 }

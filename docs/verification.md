@@ -157,6 +157,11 @@ content-fit proof: it enters the Table family view, targets the `content-fit-rel
 edits the visible `name` cell, verifies the sample keeps the fixed `score` lane anchored, and
 proves the adapter-measured `name` column widens while header and body stay aligned.
 
+`table_runtime_measured_row_height_reflows_after_paint` is the focused measured-row proof: it
+renders a measured `Table` with wrapped body content, verifies the first row grows beyond the
+fallback row height, and confirms the second row is laid out below the expanded row after the
+measurement cache settles.
+
 `components_gallery_smoke_select_table_cell_updates_sample_rows` is the focused select-edit
 proof: it enters the Table family view, targets the `select-release` sample, opens a fixed-option
 `Select` editor, picks `blocked`, verifies `TableCellEditChange` targets the stable

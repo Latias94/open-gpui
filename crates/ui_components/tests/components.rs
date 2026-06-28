@@ -32,16 +32,17 @@ use open_gpui_ui_components::{
     TableNumericFilterOperator, TablePagination, TablePredicateFilter, TablePredicateFilterChange,
     TablePredicateFilterOperator, TablePredicateFilterOperatorOptionState,
     TablePredicateFilterState, TableRangeFilter, TableRangeFilterChange, TableRangeFilterState,
-    TableResolvedHeaderKind, TableRow, TableRowChildrenLoadState, TableRowId, TableRowPinning,
-    TableRowPinningPolicy, TableRowRegion, TableSelectOption, TableSelectionActivationMode,
-    TableSelectionMode, TableSelectionScope, TableSort, TableSortDirection, TableStageMode,
-    TableState, TableTextFilterOperator, TableToolbar, TableToolbarState, Tabs, TabsActivationMode,
-    TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput, TextInputDisplayMode,
-    Textarea, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
-    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeChildrenLoadState,
-    TreeDropPosition, TreeItemDescriptor, TreeMove, TreeMoveTarget, TreeRenderPlan,
-    TreeRowRenderPlan, VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    TableResolvedHeaderKind, TableRow, TableRowChildrenLoadState, TableRowId, TableRowMeasureMode,
+    TableRowPinning, TableRowPinningPolicy, TableRowRegion, TableSelectOption,
+    TableSelectionActivationMode, TableSelectionMode, TableSelectionScope, TableSort,
+    TableSortDirection, TableStageMode, TableState, TableTextFilterOperator, TableToolbar,
+    TableToolbarState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
+    TabsState, TextInput, TextInputDisplayMode, Textarea, ThemeColor, ThemeMode, ThemeResolver,
+    ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
+    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
+    TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeChildrenLoadState, TreeDropPosition,
+    TreeItemDescriptor, TreeMove, TreeMoveTarget, TreeRenderPlan, TreeRowRenderPlan,
+    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
     VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
     VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
     VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, apply_tree_move,
@@ -1067,6 +1068,7 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "group",
             "groups",
             "disabled",
+            "full_width",
         ],
         "Combobox" => &[
             "placeholder",
@@ -1122,6 +1124,7 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
         "Splitter" => &["disabled", "panel"],
         "Table" => &[
             "label",
+            "row_measure_mode",
             "overscan",
             "row_height",
             "header_height",
@@ -1400,6 +1403,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "group",
             "groups",
             "disabled",
+            "full_width",
             "open",
             "default_open",
             "selected",
@@ -1557,6 +1561,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
         "Table" => &[
             "new",
             "label",
+            "row_measure_mode",
             "overscan",
             "row_height",
             "header_height",
@@ -6535,6 +6540,9 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .pinned_top(["row-a"])
         .pinned_bottom(["row-b"]);
     let _prelude_row_pinning: prelude::TableRowPinning = root_row_pinning.clone();
+    let _root_row_measure_mode: root::TableRowMeasureMode = root::TableRowMeasureMode::Measured;
+    let _prelude_row_measure_mode: prelude::TableRowMeasureMode =
+        prelude::TableRowMeasureMode::Fixed;
     let _root_row_pinning_policy: root::TableRowPinningPolicy =
         root::TableRowPinningPolicy::PageOnly;
     let _prelude_row_pinning_policy: prelude::TableRowPinningPolicy =
@@ -9998,6 +10006,60 @@ fn table_runtime_content_fit_widths_follow_visible_content(cx: &mut open_gpui::T
                 .expect("fixed-width name cell should stay rendered")
                 .left(),
         px(140.0)
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_measured_row_height_reflows_after_paint(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        state: TableState,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let table = Table::new(
+                "measured-row-runtime-table",
+                "Measured row runtime",
+                self.state.clone(),
+            )
+            .row_height(ui_px(24.0))
+            .row_measure_mode(TableRowMeasureMode::Measured)
+            .viewport_extent(ui_px(120.0));
+
+            div().w(px(260.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let state = TableState::new([
+        TableRow::new("row-a").with_cell(
+            "description",
+            "Measured rows should wrap onto multiple lines when the adapter can grow them from rendered content",
+        ),
+        TableRow::new("row-b").with_cell("description", "Short"),
+    ])
+    .with_columns([TableColumn::new("description", "Description").with_width(ui_px(72.0))])
+    .with_pagination(TablePagination::disabled());
+
+    let (_, cx) = cx.add_window_view(move |_, _| TestView { state });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let row_a_after = cx
+        .debug_bounds("table:measured-row-runtime-table:row:row-a")
+        .expect("measured row A should remain rendered after repaint");
+    let row_b_after = cx
+        .debug_bounds("table:measured-row-runtime-table:row:row-b")
+        .expect("measured row B should remain rendered after repaint");
+    assert!(
+        row_a_after.bottom() - row_a_after.top() > px(24.0),
+        "expected the measured first row to grow taller than the fallback row height"
+    );
+    assert!(
+        row_b_after.top() >= row_a_after.bottom() - px(1.0),
+        "expected the second row to sit below the expanded first row after the measurement cache is applied; row_a_after.bottom={:?}, row_b_after.top={:?}",
+        row_a_after.bottom(),
+        row_b_after.top()
     );
 }
 
