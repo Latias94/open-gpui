@@ -721,9 +721,11 @@ impl DockViewportAdapter {
                 DockViewportDropRouteUnavailableReason::BlockedByViewportWindow,
             );
         };
-        if request.release_origin() == DockPayloadDropReleaseOrigin::SourceOnly
+        let source_only_cross_viewport_without_trusted_hover = request.release_origin()
+            == DockPayloadDropReleaseOrigin::SourceOnly
             && target.space() != request.source_space()
-        {
+            && route_selection_source != DockViewportRouteSelectionSource::TrustedHoveredWindow;
+        if source_only_cross_viewport_without_trusted_hover {
             return DockViewportDropRoutePlan::unavailable(
                 DockViewportDropRouteUnavailableReason::NoViewportRouteSelection,
             );
@@ -1328,6 +1330,49 @@ mod tests {
             route,
             DockViewportDropRoute::Unavailable,
             "source-only releases must not use window-stack fallback as release authority; window stack fallback is preview route selection only"
+        );
+    }
+
+    #[test]
+    fn source_only_global_drop_accepts_trusted_hovered_cross_viewport_route() {
+        let source = space("source");
+        let target_space = space("target");
+        let target_window = handle(2);
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, target_space.clone(), target_window);
+        adapter.update_snapshot(
+            &target_space,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                400.0, 0.0, 320.0, 240.0,
+            ))),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+        let request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
+            source,
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(430.0), px(50.0)),
+            None,
+            DockViewportPlatformSignals::from_target_context(
+                DockViewportTargetContext::new().with_trusted_hovered_window(target_window),
+            ),
+            DockPayloadDropReleaseOrigin::SourceOnly,
+        );
+
+        let route = adapter.resolve_payload_drop_route(&request, &DockPolicy::default());
+
+        assert_eq!(
+            route,
+            DockViewportDropRoute::KnownViewport {
+                target: DockViewportTargetHit::with_facts_generation(
+                    target_space,
+                    target_window,
+                    point(px(20.0), px(30.0)),
+                    1,
+                ),
+                source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            },
+            "source-only release should still accept current trusted hovered-window route facts"
         );
     }
 
