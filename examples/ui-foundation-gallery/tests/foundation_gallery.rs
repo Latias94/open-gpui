@@ -162,30 +162,54 @@ fn scroll_page_selector_into_view(
     cx: &mut VisualTestContext,
     selector: &str,
 ) -> Bounds<Pixels> {
-    let viewport = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
-
-    for _ in 0..8 {
+    for _ in 0..96 {
+        let viewport = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
         if let Some(target) = cx.debug_bounds(selector) {
             if target_visible_for_interaction(viewport, target) {
                 return target;
             }
 
-            let handle = cx.update(|_, app| shell.read(app).page_scroll_handle().clone());
-            let delta = target.top() - viewport.top() - px(24.0);
-            let offset = handle.offset();
-            handle.set_offset(point(offset.x, offset.y - delta));
+            if shell_snapshot(shell, cx).selected_page == GalleryPage::Components {
+                let delta = if target.top() < viewport.top() {
+                    target.top() - viewport.top() - px(12.0)
+                } else {
+                    target.bottom() - viewport.bottom() + px(12.0)
+                };
+                cx.update(|_, app| {
+                    shell.read(app).components_list_state().scroll_by(delta);
+                });
+            } else {
+                let handle = cx.update(|_, app| shell.read(app).page_scroll_handle().clone());
+                let delta = target.top() - viewport.top() - px(24.0);
+                let offset = handle.offset();
+                handle.set_offset(point(offset.x, offset.y - delta));
+            }
             redraw(cx);
             continue;
         }
 
-        break;
+        if shell_snapshot(shell, cx).selected_page == GalleryPage::Components {
+            cx.update(|_, app| {
+                shell.read(app).components_list_state().scroll_by(px(160.0));
+            });
+        } else {
+            let handle = cx.update(|_, app| shell.read(app).page_scroll_handle().clone());
+            let offset = handle.offset();
+            handle.set_offset(point(offset.x, offset.y - px(160.0)));
+            cx.simulate_event(ScrollWheelEvent {
+                position: point(viewport.right() - px(6.0), viewport.center().y),
+                delta: ScrollDelta::Pixels(point(px(0.0), px(-160.0))),
+                ..Default::default()
+            });
+        }
+        redraw(cx);
     }
 
     let target = bounds(cx, selector);
     let viewport = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
     assert!(
         target_visible_for_interaction(viewport, target),
-        "expected `{selector}` to be visible after aligning the gallery page scroll handle; viewport={viewport:?} target={target:?}"
+        "expected `{selector}` to be visible after scrolling the gallery page viewport; viewport={viewport:?} target={target:?}"
     );
     target
 }
@@ -200,6 +224,25 @@ fn target_visible_for_interaction(container: Bounds<Pixels>, target: Bounds<Pixe
 
 fn bounds_overlap_y(container: Bounds<Pixels>, target: Bounds<Pixels>) -> bool {
     target.bottom() >= container.top() && target.top() <= container.bottom()
+}
+
+fn visible_page_interaction_point(
+    cx: &mut VisualTestContext,
+    selector: &str,
+) -> open_gpui::Point<Pixels> {
+    let target = bounds(cx, selector);
+    let viewport = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
+    let left = target.left().max(viewport.left());
+    let right = target.right().min(viewport.right());
+    let top = target.top().max(viewport.top());
+    let bottom = target.bottom().min(viewport.bottom());
+
+    assert!(
+        left < right && top < bottom,
+        "expected `{selector}` to overlap the visible gallery page viewport; target={target:?} viewport={viewport:?}"
+    );
+
+    point(left + (right - left) * 0.5, top + (bottom - top) * 0.5)
 }
 
 fn scroll_navigation_until_visible(cx: &mut VisualTestContext, selector: &str) -> Bounds<Pixels> {
@@ -4216,31 +4259,34 @@ fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
         .is_some(),
         "expected Components page to show AvatarGroup as an official primitive entry"
     );
-    for (name, selector) in pages::components::official_sample_selector_pairs() {
-        assert!(
-            cx.debug_bounds(selector).is_some(),
-            "expected Components page to render official {name} sample `{selector}`"
-        );
-    }
-    for (name, selector) in pages::components::state_contract_readout_pairs() {
-        assert!(
-            cx.debug_bounds(selector).is_some(),
-            "expected Components page to render state-contract {name} readout `{selector}`"
-        );
-    }
-    for selector in [
-        "separator:component-separator:section-rule:root",
-        "kbd:component-kbd:command-palette:root",
-        "progress:component-progress:sync:root",
-        "skeleton:component-skeleton:body-line:root",
-        "avatar:component-avatar:ada:root",
-        "gallery:component-avatar-group-sample:team",
-        "status-cue:component-status-cue:sync-warning:root",
-        "empty-state:component-empty-state:no-results:root",
+    assert!(
+        cx.debug_bounds("gallery:component-button-sample:default")
+            .is_none(),
+        "expected Components all-mode to lazy-render deep samples instead of mounting every section immediately"
+    );
+
+    for (jump, expected_selector) in [
+        (
+            "gallery:component-page-jump:primitives",
+            "separator:component-separator:section-rule:root",
+        ),
+        (
+            "gallery:component-page-jump:feedback",
+            "status-cue:component-status-cue:sync-warning:root",
+        ),
+        (
+            "gallery:component-page-jump:state-contracts",
+            "gallery:component-tree-state-contract:document-outline",
+        ),
+        (
+            "gallery:component-page-jump:button",
+            "gallery:component-button-sample:default",
+        ),
     ] {
+        jump_components_directory_to(cx, jump);
         assert!(
-            cx.debug_bounds(selector).is_some(),
-            "expected Components page to render real component root `{selector}`"
+            cx.debug_bounds(expected_selector).is_some(),
+            "expected Components page jump `{jump}` to render lazy target `{expected_selector}`"
         );
     }
 
@@ -4356,13 +4402,17 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
     );
     assert!(
         cx.debug_bounds("gallery:component-button-sample:default")
-            .is_some(),
-        "expected all-components mode to restore Button samples"
+            .is_none(),
+        "expected all-components mode to keep deep Button samples lazy after restoration"
     );
     assert!(
         cx.debug_bounds("gallery:component-tabs-sample:workspace-tabs")
-            .is_some(),
-        "expected all-components mode to restore nested Tabs samples"
+            .is_none(),
+        "expected all-components mode to keep nested Tabs samples lazy after restoration"
+    );
+    assert!(
+        cx.debug_bounds("component-catalog:Button").is_some(),
+        "expected all-components mode restoration to show the catalog entry for Button"
     );
 }
 
@@ -4398,10 +4448,14 @@ fn components_gallery_smoke_focuses_every_focusable_catalog_entry(
         "gallery:component-tabs-sample:workspace-tabs",
     ] {
         assert!(
-            cx.debug_bounds(selector).is_some(),
-            "expected all-mode restoration after matrix traversal to render `{selector}`"
+            cx.debug_bounds(selector).is_none(),
+            "expected all-mode restoration after matrix traversal to keep deep lazy sample `{selector}` unmounted"
         );
     }
+    assert!(
+        cx.debug_bounds("component-catalog:Button").is_some(),
+        "expected all-mode restoration after matrix traversal to return to the component catalog"
+    );
 
     assert_eq!(
         visited.len(),
@@ -4481,17 +4535,16 @@ fn components_gallery_smoke_textarea_scroll_stays_inside_sample(
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
-    scroll_page_selector_into_view(&shell, cx, "component-catalog:Textarea");
-    click(cx, "component-catalog:Textarea");
-    settle(cx);
+    jump_components_directory_to(cx, "gallery:component-page-jump:textarea");
     scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    scroll_page_selector_into_view(&shell, cx, VIEWPORT);
 
     let sample_before = bounds(cx, SAMPLE);
     let line_before = bounds(cx, LINE);
-    let viewport = bounds(cx, VIEWPORT);
+    let viewport_position = visible_page_interaction_point(cx, VIEWPORT);
 
     cx.simulate_event(ScrollWheelEvent {
-        position: viewport.center(),
+        position: viewport_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
         ..Default::default()
     });
@@ -4720,7 +4773,7 @@ fn components_gallery_smoke_closes_select_popup_from_outside_press(
 fn components_gallery_smoke_scroll_area_samples_scroll_inside_page(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
     let samples = pages::components::scroll_area_samples(ThemeTokens::default());
     let data_grid = samples
@@ -4738,12 +4791,23 @@ fn components_gallery_smoke_scroll_area_samples_scroll_inside_page(
     assert!(data_grid.state.scrolls_y());
     assert_eq!(data_grid.items.len(), 7);
 
-    scroll_page_until_visible(cx, "gallery:component-scroll-area-sample:release-queue");
+    jump_components_directory_to(cx, "gallery:component-page-jump:scroll-area");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "gallery:component-scroll-area-sample:release-queue",
+    );
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:component-scroll-area:release-queue",
+    );
     let queue_before = bounds(cx, "gallery:component-scroll-area-item:release-queue:2");
-    let queue_viewport = bounds(cx, "scroll-area:component-scroll-area:release-queue");
+    let queue_position =
+        visible_page_interaction_point(cx, "scroll-area:component-scroll-area:release-queue");
 
     cx.simulate_event(ScrollWheelEvent {
-        position: queue_viewport.center(),
+        position: queue_position,
         delta: ScrollDelta::Pixels(point(px(-72.0), px(0.0))),
         ..Default::default()
     });
@@ -4760,15 +4824,26 @@ fn components_gallery_smoke_scroll_area_samples_scroll_inside_page(
 fn components_gallery_smoke_release_queue_scroll_stays_inside_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
-    scroll_page_until_visible(cx, "gallery:component-scroll-area-sample:release-queue");
+    jump_components_directory_to(cx, "gallery:component-page-jump:scroll-area");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "gallery:component-scroll-area-sample:release-queue",
+    );
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:component-scroll-area:release-queue",
+    );
     let sample_before = bounds(cx, "gallery:component-scroll-area-sample:release-queue");
     let queue_before = bounds(cx, "gallery:component-scroll-area-item:release-queue:2");
-    let queue_viewport = bounds(cx, "scroll-area:component-scroll-area:release-queue");
+    let queue_position =
+        visible_page_interaction_point(cx, "scroll-area:component-scroll-area:release-queue");
 
     cx.simulate_event(ScrollWheelEvent {
-        position: queue_viewport.center(),
+        position: queue_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-56.0))),
         ..Default::default()
     });
@@ -4792,9 +4867,14 @@ fn components_gallery_smoke_release_queue_scroll_stays_inside_sample(
 fn components_gallery_smoke_release_queue_card_wheel_does_not_leak_to_page(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
-    scroll_page_until_visible(cx, "gallery:component-scroll-area-sample:release-queue");
+    jump_components_directory_to(cx, "gallery:component-page-jump:scroll-area");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "gallery:component-scroll-area-sample:release-queue",
+    );
     let sample_before = bounds(cx, "gallery:component-scroll-area-sample:release-queue");
     let queue_before = bounds(cx, "gallery:component-scroll-area-item:release-queue:2");
 
@@ -5711,9 +5791,16 @@ fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
     );
     let sample_before = bounds(cx, "gallery:component-table-sample:release-rollup");
     let header_before = bounds(cx, "table:component-table:release-rollup:header-row");
-    let scroll_target = bounds(
+    let body_viewport = bounds(
         cx,
-        &format!("table:component-table:release-rollup:cell:{first_row_id}:name"),
+        "scroll-area:table:component-table:release-rollup:body-scroll",
+    );
+    let page_viewport = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
+    let scroll_target_top = body_viewport.top().max(page_viewport.top());
+    let scroll_target_bottom = body_viewport.bottom().min(page_viewport.bottom());
+    let scroll_target = point(
+        body_viewport.left() + px(12.0),
+        scroll_target_top + (scroll_target_bottom - scroll_target_top) * 0.5,
     );
 
     assert!(
@@ -5727,7 +5814,7 @@ fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
     );
 
     cx.simulate_event(ScrollWheelEvent {
-        position: scroll_target.center(),
+        position: scroll_target,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-520.0))),
         ..Default::default()
     });
@@ -6632,10 +6719,11 @@ fn components_gallery_smoke_tree_drag_updates_sample(cx: &mut open_gpui::TestApp
     focus_components_catalog_entry(&shell, cx, tree_entry);
 
     scroll_page_selector_into_view(&shell, cx, CHILD);
-    let child_before = bounds(cx, CHILD).center();
-    let peer_before = bounds(cx, PEER).center();
-    let sibling_before = bounds(cx, SIBLING).center();
-    let drop_before = bounds(cx, DROP).center();
+    scroll_page_selector_into_view(&shell, cx, DROP);
+    let child_before = visible_page_interaction_point(cx, CHILD);
+    let peer_before = visible_page_interaction_point(cx, PEER);
+    let sibling_before = visible_page_interaction_point(cx, SIBLING);
+    let drop_before = visible_page_interaction_point(cx, DROP);
     assert!(
         child_before.y < peer_before.y,
         "expected child row to render above peer before drag"
@@ -6807,15 +6895,17 @@ fn components_gallery_smoke_tree_card_wheel_does_not_leak_to_page(
     const VIEWPORT: &str = "scroll-area:tree:component-tree:document-outline:scroll";
     const ITEM: &str = "tree:component-tree:document-outline:item:appendix-01";
 
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
-    scroll_page_until_visible(cx, SAMPLE);
+    jump_components_directory_to(cx, "gallery:component-page-jump:tree");
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    scroll_page_selector_into_view(&shell, cx, VIEWPORT);
     let sample_before = bounds(cx, SAMPLE);
     let item_before = bounds(cx, ITEM);
-    let viewport = bounds(cx, VIEWPORT);
+    let viewport_position = visible_page_interaction_point(cx, VIEWPORT);
 
     cx.simulate_event(ScrollWheelEvent {
-        position: viewport.center(),
+        position: viewport_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
         ..Default::default()
     });
@@ -7128,7 +7218,10 @@ fn components_gallery_smoke_directory_jump_scrolls_to_tabs_section(
             .to_string(),
     );
 
-    let before = bounds(cx, "gallery:components-section:tabs");
+    assert!(
+        cx.debug_bounds("gallery:components-section:tabs").is_none(),
+        "expected all-mode to leave the deep Tabs section unmounted before the directory jump"
+    );
     click(cx, "gallery:component-page-jump:tabs");
     settle(cx);
     settle(cx);
@@ -7139,7 +7232,7 @@ fn components_gallery_smoke_directory_jump_scrolls_to_tabs_section(
 
     assert!(
         (after.top() - viewport.top()).abs() <= px(1.0),
-        "expected the Components page directory jump to align the Tabs section with the viewport top; before={before:?} after={after:?} viewport={viewport:?}"
+        "expected the Components page directory jump to align the Tabs section with the viewport top; after={after:?} viewport={viewport:?}"
     );
     assert!(
         after.bottom() > viewport.top(),
@@ -7184,9 +7277,18 @@ fn components_gallery_smoke_vertical_tabs_scroll_inside_sample(cx: &mut open_gpu
         cx,
         "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
     );
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:tabs:component-tabs:workspace-tabs:tablist-scroll",
+    );
     let sample_before = bounds(cx, "gallery:component-tabs-sample:workspace-tabs");
     let tablist = bounds(cx, "tabs:component-tabs:workspace-tabs:tablist");
     let tablist_viewport = bounds(
+        cx,
+        "scroll-area:tabs:component-tabs:workspace-tabs:tablist-scroll",
+    );
+    let tablist_position = visible_page_interaction_point(
         cx,
         "scroll-area:tabs:component-tabs:workspace-tabs:tablist-scroll",
     );
@@ -7196,7 +7298,7 @@ fn components_gallery_smoke_vertical_tabs_scroll_inside_sample(cx: &mut open_gpu
     );
 
     cx.simulate_event(ScrollWheelEvent {
-        position: tablist_viewport.center(),
+        position: tablist_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-72.0))),
         ..Default::default()
     });
@@ -7222,15 +7324,22 @@ fn components_gallery_smoke_vertical_tabs_scroll_inside_sample(cx: &mut open_gpu
 fn components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
-    scroll_page_until_visible(cx, "gallery:component-sidebar-sample:long-sidebar");
+    jump_components_directory_to(cx, "gallery:component-page-jump:sidebar");
+    scroll_page_selector_into_view(&shell, cx, "gallery:component-sidebar-sample:long-sidebar");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:component-sidebar:long-sidebar-scroll",
+    );
     let sample_before = bounds(cx, "gallery:component-sidebar-sample:long-sidebar");
     let segments_before = bounds(cx, "sidebar:component-sidebar:long-sidebar:item:segments");
-    let sidebar_viewport = bounds(cx, "scroll-area:component-sidebar:long-sidebar-scroll");
+    let sidebar_position =
+        visible_page_interaction_point(cx, "scroll-area:component-sidebar:long-sidebar-scroll");
 
     cx.simulate_event(ScrollWheelEvent {
-        position: sidebar_viewport.center(),
+        position: sidebar_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-96.0))),
         ..Default::default()
     });
@@ -7303,13 +7412,21 @@ fn components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_com
         cx,
         "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
     );
-    let tablist = bounds(cx, "tabs:component-tabs:workspace-tabs:tablist");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:tabs:component-tabs:workspace-tabs:tablist-scroll",
+    );
+    let tablist_position = visible_page_interaction_point(
+        cx,
+        "scroll-area:tabs:component-tabs:workspace-tabs:tablist-scroll",
+    );
     let tab_before = bounds(
         cx,
         "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
     );
     cx.simulate_event(ScrollWheelEvent {
-        position: tablist.center(),
+        position: tablist_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-72.0))),
         ..Default::default()
     });

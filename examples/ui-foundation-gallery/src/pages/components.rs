@@ -39,7 +39,8 @@ use std::sync::{Arc, LazyLock};
 mod render;
 
 pub(crate) use render::{
-    ComponentPageAnchors, render_components_directory, render_components_page,
+    component_page_section_count, component_page_section_index, render_components_directory,
+    render_components_page,
 };
 
 /// Page title.
