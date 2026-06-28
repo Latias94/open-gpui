@@ -7,6 +7,23 @@ use crate::{
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
 
 impl DockHost {
+    pub(crate) fn record_payload_drag_anchor_from_render(
+        &mut self,
+        source_space: DockSpaceId,
+        source_node: DockNodeId,
+        position: Point<Pixels>,
+    ) {
+        self.interaction_mut()
+            .record_payload_drag_anchor(source_space, source_node, position);
+    }
+
+    pub(crate) fn payload_drag_anchor_position_from_render(
+        &self,
+        payload: &DockDragPayload,
+    ) -> Option<Point<Pixels>> {
+        self.interaction().payload_drag_anchor_position(payload)
+    }
+
     pub(crate) fn begin_payload_drag_from_render(
         &mut self,
         payload: &DockDragPayload,
@@ -55,12 +72,15 @@ impl DockHost {
     }
 
     pub(crate) fn finish_payload_drag_session(
-        &self,
+        &mut self,
         session: &DockRuntimeDragSession,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.viewport_runtime()
-            .finish_payload_drag_with_app(session, cx)
+        let changed = self
+            .viewport_runtime()
+            .finish_payload_drag_with_app(session, cx);
+        let anchor_cleared = self.interaction_mut().clear_any_payload_drag_anchor();
+        changed || anchor_cleared
     }
 
     pub(crate) fn select_tab_from_render(

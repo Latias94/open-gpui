@@ -1,5 +1,5 @@
 use crate::{
-    DockSpaceId, DockViewportIdentity, DockViewportWindowFacts,
+    DockNodeId, DockSpaceId, DockViewportIdentity, DockViewportWindowFacts,
     drop_runtime::DockHostDropSceneFact,
     geometry::DockDropGuideStyle,
     viewport_drop_scene::{
@@ -145,6 +145,16 @@ impl DockViewportFrameCoordinator {
         fact: DockHostDropSceneFact,
     ) -> Option<DockViewportHostSceneFrame> {
         self.host_scenes.push_frame_fact(frame, fact)
+    }
+
+    pub(crate) fn leaf_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        self.host_scenes
+            .leaf_bounds_for_tabs(space, window_id, tabs)
     }
 
     #[cfg(test)]

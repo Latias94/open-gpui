@@ -1,8 +1,8 @@
 #[cfg(test)]
 use crate::DockViewportActivationTransaction;
 use crate::{
-    DockActionApplyError, DockController, DockDropDelivery, DockHost, DockItemId, DockSpaceId,
-    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRouteOutcome,
+    DockActionApplyError, DockController, DockDropDelivery, DockHost, DockItemId, DockNodeId,
+    DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRouteOutcome,
     DockViewportDropRouteRequest, DockViewportHostSceneRenderToken, DockViewportIdentity,
     DockViewportOpenOutcome, DockViewportOpenStatus, DockViewportPlacementLayout,
     DockViewportPlacementValidationError, DockViewportPlatformFocusRestoreGate,
@@ -25,7 +25,7 @@ use crate::{
 };
 #[cfg(test)]
 use crate::{
-    DockNodeId, DockViewportDropPayload, DockViewportDropRoute, DockViewportPlatformSignals,
+    DockViewportDropPayload, DockViewportDropRoute, DockViewportPlatformSignals,
     interaction::DockPayloadDropReleaseOrigin,
     viewport_registry::DockViewportRouteUnavailableReason,
 };
@@ -993,6 +993,17 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow_mut()
             .push_viewport_host_scene_frame_fact(frame, fact)
+    }
+
+    pub(crate) fn rendered_leaf_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        self.runtime
+            .borrow()
+            .rendered_leaf_bounds_for_tabs(space, window_id, tabs)
     }
 
     pub(crate) fn window_id_for_space(&self, space: &DockSpaceId) -> Option<WindowId> {

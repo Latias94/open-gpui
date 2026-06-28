@@ -109,6 +109,14 @@ impl DockViewportHostSceneSnapshot {
         self.scene.push_fact(fact);
     }
 
+    fn leaf_bounds_for_tabs(&self, tabs: DockNodeId) -> Option<Bounds<Pixels>> {
+        self.scene
+            .leaves
+            .iter()
+            .find(|leaf| leaf.target_tabs == tabs)
+            .map(|leaf| leaf.bounds)
+    }
+
     #[cfg(test)]
     pub(crate) fn global_screen_position(&self) -> Option<Point<Pixels>> {
         let screen_bounds = self.current_bounds.global_screen_bounds()?;
@@ -173,6 +181,19 @@ impl DockViewportHostSceneRegistry {
         self.next_generation = self.next_generation.wrapping_add(1);
         scene.generation = self.next_generation;
         Some(scene.frame())
+    }
+
+    pub(crate) fn leaf_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        let snapshot = self.scenes.get(space)?;
+        if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
+            return None;
+        }
+        snapshot.leaf_bounds_for_tabs(tabs)
     }
 
     #[cfg(test)]
@@ -268,8 +289,8 @@ impl DockViewportHostSceneRegistry {
 mod tests {
     use super::*;
     use crate::{
-        DockPolicy,
-        drop_target::{DockEmptySpaceDropTarget, DockResolvedDropTargetKind},
+        DockGraph, DockNode, DockPolicy,
+        drop_target::{DockEmptySpaceDropTarget, DockLeafDropTarget, DockResolvedDropTargetKind},
         viewport_test_support::{bounds, space},
     };
     use open_gpui::{WindowId, point, px};
@@ -505,6 +526,53 @@ mod tests {
                 )
                 .is_some(),
             "window-local scene facts should still resolve for the receiving viewport"
+        );
+    }
+
+    #[test]
+    fn host_scene_leaf_bounds_for_tabs_is_bound_to_space_and_window() {
+        let source_space = space("main");
+        let other_space = space("other");
+        let window_id = WindowId::from(1);
+        let other_window_id = WindowId::from(2);
+        let mut graph = DockGraph::new();
+        let tabs = graph.insert_node(DockNode::Tabs {
+            items: Vec::new(),
+            selected: None,
+        });
+        let leaf_bounds = bounds(20.0, 30.0, 400.0, 240.0);
+        let mut registry = DockViewportHostSceneRegistry::default();
+
+        let frame = registry
+            .register(snapshot(source_space.clone(), window_id))
+            .frame;
+        assert!(
+            registry
+                .push_frame_fact(
+                    &frame,
+                    DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                        root: tabs,
+                        target_tabs: tabs,
+                        bounds: leaf_bounds,
+                        is_central: false,
+                    })
+                )
+                .is_some()
+        );
+
+        assert_eq!(
+            registry.leaf_bounds_for_tabs(&source_space, Some(window_id), tabs),
+            Some(leaf_bounds)
+        );
+        assert_eq!(
+            registry.leaf_bounds_for_tabs(&source_space, Some(other_window_id), tabs),
+            None,
+            "a stale window id must not reuse another viewport's leaf bounds"
+        );
+        assert_eq!(
+            registry.leaf_bounds_for_tabs(&other_space, Some(window_id), tabs),
+            None,
+            "leaf bounds are scoped to the rendered dock space"
         );
     }
 

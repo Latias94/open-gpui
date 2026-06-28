@@ -16,6 +16,7 @@ use open_gpui::{Bounds, Pixels, Point, point};
 pub(crate) struct DockInteractionRuntime {
     splitter_drag: Option<SplitterDrag>,
     floating_drag: Option<FloatingDrag>,
+    payload_drag_anchor: Option<DockPayloadDragAnchor>,
     drop: DockDropRuntime,
     outside_release_poll: Option<DockOutsideReleasePollSession>,
     next_outside_release_poll_id: u64,
@@ -38,6 +39,13 @@ pub(crate) struct FloatingDrag {
     pub(crate) floating: DockNodeId,
     pub(crate) start_position: Point<Pixels>,
     pub(crate) initial_bounds: Bounds<Pixels>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPayloadDragAnchor {
+    source_space: DockSpaceId,
+    source_node: DockNodeId,
+    position: Point<Pixels>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -418,6 +426,36 @@ impl DockInteractionRuntime {
 }
 
 impl DockInteractionRuntime {
+    pub(crate) fn record_payload_drag_anchor(
+        &mut self,
+        source_space: DockSpaceId,
+        source_node: DockNodeId,
+        position: Point<Pixels>,
+    ) {
+        self.payload_drag_anchor = Some(DockPayloadDragAnchor {
+            source_space,
+            source_node,
+            position,
+        });
+    }
+
+    pub(crate) fn payload_drag_anchor_position(
+        &self,
+        payload: &DockDragPayload,
+    ) -> Option<Point<Pixels>> {
+        self.payload_drag_anchor
+            .as_ref()
+            .filter(|anchor| {
+                anchor.source_space == payload.source_space
+                    && anchor.source_node == payload.source_node
+            })
+            .map(|anchor| anchor.position)
+    }
+
+    pub(crate) fn clear_any_payload_drag_anchor(&mut self) -> bool {
+        self.payload_drag_anchor.take().is_some()
+    }
+
     pub(crate) fn start_splitter_drag(
         &mut self,
         split: DockNodeId,
@@ -814,6 +852,19 @@ mod tests {
         )
     }
 
+    fn item_payload_for_node(
+        space: impl Into<DockSpaceId>,
+        source_node: DockNodeId,
+        item: &str,
+    ) -> DockDragPayload {
+        DockDragPayload::new_item(
+            space.into(),
+            source_node,
+            DockItemId::from(item),
+            item.to_string(),
+        )
+    }
+
     fn poll_request(
         session: &DockOutsideReleasePollSession,
         payload: Option<DockDragPayload>,
@@ -847,6 +898,42 @@ mod tests {
             DockSpaceId::from("host"),
             point(px(120.0), px(80.0)),
         )
+    }
+
+    #[test]
+    fn payload_drag_anchor_matches_any_payload_from_same_source_tabs() {
+        let mut runtime = DockInteractionRuntime::default();
+        let mut graph = crate::DockGraph::new();
+        let source_tabs = graph.insert_node(crate::DockNode::Tabs {
+            items: Vec::new(),
+            selected: None,
+        });
+        let position = point(px(42.0), px(17.0));
+        let source_space = DockSpaceId::from("main");
+        let item_payload = item_payload_for_node(source_space.clone(), source_tabs, "a");
+        let tabs_payload =
+            DockDragPayload::new_tabs(source_space.clone(), source_tabs, "tabs".to_string());
+
+        runtime.record_payload_drag_anchor(source_space, source_tabs, position);
+
+        assert_eq!(
+            runtime.payload_drag_anchor_position(&item_payload),
+            Some(position)
+        );
+        assert_eq!(
+            runtime.payload_drag_anchor_position(&tabs_payload),
+            Some(position)
+        );
+        assert_eq!(
+            runtime.payload_drag_anchor_position(&item_payload_for_node(
+                DockSpaceId::from("other"),
+                source_tabs,
+                "a",
+            )),
+            None
+        );
+        assert!(runtime.clear_any_payload_drag_anchor());
+        assert_eq!(runtime.payload_drag_anchor_position(&item_payload), None);
     }
 
     #[test]

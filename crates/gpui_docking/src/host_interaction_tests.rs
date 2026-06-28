@@ -1495,6 +1495,163 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
 }
 
 #[open_gpui::test]
+fn runtime_nested_tab_tear_off_uses_leaf_size_not_tab_label(cx: &mut TestAppContext) {
+    let source_space = crate::DockSpaceId::from("source:nested-tear-off");
+    let mut graph = DockGraph::new();
+    let left_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("left")],
+        selected: Some(item("left")),
+    });
+    let top_right_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("top")],
+        selected: Some(item("top")),
+    });
+    let bottom_right_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("bottom"), item("other")],
+        selected: Some(item("bottom")),
+    });
+    let right_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![top_right_tabs, bottom_right_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left_tabs, right_split],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(source_space.clone(), root);
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("left", "Panel Left", "Left"),
+            ("top", "Panel Top", "Top"),
+            ("bottom", "Panel Bottom", "Bottom"),
+            ("other", "Panel Other", "Other"),
+        ],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(640.0, 420.0),
+                app,
+            )
+        })
+        .expect("source viewport should open through runtime");
+    let source_window = opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("runtime viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("runtime viewport should expose DockHost root");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(opened.window(), cx);
+
+    let bottom_leaf = selector_for(
+        &visual,
+        &source_host,
+        DockDebugRegion::Tabs {
+            node: bottom_right_tabs,
+        },
+    )
+    .expect("bottom-right leaf selector should be emitted");
+    let bottom_tab = selector_for(
+        &visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: bottom_right_tabs,
+            item: item("bottom"),
+        },
+    )
+    .expect("bottom-right tab selector should be emitted");
+    let leaf_bounds = debug_bounds(&mut visual, &bottom_leaf);
+    let tab_bounds = debug_bounds(&mut visual, &bottom_tab);
+    let rendered_leaf_bounds = runtime
+        .borrow()
+        .rendered_leaf_bounds_for_tabs(
+            &source_space,
+            Some(opened.window().window_id()),
+            bottom_right_tabs,
+        )
+        .expect("source leaf bounds should be available before tab drag starts");
+    assert!(
+        rendered_leaf_bounds.size.width > tab_bounds.size.width * 2.0,
+        "test must distinguish the leaf from the tab label"
+    );
+    assert!(
+        rendered_leaf_bounds.size.height > tab_bounds.size.height * 3.0,
+        "test must distinguish the leaf from the tab label"
+    );
+    assert!(
+        leaf_bounds.contains(&rendered_leaf_bounds.origin)
+            && leaf_bounds.contains(&rendered_leaf_bounds.bottom_right()),
+        "rendered leaf bounds should describe the source leaf interior"
+    );
+
+    let start = tab_bounds.center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let outside_window = point(px(900.0), px(900.0));
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+    visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    let detached_space = cx.read_entity(&controller, |controller, _| {
+        let detached_space = controller
+            .graph()
+            .spaces()
+            .into_iter()
+            .find(|space| {
+                space
+                    .as_str()
+                    .starts_with("source:nested-tear-off:tear-off:bottom:")
+            })
+            .expect("outside release should create a detached viewport space");
+        assert_eq!(
+            controller.graph().collect_items_in_space(&detached_space),
+            vec![item("bottom")]
+        );
+        detached_space
+    });
+    let detached_bounds = runtime
+        .borrow()
+        .adapter()
+        .window_for_space(&detached_space)
+        .expect("detached space should have a runtime window")
+        .update(cx, |_, window, _| window.window_bounds().get_bounds())
+        .expect("detached viewport should remain live");
+
+    assert!(
+        detached_bounds.size.width >= rendered_leaf_bounds.size.width,
+        "tear-off width should come from the source leaf, not the tab label"
+    );
+    assert!(
+        detached_bounds.size.height >= rendered_leaf_bounds.size.height,
+        "tear-off height should come from the source leaf, not the tab label"
+    );
+    let expected_origin = outside_window - (start - rendered_leaf_bounds.origin);
+    assert_close(
+        f32::from(detached_bounds.origin.x),
+        f32::from(expected_origin.x),
+    );
+    assert_close(
+        f32::from(detached_bounds.origin.y),
+        f32::from(expected_origin.y),
+    );
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
+}
+
+#[open_gpui::test]
 fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext) {
     let source_space = crate::DockSpaceId::from("source");
     let mut graph = DockGraph::new();

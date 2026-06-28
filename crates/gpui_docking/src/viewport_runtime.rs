@@ -4,8 +4,9 @@ use crate::viewport_registry::DockViewportRouteUnavailableReason;
 use crate::viewport_window_lifecycle::DockViewportReusableWindow;
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockDropDelivery,
-    DockDropWorkspaceCommit, DockItemId, DockSpaceId, DockViewportActivationBackendFocusApply,
-    DockViewportActivationBackendFocusObservation, DockViewportActivationBackendFocusRecordEffect,
+    DockDropWorkspaceCommit, DockItemId, DockNodeId, DockSpaceId,
+    DockViewportActivationBackendFocusApply, DockViewportActivationBackendFocusObservation,
+    DockViewportActivationBackendFocusRecordEffect,
     DockViewportActivationPendingBackendFocusEffect, DockViewportActivationTransaction,
     DockViewportAdapter, DockViewportBackendFocusState, DockViewportCloseCoordinator,
     DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportCommittedTearOffMove,
@@ -932,6 +933,16 @@ impl DockViewportRuntime {
         fact: DockHostDropSceneFact,
     ) -> Option<DockViewportHostSceneFrame> {
         self.frame_coordinator.push_frame_fact(frame, fact)
+    }
+
+    pub(crate) fn rendered_leaf_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        self.frame_coordinator
+            .leaf_bounds_for_tabs(space, window_id, tabs)
     }
 
     pub(crate) fn routed_drop_preview_for(
