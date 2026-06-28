@@ -3,7 +3,7 @@ type: Current State
 title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
-git_branch: feat/scroll-surface-containment
+git_branch: feat/ui-choice-surface-refactor
 verified_by:
   - cargo check -p open-gpui-ui-components --tests
   - cargo check -p open-gpui-ui-foundation-gallery
@@ -145,13 +145,15 @@ verified_by:
 
 # Current State
 
-- Goal: 继续 Table 成熟度边界梳理，并把 measured-row 这条切片收口成可提交的状态。
-- Branch: feat/scroll-surface-containment
-- Last verified: `cargo nextest run -p open-gpui-ui-components table component_api_inventory`, `cargo nextest run -p open-gpui-ui-foundation-gallery table`, `cargo nextest run -p open-gpui-ui-components table::tests::measured_virtualizer_uses_cached_row_heights_for_known_rows`, and `git diff --check` all passed on the current working tree.
-- Done: `feat/scroll-surface-containment` 的 scroll-surface containment 已经收口并提交，vertical `Tabs` 走共享 `ScrollArea`，long `Sidebar` 保持在共享 viewport 内，ContextMenu 的长列表 wheel 输入也停留在自己的 surface 里。
-- Done: The Table row-measurement slice is complete in the working tree. `Table` now exposes `row_measure_mode`, measures rendered body row heights when opted in, and feeds the results back into the row virtualizer cache.
+- Goal: Complete `docs/plans/2026-06-28-001-refactor-ui-choice-surface-plan.md` by deepening the choice surface seams for the component library.
+- Branch: feat/ui-choice-surface-refactor
+- Last verified: `cargo run -p xtask -- verify`, `git diff --check`, and engineering wiki validation passed on the current working tree after the U4 docs/gallery sync.
+- Done: `ui_components::choice` now owns stable-value lookup, selected-value projection, multi-select dedupe, and normalized query handling for `Command`, `Combobox`, and `Select`.
+- Done: `roving_focus.rs` now owns shared vertical, paged, and typeahead navigation helpers used by listbox-like surfaces while component adapters keep their own activation/branch rules.
+- Done: `menu_runtime.rs` now owns `Menu` / `ContextMenu` open sync, focused path/value mutation, submenu hover timing, branch switching, trigger-bound caches, and local submenu scroll handles.
+- Done: Components gallery metadata now exposes a `choice-surfaces` conformance gate plus focused choice-family readouts for stable value, selected chips, query/typeahead, and shared navigation behavior.
 - Blocked: None.
-- Next action: Commit the measured-row Table slice, then move to the next clear Table maturity boundary; standalone headless extraction continues to stay deferred.
+- Next action: Commit the completed choice-surface refactor slice, then use the new seams as the baseline for future component-library work.
 
 - 2026-06-26: Completed the Tree drag-and-drop hierarchy editing slice from
   `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md`. `TreeMove`,

@@ -218,12 +218,13 @@ keyboard selection payloads, closes after selection, and confirms popup Listbox 
 skips disabled rows. The focused Combobox tests click the controller-backed text input, type a
 query, open the filtered popup by trigger and keyboard paths, verify filtered Listbox options, and
 select filtered options with ordered select/open callbacks. The focused Command tests cover
-renderer-neutral ranking, controlled and default query ownership, multi-select selected chips,
-virtualized result render plans, app-owned index snapshots, inline and dialog command filtering,
-keyboard activation, shortcut payloads, non-dialog content persistence, and dialog Escape/outside
-press dismissal. The focused gallery Command smoke renders ranked, multi-select, virtualized, and
-indexed/loading samples in focused family mode, verifies selected chips and snapshot metadata are
-inspectable, and confirms wheel input on the virtualized sample does not move the surrounding card.
+renderer-neutral ranking, controlled and default query ownership, stable-value selection across
+descriptor reorder, multi-select selected chips, virtualized result render plans, app-owned index
+snapshots, inline and dialog command filtering, keyboard activation, shortcut payloads, non-dialog
+content persistence, and dialog Escape/outside press dismissal. The focused gallery Command smoke
+renders ranked, multi-select, virtualized, and indexed/loading samples in focused family mode,
+verifies selected chips, stable selected values, and snapshot metadata are inspectable, and
+confirms wheel input on the virtualized sample does not move the surrounding card.
 Run the focused proof with:
 
 ```powershell
@@ -257,6 +258,10 @@ That gate checks that every official Components catalog entry has a matching API
 that overlay families are explicitly listed, that public method baselines catch top-level builder
 drift, that render/controlled/default/policy vocabulary stays consistent, and that
 renderer-neutral resolved state remains free of GPUI runtime types.
+The choice and runtime seams are guarded separately: `choice.rs` owns stable-value and normalized
+query helpers for `Command`, `Combobox`, and `Select`; `roving_focus.rs` owns the shared enabled-item
+navigation targets used across listbox-like surfaces; and `menu_runtime.rs` owns submenu hover
+timing plus local scroll state for `Menu` and `ContextMenu`.
 Feedback coverage now promotes `StatusCue` and `EmptyState` as official rendered Components
 catalog entries. The focused component tests verify root/prelude exports, feedback intent labels,
 resolved roles, metrics, and theme color intents. The gallery metadata tests require their
@@ -545,15 +550,18 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    activation. The Select
    samples should expose closed, controlled-open, and disabled states; confirm the trigger label
    reflects the selected option, the open sample uses a non-modal dismissible listbox popup with a
-   scrollable long option set, Escape/outside press dismisses it, and disabled empty select remains
-   closed. The component runtime smoke now verifies rendered Select trigger opening, disabled popup
+   scrollable long option set, Escape/outside press dismisses it, disabled empty select remains
+   closed, and the state readout keeps trigger-selected value distinct from popup listbox selection.
+   The component runtime smoke now verifies rendered Select trigger opening, disabled popup
    option rejection, click selection, keyboard popup selection that skips disabled rows, selection
    payloads, and ordered popup close callbacks. The Combobox samples should expose editable
    filtering, selected value metadata that does not disappear when the query hides the selected
-   option, an empty filtered state, and disabled input/popup suppression. The component runtime
+   option, an empty filtered state, disabled input/popup suppression, and visible query/typeahead
+   metadata. The component runtime
    smoke now verifies real Combobox text-input editing, filtered popup options, filtered option
    click selection, and close callbacks. The Command samples should expose ranked search results,
-   selected chips for multi-select, a 10k-item virtualized command result window, app-owned
+   selected chips for multi-select, stable selected values independent of result order, a 10k-item
+   virtualized command result window, app-owned
    indexed/loading metadata, shortcut labels, inline and dialog-backed presentation, and modal
    dialog outside/Escape dismissal while preserving the Components page scrollability. The component
    runtime smoke now verifies real Command text-input editing, inline filtering, keyboard

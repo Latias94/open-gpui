@@ -2,6 +2,7 @@
 
 use crate::a11y::UiA11yElementExt;
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
+use crate::roving_focus::paged_navigation_target;
 use crate::scroll_area::ScrollArea;
 use open_gpui::prelude::*;
 use open_gpui::{
@@ -1019,19 +1020,7 @@ pub fn virtualized_list_navigation_target(
     item_count: usize,
     viewport_item_count: usize,
 ) -> Option<usize> {
-    if item_count == 0 || current >= item_count {
-        return None;
-    }
-
-    match key {
-        "home" => Some(0),
-        "end" => item_count.checked_sub(1),
-        "up" => Some(current.saturating_sub(1)),
-        "down" => Some((current + 1).min(item_count - 1)),
-        "pageup" => Some(current.saturating_sub(viewport_item_count.max(1))),
-        "pagedown" => Some((current + viewport_item_count.max(1)).min(item_count - 1)),
-        _ => None,
-    }
+    paged_navigation_target(key, current, item_count, viewport_item_count)
 }
 
 /// Resolves a fixed-height scroll target for a virtualized list.

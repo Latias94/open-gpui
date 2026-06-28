@@ -1,5 +1,6 @@
 //! Command palette component built from search input, grouped command items, and listbox state.
 
+use crate::choice;
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -1327,7 +1328,7 @@ impl CommandState {
             CommandOpenMode::Uncontrolled
         };
         let open = open.unwrap_or(default_open) && !disabled;
-        let normalized_query = normalize_query(query.as_str());
+        let normalized_query = choice::normalize_query(query.as_str());
         let query_is_empty = normalized_query.is_empty();
         let CommandDataSource {
             revision: index_revision,
@@ -1342,16 +1343,22 @@ impl CommandState {
                 .iter()
                 .map(|group| group.items_ref().len())
                 .sum::<usize>();
-        let selected_item = selected_value
-            .and_then(|value| find_command_item(&raw_groups, &raw_items, value))
-            .filter(|item| !item.disabled_state());
-        let selected_value = selected_item.map(|item| item.value().to_owned());
-        let selected_values = resolve_command_selected_values(
-            &raw_groups,
+        let selected_item = choice::resolve_enabled_value(
             &raw_items,
-            selection_mode,
+            raw_groups.iter().map(|group| group.items_ref()),
+            selected_value,
+            CommandItemDescriptor::value,
+            CommandItemDescriptor::disabled_state,
+        );
+        let selected_value = selected_item.map(|item| item.value().to_owned());
+        let selected_values = choice::resolve_selected_values(
+            selection_mode.is_multiple(),
+            &raw_items,
+            raw_groups.iter().map(|group| group.items_ref()),
             selected_value.as_deref(),
             selected_values,
+            CommandItemDescriptor::value,
+            CommandItemDescriptor::disabled_state,
         );
         let listbox_selected_value = (!selection_mode.is_multiple())
             .then_some(selected_value.as_deref())
@@ -1523,12 +1530,16 @@ impl CommandState {
             .iter()
             .enumerate()
             .filter_map(|(index, value)| {
-                find_command_item(&raw_groups, &raw_items, value).map(|item| {
-                    CommandSelectedChipState {
-                        index,
-                        value: item.value().to_owned(),
-                        label: item.label().to_owned(),
-                    }
+                choice::find_value_in_flat_groups(
+                    &raw_items,
+                    raw_groups.iter().map(|group| group.items_ref()),
+                    value,
+                    CommandItemDescriptor::value,
+                )
+                .map(|item| CommandSelectedChipState {
+                    index,
+                    value: item.value().to_owned(),
+                    label: item.label().to_owned(),
                 })
             })
             .collect::<Vec<_>>();
@@ -3400,16 +3411,12 @@ impl CommandGroup {
     }
 }
 
-fn normalize_query(query: &str) -> String {
-    query.trim().to_lowercase()
-}
-
 fn command_text_match_rank(
     text: &str,
     normalized_query: &str,
     source: CommandMatchSource,
 ) -> Option<CommandMatchRank> {
-    let text = normalize_query(text);
+    let text = choice::normalize_query(text);
     if text.is_empty() || normalized_query.is_empty() {
         return None;
     }
@@ -3457,44 +3464,6 @@ fn sort_ranked_command_items(items: &mut [FlattenedCommandItem]) {
             .cmp(&a.rank.score)
             .then_with(|| a.source_index.cmp(&b.source_index))
     });
-}
-
-fn resolve_command_selected_values(
-    groups: &[CommandGroupDescriptor],
-    items: &[CommandItemDescriptor],
-    mode: CommandSelectionMode,
-    selected_value: Option<&str>,
-    selected_values: impl IntoIterator<Item = impl Into<String>>,
-) -> Vec<String> {
-    if mode.is_multiple() {
-        selected_values
-            .into_iter()
-            .map(Into::into)
-            .filter(|value| {
-                find_command_item(groups, items, value).is_some_and(|item| !item.disabled_state())
-            })
-            .fold(Vec::new(), |mut values, value| {
-                if !values.iter().any(|existing| existing == &value) {
-                    values.push(value);
-                }
-                values
-            })
-    } else {
-        selected_value.map(str::to_owned).into_iter().collect()
-    }
-}
-
-fn find_command_item<'a>(
-    groups: &'a [CommandGroupDescriptor],
-    items: &'a [CommandItemDescriptor],
-    value: &str,
-) -> Option<&'a CommandItemDescriptor> {
-    items.iter().find(|item| item.value() == value).or_else(|| {
-        groups
-            .iter()
-            .flat_map(CommandGroupDescriptor::items_ref)
-            .find(|item| item.value() == value)
-    })
 }
 
 impl ThemeResolver {

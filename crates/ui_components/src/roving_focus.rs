@@ -92,6 +92,62 @@ pub(crate) fn roving_navigation_target(
     }
 }
 
+/// Resolves the standard vertical roving target used by listbox-like surfaces.
+pub(crate) fn vertical_roving_navigation_target(
+    key: &str,
+    current: usize,
+    disabled: &[bool],
+) -> Option<usize> {
+    roving_navigation_target(Orientation::Vertical, key, current, disabled)
+}
+
+/// Resolves bounded sequential navigation, including optional page jumps.
+pub(crate) fn paged_navigation_target(
+    key: &str,
+    current: usize,
+    item_count: usize,
+    page_step: usize,
+) -> Option<usize> {
+    if item_count == 0 || current >= item_count {
+        return None;
+    }
+
+    match key {
+        "home" => Some(0),
+        "end" => item_count.checked_sub(1),
+        "up" => Some(current.saturating_sub(1)),
+        "down" => Some((current + 1).min(item_count - 1)),
+        "pageup" => Some(current.saturating_sub(page_step.max(1))),
+        "pagedown" => Some((current + page_step.max(1)).min(item_count - 1)),
+        _ => None,
+    }
+}
+
+/// Resolves a typeahead target by scanning from the item after the current index.
+pub(crate) fn typeahead_target<'a, T>(
+    items: &'a [T],
+    current: Option<usize>,
+    query: &str,
+    focusable: impl Fn(&T) -> bool,
+    label: impl Fn(&T) -> &str,
+) -> Option<&'a T> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return None;
+    }
+
+    let len = items.len();
+    if len == 0 {
+        return None;
+    }
+
+    let start = current.map_or(0, |index| (index + 1) % len);
+    (0..len)
+        .map(|step| (start + step) % len)
+        .filter_map(|index| items.get(index))
+        .find(|item| focusable(item) && label(item).to_lowercase().starts_with(query.as_str()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,5 +206,84 @@ mod tests {
             roving_navigation_target(Orientation::Vertical, "left", 0, &disabled),
             None
         );
+        assert_eq!(
+            vertical_roving_navigation_target("down", 2, &disabled),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn typeahead_target_scans_focusable_items_after_current() {
+        #[derive(Clone, Copy)]
+        struct Item {
+            label: &'static str,
+            focusable: bool,
+        }
+
+        let items = [
+            Item {
+                label: "Alpha",
+                focusable: true,
+            },
+            Item {
+                label: "Bravo",
+                focusable: false,
+            },
+            Item {
+                label: "Charlie",
+                focusable: true,
+            },
+            Item {
+                label: "Delta",
+                focusable: true,
+            },
+        ];
+
+        assert_eq!(
+            typeahead_target(
+                &items,
+                Some(0),
+                " ch",
+                |item| item.focusable,
+                |item| item.label
+            )
+            .map(|item| item.label),
+            Some("Charlie")
+        );
+        assert_eq!(
+            typeahead_target(
+                &items,
+                Some(2),
+                "al",
+                |item| item.focusable,
+                |item| item.label
+            )
+            .map(|item| item.label),
+            Some("Alpha")
+        );
+        assert_eq!(
+            typeahead_target(
+                &items,
+                Some(0),
+                "",
+                |item| item.focusable,
+                |item| item.label
+            )
+            .map(|item| item.label),
+            None
+        );
+    }
+
+    #[test]
+    fn paged_navigation_clamps_to_bounds() {
+        assert_eq!(paged_navigation_target("home", 6, 12, 4), Some(0));
+        assert_eq!(paged_navigation_target("end", 6, 12, 4), Some(11));
+        assert_eq!(paged_navigation_target("up", 6, 12, 4), Some(5));
+        assert_eq!(paged_navigation_target("down", 6, 12, 4), Some(7));
+        assert_eq!(paged_navigation_target("pageup", 6, 12, 4), Some(2));
+        assert_eq!(paged_navigation_target("pagedown", 6, 12, 4), Some(10));
+        assert_eq!(paged_navigation_target("pagedown", 11, 12, 4), Some(11));
+        assert_eq!(paged_navigation_target("pageup", 0, 12, 4), Some(0));
+        assert_eq!(paged_navigation_target("down", 0, 0, 4), None);
     }
 }

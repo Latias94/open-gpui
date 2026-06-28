@@ -236,7 +236,8 @@ impl GalleryShell {
         }
     }
 
-    pub(crate) fn set_components_focus(
+    /// Updates the Components page focus mode used by catalog cards and focus controls.
+    pub fn set_components_focus(
         &mut self,
         focus: pages::components::ComponentFocusMode,
         cx: &mut Context<Self>,
@@ -4469,6 +4470,20 @@ fn component_listbox_state_row(state: &ListboxState) -> impl IntoElement {
     let selected = state.selected_value().unwrap_or("none");
 
     let active = state.active_value().unwrap_or("none");
+    let typeahead = state.typeahead_query().unwrap_or("");
+    let typeahead_label = if typeahead.is_empty() {
+        "none"
+    } else {
+        typeahead
+    };
+    let first_typeahead_target = if typeahead.is_empty() {
+        "none"
+    } else {
+        state
+            .typeahead_target(typeahead)
+            .map(|option| option.value())
+            .unwrap_or("none")
+    };
 
     let disabled_count = state
         .options()
@@ -4485,6 +4500,10 @@ fn component_listbox_state_row(state: &ListboxState) -> impl IntoElement {
         .child(format!("{:?} / {}", state.role(), state.size().as_str()))
         .child(format!("selected {} / active {}", selected, active))
         .child(format!(
+            "typeahead '{}' / target {}",
+            typeahead_label, first_typeahead_target
+        ))
+        .child(format!(
             "{} groups / {} options / {} disabled",
             state.groups().len(),
             state.options().len(),
@@ -4496,6 +4515,7 @@ fn component_select_state_row(state: &SelectState) -> impl IntoElement {
     let selected = state.selected_value().unwrap_or("none");
 
     let active = state.active_value().unwrap_or("none");
+    let listbox_selected = state.listbox().selected_value().unwrap_or("none");
 
     div()
         .flex()
@@ -4516,13 +4536,17 @@ fn component_select_state_row(state: &SelectState) -> impl IntoElement {
             active
         ))
         .child(format!(
-            "{} options / scroll {} / {:?}",
-            state.listbox().options().len(),
+            "listbox selected {} / scroll {}",
+            listbox_selected,
             if state.scrollable_content() {
                 "enabled"
             } else {
                 "not needed"
-            },
+            }
+        ))
+        .child(format!(
+            "{} options / {:?}",
+            state.listbox().options().len(),
             state.outside_press_policy()
         ))
 }
@@ -4531,6 +4555,8 @@ fn component_combobox_state_row(state: &ComboboxState) -> impl IntoElement {
     let selected = state.selected_value().unwrap_or("none");
 
     let active = state.active_value().unwrap_or("none");
+    let query = state.query();
+    let typeahead = state.listbox().typeahead_query().unwrap_or("none");
 
     div()
         .flex()
@@ -4546,14 +4572,13 @@ fn component_combobox_state_row(state: &ComboboxState) -> impl IntoElement {
         ))
         .child(format!(
             "query '{}' / selected {} / active {}",
-            state.query(),
-            selected,
-            active
+            query, selected, active
         ))
         .child(format!(
-            "{} of {} options / {:?}",
+            "visible {} of {} / typeahead '{}' / {:?}",
             state.filtered_option_count(),
             state.total_option_count(),
+            typeahead,
             state.outside_press_policy()
         ))
 }
@@ -4591,7 +4616,7 @@ fn component_command_state_row(state: &CommandState) -> impl IntoElement {
             state.selection_mode()
         ))
         .child(format!(
-            "{} / index {} / {:?} / {} chips",
+            "{} / index {} / {:?} / {} chips / selected_values {:?}",
             if state.dialog().is_some() {
                 "dialog"
             } else {
@@ -4599,7 +4624,8 @@ fn component_command_state_row(state: &CommandState) -> impl IntoElement {
             },
             revision,
             state.index_mode(),
-            selected_count
+            selected_count,
+            state.selected_values()
         ))
 }
 

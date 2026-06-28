@@ -167,6 +167,11 @@ intents, and the listbox content role. The GPUI `Select` adapter owns trigger/co
 keyed runtime open/selected/active state, callbacks, outside-press and Escape wiring, deferred
 anchored rendering, and concrete focus handles.
 
+`choice.rs` keeps the stable-value projection helpers for the choice family in one place. It
+normalizes query text, resolves selected values by stable item identity, deduplicates multi-select
+chips, and keeps `Command`, `Combobox`, and `Select` aligned on the same value-seam behavior
+without giving `Select` or `Combobox` command-specific ranking semantics.
+
 `ComboboxState` composes an editable text input, non-modal dismissible popup, scroll viewport
 metadata, and nested `ListboxState`. It records controlled versus uncontrolled open mode,
 default-open state, required/disabled metadata, query text, selected value and label, active option
@@ -667,6 +672,8 @@ impls; the remaining non-headless surfaces are GPUI-owned adapter APIs such as
 conversion helpers, and GPUI overlay scheduling helpers. These public adapter APIs are now grouped
 under `open_gpui_ui_components::gpui_adapter`. Shared roving-focus helpers now live in
 `open_gpui_ui_components::roving_focus`, with `Tabs` preserving compatibility re-exports.
+The choice family now also has a shared internal seam in `open_gpui_ui_components::choice` for
+stable-value resolution and normalized query handling across `Command`, `Combobox`, and `Select`.
 `open_gpui_ui_core` now owns `UiPx`, `UiPoint`, `UiSize`, `UiRect`, and `UiEdges`, and
 `ContextMenuState` stores a neutral point anchor plus renderer-neutral `OverlayPlacementInput`.
 GPUI placement is resolved only inside the adapter/render boundary. Overlay stack Escape,
@@ -746,6 +753,9 @@ as branches but do not emit repeat toggle requests while the caller reports load
 focusable row list; the GPUI adapter owns the printable-key buffer and reset timing, then moves
 focus without selecting the matched row. Typeahead intentionally does not search collapsed,
 unloaded, or virtualized descendants.
+`roving_focus.rs` now owns the shared vertical, paged, and typeahead target helpers used by
+`Listbox`, `Tabs`, `RadioGroup`, `Menu`, `Sidebar`, `Toolbar`, `Tree`, and `VirtualizedList`, so
+the component-specific adapters keep only their own branch and activation rules.
 `VirtualizedList` is now an official rendered component. Its adapter resolves a
 `VirtualizedListRenderPlan` from stable descriptors, owns a keyed GPUI runtime plus persistent
 `ScrollHandle`, and keeps row rendering inside its viewport. `VirtualizedListState` remains the
@@ -753,6 +763,9 @@ renderer-neutral keyboard/navigation contract: active/selected indices, page nav
 activation payloads, viewport item count, fixed row metrics, overscan, and semantic scroll
 strategy labels. Rendered range calculation remains owned by
 `open_gpui_ui_core::VirtualizerState`.
+`menu_runtime.rs` owns submenu hover timing, branch switching, trigger-bound caches, and local
+submenu scroll handles for `Menu` and `ContextMenu`, keeping render assembly thin while preserving
+safe hover and local scroll ownership.
 `Splitter` covers panel fraction normalization, min/max constraints, collapsed-panel metadata,
 stable handle anatomy, and local pointer dragging through keyed runtime state. Keyboard resizing,
 controlled resize callbacks, persisted layouts, RTL behavior, and nested splitter arbitration

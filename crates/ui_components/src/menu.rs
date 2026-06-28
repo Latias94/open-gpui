@@ -2,15 +2,13 @@
 
 use crate::geometry::gpui_px_from_ui;
 use crate::geometry::{ui_point_from_gpui, ui_size_from_gpui_size};
-use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Duration;
 
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, FocusHandle, IntoElement, KeyDownEvent, ParentElement,
-    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Task, Window,
-    anchored, deferred, div,
+    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, anchored,
+    deferred, div,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
@@ -22,19 +20,19 @@ use open_gpui_ui_core::{
 use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::menu_runtime::{
+    MenuRuntime, handle_menu_submenu_surface_hover, update_menu_hover_target,
+};
 use crate::overlay::{
     GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState,
     focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
 };
-use crate::roving_focus::{first_enabled, last_enabled, next_enabled};
+use crate::roving_focus::{typeahead_target, vertical_roving_navigation_target};
 use crate::scroll_area::ScrollArea;
 use crate::theme::ThemeResolver;
 
 /// Default threshold where menu surfaces become locally scrollable.
 pub const DEFAULT_SCROLLABLE_MENU_ITEM_COUNT_THRESHOLD: usize = 8;
-
-const MENU_SUBMENU_OPEN_DELAY: Duration = Duration::from_millis(120);
-const MENU_SUBMENU_CLOSE_DELAY: Duration = Duration::from_millis(180);
 
 /// Menu open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1250,21 +1248,13 @@ impl MenuState {
 
     /// Resolves a typeahead target for a caller-owned text buffer.
     pub fn typeahead_target(&self, query: &str) -> Option<&MenuItemState> {
-        let query = query.trim().to_lowercase();
-        if query.is_empty() {
-            return None;
-        }
-
-        let len = self.visible_items.len();
-        if len == 0 {
-            return None;
-        }
-
-        let start = self.focused_index.map_or(0, |index| (index + 1) % len);
-        (0..len)
-            .map(|step| (start + step) % len)
-            .filter_map(|index| self.visible_items.get(index))
-            .find(|item| item.focusable() && item.label().to_lowercase().starts_with(&query))
+        typeahead_target(
+            self.visible_items.as_slice(),
+            self.focused_index,
+            query,
+            MenuItemState::focusable,
+            MenuItemState::label,
+        )
     }
 
     /// Resolves an activation payload for an APG-style activation key.
@@ -1370,13 +1360,7 @@ impl MenuState {
 
 /// Resolves a menu roving-focus target from an APG-style key name.
 pub fn menu_navigation_target(key: &str, current: usize, disabled: &[bool]) -> Option<usize> {
-    match key {
-        "home" => first_enabled(disabled),
-        "end" => last_enabled(disabled),
-        "up" => next_enabled(disabled, current, false, true),
-        "down" => next_enabled(disabled, current, true, true),
-        _ => None,
-    }
+    vertical_roving_navigation_target(key, current, disabled)
 }
 
 fn menu_item_element(
@@ -1531,200 +1515,6 @@ fn menu_item_element(
                 })
                 .when(has_submenu, |this| this.child(div().ml_2().child(">")))
                 .into_any_element()
-        }
-    }
-}
-
-fn update_menu_hover_target(
-    runtime: open_gpui::Entity<MenuRuntime>,
-    focused_path: Vec<String>,
-    focused_value: String,
-    submenu_navigation: Option<MenuSubmenuNavigation>,
-    hovered: bool,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    runtime.update(cx, |runtime, _| {
-        if hovered {
-            runtime.focused_path = Some(focused_path.clone());
-            runtime.focused_value = Some(focused_value.clone());
-            runtime.submenu_hovered_path = Some(focused_path.clone());
-        } else if runtime.submenu_hovered_path.as_deref() == Some(focused_path.as_slice()) {
-            runtime.submenu_hovered_path = None;
-        }
-    });
-
-    if hovered {
-        if let Some(submenu_navigation) = submenu_navigation {
-            let open_path = submenu_navigation.open_path().to_vec();
-            let should_open = runtime.read(cx).open_path != open_path;
-            if should_open {
-                schedule_menu_submenu_open(runtime, submenu_navigation, window, cx);
-            }
-        } else {
-            let should_close = {
-                let runtime_state = runtime.read(cx);
-                !runtime_state.open_path.is_empty()
-                    && runtime_state
-                        .submenu_hovered_path
-                        .as_deref()
-                        .is_none_or(|path| !path.starts_with(runtime_state.open_path.as_slice()))
-            };
-            if should_close {
-                schedule_menu_submenu_close(runtime, window, cx);
-            }
-        }
-    } else {
-        let should_close = {
-            let runtime_state = runtime.read(cx);
-            !runtime_state.open_path.is_empty()
-                && runtime_state
-                    .submenu_hovered_path
-                    .as_deref()
-                    .is_none_or(|path| path.starts_with(runtime_state.open_path.as_slice()))
-        };
-        if should_close {
-            schedule_menu_submenu_close(runtime, window, cx);
-        }
-    }
-}
-
-fn schedule_menu_submenu_open(
-    runtime: open_gpui::Entity<MenuRuntime>,
-    submenu_navigation: MenuSubmenuNavigation,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    runtime.update(cx, |runtime, _| {
-        runtime.submenu_hover_epoch = runtime.submenu_hover_epoch.wrapping_add(1);
-        runtime.submenu_hover_task = None;
-    });
-    let epoch = runtime.read(cx).submenu_hover_epoch;
-    let open_path = submenu_navigation.open_path().to_vec();
-    let focused_path = submenu_navigation.focused_path().to_vec();
-    let focused_value = submenu_navigation.focused_value().to_owned();
-
-    if MENU_SUBMENU_OPEN_DELAY.is_zero() {
-        runtime.update(cx, |runtime, _| {
-            runtime.open_path = open_path;
-            runtime.focused_path = Some(focused_path);
-            runtime.focused_value = Some(focused_value);
-        });
-        return;
-    }
-
-    let task = window.spawn(cx, {
-        let runtime = runtime.clone();
-        let open_path = open_path.clone();
-        let focused_path = focused_path.clone();
-        let focused_value = focused_value.clone();
-        async move |cx| {
-            cx.background_executor()
-                .timer(MENU_SUBMENU_OPEN_DELAY)
-                .await;
-            cx.update(|_, cx| {
-                let should_open = {
-                    let runtime_state = runtime.read(cx);
-                    runtime_state.submenu_hover_epoch == epoch
-                        && runtime_state
-                            .submenu_hovered_path
-                            .as_deref()
-                            .is_some_and(|path| path.starts_with(open_path.as_slice()))
-                };
-
-                if should_open {
-                    runtime.update(cx, |runtime, _| {
-                        runtime.open_path = open_path.clone();
-                        runtime.focused_path = Some(focused_path.clone());
-                        runtime.focused_value = Some(focused_value.clone());
-                        runtime.submenu_hover_task = None;
-                        runtime.submenu_hover_epoch = runtime.submenu_hover_epoch.wrapping_add(1);
-                    });
-                }
-            })
-            .ok();
-        }
-    });
-    runtime.update(cx, |runtime, _| {
-        runtime.submenu_hover_task = Some(Rc::new(task));
-    });
-}
-
-fn schedule_menu_submenu_close(
-    runtime: open_gpui::Entity<MenuRuntime>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    runtime.update(cx, |runtime, _| {
-        runtime.submenu_hover_epoch = runtime.submenu_hover_epoch.wrapping_add(1);
-        runtime.submenu_hover_task = None;
-    });
-    let epoch = runtime.read(cx).submenu_hover_epoch;
-
-    if MENU_SUBMENU_CLOSE_DELAY.is_zero() {
-        runtime.update(cx, |runtime, _| {
-            runtime.open_path.clear();
-        });
-        return;
-    }
-
-    let task = window.spawn(cx, {
-        let runtime = runtime.clone();
-        async move |cx| {
-            cx.background_executor()
-                .timer(MENU_SUBMENU_CLOSE_DELAY)
-                .await;
-            cx.update(|_, cx| {
-                let should_close = {
-                    let runtime_state = runtime.read(cx);
-                    runtime_state.submenu_hover_epoch == epoch
-                        && !runtime_state.submenu_hovering_surface
-                        && !runtime_state.open_path.is_empty()
-                        && runtime_state
-                            .submenu_hovered_path
-                            .as_deref()
-                            .is_none_or(|path| {
-                                !path.starts_with(runtime_state.open_path.as_slice())
-                            })
-                };
-
-                if should_close {
-                    runtime.update(cx, |runtime, _| {
-                        runtime.open_path.clear();
-                        runtime.submenu_hover_task = None;
-                        runtime.submenu_hover_epoch = runtime.submenu_hover_epoch.wrapping_add(1);
-                    });
-                }
-            })
-            .ok();
-        }
-    });
-    runtime.update(cx, |runtime, _| {
-        runtime.submenu_hover_task = Some(Rc::new(task));
-    });
-}
-
-fn handle_menu_submenu_surface_hover(
-    runtime: open_gpui::Entity<MenuRuntime>,
-    hovered: bool,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    runtime.update(cx, |runtime, _| {
-        runtime.submenu_hovering_surface = hovered;
-    });
-
-    if !hovered {
-        let should_close = {
-            let runtime_state = runtime.read(cx);
-            !runtime_state.open_path.is_empty()
-                && runtime_state
-                    .submenu_hovered_path
-                    .as_deref()
-                    .is_none_or(|path| path.starts_with(runtime_state.open_path.as_slice()))
-        };
-        if should_close {
-            schedule_menu_submenu_close(runtime, window, cx);
         }
     }
 }
@@ -1905,33 +1695,6 @@ pub struct Menu {
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
 }
 
-#[derive(Debug, Clone)]
-struct MenuRuntime {
-    open: bool,
-    did_initial_focus: bool,
-    trigger_focus: FocusHandle,
-    focused_value: Option<String>,
-    focused_path: Option<Vec<String>>,
-    open_path: Vec<String>,
-    submenu_hovered_path: Option<Vec<String>>,
-    submenu_hovering_surface: bool,
-    submenu_hover_epoch: u64,
-    submenu_hover_task: Option<Rc<Task<()>>>,
-    scroll_handle: ScrollHandle,
-    submenu_scroll_handles: HashMap<String, ScrollHandle>,
-    submenu_trigger_bounds: HashMap<String, Rect>,
-    content_focus: FocusHandle,
-}
-
-impl MenuRuntime {
-    fn submenu_scroll_handle(&mut self, branch_key: &str) -> ScrollHandle {
-        self.submenu_scroll_handles
-            .entry(branch_key.to_owned())
-            .or_insert_with(ScrollHandle::new)
-            .clone()
-    }
-}
-
 impl Menu {
     /// Creates a menu with a trigger label.
     pub fn new(id: impl Into<ElementId>, trigger_label: impl Into<SharedString>) -> Self {
@@ -2085,21 +1848,13 @@ impl RenderOnce for Menu {
             self.items.iter().map(MenuItem::descriptor).collect();
         let trigger_focus = cx.focus_handle();
         let content_focus = cx.focus_handle();
-        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| MenuRuntime {
-            open: self.default_open,
-            did_initial_focus: false,
-            trigger_focus: trigger_focus.clone(),
-            content_focus: content_focus.clone(),
-            focused_value: self.focused_value.clone(),
-            focused_path: None,
-            open_path: Vec::new(),
-            submenu_hovered_path: None,
-            submenu_hovering_surface: false,
-            submenu_hover_epoch: 0,
-            submenu_hover_task: None,
-            scroll_handle: ScrollHandle::new(),
-            submenu_scroll_handles: HashMap::new(),
-            submenu_trigger_bounds: HashMap::new(),
+        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| {
+            MenuRuntime::new(
+                self.default_open,
+                trigger_focus.clone(),
+                content_focus.clone(),
+                self.focused_value.clone(),
+            )
         });
         let runtime_state = runtime.read(cx).clone();
         let controlled_open = self.open;
@@ -2107,26 +1862,11 @@ impl RenderOnce for Menu {
 
         if controlled_open.is_some() && runtime_state.open != resolved_open {
             runtime.update(cx, |runtime, _| {
-                runtime.open = resolved_open;
-                if !resolved_open {
-                    runtime.did_initial_focus = false;
-                    runtime.focused_value = None;
-                    runtime.focused_path = None;
-                    runtime.open_path.clear();
-                    runtime.submenu_hovered_path = None;
-                    runtime.submenu_hovering_surface = false;
-                    runtime.submenu_hover_epoch = runtime.submenu_hover_epoch.wrapping_add(1);
-                    runtime.submenu_hover_task = None;
-                    runtime.submenu_scroll_handles.clear();
-                    runtime.submenu_trigger_bounds.clear();
-                }
+                runtime.sync_controlled_open(resolved_open);
             });
         }
 
-        let focused_value = runtime_state
-            .focused_value
-            .as_deref()
-            .or(self.focused_value.as_deref());
+        let focused_value = runtime_state.resolved_focused_value(self.focused_value.as_deref());
         let state = MenuState::resolve_with_paths(
             self.size,
             self.disabled,
@@ -2380,9 +2120,7 @@ fn menu_content_element(
                 window.prevent_default();
                 if let Some(target) = key_state.close_submenu_target() {
                     key_runtime.update(cx, |runtime, _| {
-                        runtime.open_path = target.open_path().to_vec();
-                        runtime.focused_path = Some(target.focused_path().to_vec());
-                        runtime.focused_value = Some(target.focused_value().to_owned());
+                        runtime.apply_submenu_target(&target);
                     });
                     return;
                 }
@@ -2401,9 +2139,7 @@ fn menu_content_element(
                 cx.stop_propagation();
                 window.prevent_default();
                 key_runtime.update(cx, |runtime, _| {
-                    runtime.open_path = target.open_path().to_vec();
-                    runtime.focused_path = Some(target.focused_path().to_vec());
-                    runtime.focused_value = Some(target.focused_value().to_owned());
+                    runtime.apply_submenu_target(&target);
                 });
                 return;
             }
@@ -2773,16 +2509,7 @@ fn close_menu(
 ) {
     runtime.update(cx, |runtime, _| {
         runtime.open = false;
-        runtime.did_initial_focus = false;
-        runtime.focused_value = None;
-        runtime.focused_path = None;
-        runtime.open_path.clear();
-        runtime.submenu_hovered_path = None;
-        runtime.submenu_hovering_surface = false;
-        runtime.submenu_hover_epoch = runtime.submenu_hover_epoch.wrapping_add(1);
-        runtime.submenu_hover_task = None;
-        runtime.submenu_scroll_handles.clear();
-        runtime.submenu_trigger_bounds.clear();
+        runtime.reset_closed_state();
     });
     if let Some(on_open_change) = on_open_change.as_ref() {
         on_open_change(false, window, cx);

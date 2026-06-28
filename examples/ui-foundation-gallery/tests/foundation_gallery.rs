@@ -287,6 +287,59 @@ fn focus_components_catalog_entry(
     expected_focus
 }
 
+fn focus_components_section(
+    shell: &Entity<GalleryShell>,
+    cx: &mut VisualTestContext,
+    entry: &pages::components::ComponentCatalogEntry,
+) -> pages::components::ComponentFocusMode {
+    let focus = pages::components::focused_section_for_catalog_entry(entry)
+        .unwrap_or_else(|| panic!("expected focusable catalog entry `{}`", entry.name));
+    let expected_focus = pages::components::ComponentFocusMode::Section(focus);
+
+    cx.update(|_, app| {
+        shell.update(app, |shell, cx| {
+            shell.set_components_focus(expected_focus, cx);
+        });
+    });
+    settle(cx);
+
+    assert_eq!(
+        shell_snapshot(shell, cx).components_focus,
+        expected_focus,
+        "expected catalog entry `{}` to enter focused mode",
+        entry.name
+    );
+
+    let focus_selector = entry
+        .sample_selector
+        .or(entry.state_contract_selector)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected focused selector for catalog entry `{}`",
+                entry.name
+            )
+        });
+    let section_selector = format!("gallery:components-section:{focus}");
+
+    assert!(
+        cx.debug_bounds(section_selector.as_str()).is_some(),
+        "expected focused catalog entry `{}` to render section `{section_selector}`",
+        entry.name
+    );
+    assert!(
+        cx.debug_bounds(focus_selector).is_some(),
+        "expected focused catalog entry `{}` to render selector `{focus_selector}`",
+        entry.name
+    );
+    assert!(
+        cx.debug_bounds("gallery:components-directory").is_some(),
+        "expected focused catalog entry `{}` to keep the section directory available",
+        entry.name
+    );
+
+    expected_focus
+}
+
 fn drag(
     cx: &mut VisualTestContext,
     start: open_gpui::Point<Pixels>,
@@ -1361,12 +1414,20 @@ fn components_page_samples_expose_component_metadata() {
             .all(|entry| entry.sample_selector.is_none() && entry.state_contract_selector.is_some())
     );
 
-    assert_eq!(gates.len(), 10);
+    assert_eq!(gates.len(), 11);
     assert_eq!(gates[0].id, "public-api-exports");
     assert!(
         gates[0]
             .evidence
             .contains(&"crates/ui_components/src/lib.rs")
+    );
+    assert!(
+        gates.iter().any(|gate| {
+            gate.id == "choice-surfaces"
+                && gate.evidence.contains(&"choice.rs")
+                && gate.evidence.contains(&"roving_focus.rs")
+        }),
+        "expected Components conformance gates to expose the shared choice/navigation seam"
     );
     assert_eq!(gates[1].id, "gallery-metadata");
     assert_eq!(gates[2].id, "scroll-redraw");
@@ -1399,7 +1460,8 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(gates[6].id, "tree-renderer");
     assert_eq!(gates[7].id, "virtualized-list-renderer");
     assert_eq!(gates[8].id, "state-contract-readouts");
-    assert_eq!(gates[9].id, "a11y-labels");
+    assert_eq!(gates[9].id, "choice-surfaces");
+    assert_eq!(gates[10].id, "a11y-labels");
 
     assert_eq!(buttons.len(), 6);
     assert_eq!(buttons[0].id, "default");
@@ -1789,7 +1851,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 
-    assert_eq!(tables.len(), 14);
+    assert_eq!(tables.len(), 15);
     let release_queue = table_sample(tables, "release-queue");
     assert_eq!(release_queue.state.rows().len(), 10_000);
     assert_eq!(
@@ -2382,6 +2444,30 @@ fn component_gallery_shell_reads_choice_active_metadata_from_resolved_state() {
         .nth(1)
         .and_then(|section| section.split("fn resolved_listbox_option").next())
         .expect("expected Command sample section in shell source");
+    let listbox_readout = shell_source
+        .split("fn component_listbox_state_row(")
+        .nth(1)
+        .and_then(|section| section.split("fn component_select_state_row").next())
+        .expect("expected Listbox state row in shell source");
+    let select_readout = shell_source
+        .split("fn component_select_state_row(")
+        .nth(1)
+        .and_then(|section| section.split("fn component_combobox_state_row").next())
+        .expect("expected Select state row in shell source");
+    let combobox_readout = shell_source
+        .split("fn component_combobox_state_row(")
+        .nth(1)
+        .and_then(|section| section.split("fn component_command_state_row").next())
+        .expect("expected Combobox state row in shell source");
+    let command_readout = shell_source
+        .split("fn component_command_state_row(")
+        .nth(1)
+        .and_then(|section| {
+            section
+                .split("pub(crate) fn component_radio_state_row")
+                .next()
+        })
+        .expect("expected Command state row in shell source");
 
     assert!(select_section.contains("if let Some(active) = state.active_value()"));
     assert!(select_section.contains("select = select.active(active);"));
@@ -2389,6 +2475,11 @@ fn component_gallery_shell_reads_choice_active_metadata_from_resolved_state() {
     assert!(combobox_section.contains("combobox = combobox.active(active);"));
     assert!(command_section.contains("if let Some(active) = state.active_value()"));
     assert!(command_section.contains("command = command.active(active);"));
+    assert!(listbox_readout.contains("typeahead_label"));
+    assert!(listbox_readout.contains("first_typeahead_target"));
+    assert!(select_readout.contains("listbox selected"));
+    assert!(combobox_readout.contains("visible {} of {} / typeahead"));
+    assert!(command_readout.contains("selected_values {:?}"));
 }
 
 #[test]
@@ -3567,6 +3658,11 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(
         table_gate
             .evidence
+            .contains(&"components_gallery_smoke_select_table_cell_updates_sample_rows")
+    );
+    assert!(
+        table_gate
+            .evidence
             .contains(&"components_gallery_smoke_global_filter_updates_table_rows")
     );
     assert!(
@@ -4285,7 +4381,7 @@ fn components_gallery_smoke_focuses_every_focusable_catalog_entry(
         .iter()
         .filter(|entry| pages::components::focused_section_for_catalog_entry(entry).is_some())
     {
-        focus_components_catalog_entry(&shell, cx, entry);
+        focus_components_section(&shell, cx, entry);
         visited.push(entry.name);
     }
 
@@ -4419,11 +4515,12 @@ fn components_gallery_smoke_textarea_scroll_stays_inside_sample(
 fn components_gallery_smoke_focused_command_samples_cover_depth_behaviors(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    let cx = open_components_gallery(cx);
-
-    scroll_page_until_visible(cx, "component-catalog:Command");
-    click(cx, "component-catalog:Command");
-    settle(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    let command_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Command")
+        .unwrap_or_else(|| panic!("expected catalog entry `Command`"));
+    focus_components_section(&shell, cx, command_entry);
 
     for selector in [
         "gallery:component-command-sample:ranked-search",
@@ -6435,13 +6532,16 @@ fn components_gallery_smoke_tree_expands_and_selects(cx: &mut open_gpui::TestApp
     const INTRO: &str = "tree:component-tree:document-outline:item:intro";
     const NOTES: &str = "tree:component-tree:document-outline:item:notes";
 
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     cx.set_global(pages::components::TreeSampleRuntimeLog::default());
+    let tree_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Tree")
+        .unwrap_or_else(|| panic!("expected catalog entry `Tree`"));
+    focus_components_section(&shell, cx, tree_entry);
 
-    scroll_page_until_visible(cx, "component-catalog:Tree");
-    click(cx, "component-catalog:Tree");
-    settle(cx);
-    scroll_page_until_visible(cx, SAMPLE);
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    scroll_page_selector_into_view(&shell, cx, PAPER);
     assert!(
         cx.debug_bounds(INTRO).is_none(),
         "expected collapsed Tree descendants to stay hidden before expansion"

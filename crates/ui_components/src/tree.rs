@@ -19,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::roving_focus::{first_enabled, last_enabled, next_enabled};
+use crate::roving_focus::{first_enabled, typeahead_target, vertical_roving_navigation_target};
 
 type TreeSelectHandler = Rc<dyn Fn(TreeSelection, &mut Window, &mut App)>;
 type TreeToggleHandler = Rc<dyn Fn(TreeToggle, &mut Window, &mut App)>;
@@ -813,21 +813,13 @@ impl TreeState {
 
     /// Resolves a typeahead target for a caller-owned text buffer.
     pub fn typeahead_target(&self, query: &str) -> Option<&TreeItemState> {
-        let query = query.trim().to_lowercase();
-        if query.is_empty() {
-            return None;
-        }
-
-        let len = self.items.len();
-        if len == 0 {
-            return None;
-        }
-
-        let start = self.focused_index.map_or(0, |index| (index + 1) % len);
-        (0..len)
-            .map(|step| (start + step) % len)
-            .filter_map(|index| self.items.get(index))
-            .find(|item| item.focusable() && item.label().to_lowercase().starts_with(&query))
+        typeahead_target(
+            self.items.as_slice(),
+            self.focused_index,
+            query,
+            TreeItemState::focusable,
+            TreeItemState::label,
+        )
     }
 
     /// Resolves a keyboard action from the current focused item.
@@ -1129,13 +1121,7 @@ impl TreeRenderPlan {
 
 /// Resolves tree navigation for APG-style key names.
 pub fn tree_navigation_target(key: &str, current: usize, disabled: &[bool]) -> Option<usize> {
-    match key {
-        "home" => first_enabled(disabled),
-        "end" => last_enabled(disabled),
-        "up" => next_enabled(disabled, current, false, true),
-        "down" => next_enabled(disabled, current, true, true),
-        _ => None,
-    }
+    vertical_roving_navigation_target(key, current, disabled)
 }
 
 #[derive(Debug, Clone, Default)]

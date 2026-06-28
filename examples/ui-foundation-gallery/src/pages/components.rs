@@ -73,6 +73,7 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Avatar",
     "open_gpui_ui_components::AvatarGroup",
     "open_gpui_ui_components::AvatarGroupCount",
+    "open_gpui_ui_components::AvatarGroupState",
     "open_gpui_ui_components::AvatarState",
     "open_gpui_ui_components::StatusCue",
     "open_gpui_ui_components::StatusCueState",
@@ -702,28 +703,28 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "Listbox",
         "choice",
         "ListboxState",
-        "exports / gallery / runtime smoke",
+        "exports / gallery / shared navigation smoke",
         "gallery:component-listbox-sample:assignee-listbox",
     ),
     ComponentCatalogEntry::official(
         "Select",
         "choice",
         "SelectState",
-        "exports / gallery / runtime smoke",
+        "exports / gallery / stable value smoke",
         "gallery:component-select-sample:priority-select",
     ),
     ComponentCatalogEntry::official(
         "Combobox",
         "choice-search",
         "ComboboxState",
-        "exports / gallery / runtime smoke",
+        "exports / gallery / stable value smoke",
         "gallery:component-combobox-sample:framework-combobox",
     ),
     ComponentCatalogEntry::official(
         "Command",
         "choice-search",
         "CommandState",
-        "exports / gallery / runtime smoke",
+        "exports / gallery / stable value and runtime smoke",
         "gallery:component-command-sample:ranked-search",
     ),
     ComponentCatalogEntry::official(
@@ -962,6 +963,7 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "release-resize",
             "content-fit-release",
             "toggle-release",
+            "select-release",
             "multiline-release",
             "row-pinning",
             "filter-board",
@@ -979,6 +981,7 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "components_gallery_smoke_range_filter_updates_table_rows",
             "components_gallery_smoke_content_fit_table_cell_edit_widens_name_column",
             "components_gallery_smoke_checkbox_table_cell_updates_sample_rows",
+            "components_gallery_smoke_select_table_cell_updates_sample_rows",
             "components_gallery_smoke_multiline_table_cell_updates_sample_rows",
             "components_gallery_smoke_column_visibility_updates_release_matrix",
             "components_gallery_smoke_table_scroll_stays_inside_sample",
@@ -1029,6 +1032,18 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "TreeState::keyboard_action_for_key",
             "VirtualizedListState::navigation_target",
             "components_page_state_contract_samples_expose_tree_and_virtualized_list_contracts",
+        ],
+    },
+    ComponentConformanceGate {
+        id: "choice-surfaces",
+        title: "Choice identity and navigation",
+        summary: "Choice surfaces keep stable value identity, shared listbox navigation, and focused gallery readouts aligned.",
+        evidence: &[
+            "choice.rs",
+            "roving_focus.rs",
+            "components_page_search_samples_expose_combobox_and_command_contracts",
+            "component_gallery_shell_reads_choice_active_metadata_from_resolved_state",
+            "components_gallery_smoke_focused_command_samples_cover_depth_behaviors",
         ],
     },
     ComponentConformanceGate {
@@ -6277,7 +6292,7 @@ pub fn listbox_samples(tokens: ThemeTokens) -> [ListboxSample; 2] {
     [
         ListboxSample {
             id: "assignee-listbox",
-            summary: "Grouped listbox with one disabled option and roving active metadata.",
+            summary: "Grouped listbox with shared roving navigation, typeahead, and one disabled option.",
             state: listbox_state(
                 Size::Medium,
                 false,
@@ -6379,7 +6394,7 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
     [
         SelectSample {
             id: "priority-select",
-            summary: "Open select keeps selected and active option state distinct.",
+            summary: "Open select keeps stable trigger selection distinct from popup active state.",
             state: select_state(
                 Size::Medium,
                 false,
@@ -6476,7 +6491,7 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
     [
         ComboboxSample {
             id: "framework-combobox",
-            summary: "Editable combobox keeps selected and active state distinct while filtering grouped options.",
+            summary: "Editable combobox keeps stable selected value while query filtering changes the visible list.",
             state: combobox_state(
                 Size::Medium,
                 false,
@@ -6585,7 +6600,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 4] {
     [
         command_sample_from_local(
             "ranked-search",
-            "Ranked query puts label and value matches ahead of keyword-only commands.",
+            "Ranked query keeps stable selected value while label and value matches outrank keyword-only commands.",
             Size::Medium,
             false,
             Some(true),
