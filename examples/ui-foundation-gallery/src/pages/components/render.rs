@@ -13,6 +13,7 @@ const COMPONENT_PAGE_RENDER_SECTION_IDS: &[&str] = &[
     "catalog",
     "primitives",
     "feedback",
+    "foundation-components",
     "state-contracts",
     "gates",
     "sidebar",
@@ -306,6 +307,16 @@ fn render_components_section(
             .child(component_feedback_samples_section(
                 pages::components::status_cue_samples(snapshot.tokens),
                 pages::components::empty_state_samples(snapshot.tokens),
+                snapshot.tokens,
+            ))
+            .into_any_element(),
+        "foundation-components" => component_page_section("foundation-components")
+            .when(
+                !show_component_section(focus_mode, "foundation-components"),
+                |this| this.hidden(),
+            )
+            .child(component_foundation_samples_section(
+                pages::components::foundation_component_samples(snapshot.tokens),
                 snapshot.tokens,
             ))
             .into_any_element(),
@@ -2497,6 +2508,374 @@ fn component_feedback_samples_section(
         )
 }
 
+fn component_foundation_samples_section(
+    samples: pages::components::FoundationComponentSamples,
+    tokens: ThemeTokens,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .child("Foundation components"),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(samples.accordions.into_iter().map(|sample| {
+                    let state = sample.state.clone();
+                    let mut accordion =
+                        Accordion::new(format!("component-accordion:{}", sample.id))
+                            .mode(state.mode())
+                            .collapsible(state.collapsible())
+                            .open_values(state.open_values().iter().cloned())
+                            .tokens(tokens);
+                    for item in sample.items.clone() {
+                        accordion = accordion.item(item);
+                    }
+
+                    gallery_card_shell(
+                        format!("component-accordion-sample:{}", sample.id),
+                        Some(sample.debug_selector()),
+                    )
+                    .w(px(420.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child(sample.title),
+                            )
+                            .child(label_pill(state.mode().as_str())),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0x5a6472))
+                            .child(sample.summary),
+                    )
+                    .child(accordion)
+                    .child(component_accordion_state_row(&state))
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(samples.collapsibles.into_iter().map(|sample| {
+                    let state = sample.state.clone();
+                    let collapsible = Collapsible::new(
+                        format!("component-collapsible:{}", sample.id),
+                        state.label(),
+                    )
+                    .open(state.open())
+                    .content(
+                        div()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(rgb(0xe2e4dc))
+                            .bg(rgb(0xfcfcf8))
+                            .p_2()
+                            .text_xs()
+                            .text_color(rgb(0x5a6472))
+                            .child(sample.content),
+                    )
+                    .with_size(state.size())
+                    .tokens(tokens);
+
+                    gallery_card_shell(
+                        format!("component-collapsible-sample:{}", sample.id),
+                        Some(sample.debug_selector()),
+                    )
+                    .w(px(360.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child(state.label().to_owned()),
+                            )
+                            .child(label_pill(if state.open() { "open" } else { "closed" })),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0x5a6472))
+                            .child(sample.summary),
+                    )
+                    .child(collapsible)
+                    .child(component_collapsible_state_row(&state))
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(samples.sliders.into_iter().map(|sample| {
+                    let state = sample.state.clone();
+                    gallery_card_shell(
+                        format!("component-slider-sample:{}", sample.id),
+                        Some(sample.debug_selector()),
+                    )
+                    .w(px(320.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        Slider::new(format!("component-slider:{}", sample.id), state.label())
+                            .value(state.value())
+                            .min(state.min())
+                            .max(state.max())
+                            .step(state.step())
+                            .disabled(state.disabled())
+                            .with_size(state.size())
+                            .tokens(tokens),
+                    )
+                    .child(component_slider_state_row(&state))
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(samples.number_inputs.into_iter().map(|sample| {
+                    let state = sample.state.clone();
+                    gallery_card_shell(
+                        format!("component-number-input-sample:{}", sample.id),
+                        Some(sample.debug_selector()),
+                    )
+                    .w(px(260.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        NumberInput::new(
+                            format!("component-number-input:{}", sample.id),
+                            state.label(),
+                        )
+                        .value(state.value())
+                        .min(state.min())
+                        .max(state.max())
+                        .step(state.step())
+                        .disabled(state.disabled())
+                        .read_only(state.read_only())
+                        .invalid(state.invalid())
+                        .required(state.required())
+                        .with_size(state.size())
+                        .tokens(tokens),
+                    )
+                    .child(component_number_input_state_row(&state))
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(samples.toggle_groups.into_iter().map(|sample| {
+                    let state = sample.state.clone();
+                    let mut group = ToggleGroup::new(
+                        format!("component-toggle-group:{}", sample.id),
+                        state.label(),
+                    )
+                    .orientation(state.orientation())
+                    .mode(state.mode())
+                    .selection_required(state.selection_required())
+                    .selected_values(state.selected_values().iter().cloned())
+                    .with_size(state.size())
+                    .tokens(tokens);
+                    if let Some(focused) = state.focused_value() {
+                        group = group.default_focused(focused);
+                    }
+                    for item in state.items() {
+                        group = group.item(
+                            ToggleGroupItem::new(item.value(), item.label())
+                                .disabled(item.disabled()),
+                        );
+                    }
+
+                    gallery_card_shell(
+                        format!("component-toggle-group-sample:{}", sample.id),
+                        Some(sample.debug_selector()),
+                    )
+                    .w(px(380.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child(state.label().to_owned()),
+                            )
+                            .child(label_pill(state.mode().as_str())),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0x5a6472))
+                            .child(sample.summary),
+                    )
+                    .child(group)
+                    .child(component_toggle_group_state_row(&state))
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(samples.links.into_iter().map(|sample| {
+                    let state = sample.state.clone();
+                    gallery_card_shell(
+                        format!("component-link-sample:{}", sample.id),
+                        Some(sample.debug_selector()),
+                    )
+                    .min_w(px(220.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        Link::new(
+                            format!("component-link:{}", sample.id),
+                            state.label(),
+                            state.href(),
+                        )
+                        .external(state.external())
+                        .disabled(state.disabled())
+                        .with_size(state.size())
+                        .tokens(tokens),
+                    )
+                    .child(component_link_state_row(&state))
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(samples.breadcrumbs.into_iter().map(|sample| {
+                    let state = sample.state.clone();
+                    let mut breadcrumb = Breadcrumb::new(
+                        format!("component-breadcrumb:{}", sample.id),
+                        state.label(),
+                    )
+                    .disabled(state.disabled())
+                    .with_size(state.size())
+                    .tokens(tokens);
+                    for item in state.items() {
+                        let mut descriptor =
+                            BreadcrumbItemDescriptor::new(item.value(), item.label());
+                        if let Some(href) = item.href() {
+                            descriptor = descriptor.href(href);
+                        }
+                        descriptor = descriptor.current(item.current()).disabled(item.disabled());
+                        breadcrumb = breadcrumb.item(descriptor);
+                    }
+
+                    gallery_card_shell(
+                        format!("component-breadcrumb-sample:{}", sample.id),
+                        Some(sample.debug_selector()),
+                    )
+                    .w(px(420.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(breadcrumb)
+                    .child(component_breadcrumb_state_row(&state))
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(samples.tags.into_iter().map(|sample| {
+                    let state = sample.state.clone();
+                    gallery_card_shell(
+                        format!("component-tag-sample:{}", sample.id),
+                        Some(sample.debug_selector()),
+                    )
+                    .min_w(px(180.0))
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap_2()
+                    .child(
+                        Tag::new(
+                            format!("component-tag:{}", sample.id),
+                            state.value(),
+                            state.label(),
+                        )
+                        .variant(state.variant())
+                        .removable(state.removable())
+                        .disabled(state.disabled())
+                        .with_size(state.size())
+                        .tokens(tokens),
+                    )
+                    .child(component_tag_state_row(&state))
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(samples.toast_stacks.into_iter().map(|sample| {
+                    let state = sample.state.clone();
+                    gallery_card_shell(
+                        format!("component-toast-stack-sample:{}", sample.id),
+                        Some(sample.debug_selector()),
+                    )
+                    .w(px(460.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        ToastStack::new(
+                            format!("component-toast-stack:{}", sample.id),
+                            state.label(),
+                        )
+                        .toasts(state.toasts().iter().cloned())
+                        .max_visible(state.max_visible())
+                        .with_size(state.size())
+                        .tokens(tokens),
+                    )
+                    .child(component_toast_stack_state_row(&state))
+                })),
+        )
+}
+
 fn component_state_contract_samples_section(
     tree_samples: [pages::components::TreeStateContractSample; 1],
     virtualized_list_samples: [pages::components::VirtualizedListStateContractSample; 1],
@@ -2659,6 +3038,235 @@ pub(crate) fn component_empty_state_state_row(state: &EmptyStateState) -> impl I
             format_px(metrics.padding()),
             format_px(metrics.gap())
         ))
+}
+
+pub(crate) fn component_accordion_state_row(state: &AccordionState) -> impl IntoElement {
+    let open = if state.open_values().is_empty() {
+        "none".to_owned()
+    } else {
+        state.open_values().join(",")
+    };
+    let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / collapsible {} / {}",
+            state.mode().as_str(),
+            state.collapsible(),
+            state.size().as_str()
+        ))
+        .child(format!(
+            "{} items / {} disabled / open {}",
+            state.items().len(),
+            disabled_count,
+            open
+        ))
+}
+
+pub(crate) fn component_collapsible_state_row(state: &CollapsibleState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{:?} trigger / {:?} panel / {}",
+            state.trigger_role(),
+            state.content_role(),
+            state.size().as_str()
+        ))
+        .child(format!(
+            "open {} / disabled {} / next {}",
+            state.open(),
+            state.disabled(),
+            state.next_open()
+        ))
+}
+
+pub(crate) fn component_slider_state_row(state: &SliderState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{:?} / {} / disabled {}",
+            state.role(),
+            state.size().as_str(),
+            state.disabled()
+        ))
+        .child(format!(
+            "value {:.1} / range {:.1}..{:.1} / step {:.1}",
+            state.value(),
+            state.min(),
+            state.max(),
+            state.step()
+        ))
+        .child(format!("normalized {:.2}", state.normalized_value()))
+}
+
+pub(crate) fn component_number_input_state_row(state: &NumberInputState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{:?} / {} / display {}",
+            state.role(),
+            state.size().as_str(),
+            state.display_value()
+        ))
+        .child(format!(
+            "range {:.1}..{:.1} / step {:.1} / enabled {}",
+            state.min(),
+            state.max(),
+            state.step(),
+            state.input_enabled()
+        ))
+        .child(format!(
+            "read-only {} / invalid {} / required {}",
+            state.read_only(),
+            state.invalid(),
+            state.required()
+        ))
+}
+
+pub(crate) fn component_toggle_group_state_row(state: &ToggleGroupState) -> impl IntoElement {
+    let selected = if state.selected_values().is_empty() {
+        "none".to_owned()
+    } else {
+        state.selected_values().join(",")
+    };
+    let focused = state.focused_value().unwrap_or("none");
+    let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{:?} / {} / {} / required {}",
+            state.role(),
+            match state.orientation() {
+                Orientation::Horizontal => "horizontal",
+                Orientation::Vertical => "vertical",
+            },
+            state.mode().as_str(),
+            state.selection_required()
+        ))
+        .child(format!("selected {} / focus {}", selected, focused))
+        .child(format!(
+            "{} items / {} disabled",
+            state.items().len(),
+            disabled_count
+        ))
+}
+
+pub(crate) fn component_link_state_row(state: &LinkState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{:?} / {} / external {}",
+            state.role(),
+            state.size().as_str(),
+            state.external()
+        ))
+        .child(format!(
+            "{} -> {} / activation {}",
+            state.label(),
+            state.href(),
+            state.activation_enabled()
+        ))
+}
+
+pub(crate) fn component_breadcrumb_state_row(state: &BreadcrumbState) -> impl IntoElement {
+    let current = state
+        .current_index()
+        .and_then(|index| state.items().get(index))
+        .map(BreadcrumbItemState::value)
+        .unwrap_or("none");
+    let links = state
+        .items()
+        .iter()
+        .filter(|item| item.activation_enabled())
+        .count();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{:?} / {} / disabled {}",
+            state.role(),
+            state.size().as_str(),
+            state.disabled()
+        ))
+        .child(format!(
+            "{} items / {} links / current {}",
+            state.items().len(),
+            links,
+            current
+        ))
+}
+
+pub(crate) fn component_tag_state_row(state: &TagState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{:?} / {} / {}",
+            state.role(),
+            state.variant().as_str(),
+            state.size().as_str()
+        ))
+        .child(format!(
+            "value {} / removable {} / remove-enabled {}",
+            state.value(),
+            state.removable(),
+            state.remove_enabled()
+        ))
+}
+
+pub(crate) fn component_toast_stack_state_row(state: &ToastStackState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{:?} / {} / max {}",
+            state.role(),
+            state.size().as_str(),
+            state.max_visible()
+        ))
+        .child(format!(
+            "{} queued / {} visible / {} overflow",
+            state.toasts().len(),
+            state.visible_toasts().len(),
+            state.overflow_count()
+        ))
+        .child(format!("expired {}", state.expired_dismissals().len()))
 }
 
 pub(crate) fn component_tree_state_contract_row(state: &TreeState) -> impl IntoElement {
