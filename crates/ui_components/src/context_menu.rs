@@ -20,8 +20,8 @@ use crate::a11y::UiA11yElementExt;
 use crate::focus::focus_ring_shadow;
 use crate::geometry::{gpui_point_from_ui, ui_point_from_gpui};
 use crate::menu::{
-    MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuMetrics, MenuOpenMode,
-    MenuSelection, MenuState, MenuSubmenuNavigation, visible_menu_items,
+    MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuKeyboardIntent, MenuMetrics,
+    MenuOpenMode, MenuSelection, MenuState, MenuSubmenuNavigation, visible_menu_items,
 };
 use crate::overlay::{
     GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
@@ -552,67 +552,70 @@ fn context_menu_surface(
             let trigger_focus = trigger_focus.clone();
             let focus_restore = focus_restore.clone();
             move |event: &KeyDownEvent, window, cx| {
-                let key = event.keystroke.key.as_str();
-                if key == "escape" {
-                    consume_overlay_event(window, cx);
-                    if let Some(target) = key_state.close_submenu_target() {
+                let Some(intent) = key_state.keyboard_intent_for_key(event.keystroke.key.as_str())
+                else {
+                    return;
+                };
+
+                match intent {
+                    MenuKeyboardIntent::DismissSubmenu(target) => {
+                        consume_overlay_event(window, cx);
                         key_runtime.update(cx, |runtime, _| {
                             runtime.apply_submenu_target(&target);
                         });
-                        return;
                     }
-                    close_context_menu(
-                        key_runtime.clone(),
-                        trigger_focus.clone(),
-                        focus_restore.clone(),
-                        key_open_change.clone(),
-                        window,
-                        cx,
-                    );
-                    return;
-                }
-
-                if let Some(target) = key_state.submenu_navigation_target(key) {
-                    cx.stop_propagation();
-                    window.prevent_default();
-                    key_runtime.update(cx, |runtime, _| {
-                        runtime.apply_submenu_target(&target);
-                    });
-                    return;
-                }
-
-                if let Some(target) = key_state.navigation_target(key) {
-                    cx.stop_propagation();
-                    window.prevent_default();
-                    key_runtime.update(cx, |runtime, _| {
-                        runtime.focus_item(target.path().to_vec(), target.value().to_owned());
-                    });
-                    return;
-                }
-
-                if let Some(selection) = key_state.activation_for_key(key) {
-                    cx.stop_propagation();
-                    window.prevent_default();
-                    if let Some(item_handler) = key_items
-                        .iter()
-                        .zip(key_state.visible_items())
-                        .find(|(_, item_state)| item_state.path() == selection.path())
-                        .and_then(|(item, _)| item.select_handler())
-                        .as_ref()
-                    {
-                        item_handler(selection.clone(), window, cx);
+                    MenuKeyboardIntent::DismissRoot => {
+                        consume_overlay_event(window, cx);
+                        close_context_menu(
+                            key_runtime.clone(),
+                            trigger_focus.clone(),
+                            focus_restore.clone(),
+                            key_open_change.clone(),
+                            window,
+                            cx,
+                        );
                     }
-                    if let Some(on_select) = key_select.as_ref() {
-                        on_select(selection, window, cx);
+                    MenuKeyboardIntent::NavigateSubmenu(target) => {
+                        cx.stop_propagation();
+                        window.prevent_default();
+                        key_runtime.update(cx, |runtime, _| {
+                            runtime.apply_submenu_target(&target);
+                        });
                     }
-                    close_context_menu(
-                        key_runtime.clone(),
-                        trigger_focus.clone(),
-                        focus_restore.clone(),
-                        key_open_change.clone(),
-                        window,
-                        cx,
-                    );
+                    MenuKeyboardIntent::FocusItem {
+                        focused_path,
+                        focused_value,
+                    } => {
+                        cx.stop_propagation();
+                        window.prevent_default();
+                        key_runtime.update(cx, |runtime, _| {
+                            runtime.focus_item(focused_path, focused_value);
+                        });
+                    }
+                    MenuKeyboardIntent::Activate(selection) => {
+                        cx.stop_propagation();
+                        window.prevent_default();
+                        if let Some(item_handler) = key_items
+                            .iter()
+                            .zip(key_state.visible_items())
+                            .find(|(_, item_state)| item_state.path() == selection.path())
+                            .and_then(|(item, _)| item.select_handler())
+                            .as_ref()
+                        {
+                            item_handler(selection.clone(), window, cx);
+                        }
+                        if let Some(on_select) = key_select.as_ref() {
+                            on_select(selection, window, cx);
+                        }
+                        close_context_menu(
+                            key_runtime.clone(),
+                            trigger_focus.clone(),
+                            focus_restore.clone(),
+                            key_open_change.clone(),
+                            window,
+                            cx,
+                        );
+                    }
                 }
             }
         })
