@@ -55,6 +55,7 @@ pub mod tag;
 pub mod text_input;
 pub mod textarea;
 pub mod theme;
+pub mod toast;
 pub mod toggle;
 pub mod toggle_group;
 pub mod toolbar;
@@ -226,6 +227,10 @@ pub use text_input::{
 };
 pub use textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
 pub use theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
+pub use toast::{
+    Toast, ToastAction, ToastColors, ToastDismiss, ToastDismissReason, ToastIntent, ToastMetrics,
+    ToastStack, ToastStackState, ToastState,
+};
 pub use toggle::{Toggle, ToggleColors, ToggleMetrics, ToggleState, ToggleVariant};
 pub use toggle_group::{
     ToggleGroup, ToggleGroupColors, ToggleGroupItem, ToggleGroupItemDescriptor,

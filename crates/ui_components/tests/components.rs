@@ -208,6 +208,25 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         no_interaction_note: None,
     },
     ComponentApiInventoryEntry {
+        component: "ToastStack",
+        controlled_inputs: &["toasts"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["max_visible", "toast"],
+        callbacks: &[
+            CallbackApi {
+                name: "on_action",
+                payload: "ToastAction",
+            },
+            CallbackApi {
+                name: "on_dismiss",
+                payload: "ToastDismiss",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
         component: "IconButton",
         controlled_inputs: &[],
         default_seeds: &[],
@@ -1353,6 +1372,7 @@ fn component_source_file(component: &str) -> &'static str {
         "Collapsible" => "collapsible.rs",
         "Link" => "link.rs",
         "Tag" => "tag.rs",
+        "ToastStack" => "toast.rs",
         "IconButton" => "icon_button.rs",
         "Switch" => "switch.rs",
         "Checkbox" => "checkbox.rs",
@@ -1454,6 +1474,16 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "disabled",
             "tokens",
             "on_remove",
+            "state",
+        ],
+        "ToastStack" => &[
+            "new",
+            "toast",
+            "toasts",
+            "max_visible",
+            "tokens",
+            "on_action",
+            "on_dismiss",
             "state",
         ],
         "IconButton" => &[
@@ -11329,6 +11359,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         .item(root::BreadcrumbItemDescriptor::new("home", "Home").href("/"))
         .item(root::BreadcrumbItemDescriptor::new("docs", "Docs").current(true));
     let root_tag = root::Tag::new("tag", "ready", "Ready").removable(true);
+    let root_toast_stack = root::ToastStack::new("toasts", "Notifications")
+        .toast(root::Toast::new("saved", "Saved").intent(root::ToastIntent::Success));
     let root_toggle_group = root::ToggleGroup::new("toggle-group", "Alignment")
         .item(root::ToggleGroupItem::new("left", "Left"))
         .item(root::ToggleGroupItem::new("right", "Right"))
@@ -11419,6 +11451,12 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         .items([prelude::BreadcrumbItemDescriptor::new("home", "Home")]);
     let prelude_tag =
         prelude::Tag::new("tag", "ready", "Ready").variant(prelude::TagVariant::Outline);
+    let prelude_toast_stack =
+        prelude::ToastStack::new("toasts", "Notifications").toasts([prelude::Toast::new(
+            "saved", "Saved",
+        )
+        .action("Undo")
+        .pinned()]);
     let prelude_toggle_group = prelude::ToggleGroup::new("toggle-group", "Alignment")
         .mode(prelude::ToggleGroupSelectionMode::Multiple)
         .items([
@@ -11464,6 +11502,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_link.state(),
         root_breadcrumb.state(),
         root_tag.state(),
+        root_toast_stack.state(),
         root_toggle_group.state(),
         prelude_button.state(),
         prelude_accordion.state(),
@@ -11501,6 +11540,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_link.state(),
         prelude_breadcrumb.state(),
         prelude_tag.state(),
+        prelude_toast_stack.state(),
         prelude_toggle_group.state(),
         root::toggle_group_navigation_target(Orientation::Horizontal, "right", 0, &[false, false]),
         prelude::toggle_group_navigation_target(
@@ -11650,6 +11690,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_cell_edit_change",
         "on_column_order_change",
         "on_column_sizing_change",
+        "on_dismiss",
         "on_move",
         "on_open_change",
         "on_query_change",
