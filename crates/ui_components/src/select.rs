@@ -805,8 +805,7 @@ impl RenderOnce for Select {
                         move |event: &KeyDownEvent, window, cx| {
                             let key = event.keystroke.key.as_str();
                             if matches!(key, "enter" | "space" | "down" | "up") {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = true;
                                 });
@@ -828,8 +827,7 @@ impl RenderOnce for Select {
                                 style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
                             })
                             .capture_any_mouse_up(move |_, window, cx| {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 let next_open = !open;
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = next_open;

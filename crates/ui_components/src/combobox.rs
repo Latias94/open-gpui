@@ -949,8 +949,7 @@ impl RenderOnce for Combobox {
                             event.keystroke.key.as_str(),
                         ) {
                             ComboboxKeyboardAction::Navigate(value) => {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = true;
                                     runtime.active_value = Some(value);
@@ -962,8 +961,7 @@ impl RenderOnce for Combobox {
                                 }
                             }
                             ComboboxKeyboardAction::Select(selection) => {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
                                     runtime.selected_value = Some(selection.value().to_owned());
                                     runtime.active_value = Some(selection.value().to_owned());
@@ -980,8 +978,7 @@ impl RenderOnce for Combobox {
                                 }
                             }
                             ComboboxKeyboardAction::Open => {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = true;
                                 });

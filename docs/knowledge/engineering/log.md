@@ -25,6 +25,10 @@ status: active
   pairs across Dialog, Popover, HoverCard, Select, Combobox, Menu, ContextMenu, and Sheet close/barrier
   paths without changing each component's open/close runtime decisions. Verified with focused
   overlay/component nextest coverage and `cargo check -p open-gpui-ui-components --tests`.
+- 2026-06-30: Extended `consume_overlay_event` to overlay keyboard navigation and activation
+  paths in Select, Combobox, Menu, and ContextMenu, keeping non-overlay list/tree/table keyboard
+  handling out of this helper. Verified with focused select/combobox/menu/context-menu nextest
+  coverage and `cargo check -p open-gpui-ui-components --tests`.
 - 2026-06-29: Continued `docs/plans/2026-06-29-002-refactor-table-depth-second-stage-plan.md`
   on `refactor/table-depth-second-stage`. The Table adapter is now split into concern-owned
   modules for header rendering, resize/reorder affordances, body rows, cells, editors, runtime,
