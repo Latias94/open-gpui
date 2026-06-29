@@ -9,6 +9,8 @@ pub enum Role {
     Image,
     /// A push button.
     Button,
+    /// A link or link-like navigation target.
+    Link,
     /// A two-state or tri-state checkbox.
     CheckBox,
     /// A switch control.

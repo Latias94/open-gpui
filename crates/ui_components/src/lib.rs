@@ -6,12 +6,14 @@
 //! foundation vocabulary for sizing, tokens, accessibility, and focus.
 
 mod a11y;
+pub mod accordion;
 pub mod alert_dialog;
 pub mod avatar;
 pub mod badge;
 pub mod button;
 pub mod checkbox;
 mod choice;
+pub mod collapsible;
 pub mod color;
 pub mod combobox;
 pub mod command;
@@ -73,6 +75,10 @@ pub mod gpui_adapter {
     pub use crate::text_input::adapter::{TextInputController, init as init_text_input};
 }
 
+pub use accordion::{
+    Accordion, AccordionColors, AccordionItem, AccordionItemDescriptor, AccordionItemState,
+    AccordionMetrics, AccordionMode, AccordionOpenChange, AccordionState,
+};
 pub use alert_dialog::{
     AlertDialog, AlertDialogActionKind, AlertDialogActionState, AlertDialogColors,
     AlertDialogIntent, AlertDialogMetrics, AlertDialogOpenMode, AlertDialogState,
@@ -84,6 +90,7 @@ pub use avatar::{
 pub use badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVariant};
 pub use button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use checkbox::{Checkbox, CheckboxColors, CheckboxMetrics, CheckboxState};
+pub use collapsible::{Collapsible, CollapsibleColors, CollapsibleMetrics, CollapsibleState};
 pub use color::{ColorIntent, ColorState};
 pub use combobox::{
     Combobox, ComboboxColors, ComboboxGroup, ComboboxGroupDescriptor, ComboboxMetrics,

@@ -12,6 +12,7 @@ pub fn gpui_role_from_ui(role: Role) -> GpuiRole {
         Role::Label => GpuiRole::Label,
         Role::Image => GpuiRole::Image,
         Role::Button => GpuiRole::Button,
+        Role::Link => GpuiRole::Link,
         Role::CheckBox => GpuiRole::CheckBox,
         Role::Switch => GpuiRole::Switch,
         Role::RadioButton => GpuiRole::RadioButton,

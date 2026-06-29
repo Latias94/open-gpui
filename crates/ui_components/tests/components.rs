@@ -114,6 +114,22 @@ impl ComponentApiInventoryEntry {
 
 const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     ComponentApiInventoryEntry {
+        component: "Accordion",
+        controlled_inputs: &["open_values"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open_values",
+            runtime_value: "open_values",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &["mode", "collapsible"],
+        callbacks: &[CallbackApi {
+            name: "on_open_change",
+            payload: "AccordionOpenChange",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
         component: "Button",
         controlled_inputs: &[],
         default_seeds: &[],
@@ -135,6 +151,22 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         callbacks: &[],
         renderer_neutral_state: true,
         no_interaction_note: Some("display-only primitive"),
+    },
+    ComponentApiInventoryEntry {
+        component: "Collapsible",
+        controlled_inputs: &["open"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open",
+            runtime_value: "open",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &["content"],
+        callbacks: &[CallbackApi {
+            name: "on_open_change",
+            payload: "bool",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
     },
     ComponentApiInventoryEntry {
         component: "IconButton",
@@ -1227,8 +1259,10 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
 
 fn component_source_file(component: &str) -> &'static str {
     match component {
+        "Accordion" => "accordion.rs",
         "Button" => "button.rs",
         "Badge" => "badge.rs",
+        "Collapsible" => "collapsible.rs",
         "IconButton" => "icon_button.rs",
         "Switch" => "switch.rs",
         "Checkbox" => "checkbox.rs",
@@ -1278,10 +1312,31 @@ fn component_source_file(component: &str) -> &'static str {
 
 fn component_public_methods(component: &str) -> &'static [&'static str] {
     match component {
+        "Accordion" => &[
+            "new",
+            "mode",
+            "collapsible",
+            "open_values",
+            "default_open_values",
+            "item",
+            "tokens",
+            "on_open_change",
+            "state",
+        ],
         "Button" => &[
             "new", "variant", "disabled", "selected", "tokens", "on_click", "state",
         ],
         "Badge" => &["new", "variant", "tokens", "state"],
+        "Collapsible" => &[
+            "new",
+            "open",
+            "default_open",
+            "disabled",
+            "content",
+            "tokens",
+            "on_open_change",
+            "state",
+        ],
         "IconButton" => &[
             "new",
             "variant",
@@ -11036,6 +11091,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         OverlayLayerPolicy::new(OverlayLayerKind::Tooltip, OverlayPresence::open()),
     );
     let root_button = root::Button::new("save", "Save");
+    let root_accordion = root::Accordion::new("accordion")
+        .mode(root::AccordionMode::Multiple)
+        .item(root::AccordionItem::new("one", "One", "One content"));
     let root_alert_dialog = root::AlertDialog::new(
         "delete",
         "Delete",
@@ -11104,7 +11162,11 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_skeleton = root::Skeleton::new("skeleton");
     let root_status_cue = root::StatusCue::new("status", "Ready");
     let root_empty_state = root::EmptyState::new("empty", "No results");
+    let root_collapsible = root::Collapsible::new("collapsible", "Details").default_open(true);
     let prelude_button = prelude::Button::new("save", "Save");
+    let prelude_accordion = prelude::Accordion::new("accordion")
+        .mode(prelude::AccordionMode::Single)
+        .item(prelude::AccordionItem::new("one", "One", "One content"));
     let prelude_alert_dialog = prelude::AlertDialog::new(
         "delete",
         "Delete",
@@ -11178,9 +11240,12 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_skeleton = prelude::Skeleton::new("skeleton");
     let prelude_status_cue = prelude::StatusCue::new("status", "Ready");
     let prelude_empty_state = prelude::EmptyState::new("empty", "No results");
+    let prelude_collapsible =
+        prelude::Collapsible::new("collapsible", "Details").default_open(false);
 
     let _ = (
         root_button.state(),
+        root_accordion.state(),
         root_alert_dialog.state(),
         root_sheet.state(),
         root_hover_card.state(),
@@ -11209,7 +11274,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_skeleton.state(),
         root_status_cue.state(),
         root_empty_state.state(),
+        root_collapsible.state(),
         prelude_button.state(),
+        prelude_accordion.state(),
         prelude_alert_dialog.state(),
         prelude_sheet.state(),
         prelude_hover_card.state(),
@@ -11238,6 +11305,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_skeleton.state(),
         prelude_status_cue.state(),
         prelude_empty_state.state(),
+        prelude_collapsible.state(),
         root_overlay.policy().kind(),
         prelude_overlay.policy().kind(),
     );
@@ -11246,6 +11314,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
 #[test]
 fn gpui_role_mapping_covers_neutral_image_and_separator_fallback() {
     assert_eq!(gpui_role_from_ui(Role::Image), open_gpui::Role::Image);
+    assert_eq!(gpui_role_from_ui(Role::Link), open_gpui::Role::Link);
     assert_eq!(gpui_role_from_ui(Role::Separator), open_gpui::Role::Group);
     assert_eq!(gpui_role_from_ui(Role::Tree), open_gpui::Role::Tree);
     assert_eq!(gpui_role_from_ui(Role::TreeItem), open_gpui::Role::TreeItem);

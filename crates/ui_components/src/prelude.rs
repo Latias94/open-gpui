@@ -1,5 +1,9 @@
 //! Convenient re-exports for Open GPUI UI components.
 
+pub use crate::accordion::{
+    Accordion, AccordionColors, AccordionItem, AccordionItemDescriptor, AccordionItemState,
+    AccordionMetrics, AccordionMode, AccordionOpenChange, AccordionState,
+};
 pub use crate::alert_dialog::{
     AlertDialog, AlertDialogActionKind, AlertDialogActionState, AlertDialogColors,
     AlertDialogIntent, AlertDialogMetrics, AlertDialogOpenMode, AlertDialogState,
@@ -11,6 +15,9 @@ pub use crate::avatar::{
 pub use crate::badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVariant};
 pub use crate::button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use crate::checkbox::{Checkbox, CheckboxColors, CheckboxMetrics, CheckboxState};
+pub use crate::collapsible::{
+    Collapsible, CollapsibleColors, CollapsibleMetrics, CollapsibleState,
+};
 pub use crate::color::{ColorIntent, ColorState};
 pub use crate::combobox::{
     Combobox, ComboboxColors, ComboboxGroup, ComboboxGroupDescriptor, ComboboxMetrics,
