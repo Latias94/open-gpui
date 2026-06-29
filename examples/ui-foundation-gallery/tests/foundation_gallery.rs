@@ -2448,11 +2448,11 @@ fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
         .expect("expected SplitterSample selector impl to exist");
     let splitter_struct = &components_source[splitter_struct_start..splitter_struct_end];
     let splitter_section = render_source
-        .split("splitter_samples.into_iter().map(|sample| {")
+        .split("component_page_section(\"splitter\")")
         .nth(1)
         .and_then(|section| {
             section
-                .split("scroll_area_samples.into_iter().map(|sample| {")
+                .split("component_page_section(\"scroll-area\")")
                 .next()
         })
         .expect("expected Splitter section in components render source");
