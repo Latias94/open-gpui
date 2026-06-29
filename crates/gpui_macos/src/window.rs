@@ -1,8 +1,8 @@
 use crate::{
-    BoolExt, DisplayLink, MacDisplay, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
-    TISGetInputSourceProperty, events::platform_input_from_native,
-    kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
-    ns_string, renderer,
+    BoolExt, DisplayLink, DisplayLinkError, MacDisplay, NSRange, NSStringExt,
+    TISCopyCurrentKeyboardInputSource, TISGetInputSourceProperty,
+    events::platform_input_from_native, kTISPropertyInputSourceIsASCIICapable,
+    kTISPropertyInputSourceType, kTISTypeKeyboardInputMode, ns_string, renderer,
 };
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
@@ -50,7 +50,6 @@ use objc::{
     sel, sel_impl,
 };
 use objc2_app_kit::NSBeep;
-use open_gpui_util::ResultExt;
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
@@ -575,22 +574,91 @@ impl MacWindowState {
     }
 
     fn start_display_link(&mut self) {
+        if self.is_closed() {
+            self.stop_display_link();
+            return;
+        }
+
+        let (visible, screen) = unsafe {
+            (
+                self.native_window
+                    .occlusionState()
+                    .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible),
+                self.native_window.screen(),
+            )
+        };
+        if !visible {
+            self.stop_display_link();
+            return;
+        }
+
         self.stop_display_link();
-        unsafe {
-            if !self
-                .native_window
-                .occlusionState()
-                .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
-            {
-                return;
+
+        if screen == nil {
+            log::debug!(
+                "skipping display link start for {:?}: window has no screen",
+                self.handle.window_id()
+            );
+            self.request_layer_display();
+            return;
+        }
+
+        let display_id = unsafe { display_id_for_screen(screen) };
+        if display_id == 0 {
+            log::debug!(
+                "skipping display link start for {:?}: screen returned display id 0",
+                self.handle.window_id()
+            );
+            self.request_layer_display();
+            return;
+        }
+
+        let display_link =
+            DisplayLink::new(display_id, self.native_view.as_ptr() as *mut c_void, step);
+        let Some(mut display_link) = display_link
+            .inspect_err(|error| self.log_display_link_start_failure(display_id, *error))
+            .ok()
+        else {
+            self.request_layer_display();
+            return;
+        };
+
+        match display_link.start() {
+            Ok(()) => {
+                self.display_link = Some(display_link);
+            }
+            Err(error) => {
+                self.log_display_link_start_failure(display_id, error);
+                self.request_layer_display();
             }
         }
-        let display_id = unsafe { display_id_for_screen(self.native_window.screen()) };
-        if let Some(mut display_link) =
-            DisplayLink::new(display_id, self.native_view.as_ptr() as *mut c_void, step).log_err()
-        {
-            display_link.start().log_err();
-            self.display_link = Some(display_link);
+    }
+
+    fn request_layer_display(&self) {
+        unsafe {
+            let _: () = msg_send![self.native_view.as_ptr(), setNeedsDisplay:YES];
+        }
+    }
+
+    fn log_display_link_start_failure(
+        &self,
+        display_id: CGDirectDisplayID,
+        error: DisplayLinkError,
+    ) {
+        let message = format!(
+            "{error}; window_id={:?}, display_id={display_id}, closed={}, visible={}",
+            self.handle.window_id(),
+            self.is_closed(),
+            unsafe {
+                self.native_window
+                    .occlusionState()
+                    .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+            }
+        );
+        if error.is_transient_create_failure() {
+            log::debug!("{message}");
+        } else {
+            log::warn!("{message}");
         }
     }
 
