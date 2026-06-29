@@ -1,13 +1,13 @@
 use crate::{
     DockHost, DockItemId, DockNodeId,
     debug::DockDebugRegion,
-    drag::{DockDragPayload, DockDragPreview, DockDragTearOffGeometry},
+    drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_scene_fact,
     host_render_session::{DockHostPanelRenderResolution, DockHostRenderSession},
     render::DockViewportHostSceneFrameSlot,
 };
 use open_gpui::{
-    AnyElement, AppContext as _, Context, DragMoveEvent, InteractiveElement, IntoElement,
+    AnyElement, AppContext as _, Context, DragMoveEvent, Empty, InteractiveElement, IntoElement,
     MouseButton, ParentElement, StatefulInteractiveElement, Styled, Window, black, div, px, rgb,
     white,
 };
@@ -157,7 +157,7 @@ impl DockHost {
                             .with_preferred_size(source_bounds.size),
                         );
                     });
-                    cx.new(|_| DockDragPreview::new(payload.title()))
+                    cx.new(|_| Empty)
                 },
             );
         tab_bar = tab_bar.child(
@@ -270,7 +270,7 @@ impl DockHost {
                                 .with_preferred_size(source_bounds.size),
                             );
                         });
-                        cx.new(|_| DockDragPreview::new(payload.title()))
+                        cx.new(|_| Empty)
                     },
                 );
             tab =
@@ -322,7 +322,9 @@ impl DockHost {
         tabs = tabs
             .child(tab_bar)
             .child(self.render_panel(&selected_item, session, window, cx));
-        if let Some(guides) = self.render_drop_guides(session, Some(node), cx) {
+        if let Some(guides) =
+            self.render_drop_guides(session, Some(node), window.window_handle().window_id(), cx)
+        {
             tabs = tabs.child(guides);
         }
         tabs.into_any_element()

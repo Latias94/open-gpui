@@ -1006,6 +1006,16 @@ impl DockViewportRuntimeHandle {
             .rendered_leaf_bounds_for_tabs(space, window_id, tabs)
     }
 
+    pub(crate) fn rendered_host_bounds_for_window(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+    ) -> Option<Bounds<Pixels>> {
+        self.runtime
+            .borrow()
+            .rendered_host_bounds_for_window(space, window_id)
+    }
+
     pub(crate) fn window_id_for_space(&self, space: &DockSpaceId) -> Option<WindowId> {
         self.runtime
             .borrow()

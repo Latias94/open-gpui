@@ -196,6 +196,18 @@ impl DockViewportHostSceneRegistry {
         snapshot.leaf_bounds_for_tabs(tabs)
     }
 
+    pub(crate) fn host_bounds_for_window(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+    ) -> Option<Bounds<Pixels>> {
+        let snapshot = self.scenes.get(space)?;
+        if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
+            return None;
+        }
+        Some(snapshot.host_bounds)
+    }
+
     #[cfg(test)]
     fn current_frame(
         &self,

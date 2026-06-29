@@ -205,6 +205,20 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
         Modifiers::none(),
     );
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut drag_visual = VisualTestContext::from_window(window.into(), cx);
+    let preview = selector_for(&drag_visual, &host, DockDebugRegion::DropPreview)
+        .expect("center hover should render a drop preview");
+    let preview_tab = selector_for(&drag_visual, &host, DockDebugRegion::DropPayloadTabPreview)
+        .expect("center hover should render a payload tab preview");
+    let preview_bounds = debug_bounds(&mut drag_visual, &preview);
+    let preview_tab_bounds = debug_bounds(&mut drag_visual, &preview_tab);
+    assert!(
+        preview_bounds.contains(&preview_tab_bounds.center()),
+        "payload tab preview should stay inside the center drop preview"
+    );
+
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
     visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let visual = VisualTestContext::from_window(window.into(), cx);
@@ -1145,6 +1159,10 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
     assert!(
         preview_bounds.size.width < target_bounds.size.width,
         "edge preview should occupy only an edge band"
+    );
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::DropPayloadTabPreview).is_none(),
+        "edge split previews should not render a payload tab label"
     );
     visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();

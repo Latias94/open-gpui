@@ -6424,6 +6424,24 @@ fn runtime_opened_cross_window_inner_edge_drag_then_re_docks_nested_mixed_axes(
         source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
         source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
         target_visual.simulate_mouse_move(second_end, MouseButton::Left, Modifiers::none());
+        let hovered_target = cx
+            .read_entity(&target_host, |host, _| {
+                host.interaction().resolved_drop_target().cloned()
+            })
+            .unwrap_or_else(|| {
+                panic!("{first_zone:?}: second-stage nested hover should resolve an active target")
+            });
+        assert!(
+            matches!(
+                hovered_target.kind,
+                DockResolvedDropTargetKind::InnerEdge {
+                    target_tabs,
+                    zone,
+                    ..
+                } if target_tabs == target_right_tabs && zone == second_zone
+            ),
+            "{first_zone:?}: second-stage nested hover should stay inside the target leaf and resolve {second_zone:?}, got {hovered_target:?}"
+        );
         target_visual.simulate_mouse_up(second_end, MouseButton::Left, Modifiers::none());
         cx.run_until_parked();
 

@@ -157,6 +157,14 @@ impl DockViewportFrameCoordinator {
             .leaf_bounds_for_tabs(space, window_id, tabs)
     }
 
+    pub(crate) fn host_bounds_for_window(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+    ) -> Option<Bounds<Pixels>> {
+        self.host_scenes.host_bounds_for_window(space, window_id)
+    }
+
     #[cfg(test)]
     pub(crate) fn screen_position(&self, space: &DockSpaceId) -> Option<Point<Pixels>> {
         self.host_scenes.screen_position(space)

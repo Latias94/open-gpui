@@ -21,8 +21,8 @@ use crate::{
 };
 use open_gpui::{
     AnyElement, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
-    MouseUpEvent, ParentElement, Pixels, Render, Rgba, Styled, Window, black, canvas, div, point,
-    px, relative, rgb, rgba,
+    MouseUpEvent, ParentElement, Pixels, Render, Rgba, Styled, Window, WindowId, black, canvas,
+    div, point, px, rgb, rgba,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -270,7 +270,9 @@ impl DockHost {
             }),
         );
         root_container = root_container.child(root_child);
-        if let Some(guides) = self.render_drop_guides(session, None, cx) {
+        if let Some(guides) =
+            self.render_drop_guides(session, None, window.window_handle().window_id(), cx)
+        {
             root_container = root_container.child(guides);
         }
         root_container.into_any_element()
@@ -280,7 +282,7 @@ impl DockHost {
         &mut self,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -318,7 +320,9 @@ impl DockHost {
             }),
         );
         empty = empty.child(session.empty_message().to_string());
-        if let Some(guides) = self.render_drop_guides(session, None, cx) {
+        if let Some(guides) =
+            self.render_drop_guides(session, None, window.window_handle().window_id(), cx)
+        {
             empty = empty.child(guides);
         }
         empty.into_any_element()
@@ -328,7 +332,7 @@ impl DockHost {
         &mut self,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -361,7 +365,9 @@ impl DockHost {
                 drop_scene_fact::empty_central_space(space, bounds)
             }),
         );
-        if let Some(guides) = self.render_drop_guides(session, None, cx) {
+        if let Some(guides) =
+            self.render_drop_guides(session, None, window.window_handle().window_id(), cx)
+        {
             empty = empty.child(guides);
         }
         empty.into_any_element()
@@ -484,8 +490,8 @@ impl DockHost {
                     .px_2()
                     .border_1()
                     .border_color(border)
-                    .bg(rgb(0xffffff))
-                    .text_color(rgb(0x1f2937))
+                    .bg(rgb(0xf8fafc))
+                    .text_color(rgb(0x334155))
                     .text_sm()
                     .truncate()
                     .child(title),
@@ -525,6 +531,7 @@ impl DockHost {
         &mut self,
         session: &DockHostRenderSession,
         node: Option<DockNodeId>,
+        window_id: WindowId,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
         let payload = cx.active_drag_value::<DockDragPayload>()?;
@@ -532,12 +539,45 @@ impl DockHost {
         if zones.is_empty() {
             return None;
         }
+        let target_bounds = self.drop_guide_target_bounds(session, node, window_id)?;
+        let active_target = self.interaction().resolved_drop_target().cloned();
 
         let mut overlay = div().absolute().top(px(0.0)).left(px(0.0)).size_full();
         for zone in zones {
-            overlay = overlay.child(self.render_drop_guide(zone, session, node));
+            let Some(drop_box) = drop_guide_box_for_zone(session, node, target_bounds, zone) else {
+                continue;
+            };
+            let active = active_target
+                .as_ref()
+                .is_some_and(|target| drop_target_matches_guide(target, node, zone));
+            overlay = overlay.child(self.render_drop_guide(
+                zone,
+                session,
+                node,
+                target_bounds,
+                drop_box,
+                active,
+            ));
         }
         Some(overlay.into_any_element())
+    }
+
+    fn drop_guide_target_bounds(
+        &self,
+        session: &DockHostRenderSession,
+        node: Option<DockNodeId>,
+        window_id: WindowId,
+    ) -> Option<Bounds<Pixels>> {
+        match node {
+            Some(tabs) => self.viewport_runtime().rendered_leaf_bounds_for_tabs(
+                session.space(),
+                Some(window_id),
+                tabs,
+            ),
+            None => self
+                .viewport_runtime()
+                .rendered_host_bounds_for_window(session.space(), Some(window_id)),
+        }
     }
 
     fn available_drop_guide_zones(
@@ -573,6 +613,9 @@ impl DockHost {
         zone: DropZone,
         session: &DockHostRenderSession,
         node: Option<DockNodeId>,
+        container_bounds: Bounds<Pixels>,
+        drop_box: geometry::DockDropBox,
+        active: bool,
     ) -> AnyElement {
         let selector_suffix = match node {
             Some(node) => format!("{}:{zone:?}", node.as_u64()),
@@ -582,75 +625,32 @@ impl DockHost {
             DockDebugRegion::DropGuide { node, zone },
             format!("{}:drop-guide:{selector_suffix}", session.selector_prefix()),
         );
-
-        let guide_layout = geometry::nominal_drop_guide_layout(session.drop_guide_style());
-        let center_size = guide_layout.center_size;
-        let side_long = guide_layout.inner_side_long;
-        let side_short = guide_layout.inner_side_short;
-        let offset = guide_layout.inner_offset;
-        let half_center = -center_size / 2.0;
-        let half_long = -side_long / 2.0;
-        let half_short = -side_short / 2.0;
+        let local_bounds = localize_bounds(drop_box.hit_bounds, container_bounds.origin);
+        let palette = drop_guide_palette(drop_box.kind, active);
+        let cue = guide_directional_cue(zone, local_bounds.size, palette.cue);
+        let inset = guide_inset_outline(local_bounds.size, palette.inset);
 
         let mut guide = div()
             .id(selector.clone())
             .debug_selector(move || selector)
             .absolute()
+            .left(local_bounds.origin.x)
+            .top(local_bounds.origin.y)
+            .w(local_bounds.size.width)
+            .h(local_bounds.size.height)
             .flex()
             .items_center()
             .justify_center()
             .border_1()
-            .border_color(rgb(0x1d4ed8))
+            .border_color(palette.border)
             .rounded_sm()
-            .bg(if zone == DropZone::Center {
-                rgba(0xbfdbfecc)
-            } else {
-                rgba(0xdbeafecc)
-            })
-            .opacity(0.92);
-
-        guide = match zone {
-            DropZone::Center => guide
-                .left(relative(0.5))
-                .top(relative(0.5))
-                .w(center_size)
-                .h(center_size)
-                .ml(half_center)
-                .mt(half_center)
-                .child(div().w(px(8.0)).h(px(1.0)).bg(rgb(0x1d4ed8))),
-            DropZone::Left => guide
-                .left(relative(0.5))
-                .top(relative(0.5))
-                .w(side_short)
-                .h(side_long)
-                .ml(-offset + half_short)
-                .mt(half_long)
-                .child(div().w(px(1.0)).h(side_long - px(8.0)).bg(rgb(0x1d4ed8))),
-            DropZone::Right => guide
-                .left(relative(0.5))
-                .top(relative(0.5))
-                .w(side_short)
-                .h(side_long)
-                .ml(offset + half_short)
-                .mt(half_long)
-                .child(div().w(px(1.0)).h(side_long - px(8.0)).bg(rgb(0x1d4ed8))),
-            DropZone::Top => guide
-                .left(relative(0.5))
-                .top(relative(0.5))
-                .w(side_long)
-                .h(side_short)
-                .ml(half_long)
-                .mt(-offset + half_short)
-                .child(div().w(side_long - px(8.0)).h(px(1.0)).bg(rgb(0x1d4ed8))),
-            DropZone::Bottom => guide
-                .left(relative(0.5))
-                .top(relative(0.5))
-                .w(side_long)
-                .h(side_short)
-                .ml(half_long)
-                .mt(offset + half_short)
-                .child(div().w(side_long - px(8.0)).h(px(1.0)).bg(rgb(0x1d4ed8))),
-        };
+            .bg(palette.background);
+        if let Some(inset) = inset {
+            guide = guide.child(inset);
+        }
+        if let Some(cue) = cue {
+            guide = guide.child(cue);
+        }
 
         guide.into_any_element()
     }
@@ -750,6 +750,168 @@ fn drop_guide_target_for_zone(
     match node {
         Some(tabs) => tabs_drop_guide_target(session, tabs, zone, graph),
         None => host_drop_guide_target(session, zone, graph),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DockGuidePalette {
+    border: Rgba,
+    background: Rgba,
+    cue: Rgba,
+    inset: Rgba,
+}
+
+fn drop_guide_box_for_zone(
+    session: &DockHostRenderSession,
+    node: Option<DockNodeId>,
+    target_bounds: Bounds<Pixels>,
+    zone: DropZone,
+) -> Option<geometry::DockDropBox> {
+    let kind = match node {
+        Some(_) => match zone {
+            DropZone::Center => geometry::DockDropBoxKind::Center,
+            DropZone::Left | DropZone::Right | DropZone::Top | DropZone::Bottom => {
+                geometry::DockDropBoxKind::InnerEdge(zone)
+            }
+        },
+        None if session.root().is_some() => match zone {
+            DropZone::Center => return None,
+            DropZone::Left | DropZone::Right | DropZone::Top | DropZone::Bottom => {
+                geometry::DockDropBoxKind::OuterEdge(zone)
+            }
+        },
+        None => {
+            if zone != DropZone::Center {
+                return None;
+            }
+            geometry::DockDropBoxKind::Center
+        }
+    };
+    let set = if matches!(kind, geometry::DockDropBoxKind::OuterEdge(_)) {
+        geometry::DockDropBoxSet::Outer
+    } else {
+        geometry::DockDropBoxSet::Inner
+    };
+    geometry::drop_boxes_with_style(target_bounds, set, session.drop_guide_style())
+        .into_iter()
+        .find(|drop_box| drop_box.kind == kind)
+}
+
+fn drop_guide_palette(kind: geometry::DockDropBoxKind, active: bool) -> DockGuidePalette {
+    match (kind.is_center(), active) {
+        (true, true) => DockGuidePalette {
+            border: rgb(0x2563eb),
+            background: rgba(0x93c5fd73),
+            cue: rgb(0x1d4ed8),
+            inset: rgba(0xffffff8f),
+        },
+        (true, false) => DockGuidePalette {
+            border: rgba(0x3b82f699),
+            background: rgba(0xdbeafe5c),
+            cue: rgba(0x2563ebcc),
+            inset: rgba(0xffffff66),
+        },
+        (false, true) => DockGuidePalette {
+            border: rgb(0x1d4ed8),
+            background: rgba(0x60a5fa66),
+            cue: rgb(0x1e40af),
+            inset: rgba(0xffffff80),
+        },
+        (false, false) => DockGuidePalette {
+            border: rgba(0x3b82f680),
+            background: rgba(0xbfdbfe45),
+            cue: rgba(0x2563ebbf),
+            inset: rgba(0xffffff59),
+        },
+    }
+}
+
+fn guide_directional_cue(
+    zone: DropZone,
+    box_size: open_gpui::Size<Pixels>,
+    cue: Rgba,
+) -> Option<AnyElement> {
+    match zone {
+        DropZone::Center => Some(
+            div()
+                .w((box_size.width * 0.48).max(px(10.0)))
+                .h(px(2.0))
+                .bg(cue)
+                .into_any_element(),
+        ),
+        DropZone::Left | DropZone::Right => Some(
+            div()
+                .w(px(2.0))
+                .h((box_size.height * 0.62).max(px(10.0)))
+                .bg(cue)
+                .into_any_element(),
+        ),
+        DropZone::Top | DropZone::Bottom => Some(
+            div()
+                .w((box_size.width * 0.62).max(px(10.0)))
+                .h(px(2.0))
+                .bg(cue)
+                .into_any_element(),
+        ),
+    }
+}
+
+fn guide_inset_outline(box_size: open_gpui::Size<Pixels>, color: Rgba) -> Option<AnyElement> {
+    if box_size.width <= px(10.0) || box_size.height <= px(10.0) {
+        return None;
+    }
+    Some(
+        div()
+            .absolute()
+            .left(px(3.0))
+            .top(px(3.0))
+            .w((box_size.width - px(6.0)).max(px(1.0)))
+            .h((box_size.height - px(6.0)).max(px(1.0)))
+            .border_1()
+            .border_color(color)
+            .rounded_sm()
+            .into_any_element(),
+    )
+}
+
+fn localize_bounds(bounds: Bounds<Pixels>, origin: open_gpui::Point<Pixels>) -> Bounds<Pixels> {
+    Bounds::new(
+        point(bounds.origin.x - origin.x, bounds.origin.y - origin.y),
+        bounds.size,
+    )
+}
+
+fn drop_target_matches_guide(
+    target: &DockResolvedDropTarget,
+    node: Option<DockNodeId>,
+    zone: DropZone,
+) -> bool {
+    match (&target.kind, node, zone) {
+        (DockResolvedDropTargetKind::EmptyDockSpace { .. }, None, DropZone::Center) => true,
+        (
+            DockResolvedDropTargetKind::RootEdge {
+                zone: active_zone, ..
+            },
+            None,
+            zone,
+        ) => *active_zone == zone,
+        (
+            DockResolvedDropTargetKind::TabBar { target_tabs, .. }
+            | DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
+            | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. },
+            Some(node),
+            DropZone::Center,
+        ) => *target_tabs == node,
+        (
+            DockResolvedDropTargetKind::InnerEdge {
+                target_tabs,
+                zone: active_zone,
+                ..
+            },
+            Some(node),
+            zone,
+        ) => *target_tabs == node && *active_zone == zone,
+        _ => false,
     }
 }
 
@@ -870,5 +1032,64 @@ fn drop_route_preview_colors(preview: &DockDropRoutePreview) -> (Rgba, Rgba) {
         crate::drop_preview::DockDropRoutePreviewKind::Rejected => {
             (rgb(0xdc2626), rgba(0xfca5a547))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::drop_preview::DockDropRoutePreviewKind;
+    use open_gpui::{point, size};
+
+    fn preview(rejected: bool, payload_tab: bool) -> DockDropPreview {
+        DockDropPreview {
+            bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(80.0))),
+            rejected,
+            payload_tab,
+        }
+    }
+
+    fn route_preview(kind: DockDropRoutePreviewKind, rejected: bool) -> DockDropRoutePreview {
+        DockDropRoutePreview {
+            kind,
+            bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(56.0), px(40.0))),
+            rejected,
+        }
+    }
+
+    #[test]
+    fn active_center_guides_have_stronger_palette_than_inactive_edge_guides() {
+        let active_center = drop_guide_palette(geometry::DockDropBoxKind::Center, true);
+        let inactive_edge =
+            drop_guide_palette(geometry::DockDropBoxKind::InnerEdge(DropZone::Left), false);
+
+        assert_ne!(active_center.border, inactive_edge.border);
+        assert_ne!(active_center.background, inactive_edge.background);
+        assert!(active_center.background.a > inactive_edge.background.a);
+    }
+
+    #[test]
+    fn rejected_drop_preview_uses_rejected_palette() {
+        let accepted = drop_preview_colors(&preview(false, false));
+        let rejected = drop_preview_colors(&preview(true, false));
+
+        assert_ne!(accepted, rejected);
+        assert_eq!(rejected.0, rgb(0xdc2626));
+    }
+
+    #[test]
+    fn route_preview_kinds_keep_distinct_palettes() {
+        let known = drop_route_preview_colors(&route_preview(
+            DockDropRoutePreviewKind::KnownViewport,
+            false,
+        ));
+        let tear_off =
+            drop_route_preview_colors(&route_preview(DockDropRoutePreviewKind::TearOff, false));
+        let rejected =
+            drop_route_preview_colors(&route_preview(DockDropRoutePreviewKind::Rejected, true));
+
+        assert_ne!(known, tear_off);
+        assert_ne!(known, rejected);
+        assert_ne!(tear_off, rejected);
     }
 }

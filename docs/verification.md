@@ -534,6 +534,19 @@ Manual native docking dogfood should use the same example after the automated ch
    state.
 11. Drag over the empty central dogfood window; empty central-space preview, rejection, and
    passthrough behavior must match the visible policy state.
+12. While dragging over a valid tabs target, confirm the guide affordance is target-owned and
+    box-shaped rather than a floating five-button cluster. Center hover should show a center box,
+    side hover should highlight only the corresponding side box, and inactive boxes should remain
+    visibly weaker than the active one.
+13. Hover the center of a compatible target and confirm the destination window renders one dock
+    preview plus one contained payload tab preview. Hover any split edge and confirm the preview
+    becomes an edge band and the payload tab preview disappears.
+14. Reproduce a nested-target case by docking into a child region, then dragging another tab into
+    the remaining nested leaf. Confirm hovering the left or right side of that nested leaf resolves
+    inside the nested leaf itself rather than snapping to the neighboring region or to the root
+    edge.
+15. Drag a tab or stack outside every valid host. Confirm the route marker reads as tear-off or
+    rejection only; no fake blue dock target or payload tooltip should appear at the source.
 
 Current platform caveats for docking multi-viewport dogfood:
 

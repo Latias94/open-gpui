@@ -1,13 +1,13 @@
 use crate::{
     DockFloatingContainer, DockHost, DockNodeId,
     debug::DockDebugRegion,
-    drag::{DockDragPayload, DockDragPayloadKind, DockDragPreview, DockDragTearOffGeometry},
+    drag::{DockDragPayload, DockDragPayloadKind, DockDragTearOffGeometry},
     drop_scene_fact,
     host_render_session::{DockFloatingChromeTarget, DockHostRenderSession},
     render::DockViewportHostSceneFrameSlot,
 };
 use open_gpui::{
-    AnyElement, AppContext, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement,
+    AnyElement, AppContext, Bounds, Context, DragMoveEvent, Empty, InteractiveElement, IntoElement,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
     StatefulInteractiveElement, Styled, Window, canvas, div, px, rgb, rgba, white,
 };
@@ -186,7 +186,7 @@ impl DockHost {
                                 cx,
                             );
                         });
-                        cx.new(|_| DockDragPreview::new(payload.title()))
+                        cx.new(|_| Empty)
                     },
                 )
                 .on_drag_move(cx.listener(

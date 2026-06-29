@@ -2,10 +2,7 @@ use crate::{
     DockGraph, DockItemId, DockNodeId, DockSpaceId,
     workspace_drop_transaction::DockWorkspaceDropPayload,
 };
-use open_gpui::{
-    Bounds, Context, IntoElement, ParentElement, Pixels, Point, Render, Size, Styled, Window, div,
-    rgb, white,
-};
+use open_gpui::{Bounds, Pixels, Point, Size};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockDragPayload {
@@ -188,32 +185,6 @@ impl DockDragTearOffGeometry {
 
     pub(crate) fn display_work_area(&self) -> Option<Bounds<Pixels>> {
         self.display_work_area
-    }
-}
-
-pub(crate) struct DockDragPreview {
-    title: String,
-}
-
-impl DockDragPreview {
-    pub(crate) fn new(title: impl Into<String>) -> Self {
-        Self {
-            title: title.into(),
-        }
-    }
-}
-
-impl Render for DockDragPreview {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .px_2()
-            .py_1()
-            .rounded_sm()
-            .bg(rgb(0x334155))
-            .text_color(white())
-            .text_sm()
-            .shadow_md()
-            .child(self.title.clone())
     }
 }
 

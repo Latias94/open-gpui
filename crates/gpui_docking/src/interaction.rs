@@ -817,7 +817,6 @@ impl DockInteractionRuntime {
         self.floating_drag.as_ref()
     }
 
-    #[cfg(test)]
     pub(crate) fn resolved_drop_target(&self) -> Option<&DockResolvedDropTarget> {
         self.drop.resolved_target()
     }

@@ -88,14 +88,6 @@ struct DockDropBoxMetrics {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct DockDropGuideLayout {
-    pub(crate) center_size: Pixels,
-    pub(crate) inner_side_long: Pixels,
-    pub(crate) inner_side_short: Pixels,
-    pub(crate) inner_offset: Pixels,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
 struct LocalRect {
     x: f32,
     y: f32,
@@ -185,16 +177,6 @@ fn resolve_outer_drop_geometry(
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn drop_boxes(bounds: Bounds<Pixels>, set: DockDropBoxSet) -> Vec<DockDropBox> {
     drop_boxes_with_style(bounds, set, DockDropGuideStyle::default())
-}
-
-pub(crate) fn nominal_drop_guide_layout(style: DockDropGuideStyle) -> DockDropGuideLayout {
-    let center_half = drop_guide_font_size(style) * 1.5;
-    DockDropGuideLayout {
-        center_size: px(center_half * 2.0),
-        inner_side_long: px(center_half * 2.0),
-        inner_side_short: px(center_half * 0.9 * 2.0),
-        inner_offset: px(center_half * 2.4),
-    }
 }
 
 pub(crate) fn drop_boxes_with_style(
