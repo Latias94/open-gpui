@@ -6,27 +6,39 @@ use jellyflow::{
         PortCapacity, PortDirection, PortId as JellyPortId, PortKey, PortKind,
     },
     layout::{LayoutPresetBuilder, builtin_layout_engine_registry},
-    runtime::io::{NodeGraphEditorConfig, NodeGraphViewState},
+    runtime::{
+        io::{NodeGraphEditorConfig, NodeGraphViewState},
+        schema::{
+            NodeKitRegistry, NodeRegistry, NodeSurfaceProjection, NodeSurfaceSlotKind,
+            NodeSurfaceSlotProjection,
+        },
+    },
 };
 use open_gpui::{
-    App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Window, WindowBounds, WindowOptions,
-    div, point, prelude::*, px, rgb, size,
+    AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Pixels, Window,
+    WindowBounds, WindowOptions, div, point, prelude::*, px, rgb, size,
 };
 use open_gpui_canvas::{
     CanvasDocument, CanvasEditor, CanvasEditorInputHandler, CanvasEvent, CanvasHandle,
-    CanvasInputMapper, CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode,
-    CanvasNodeKind, CanvasNodeRenderPolicy, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
+    CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
+    CanvasNodeRenderPolicy, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
     CanvasToolIntent, DocumentError, HandleRole, HitTarget, NodeId, canvas_editor_view,
 };
 use open_gpui_platform::application;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 const INITIAL_SELECTION: u128 = 2;
+const CANVAS_WIDTH: f32 = 1140.0;
+const CANVAS_HEIGHT: f32 = 650.0;
+const NODE_SURFACE_CHROME_HEIGHT: f32 = 92.0;
+const NODE_SURFACE_SLOT_ROW_HEIGHT: f32 = 28.0;
 
 struct JellyflowCanvasView {
     editor: CanvasEditor,
     focus_handle: FocusHandle,
     projection: ProjectionSummary,
+    semantic_registry: NodeRegistry,
+    node_kit_registry: NodeKitRegistry,
 }
 
 #[derive(Clone)]
@@ -40,6 +52,19 @@ struct ProjectionSummary {
     last_commit: String,
     source: String,
     adapter: String,
+    kit: String,
+}
+
+#[derive(Clone)]
+struct NodeSurfaceSummary {
+    node_kind: String,
+    renderer_key: String,
+    title: String,
+    summary: String,
+    slots: Vec<NodeSurfaceSlotProjection>,
+    selected: bool,
+    zoom: f32,
+    projection: NodeSurfaceProjection,
 }
 
 struct NodeSummary {
@@ -55,9 +80,13 @@ struct JellyflowNodeKind;
 impl CanvasNodeRenderPolicy for JellyflowNodeKind {
     fn node_paint(&self, node: &CanvasNode) -> Option<CanvasKindPaint> {
         let (fill, stroke) = match data_string(node, "jellyflow_kind") {
+            Some("demo.table") => ("#eff6ff", "#3b82f6"),
+            Some("demo.topic") => ("#f5f3ff", "#8b5cf6"),
             Some("demo.source") => ("#ecfeff", "#0891b2"),
-            Some("demo.transform") => ("#fef9c3", "#ca8a04"),
-            Some("demo.sink") => ("#f0fdf4", "#16a34a"),
+            Some("demo.decision") => ("#fff7ed", "#f97316"),
+            Some("demo.llm") => ("#f8fafc", "#64748b"),
+            Some("demo.workflow_output") => ("#f0fdf4", "#16a34a"),
+            Some("demo.tool") => ("#fefce8", "#ca8a04"),
             _ => ("#f8fafc", "#64748b"),
         };
 
@@ -81,14 +110,17 @@ impl CanvasNodeRenderPolicy for JellyflowNodeKind {
 impl Render for JellyflowCanvasView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let model = CanvasPaintModel::from(&self.editor);
+        let render_model = model.clone();
         let selected = self.selected_node_summary();
+        let selection_count = self.editor.selection().selected_nodes().count()
+            + self.editor.selection().selected_edges().count();
         let options = CanvasPaintOptions {
             include_handles: true,
             ..CanvasPaintOptions::default()
         };
         let theme = CanvasPaintTheme {
             background: Some(Hsla::from(rgb(0xf8fafc))),
-            label_line_clamp: Some(3),
+            label_line_clamp: Some(2),
             ..CanvasPaintTheme::default()
         };
 
@@ -106,19 +138,24 @@ impl Render for JellyflowCanvasView {
                     .flex_1()
                     .flex()
                     .flex_col()
-                    .child(self.render_toolbar())
+                    .child(self.render_toolbar(selection_count))
                     .child(
-                        div().relative().flex_1().overflow_hidden().child(
-                            canvas_editor_view(
-                                model,
-                                cx.entity(),
-                                self.focus_handle.clone(),
-                                Self::canvas_input_handler(),
-                                options,
-                                theme,
+                        div()
+                            .relative()
+                            .flex_1()
+                            .overflow_hidden()
+                            .child(
+                                canvas_editor_view(
+                                    model,
+                                    cx.entity(),
+                                    self.focus_handle.clone(),
+                                    Self::canvas_input_handler(),
+                                    options,
+                                    theme,
+                                )
+                                .size_full(),
                             )
-                            .size_full(),
-                        ),
+                            .children(self.render_node_surfaces(&render_model)),
                     ),
             )
             .child(self.render_sidebar(selected))
@@ -126,7 +163,7 @@ impl Render for JellyflowCanvasView {
 }
 
 impl JellyflowCanvasView {
-    fn render_toolbar(&self) -> impl IntoElement {
+    fn render_toolbar(&self, selection_count: usize) -> impl IntoElement {
         div()
             .h(px(46.0))
             .flex()
@@ -145,7 +182,7 @@ impl JellyflowCanvasView {
                         div()
                             .text_sm()
                             .text_color(rgb(0x111827))
-                            .child("Jellyflow Projection"),
+                            .child("Jellyflow gpui proof"),
                     )
                     .child(
                         div()
@@ -155,10 +192,11 @@ impl JellyflowCanvasView {
                     ),
             )
             .child(div().text_xs().text_color(rgb(0x475569)).child(format!(
-                "{} graph nodes / {} ports / {} edges",
+                "{} graph nodes / {} ports / {} edges / {} selected records",
                 self.projection.graph_nodes,
                 self.projection.graph_ports,
-                self.projection.graph_edges
+                self.projection.graph_edges,
+                selection_count
             )))
     }
 
@@ -249,9 +287,62 @@ impl JellyflowCanvasView {
                             .line_height(px(18.0))
                             .text_color(rgb(0x475569))
                             .child(format!("adapter: {}", self.projection.adapter)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .line_height(px(18.0))
+                            .text_color(rgb(0x475569))
+                            .child(format!("kit: {}", self.projection.kit)),
                     ),
             )
             .child(selection)
+    }
+
+    fn render_node_surfaces(&self, model: &CanvasPaintModel) -> Vec<AnyElement> {
+        let zoom = model.viewport().zoom;
+        self.editor
+            .document()
+            .nodes()
+            .filter_map(|node| {
+                let surface = self.node_surface_summary(node, zoom)?;
+                Some(
+                    render_node_surface(
+                        model.viewport().document_bounds_to_view(node.bounds()),
+                        surface,
+                    )
+                    .into_any_element(),
+                )
+            })
+            .collect()
+    }
+
+    fn node_surface_summary(&self, node: &CanvasNode, zoom: f32) -> Option<NodeSurfaceSummary> {
+        let kind =
+            NodeKindKey::new(data_string(node, "jellyflow_kind").unwrap_or(node.kind.as_str()));
+        let descriptor = self.semantic_registry.view_descriptor(&kind)?;
+        let title = node_title(node);
+        let data = Value::Object(node.data.clone());
+        let layout_hints = self.node_kit_registry.layout_hints_for_kind(&kind)?;
+        let projection = NodeSurfaceProjection::from_layout_hints(layout_hints, zoom);
+        let slots = descriptor.surface_slots_projection(&data, Some(layout_hints), zoom);
+        let summary = data_string(node, "summary")
+            .or_else(|| data_string(node, "description"))
+            .unwrap_or("Jellyflow node projected into open-gpui-canvas")
+            .to_string();
+        Some(NodeSurfaceSummary {
+            node_kind: descriptor.kind.0.clone(),
+            renderer_key: descriptor.renderer_key.clone(),
+            title,
+            summary,
+            slots,
+            selected: self
+                .editor
+                .selection()
+                .contains_node(&NodeId::from(node.id.as_str())),
+            zoom,
+            projection,
+        })
     }
 
     fn selected_node_summary(&self) -> Option<NodeSummary> {
@@ -271,18 +362,51 @@ impl JellyflowCanvasView {
     }
 
     fn handle_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        let canvas_event = CanvasInputMapper::key_down_event(event);
-        if let Err(error) = self.editor.handle_event(canvas_event) {
-            eprintln!("canvas key event failed: {error}");
+        match self.handle_canvas_shortcut(event) {
+            Ok(true) => {
+                cx.notify();
+            }
+            Ok(false) => {
+                Self::canvas_input_handler().dispatch_key_down(self, event, cx);
+            }
+            Err(error) => {
+                eprintln!("canvas shortcut failed: {error}");
+            }
         }
-        cx.notify();
     }
 
     fn canvas_input_handler() -> CanvasEditorInputHandler<Self> {
         CanvasEditorInputHandler::new(
-            |this: &JellyflowCanvasView| !this.editor.is_tool_state_idle(),
+            |this: &JellyflowCanvasView| this.is_pointer_interacting(),
             |this, event, cx| this.handle_canvas_event(Some(event), cx),
         )
+    }
+
+    fn handle_canvas_shortcut(&mut self, event: &KeyDownEvent) -> Result<bool, DocumentError> {
+        let modifiers = event.keystroke.modifiers;
+        if !(modifiers.platform || modifiers.control) {
+            return Ok(false);
+        }
+
+        match event.keystroke.key.as_str() {
+            "c" => {
+                // CanvasEditor currently manages clipboard, but this proof stays read-only.
+                Ok(true)
+            }
+            "z" if modifiers.shift => {
+                self.editor.redo()?;
+                Ok(true)
+            }
+            "z" => {
+                self.editor.undo()?;
+                Ok(true)
+            }
+            "y" => {
+                self.editor.redo()?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
 
     fn handle_canvas_event(&mut self, event: Option<CanvasEvent>, cx: &mut Context<Self>) {
@@ -295,6 +419,159 @@ impl JellyflowCanvasView {
         }
         cx.notify();
     }
+
+    fn is_pointer_interacting(&self) -> bool {
+        !self.editor.is_tool_state_idle()
+    }
+}
+
+fn render_node_surface(bounds: Bounds<Pixels>, surface: NodeSurfaceSummary) -> impl IntoElement {
+    let zoom = surface.zoom;
+    let pad = if zoom >= 1.0 { px(10.0) } else { px(8.0) };
+    let top = bounds.top() + pad;
+    let left = bounds.left() + pad;
+    let inner_width = (bounds.size.width - pad * 2.0).max(px(0.0));
+    let inner_height = (bounds.size.height - pad * 2.0).max(px(0.0));
+    let slot_limit = adapter_slot_limit_for_height(inner_height, surface.projection.slot_limit);
+    let accent = if surface.selected {
+        rgb(0x2563eb)
+    } else {
+        rgb(0x475569)
+    };
+
+    div()
+        .absolute()
+        .left(left)
+        .top(top)
+        .w(inner_width)
+        .h(inner_height)
+        .flex()
+        .flex_col()
+        .gap_1()
+        .flex_shrink_0()
+        .min_w(px(0.0))
+        .min_h(px(0.0))
+        .p_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(accent)
+        .bg(rgb(0xffffff))
+        .overflow_hidden()
+        .shadow_sm()
+        .child(
+            div()
+                .flex()
+                .flex_shrink_0()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .min_w(px(0.0))
+                .child(div().text_xs().text_color(accent).child(surface.node_kind))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0x94a3b8))
+                        .truncate()
+                        .min_w(px(0.0))
+                        .child(surface.renderer_key),
+                ),
+        )
+        .child(
+            div()
+                .text_sm()
+                .line_height(px(20.0))
+                .text_color(rgb(0x111827))
+                .overflow_hidden()
+                .line_clamp(2)
+                .flex_shrink_1()
+                .min_w(px(0.0))
+                .child(surface.title),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(0x64748b))
+                .truncate()
+                .flex_shrink_1()
+                .min_w(px(0.0))
+                .child(surface.summary),
+        )
+        .children(render_surface_slots(surface.slots, slot_limit))
+}
+
+fn render_surface_slots(
+    slots: Vec<NodeSurfaceSlotProjection>,
+    slot_limit: usize,
+) -> Vec<AnyElement> {
+    slots
+        .into_iter()
+        .filter(|slot| slot.visible)
+        .take(slot_limit)
+        .map(render_node_slot)
+        .map(|slot| slot.into_any_element())
+        .collect()
+}
+
+fn render_node_slot(slot: NodeSurfaceSlotProjection) -> impl IntoElement {
+    let fill = match slot.kind {
+        NodeSurfaceSlotKind::Header => rgb(0xe0f2fe),
+        NodeSurfaceSlotKind::Body => rgb(0xf1f5f9),
+        NodeSurfaceSlotKind::Footer => rgb(0xe2e8f0),
+        NodeSurfaceSlotKind::Badge => rgb(0xfef3c7),
+        NodeSurfaceSlotKind::Icon => rgb(0xe0e7ff),
+        NodeSurfaceSlotKind::FieldRow => rgb(0xecfeff),
+        NodeSurfaceSlotKind::ActionRow => rgb(0xfce7f3),
+        NodeSurfaceSlotKind::Preview => rgb(0xd1fae5),
+        NodeSurfaceSlotKind::NestedRegion => rgb(0xf3e8ff),
+    };
+    let value = if slot.value.is_empty() {
+        "-".to_string()
+    } else {
+        slot.value
+    };
+    let label = if slot.label.is_empty() {
+        "slot".to_string()
+    } else {
+        slot.label
+    };
+    let status = if slot.visible { "visible" } else { "hidden" };
+
+    div()
+        .flex()
+        .flex_shrink_1()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .min_w(px(0.0))
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .bg(fill)
+        .overflow_hidden()
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(0x334155))
+                .truncate()
+                .flex_shrink_1()
+                .min_w(px(0.0))
+                .child(format!("{} · {}", label, status)),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(0x475569))
+                .truncate()
+                .flex_shrink_1()
+                .min_w(px(0.0))
+                .child(value),
+        )
+}
+
+fn adapter_slot_limit_for_height(inner_height: Pixels, semantic_slot_limit: usize) -> usize {
+    let available = (inner_height.as_f32() - NODE_SURFACE_CHROME_HEIGHT).max(0.0);
+    let height_limit = (available / NODE_SURFACE_SLOT_ROW_HEIGHT).floor() as usize;
+    semantic_slot_limit.min(height_limit)
 }
 
 fn make_demo_store() -> NodeGraphStore {
@@ -350,7 +627,7 @@ fn make_demo_graph() -> Result<Graph, Box<dyn std::error::Error>> {
         GraphOp::AddNode {
             id: transform,
             node: make_node(
-                "demo.transform",
+                "demo.llm",
                 "Normalize Rows",
                 "Maps raw rows into a clean order stream.",
                 300.0,
@@ -360,7 +637,7 @@ fn make_demo_graph() -> Result<Graph, Box<dyn std::error::Error>> {
         GraphOp::AddNode {
             id: sink,
             node: make_node(
-                "demo.sink",
+                "demo.workflow_output",
                 "Publish Report",
                 "Writes the summarized result to the reporting channel.",
                 580.0,
@@ -426,15 +703,37 @@ fn make_node(kind: &str, label: &str, description: &str, x: f32, y: f32) -> Node
         extent: None,
         expand_parent: None,
         size: Some(JellySize {
-            width: 188.0,
-            height: 86.0,
+            width: 228.0,
+            height: 168.0,
         }),
         hidden: false,
         collapsed: false,
         ports: Vec::new(),
-        data: json!({
+        data: serde_json::json!({
             "label": label,
+            "title": label,
+            "summary": description,
             "description": description,
+            "fields": {
+                "prompt": "Customer intake + policy",
+                "completion": "Priority and route"
+            },
+            "meta": {
+                "model": "gpt-4.1-mini",
+                "cardinality": "1:N",
+                "branch": "yes"
+            },
+            "nested": {
+                "policy": {
+                    "guardrails": "Block PII",
+                    "response": "Return structured route"
+                }
+            },
+            "actions": {
+                "primary": ["Test prompt", "Open trace", "Copy config"],
+                "table": ["Add column", "Inspect relation"]
+            },
+            "preview": "Evidence card"
         }),
     }
 }
@@ -465,6 +764,8 @@ fn make_edge(from: JellyPortId, to: JellyPortId) -> Edge {
         interaction_width: Some(14.0),
         deletable: None,
         reconnectable: None,
+        data: Value::Null,
+        view: Default::default(),
     }
 }
 
@@ -472,17 +773,19 @@ fn project_store(
     store: &NodeGraphStore,
 ) -> Result<(CanvasDocument, ProjectionSummary), DocumentError> {
     let graph = store.graph();
+    let kit_registry = NodeKitRegistry::builtin();
+    let semantic_registry = kit_registry.node_registry();
     let mut builder = CanvasDocument::builder();
 
-    for (id, node) in &graph.nodes {
-        builder.add_node(project_node(id, node, graph))?;
+    for (id, node) in graph.nodes().iter() {
+        builder.add_node(project_node(id, node, graph, &semantic_registry))?;
     }
 
-    for (id, edge) in &graph.edges {
-        let Some(from) = graph.ports.get(&edge.from) else {
+    for (id, edge) in graph.edges().iter() {
+        let Some(from) = graph.ports().get(&edge.from) else {
             continue;
         };
-        let Some(to) = graph.ports.get(&edge.to) else {
+        let Some(to) = graph.ports().get(&edge.to) else {
             continue;
         };
 
@@ -500,58 +803,70 @@ fn project_store(
         canvas_edge.kind = "jellyflow.edge.data".to_string();
         canvas_edge.route = open_gpui_canvas::CanvasEdgeRoute::orthogonal();
         canvas_edge.route.interaction_width = px(edge.interaction_width.unwrap_or(14.0));
-        canvas_edge
-            .data
-            .insert("jellyflow_edge_id".to_string(), json!(canvas_edge_id(id)));
+        canvas_edge.data.insert(
+            "jellyflow_edge_id".to_string(),
+            serde_json::json!(canvas_edge_id(id)),
+        );
         builder.add_edge(canvas_edge)?;
     }
 
     let document = builder.build()?;
     let projection = ProjectionSummary {
-        graph_nodes: graph.nodes.len(),
-        graph_ports: graph.ports.len(),
-        graph_edges: graph.edges.len(),
-        canvas_nodes: document.node_count(),
-        canvas_edges: document.edge_count(),
+        graph_nodes: graph.nodes().len(),
+        graph_ports: graph.ports().len(),
+        graph_edges: graph.edges().len(),
+        canvas_nodes: document.nodes().count(),
+        canvas_edges: document.edges().count(),
         layout_preset: "tree -> tidy_tree".to_string(),
-        last_commit: "store transaction moved Normalize Rows before projection".to_string(),
+        last_commit: "node-kit gpui proof now uses builtin semantic overlays".to_string(),
         source: "jellyflow graph v1".to_string(),
-        adapter: "open-gpui-canvas editor".to_string(),
+        adapter: "open-gpui-canvas overlay example".to_string(),
+        kit: "workflow.automation / erd.table / mind-map.knowledge-canvas".to_string(),
     };
 
     Ok((document, projection))
 }
 
-fn project_node(id: &JellyNodeId, node: &Node, graph: &Graph) -> CanvasNode {
+fn project_node(
+    id: &JellyNodeId,
+    node: &Node,
+    graph: &Graph,
+    semantic_registry: &NodeRegistry,
+) -> CanvasNode {
     let node_size = node.size.unwrap_or(JellySize {
-        width: 188.0,
-        height: 86.0,
+        width: 228.0,
+        height: 168.0,
     });
     let mut canvas_node = CanvasNode::new(
         canvas_node_id(id),
         point(px(node.pos.x), px(node.pos.y)),
         size(px(node_size.width), px(node_size.height)),
     );
-    canvas_node.kind = "jellyflow.node".to_string();
+    let descriptor = semantic_registry
+        .view_descriptor(&node.kind)
+        .expect("demo graph should resolve a builtin node descriptor");
+    canvas_node.kind = descriptor.renderer_key.clone();
     canvas_node.hidden = node.hidden;
     canvas_node.data = canvas_value_from_json(node.data.clone());
     canvas_node.data.insert(
         "jellyflow_kind".to_string(),
-        json!(node.kind.0.as_str().to_string()),
+        serde_json::json!(node.kind.0.as_str().to_string()),
     );
-    canvas_node
-        .data
-        .insert("jellyflow_node_id".to_string(), json!(canvas_node_id(id)));
-    canvas_node
-        .data
-        .insert("ports".to_string(), json!(port_summary(node, graph)));
+    canvas_node.data.insert(
+        "jellyflow_node_id".to_string(),
+        serde_json::json!(canvas_node_id(id)),
+    );
+    canvas_node.data.insert(
+        "ports".to_string(),
+        serde_json::json!(port_summary(node, graph)),
+    );
 
     let input_ports = node
         .ports
         .iter()
         .filter(|id| {
             graph
-                .ports
+                .ports()
                 .get(id)
                 .is_some_and(|port| port.dir == PortDirection::In)
         })
@@ -562,7 +877,7 @@ fn project_node(id: &JellyNodeId, node: &Node, graph: &Graph) -> CanvasNode {
         .iter()
         .filter(|id| {
             graph
-                .ports
+                .ports()
                 .get(id)
                 .is_some_and(|port| port.dir == PortDirection::Out)
         })
@@ -575,7 +890,7 @@ fn project_node(id: &JellyNodeId, node: &Node, graph: &Graph) -> CanvasNode {
             HandleRole::Target,
             0.0,
             port_y(index, input_ports.len(), node_size.height),
-            graph.ports.get(port_id).and_then(|port| port.connectable),
+            graph.ports().get(port_id).and_then(|port| port.connectable),
         ));
     }
 
@@ -585,44 +900,44 @@ fn project_node(id: &JellyNodeId, node: &Node, graph: &Graph) -> CanvasNode {
             HandleRole::Source,
             node_size.width,
             port_y(index, output_ports.len(), node_size.height),
-            graph.ports.get(port_id).and_then(|port| port.connectable),
+            graph.ports().get(port_id).and_then(|port| port.connectable),
         ));
     }
 
     canvas_node
 }
 
-fn project_handle(
-    port_id: JellyPortId,
-    role: HandleRole,
-    x: f32,
-    y: f32,
-    connectable: Option<bool>,
-) -> CanvasHandle {
-    let mut handle = CanvasHandle::new(canvas_port_id(&port_id), point(px(x), px(y)));
-    handle.role = role;
-    handle.connectable = connectable.unwrap_or(true);
-    handle
+fn jellyflow_kind_registry() -> CanvasKindRegistry {
+    let mut registry = CanvasKindRegistry::open();
+    for kind in [
+        "data-card",
+        "task-card",
+        "decision-card",
+        "output-card",
+        "table-card",
+        "topic-card",
+        "idea-card",
+        "source-card",
+    ] {
+        registry.register_node_kind(
+            kind,
+            CanvasNodeKind::new().with_render_policy(JellyflowNodeKind),
+        );
+    }
+    registry
 }
 
-fn port_y(index: usize, count: usize, height: f32) -> f32 {
-    let step = height / (count + 1) as f32;
-    step * (index + 1) as f32
-}
-
-fn port_summary(node: &Node, graph: &Graph) -> String {
-    node.ports
-        .iter()
-        .filter_map(|id| graph.ports.get(id))
-        .map(|port| {
-            let dir = match port.dir {
-                PortDirection::In => "in",
-                PortDirection::Out => "out",
-            };
-            format!("{dir}:{}", port.key.0)
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+fn demo_editor() -> (CanvasEditor, ProjectionSummary) {
+    let store = make_demo_store();
+    let (document, projection) = project_store(&store).expect("demo graph should project");
+    let mut editor = CanvasEditor::try_new_with_kind_registry(document, jellyflow_kind_registry())
+        .expect("canvas editor should accept projected Jellyflow graph");
+    editor
+        .apply_tool_intent(CanvasToolIntent::ReplaceSelection(HitTarget::Node(
+            NodeId::from(canvas_node_id(&JellyNodeId::from_u128(INITIAL_SELECTION))),
+        )))
+        .expect("initial selection should exist");
+    (editor, projection)
 }
 
 fn canvas_value_from_json(value: Value) -> open_gpui_canvas::CanvasValue {
@@ -648,42 +963,58 @@ fn canvas_edge_id(id: &JellyEdgeId) -> String {
     id.0.to_string()
 }
 
-fn jellyflow_kind_registry() -> CanvasKindRegistry {
-    let mut registry = CanvasKindRegistry::open();
-    registry.register_node_kind(
-        "jellyflow.node",
-        CanvasNodeKind::new().with_render_policy(JellyflowNodeKind),
-    );
-    registry
-}
-
-fn demo_editor() -> (CanvasEditor, ProjectionSummary) {
-    let store = make_demo_store();
-    let (document, projection) = project_store(&store).expect("demo graph should project");
-    let mut editor = CanvasEditor::try_new_with_kind_registry(document, jellyflow_kind_registry())
-        .expect("canvas editor should accept projected Jellyflow graph");
-    editor
-        .apply_tool_intent(CanvasToolIntent::ReplaceSelection(HitTarget::Node(
-            NodeId::from(canvas_node_id(&JellyNodeId::from_u128(INITIAL_SELECTION))),
-        )))
-        .expect("initial selection should exist");
-    (editor, projection)
+fn node_title(node: &CanvasNode) -> String {
+    data_string(node, "label")
+        .or_else(|| data_string(node, "title"))
+        .or_else(|| data_string(node, "summary"))
+        .or_else(|| data_string(node, "description"))
+        .unwrap_or_else(|| node.id.as_str())
+        .to_string()
 }
 
 fn data_string<'a>(node: &'a CanvasNode, field: &str) -> Option<&'a str> {
     node.data.get(field).and_then(|value| value.as_str())
 }
 
-fn node_title(node: &CanvasNode) -> String {
-    data_string(node, "label")
-        .unwrap_or_else(|| node.id.as_str())
-        .to_string()
+fn port_summary(node: &Node, graph: &Graph) -> String {
+    node.ports
+        .iter()
+        .filter_map(|id| graph.ports().get(id))
+        .map(|port| {
+            let dir = match port.dir {
+                PortDirection::In => "in",
+                PortDirection::Out => "out",
+            };
+            format!("{dir}:{}", port.key.0)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn project_handle(
+    port_id: JellyPortId,
+    role: HandleRole,
+    x: f32,
+    y: f32,
+    connectable: Option<bool>,
+) -> CanvasHandle {
+    let mut handle = CanvasHandle::new(canvas_port_id(&port_id), point(px(x), px(y)));
+    handle.role = role;
+    handle.connectable = connectable.unwrap_or(true);
+    handle
+}
+
+fn port_y(index: usize, count: usize, height: f32) -> f32 {
+    let step = height / (count + 1) as f32;
+    step * (index + 1) as f32
 }
 
 fn main() {
     application().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(1140.0), px(650.0)), cx);
+        let bounds = Bounds::centered(None, size(px(CANVAS_WIDTH), px(CANVAS_HEIGHT)), cx);
         let (editor, projection) = demo_editor();
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
 
         cx.open_window(
             WindowOptions {
@@ -695,6 +1026,8 @@ fn main() {
                     editor,
                     focus_handle: cx.focus_handle(),
                     projection,
+                    semantic_registry,
+                    node_kit_registry,
                 })
             },
         )
@@ -719,6 +1052,7 @@ mod tests {
         assert_eq!(projection.canvas_nodes, 3);
         assert_eq!(projection.canvas_edges, 2);
         assert_eq!(projection.layout_preset, "tree -> tidy_tree");
+        assert!(projection.kit.contains("workflow.automation"));
 
         let transform_id = NodeId::from(canvas_node_id(&JellyNodeId::from_u128(3)));
         let transform = document.node(&transform_id).unwrap();
@@ -747,5 +1081,36 @@ mod tests {
             edge.target.handle_id.as_ref().unwrap().as_str(),
             canvas_port_id(&JellyPortId::from_u128(30))
         );
+    }
+
+    #[test]
+    fn semantic_descriptor_extracts_builtin_node_surface_slots() {
+        let store = make_demo_store();
+        let (document, _) = project_store(&store).unwrap();
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let node = document
+            .node(&NodeId::from(canvas_node_id(&JellyNodeId::from_u128(3))))
+            .unwrap();
+        let descriptor = semantic_registry
+            .view_descriptor(&NodeKindKey::new("demo.llm"))
+            .unwrap();
+        let data = Value::Object(node.data.clone());
+        let surface = descriptor.surface_slots_projection(
+            &data,
+            node_kit_registry.layout_hints_for_kind(&NodeKindKey::new("demo.llm")),
+            1.0,
+        );
+
+        assert!(surface.iter().any(|slot| slot.label == "Prompt"));
+        assert!(surface.iter().any(|slot| slot.label == "Policy"));
+        assert!(surface.iter().any(|slot| slot.label == "Actions"));
+    }
+
+    #[test]
+    fn adapter_slot_limit_scales_with_available_height() {
+        assert_eq!(adapter_slot_limit_for_height(px(148.0), usize::MAX), 2);
+        assert_eq!(adapter_slot_limit_for_height(px(220.0), 3), 3);
+        assert_eq!(adapter_slot_limit_for_height(px(88.0), 4), 0);
     }
 }
