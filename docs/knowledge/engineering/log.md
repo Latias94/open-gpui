@@ -38,6 +38,10 @@ status: active
   `crates/ui_components/src/tree/render_plan.rs`, preserving `tree` module exports and updating the
   component contract source mapping. Verified with `cargo check -p open-gpui-ui-components --tests`
   and focused tree/export/contract nextest coverage.
+- 2026-06-30: Split Tree movement payloads and `apply_tree_move` into
+  `crates/ui_components/src/tree/movement.rs`, preserving `tree` module exports and updating the
+  component contract source mapping. Verified with `cargo check -p open-gpui-ui-components --tests`
+  and focused tree movement/export/contract nextest coverage.
 - 2026-06-29: Continued `docs/plans/2026-06-29-002-refactor-table-depth-second-stage-plan.md`
   on `refactor/table-depth-second-stage`. The Table adapter is now split into concern-owned
   modules for header rendering, resize/reorder affordances, body rows, cells, editors, runtime,
