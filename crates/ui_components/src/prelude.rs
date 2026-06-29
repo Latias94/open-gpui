@@ -50,6 +50,9 @@ pub use crate::menu::{
 };
 pub use crate::overlay::OverlayResolvedState;
 pub use crate::popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
+pub use crate::primitives::{
+    ActiveDescendant, CollectionPosition, ControllableState, UiA11yElementExt,
+};
 pub use crate::progress::{
     Progress, ProgressColors, ProgressMetrics, ProgressState, ProgressVisualMode,
 };

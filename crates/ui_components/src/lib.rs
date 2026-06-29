@@ -31,6 +31,7 @@ mod menu_runtime;
 mod overlay;
 pub mod popover;
 pub mod prelude;
+pub mod primitives;
 pub mod progress;
 pub mod radio;
 pub mod roving_focus;
