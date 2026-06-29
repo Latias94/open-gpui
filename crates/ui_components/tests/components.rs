@@ -1394,7 +1394,7 @@ fn component_source_files(component: &str) -> &'static [&'static str] {
         "ScrollArea" => &["scroll_area.rs"],
         "Splitter" => &["splitter.rs"],
         "Table" => &["table/mod.rs", "table/resolve.rs"],
-        "TableColumnVisibility" => &["table/column_visibility.rs"],
+        "TableColumnVisibility" => &["table/column_visibility/component.rs"],
         "TableFacetedFilter" => &["table/faceted_filter.rs"],
         "TableGlobalFilter" => &["table/global_filter.rs"],
         "TablePredicateFilter" => &["table/predicate_filter.rs"],
