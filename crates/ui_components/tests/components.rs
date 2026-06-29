@@ -1398,7 +1398,7 @@ fn component_source_files(component: &str) -> &'static [&'static str] {
         "TableFacetedFilter" => &["table/faceted_filter.rs"],
         "TableGlobalFilter" => &["table/global_filter.rs"],
         "TablePredicateFilter" => &["table/predicate_filter.rs"],
-        "TableRangeFilter" => &["table/range_filter.rs"],
+        "TableRangeFilter" => &["table/range_filter/component.rs"],
         "TableToolbar" => &["table/toolbar.rs"],
         "VirtualizedList" => &["virtualized_list.rs"],
         "StatusCue" => &["feedback.rs"],
