@@ -1381,7 +1381,7 @@ fn component_source_inputs(component: &str) -> &'static [&'static str] {
         "ToggleGroup" => &["toggle_group.rs"],
         "Toolbar" => &["toolbar.rs"],
         "Sidebar" => &["sidebar.rs"],
-        "Tree" => &["tree.rs"],
+        "Tree" => &["tree.rs", "tree/render_plan.rs"],
         "Listbox" => &["listbox.rs"],
         "Select" => &["select.rs"],
         "Combobox" => &["combobox.rs"],
