@@ -6,12 +6,14 @@ mod editing;
 mod faceted_filter;
 mod filtering;
 mod global_filter;
+mod header;
 mod interaction;
 mod layout;
 mod metrics;
 mod predicate_filter;
 mod range_filter;
 mod render_plan;
+mod resize;
 mod resolve;
 mod runtime;
 mod toolbar;
@@ -27,23 +29,20 @@ use crate::text_input::TextInput;
 use crate::textarea::Textarea;
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, CursorStyle, DragMoveEvent, Empty, Entity, FocusHandle,
-    FontWeight, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels,
-    RenderOnce, ScrollHandle, ScrollWheelEvent, SharedString, StatefulInteractiveElement, Styled,
-    Window, div, point, px, rgb, rgba,
+    AnyElement, App, ClickEvent, DragMoveEvent, Entity, FocusHandle, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Pixels, RenderOnce, ScrollHandle, ScrollWheelEvent,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, point, px, rgb,
 };
 use open_gpui_ui_core::{
-    Role, Sizable, Size, TableCellEditor, TableCellValue, TableColumnId, TableColumnRegion,
-    TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState, TableColumnSizing,
-    TableExpansionMode, TableExpansionState, TableResolvedRow, TableRowChildrenLoadState,
-    TableRowId, TableRowRegion, TableSelectionPolicy, TableSortDirection, TableState, TableTreeRow,
-    Toggled, UiPx, VirtualizerSnapshot, drag_table_column_resize, end_table_column_resize, ui_px,
+    Role, Sizable, Size, TableCellEditor, TableCellValue, TableColumnRegion,
+    TableColumnResizeDirection, TableColumnResizeMode, TableExpansionMode, TableExpansionState,
+    TableResolvedRow, TableRowChildrenLoadState, TableRowId, TableRowRegion, TableSelectionPolicy,
+    TableState, TableTreeRow, Toggled, UiPx, VirtualizerSnapshot, ui_px,
 };
 pub use open_gpui_ui_core::{
     TableResolvedHeaderCell, TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions,
     TableResolvedHeaderKind,
 };
-use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 pub use column_visibility::{
@@ -57,6 +56,7 @@ pub use faceted_filter::{
     TableFacetedFilterState,
 };
 pub use global_filter::{TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState};
+use header::render_table_header;
 use interaction::request_table_row_selection_change;
 pub use interaction::{
     TableColumnOrderChange, TableColumnOrderPlacement, TableColumnSizingChange, TableHeaderAction,
@@ -76,46 +76,19 @@ pub use render_plan::{
     TableHeaderGroupRegionsRenderPlan, TableHeaderGroupRenderPlan, TablePinnedLayoutPlan,
     TableRenderPlan, TableRowRenderPlan,
 };
+use resize::{TableColumnResizeDrag, TableResizeRenderConfig, handle_table_column_resize_drag};
 use runtime::TableRuntime;
 pub use toolbar::{TableToolbar, TableToolbarState};
 use virtualization::table_rows_virtual_size;
 
 type TableSortHandler = Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>;
-type TableColumnSizingHandler = Rc<dyn Fn(TableColumnSizingChange, &mut Window, &mut App)>;
-type TableColumnOrderHandler = Rc<dyn Fn(TableColumnOrderChange, &mut Window, &mut App)>;
+pub(super) type TableColumnSizingHandler =
+    Rc<dyn Fn(TableColumnSizingChange, &mut Window, &mut App)>;
+pub(super) type TableColumnOrderHandler = Rc<dyn Fn(TableColumnOrderChange, &mut Window, &mut App)>;
 type TableRowActivationHandler = Rc<dyn Fn(TableRowActivation, &mut Window, &mut App)>;
 type TableRowExpansionHandler = Rc<dyn Fn(TableRowExpansionToggle, &mut Window, &mut App)>;
 type TableRowSelectionHandler = Rc<dyn Fn(TableRowSelectionChange, &mut Window, &mut App)>;
 type TableCellEditHandler = Rc<dyn Fn(TableCellEditChange, &mut Window, &mut App)>;
-
-#[derive(Clone)]
-struct TableResizeRenderConfig {
-    table_id: String,
-    enabled: bool,
-    mode: TableColumnResizeMode,
-    direction: TableColumnResizeDirection,
-    base_sizing: TableColumnSizing,
-    runtime: Entity<TableRuntime>,
-    on_change: Option<TableColumnSizingHandler>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct TableColumnResizeDrag {
-    table_id: String,
-    column_id: TableColumnId,
-    start_width: UiPx,
-    column_widths_start: Vec<(TableColumnId, UiPx)>,
-    base_sizing: TableColumnSizing,
-    mode: TableColumnResizeMode,
-    direction: TableColumnResizeDirection,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TableColumnOrderDrag {
-    table_id: String,
-    column_id: TableColumnId,
-    region: TableColumnRegion,
-}
 
 /// Body row height ownership for table rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -475,606 +448,6 @@ impl RenderOnce for Table {
                 plan.sticky_header_band_height(),
             ))
     }
-}
-
-fn render_table_header(
-    plan: &TableRenderPlan,
-    on_sort_requested: Option<TableSortHandler>,
-    on_column_order_change: Option<TableColumnOrderHandler>,
-    resize_config: TableResizeRenderConfig,
-    horizontal_scroll_handle: ScrollHandle,
-    header_band_height: UiPx,
-) -> impl IntoElement {
-    let table_id = plan.table_id().to_owned();
-    let metrics = plan.metrics();
-    let column_header_role = plan.column_header_role();
-    let regions = plan.column_regions().to_vec();
-    let header_groups = plan.header_groups().clone();
-    let columns_by_id = Rc::new(
-        plan.columns()
-            .iter()
-            .cloned()
-            .map(|column| (column.id().clone(), column))
-            .collect::<BTreeMap<_, _>>(),
-    );
-    let pinned_layout = plan.pinned_layout().cloned();
-    let center_window = if pinned_layout.is_some() {
-        plan.center_column_window().cloned().map(Rc::new)
-    } else {
-        None
-    };
-    let rendered_center_leaf_ids = center_window.as_ref().map(|window| {
-        window
-            .rendered_columns()
-            .iter()
-            .map(|column| column.id().clone())
-            .collect::<BTreeSet<_>>()
-    });
-    div()
-        .id(format!("table:{table_id}:header-row"))
-        .debug_selector({
-            let table_id = table_id.clone();
-            move || format!("table:{table_id}:header-row")
-        })
-        .absolute()
-        .top(px(0.0))
-        .left(px(0.0))
-        .right(px(0.0))
-        .h(gpui_px_from_ui(header_band_height))
-        .flex()
-        .items_center()
-        .overflow_hidden()
-        .border_b_1()
-        .border_color(rgb(0xd6d8ce))
-        .bg(rgb(0xf3f4ef))
-        .ui_role(plan.row_role())
-        .aria_row_index(1)
-        .children(regions.iter().map(move |region_plan| {
-            let table_id = table_id.clone();
-            let pinned_layout = pinned_layout.clone();
-            let center_window = center_window.clone();
-            let on_sort_requested = on_sort_requested.clone();
-            let on_column_order_change = on_column_order_change.clone();
-            let resize_config = resize_config.clone();
-            let header_groups = header_groups.clone();
-            let columns_by_id = columns_by_id.clone();
-            let rendered_center_leaf_ids = rendered_center_leaf_ids.clone();
-            let metrics = metrics;
-            let column_header_role = column_header_role;
-            let region = region_plan.region();
-            let region_name = region.as_str().to_owned();
-            let active_center_window = (region == TableColumnRegion::Center)
-                .then_some(center_window.as_deref())
-                .flatten();
-            let region_width = active_center_window
-                .map(TableCenterColumnWindowPlan::center_width)
-                .unwrap_or_else(|| region_plan.total_width());
-            let header_region = header_groups.region(region);
-            let reorder_enabled =
-                on_column_order_change.is_some() && region_plan.columns().len() > 1;
-            let mut occupied_leaf_ids = BTreeSet::new();
-            let mut header_children = Vec::new();
-            for group in header_region.groups() {
-                for header in group.headers() {
-                    let effective_leaf_ids = header
-                        .leaf_column_ids()
-                        .iter()
-                        .filter(|leaf_id| {
-                            if region == TableColumnRegion::Center {
-                                rendered_center_leaf_ids
-                                    .as_ref()
-                                    .is_none_or(|rendered| rendered.contains(*leaf_id))
-                            } else {
-                                true
-                            }
-                        })
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    if effective_leaf_ids.is_empty() {
-                        continue;
-                    }
-                    if header.kind().is_placeholder()
-                        && effective_leaf_ids
-                            .iter()
-                            .all(|leaf_id| occupied_leaf_ids.contains(leaf_id))
-                    {
-                        continue;
-                    }
-
-                    header_children.push(
-                        render_table_header_group_cell(
-                            table_id.clone(),
-                            metrics,
-                            column_header_role,
-                            header.clone(),
-                            effective_leaf_ids.clone(),
-                            columns_by_id.clone(),
-                            on_sort_requested.clone(),
-                            on_column_order_change.clone(),
-                            reorder_enabled,
-                            resize_config.clone(),
-                        )
-                        .into_any_element(),
-                    );
-                    if header.kind().is_leaf() {
-                        occupied_leaf_ids.extend(effective_leaf_ids);
-                    }
-                }
-            }
-            let center_scroll_id = pinned_layout.as_ref().and_then(|layout| {
-                (region == TableColumnRegion::Center && !region_plan.columns().is_empty())
-                    .then(|| layout.header_center_scroll_id())
-            });
-
-            let region_lane = div()
-                .id(format!("table:{table_id}:header-region:{region_name}"))
-                .debug_selector({
-                    let table_id = table_id.clone();
-                    let region_name = region_name.clone();
-                    move || format!("table:{table_id}:header-region:{region_name}")
-                })
-                .relative()
-                .h_full()
-                .min_w(px(0.0))
-                .w(gpui_px_from_ui(region_width))
-                .flex_none()
-                .overflow_hidden()
-                .children(header_children)
-                .into_any_element();
-
-            if let Some(center_scroll_id) = center_scroll_id {
-                div()
-                    .h_full()
-                    .min_w(px(0.0))
-                    .flex_1()
-                    .child(
-                        ScrollArea::new(center_scroll_id, region_lane)
-                            .horizontal()
-                            .scroll_handle(&horizontal_scroll_handle)
-                            .with_size(metrics.size()),
-                    )
-                    .into_any_element()
-            } else {
-                region_lane
-            }
-        }))
-}
-
-fn render_table_header_group_cell(
-    table_id: String,
-    metrics: TableMetrics,
-    column_header_role: Role,
-    header: TableHeaderCellRenderPlan,
-    effective_leaf_ids: Vec<TableColumnId>,
-    columns_by_id: Rc<BTreeMap<TableColumnId, TableColumnRenderPlan>>,
-    on_sort_requested: Option<TableSortHandler>,
-    on_column_order_change: Option<TableColumnOrderHandler>,
-    reorder_enabled: bool,
-    resize_config: TableResizeRenderConfig,
-) -> AnyElement {
-    let header_id = header.id().to_owned();
-    let header_kind = header.kind();
-    let header_label = header.label().to_owned();
-    let is_leaf = header_kind.is_leaf();
-    let interactive_sort = is_leaf
-        .then(|| header.sort_action().cloned().zip(on_sort_requested))
-        .flatten();
-    let leaf_column = is_leaf
-        .then(|| {
-            effective_leaf_ids
-                .first()
-                .and_then(|column_id| columns_by_id.get(column_id))
-                .map(|column| column.clone())
-        })
-        .flatten();
-    let order_drag = reorder_enabled
-        .then(|| {
-            leaf_column.clone().map(|column| TableColumnOrderDrag {
-                table_id: table_id.clone(),
-                column_id: column.id().clone(),
-                region: column.region(),
-            })
-        })
-        .flatten();
-    let order_drop_target = reorder_enabled.then(|| leaf_column.clone()).flatten();
-    let order_drop_handler = reorder_enabled.then_some(on_column_order_change).flatten();
-    let show_resize_handle = resize_config.enabled && header.resizable();
-    let row_span = header.row_span().max(1) as f32;
-    let width = effective_leaf_ids
-        .iter()
-        .fold(UiPx::ZERO, |total, column_id| {
-            total
-                + columns_by_id
-                    .get(column_id)
-                    .map(|column| column.width())
-                    .unwrap_or(UiPx::ZERO)
-        });
-    let start = effective_leaf_ids
-        .first()
-        .and_then(|column_id| columns_by_id.get(column_id))
-        .map(|column| column.start())
-        .unwrap_or(UiPx::ZERO);
-    let aria_column_index = effective_leaf_ids
-        .first()
-        .and_then(|column_id| columns_by_id.get(column_id))
-        .map(|column| column.aria_column_index())
-        .unwrap_or(1);
-    let sort_suffix = header
-        .sort_direction()
-        .map(|direction| match direction {
-            TableSortDirection::Ascending => " ↑",
-            TableSortDirection::Descending => " ↓",
-        })
-        .unwrap_or("");
-
-    div()
-        .id(header_id.clone())
-        .debug_selector(move || header_id.clone())
-        .absolute()
-        .top(gpui_px_from_ui(
-            metrics.header_height() * header.depth() as f32,
-        ))
-        .left(gpui_px_from_ui(start))
-        .w(gpui_px_from_ui(width))
-        .min_w(gpui_px_from_ui(width))
-        .max_w(gpui_px_from_ui(width))
-        .flex_none()
-        .h(gpui_px_from_ui(metrics.header_height() * row_span))
-        .min_h(px(0.0))
-        .flex()
-        .items_center()
-        .px(gpui_px_from_ui(metrics.cell_padding_x()))
-        .border_r_1()
-        .border_color(rgb(0xd6d8ce))
-        .text_xs()
-        .font_weight(FontWeight::BOLD)
-        .text_color(rgb(0x3f4a57))
-        .truncate()
-        .whitespace_nowrap()
-        .ui_role(column_header_role)
-        .aria_label(header.label().to_owned())
-        .aria_column_index(aria_column_index)
-        .when_some(interactive_sort, |this, (action, handler)| {
-            let key_action = action.clone();
-            let key_handler = handler.clone();
-
-            this.focusable()
-                .tab_stop(true)
-                .cursor_pointer()
-                .hover(|style| style.bg(rgb(0xe9ece3)))
-                .on_click(move |_event: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    handler(action.clone(), window, cx);
-                })
-                .on_key_down(move |event: &KeyDownEvent, window, cx| {
-                    if event.keystroke.modifiers.modified() {
-                        return;
-                    }
-                    if !matches!(event.keystroke.key.as_str(), "space" | "enter") {
-                        return;
-                    }
-
-                    cx.stop_propagation();
-                    key_handler(key_action.clone(), window, cx);
-                })
-        })
-        .child(format!("{}{}", header_label, sort_suffix))
-        .when_some(order_drag, |this, drag| {
-            this.cursor(CursorStyle::OpenHand)
-                .on_drag(drag, |_, _, _, _, cx| cx.new(|_| Empty))
-        })
-        .when_some(order_drop_target, |this, column| {
-            this.when_some(order_drop_handler.clone(), |this, handler| {
-                let drop_handle_inset = if show_resize_handle {
-                    px(10.0)
-                } else {
-                    px(0.0)
-                };
-                let drop_zone_width = px((width.as_f32() * 0.5).max(12.0));
-
-                this.child(render_table_column_order_drop_zone(
-                    table_id.clone(),
-                    column.clone(),
-                    TableColumnOrderPlacement::Before,
-                    handler.clone(),
-                    drop_zone_width,
-                    drop_handle_inset,
-                ))
-                .child(render_table_column_order_drop_zone(
-                    table_id.clone(),
-                    column,
-                    TableColumnOrderPlacement::After,
-                    handler,
-                    drop_zone_width,
-                    drop_handle_inset,
-                ))
-            })
-        })
-        .when(show_resize_handle, |this| {
-            this.when_some(leaf_column.clone(), |this, column| {
-                this.child(render_table_resize_handle(
-                    table_id.clone(),
-                    column,
-                    resize_config.clone(),
-                ))
-            })
-        })
-        .into_any_element()
-}
-
-fn render_table_resize_handle(
-    table_id: String,
-    column: TableColumnRenderPlan,
-    config: TableResizeRenderConfig,
-) -> impl IntoElement {
-    let column_id = column.id().clone();
-    let column_key = column_id.as_str().to_owned();
-    let drag = TableColumnResizeDrag {
-        table_id: table_id.clone(),
-        column_id: column_id.clone(),
-        start_width: column.width(),
-        column_widths_start: vec![(column_id.clone(), column.width())],
-        base_sizing: config.base_sizing.clone(),
-        mode: config.mode,
-        direction: config.direction,
-    };
-    let drag_for_mouse_up = drag.clone();
-    let drag_for_mouse_up_out = drag.clone();
-    let drag_for_drag = drag.clone();
-    let drag_table_id = table_id.clone();
-    let drag_runtime = config.runtime.clone();
-    let mouse_up_runtime = config.runtime.clone();
-    let mouse_up_config = config.clone();
-    let mouse_up_out_runtime = config.runtime.clone();
-    let mouse_up_out_config = config;
-
-    div()
-        .id(format!("table:{table_id}:resize:{column_key}"))
-        .debug_selector(move || format!("table:{table_id}:resize:{column_key}"))
-        .absolute()
-        .top(px(0.0))
-        .right(px(0.0))
-        .h_full()
-        .w(px(10.0))
-        .cursor(CursorStyle::ResizeColumn)
-        .occlude()
-        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-            window.prevent_default();
-            cx.stop_propagation();
-        })
-        .on_drag(
-            drag_for_drag,
-            move |drag, cursor_offset, bounds, window, cx| {
-                if drag.table_id != drag_table_id {
-                    return cx.new(|_| Empty);
-                }
-
-                let start_x = ui_px_from_gpui(bounds.origin.x + cursor_offset.x);
-                drag_runtime.update(cx, |runtime, _| {
-                    runtime.column_resize = TableColumnResizeState::begin(
-                        drag.column_id.clone(),
-                        start_x,
-                        drag.start_width,
-                        drag.column_widths_start.clone(),
-                    );
-                });
-                window.prevent_default();
-                cx.stop_propagation();
-                cx.new(|_| Empty)
-            },
-        )
-        .on_mouse_up(MouseButton::Left, move |event, window, cx| {
-            finish_table_column_resize(
-                &mouse_up_runtime,
-                &mouse_up_config,
-                &drag_for_mouse_up,
-                ui_px_from_gpui(event.position.x),
-                window,
-                cx,
-            );
-        })
-        .on_mouse_up_out(MouseButton::Left, move |event, window, cx| {
-            finish_table_column_resize(
-                &mouse_up_out_runtime,
-                &mouse_up_out_config,
-                &drag_for_mouse_up_out,
-                ui_px_from_gpui(event.position.x),
-                window,
-                cx,
-            );
-        })
-        .child(
-            div()
-                .absolute()
-                .right(px(0.0))
-                .top(px(4.0))
-                .bottom(px(4.0))
-                .w(px(1.0))
-                .bg(rgb(0xc8cdc2)),
-        )
-}
-
-fn render_table_column_order_drop_zone(
-    table_id: String,
-    target_column: TableColumnRenderPlan,
-    placement: TableColumnOrderPlacement,
-    handler: TableColumnOrderHandler,
-    zone_width: Pixels,
-    right_inset: Pixels,
-) -> impl IntoElement {
-    let target_column_id = target_column.id().clone();
-    let target_region = target_column.region();
-    let zone_key = target_column_id.as_str().to_owned();
-    let placement_key = placement.as_str().to_owned();
-    let table_for_can_drop = table_id.clone();
-    let table_for_drag_over = table_id.clone();
-    let table_for_drop = table_id.clone();
-    let target_for_can_drop = target_column_id.clone();
-    let target_for_drag_over = target_column_id.clone();
-    let target_for_drop = target_column_id.clone();
-
-    div()
-        .id(format!(
-            "table:{table_id}:header-order-drop:{placement_key}:{zone_key}"
-        ))
-        .debug_selector(move || {
-            format!("table:{table_id}:header-order-drop:{placement_key}:{zone_key}")
-        })
-        .absolute()
-        .top(px(0.0))
-        .bottom(px(0.0))
-        .when(placement == TableColumnOrderPlacement::Before, |this| {
-            this.left(px(0.0)).w(zone_width)
-        })
-        .when(placement == TableColumnOrderPlacement::After, |this| {
-            this.right(right_inset).w(zone_width)
-        })
-        .can_drop(move |dragged, _, _| {
-            dragged
-                .downcast_ref::<TableColumnOrderDrag>()
-                .is_some_and(|drag| {
-                    drag.table_id == table_for_can_drop
-                        && drag.region == target_region
-                        && drag.column_id != target_for_can_drop
-                })
-        })
-        .drag_over::<TableColumnOrderDrag>(move |style, drag, _, _| {
-            if drag.table_id != table_for_drag_over
-                || drag.region != target_region
-                || drag.column_id == target_for_drag_over
-            {
-                return style;
-            }
-
-            style.bg(rgba(0x1f7a662e))
-        })
-        .on_drop(move |drag: &TableColumnOrderDrag, window, cx| {
-            if drag.table_id != table_for_drop
-                || drag.region != target_region
-                || drag.column_id == target_for_drop
-            {
-                return;
-            }
-
-            let change = match placement {
-                TableColumnOrderPlacement::Before => TableColumnOrderChange::move_before(
-                    drag.column_id.clone(),
-                    target_column_id.clone(),
-                    drag.region,
-                ),
-                TableColumnOrderPlacement::After => TableColumnOrderChange::move_after(
-                    drag.column_id.clone(),
-                    target_column_id.clone(),
-                    drag.region,
-                ),
-            };
-            handler(change, window, cx);
-        })
-        .into_any_element()
-}
-
-fn handle_table_column_resize_drag(
-    runtime: &Entity<TableRuntime>,
-    config: &TableResizeRenderConfig,
-    event: &DragMoveEvent<TableColumnResizeDrag>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let drag = event.drag(cx).clone();
-    if drag.table_id != config.table_id {
-        return;
-    }
-
-    let client_x = ui_px_from_gpui(event.event.position.x);
-    let mut committed_change = None;
-    runtime.update(cx, |runtime, _| {
-        if runtime.column_resize.active_column().is_none() {
-            runtime.column_resize = TableColumnResizeState::begin(
-                drag.column_id.clone(),
-                client_x,
-                drag.start_width,
-                drag.column_widths_start.clone(),
-            );
-        }
-
-        let update = drag_table_column_resize(
-            drag.mode,
-            drag.direction,
-            &drag.base_sizing,
-            &runtime.column_resize,
-            client_x,
-        );
-        if let Some(sizing) = update.committed_sizing().cloned() {
-            committed_change = Some(table_column_sizing_change(&drag, sizing));
-        }
-        runtime.column_resize = update.state().clone();
-    });
-
-    if let (Some(handler), Some(change)) = (&config.on_change, committed_change) {
-        handler(change, window, cx);
-    }
-
-    window.prevent_default();
-    cx.stop_propagation();
-    window.refresh();
-}
-
-fn finish_table_column_resize(
-    runtime: &Entity<TableRuntime>,
-    config: &TableResizeRenderConfig,
-    drag: &TableColumnResizeDrag,
-    client_x: UiPx,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    if drag.table_id != config.table_id {
-        return;
-    }
-
-    let mut committed_change = None;
-    let mut handled = false;
-    runtime.update(cx, |runtime, _| {
-        if !runtime
-            .column_resize
-            .active_column()
-            .is_some_and(|column_id| column_id == &drag.column_id)
-        {
-            return;
-        }
-        handled = true;
-
-        let update = end_table_column_resize(
-            drag.mode,
-            drag.direction,
-            &drag.base_sizing,
-            &runtime.column_resize,
-            Some(client_x),
-        );
-        if let Some(sizing) = update.committed_sizing().cloned() {
-            committed_change = Some(table_column_sizing_change(drag, sizing));
-        }
-        runtime.column_resize = update.state().clone();
-    });
-
-    if !handled {
-        return;
-    }
-
-    if let (Some(handler), Some(change)) = (&config.on_change, committed_change) {
-        handler(change, window, cx);
-    }
-
-    window.prevent_default();
-    cx.stop_propagation();
-    window.refresh();
-}
-
-fn table_column_sizing_change(
-    drag: &TableColumnResizeDrag,
-    sizing: TableColumnSizing,
-) -> TableColumnSizingChange {
-    let width = sizing.width(&drag.column_id).unwrap_or(drag.start_width);
-    TableColumnSizingChange::new(drag.column_id.clone(), width, sizing)
 }
 
 fn toggle_table_expansion(
@@ -2150,10 +1523,13 @@ const fn nonnegative_px(value: UiPx) -> UiPx {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
     use super::virtualization::measured_virtualizer_state;
     use super::*;
     use open_gpui_ui_core::{
-        TableColumn, TableColumnPinning, TableRow, TableSort, VirtualizerRange,
+        TableColumn, TableColumnId, TableColumnPinning, TableColumnSizing, TableRow, TableSort,
+        VirtualizerRange,
     };
 
     #[test]
