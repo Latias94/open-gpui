@@ -573,7 +573,8 @@ fn context_menu_surface(
                 }
 
                 if let Some(target) = key_state.submenu_navigation_target(key) {
-                    consume_overlay_event(window, cx);
+                    cx.stop_propagation();
+                    window.prevent_default();
                     key_runtime.update(cx, |runtime, _| {
                         runtime.apply_submenu_target(&target);
                     });
@@ -581,7 +582,8 @@ fn context_menu_surface(
                 }
 
                 if let Some(target) = key_state.navigation_target(key) {
-                    consume_overlay_event(window, cx);
+                    cx.stop_propagation();
+                    window.prevent_default();
                     key_runtime.update(cx, |runtime, _| {
                         runtime.focus_item(target.path().to_vec(), target.value().to_owned());
                     });
@@ -589,7 +591,8 @@ fn context_menu_surface(
                 }
 
                 if let Some(selection) = key_state.activation_for_key(key) {
-                    consume_overlay_event(window, cx);
+                    cx.stop_propagation();
+                    window.prevent_default();
                     if let Some(item_handler) = key_items
                         .iter()
                         .zip(key_state.visible_items())
