@@ -12208,6 +12208,114 @@ fn public_reexports_stay_explicit_without_wildcards() {
     );
 }
 
+#[test]
+fn crate_root_and_prelude_reexports_stay_intentionally_aligned() {
+    let root_exports = default_reexport_tokens("lib.rs");
+    let prelude_exports = default_reexport_tokens("prelude.rs");
+    let root_only = root_exports
+        .difference(&prelude_exports)
+        .cloned()
+        .collect::<Vec<_>>();
+    let prelude_only = prelude_exports
+        .difference(&root_exports)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        root_only,
+        Vec::<String>::new(),
+        "crate root exports tokens not exposed through prelude; update prelude.rs or document the intentional root-only token here"
+    );
+    assert_eq!(
+        prelude_only,
+        vec![
+            "ActiveDescendant".to_string(),
+            "CollectionPosition".to_string(),
+            "ControllableState".to_string(),
+            "Sizable".to_string(),
+            "Size".to_string(),
+            "ThemeTokens".to_string(),
+            "UiA11yElementExt".to_string(),
+        ],
+        "prelude-only exports must stay intentional; update the allowlist when the convenience prelude grows"
+    );
+}
+
+fn default_reexport_tokens(file_name: &str) -> std::collections::BTreeSet<String> {
+    let source = std::fs::read_to_string(format!("{}/src/{file_name}", env!("CARGO_MANIFEST_DIR")))
+        .unwrap_or_else(|error| panic!("failed to read {file_name}: {error}"));
+    let source = if file_name == "lib.rs" {
+        source_without_gpui_adapter_module(&source)
+    } else {
+        source
+    };
+    let mut exports = std::collections::BTreeSet::new();
+    let mut statement = String::new();
+    let mut collecting = false;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if collecting {
+            statement.push(' ');
+            statement.push_str(trimmed);
+        } else if trimmed.starts_with("pub use ") {
+            statement.clear();
+            statement.push_str(trimmed);
+            collecting = true;
+        }
+
+        if collecting && trimmed.ends_with(';') {
+            collect_public_reexport_tokens(&statement, &mut exports);
+            statement.clear();
+            collecting = false;
+        }
+    }
+
+    exports
+}
+
+fn collect_public_reexport_tokens(
+    statement: &str,
+    exports: &mut std::collections::BTreeSet<String>,
+) {
+    let statement = statement.trim().trim_end_matches(';');
+    let Some(rest) = statement.strip_prefix("pub use ") else {
+        return;
+    };
+    if rest.contains("::*") {
+        return;
+    }
+
+    if let Some((_, group)) = rest.split_once("::{") {
+        let group = group.trim_end_matches('}');
+        for item in group.split(',') {
+            collect_public_reexport_token(item, exports);
+        }
+    } else {
+        collect_public_reexport_token(rest, exports);
+    }
+}
+
+fn collect_public_reexport_token(item: &str, exports: &mut std::collections::BTreeSet<String>) {
+    let token = item.trim();
+    if token.is_empty() {
+        return;
+    }
+
+    let exported_name = token
+        .split_once(" as ")
+        .map(|(_, alias)| alias.trim())
+        .unwrap_or(token)
+        .rsplit("::")
+        .next()
+        .unwrap_or(token)
+        .trim();
+
+    if !exported_name.is_empty() {
+        exports.insert(exported_name.to_owned());
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct PublicContractBlocker {
     file: String,

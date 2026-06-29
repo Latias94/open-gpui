@@ -11,6 +11,15 @@ status: active
   `contracts`, `large_modules`, `runtime_patterns`, and `exports_tests`; the first main-thread
   target is the `ui_components` component contract source-scanning blind spot for split component
   directories.
+- 2026-06-30: Added a root/prelude re-export alignment contract in
+  `crates/ui_components/tests/components.rs`. The test parses explicit `pub use` token sets from
+  `src/lib.rs` and `src/prelude.rs`, keeps adapter-only root exports out of the default surface, and
+  records the intentional prelude-only convenience tokens as an allowlist.
+- 2026-06-30: Hardened component contract source scanning for split component directories.
+  `component_source_inputs` can now name either `.rs` files or directories, directory inputs expand
+  recursively to source paths, and public method scanning requires the target impl to exist across
+  the expanded set instead of every mapped file. Verified with focused component contract nextest
+  runs and `cargo check -p open-gpui-ui-components --tests`.
 - 2026-06-29: Continued `docs/plans/2026-06-29-002-refactor-table-depth-second-stage-plan.md`
   on `refactor/table-depth-second-stage`. The Table adapter is now split into concern-owned
   modules for header rendering, resize/reorder affordances, body rows, cells, editors, runtime,
