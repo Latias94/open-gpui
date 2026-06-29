@@ -1,8 +1,8 @@
-//! GPUI-facing overlay primitives and adapter helpers.
+//! Overlay policy primitives shared by concrete component adapters.
 
-pub use crate::overlay::{
-    DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
-    OverlayOpenChange, OverlayResolvedState, default_deferred_priority, escape_open_change,
-    focus_restore_requests_trigger, gpui_anchor, gpui_overlay_state, outside_press_open_change,
-    point_anchor_placement,
+pub use open_gpui_ui_core::{
+    DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+    OverlayAnchorInput, OverlayLayerKind, OverlayLayerPolicy, OverlayLayerState,
+    OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, OverlayPresence,
+    OverlayResolvedState, resolve_escape_key, resolve_focus_restore, resolve_outside_press,
 };

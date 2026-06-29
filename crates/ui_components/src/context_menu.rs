@@ -23,7 +23,7 @@ use crate::menu::{
     MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuMetrics, MenuOpenMode,
     MenuSelection, MenuState, MenuSubmenuNavigation, visible_menu_items,
 };
-use crate::primitives::overlay::{
+use crate::overlay::{
     GpuiOverlayPlacement, OverlayResolvedState, focus_restore_requests_trigger, gpui_overlay_state,
     outside_press_open_change,
 };

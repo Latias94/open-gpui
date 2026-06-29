@@ -15,7 +15,7 @@ use open_gpui_ui_core::{
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::primitives::overlay::{GpuiOverlayAdapterConfig, OverlayResolvedState};
+use crate::overlay::{GpuiOverlayAdapterConfig, OverlayResolvedState};
 use crate::theme::ThemeResolver;
 
 /// Open affordance for a tooltip trigger.

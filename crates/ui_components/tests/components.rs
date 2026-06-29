@@ -1861,14 +1861,11 @@ fn component_public_methods_from_source(component: &str) -> Vec<String> {
     const MARKER_PREFIX: &str = "impl ";
 
     let source_file = component_source_file(component);
-    let source_path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/");
-    let source_path = format!("{source_path}{source_file}");
-    let source = std::fs::read_to_string(&source_path)
-        .unwrap_or_else(|error| panic!("failed to read {source_path}: {error}"));
+    let (source_path, source) = read_component_source_file(source_file);
     let marker = format!("{MARKER_PREFIX}{component} {{");
     let impl_start = source
         .find(&marker)
-        .unwrap_or_else(|| panic!("missing `{marker}` in {source_file}"));
+        .unwrap_or_else(|| panic!("missing `{marker}` in {source_path}"));
     let body_start = source[impl_start..]
         .find('{')
         .map(|offset| impl_start + offset)
@@ -1921,6 +1918,47 @@ fn component_public_methods_from_source(component: &str) -> Vec<String> {
     }
 
     methods
+}
+
+fn read_component_source_file(source_file: &str) -> (String, String) {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let flat_path = source_dir.join(source_file);
+    if flat_path.is_file() {
+        let source = std::fs::read_to_string(&flat_path)
+            .unwrap_or_else(|error| panic!("failed to read {flat_path:?}: {error}"));
+        return (flat_path.display().to_string(), source);
+    }
+
+    let Some(module_name) = source_file.strip_suffix(".rs") else {
+        panic!("source file mapping must end in .rs: {source_file}");
+    };
+    let mod_path = source_dir.join(module_name).join("mod.rs");
+    let source = std::fs::read_to_string(&mod_path)
+        .unwrap_or_else(|error| panic!("failed to read {mod_path:?}: {error}"));
+    (mod_path.display().to_string(), source)
+}
+
+fn ui_component_source_files() -> Vec<std::path::PathBuf> {
+    fn collect_rs_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        let entries = std::fs::read_dir(dir)
+            .unwrap_or_else(|error| panic!("failed to read source dir {dir:?}: {error}"));
+        for entry in entries {
+            let path = entry
+                .unwrap_or_else(|error| panic!("failed to read source dir entry: {error}"))
+                .path();
+            if path.is_dir() {
+                collect_rs_files(&path, files);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    collect_rs_files(&source_dir, &mut files);
+    files.sort();
+    files
 }
 
 fn custom_tokens() -> ThemeTokens {
@@ -11522,19 +11560,8 @@ fn public_resolved_state_contracts_avoid_gpui_runtime_types() {
         "ScrollHandle",
         "Rc<dyn",
     ];
-    let mut source_files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
-        .expect("ui_components src directory should be readable")
-        .map(|entry| {
-            entry
-                .expect("source directory entry should be readable")
-                .path()
-        })
-        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-        .collect::<Vec<_>>();
-    source_files.sort();
-
     let mut checked = 0;
-    for source_file in source_files {
+    for source_file in ui_component_source_files() {
         let source = std::fs::read_to_string(&source_file)
             .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
         let file_name = source_file
@@ -11803,19 +11830,8 @@ fn public_contract_structs<'a>(
 }
 
 fn public_contract_extraction_blockers(tokens: &[&str]) -> Vec<PublicContractBlocker> {
-    let mut source_files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
-        .expect("ui_components src directory should be readable")
-        .map(|entry| {
-            entry
-                .expect("source directory entry should be readable")
-                .path()
-        })
-        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-        .collect::<Vec<_>>();
-    source_files.sort();
-
     let mut blockers = Vec::new();
-    for source_file in source_files {
+    for source_file in ui_component_source_files() {
         let source = std::fs::read_to_string(&source_file)
             .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
         let file_name = source_file
@@ -11840,19 +11856,8 @@ fn public_contract_extraction_blockers(tokens: &[&str]) -> Vec<PublicContractBlo
 }
 
 fn public_surface_blockers(tokens: &[&str]) -> Vec<PublicSurfaceBlocker> {
-    let mut source_files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
-        .expect("ui_components src directory should be readable")
-        .map(|entry| {
-            entry
-                .expect("source directory entry should be readable")
-                .path()
-        })
-        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-        .collect::<Vec<_>>();
-    source_files.sort();
-
     let mut blockers = Vec::new();
-    for source_file in source_files {
+    for source_file in ui_component_source_files() {
         let source = std::fs::read_to_string(&source_file)
             .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
         let file_name = source_file

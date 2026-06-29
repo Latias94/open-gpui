@@ -18,7 +18,7 @@ use open_gpui_ui_core::{
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::primitives::overlay::{
+use crate::overlay::{
     GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, escape_open_change,
     focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
 };
