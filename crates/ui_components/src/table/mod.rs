@@ -1,6 +1,7 @@
 //! Table component backed by renderer-neutral row-model and virtualizer contracts.
 
 mod content_fit;
+mod layout;
 mod metrics;
 mod virtualization;
 
@@ -48,6 +49,9 @@ use std::rc::Rc;
 use content_fit::{
     TableContentFitMeasureCache, apply_table_content_fit_widths, content_fit_measure_key,
     table_content_fit_rendered_rows,
+};
+use layout::{
+    resolve_center_column_window, resolve_column_region_render_plans, resolve_table_column_offsets,
 };
 pub use metrics::TableMetrics;
 use virtualization::{measured_virtualizer_state, row_render_key, table_rows_virtual_size};
@@ -6936,72 +6940,6 @@ impl Table {
 
         columns
     }
-}
-
-fn resolve_column_region_render_plans(
-    columns: &[TableColumnRenderPlan],
-) -> Vec<TableColumnRegionRenderPlan> {
-    TableColumnRegion::ALL
-        .into_iter()
-        .map(|region| {
-            TableColumnRegionRenderPlan::new(
-                region,
-                columns
-                    .iter()
-                    .filter(|column| column.region() == region)
-                    .cloned()
-                    .collect(),
-            )
-        })
-        .collect()
-}
-
-fn resolve_table_column_offsets(columns: Vec<TableColumnRenderPlan>) -> Vec<TableColumnRenderPlan> {
-    let region_totals = TableColumnRegion::ALL
-        .into_iter()
-        .map(|region| {
-            let total = columns
-                .iter()
-                .filter(|column| column.region() == region)
-                .fold(UiPx::ZERO, |total, column| total + column.width());
-            (region, total)
-        })
-        .collect::<BTreeMap<_, _>>();
-    let mut region_starts = TableColumnRegion::ALL
-        .into_iter()
-        .map(|region| (region, UiPx::ZERO))
-        .collect::<BTreeMap<_, _>>();
-
-    columns
-        .into_iter()
-        .map(|column| {
-            let region = column.region();
-            let start = region_starts.get(&region).copied().unwrap_or(UiPx::ZERO);
-            let total_width = region_totals.get(&region).copied().unwrap_or(UiPx::ZERO);
-            let after = nonnegative_px(total_width - start - column.width());
-            region_starts.insert(region, start + column.width());
-            column.with_offsets(start, after)
-        })
-        .collect()
-}
-
-fn resolve_center_column_window(
-    regions: &[TableColumnRegionRenderPlan],
-    scroll_offset: Option<UiPx>,
-    viewport_extent: Option<UiPx>,
-    overscan: usize,
-) -> Option<TableCenterColumnWindowPlan> {
-    let center = regions
-        .iter()
-        .find(|plan| plan.region() == TableColumnRegion::Center)?;
-    let viewport_extent = viewport_extent.unwrap_or_else(|| center.total_width());
-
-    TableCenterColumnWindowPlan::resolve(
-        center.columns(),
-        scroll_offset.unwrap_or(UiPx::ZERO),
-        viewport_extent,
-        overscan,
-    )
 }
 
 impl Sizable for Table {
