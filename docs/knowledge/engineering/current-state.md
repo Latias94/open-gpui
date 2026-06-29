@@ -3,9 +3,54 @@ type: Current State
 title: open-gpui component renderer implementation state
 status: active
 source_session: 019ec6c8-5566-7062-8458-21ebe1360573
-git_branch: main
-git_commit: 1b4f482
+git_branch: feat/ui-choice-surface-refactor
 verified_by:
+  - cargo check -p open-gpui-ui-components --tests
+  - cargo check -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components --tests avatar --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery --tests foundation_gallery --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components avatar_group_state_tracks_visible_and_hidden_counts controlled_text_input_on_change_marks_input_controller_driven --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation --no-fail-fast
+  - git diff --check
+  - cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components
+  - cargo nextest run -p open-gpui-ui-core table
+  - cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit public_resolved_state_contracts_avoid_gpui_runtime_types table_public_exports_include_core_table_and_virtualizer_contracts
+  - cargo nextest run -p open-gpui-ui-foundation-gallery table
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components tabs_vertical_tablist_scrolls_when_constrained sidebar_long_navigation_scrolls_inside_shared_scroll_area scroll_area_nested_scroll_keeps_parent_static
+  - cargo nextest run -p open-gpui-ui-components context_menu_runtime_long_menu_scroll_stays_inside_surface
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_vertical_tabs_scroll_inside_sample components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample
+  - git diff --check
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
+  - git diff --check
+  - cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components
+  - cargo nextest run -p open-gpui-ui-core table
+  - cargo nextest run -p open-gpui-ui-components table
+  - git diff --check
+  - cargo nextest run -p open-gpui-ui-core table
+  - cargo nextest run -p open-gpui-ui-components table
+  - cargo nextest run -p open-gpui-ui-foundation-gallery table
+  - cargo fmt --all -- crates/ui_components/src/table.rs crates/ui_components/tests/components.rs examples/ui-foundation-gallery/tests/foundation_gallery.rs
+  - cargo nextest run -p open-gpui-ui-components table
+  - cargo nextest run -p open-gpui-ui-foundation-gallery table
+  - git diff --check
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
+  - cargo fmt -p open-gpui-ui-components
+  - cargo nextest run -p open-gpui-ui-components table component_api_inventory
+  - git diff --check
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
+  - cargo fmt -p open-gpui-ui-core
+  - cargo nextest run -p open-gpui-ui-core virtualizer table
+  - git diff --check
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
+  - cargo nextest run -p open-gpui-ui-components table_runtime_pinned_body_scrolls_without_moving_parent
+  - cargo nextest run -p open-gpui-ui-components table
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_grouped_table_scroll_stays_inside_sample
+  - cargo nextest run -p open-gpui-ui-foundation-gallery table
+  - cargo fmt --all -- crates/ui_components/src/table.rs crates/ui_components/tests/components.rs examples/ui-foundation-gallery/src/pages/components.rs examples/ui-foundation-gallery/src/pages/components/render.rs examples/ui-foundation-gallery/tests/foundation_gallery.rs
+  - git diff --check
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
   - cargo check -p open-gpui-ui-core --tests
   - cargo check -p open-gpui-ui-components --tests
   - cargo nextest run -p open-gpui-ui-core table
@@ -52,13 +97,375 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-foundation-gallery
   - git diff --check
   - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
+  - cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_table_samples_expose_virtualized_row_model_contract components_gallery_smoke_focused_table_scroll_stays_inside_sample components_gallery_smoke_table_scroll_stays_inside_sample components_gallery_smoke_grouped_table_scroll_stays_inside_sample components_gallery_smoke_resizable_table_resize_updates_sample
+  - cargo nextest run -p open-gpui-ui-components table component_api_inventory
+  - cargo nextest run -p open-gpui-ui-foundation-gallery table
+  - cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-core table
+  - cargo nextest run -p open-gpui-ui-components table component_api_inventory
+  - cargo nextest run -p open-gpui-ui-foundation-gallery table
+  - git diff --check
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components table component_api_inventory crate_root_and_prelude_exports_remain_explicit
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_faceted_filter_updates_table_rows table
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components table_predicate_filter
+  - cargo nextest run -p open-gpui-ui-components component_api_inventory crate_root_and_prelude_exports_remain_explicit table_public_exports_include_core_table_and_virtualizer_contracts public_resolved_state_contracts_avoid_gpui_runtime_types
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_predicate_filter_updates_table_rows
+  - cargo nextest run -p open-gpui-ui-foundation-gallery official_component_catalog_entries_have_signals_and_sample_selectors state_contract_catalog_entries_have_signals_and_readout_selectors components_page_table_samples_expose_virtualized_row_model_contract
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
+  - git diff --check
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components textarea component_api_inventory crate_root_and_prelude_exports_remain_explicit controlled_textarea_on_change_preserves_newline_input default_textarea_state_uses_text_input_role_and_rows filled_textarea_preserves_newlines_in_state disabled_read_only_and_invalid_textareas_expose_control_state public_resolved_state_contracts_avoid_gpui_runtime_types gpui_adapter_exports_group_runtime_specific_surfaces public_contract_extraction_blockers_match_allowlist adapter_only_public_surfaces_match_allowlist adapter_only_helpers_do_not_leak_from_default_exports default_theme_resolves_all_current_component_color_intents
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata official_component_catalog_entries_have_signals_and_sample_selectors components_gallery_smoke_textarea_scroll_stays_inside_sample
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
+  - git diff --check
+  - cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-core multiline_text_editor_rows_are_normalized
+  - cargo nextest run -p open-gpui-ui-components table_render_plan_exposes_text_cell_editability_for_leaf_cells_only table_cell_edit_change_updates_source_row_and_preserves_table_state table_runtime_text_cell_edit_emits_change_without_row_interaction table_runtime_multiline_cell_edit_emits_newline_change_without_row_interaction table_public_exports_include_core_table_and_virtualizer_contracts component_api_inventory_uses_stable_ownership_vocabulary
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_table_samples_expose_virtualized_row_model_contract components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_multiline_table_cell_updates_sample_rows
+  - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
+  - git diff --check
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components tree_state_resolves_lazy_branch_load_metadata_without_synthetic_children tree_toggle_payload_includes_child_load_state_and_blocks_loading feedback_tree_and_virtualized_list_public_exports_remain_explicit
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_gallery_smoke_tree_expands_and_selects components_gallery_smoke_tree_lazy_branches_emit_load_metadata
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components tree_typeahead_targets_visible_focusable_items_from_current_focus tree_runtime_typeahead_focuses_visible_matching_row
+  - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_tree_expands_and_selects
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+  - cargo nextest run -p open-gpui-ui-components menu_runtime_hover_switches_between_submenu_branches menu_runtime_hover_opens_submenu_and_preserves_child_focus
+  - cargo nextest run -p open-gpui-ui-foundation-gallery overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts overlay_gallery_smoke_opens_menu_submenu_from_hover
+  - cargo fmt -p open-gpui-ui-components
+  - cargo check -p open-gpui-ui-components --tests
+  - cargo nextest run -p open-gpui-ui-components menu_state_resolves_submenu_surface_and_safe_hover_contract menu_submenu_surface_resolves_left_placement_without_renderer_state
+  - cargo nextest run -p open-gpui-ui-components crate_root_and_prelude_exports_remain_explicit component_api_inventory_uses_stable_ownership_vocabulary public_resolved_state_contracts_avoid_gpui_runtime_types
 ---
 
 # Current State
 
-- Goal: Execute the next Table follow-up slice: column sizing and resize semantics, with TanStack Table and Fret as the main references.
+- Goal: Complete `docs/plans/2026-06-28-001-refactor-ui-choice-surface-plan.md` by deepening the choice surface seams for the component library.
+- Branch: feat/ui-choice-surface-refactor
+- Last verified: `cargo run -p xtask -- verify`, `git diff --check`, and engineering wiki validation passed on the current working tree after the U4 docs/gallery sync.
+- Done: `ui_components::choice` now owns stable-value lookup, selected-value projection, multi-select dedupe, and normalized query handling for `Command`, `Combobox`, and `Select`.
+- Done: `roving_focus.rs` now owns shared vertical, paged, and typeahead navigation helpers used by listbox-like surfaces while component adapters keep their own activation/branch rules.
+- Done: `menu_runtime.rs` now owns `Menu` / `ContextMenu` open sync, focused path/value mutation, submenu hover timing, branch switching, trigger-bound caches, and local submenu scroll handles.
+- Done: Components gallery metadata now exposes a `choice-surfaces` conformance gate plus focused choice-family readouts for stable value, selected chips, query/typeahead, and shared navigation behavior.
+- Blocked: None.
+- Next action: Commit the completed choice-surface refactor slice, then use the new seams as the baseline for future component-library work.
+
+- 2026-06-26: Completed the Tree drag-and-drop hierarchy editing slice from
+  `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md`. `TreeMove`,
+  `TreeMoveTarget`, and `TreeDropPosition` are now public, `Tree::draggable` and `Tree::on_move`
+  are wired, caller-owned descriptor reordering is handled by `apply_tree_move`, and the
+  Components gallery now carries an `editable-outline` sample with passing drag smoke coverage.
+  The drag smoke scrolls the `child` row into view before the move so the interaction is stable in
+  the nested gallery viewport. Next Tree follow-ups are now beyond the first hierarchy-editing
+  slice.
+- 2026-06-26: Started the Tree drag-and-drop hierarchy editing slice from
+  `docs/plans/2026-06-26-004-feat-ui-tree-drag-drop-hierarchy-plan.md`. The next work focuses on
+  a pure move contract first, then adapter-owned drag runtime and gallery proof. The existing Tree
+  lazy-loading, typeahead, and virtualized render-window slices remain shipped; Tree drag-and-drop
+  is now the next boundary.
+- 2026-06-26: Completed the Tree virtualized render-window slice from
+  `docs/plans/2026-06-26-003-feat-ui-tree-virtualized-window-plan.md` in the working tree.
+  `TreeRenderPlan` and `TreeRowRenderPlan` now resolve a fixed-row overscan window from
+  `TreeState` and `VirtualizerState`, the GPUI `Tree` adapter exposes opt-in virtualized
+  rendering plus viewport / overscan controls, and the Components gallery carries a large
+  `release-outline` sample with focused export / metadata / virtual-window verification. Next Tree
+  follow-ups are drag-and-drop hierarchy editing and any deeper scroll proof the runtime needs.
+- 2026-06-26: Completed the Tree typeahead navigation contract from
+  `docs/plans/2026-06-26-002-feat-ui-tree-typeahead-plan.md` in the working tree.
+  `TreeState::typeahead_target` now resolves prefix matches over visible, focusable rows with
+  wraparound from the current focus, while the GPUI `Tree` adapter owns the printable-key buffer
+  and timeout reset. The Components gallery Tree smoke now proves typed `n o` focuses the visible
+  Notes row without selecting it. Collapsed/unloaded descendants, highlight rendering, app search
+  indexes, drag-and-drop hierarchy editing, and virtualized tree data remain deferred.
+- 2026-06-26: Completed the Tree lazy-loading branch contract from
+  `docs/plans/2026-06-26-001-feat-ui-tree-lazy-loading-plan.md` in the working tree.
+  `TreeChildrenLoadState` now distinguishes loaded, unloaded, loading, and failed child states;
+  `TreeItemDescriptor`, `TreeItemState`, and `TreeToggle` expose loaded-child counts and
+  caller-owned child-load metadata without making `Tree` own async fetching. Loading branches keep
+  a disclosure affordance but block repeat toggle requests, while unloaded and failed branches
+  emit normal expansion payloads for app-owned load/retry logic. The Components gallery now has a
+  `remote-workspace` Tree sample and smoke coverage for load-state hints plus toggle payload
+  metadata. Next Tree follow-ups remain typeahead, drag-and-drop hierarchy editing, and
+  virtualized tree data.
+- 2026-06-26: Completed U4 of the text input editor family plan in the working tree.
+  `TableCellEditor::MultilineText { rows }` now lets Table compose fixed-height `Textarea`
+  editors for editable leaf cells. The contract keeps row data app-owned through the existing
+  `TableCellEditChange` payload; `multiline-release` in the Components gallery proves newline
+  edits feed back into sample-owned rows without mounting the wrong editor. Dynamic row-height
+  measurement, validation, dirty tracking, commit/cancel workflows, and server persistence remain
+  deferred. Next action after final verification is to choose the next component-depth boundary.
+- 2026-06-26: Completed U3 of the text input editor family plan in the working tree. `Textarea`
+  is now an official separate multiline form editor with renderer-neutral `TextareaState`,
+  root/prelude exports, API inventory coverage, newline-preserving `on_change`, local viewport
+  scrolling, Components gallery samples, Field+Textarea composition, and a focused gallery smoke
+  proving textarea wheel input stays inside the sample. The next optional unit is U4: compose
+  `Textarea` into Table as a fixed-height multiline cell editor only if the current component
+  roadmap needs it before switching to another component-depth boundary.
+- 2026-06-25: Completed U1/U2 of the text input editor family plan in the working tree.
+  `TextInputDisplayMode` is now a public root/prelude API with `Plain` and `Password`; password
+  mode uses the new value/display projection helpers to mask one glyph per stored grapheme while
+  preserving controller values, `on_change` payloads, caret/selection geometry, hit testing, and
+  IME bounds. The Components gallery now includes a password `TextInput` sample, and the next
+  action is U3: add a separate controlled `Textarea` component.
+- 2026-06-25: The content-fit Table slice is shipped as commit `10ec7b3`
+  (`feat(table): support content-fit width growth`). The next component-depth boundary was the
+  text input editor family plan at
+  `docs/plans/2026-06-25-002-feat-ui-text-input-editor-family-plan.md`, which grew from
+  single-line `TextInput` into value/display projection, password display, controlled `Textarea`,
+  and later opt-in Table multiline editor composition.
+- 2026-06-25: Completed the content-fit Table slice. `ui_core::TableColumn` now carries a
+  renderer-neutral width policy with `Fixed` and `ContentFit` modes, the policy participates in
+  table cache keys, the GPUI table render plan exposes measured content-fit width snapshots, the
+  Components gallery proves visible edits widen the `content-fit-release` sample, and focused
+  core/components/table plus gallery nextest checks passed. Remaining Table follow-ups move through
+  editor-family primitives rather than expanding Table's own editor engine first.
+- 2026-06-25: Completed U4 of
+  `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
+  tree. `ui_components::Table` now renders nested header groups with multi-row, region-aware GPUI
+  header lanes while preserving leaf sort and resize behavior; the same plan metadata continues to
+  expose region-specific header row counts and widths derived from the visible leaf contracts.
+  Focused core and component nextest checks passed, and the next action is U5: add gallery proof
+  for the nested headers slice.
+- 2026-06-25: Completed U5 of
+  `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
+  tree. `release-matrix` now carries the nested-header gallery proof with a grouped column tree, a
+  header-summary readout, and a focused center-lane scroll smoke that keeps pinned header families
+  mounted while the far center window enters and exits view. Focused gallery nextest checks passed,
+  wiki validation passed, and the remaining action is to decide whether this slice is ready to
+  commit.
+- 2026-06-24: Completed U1 of
+  `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` in the working
+  tree. `TableColumnGroupId`, `TableColumnNode`, and `TableColumnGroup` now provide a renderer-
+  neutral nested column-tree contract in `ui_core`; `TableState` preserves a normalized tree plus
+  leaf projection; duplicate leaf ids are pruned deterministically; and the table cache key now
+  includes tree shape. `ui_components` root and prelude exports cover the new types, and focused
+  core / component-export nextest checks passed. Next action is U2: renderer-neutral header group
+  resolution.
+- 2026-06-24: The global filtering and faceting slice is already shipped on the current main
+  history as `88749ce`, `fd66b20`, and `947daa2`. The next active Table boundary was richer filter
+  operators, and the plan `docs/plans/2026-06-24-009-feat-ui-table-filter-operators-plan.md` is
+  already committed as `f4a0af7`.
+- 2026-06-24: Completed U1/U2 of the filter operators plan and committed the core slice as
+  `ae798e7`. `TableFilterKind` now carries explicit text and numeric comparison operators, text
+  case-sensitivity metadata, and stable accessors; `ui_core`, `ui_components`, and the focused
+  tests now export and verify the new built-in operator family.
+- 2026-06-24: Completed U3/U4 of the filter operators plan and committed the component/gallery
+  slice as `82997fe` and `ecc5f45`. `TablePredicateFilter` now productizes the controlled
+  operator/value recipe, `TablePredicateFilterChange` preserves unrelated `TableState` slices,
+  and the Components gallery proves the predicate filter against the `filter-board` sample with
+  runtime logs and row-window changes.
+- 2026-06-24: Wrote
+  `docs/plans/2026-06-24-010-feat-ui-table-column-groups-nested-headers-plan.md` as the next Table
+  boundary. The plan keeps `TableColumn` as the leaf behavior descriptor, adds a separate column
+  group/tree contract for nested headers, follows TanStack/Fret header-group resolution, and starts
+  with U1 core descriptors plus a normalized leaf projection.
+- 2026-06-24: Wrote `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md`
+  as the next Table boundary and committed it as `55c7970`. The plan follows TanStack's sparse
+  `columnVisibility` state and Fret's caller-owned view-options menu pattern: keep
+  `TableColumn::visible` as the schema default, add runtime visibility overrides to `TableState`,
+  expose hideability policy for locked identity columns, and prove a `TableColumnVisibility`
+  toolbar recipe in the wide `release-matrix` gallery sample.
+- 2026-06-24: Completed U1 of the column visibility plan in the working tree. `ui_core::TableState`
+  now carries `TableColumnVisibilityOverrides` sparse runtime overrides, `TableColumn` exposes a hideable
+  policy for locked identity columns, effective visibility resolves through the existing visible
+  column pipeline before order / pinning / sizing consumers, and `ui_core`, `ui_components`, and
+  both preludes export the new contract type. Focused core table and component export gates pass.
+- 2026-06-24: Completed U2 of the column visibility plan in the current branch.
+  `TableColumnVisibility` now provides a Popover-backed toolbar recipe with controlled
+  `visibility` / `open` inputs, default seeds, item metadata, visible / hidden counts, show-all
+  and reset actions, and `TableColumnVisibilityChange::apply_to` helpers that preserve unrelated
+  `TableState` slices. Public exports and the component API inventory now cover the recipe,
+  state, item-state, action, payload, and `TableColumnVisibilityOverrides` contract.
+- 2026-06-24: Completed U3/U4 of the column visibility plan and committed the slice as `d8abeaa`.
+  The `release-matrix` Components gallery sample now renders a `TableColumnVisibility` toolbar control,
+  keeps the pinned identity/status columns non-hideable, records app-owned
+  `TableColumnVisibilityChange` payloads in `TableSampleRuntimeLog`, applies visibility overrides
+  through the existing `table_sample_state_with_runtime` path, and has focused smoke coverage that
+  hides/restores a metric column while keeping popup wheel input local. Contract and verification
+  docs now record column visibility as shipped Table behavior.
+- 2026-06-24: Wrote `docs/plans/2026-06-24-007-feat-ui-table-global-filtering-faceting-plan.md`
+  as the next Table boundary. The plan keeps global query state separate from column filters,
+  derives global facet metadata from the row basis before the global query is applied, and scopes
+  the first component recipe to a controlled search input rather than a predicate builder.
+- 2026-06-24: Committed `8fc540f` to add `TableToolbar` as a narrow table filter-composition
+  recipe. The gallery `filter-board` sample now uses the toolbar to host global, faceted, and
+  range filter controls, and the focused component/gallery tests passed. The next Table boundary
+  is likely column visibility or another shell-level composition recipe that keeps the table API
+  moving toward a mature default surface.
+- 2026-06-24: Completed the Table numeric range filter controls slice in the working tree.
+  `TableFilterKind` now supports inclusive finite numeric ranges, `TableRangeFilter` provides a
+  min/max Popover recipe with controlled `TableRangeFilterChange` payloads, and `filter-board`
+  proves score range filtering with app-owned `TableState` overrides and local popup wheel
+  containment. Contract, verification, and engineering memory now record single-column numeric
+  range filtering as shipped while leaving global faceting, richer predicate builders, and
+  fetch/cache orchestration out of scope.
+- 2026-06-24: Completed U3/U4 of the faceted filter controls plan as `1298177`.
+  `filter-board` now renders the status `TableFacetedFilter`, stores app-owned filter overrides in
+  `TableSampleRuntimeLog`, recomputes the table summary from the controlled state, and has a
+  focused gallery smoke proving popup wheel containment, exact `Done` token selection, filtered row
+  count changes, and clearing back to the original row window. Contract, verification, and memory
+  docs now record the recipe as shipped while keeping global faceting, async option search, and
+  fetch/cache orchestration out of that categorical slice.
+- 2026-06-24: Completed U2 of the faceted filter controls plan as `cfcab3a`. `TableFacetedFilter`
+  now productizes the single-column categorical filter recipe with exact-value checkbox facets,
+  controlled and default open/query ownership, a reusable `TableFacetedFilterChange` payload that
+  resets pagination to the first page, and public exports through `ui_components` and both
+  preludes. The focused Components tests now cover resolved state, empty query results, and
+  controlled filter-change application.
+- 2026-06-24: Completed the Table row-pinning / two-axis viewport slice as `725f859` on `main`.
+  The later `docs(knowledge): sync row-pinning completion state` commit `bbc6633` refreshed the
+  memory bundle after the code landed. The working tree is clean and `git diff --check` passed;
+  the next Table follow-up can start from the updated `main` line.
+- 2026-06-24: Completed the Table row-selection variants slice from
+  `docs/plans/2026-06-24-003-feat-ui-table-row-selection-variants-plan.md`. `ui_core::TableState`
+  now carries explicit selection policy knobs for single vs multiple selection, explicit-control
+  vs row-click activation, and descendant propagation, plus renderer-neutral selection summaries
+  for full-model and current-page scopes. `ui_components::Table` now emits controlled
+  `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when
+  the policy is explicit-control. The Components test suite now covers row-click selection,
+  explicit-control row clicks, and inventory / export baselines for the new row-selection callback.
+- 2026-06-24: Wrote `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md`
+  as the next Table boundary. The plan adds exact categorical filter semantics, a Popover +
+  command-palette faceted filter recipe, and a gallery proof while deferring global faceting,
+  numeric range sliders, async facet loading, and standalone headless extraction.
+- 2026-06-24: Completed U1 of the faceted filter controls plan as `a52751f`. `TableFilter` now
+  supports kind-based filters with preserved case-insensitive `contains` behavior and exact
+  categorical `one_of` / `exact` token filters backed by an order-independent token set.
+- 2026-06-24: Chose the next Table planning boundary as
+  `docs/plans/2026-06-24-003-feat-ui-table-row-selection-variants-plan.md`. The slice covers
+  checkbox, radio, and list-like row selection recipes over the existing stable selected-row id
+  state, keeps selection semantics renderer-neutral in `ui_core`, keeps gestures and selection
+  chrome in `ui_components`, and defers cell editing, server-synced selection persistence, and a
+  general feature plugin system.
+
+- Goal: Finish the scroll-surface local containment slice by keeping vertical `Tabs` and long
+  `Sidebar` navigation backed by the shared `ScrollArea` viewport, then tighten the remaining
+  gallery contract and verification wording for local scroll surfaces.
 - Branch: `main`
-- Last verified: 2026-06-23, Table depth U6 gates passed on top of `1b4f482` plus the current docs-only planning diff. Previous verification remains green: `cargo fmt --all`, `cargo fmt --all --check`, `cargo check -p open-gpui-ui-core --tests`, `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p open-gpui-ui-core table`, `cargo nextest run -p open-gpui-ui-components table`, `cargo nextest run -p open-gpui-ui-foundation-gallery table`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-foundation-gallery`, targeted gallery automation regression reruns, `git diff --check`, and engineering wiki validation.
+- Last verified: 2026-06-26, `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`,
+  `cargo nextest run -p open-gpui-ui-components tabs_vertical_tablist_scrolls_when_constrained sidebar_long_navigation_scrolls_inside_shared_scroll_area scroll_area_nested_scroll_keeps_parent_static`,
+  `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_vertical_tabs_scroll_inside_sample components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample`,
+  `git diff --check`, and
+  `python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering`
+  passed for the scroll-surface slice.
+- Done: Completed U1 of `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md`
+  in the working tree by adding core `TableColumnVisibilityOverrides` runtime state and hideability policy.
+- Done: Completed U2 of `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md`
+  by adding the `TableColumnVisibility` recipe, resolved state, change payload, public exports,
+  API inventory coverage, and focused state/payload tests.
+- Done: Completed U3/U4 of `docs/plans/2026-06-24-008-feat-ui-table-column-visibility-controls-plan.md`
+  by proving column visibility in `release-matrix`, updating table conformance evidence, and
+  documenting the shipped Table contract.
+- Done: Wrote `docs/plans/2026-06-24-007-feat-ui-table-global-filtering-faceting-plan.md` and recorded the planning handoff in `docs/knowledge/engineering/progress/2026-06-24-table-global-filtering-faceting-plan.md`.
+- Done: Wrote the Table faceted filter controls plan as `docs/plans/2026-06-24-004-feat-ui-table-faceted-filter-controls-plan.md`.
+- Done: Completed U1 as `a52751f`. `TableFilterKind` is now exported through `ui_core`, `ui_components`, and both preludes; tests cover exact categorical matching, empty no-op filters, order-independent cache keys, and public export inventory.
+- Done: Completed U2 as `cfcab3a`. `TableFacetedFilter` now provides the single-column categorical filter recipe with checkbox facets, search query control, popover policy controls, a controlled change payload, and export / inventory coverage.
+- Done: Completed U3/U4 as `1298177`. `filter-board` now proves the status faceted filter in the Components gallery, and docs / verification / memory record the shipped contract.
+- Done: Completed the Table custom aggregation callbacks slice as `dded73b`. `TableState` now stores named custom aggregation callbacks, grouped rows resolve named custom aggregates through the renderer-neutral pipeline, `TableRenderPlan` exposes the callback count, and the Components gallery includes `grouped-custom-aggregation`.
+- Done: Completed the Table row-selection variants slice as `ea3785f`. `ui_core::TableState` now carries explicit selection policy knobs for single vs multiple selection, explicit-control vs row-click activation, and descendant propagation, plus renderer-neutral selection summaries for full-model and current-page scopes. `ui_components::Table` emits controlled `TableRowSelectionChange` payloads and keeps row-click selection distinct from activation when the policy is explicit-control.
+- Done: A combined two-axis viewport contract is already on `main` as `725f859`.
+- In progress: The column visibility, nested-header, content-fit, and editor-family slices are
+  shipped; the long-running Table maturity goal remains active, and the next boundary will be
+  chosen from the remaining polish track.
+- Blocked: None.
+- Next action: Continue the scroll-surface local containment plan by tightening the remaining
+  gallery contract and verification wording for local scroll surfaces.
+- Done: Implemented U1-U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the
+  working tree. `TableRow` now carries nested children, `TableState` resolves source-tree rows
+  with depth/parent/branch/descendant metadata, source-tree expansion reuses
+  `TableExpansionState`, and collapsed descendants stay addressable through row lookup metadata.
+  The GPUI `Table` adapter now exposes row focus, click/double-click/keyboard activation payloads,
+  controlled source-tree expansion request payloads, tree disclosure affordances, and a runtime
+  expansion override so disclosure clicks update the current table element immediately.
+- Done: Added the focused Components gallery `dependency-tree` Table sample with pinned identity
+  and status lanes, tree-depth state summary metadata, controlled expansion/activation runtime
+  logging, and `components_gallery_smoke_tree_table_expands_and_activates`.
+- Done: Wrote `docs/plans/2026-06-23-006-feat-ui-table-manual-expansion-plan.md` for the next
+  Table slice. The plan keeps manual expansion separate from the client-expanded path, adds
+  expandable unloaded branches plus child-load metadata, and keeps real async fetching owned by the
+  application.
+- Done: Completed the `docs/plans/2026-06-26-005-feat-ui-scroll-surface-local-containment-plan.md`
+  slice on `feat/scroll-surface-containment`. Vertical `Tabs` now route their tab rail through the
+  shared `ScrollArea` viewport, long `Sidebar` navigation keeps using the same shared scroll
+  primitive, and component/gallery smokes prove the local viewport stays inside the sample shell.
+  The current verification trail includes the focused `tabs_vertical_tablist_scrolls_when_constrained`,
+  `sidebar_long_navigation_scrolls_inside_shared_scroll_area`, and
+  `scroll_area_nested_scroll_keeps_parent_static` component gates plus the matching gallery smokes.
+- Done: Implemented the manual expansion / async child metadata slice in the working tree.
+  `TableRowChildrenLoadState` records idle/loading/failed child metadata, `TableRow` can be
+  expandable without loaded children, and `TableExpansionMode::Manual` preserves app-supplied
+  ungrouped source snapshots while the existing client-expanded path stays intact. The
+  `ui_components::Table` adapter exports the new contract types, renders loaded/unloaded/loading/
+  failed tree disclosure states, and includes loaded-child and child-load metadata in expansion
+  request payloads.
+- Done: Added the focused Components gallery `server-tree` Table sample. It uses manual expansion,
+  starts with unloaded/loading/failed top-level branches, records expansion payload metadata in the
+  runtime log, and simulates app-owned child loading by swapping in a loaded source snapshot after
+  the `server-workspace` disclosure request.
+- Done: Updated the Table contract and verification docs so manual source-tree expansion,
+  expandable unloaded branches, and child-load metadata are documented as shipped component
+  behavior. Real fetch/cache/data-source orchestration remains app-owned follow-up work.
+- Done: Committed the manual expansion slice as `bfa91df`.
+- Done: Wrote `docs/plans/2026-06-23-007-feat-ui-table-manual-row-model-controls-plan.md` as the
+  next Table slice. The plan follows TanStack-style manual filtering/sorting/pagination controls,
+  keeps real fetching and cache ownership in the app, and scopes the first implementation proof to
+  server pagination totals plus app-supplied row snapshots.
+- Done: Completed the manual row-model controls slice as `d6e5c0d`. `TableStageMode` now lets
+  filtering and sorting become manual independently, `TablePagination::manual` carries
+  row-count/page-count metadata, manual stages preserve caller-supplied snapshots, and the row-model
+  cache key includes the new stage ownership and pagination-total inputs.
+- Done: `ui_components::TableRenderPlan` now exposes filtering/sorting/pagination ownership modes
+  plus pagination row/page totals, and the core/components crate roots and preludes export
+  `TableStageMode`.
+- Done: The Components gallery now includes `server-paged`, a manual filter/sort/page Table sample
+  that renders only the app-supplied page snapshot while exposing total row and page counts in the
+  state readout. Contract docs and verification docs describe manual row-model controls as shipped
+  behavior.
+- Done: Wrote `docs/plans/2026-06-23-008-feat-ui-table-faceting-filter-metadata-plan.md` as the next
+  Table slice. The plan follows TanStack and Fret faceting references, narrows the first pass to
+  per-column facet metadata, unique value counts, numeric ranges, and manual/server facet payloads,
+  and defers global faceting plus concrete faceted filter toolbar UI.
+- Done: Implemented the Table faceting/filter metadata slice in the working tree. `ui_core::TableState`
+  now resolves deterministic per-column facet summaries with unique value counts and numeric
+  ranges, excludes the target column's own local filter for client facets, accepts explicit
+  manual/server facet payloads, and includes faceting inputs in state equality/cache keys.
+  `ui_components::TableRenderPlan` exposes faceting ownership plus column facet metadata, with
+  crate-root/prelude exports covering the new contract types.
+- Done: The Components gallery now proves both client and server facet metadata. `filter-board`
+  exposes status unique counts and score ranges derived before pagination, while `server-paged`
+  supplies manual status counts and score range metadata for the full 64-row server set even though
+  the sample renders only the current 8-row page snapshot. `docs/ui/component-contract.md` and
+  `docs/verification.md` record per-column faceting metadata as shipped while keeping global
+  faceting, rich filter controls, async option search, and fetch/cache orchestration deferred.
+- Done: Simplification review removed the remaining hot-path facet metadata copies: core facet
+  resolution uses a recursive visitor instead of intermediate filtered/flattened row vectors, and
+  `TableRenderPlan` delegates facet access to its shared resolved table state instead of cloning the
+  payload. Focused code review also found and fixed the NaN equality edge case for
+  `TableFacetValueCount`, so manual facet payloads with NaN values no longer make cache-key
+  comparisons non-reflexive. Final scoped gates, `git diff --check`, and engineering wiki
+  validation passed.
+- Done: Wrote `docs/plans/2026-06-23-009-feat-ui-table-row-pinning-plan.md` as the next Table
+  slice. The plan follows TanStack Table's `top` / `center` / `bottom` row pinning model and
+  Fret's Rust visible-all plus paged-center precedent. Scope covers core row pinning state,
+  duplicate-free row-region resolution, keep-pinned and page-only policies, center-only vertical
+  virtualization, fixed pinned bands in the GPUI adapter, a focused gallery proof, and contract /
+  verification memory updates. Row-selection controls, cell editing, synthetic summary rows,
+  fetch/cache ownership, and full two-axis grid virtualization remain deferred.
+- Done: Implemented the Table row-pinning slice in the working tree. `TableRowPinning`,
+  `TableRowPinningPolicy`, and `TableRowRegions` now live in the core contract; `TableState`
+  resolves top, center, and bottom row regions with keep-pinned and page-only policies; and
+  `TableRenderPlan` exposes row-region metadata while the GPUI adapter virtualizes only center
+  rows and renders fixed top/bottom pinned bands. The Components gallery now includes the
+  `row-pinning` sample with row-region readouts and a focused smoke proving center-body wheel input
+  changes the center row window without moving pinned bands or the sample page.
+- Done: Wrote `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` as the next Table slice. The plan keeps tree-data rows separate from synthetic grouping, reuses `TableExpansionState` for source hierarchy, adds row interaction payloads and focus semantics, and scopes the first gallery proof to a focused tree-data Table sample with runtime expansion and activation coverage.
+- Done: Completed U5/U6 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `25875d0`. The Components gallery now includes `release-matrix`, a wide pinned Table sample with fourteen center metrics, and a focused smoke that proves far center columns stay unmounted before scroll, mount after horizontal scroll, and keep the outer Components page plus fixed lanes stationary. The gallery state row is also less noisy for non-grouped tables, and the Table contract / verification docs now describe the center-column window as a first-class adapter behavior.
+- Done: Completed the sticky pinned Table slice on top of `3273c1a`: the GPUI Table adapter keeps vertical wheel input inside pinned table bodies, `release-rollup` exposes explicit left/center/right lane widths, and the focused gallery smoke proves horizontal center-lane scrolling leaves left/right pinned lanes plus the outer Components page fixed.
 - Done: Moved the Components section directory into its own fixed strip above the page scroll area.
 - Done: Kept the Components-page scroll smoke passing while preserving the directory jump contract and page scroll reset behavior.
 - Done: Replaced the unstable `data-grid` wheel-motion expectation with a stable state-level contract assertion and kept the release queue horizontal scroll smoke as the runtime proof.
@@ -94,7 +501,7 @@ verified_by:
 - Done: Wrote `docs/plans/2026-06-22-005-feat-ui-command-depth-plan.md` for the next `Command` depth slice. The plan covers renderer-neutral ranking, controlled query ergonomics, optional multi-selection, virtualized long results, app-owned index snapshots, focused gallery samples, and contract / verification memory updates.
 - Done: Completed U1-U5 of the Command depth plan. `CommandState` now resolves deterministic ranked results, controlled/default query ownership, optional multi-select selected chips, virtualized render plans for long result sets, and caller-owned `CommandIndexSnapshot` sources with `LocalRanked`, `PreRankedFilter`, and `PreFiltered` modes. The component crate still does not own global command registries, dispatch buses, keybinding resolution, enablement engines, or async indexing.
 - Done: Promoted focused Command gallery samples for ranked search, multi-select, a 10k-item virtualized command index, and app-owned indexed/loading metadata. Gallery smokes prove focused Command mode renders all samples, selected chips are inspectable, and virtualized sample wheel input stays inside the sample.
-- Done: Wrote `docs/plans/2026-06-22-006-feat-ui-menu-context-menu-depth-plan.md` and implemented the Menu / ContextMenu depth slice through rich item semantics, stable tree paths, caller-owned checkbox/radio checked state, pure typeahead, keyboard submenu open/close targets, local menu scroll carriers, ContextMenu reuse, and expanded Overlay gallery samples.
+- Done: Wrote `docs/plans/2026-06-22-006-feat-ui-menu-context-menu-depth-plan.md` and implemented the Menu / ContextMenu depth slice through rich item semantics, stable tree paths, caller-owned checkbox/radio checked state, pure typeahead, keyboard submenu open/close targets, local menu scroll carriers, ContextMenu reuse, and expanded Overlay gallery samples. Added `context_menu_runtime_long_menu_scroll_stays_inside_surface` to prove a long ContextMenu keeps wheel input inside its own scroll surface even when the overlay gallery keeps default-open samples visually non-blocking.
 - Done: Verified the new Menu / ContextMenu core gates with `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, focused `cargo nextest run -p open-gpui-ui-components menu`, `cargo nextest run -p open-gpui-ui-components context_menu`, focused submenu/runtime tests, focused Overlay gallery menu/context samples, engineering wiki validation, and `git diff --check`. Review follow-up fixed keyboard item-level selection handler parity and ContextMenu placement sizing for long visible menus. Hover corridor submenu opening, menubar, OS menu bridge, app-menu registry, and global command dispatch remain deferred.
 - Done: Committed and pushed the Menu / ContextMenu depth slice as `697f762`.
 - Done: Wrote `docs/plans/2026-06-23-001-feat-ui-table-depth-plan.md` for the next Table depth slice. The plan focuses on making grouped and expanded row-model stages real, adding built-in aggregate metadata, splitting visible columns into pinned left/center/right regions, and proving the behavior in focused Components gallery Table samples.
@@ -110,10 +517,45 @@ verified_by:
 - Done: Completed U6 of the Table depth plan with full focused and broad verification. The full `open-gpui-ui-components` suite passes 209/209 and the full `open-gpui-ui-foundation-gallery` suite passes 74/74 after stabilizing long Components-page automation.
 - Done: Hardened the Components gallery smokes discovered during U6: the Command catalog entry now points at the real `ranked-search` sample selector, and long-section smokes use catalog directory jumps plus the gallery page `ScrollHandle` to align concrete interactive targets before clicking, dragging, or scrolling nested controls.
 - Done: Created `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md` to start the next Table slice. The new plan uses TanStack Table's committed sizing / transient resizing split and Fret's parity fixtures as the main references, and it deliberately stops before sticky pinned-column layout or two-dimensional virtualization.
+- Done: Completed U1/U2 of `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md` as commits `9264682` and `513f13c`. `TableColumnSizing` now resolves controlled widths and total size, the GPUI Table adapter consumes column sizing offsets, and the components crate exports the sizing contract through its public surface. Verified the focused core/components table gates before moving on to resize interaction work.
+- Done: Completed U3 of `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md` as `426742a`. `TableColumnResizeMode`, `TableColumnResizeDirection`, and resize state/update helpers now drive committed/transient resize behavior, the GPUI adapter exposes callback-backed drag handles with controlled sizing change events, and tests cover LTR/RTL drag semantics plus runtime header-click parity.
+- Done: Completed U4 of `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md` as `3273c1a`. The Components gallery now has a `release-resize` Table sample, a runtime sizing log, visible width / resizable-column summaries, selector-aligned resize smoke coverage, and docs / verification entries for the new gate.
+- Done: Created `docs/plans/2026-06-23-003-feat-ui-table-sticky-pinned-columns-plan.md` as the next Table slice. The new plan keeps the existing semantic pinned regions, turns the center lane into a shared horizontal scroll surface, and keeps vertical row virtualization one-dimensional.
+- Done: Completed the sticky pinned Table implementation as `f0b7e62` and recorded its contract / verification evidence as `7f8b986`.
+- Done: Created `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` for the next Table slice. The plan narrows two-dimensional virtualization to center-column virtualization first: pinned lanes stay fully rendered, center lanes render only the visible plus overscan column window, and row virtualization remains one-dimensional.
+- Done: Completed U1 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `94fdd59`. `VirtualizerState` now resolves exact-size windows for known item widths, materializes only visible plus overscan measurements, and keeps the fixed-size path unchanged.
+- Done: Completed U2 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `df27aa4`. `ui_components::TableRenderPlan` now exposes `TableCenterColumnWindowPlan` metadata for the center lane, including total center width, visible and overscan ranges, leading/trailing spacer widths, rendered center columns, and virtualization activity from adapter-owned horizontal scroll input.
+- Done: Completed U3 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `3819ac6`. The GPUI `Table` adapter now renders center headers and body cells from the shared `TableCenterColumnWindowPlan`, inserts leading/trailing spacers to preserve full center-lane scroll geometry, keeps left/right pinned lanes fully mounted, and tests prove off-window center selectors unmount/remount while row virtualization remains independent after horizontal scroll.
+- Done: Completed U4 of `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md` as `5d67277`. Added plan-level accessibility coverage for virtualized center columns, runtime sort coverage for a rendered center header after horizontal scroll, and resize-geometry coverage proving the virtual center window recomputes from committed sizing while preserving the rendered column identity set.
 - Follow-up: Keep the full all-components page as the integration stress test; focused mode is a product inspection path, not a replacement for full-page scroll and conformance gates.
-- Follow-up: Table column sizing / resize is now active in the new plan; remaining follow-ups after that are sticky horizontal pinned-column layout, two-dimensional grid virtualization, tree-data tables, custom aggregation callbacks, server pagination/faceting/editing, and standalone headless extraction.
+- Done: Completed the Table column-order slice on `feat/scroll-surface-containment`. `ui_components::Table` now emits controlled `TableColumnOrderChange` payloads through `on_column_order_change`, `TableColumnOrderPlacement` captures before/after insertion semantics, the gallery runtime log stores per-sample column-order overrides, and the component plus gallery gates prove the `release-rollup` sample re-renders the reordered center columns without disturbing other `TableState` slices. Verified with `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components table_column_order_change_reorders_leaf_columns_without_touching_other_state table_runtime_header_drag_emits_controlled_column_order_change component_api_inventory table_runtime_pinned_header_drag_emits_controlled_column_order_change`, and `cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_grouped_table_column_reorder_updates_sample`.
+- Follow-up: The column sizing / resize, sticky pinned-column, center-column virtualization,
+  tree-data, row-interaction, manual-expansion, manual row-model control, per-column faceting
+  metadata, single-column categorical faceted filter controls, single-column numeric range filter
+  controls, row selection variants, row pinning, custom aggregation callbacks, two-axis viewport,
+  value cell editing, global filtering, column visibility, and richer filter-operator core slices
+  are complete in the current working tree.
+  Remaining Table follow-ups are richer editor families, column-group / nested-header polish, and
+  standalone headless extraction if cross-framework pressure appears.
+- 2026-06-27: Completed the Table checkbox editor slice in the working tree.
+  `TableCellEditor::Checkbox` now composes controlled `Checkbox` editors for bool leaf cells,
+  `TableCellEditChange` carries value-shaped payloads while preserving text accessors, and
+  `toggle-release` in the Components gallery proves bool edits round-trip through the sample
+  runtime log without triggering row activation or selection.
+- Done: Completed `docs/plans/2026-06-24-005-feat-ui-table-cell-editing-plan.md` in the working
+  tree. Table columns can opt into `TableCellEditor::Text`, editable leaf cells render controlled
+  `TextInput` editors through the GPUI adapter, `TableCellEditChange` targets stable row and column
+  ids, and `editable-release` proves app-owned row updates in the Components gallery.
+- Done: Verified the Table cell editing slice with targeted `cargo fmt`, focused component and
+  gallery `cargo nextest run` commands, engineering wiki validation, and `git diff --check`.
+- Done: The two-dimensional Table viewport contract is shipped on `main` as `725f859`.
+- Done: The predicate-filter Table slice is shipped on the current main history as `82997fe` and
+  `ecc5f45`; docs now record the official `TablePredicateFilter` contract and focused gallery
+  proof.
 - Blocked: None.
-- Next action: Start U1 of `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md`.
+- Next action: Implement U2 of
+  `docs/plans/2026-06-25-001-feat-ui-table-autosize-by-content-plan.md`: gallery proof and docs
+  / memory sync for content-fit width growth.
 
 # Citations
 
@@ -158,3 +600,33 @@ verified_by:
 [39] Verification command `cargo nextest run -p open-gpui-ui-components table`
 [40] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery table`
 [41] Plan `docs/plans/2026-06-23-002-feat-ui-table-column-sizing-plan.md`
+[42] Commit `9264682` - `feat(ui-core): add table column sizing state`
+[43] Commit `513f13c` - `feat(ui-components): expose table column sizing contract`
+[44] Commit `426742a` - `feat(ui): add table column resizing interactions`
+[45] Commit `3273c1a` - `feat(gallery): add table column resize sample`
+[46] Plan `docs/plans/2026-06-23-003-feat-ui-table-sticky-pinned-columns-plan.md`
+[47] Verification command `cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components`
+[48] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_table_samples_expose_virtualized_row_model_contract components_gallery_smoke_focused_table_scroll_stays_inside_sample components_gallery_smoke_table_scroll_stays_inside_sample components_gallery_smoke_grouped_table_scroll_stays_inside_sample components_gallery_smoke_resizable_table_resize_updates_sample`
+[49] Verification evidence `docs/knowledge/engineering/verification/table-sticky-pinned-columns-20260623.md`
+[50] Plan `docs/plans/2026-06-23-004-feat-ui-table-column-virtualization-plan.md`
+[51] Verification evidence `docs/knowledge/engineering/verification/table-exact-size-virtualizer-window-20260623.md`
+[52] Commit `df27aa4` - `feat(ui-components): add table center column window plan`
+[53] Commit `3819ac6` - `feat(ui-components): virtualize table center columns`
+[54] Commit `5d67277` - `test(ui-components): cover virtualized table center interactions`
+[55] Commit `234b0cc` - `feat(ui): add table tree rows and row interactions`
+[56] Plan `docs/plans/2026-06-23-006-feat-ui-table-manual-expansion-plan.md`
+[57] Commit `bfa91df` - `feat(ui): add table manual expansion state`
+[58] Plan `docs/plans/2026-06-23-007-feat-ui-table-manual-row-model-controls-plan.md`
+[59] Commit `d6e5c0d` - `feat(ui): add table manual row-model controls`
+[60] Verification command `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery -- --check`
+[61] Verification command `cargo nextest run -p open-gpui-ui-core table`
+[62] Verification command `cargo nextest run -p open-gpui-ui-components table component_api_inventory`
+[63] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery table`
+[64] Plan `docs/plans/2026-06-23-009-feat-ui-table-row-pinning-plan.md`
+[65] Plan `docs/plans/2026-06-24-005-feat-ui-table-cell-editing-plan.md`
+[66] Progress note `docs/knowledge/engineering/progress/2026-06-24-table-cell-editing-plan.md`
+[67] Verification command `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`
+[68] Verification command `cargo nextest run -p open-gpui-ui-components table_render_plan_exposes_text_cell_editability_for_leaf_cells_only table_cell_edit_change_updates_source_row_and_preserves_table_state table_runtime_text_cell_edit_emits_change_without_row_interaction controlled_text_input_on_change_accepts_input_without_supplied_controller component_api_inventory_uses_stable_ownership_vocabulary table_public_exports_include_core_table_and_virtualizer_contracts`
+[69] Verification command `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_editable_table_cell_updates_sample_rows`
+[70] Verification command `python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering`
+[71] Verification command `git diff --check`

@@ -429,6 +429,67 @@ impl VirtualizerState {
         }
     }
 
+    /// Resolves a virtual window for items whose exact sizes are known by index.
+    ///
+    /// This path is intended for adapter-owned horizontal virtualization, such as table columns
+    /// whose widths are already resolved. The resolver scans exact sizes to compute total
+    /// geometry and range boundaries, but only materializes visible and overscan item measurements
+    /// in the resolved output.
+    pub fn resolve_known_size_window(
+        &self,
+        item_for_index: impl Fn(usize) -> (VirtualizerItemKey, UiPx),
+    ) -> VirtualizerResolvedState {
+        let viewport_extent = nonnegative_px(self.viewport_extent);
+        let scroll_offset = nonnegative_px(self.scroll_offset);
+        let estimated_size = nonnegative_px(self.estimated_size);
+        let gap = nonnegative_px(self.gap);
+        let scroll_margin = nonnegative_px(self.scroll_margin);
+        let (total_size, visible_range) = known_size_geometry(
+            self.count,
+            scroll_offset,
+            viewport_extent,
+            gap,
+            scroll_margin,
+            &item_for_index,
+        );
+        let overscan_range = overscan_range(visible_range.clone(), self.count, self.overscan);
+        let items = known_size_items(
+            overscan_range.as_range(),
+            self.count,
+            gap,
+            scroll_margin,
+            &item_for_index,
+        );
+        let visible_items = if visible_range.is_empty() {
+            Vec::new()
+        } else {
+            let visible = visible_range.as_range();
+            items
+                .iter()
+                .filter(|item| visible.contains(&item.index()))
+                .cloned()
+                .collect()
+        };
+        let snapshot = VirtualizerSnapshot::new(scroll_offset, []);
+
+        VirtualizerResolvedState {
+            count: self.count,
+            viewport_extent,
+            scroll_offset,
+            estimated_size,
+            overscan: self.overscan,
+            gap,
+            scroll_margin,
+            total_size,
+            visible_range,
+            overscan_range,
+            measurements: items.clone(),
+            visible_items,
+            items,
+            snapshot,
+        }
+    }
+
     fn resolve_measurements(
         &self,
         estimated_size: UiPx,
@@ -539,6 +600,95 @@ fn fixed_items(
         .collect()
 }
 
+fn known_size_geometry(
+    count: usize,
+    scroll_offset: UiPx,
+    viewport_extent: UiPx,
+    gap: UiPx,
+    scroll_margin: UiPx,
+    item_for_index: &impl Fn(usize) -> (VirtualizerItemKey, UiPx),
+) -> (UiPx, VirtualizerRange) {
+    if count == 0 {
+        return (UiPx::ZERO, VirtualizerRange::empty());
+    }
+
+    let scroll_margin = scroll_margin.as_f32();
+    let gap = gap.as_f32();
+    let viewport_start = scroll_offset.as_f32();
+    let viewport_end = viewport_start + viewport_extent.as_f32();
+    let can_resolve_visible = viewport_extent.as_f32() > 0.0;
+    let mut cursor = scroll_margin;
+    let mut visible_start = None;
+    let mut visible_end = None;
+
+    for index in 0..count {
+        let (_, size) = item_for_index(index);
+        let size = nonnegative_px(size).as_f32();
+        let start = cursor;
+        let end = start + size;
+
+        if can_resolve_visible {
+            if visible_start.is_none() && end > viewport_start {
+                visible_start = Some(index);
+            }
+            if start < viewport_end {
+                visible_end = Some(index + 1);
+            }
+        }
+
+        cursor = end;
+        if index + 1 < count {
+            cursor += gap;
+        }
+    }
+
+    let total_size = ui_px(cursor + scroll_margin);
+    let visible_range = if let Some(start) = visible_start {
+        VirtualizerRange::new(start, visible_end.unwrap_or(start).max(start))
+    } else {
+        VirtualizerRange::empty()
+    };
+
+    (total_size, visible_range)
+}
+
+fn known_size_items(
+    range: Range<usize>,
+    count: usize,
+    gap: UiPx,
+    scroll_margin: UiPx,
+    item_for_index: &impl Fn(usize) -> (VirtualizerItemKey, UiPx),
+) -> Vec<VirtualizerItemMeasurement> {
+    if range.is_empty() {
+        return Vec::new();
+    }
+
+    let scroll_margin = scroll_margin.as_f32();
+    let gap = gap.as_f32();
+    let mut cursor = scroll_margin;
+    let mut items = Vec::with_capacity(range.len());
+
+    for index in 0..range.end.min(count) {
+        let (key, size) = item_for_index(index);
+        let size = nonnegative_px(size);
+        let start = ui_px(cursor);
+        let end = cursor + size.as_f32();
+
+        if range.contains(&index) {
+            items.push(VirtualizerItemMeasurement::new(
+                index, key, start, size, false,
+            ));
+        }
+
+        cursor = end;
+        if index + 1 < count {
+            cursor += gap;
+        }
+    }
+
+    items
+}
+
 /// Resolved virtualizer output.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VirtualizerResolvedState {
@@ -611,8 +761,9 @@ impl VirtualizerResolvedState {
 
     /// Returns the materialized item measurements for this resolved state.
     ///
-    /// [`VirtualizerState::resolve`] materializes every item. Fixed-window resolution materializes
-    /// only the rendered window so large lists can avoid per-frame full-list work.
+    /// [`VirtualizerState::resolve`] materializes every item. Fixed-window and known-size window
+    /// resolution materialize only the rendered window so large lists can avoid per-frame
+    /// full-list measurement output.
     pub fn measurements(&self) -> &[VirtualizerItemMeasurement] {
         &self.measurements
     }
@@ -827,6 +978,161 @@ mod tests {
         assert_eq!(resolved.measurements()[1].key().as_str(), "row-1");
         assert_eq!(resolved.measurements()[1].size(), ui_px(34.0));
         assert!(resolved.measurements()[1].measured());
+    }
+
+    #[test]
+    fn known_size_window_resolver_materializes_only_rendered_items() {
+        let sizes = [
+            ui_px(20.0),
+            ui_px(30.0),
+            ui_px(40.0),
+            ui_px(50.0),
+            ui_px(60.0),
+            ui_px(70.0),
+            ui_px(80.0),
+            ui_px(90.0),
+            ui_px(100.0),
+            ui_px(110.0),
+        ];
+        let resolved = VirtualizerState::new(sizes.len(), ui_px(999.0))
+            .with_viewport_extent(ui_px(100.0))
+            .with_scroll_offset(ui_px(120.0))
+            .with_overscan(4)
+            .resolve_known_size_window(|index| {
+                (
+                    VirtualizerItemKey::new(format!("col-{index}")),
+                    sizes[index],
+                )
+            });
+
+        assert_eq!(resolved.count(), sizes.len());
+        assert_eq!(resolved.total_size(), ui_px(650.0));
+        assert_eq!(*resolved.visible_range(), VirtualizerRange::new(3, 6));
+        assert_eq!(*resolved.overscan_range(), VirtualizerRange::new(1, 8));
+        assert_eq!(resolved.items().len(), 7);
+        assert_eq!(resolved.measurements().len(), resolved.items().len());
+        assert_eq!(resolved.visible_items().len(), 3);
+        assert_eq!(resolved.items()[0].key().as_str(), "col-1");
+        assert_eq!(resolved.items()[0].start(), ui_px(20.0));
+        assert_eq!(resolved.items()[0].end(), ui_px(50.0));
+        assert_eq!(resolved.items().last().unwrap().key().as_str(), "col-7");
+        assert!(resolved.snapshot().measurements().is_empty());
+    }
+
+    #[test]
+    fn known_size_window_resolver_matches_full_variable_size_boundaries() {
+        let sizes = [
+            ui_px(12.0),
+            ui_px(18.0),
+            ui_px(24.0),
+            ui_px(30.0),
+            ui_px(36.0),
+        ];
+
+        for offset in [0.0, 5.0, 12.0, 18.0, 29.0, 35.0, 60.0, 99.0] {
+            let full = sizes
+                .iter()
+                .enumerate()
+                .fold(
+                    VirtualizerState::new(sizes.len(), ui_px(1.0))
+                        .with_viewport_extent(ui_px(40.0))
+                        .with_scroll_offset(ui_px(offset))
+                        .with_gap(ui_px(3.0))
+                        .with_scroll_margin(ui_px(5.0))
+                        .with_overscan(2)
+                        .with_item_keys((0..sizes.len()).map(|index| format!("col-{index}"))),
+                    |state, (index, size)| state.with_measurement(format!("col-{index}"), *size),
+                )
+                .resolve();
+
+            let exact = VirtualizerState::new(sizes.len(), ui_px(1.0))
+                .with_viewport_extent(ui_px(40.0))
+                .with_scroll_offset(ui_px(offset))
+                .with_gap(ui_px(3.0))
+                .with_scroll_margin(ui_px(5.0))
+                .with_overscan(2)
+                .resolve_known_size_window(|index| {
+                    (
+                        VirtualizerItemKey::new(format!("col-{index}")),
+                        sizes[index],
+                    )
+                });
+
+            assert_eq!(exact.total_size(), full.total_size(), "offset {offset}");
+            assert_eq!(
+                exact.visible_range(),
+                full.visible_range(),
+                "offset {offset}"
+            );
+            assert_eq!(
+                exact.overscan_range(),
+                full.overscan_range(),
+                "offset {offset}"
+            );
+            assert_eq!(
+                measurement_geometry(exact.visible_items()),
+                measurement_geometry(full.visible_items()),
+                "offset {offset}"
+            );
+            assert_eq!(
+                measurement_geometry(exact.items()),
+                measurement_geometry(full.items()),
+                "offset {offset}"
+            );
+            assert_eq!(exact.snapshot().scroll_offset(), ui_px(offset));
+            assert!(exact.snapshot().measurements().is_empty());
+        }
+    }
+
+    #[test]
+    fn known_size_window_resolver_handles_empty_zero_viewport_and_zero_width_items() {
+        let empty = VirtualizerState::new(0, ui_px(20.0))
+            .with_viewport_extent(ui_px(100.0))
+            .resolve_known_size_window(|index| {
+                (VirtualizerItemKey::new(format!("col-{index}")), ui_px(20.0))
+            });
+        assert_eq!(empty.total_size(), ui_px(0.0));
+        assert!(empty.visible_range().is_empty());
+        assert!(empty.overscan_range().is_empty());
+        assert!(empty.items().is_empty());
+
+        let zero_viewport = VirtualizerState::new(3, ui_px(20.0))
+            .with_viewport_extent(ui_px(0.0))
+            .with_scroll_offset(ui_px(40.0))
+            .resolve_known_size_window(|index| {
+                (VirtualizerItemKey::new(format!("col-{index}")), ui_px(20.0))
+            });
+        assert_eq!(zero_viewport.total_size(), ui_px(60.0));
+        assert!(zero_viewport.visible_range().is_empty());
+        assert!(zero_viewport.overscan_range().is_empty());
+        assert!(zero_viewport.items().is_empty());
+
+        let zero_width = VirtualizerState::new(3, ui_px(1.0))
+            .with_viewport_extent(ui_px(100.0))
+            .resolve_known_size_window(|index| {
+                (VirtualizerItemKey::new(format!("col-{index}")), ui_px(0.0))
+            });
+        assert_eq!(zero_width.total_size(), ui_px(0.0));
+        assert!(zero_width.visible_range().is_empty());
+        assert!(zero_width.overscan_range().is_empty());
+        assert!(zero_width.items().is_empty());
+    }
+
+    fn measurement_geometry(
+        measurements: &[VirtualizerItemMeasurement],
+    ) -> Vec<(usize, &str, UiPx, UiPx, UiPx)> {
+        measurements
+            .iter()
+            .map(|item| {
+                (
+                    item.index(),
+                    item.key().as_str(),
+                    item.start(),
+                    item.size(),
+                    item.end(),
+                )
+            })
+            .collect()
     }
 
     #[test]

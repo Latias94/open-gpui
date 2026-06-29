@@ -23,8 +23,8 @@ Priority order:
    stronger controlled query / selection ergonomics.
 2. `Menu` / `ContextMenu`: submenu support, menu bar shape, checkbox and radio menu items, richer
    keyboard navigation, and application-menu integration points.
-3. `Table`: pinned columns, grouped and expanded rows, aggregation, sticky headers, and later
-   two-dimensional virtualization if the current one-axis virtualizer proves insufficient.
+3. `Table`: pinned columns, grouped and expanded rows, aggregation, and later two-dimensional
+   virtualization if the current one-axis virtualizer proves insufficient.
 4. `Tree`: async loading, typeahead, drag-and-drop hierarchy editing, and virtualized tree data
    after the current renderer and `VirtualizedList` contract settle.
 5. Polish track: `Sidebar`, `ScrollArea`, `TextInput`, `Avatar`, and `Overlay` should receive

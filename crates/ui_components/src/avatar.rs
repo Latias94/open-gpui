@@ -4,9 +4,10 @@ use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
+use open_gpui::prelude::FluentBuilder as _;
 use open_gpui::{
     ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, div,
+    StatefulInteractiveElement, Styled, div, px,
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
@@ -283,6 +284,289 @@ impl RenderOnce for Avatar {
             .ui_role(state.role())
             .aria_label(label)
             .child(fallback)
+    }
+}
+
+/// Resolved avatar group count state.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AvatarGroupCountState {
+    size: Size,
+    count: usize,
+    tokens: ThemeTokens,
+}
+
+impl AvatarGroupCountState {
+    /// Returns the avatar size.
+    pub const fn size(self) -> Size {
+        self.size
+    }
+
+    /// Returns the hidden avatar count.
+    pub const fn count(self) -> usize {
+        self.count
+    }
+
+    /// Returns the resolved metrics.
+    pub const fn metrics(self) -> AvatarMetrics {
+        AvatarMetrics::from_size(self.size)
+    }
+
+    /// Returns the accessibility role used by the GPUI adapter.
+    pub const fn role(self) -> Role {
+        Role::Label
+    }
+
+    /// Returns resolved color intents.
+    pub const fn colors(self) -> AvatarGroupCountColors {
+        ThemeResolver::avatar_group_count_colors(self.tokens)
+    }
+}
+
+/// Resolved avatar group count color intents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AvatarGroupCountColors {
+    pub(crate) background: ColorIntent,
+    pub(crate) foreground: ColorIntent,
+    pub(crate) border: ColorIntent,
+}
+
+impl AvatarGroupCountColors {
+    /// Returns the background color intent.
+    pub const fn background(self) -> ColorIntent {
+        self.background
+    }
+
+    /// Returns the foreground color intent.
+    pub const fn foreground(self) -> ColorIntent {
+        self.foreground
+    }
+
+    /// Returns the border color intent.
+    pub const fn border(self) -> ColorIntent {
+        self.border
+    }
+}
+
+/// A compact overlapping avatar collection.
+#[derive(IntoElement)]
+pub struct AvatarGroup {
+    id: ElementId,
+    avatars: Vec<Avatar>,
+    max_visible: usize,
+    size: Size,
+    tokens: ThemeTokens,
+}
+
+impl AvatarGroup {
+    /// Creates an empty avatar group.
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self {
+            id: id.into(),
+            avatars: Vec::new(),
+            max_visible: 3,
+            size: Size::Medium,
+            tokens: ThemeTokens::default(),
+        }
+    }
+
+    /// Adds one child avatar.
+    pub fn avatar(mut self, avatar: Avatar) -> Self {
+        self.avatars.push(avatar);
+        self
+    }
+
+    /// Adds many child avatars.
+    pub fn avatars(mut self, avatars: impl IntoIterator<Item = Avatar>) -> Self {
+        self.avatars.extend(avatars);
+        self
+    }
+
+    /// Limits how many avatars are visible before the count bubble appears.
+    pub fn max_visible(mut self, max_visible: usize) -> Self {
+        self.max_visible = max_visible.max(1);
+        self
+    }
+
+    /// Applies a token bundle.
+    pub fn tokens(mut self, tokens: ThemeTokens) -> Self {
+        self.tokens = tokens;
+        self
+    }
+
+    /// Returns the resolved avatar group state.
+    pub fn state(&self) -> AvatarGroupState {
+        AvatarGroupState {
+            size: self.size,
+            total_count: self.avatars.len(),
+            visible_count: self.max_visible.min(self.avatars.len()),
+        }
+    }
+}
+
+impl Sizable for AvatarGroup {
+    fn with_size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+}
+
+impl RenderOnce for AvatarGroup {
+    fn render(self, _window: &mut open_gpui::Window, _cx: &mut open_gpui::App) -> impl IntoElement {
+        let state = self.state();
+        let metrics = state.metrics();
+        let visible_count = state.visible_count();
+        let hidden_count = state.hidden_count();
+        let overlap = px(-metrics.diameter().as_f32() * 0.3);
+        let size = self.size;
+        let tokens = self.tokens;
+        let id = self.id;
+
+        div()
+            .id(id.clone())
+            .debug_selector({
+                let debug_id = id.to_string();
+                move || format!("avatar-group:{debug_id}:root")
+            })
+            .flex()
+            .items_center()
+            .flex_none()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .children(
+                        self.avatars
+                            .into_iter()
+                            .take(visible_count)
+                            .enumerate()
+                            .map(move |(index, avatar)| {
+                                let avatar = avatar.with_size(size).tokens(tokens);
+                                div()
+                                    .flex_none()
+                                    .when(index > 0, |this| this.ml(overlap))
+                                    .child(avatar)
+                            }),
+                    )
+                    .when(hidden_count > 0, |this| {
+                        this.child(
+                            AvatarGroupCount::new(id.clone(), hidden_count)
+                                .with_size(size)
+                                .tokens(tokens),
+                        )
+                    }),
+            )
+    }
+}
+
+/// Resolved avatar group state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AvatarGroupState {
+    size: Size,
+    total_count: usize,
+    visible_count: usize,
+}
+
+impl AvatarGroupState {
+    /// Returns the avatar size.
+    pub const fn size(&self) -> Size {
+        self.size
+    }
+
+    /// Returns the total avatar count.
+    pub const fn total_count(&self) -> usize {
+        self.total_count
+    }
+
+    /// Returns the visible avatar count.
+    pub const fn visible_count(&self) -> usize {
+        self.visible_count
+    }
+
+    /// Returns the hidden avatar count.
+    pub const fn hidden_count(&self) -> usize {
+        self.total_count.saturating_sub(self.visible_count)
+    }
+
+    /// Returns the resolved metrics.
+    pub const fn metrics(&self) -> AvatarMetrics {
+        AvatarMetrics::from_size(self.size)
+    }
+}
+
+/// A compact overflow counter for avatar groups.
+#[derive(IntoElement)]
+pub struct AvatarGroupCount {
+    id: ElementId,
+    count: usize,
+    size: Size,
+    tokens: ThemeTokens,
+}
+
+impl AvatarGroupCount {
+    /// Creates a new overflow counter.
+    pub fn new(id: impl Into<ElementId>, count: usize) -> Self {
+        Self {
+            id: id.into(),
+            count,
+            size: Size::Medium,
+            tokens: ThemeTokens::default(),
+        }
+    }
+
+    /// Applies a token bundle.
+    pub fn tokens(mut self, tokens: ThemeTokens) -> Self {
+        self.tokens = tokens;
+        self
+    }
+
+    /// Returns the resolved count state.
+    pub fn state(&self) -> AvatarGroupCountState {
+        AvatarGroupCountState {
+            size: self.size,
+            count: self.count,
+            tokens: self.tokens,
+        }
+    }
+}
+
+impl Sizable for AvatarGroupCount {
+    fn with_size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+}
+
+impl RenderOnce for AvatarGroupCount {
+    fn render(self, _window: &mut open_gpui::Window, _cx: &mut open_gpui::App) -> impl IntoElement {
+        let state = self.state();
+        let metrics = state.metrics();
+        let colors = state.colors();
+        let debug_id = self.id.to_string();
+        let label = format!("+{}", state.count());
+        let text_size = gpui_px_from_ui(metrics.text_size());
+
+        div()
+            .id(self.id)
+            .debug_selector(move || format!("avatar-group-count:{debug_id}:root"))
+            .w(gpui_px_from_ui(metrics.diameter()))
+            .h(gpui_px_from_ui(metrics.diameter()))
+            .min_w(gpui_px_from_ui(metrics.diameter()))
+            .min_h(gpui_px_from_ui(metrics.diameter()))
+            .flex()
+            .items_center()
+            .justify_center()
+            .flex_none()
+            .overflow_hidden()
+            .rounded(gpui_px_from_ui(metrics.radius()))
+            .border_1()
+            .border_color(ThemeResolver::resolve(colors.border()))
+            .bg(ThemeResolver::resolve(colors.background()))
+            .text_color(ThemeResolver::resolve(colors.foreground()))
+            .text_size(text_size)
+            .line_height(text_size)
+            .ui_role(state.role())
+            .aria_label(label.clone())
+            .child(label)
     }
 }
 

@@ -1,6 +1,7 @@
 //! Context menu component.
 
 use crate::geometry::gpui_px_from_ui;
+use crate::menu_runtime::ContextMenuRuntime;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
@@ -17,13 +18,14 @@ use open_gpui_ui_core::{
 
 use crate::a11y::UiA11yElementExt;
 use crate::focus::focus_ring_shadow;
+use crate::geometry::{gpui_point_from_ui, ui_point_from_gpui};
 use crate::menu::{
     MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuMetrics, MenuOpenMode,
     MenuSelection, MenuState, MenuSubmenuNavigation, visible_menu_items,
 };
 use crate::overlay::{
     GpuiOverlayPlacement, OverlayResolvedState, focus_restore_requests_trigger, gpui_overlay_state,
-    gpui_point_from_ui, outside_press_open_change, ui_point_from_gpui,
+    outside_press_open_change,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::ThemeResolver;
@@ -186,20 +188,6 @@ pub struct ContextMenu {
     on_select: Option<Rc<dyn Fn(MenuSelection, &mut Window, &mut App)>>,
 }
 
-#[derive(Debug, Clone)]
-struct ContextMenuRuntime {
-    open: bool,
-    anchor_point: Point<Pixels>,
-    did_initial_focus: bool,
-    seeded_focused_value: bool,
-    focused_value: Option<String>,
-    focused_path: Option<Vec<String>>,
-    open_path: Vec<String>,
-    scroll_handle: ScrollHandle,
-    content_focus: FocusHandle,
-    trigger_focus: FocusHandle,
-}
-
 impl ContextMenu {
     /// Creates a context menu.
     pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
@@ -336,17 +324,14 @@ impl RenderOnce for ContextMenu {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let content_focus = cx.focus_handle();
         let trigger_focus = cx.focus_handle();
-        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| ContextMenuRuntime {
-            open: self.default_open,
-            anchor_point: self.anchor_point,
-            did_initial_focus: false,
-            seeded_focused_value: false,
-            focused_value: self.focused_value.clone(),
-            focused_path: None,
-            open_path: Vec::new(),
-            scroll_handle: ScrollHandle::new(),
-            content_focus: content_focus.clone(),
-            trigger_focus: trigger_focus.clone(),
+        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| {
+            ContextMenuRuntime::new(
+                self.default_open,
+                self.anchor_point,
+                content_focus.clone(),
+                trigger_focus.clone(),
+                self.focused_value.clone(),
+            )
         });
         let runtime_state = runtime.read(cx).clone();
         let controlled_open = self.open;
@@ -359,24 +344,11 @@ impl RenderOnce for ContextMenu {
 
         if controlled_open.is_some() && runtime_state.open != resolved_open {
             runtime.update(cx, |runtime, _| {
-                runtime.open = resolved_open;
-                if !resolved_open {
-                    runtime.did_initial_focus = false;
-                    runtime.seeded_focused_value = false;
-                    runtime.focused_value = None;
-                    runtime.focused_path = None;
-                    runtime.open_path.clear();
-                }
+                runtime.sync_controlled_open(resolved_open);
             });
         }
 
-        let focused_value = if runtime_state.seeded_focused_value {
-            runtime_state.focused_value.as_deref()
-        } else {
-            self.focused_value
-                .as_deref()
-                .or(runtime_state.focused_value.as_deref())
-        };
+        let focused_value = runtime_state.resolved_focused_value(self.focused_value.as_deref());
         let mut state = ContextMenuState::resolve(
             self.size,
             Some(resolved_open),
@@ -456,10 +428,7 @@ impl RenderOnce for ContextMenu {
                 cx.stop_propagation();
                 window.prevent_default();
                 open_runtime.update(cx, |runtime, _| {
-                    runtime.open = true;
-                    runtime.anchor_point = event.position;
-                    runtime.focused_path = None;
-                    runtime.open_path.clear();
+                    runtime.open_at(event.position);
                 });
                 if let Some(on_open_change) = open_change.as_ref() {
                     on_open_change(true, window, cx);
@@ -590,10 +559,7 @@ fn context_menu_surface(
                     window.prevent_default();
                     if let Some(target) = key_state.close_submenu_target() {
                         key_runtime.update(cx, |runtime, _| {
-                            runtime.open_path = target.open_path().to_vec();
-                            runtime.focused_path = Some(target.focused_path().to_vec());
-                            runtime.focused_value = Some(target.focused_value().to_owned());
-                            runtime.seeded_focused_value = true;
+                            runtime.apply_submenu_target(&target);
                         });
                         return;
                     }
@@ -612,10 +578,7 @@ fn context_menu_surface(
                     cx.stop_propagation();
                     window.prevent_default();
                     key_runtime.update(cx, |runtime, _| {
-                        runtime.open_path = target.open_path().to_vec();
-                        runtime.focused_path = Some(target.focused_path().to_vec());
-                        runtime.focused_value = Some(target.focused_value().to_owned());
-                        runtime.seeded_focused_value = true;
+                        runtime.apply_submenu_target(&target);
                     });
                     return;
                 }
@@ -623,12 +586,8 @@ fn context_menu_surface(
                 if let Some(target) = key_state.navigation_target(key) {
                     cx.stop_propagation();
                     window.prevent_default();
-                    let target_value = target.value().to_owned();
-                    let target_path = target.path().to_vec();
                     key_runtime.update(cx, |runtime, _| {
-                        runtime.seeded_focused_value = true;
-                        runtime.focused_value = Some(target_value);
-                        runtime.focused_path = Some(target_path);
+                        runtime.focus_item(target.path().to_vec(), target.value().to_owned());
                     });
                     return;
                 }
@@ -791,12 +750,7 @@ fn context_menu_item_elements(
                                 cx.stop_propagation();
                                 if let Some(submenu_navigation) = submenu_navigation.clone() {
                                     runtime.update(cx, |runtime, _| {
-                                        runtime.open_path = submenu_navigation.open_path().to_vec();
-                                        runtime.focused_path =
-                                            Some(submenu_navigation.focused_path().to_vec());
-                                        runtime.focused_value =
-                                            Some(submenu_navigation.focused_value().to_owned());
-                                        runtime.seeded_focused_value = true;
+                                        runtime.apply_submenu_target(&submenu_navigation);
                                     });
                                     return;
                                 }
@@ -810,9 +764,8 @@ fn context_menu_item_elements(
                                     global_handler(selection, window, cx);
                                 }
                                 runtime.update(cx, |runtime, _| {
-                                    runtime.seeded_focused_value = true;
-                                    runtime.focused_value = Some(item_value.clone());
-                                    runtime.focused_path = Some(item_state.path().to_vec());
+                                    runtime
+                                        .focus_item(item_state.path().to_vec(), item_value.clone());
                                 });
                                 close_context_menu(
                                     runtime.clone(),
@@ -850,11 +803,7 @@ fn close_context_menu(
 ) {
     runtime.update(cx, |runtime, _| {
         runtime.open = false;
-        runtime.did_initial_focus = false;
-        runtime.seeded_focused_value = false;
-        runtime.focused_value = None;
-        runtime.focused_path = None;
-        runtime.open_path.clear();
+        runtime.reset_closed_state();
     });
     if let Some(on_open_change) = on_open_change.as_ref() {
         on_open_change(false, window, cx);

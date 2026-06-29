@@ -329,7 +329,8 @@ pub const fn outside_press_open_change(policy: &OverlayLayerPolicy) -> Option<Ov
     }
 }
 
-pub(crate) const fn focus_restore_requests_trigger(intent: &FocusRestoreIntent) -> bool {
+/// Returns whether the overlay should restore focus back to the trigger.
+pub const fn focus_restore_requests_trigger(intent: &FocusRestoreIntent) -> bool {
     matches!(
         intent,
         FocusRestoreIntent::Trigger | FocusRestoreIntent::TriggerOrFallback(_)

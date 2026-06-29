@@ -49,8 +49,16 @@ cargo nextest run -p open-gpui-ui-foundation-gallery
 The gallery package includes Components-page runtime smoke coverage for regressions that state-only
 tests can miss: short-viewport page scrolling and navigation reset, navigation rail scrolling,
 Select popup outside dismissal, nested ScrollArea wheel scrolling, vertical Tabs rail scrolling,
-horizontal plus vertical Splitter pointer dragging, and long Sidebar internal navigation scrolling.
-Run the gallery package tests before relying on manual dogfood for those paths.
+horizontal plus vertical Splitter pointer dragging, Table column resize dragging, and long Sidebar
+internal navigation scrolling. Run the gallery package tests before relying on manual dogfood for
+those paths.
+Overlay gallery smoke coverage now also includes menu submenu hover-open and sibling branch
+switching on the rich-items sample, so submenu branch visibility, local hover retention, and
+old-branch dismissal are verified through the real gallery shell instead of only through
+component-state tests.
+Component-state coverage also includes `MenuSubmenuSurface` and `MenuSafeHoverCorridor`, which
+prove renderer-neutral submenu placement inputs and safe-hover transition bounds for the floating
+submenu panels.
 The Components-page ScrollArea regressions also cover release-queue wheel isolation so scroll
 gestures on the sample card chrome do not leak to the page shell.
 Because the Components page now carries more depth samples, the longer-section smokes also rely on
@@ -70,17 +78,112 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_fo
 cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focused_mode_resets_page_on_family_change
 ```
 
-Table gallery gates now follow the same split: `open-gpui-ui-core` tests prove row-model and
-virtualizer contracts without rendering, including grouped row ids, expansion lookup behavior, and
-built-in group-row aggregate cells plus pinned-column region splitting;
-`open-gpui-ui-components` tests prove adapter exports, state metadata, and scroll ownership; and
-gallery smokes prove long table scroll input stays inside the table viewport when the surrounding
-Components page also overflows. The focused proofs are:
+Table gallery gates now follow the same split: `open-gpui-ui-core` tests prove row-model,
+manual row-model stages, manual expansion, child-load metadata, virtualizer, column sizing,
+column-window, row pinning, and resize-math contracts without rendering, including grouped row ids,
+expansion lookup behavior, expandable unloaded branches, built-in group-row aggregate cells,
+pinned-column region splitting, center-column virtual windows, top/center/bottom row regions,
+keep-pinned versus page-only policies, manual filtering/sorting/pagination cache keys, pagination
+row/page totals, per-column facet metadata, manual facet payload cache keys, and on-end/on-change
+resize deltas. `open-gpui-ui-components` tests prove adapter exports, state metadata, manual
+row-model render-plan metadata, faceting render-plan metadata, row-pinning render-plan metadata,
+expansion payload metadata, resize callback wiring, center-window header/body mounting, fixed
+row-pinned bands, and scroll ownership; gallery smokes prove long table scroll input stays inside
+the table viewport, `release-resize` column dragging updates the controlled sample without moving
+the outer Components page, wide center lanes scroll independently from fixed left/right pinned
+lanes, `row-pinning` keeps top/bottom row bands fixed while the center body scrolls, `server-paged`
+renders an app-owned page snapshot with total counts plus caller-provided facet summaries,
+`filter-board` exposes client-derived status counts and score ranges, and `server-tree` renders
+app-owned manual child loading. The focused proofs are:
+
+`components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample` is the focused
+sticky-pinned Table proof: it enters the Table family view, scrolls the `release-rollup` center
+lane horizontally, and asserts left/right pinned lanes plus the outer Components page stay fixed.
+
+`components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample` is the focused
+center-column virtualization proof: it enters the Table family view, scrolls the `release-matrix`
+center lane horizontally, verifies far center metric cells are unmounted before scrolling and
+mounted after scrolling, and asserts left/right pinned lanes plus the outer Components page stay
+fixed.
+
+`components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample` is the focused row-pinning
+proof: it enters the Table family view, aligns the `row-pinning` sample to an interactive center
+cell, wheels inside the center body, and asserts the sample, top pinned band, bottom pinned band,
+and left-pinned cells stay fixed while the center row window changes.
+
+`components_gallery_smoke_table_server_tree_loads_children_from_expansion_request` is the focused
+manual-expansion proof: it enters the Table family view, starts with `server-api` absent from the
+app-supplied source snapshot, clicks the unloaded `server-workspace` disclosure, verifies the
+expansion payload carries zero loaded children plus idle child-load state, and then confirms the
+new child row renders after the gallery runtime supplies the loaded snapshot.
+
+`components_gallery_smoke_faceted_filter_updates_table_rows` is the focused faceted-filter proof:
+it enters the Table family view, opens the `filter-board` status popover, verifies wheel input on
+the popup content stays local, selects the exact `Done` token, checks the controlled change payload
+and filtered row counts, then toggles the token off and confirms the original row window returns.
+
+`components_gallery_smoke_range_filter_updates_table_rows` is the focused numeric range proof:
+it enters the Table family view, opens the `filter-board` score popover, verifies wheel input on
+the popup content stays local, types a minimum score, checks the controlled
+`TableRangeFilterChange` payload and filtered row counts against the same `TableState` contract,
+and confirms a lower-score row leaves the rendered window.
+
+`components_gallery_smoke_predicate_filter_updates_table_rows` is the focused predicate-filter
+proof: it enters the Table family view, types into the `filter-board` name predicate control,
+checks the controlled `TablePredicateFilterChange` payload and sample-owned predicate override,
+verifies filtered/final row counts against the resolved `TableState`, and confirms the rendered
+row window changes without moving the outer Components page.
+
+`components_gallery_smoke_editable_table_cell_updates_sample_rows` is the focused text-cell editing
+proof: it enters the Table family view, targets the `editable-release` sample, edits a rendered
+`name` cell through the nested `TextInput`, verifies `TableCellEditChange` targets the stable
+`(row_id, column_id)` pair, confirms the gallery applies the change to its app-owned `TableState`,
+and proves a read-only `status` cell does not mount an editor.
+
+`components_gallery_smoke_checkbox_table_cell_updates_sample_rows` is the focused checkbox editing
+proof: it enters the Table family view, targets the `toggle-release` sample, toggles a rendered
+`enabled` cell through the nested `Checkbox`, verifies `TableCellEditChange` targets the stable
+`(row_id, column_id)` pair, confirms the gallery applies the bool change to its app-owned
+`TableState`, and proves the checkbox cell does not mount a text editor.
+
+`components_gallery_smoke_multiline_table_cell_updates_sample_rows` is the focused multiline
+cell-editing proof: it enters the Table family view, targets the `multiline-release` sample, edits
+a rendered `notes` cell through the nested `Textarea`, verifies the same `TableCellEditChange`
+payload preserves newlines, confirms the gallery applies the change to its app-owned
+`TableState`, and proves non-multiline/read-only cells do not mount the wrong editor.
+
+`components_gallery_smoke_content_fit_table_cell_edit_widens_name_column` is the focused
+content-fit proof: it enters the Table family view, targets the `content-fit-release` sample,
+edits the visible `name` cell, verifies the sample keeps the fixed `score` lane anchored, and
+proves the adapter-measured `name` column widens while header and body stay aligned.
+
+`table_runtime_measured_row_height_reflows_after_paint` is the focused measured-row proof: it
+renders a measured `Table` with wrapped body content, verifies the first row grows beyond the
+fallback row height, and confirms the second row is laid out below the expanded row after the
+measurement cache settles.
+
+`components_gallery_smoke_select_table_cell_updates_sample_rows` is the focused select-edit
+proof: it enters the Table family view, targets the `select-release` sample, opens a fixed-option
+`Select` editor, picks `blocked`, verifies `TableCellEditChange` targets the stable
+`(row_id, column_id)` pair, confirms the gallery applies the text change to its app-owned
+`TableState`, and proves the select cell does not activate or select the row.
+
+`open-gpui-ui-components` table tests also cover the select editor adapter path directly:
+`table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only`,
+`table_runtime_select_cell_edit_emits_change_without_row_interaction`, and the other table cell
+edit gates prove the fixed-option `Select` editor stays a leaf-cell recipe rather than a new row
+interaction path.
 
 ```powershell
 cargo nextest run -p open-gpui-ui-core table
 cargo nextest run -p open-gpui-ui-components table
 cargo nextest run -p open-gpui-ui-foundation-gallery table
+cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_faceted_filter_updates_table_rows components_gallery_smoke_range_filter_updates_table_rows components_gallery_smoke_predicate_filter_updates_table_rows table
+cargo nextest run -p open-gpui-ui-core numeric_range_filters_match_finite_number_cells_inclusively numeric_range_filters_normalize_open_and_reversed_bounds categorical_filters_match_exact_tokens_and_multiple_values
+cargo nextest run -p open-gpui-ui-components table_range_filter_state_resolves_bounds_and_popover_contract table_range_filter_change_updates_filters_and_resets_pagination table_render_plan_exposes_faceting_metadata table_public_exports_include_core_table_and_virtualizer_contracts component_api_inventory_uses_stable_ownership_vocabulary
+cargo nextest run -p open-gpui-ui-components table_predicate_filter
+cargo nextest run -p open-gpui-ui-components table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only table_cell_edit_change_updates_source_row_and_preserves_table_state table_cell_edit_change_updates_boolean_source_row_and_preserves_table_state table_runtime_text_cell_edit_emits_change_without_row_interaction table_runtime_boolean_cell_edit_emits_toggle_change_without_row_interaction table_runtime_multiline_cell_edit_emits_newline_change_without_row_interaction controlled_text_input_on_change_accepts_input_without_supplied_controller component_api_inventory_uses_stable_ownership_vocabulary table_public_exports_include_core_table_and_virtualizer_contracts
+cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_editable_table_cell_updates_sample_rows components_gallery_smoke_checkbox_table_cell_updates_sample_rows components_gallery_smoke_select_table_cell_updates_sample_rows components_gallery_smoke_multiline_table_cell_updates_sample_rows
 ```
 
 `VirtualizedList` follows the same split at component scale: `open-gpui-ui-components` tests prove
@@ -95,12 +198,15 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_vi
 cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_virtualized_list_keyboard_reveals_and_activates
 ```
 
-The components package includes runtime smoke coverage for Switch, TextInput, RadioGroup, Listbox,
-Select, Combobox, Command, Tabs, and Toolbar keyboard navigation. The focused Switch test renders
-a controlled switch, clicks its real root selector, verifies `on_change` receives the next checked
-value, and confirms disabled switches do not emit changes. The focused TextInput test renders a
-standalone controller-backed input, clicks its real root, accepts simulated platform text, sanitizes
-single-line input, and verifies the controller caret ends at the inserted text. The focused
+The components package includes runtime smoke coverage for Switch, TextInput, Textarea, RadioGroup,
+Listbox, Select, Combobox, Command, Tabs, and Toolbar keyboard navigation. The focused Switch test
+renders a controlled switch, clicks its real root selector, verifies `on_change` receives the next
+checked value, and confirms disabled switches do not emit changes. The focused TextInput tests
+render a standalone controller-backed input, click its real root, accept simulated platform text,
+sanitize single-line input, verify the controller caret ends at the inserted text, and assert
+password display mode masks one glyph per grapheme while preserving the stored value. The focused
+Textarea checks prove newline-preserving controlled payloads in component tests and inner viewport
+wheel containment in the Components gallery. The focused
 RadioGroup test renders real radio
 items, rejects disabled clicks, skips disabled items with arrow navigation, verifies default
 selection seeding, click and arrow-selection payloads, and confirms Space on an already selected radio does not emit a duplicate
@@ -112,12 +218,13 @@ keyboard selection payloads, closes after selection, and confirms popup Listbox 
 skips disabled rows. The focused Combobox tests click the controller-backed text input, type a
 query, open the filtered popup by trigger and keyboard paths, verify filtered Listbox options, and
 select filtered options with ordered select/open callbacks. The focused Command tests cover
-renderer-neutral ranking, controlled and default query ownership, multi-select selected chips,
-virtualized result render plans, app-owned index snapshots, inline and dialog command filtering,
-keyboard activation, shortcut payloads, non-dialog content persistence, and dialog Escape/outside
-press dismissal. The focused gallery Command smoke renders ranked, multi-select, virtualized, and
-indexed/loading samples in focused family mode, verifies selected chips and snapshot metadata are
-inspectable, and confirms wheel input on the virtualized sample does not move the surrounding card.
+renderer-neutral ranking, controlled and default query ownership, stable-value selection across
+descriptor reorder, multi-select selected chips, virtualized result render plans, app-owned index
+snapshots, inline and dialog command filtering, keyboard activation, shortcut payloads, non-dialog
+content persistence, and dialog Escape/outside press dismissal. The focused gallery Command smoke
+renders ranked, multi-select, virtualized, and indexed/loading samples in focused family mode,
+verifies selected chips, stable selected values, and snapshot metadata are inspectable, and
+confirms wheel input on the virtualized sample does not move the surrounding card.
 Run the focused proof with:
 
 ```powershell
@@ -132,10 +239,11 @@ Toolbar test renders real toolbar items, moves roving focus with arrow/Home keys
 separator items, and activates the focused item with Enter.
 
 The components package also includes low-state primitive coverage for Separator, Kbd, Progress,
-Skeleton, and Avatar. Those tests verify resolved state branches, explicit root/prelude exports,
-theme color intents, stable rendered debug selectors, decorative separator semantics, progress
-clamping, indeterminate progress, Avatar fallback initials, explicit accessible labels, size
-metrics, `Role::Image`, and source metadata staying outside image-loading ownership. The gallery metadata and
+Skeleton, Avatar, AvatarGroup, and AvatarGroupCount. Those tests verify resolved state branches,
+explicit root/prelude exports, theme color intents, stable rendered debug selectors, decorative
+separator semantics, progress clamping, indeterminate progress, Avatar fallback initials,
+explicit accessible labels, size metrics, `Role::Image`, group visible/hidden counts, overflow
+label state, and source metadata staying outside image-loading ownership. The gallery metadata and
 short-viewport smoke tests also verify those primitives are listed as official catalog entries and
 render visible samples with stable debug selectors.
 The public API inventory gate lives in `crates/ui_components/tests/components.rs` as
@@ -150,6 +258,22 @@ That gate checks that every official Components catalog entry has a matching API
 that overlay families are explicitly listed, that public method baselines catch top-level builder
 drift, that render/controlled/default/policy vocabulary stays consistent, and that
 renderer-neutral resolved state remains free of GPUI runtime types.
+
+The foundation component family gate covers the shipped disclosure, numeric, navigation, display,
+action, and feedback additions: Accordion, Collapsible, Slider, NumberInput, ToggleGroup, Link,
+Breadcrumb, Tag, and ToastStack. These tests keep one canonical API per family, explicit
+root/prelude exports, ownership vocabulary, resolved-state purity, official catalog metadata, and
+focused Components-page rendering aligned:
+
+```powershell
+cargo nextest run -p open-gpui-ui-components accordion collapsible slider number_input link tag breadcrumb toggle_group toast component_api_inventory_uses_stable_ownership_vocabulary crate_root_and_prelude_exports_remain_explicit public_resolved_state_contracts_avoid_gpui_runtime_types
+cargo nextest run -p open-gpui-ui-foundation-gallery official_component_catalog_entries_have_signals_and_sample_selectors components_gallery_smoke_focuses_every_focusable_catalog_entry components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
+```
+
+The choice and runtime seams are guarded separately: `choice.rs` owns stable-value and normalized
+query helpers for `Command`, `Combobox`, and `Select`; `roving_focus.rs` owns the shared enabled-item
+navigation targets used across listbox-like surfaces; and `menu_runtime.rs` owns submenu hover
+timing plus local scroll state for `Menu` and `ContextMenu`.
 Feedback coverage now promotes `StatusCue` and `EmptyState` as official rendered Components
 catalog entries. The focused component tests verify root/prelude exports, feedback intent labels,
 resolved roles, metrics, and theme color intents. The gallery metadata tests require their
@@ -168,32 +292,111 @@ descriptor, action/result, helper, and payload types. `TreeState` remains a reus
 contract even though `Tree` is now an official rendered component, matching the
 `VirtualizedListState` / `VirtualizedList` split. The Components page smoke also verifies every
 `state_contract_readout_pairs()` selector is visible.
-The official Table gate requires `Table`, `TableState`, `VirtualizerState`, role signals for table
-rows and cells, and at least one `gallery:component-table-sample:{id}` selector. Table smokes and
-state tests assert that rendered row selectors stay bounded by the virtualizer's visible rows plus
-overscan, scroll input stays inside the table viewport, sortable header actions emit state-update
-payloads, sort/filter state follows stable row ids rather than numeric positions, and grouped /
-expanded row models keep collapsed descendants addressable by stable row id. The Components
-gallery now carries `release-rollup`, a grouped Table sample that mixes expanded and collapsed
-team groups, exposes aggregate count and score cells, pins the identifier and status columns, and
-has its own inner-scroll smoke. Core table tests also assert that `TableAggregation` exposes
-stable built-in aggregate labels and resolves count, sum, min, max, and average cells for grouped
-rows without hiding the grouping column value. Core and component tests assert that
-`TableColumnPinning` splits visible columns into left, center, and right regions after
-visibility/order resolution, ignores unknown or invisible pinned ids, removes moved columns from
-their previous pinned side, and exposes matching header/body region metadata and debug selectors.
+The official Table gate requires `Table`, `TableState`, `VirtualizerState`,
+`TableFacetedFilter`, `TableRangeFilter`, `TablePredicateFilter`, `TableColumnVisibility`, role
+signals for table rows and cells, and at least one `gallery:component-table-sample:{id}` selector.
+Table smokes and state tests assert that rendered row selectors stay bounded by the virtualizer's
+visible rows plus overscan, scroll input stays inside the table viewport, sortable header actions
+emit state-update payloads, controlled column resize callbacks carry stable sizing payloads,
+categorical faceted filters emit controlled exact-token updates, numeric range filters emit
+controlled finite-bound updates, predicate filters emit controlled operator/value updates, column
+visibility emits controlled hide/show payloads, editable text cells emit controlled stable
+row/column change payloads without
+triggering row interaction callbacks, row activation and expansion request payloads stay controlled,
+source-tree row
+models keep nested descendants addressable by stable row id, manual source-tree snapshots expose
+unloaded/loading/failed child metadata, row-pinning regions split top/center/bottom rows with
+keep-pinned and page-only policies, and grouped / expanded row models keep collapsed descendants
+addressable by stable row id, controlled column order changes emit stable before/after placement
+payloads, and the reorder helpers keep the rest of `TableState` untouched. The Components gallery
+now carries `release-rollup`, a grouped Table sample that mixes expanded and collapsed team groups,
+exposes aggregate count and score cells, pins the identifier and status columns, and has its own
+sticky-header plus inner-scroll smoke. It also carries
+`server-paged`, a manual filtering/sorting/pagination sample that renders only the current
+app-supplied page snapshot while exposing server-known total row and page counts through the
+gallery summary and `TableRenderPlan`. It also carries `release-resize`, a controlled
+column-sizing sample whose resize smoke drags the `name` handle, records the app-owned committed
+width, and verifies header and first-row cell widths stay aligned. `filter-board` is also the
+faceted-filter proof: it renders a `status` `TableFacetedFilter`, records
+`TableFacetedFilterChange` payloads in the sample runtime log, proves selecting `Done` changes the
+rendered row window, proves clearing restores it, and confirms popup wheel input does not move the
+outer table sample. It also renders a score `TableRangeFilter`, records
+`TableRangeFilterChange` payloads in the same runtime log, applies the range to a sample-owned
+`TableState` override, proves filtered/final row counts match the core contract, and confirms
+popup wheel input stays local. It also renders a name `TablePredicateFilter`, records
+`TablePredicateFilterChange` payloads in the same runtime log, applies the operator/value
+predicate to a sample-owned `TableState` override, and proves the rendered row window follows the
+core filtered row model. `release-matrix` also renders a `TableColumnVisibility` toolbar
+control, records `TableColumnVisibilityChange` payloads in the sample runtime log, applies
+visibility overrides to the sample-owned `TableState`, proves hiding a metric column removes its
+header and cells, proves show-all restores the column, and confirms popup wheel input stays local.
+`release-rollup` now also proves controlled column-order changes: the sample runtime log records
+`TableColumnOrderChange` payloads, applies the app-owned override to the sample `TableState`, and
+shows the score column re-rendering before team while the sample card stays anchored.
+`components_gallery_smoke_grouped_table_scroll_stays_inside_sample` is the focused vertical
+sticky-header proof: it enters the Table family view, wheels the `release-rollup` body, and
+asserts the header band stays fixed while the body row window advances.
+`editable-release` is the text-cell editing proof: it renders editable `name` and `team` columns,
+keeps `status` read-only, records `TableCellEditChange` payloads in the sample runtime log, applies
+changes to a sample-owned `TableState` override, and proves the changed row text re-renders through
+the normal Table pipeline.
+`release-matrix` is the wide center-column virtualization and column-visibility sample: it pins the
+identity and status lanes, exposes fourteen center metrics, locks identity/status visibility, and
+has focused smokes that prove off-window center columns unmount/remount, hide/show visibility
+changes update rendered headers/cells, and horizontal / popup wheel input remains inside the
+sample. `row-pinning` is the row-region sample: it pins top and bottom review rows around a paged center body, exposes
+top/center/bottom readouts, and proves center-body wheel input changes the center row window
+without moving the fixed row bands or outer sample. The Table adapter also exposes a combined
+`GridViewport2D` contract for the current row window and center-column window, keeping the row and
+column virtualizers separate while still making the two-axis viewport inspectable. `dependency-tree`
+is the source-hierarchy
+sample: it proves nested `TableRow` children resolve to visible tree rows,
+keeps collapsed descendants addressable by stable id, exposes tree-depth and tree-branch summary
+metadata, and drives controlled expansion plus row activation through the gallery runtime log.
+`server-tree` is the manual-expansion sample: it preserves the app-supplied source snapshot,
+renders unloaded, loading, and failed branch affordances, records loaded-child and load-state
+metadata in expansion payloads, and proves that child rows appear only after the gallery runtime
+supplies the loaded snapshot.
+Core table tests also assert that `TableAggregation` exposes stable built-in aggregate labels,
+resolves count, sum, min, max, and average cells for grouped rows without hiding the grouping
+column value, and lets `TableState::with_aggregation_fn` resolve named custom aggregate callbacks
+with safe empty fallback for unknown names. Core and component tests assert that
+`TableColumnPinning` splits visible columns into
+left, center, and right regions after visibility/order resolution, ignores unknown or invisible
+pinned ids, removes moved columns from their previous pinned side, and exposes matching
+header/body region metadata and debug selectors. They also assert `TableRowPinning` deduplicates
+ordered top/bottom ids, ignores unknown/filtered/collapsed rows, preserves pinned rows outside the
+current page by default, supports page-only behavior, feeds only center rows into the vertical
+virtualizer, and renders fixed row-pinned bands around the scrollable center body.
 The official Tree gate requires `Tree`, `TreeState`, `TreeMetrics`, tree/tree-item role signals,
 and at least one `gallery:component-tree-sample:{id}` selector. Component runtime tests verify
 expansion, reveal, and selection payloads; gallery smokes verify keyboard expansion/selection
 through the sample runtime log and prove Tree wheel input stays inside the sample viewport.
+`TreeChildrenLoadState` adds the lazy-branch gate: unit tests prove expanded unloaded/loading/failed
+branches do not synthesize fake child rows, toggle payloads carry loaded-child and load-state
+metadata, and loading branches do not repeat toggle requests. The `remote-workspace` gallery sample
+proves unloaded, loading, loaded, and failed branch affordances plus runtime payload metadata.
+Tree typeahead is covered by a pure state test and a runtime adapter test: the pure helper matches
+visible, focusable row labels with wraparound and skips disabled/collapsed rows, while the rendered
+adapter buffers printable keys and moves focus without selecting. The `document-outline` gallery
+smoke now verifies typing `n o` focuses the visible Notes row after the expand/select path.
 Tree and virtualized-list state-contract samples are verified through
 `components_page_samples_expose_component_metadata`: Tree readouts assert visible flattening,
 disabled-row position skipping, navigation skipping, toggle payloads, and Enter/Space selection
 actions; virtualized-list state-contract readouts assert active/selected indices, PageUp/PageDown
 clamping, activation payloads, viewport item count, overscan, and semantic scroll strategy labels.
 The same metadata test now also checks the official `Tree` sample's role metadata and keyboard
-toggle payload, plus the official `VirtualizedList` sample's 10k item count, listbox roles,
-active/selected state, visible range, and overscan summary.
+toggle payload, the official `remote-workspace` Tree sample's child-load metadata, plus the
+official `VirtualizedList` sample's 10k item count, listbox roles, active/selected state, visible
+range, and overscan summary.
+
+The focused Tree proof is:
+
+```powershell
+cargo nextest run -p open-gpui-ui-components tree_state_resolves_lazy_branch_load_metadata_without_synthetic_children tree_toggle_payload_includes_child_load_state_and_blocks_loading feedback_tree_and_virtualized_list_public_exports_remain_explicit
+cargo nextest run -p open-gpui-ui-components tree_typeahead_targets_visible_focusable_items_from_current_focus tree_runtime_typeahead_focuses_visible_matching_row
+cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_gallery_smoke_tree_expands_and_selects components_gallery_smoke_tree_lazy_branches_emit_load_metadata
+```
 
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left
@@ -307,13 +510,22 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    press or Escape.
 6. Open `Components`, or start there directly with
    `cargo run -p open-gpui-ui-foundation-gallery -- --page components`, and confirm Button, Badge,
+   Accordion, Collapsible, Slider, NumberInput, ToggleGroup, Link, Breadcrumb, Tag, ToastStack,
    IconButton, Separator, Kbd, Progress, Skeleton, Avatar, ScrollArea, Splitter, Switch, Checkbox,
-   RadioGroup, Toggle, Label, TextInput, Field, Tabs, Toolbar, Sidebar, Listbox, Select, Combobox,
-   Command, Table, and VirtualizedList samples render with enabled, disabled, selected, checked, unchecked,
+   RadioGroup, Toggle, Label, TextInput, Textarea, Field, Tabs, Toolbar, Sidebar, Listbox, Select,
+   Combobox, Command, Table, and VirtualizedList samples render with enabled, disabled, selected, checked, unchecked,
    indeterminate, pressed, invalid, required, read-only, placeholder, value, help, error,
    control-association, decorative, semantic, indeterminate-progress, fallback-initial,
    source-metadata, roving-focus, popup, overflow-axis, scroll-reset, resize-constraint, row-model,
-   and virtualized-viewport states. The Badge, Kbd, and Skeleton samples should remain display-only.
+   and virtualized-viewport states. The Badge, Kbd, Skeleton, and non-removable Tag samples should
+   remain display-only.
+   The Accordion and Collapsible samples should expose stable disclosure values, disabled rows, and
+   open-state readouts. Slider and NumberInput samples should expose clamped min/max/step metadata,
+   disabled/read-only or invalid states, and keyboard or step payload semantics. ToggleGroup should
+   expose single and multiple stable-value selection with disabled-item skipping. Link and
+   Breadcrumb should expose accessible navigation labels and activation metadata. Tag should expose
+   removable and disabled-remove metadata. ToastStack should expose visible stack ordering,
+   overflow, timeout pruning, dismiss reasons, and action metadata without owning timers.
    Use a few catalog cards, such as Table, Tree, and VirtualizedList, to enter focused
    component-family mode; confirm unrelated samples are hidden, the section directory stays
    available, nested sample scrolling still stays inside the sample, and `All components` restores
@@ -329,7 +541,8 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    keep moving instead of snapping back to the origin after the redraw caused by the first scroll.
    The gallery navigation rail should also scroll independently inside its own viewport so deep
    sections remain reachable on compact windows. The vertical Tabs sample should keep its tab rail
-   scrollable inside the constrained gallery card.
+   scrollable inside the constrained gallery card, and the focused component smoke now verifies the
+   shared `ScrollArea` viewport directly through `tabs_vertical_tablist_scrolls_when_constrained`.
    The Splitter samples should
    show horizontal and vertical panel groups, stable handle affordances, min/max fraction readouts,
    collapsed-panel metadata, and pointer-drag resizing without changing surrounding layout. Drag the
@@ -347,8 +560,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    expanded, icon-collapsed, and long scrollable navigation; icon collapse should hide visible labels
    while keeping item labels
    explicit, disabled items should be skipped, and the long sidebar should scroll inside its sample
-   frame. The gallery smoke now verifies the long sidebar's internal viewport moves relative to its
-   sample card. The Listbox samples should expose
+   frame. The component smoke now verifies the shared `ScrollArea` viewport directly through
+   `sidebar_long_navigation_scrolls_inside_shared_scroll_area`, and the gallery smoke verifies the
+   long sidebar's internal viewport moves relative to its sample card. The Listbox samples should
+   expose
    grouped options, disabled option skipping, selected and active descendant metadata, empty-state
    behavior, and keyboard navigation/activation with Up/Down/Home/End plus Enter/Space. The
    component runtime smoke now verifies rendered Listbox disabled clicks, selection-free arrow
@@ -356,26 +571,42 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    activation. The Select
    samples should expose closed, controlled-open, and disabled states; confirm the trigger label
    reflects the selected option, the open sample uses a non-modal dismissible listbox popup with a
-   scrollable long option set, Escape/outside press dismisses it, and disabled empty select remains
-   closed. The component runtime smoke now verifies rendered Select trigger opening, disabled popup
+   scrollable long option set, Escape/outside press dismisses it, disabled empty select remains
+   closed, and the state readout keeps trigger-selected value distinct from popup listbox selection.
+   The component runtime smoke now verifies rendered Select trigger opening, disabled popup
    option rejection, click selection, keyboard popup selection that skips disabled rows, selection
    payloads, and ordered popup close callbacks. The Combobox samples should expose editable
    filtering, selected value metadata that does not disappear when the query hides the selected
-   option, an empty filtered state, and disabled input/popup suppression. The component runtime
+   option, an empty filtered state, disabled input/popup suppression, and visible query/typeahead
+   metadata. The component runtime
    smoke now verifies real Combobox text-input editing, filtered popup options, filtered option
    click selection, and close callbacks. The Command samples should expose ranked search results,
-   selected chips for multi-select, a 10k-item virtualized command result window, app-owned
+   selected chips for multi-select, stable selected values independent of result order, a 10k-item
+   virtualized command result window, app-owned
    indexed/loading metadata, shortcut labels, inline and dialog-backed presentation, and modal
    dialog outside/Escape dismissal while preserving the Components page scrollability. The component
    runtime smoke now verifies real Command text-input editing, inline filtering, keyboard
    activation, shortcut payloads, non-dialog content persistence, multi-select toggling, virtualized
    scrolling/reveal behavior, and app-owned index snapshot state. The default TextInput
-    sample should accept real text editing through the
-    controller-backed path, while the gallery remains scrollable and keeps focus visible when the
-    page overflows. The Table samples should expose the `release-queue` 10k-row virtualized window,
-    the filtered/sorted/paginated `filter-board` model, the grouped and pinned `release-rollup`
-    model, stable selected row ids, table/row/cell accessibility metadata, sortable header
-    metadata, and internal body viewports that scroll without moving the outer Components page.
+   sample should accept real text editing through the controller-backed path, and the password
+   sample should show masked display metadata while preserving the underlying value contract. The
+   Textarea samples should expose placeholder, filled, overflowing, and invalid states; wheel input
+   inside the overflowing textarea should scroll its multiline content without moving the sample
+   card or outer Components page. The
+   gallery remains scrollable and keeps focus visible when the page overflows. The Table samples
+   should expose the `release-queue` 10k-row virtualized window,
+    the filtered/sorted/paginated `filter-board` model with working status `TableFacetedFilter`,
+    score `TableRangeFilter`, and name `TablePredicateFilter` controls,
+    the controlled `release-resize` sizing
+    sample, the grouped and sticky pinned `release-rollup` model with left/right fixed lanes and a
+    horizontally scrollable center lane, the wide `release-matrix` center-column window with a
+    working `TableColumnVisibility` control, the source-tree `dependency-tree` sample with nested
+    rows and controlled expansion, stable selected row ids, the editable `editable-release`
+    text-cell sample with app-owned row updates, the `multiline-release` textarea-cell sample with
+    newline-preserving app-owned row updates, table/row/cell accessibility metadata, sortable header
+    metadata, resize handle metadata, row activation, expansion, column-visibility, and cell-edit
+    log entries, and internal body viewports that scroll
+    without moving the outer Components page.
     The Tree sample should expose `document-outline`,
     tree/tree-item accessibility metadata, expandable `Paper` children, a state readout, an inner
     viewport that scrolls without moving the outer Components page, and selection/toggle events
@@ -397,12 +628,19 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    disabled, submenu, typeahead, controlled-open, outside-policy, and point-anchor variants. Use
    `cargo nextest run -p open-gpui-ui-components menu` and `cargo nextest run -p
    open-gpui-ui-components context_menu` to verify rich item payloads, pure typeahead,
-   visible-submenu keyboard navigation, local menu scrollability, and context-menu reuse. Use
+   visible-submenu keyboard navigation, submenu hover delay / close timing, local menu scrollability,
+   context-menu reuse, and long-menu wheel containment through
+   `context_menu_runtime_long_menu_scroll_stays_inside_surface`. Use `cargo nextest run -p
+   open-gpui-ui-components
+   menu_runtime_hover_opens_submenu_and_preserves_child_focus
+   menu_runtime_hover_switches_between_submenu_branches` together with the menu family command to
+   cover the hover-delay runtime. Use
    `cargo nextest run -p open-gpui-ui-foundation-gallery
    overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts
    overlay_page_context_menu_samples_expose_point_anchor_contracts
    overlay_page_catalog_entries_have_signals_and_sample_selectors
    overlay_gallery_smoke_closes_menu_from_escape_and_outside_press
+   overlay_gallery_smoke_opens_menu_submenu_from_hover
    overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses` plus `cargo check -p
    open-gpui-ui-foundation-gallery --tests` after changing the overlay menu family.
 7. Re-run `cargo nextest run -p open-gpui-ui-components` and `cargo nextest run -p
@@ -448,7 +686,14 @@ cargo run -p open-gpui-docking-native
 
 The docking native example exercises the public multi-window setup: applications build one
 `DockController`, wrap it in a `DockViewportRuntimeHandle`, register window-close cleanup, and open
-controller-backed primary and secondary `DockHost` viewports.
+controller-backed primary and secondary `DockHost` viewports. The runtime panel reports both the
+last route target and the route selection source, so dogfood runs can distinguish trusted hovered
+window routes, window-stack fallback routes, focus-stamp fallback routes, and accepted routed-preview
+replays. It also reports the current platform viewport capability snapshot, splitting route facts
+from placement facts so platform-boundary regressions are visible during native dogfood. The
+placement restore line reports matched and missing restored windows, and the tear-off status line
+reports whether a viewport opened from suggested bounds or drag-source geometry, so placement
+authority regressions are visible in the same panel.
 
 Manual native docking dogfood should use the same example after the automated checks pass:
 

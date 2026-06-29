@@ -13,7 +13,7 @@ use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::roving_focus::{first_enabled, last_enabled, next_enabled};
+use crate::roving_focus::{first_enabled, typeahead_target, vertical_roving_navigation_target};
 use crate::theme::ThemeResolver;
 
 type ListboxSelectHandler = Rc<dyn Fn(ListboxSelection, &mut Window, &mut App)>;
@@ -694,23 +694,13 @@ impl ListboxState {
 
     /// Resolves a typeahead target for a query.
     pub fn typeahead_target(&self, query: &str) -> Option<&ListboxOptionState> {
-        let query = query.trim().to_lowercase();
-        if query.is_empty() {
-            return None;
-        }
-
-        let len = self.options.len();
-        if len == 0 {
-            return None;
-        }
-
-        let start = self.active_index.map_or(0, |index| (index + 1) % len);
-        (0..len)
-            .map(|step| (start + step) % len)
-            .filter_map(|index| self.options.get(index))
-            .find(|option| {
-                option.focusable() && option.label().to_lowercase().starts_with(query.as_str())
-            })
+        typeahead_target(
+            self.options.as_slice(),
+            self.active_index,
+            query,
+            ListboxOptionState::focusable,
+            ListboxOptionState::label,
+        )
     }
 
     /// Resolves an activation payload for an APG-style activation key.
@@ -754,13 +744,7 @@ impl ListboxState {
 
 /// Resolves a listbox active descendant target from an APG-style key name.
 pub fn listbox_navigation_target(key: &str, current: usize, disabled: &[bool]) -> Option<usize> {
-    match key {
-        "home" => first_enabled(disabled),
-        "end" => last_enabled(disabled),
-        "up" => next_enabled(disabled, current, false, true),
-        "down" => next_enabled(disabled, current, true, true),
-        _ => None,
-    }
+    vertical_roving_navigation_target(key, current, disabled)
 }
 
 /// A concrete GPUI listbox option.

@@ -1,11 +1,12 @@
 //! Select component built from a trigger, overlay, and listbox state.
 
+use crate::choice;
 use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, IntoElement, KeyDownEvent, ParentElement, RenderOnce, SharedString,
+    App, ElementId, IntoElement, KeyDownEvent, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
 };
 use open_gpui_ui_core::{
@@ -375,10 +376,8 @@ impl SelectState {
         self.listbox
             .selected_value()
             .and_then(|value| {
-                self.listbox
-                    .options()
-                    .iter()
-                    .find(|option| option.value() == value && option.focusable())
+                choice::find_value(self.listbox.options(), value, |option| option.value())
+                    .filter(|option| option.focusable())
                     .map(|option| option.label())
             })
             .unwrap_or(self.placeholder.as_str())
@@ -487,6 +486,7 @@ pub struct Select {
     groups: Vec<ListboxGroup>,
     size: Size,
     disabled: bool,
+    full_width: bool,
     open: Option<bool>,
     default_open: bool,
     selected_value: Option<String>,
@@ -512,6 +512,7 @@ impl Select {
             groups: Vec::new(),
             size: Size::Medium,
             disabled: false,
+            full_width: false,
             open: None,
             default_open: false,
             selected_value: None,
@@ -560,6 +561,12 @@ impl Select {
     /// Marks the select as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Makes the trigger expand to the full width of its parent.
+    pub fn full_width(mut self, full_width: bool) -> Self {
+        self.full_width = full_width;
         self
     }
 
@@ -751,7 +758,9 @@ impl RenderOnce for Select {
             .relative()
             .flex()
             .flex_col()
-            .items_start()
+            .when(self.full_width, |this| this.w_full().items_stretch())
+            .when(!self.full_width, |this| this.items_start())
+            .when(self.full_width, |this| this.occlude())
             .child(
                 div()
                     .id(trigger_id)
@@ -759,8 +768,11 @@ impl RenderOnce for Select {
                         let debug_id = debug_id.clone();
                         move || format!("select:{debug_id}:trigger")
                     })
-                    .min_w(gpui_px_from_ui(metrics.min_width()))
-                    .max_w(gpui_px_from_ui(metrics.max_width()))
+                    .when(self.full_width, |this| this.w_full())
+                    .when(!self.full_width, |this| {
+                        this.min_w(gpui_px_from_ui(metrics.min_width()))
+                            .max_w(gpui_px_from_ui(metrics.max_width()))
+                    })
                     .min_h(gpui_px_from_ui(metrics.trigger_height()))
                     .px(gpui_px_from_ui(metrics.trigger_padding_x()))
                     .py(gpui_px_from_ui(metrics.trigger_padding_y()))
@@ -816,8 +828,9 @@ impl RenderOnce for Select {
                             .hover(move |style| {
                                 style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
                             })
-                            .on_click(move |_event: &ClickEvent, window, cx| {
+                            .capture_any_mouse_up(move |_, window, cx| {
                                 cx.stop_propagation();
+                                window.prevent_default();
                                 let next_open = !open;
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = next_open;

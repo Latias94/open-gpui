@@ -1814,7 +1814,9 @@ impl LinuxClient for X11Client {
     }
 
     fn hovered_window(&self) -> PlatformHoveredWindow {
-        match self.hovered_window_from_pointer_query() {
+        let state = self.0.borrow();
+
+        match state.hovered_window_from_pointer_query() {
             Ok(window) => PlatformHoveredWindow::from_window(window),
             Err(error) => {
                 log::debug!("X11 hovered window query failed: {error}");

@@ -7,26 +7,37 @@ use open_gpui_ui_components::{
     CommandIndexSnapshotMode, CommandOpenMode, CommandSelectionMode, DialogOpenMode,
     FeedbackIntent, HoverCardOpenIntent, HoverCardOpenMode, MenuItemKind, MenuOpenMode,
     OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableColumnId,
-    TableColumnRegion, TableExpansionState, TableRowId, ThemeMode, ToggleVariant,
-    TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
-    gpui_adapter::{DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state},
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableCellEditor,
+    TableCellValue, TableColumnFacets, TableColumnId, TableColumnOrderChange, TableColumnRegion,
+    TableExpansionMode, TableExpansionState, TableGlobalFilterChange, TablePredicateFilterChange,
+    TablePredicateFilterOperator, TableRangeFilterChange, TableRowChildrenLoadState, TableRowId,
+    TableRowRegion, TableStageMode, TableTextFilterOperator, TextInputDisplayMode, ThemeMode,
+    ToggleVariant, TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
+    gpui_adapter::{
+        DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state, init_text_input,
+    },
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
     InitialFocusIntent, Orientation, OutsidePressPolicy, OverlayLayerKind,
-    OverlayPlacementAlignment, OverlayPlacementSide, PanelAdaptiveClass, Role, Size, ThemeTokens,
-    Toggled, semantic, ui_point, ui_px,
+    OverlayPlacementAlignment, OverlayPlacementSide, PanelAdaptiveClass, Role, Size,
+    TableColumnWidthPolicy, ThemeTokens, Toggled, semantic, ui_point, ui_px,
 };
 use open_gpui_ui_foundation_gallery::{
     DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, GalleryShell, GalleryShellSnapshot,
     foundation_snapshot, pages,
 };
+use std::time::Duration;
 
 fn redraw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
         window.draw(cx).clear();
     });
+}
+
+fn advance_and_redraw(cx: &mut VisualTestContext, duration: Duration) {
+    cx.executor().advance_clock(duration);
+    redraw(cx);
 }
 
 fn set_short_gallery_viewport(cx: &mut VisualTestContext) {
@@ -46,6 +57,7 @@ fn open_gallery_page_with_shell(
     cx: &mut open_gpui::TestAppContext,
     page: GalleryPage,
 ) -> (Entity<GalleryShell>, &mut VisualTestContext) {
+    cx.update(init_text_input);
     let (shell, cx) = cx.add_window_view(|_, cx| GalleryShell::with_selected_page(page, cx));
     set_short_gallery_viewport(cx);
     redraw(cx);
@@ -70,6 +82,32 @@ fn shell_snapshot(
 fn bounds(cx: &mut VisualTestContext, selector: &str) -> Bounds<Pixels> {
     cx.debug_bounds(selector)
         .unwrap_or_else(|| panic!("expected debug selector `{selector}` to be rendered"))
+}
+
+fn table_sample<'a>(
+    samples: &'a [pages::components::TableSample],
+    id: &str,
+) -> &'a pages::components::TableSample {
+    samples
+        .iter()
+        .find(|sample| sample.id == id)
+        .unwrap_or_else(|| panic!("expected table sample `{id}`"))
+}
+
+fn text_facet_counts(facet: &TableColumnFacets) -> Vec<(String, usize)> {
+    facet
+        .unique_values()
+        .iter()
+        .map(|entry| (entry.value().filter_text(), entry.count()))
+        .collect()
+}
+
+fn facet_total_count(facet: &TableColumnFacets) -> usize {
+    facet
+        .unique_values()
+        .iter()
+        .map(|entry| entry.count())
+        .sum()
 }
 
 fn scroll_until_visible(
@@ -124,30 +162,54 @@ fn scroll_page_selector_into_view(
     cx: &mut VisualTestContext,
     selector: &str,
 ) -> Bounds<Pixels> {
-    let viewport = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
-
-    for _ in 0..8 {
+    for _ in 0..96 {
+        let viewport = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
         if let Some(target) = cx.debug_bounds(selector) {
             if target_visible_for_interaction(viewport, target) {
                 return target;
             }
 
-            let handle = cx.update(|_, app| shell.read(app).page_scroll_handle().clone());
-            let delta = target.top() - viewport.top() - px(24.0);
-            let offset = handle.offset();
-            handle.set_offset(point(offset.x, offset.y - delta));
+            if shell_snapshot(shell, cx).selected_page == GalleryPage::Components {
+                let delta = if target.top() < viewport.top() {
+                    target.top() - viewport.top() - px(12.0)
+                } else {
+                    target.bottom() - viewport.bottom() + px(12.0)
+                };
+                cx.update(|_, app| {
+                    shell.read(app).components_list_state().scroll_by(delta);
+                });
+            } else {
+                let handle = cx.update(|_, app| shell.read(app).page_scroll_handle().clone());
+                let delta = target.top() - viewport.top() - px(24.0);
+                let offset = handle.offset();
+                handle.set_offset(point(offset.x, offset.y - delta));
+            }
             redraw(cx);
             continue;
         }
 
-        break;
+        if shell_snapshot(shell, cx).selected_page == GalleryPage::Components {
+            cx.update(|_, app| {
+                shell.read(app).components_list_state().scroll_by(px(160.0));
+            });
+        } else {
+            let handle = cx.update(|_, app| shell.read(app).page_scroll_handle().clone());
+            let offset = handle.offset();
+            handle.set_offset(point(offset.x, offset.y - px(160.0)));
+            cx.simulate_event(ScrollWheelEvent {
+                position: point(viewport.right() - px(6.0), viewport.center().y),
+                delta: ScrollDelta::Pixels(point(px(0.0), px(-160.0))),
+                ..Default::default()
+            });
+        }
+        redraw(cx);
     }
 
     let target = bounds(cx, selector);
     let viewport = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
     assert!(
         target_visible_for_interaction(viewport, target),
-        "expected `{selector}` to be visible after aligning the gallery page scroll handle; viewport={viewport:?} target={target:?}"
+        "expected `{selector}` to be visible after scrolling the gallery page viewport; viewport={viewport:?} target={target:?}"
     );
     target
 }
@@ -162,6 +224,25 @@ fn target_visible_for_interaction(container: Bounds<Pixels>, target: Bounds<Pixe
 
 fn bounds_overlap_y(container: Bounds<Pixels>, target: Bounds<Pixels>) -> bool {
     target.bottom() >= container.top() && target.top() <= container.bottom()
+}
+
+fn visible_page_interaction_point(
+    cx: &mut VisualTestContext,
+    selector: &str,
+) -> open_gpui::Point<Pixels> {
+    let target = bounds(cx, selector);
+    let viewport = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
+    let left = target.left().max(viewport.left());
+    let right = target.right().min(viewport.right());
+    let top = target.top().max(viewport.top());
+    let bottom = target.bottom().min(viewport.bottom());
+
+    assert!(
+        left < right && top < bottom,
+        "expected `{selector}` to overlap the visible gallery page viewport; target={target:?} viewport={viewport:?}"
+    );
+
+    point(left + (right - left) * 0.5, top + (bottom - top) * 0.5)
 }
 
 fn scroll_navigation_until_visible(cx: &mut VisualTestContext, selector: &str) -> Bounds<Pixels> {
@@ -216,6 +297,59 @@ fn focus_components_catalog_entry(
         shell_snapshot(shell, cx).components_focus,
         expected_focus,
         "expected catalog card `{}` to enter focused mode",
+        entry.name
+    );
+
+    let focus_selector = entry
+        .sample_selector
+        .or(entry.state_contract_selector)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected focused selector for catalog entry `{}`",
+                entry.name
+            )
+        });
+    let section_selector = format!("gallery:components-section:{focus}");
+
+    assert!(
+        cx.debug_bounds(section_selector.as_str()).is_some(),
+        "expected focused catalog entry `{}` to render section `{section_selector}`",
+        entry.name
+    );
+    assert!(
+        cx.debug_bounds(focus_selector).is_some(),
+        "expected focused catalog entry `{}` to render selector `{focus_selector}`",
+        entry.name
+    );
+    assert!(
+        cx.debug_bounds("gallery:components-directory").is_some(),
+        "expected focused catalog entry `{}` to keep the section directory available",
+        entry.name
+    );
+
+    expected_focus
+}
+
+fn focus_components_section(
+    shell: &Entity<GalleryShell>,
+    cx: &mut VisualTestContext,
+    entry: &pages::components::ComponentCatalogEntry,
+) -> pages::components::ComponentFocusMode {
+    let focus = pages::components::focused_section_for_catalog_entry(entry)
+        .unwrap_or_else(|| panic!("expected focusable catalog entry `{}`", entry.name));
+    let expected_focus = pages::components::ComponentFocusMode::Section(focus);
+
+    cx.update(|_, app| {
+        shell.update(app, |shell, cx| {
+            shell.set_components_focus(expected_focus, cx);
+        });
+    });
+    settle(cx);
+
+    assert_eq!(
+        shell_snapshot(shell, cx).components_focus,
+        expected_focus,
+        "expected catalog entry `{}` to enter focused mode",
         entry.name
     );
 
@@ -1008,7 +1142,8 @@ fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
     assert_eq!(samples[4].state.items()[1].toggled(), Some(Toggled::False));
     assert_eq!(samples[4].state.items()[2].toggled(), Some(Toggled::True));
     assert!(samples[4].state.items()[3].has_submenu());
-    assert!(!samples[4].state.items()[4].focusable());
+    assert!(samples[4].state.items()[4].has_submenu());
+    assert!(!samples[4].state.items()[5].focusable());
 
     assert_eq!(samples[5].id, "typeahead");
     assert_eq!(
@@ -1213,6 +1348,15 @@ fn components_page_samples_expose_component_metadata() {
     let gates = pages::components::CONFORMANCE_GATES;
     let buttons = pages::components::button_samples(tokens);
     let badges = pages::components::badge_samples(tokens);
+    let accordions = pages::components::accordion_samples(tokens);
+    let collapsibles = pages::components::collapsible_samples(tokens);
+    let sliders = pages::components::slider_samples(tokens);
+    let number_inputs = pages::components::number_input_samples(tokens);
+    let toggle_groups = pages::components::toggle_group_samples(tokens);
+    let links = pages::components::link_samples(tokens);
+    let breadcrumbs = pages::components::breadcrumb_samples(tokens);
+    let tags = pages::components::tag_samples(tokens);
+    let toast_stacks = pages::components::toast_stack_samples(tokens);
     let icon_buttons = pages::components::icon_button_samples(tokens);
     let separators = pages::components::separator_samples(tokens);
     let kbds = pages::components::kbd_samples(tokens);
@@ -1234,7 +1378,9 @@ fn components_page_samples_expose_component_metadata() {
     let commands = pages::components::command_samples(tokens);
     let labels = pages::components::label_samples(tokens);
     let text_inputs = pages::components::text_input_samples(tokens);
+    let textareas = pages::components::textarea_samples(tokens);
     let fields = pages::components::field_samples(tokens);
+    let field_textareas = pages::components::field_textarea_samples(tokens);
     let scroll_areas = pages::components::scroll_area_samples(tokens);
     let splitters = pages::components::splitter_samples(tokens);
     let tables = pages::components::table_samples(tokens);
@@ -1250,6 +1396,15 @@ fn components_page_samples_expose_component_metadata() {
         vec![
             "Button",
             "Badge",
+            "Accordion",
+            "Collapsible",
+            "Slider",
+            "NumberInput",
+            "ToggleGroup",
+            "Link",
+            "Breadcrumb",
+            "Tag",
+            "ToastStack",
             "IconButton",
             "Switch",
             "Checkbox",
@@ -1264,6 +1419,7 @@ fn components_page_samples_expose_component_metadata() {
             "Command",
             "Label",
             "TextInput",
+            "Textarea",
             "Field",
             "Tabs",
             "ScrollArea",
@@ -1277,6 +1433,7 @@ fn components_page_samples_expose_component_metadata() {
             "Progress",
             "Skeleton",
             "Avatar",
+            "AvatarGroup",
         ]
     );
     assert!(catalog.iter().all(|entry| !entry.name.trim().is_empty()));
@@ -1302,6 +1459,23 @@ fn components_page_samples_expose_component_metadata() {
                 && entry.status == pages::components::ComponentCatalogStatus::Official
                 && entry.coverage == "exports / gallery / state tests"))
     );
+    assert!(
+        [
+            "Accordion",
+            "Collapsible",
+            "Slider",
+            "NumberInput",
+            "ToggleGroup",
+            "Link",
+            "Breadcrumb",
+            "Tag",
+            "ToastStack"
+        ]
+        .iter()
+        .all(|name| catalog.iter().any(|entry| entry.name == *name
+            && entry.status == pages::components::ComponentCatalogStatus::Official
+            && entry.sample_section_id() == "foundation-components"))
+    );
     let state_contract_names: Vec<_> = catalog
         .iter()
         .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::StateContract)
@@ -1318,12 +1492,20 @@ fn components_page_samples_expose_component_metadata() {
             .all(|entry| entry.sample_selector.is_none() && entry.state_contract_selector.is_some())
     );
 
-    assert_eq!(gates.len(), 10);
+    assert_eq!(gates.len(), 11);
     assert_eq!(gates[0].id, "public-api-exports");
     assert!(
         gates[0]
             .evidence
             .contains(&"crates/ui_components/src/lib.rs")
+    );
+    assert!(
+        gates.iter().any(|gate| {
+            gate.id == "choice-surfaces"
+                && gate.evidence.contains(&"choice.rs")
+                && gate.evidence.contains(&"roving_focus.rs")
+        }),
+        "expected Components conformance gates to expose the shared choice/navigation seam"
     );
     assert_eq!(gates[1].id, "gallery-metadata");
     assert_eq!(gates[2].id, "scroll-redraw");
@@ -1335,10 +1517,29 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(gates[3].id, "splitter-runtime");
     assert_eq!(gates[4].id, "tabs-overflow");
     assert_eq!(gates[5].id, "table-virtualization");
+    assert!(gates[5].evidence.contains(&"TableFacetedFilter"));
+    assert!(gates[5].evidence.contains(&"TableGlobalFilter"));
+    assert!(
+        gates[5]
+            .evidence
+            .contains(&"components_gallery_smoke_global_filter_updates_table_rows")
+    );
+    assert!(gates[5].evidence.contains(&"TablePredicateFilter"));
+    assert!(
+        gates[5]
+            .evidence
+            .contains(&"components_gallery_smoke_predicate_filter_updates_table_rows")
+    );
+    assert!(
+        gates[5]
+            .evidence
+            .contains(&"components_gallery_smoke_faceted_filter_updates_table_rows")
+    );
     assert_eq!(gates[6].id, "tree-renderer");
     assert_eq!(gates[7].id, "virtualized-list-renderer");
     assert_eq!(gates[8].id, "state-contract-readouts");
-    assert_eq!(gates[9].id, "a11y-labels");
+    assert_eq!(gates[9].id, "choice-surfaces");
+    assert_eq!(gates[10].id, "a11y-labels");
 
     assert_eq!(buttons.len(), 6);
     assert_eq!(buttons[0].id, "default");
@@ -1359,6 +1560,90 @@ fn components_page_samples_expose_component_metadata() {
     );
     assert_eq!(badges[3].state.variant(), BadgeVariant::Outline);
     assert_eq!(badges[3].state.size(), Size::Small);
+
+    assert_eq!(accordions.len(), 1);
+    assert_eq!(accordions[0].id, "shipping");
+    assert_eq!(accordions[0].state.role(), Role::Group);
+    assert_eq!(accordions[0].state.mode().as_str(), "multiple");
+    assert!(accordions[0].state.collapsible());
+    assert_eq!(accordions[0].state.open_values(), ["scope", "risk"]);
+    assert!(accordions[0].state.items()[2].disabled());
+    assert!(!accordions[0].state.items()[2].activation_enabled());
+
+    assert_eq!(collapsibles.len(), 1);
+    assert_eq!(collapsibles[0].id, "release-notes");
+    assert!(collapsibles[0].state.open());
+    assert_eq!(collapsibles[0].state.trigger_role(), Role::Button);
+    assert_eq!(collapsibles[0].state.content_role(), Role::Group);
+
+    assert_eq!(sliders.len(), 2);
+    assert_eq!(sliders[0].id, "volume");
+    assert_eq!(sliders[0].state.role(), Role::Slider);
+    assert_eq!(sliders[0].state.value(), 72.0);
+    assert_eq!(sliders[0].state.min(), 0.0);
+    assert_eq!(sliders[0].state.max(), 100.0);
+    assert!(sliders[0].state.activation_enabled());
+    assert_eq!(sliders[1].state.step(), 5.0);
+    assert!(sliders[1].state.disabled());
+
+    assert_eq!(number_inputs.len(), 2);
+    assert_eq!(number_inputs[0].id, "workers");
+    assert_eq!(number_inputs[0].state.role(), Role::SpinButton);
+    assert_eq!(number_inputs[0].state.display_value(), "6");
+    assert!(number_inputs[0].state.input_enabled());
+    assert!(number_inputs[1].state.invalid());
+
+    assert_eq!(toggle_groups.len(), 2);
+    assert_eq!(toggle_groups[0].id, "alignment");
+    assert_eq!(toggle_groups[0].state.role(), Role::Group);
+    assert_eq!(toggle_groups[0].state.mode().as_str(), "single");
+    assert!(toggle_groups[0].state.selection_required());
+    assert_eq!(toggle_groups[0].state.selected_values(), ["left"]);
+    assert_eq!(toggle_groups[0].state.focused_value(), Some("center"));
+    assert!(toggle_groups[0].state.items()[2].disabled());
+    assert_eq!(toggle_groups[1].state.mode().as_str(), "multiple");
+    assert_eq!(toggle_groups[1].state.selected_values(), ["bold", "code"]);
+
+    assert_eq!(links.len(), 2);
+    assert_eq!(links[0].id, "docs");
+    assert_eq!(links[0].state.role(), Role::Link);
+    assert!(links[0].state.external());
+    assert!(links[0].state.activation().is_some());
+    assert!(links[1].state.disabled());
+    assert!(links[1].state.activation().is_none());
+
+    assert_eq!(breadcrumbs.len(), 1);
+    assert_eq!(breadcrumbs[0].id, "project");
+    assert_eq!(breadcrumbs[0].state.role(), Role::Navigation);
+    assert_eq!(breadcrumbs[0].state.current_index(), Some(2));
+    assert_eq!(breadcrumbs[0].state.items()[2].role(), Role::Label);
+    assert!(breadcrumbs[0].state.items()[2].current());
+
+    assert_eq!(tags.len(), 3);
+    assert_eq!(tags[0].id, "ready");
+    assert_eq!(tags[0].state.role(), Role::Label);
+    assert!(tags[0].state.removable());
+    assert!(tags[0].state.remove().is_some());
+    assert_eq!(tags[1].state.variant(), BadgeVariant::Destructive);
+    assert!(tags[2].state.disabled());
+    assert!(tags[2].state.remove().is_none());
+
+    assert_eq!(toast_stacks.len(), 1);
+    assert_eq!(toast_stacks[0].id, "notifications");
+    assert_eq!(toast_stacks[0].state.role(), Role::Section);
+    assert_eq!(toast_stacks[0].state.max_visible(), 2);
+    assert_eq!(toast_stacks[0].state.visible_toasts().len(), 2);
+    assert_eq!(toast_stacks[0].state.overflow_count(), 0);
+    assert_eq!(toast_stacks[0].state.expired_dismissals().len(), 1);
+    assert_eq!(
+        toast_stacks[0].state.expired_dismissals()[0]
+            .reason()
+            .as_str(),
+        "timeout"
+    );
+    assert_eq!(toast_stacks[0].state.visible_toasts()[0].id(), "queued");
+    assert_eq!(toast_stacks[0].state.visible_toasts()[1].id(), "saved");
+    assert!(toast_stacks[0].state.visible_toasts()[1].action().is_some());
 
     assert_eq!(separators.len(), 3);
     assert_eq!(separators[0].id, "section-rule");
@@ -1491,7 +1776,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(sidebars[2].state.scrollable());
     assert!(sidebars[2].state.items().len() > 8);
 
-    assert_eq!(trees.len(), 1);
+    assert_eq!(trees.len(), 4);
     let tree = &trees[0];
     assert_eq!(tree.id, "document-outline");
     assert_eq!(tree.state.role(), Role::Tree);
@@ -1504,6 +1789,49 @@ fn components_page_samples_expose_component_metadata() {
         Some(TreeKeyboardAction::Toggle(toggle)) if toggle.value() == "paper" && toggle.expanded()
     ));
     assert_eq!(tree.build_tree().state().role(), Role::Tree);
+    let remote_tree = &trees[1];
+    assert_eq!(remote_tree.id, "remote-workspace");
+    assert_eq!(remote_tree.state.selected_value(), Some("remote-src"));
+    assert!(
+        remote_tree
+            .state
+            .item_by_value("remote-src")
+            .is_some_and(|item| item.children_unloaded() && item.loaded_child_count() == 0)
+    );
+    assert!(
+        remote_tree
+            .state
+            .item_by_value("remote-crates")
+            .is_some_and(|item| item.children_loading()
+                && item.children_load_state().message() == Some("Loading child packages"))
+    );
+    assert!(
+        remote_tree
+            .state
+            .item_by_value("remote-build")
+            .is_some_and(|item| item.children_load_failed()
+                && item.children_load_state().message() == Some("Network unavailable"))
+    );
+    let release_tree = &trees[2];
+    assert_eq!(release_tree.id, "release-outline");
+    assert!(release_tree.virtualized);
+    assert_eq!(release_tree.viewport_item_count, 8);
+    assert_eq!(release_tree.overscan_count, 4);
+    assert_eq!(release_tree.state.items().len(), 240);
+    let release_tree_plan = release_tree.render_plan();
+    assert_eq!(release_tree_plan.virtualizer().count(), 240);
+    assert_eq!(release_tree_plan.visible_row_count(), 8);
+    assert_eq!(release_tree_plan.rendered_row_count(), 12);
+    assert_eq!(
+        release_tree_plan.rows()[0].render_key(),
+        "0:release-node-0000"
+    );
+    let editable_tree = &trees[3];
+    assert_eq!(editable_tree.id, "editable-outline");
+    assert!(editable_tree.draggable);
+    assert_eq!(editable_tree.state.selected_value(), Some("root"));
+    assert_eq!(editable_tree.state.focused_value(), Some("root"));
+    assert_eq!(editable_tree.state.items().len(), 4);
 
     assert_eq!(listboxes.len(), 2);
     assert_eq!(listboxes[0].id, "assignee-listbox");
@@ -1597,7 +1925,7 @@ fn components_page_samples_expose_component_metadata() {
     assert!(labels[2].state.disabled());
     assert!(!labels[3].state.associated());
 
-    assert_eq!(text_inputs.len(), 5);
+    assert_eq!(text_inputs.len(), 6);
     assert_eq!(text_inputs[0].state.role(), Role::TextInput);
     assert!(text_inputs[0].state.controller_driven());
     assert!(
@@ -1613,6 +1941,22 @@ fn components_page_samples_expose_component_metadata() {
     );
     assert!(!text_inputs[3].state.editable());
     assert!(!text_inputs[4].state.editable());
+    assert_eq!(
+        text_inputs[5].state.display_mode(),
+        TextInputDisplayMode::Password
+    );
+    assert_eq!(text_inputs[5].state.display_text().as_ref(), "•••");
+
+    assert_eq!(textareas.len(), 4);
+    assert_eq!(textareas[0].state.role(), Role::TextInput);
+    assert!(textareas[0].state.displaying_placeholder());
+    assert!(!textareas[0].state.controller_driven());
+    assert_eq!(textareas[1].state.value(), "Line 1\nLine 2");
+    assert_eq!(textareas[1].state.rows(), 4);
+    assert_eq!(textareas[2].state.rows(), 3);
+    assert!(textareas[2].state.value().contains("Line 8"));
+    assert!(textareas[3].state.required());
+    assert!(textareas[3].state.invalid());
 
     assert_eq!(fields.len(), 3);
     assert!(fields[0].state.required());
@@ -1627,6 +1971,12 @@ fn components_page_samples_expose_component_metadata() {
     );
     assert!(fields[2].state.disabled());
     assert!(!fields[2].input_state.editable());
+
+    assert_eq!(field_textareas.len(), 1);
+    assert!(field_textareas[0].state.required());
+    assert!(field_textareas[0].state.invalid());
+    assert_eq!(field_textareas[0].textarea_state.rows(), 4);
+    assert_eq!(field_textareas[0].textarea_state.role(), Role::TextInput);
 
     assert_eq!(scroll_areas.len(), 3);
     assert_eq!(scroll_areas[0].id, "activity-log");
@@ -1663,14 +2013,14 @@ fn components_page_samples_expose_component_metadata() {
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 
-    assert_eq!(tables.len(), 3);
-    assert_eq!(tables[0].id, "release-queue");
-    assert_eq!(tables[0].state.rows().len(), 10_000);
+    assert_eq!(tables.len(), 15);
+    let release_queue = table_sample(tables, "release-queue");
+    assert_eq!(release_queue.state.rows().len(), 10_000);
     assert_eq!(
-        tables[0].state.sorting()[0].direction().as_str(),
+        release_queue.state.sorting()[0].direction().as_str(),
         "descending"
     );
-    let release_plan = tables[0].render_plan();
+    let release_plan = release_queue.render_plan();
     assert_eq!(release_plan.role(), Role::Table);
     assert_eq!(release_plan.column_header_role(), Role::ColumnHeader);
     assert_eq!(release_plan.cell_role(), Role::Cell);
@@ -1678,21 +2028,250 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(release_plan.aria_column_count(), 4);
     assert!(release_plan.rendered_row_count() <= release_plan.visible_row_count() + 5);
 
-    let filter_plan = tables[1].render_plan();
-    assert_eq!(tables[1].id, "filter-board");
+    let filter_board = table_sample(tables, "filter-board");
+    let filter_plan = filter_board.render_plan();
+    let filter_summary = filter_board.state_summary();
     assert_eq!(filter_plan.table().filtered_model().rows().len(), 60);
     assert_eq!(filter_plan.table().final_model().rows().len(), 24);
     assert_eq!(filter_plan.table().final_model().selected_count(), 1);
+    assert_eq!(filter_summary.facet_columns, 4);
+    assert_eq!(filter_summary.manual_facet_columns, 0);
+    assert_eq!(filter_summary.status_facet_values, 4);
+    assert_eq!(filter_summary.status_facet_total_count, 60);
+    assert_eq!(filter_summary.score_facet_min, Some(0));
+    assert_eq!(filter_summary.score_facet_max, Some(177));
 
-    let grouped_plan = tables[2].render_plan();
-    assert_eq!(tables[2].id, "release-rollup");
-    assert_eq!(tables[2].state.grouping()[0].as_str(), "team");
-    assert_eq!(tables[2].state.aggregations().len(), 2);
-    assert_eq!(tables[2].state.column_pinning().left()[0].as_str(), "name");
+    let status_facet = filter_plan
+        .column_facet(&TableColumnId::new("status"))
+        .expect("filter-board status facet should resolve");
+    assert_eq!(status_facet.mode(), TableStageMode::Client);
+    assert_eq!(status_facet.row_count(), 60);
     assert_eq!(
-        tables[2].state.column_pinning().right()[0].as_str(),
+        text_facet_counts(status_facet),
+        [
+            ("Doing".to_string(), 15),
+            ("Done".to_string(), 15),
+            ("Review".to_string(), 15),
+            ("Todo".to_string(), 15),
+        ],
+        "client facets should ignore the target column filter and stay deterministic"
+    );
+
+    let score_facet = filter_plan
+        .column_facet(&TableColumnId::new("score"))
+        .expect("filter-board score facet should resolve");
+    assert_eq!(score_facet.mode(), TableStageMode::Client);
+    assert_eq!(score_facet.row_count(), 60);
+    let score_range = score_facet
+        .numeric_range()
+        .expect("score facet should expose a numeric range");
+    assert_eq!(score_range.min(), 0.0);
+    assert_eq!(score_range.max(), 177.0);
+
+    let server_paged = table_sample(tables, "server-paged");
+    let server_page_plan = server_paged.render_plan();
+    let server_page_summary = server_paged.state_summary();
+    assert_eq!(server_paged.state.rows().len(), 8);
+    assert_eq!(server_page_plan.filtering_mode(), TableStageMode::Manual);
+    assert_eq!(server_page_plan.sorting_mode(), TableStageMode::Manual);
+    assert_eq!(server_page_plan.pagination_mode(), TableStageMode::Manual);
+    assert_eq!(server_page_summary.core_rows, 8);
+    assert_eq!(server_page_summary.filtered_rows, 8);
+    assert_eq!(server_page_summary.final_rows, 8);
+    assert!(server_page_summary.manual_filtering);
+    assert!(server_page_summary.manual_sorting);
+    assert!(server_page_summary.manual_pagination);
+    assert_eq!(server_page_summary.pagination_page_index, 2);
+    assert_eq!(server_page_summary.pagination_page_size, 8);
+    assert_eq!(server_page_summary.pagination_row_count, Some(64));
+    assert_eq!(server_page_summary.pagination_page_count, Some(8));
+    assert_eq!(server_page_summary.facet_columns, 4);
+    assert_eq!(server_page_summary.manual_facet_columns, 2);
+    assert_eq!(server_page_summary.status_facet_values, 4);
+    assert_eq!(server_page_summary.status_facet_total_count, 64);
+    assert_eq!(server_page_summary.score_facet_min, Some(1));
+    assert_eq!(server_page_summary.score_facet_max, Some(64));
+    assert_eq!(server_page_plan.pagination_row_count(), Some(64));
+    assert_eq!(server_page_plan.pagination_page_count(), Some(8));
+    assert_eq!(server_page_plan.faceting_mode(), TableStageMode::Client);
+    assert_eq!(server_page_plan.column_facets().len(), 4);
+    let server_status_facet = server_page_plan
+        .column_facet(&TableColumnId::new("status"))
+        .expect("server-paged status facet should resolve");
+    assert_eq!(server_status_facet.mode(), TableStageMode::Manual);
+    assert_eq!(server_status_facet.row_count(), 64);
+    assert_eq!(
+        text_facet_counts(server_status_facet),
+        [
+            ("Blocked".to_string(), 16),
+            ("Queued".to_string(), 16),
+            ("Ready".to_string(), 16),
+            ("Review".to_string(), 16),
+        ],
+        "server facet payloads should stay visible in render-plan metadata"
+    );
+    let server_score_facet = server_page_plan
+        .column_facet(&TableColumnId::new("score"))
+        .expect("server-paged score facet should resolve");
+    assert_eq!(server_score_facet.mode(), TableStageMode::Manual);
+    assert_eq!(server_score_facet.row_count(), 64);
+    let server_score_range = server_score_facet
+        .numeric_range()
+        .expect("server score facet should expose a numeric range");
+    assert_eq!(server_score_range.min(), 1.0);
+    assert_eq!(server_score_range.max(), 64.0);
+    assert_eq!(
+        server_page_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "server-paged-row-0016",
+            "server-paged-row-0017",
+            "server-paged-row-0018",
+            "server-paged-row-0019",
+            "server-paged-row-0020",
+            "server-paged-row-0021",
+            "server-paged-row-0022",
+            "server-paged-row-0023",
+        ]
+    );
+
+    let release_resize = table_sample(tables, "release-resize");
+    let resize_plan = release_resize.render_plan();
+    assert_eq!(release_resize.state.rows().len(), 160);
+    assert_eq!(
+        resize_plan.columns()[0].width(),
+        ui_px(188.0),
+        "release-resize should expose committed sizing metadata"
+    );
+    assert!(
+        resize_plan.columns()[0].resizable(),
+        "name column should expose a resize handle"
+    );
+    assert!(
+        !resize_plan.columns()[3].resizable(),
+        "score column should prove per-column resize disablement"
+    );
+
+    let editable_release = table_sample(tables, "editable-release");
+    let editable_plan = editable_release.render_plan();
+    assert_eq!(editable_release.state.rows().len(), 32);
+    assert!(
+        editable_plan.columns()[0].text_editable(),
+        "editable-release name column should expose text editing metadata"
+    );
+    assert!(
+        editable_plan.columns()[1].text_editable(),
+        "editable-release team column should expose text editing metadata"
+    );
+    assert!(
+        !editable_plan.columns()[2].text_editable(),
+        "editable-release status column should stay read-only"
+    );
+    assert!(
+        editable_plan.rows()[0].cells()[0].text_editable(),
+        "editable-release first visible name cell should render as editable"
+    );
+
+    let toggle_release = table_sample(tables, "toggle-release");
+    let toggle_plan = toggle_release.render_plan();
+    assert_eq!(toggle_release.state.rows().len(), 28);
+    assert_eq!(
+        toggle_plan.columns()[1].editor(),
+        Some(TableCellEditor::Checkbox),
+        "toggle-release enabled column should expose checkbox editing metadata"
+    );
+    assert_eq!(
+        toggle_plan.rows()[0].cells()[1].editor(),
+        Some(TableCellEditor::Checkbox),
+        "toggle-release first visible enabled cell should render as a checkbox editor"
+    );
+    assert_eq!(
+        toggle_plan.table().final_model().rows()[0]
+            .cell(&TableColumnId::new("enabled"))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("true")
+    );
+
+    let multiline_release = table_sample(tables, "multiline-release");
+    let multiline_plan = multiline_release.render_plan();
+    assert_eq!(multiline_release.state.rows().len(), 24);
+    assert_eq!(
+        multiline_plan.columns()[1].editor(),
+        Some(TableCellEditor::MultilineText { rows: 3 }),
+        "multiline-release notes column should expose fixed-row multiline editing metadata"
+    );
+    assert_eq!(
+        multiline_plan.rows()[0].cells()[1].editor(),
+        Some(TableCellEditor::MultilineText { rows: 3 }),
+        "multiline-release first visible notes cell should render as a multiline editor"
+    );
+    assert!(
+        !multiline_plan.columns()[2].text_editable(),
+        "multiline-release status column should stay read-only"
+    );
+
+    let select_release = table_sample(tables, "select-release");
+    let select_plan = select_release.render_plan();
+    assert_eq!(select_release.state.rows().len(), 28);
+    assert_eq!(
+        select_plan.columns()[1].editor(),
+        Some(TableCellEditor::Select),
+        "select-release status column should expose fixed-option select editing metadata"
+    );
+    assert_eq!(
+        select_plan.rows()[0].cells()[1].editor(),
+        Some(TableCellEditor::Select),
+        "select-release first visible status cell should render as a select editor"
+    );
+    assert_eq!(
+        select_plan.rows()[0].cells()[1].text(),
+        "Ready",
+        "select-release first visible status cell should resolve the display label from select options"
+    );
+    assert_eq!(
+        select_plan.rows()[0].cells()[1].select_options().len(),
+        2,
+        "select-release visible select cell should carry the fixed option list"
+    );
+
+    let grouped_release = table_sample(tables, "release-rollup");
+    let grouped_plan = grouped_release.render_plan();
+    assert_eq!(grouped_release.state.grouping()[0].as_str(), "team");
+    assert_eq!(grouped_release.state.aggregations().len(), 2);
+    assert_eq!(
+        grouped_release.state.column_pinning().left()[0].as_str(),
+        "name"
+    );
+    assert_eq!(
+        grouped_release.state.column_pinning().right()[0].as_str(),
         "status"
     );
+    assert_eq!(
+        grouped_plan.column_region_width(TableColumnRegion::Left),
+        ui_px(188.0)
+    );
+    assert_eq!(
+        grouped_plan.column_region_width(TableColumnRegion::Center),
+        ui_px(400.0)
+    );
+    assert_eq!(
+        grouped_plan.column_region_width(TableColumnRegion::Right),
+        ui_px(164.0)
+    );
+    assert!(grouped_plan.uses_split_pinned_layout());
+    let grouped_layout = grouped_plan
+        .pinned_layout()
+        .expect("release-rollup should render through the split sticky pinned layout");
+    assert_eq!(grouped_layout.left_width(), ui_px(188.0));
+    assert_eq!(grouped_layout.center_width(), ui_px(400.0));
+    assert_eq!(grouped_layout.right_width(), ui_px(164.0));
+    assert_eq!(grouped_layout.total_width(), ui_px(752.0));
     assert!(
         grouped_plan
             .table()
@@ -1710,7 +2289,195 @@ fn components_page_samples_expose_component_metadata() {
             .any(|row| row.is_leaf())
     );
     assert!(
-        grouped_plan.rendered_row_count() <= grouped_plan.visible_row_count() + tables[2].overscan
+        grouped_plan.rendered_row_count()
+            <= grouped_plan.visible_row_count() + grouped_release.overscan
+    );
+
+    let release_matrix = table_sample(tables, "release-matrix");
+    let matrix_plan = release_matrix.render_plan();
+    assert_eq!(release_matrix.state.rows().len(), 480);
+    assert_eq!(
+        release_matrix.state.column_pinning().left()[0].as_str(),
+        "name"
+    );
+    assert_eq!(
+        release_matrix.state.column_pinning().right()[0].as_str(),
+        "status"
+    );
+    assert_eq!(
+        release_matrix.state.sorting()[0].column().as_str(),
+        "metric_13"
+    );
+    assert_eq!(
+        matrix_plan.column_region_width(TableColumnRegion::Left),
+        ui_px(172.0)
+    );
+    assert_eq!(
+        matrix_plan.column_region_width(TableColumnRegion::Center),
+        ui_px(1516.0)
+    );
+    assert_eq!(
+        matrix_plan.column_region_width(TableColumnRegion::Right),
+        ui_px(148.0)
+    );
+    assert!(matrix_plan.uses_split_pinned_layout());
+    let matrix_layout = matrix_plan
+        .pinned_layout()
+        .expect("release-matrix should render through the split sticky pinned layout");
+    assert_eq!(matrix_layout.left_width(), ui_px(172.0));
+    assert_eq!(matrix_layout.center_width(), ui_px(1516.0));
+    assert_eq!(matrix_layout.right_width(), ui_px(148.0));
+    assert_eq!(matrix_layout.total_width(), ui_px(1836.0));
+    assert_eq!(matrix_plan.aria_column_count(), 16);
+    assert_eq!(matrix_plan.columns().len(), 16);
+    assert!(
+        matrix_plan
+            .columns()
+            .iter()
+            .any(|column| column.id().as_str() == "metric_13")
+    );
+    assert_eq!(matrix_plan.table().final_model().selected_count(), 1);
+
+    let row_pinning = table_sample(tables, "row-pinning");
+    let row_pinning_plan = row_pinning.render_plan();
+    let row_pinning_summary = row_pinning.state_summary();
+    assert_eq!(row_pinning.state.rows().len(), 96);
+    assert_eq!(row_pinning_summary.core_rows, 96);
+    assert_eq!(row_pinning_summary.final_rows, 14);
+    assert_eq!(row_pinning_summary.pinned_top_rows, 1);
+    assert_eq!(row_pinning_summary.pinned_center_rows, 11);
+    assert_eq!(row_pinning_summary.pinned_bottom_rows, 2);
+    assert!(!row_pinning_summary.row_pinning_page_only);
+    assert_eq!(row_pinning_summary.pinned_left_columns, 1);
+    assert_eq!(row_pinning_summary.pinned_center_columns, 14);
+    assert_eq!(row_pinning_summary.pinned_right_columns, 1);
+    assert_eq!(row_pinning_summary.pinned_left_width_px, 172);
+    assert_eq!(row_pinning_summary.pinned_center_width_px, 1516);
+    assert_eq!(row_pinning_summary.pinned_right_width_px, 148);
+    assert_eq!(row_pinning_summary.total_column_width_px, 1836);
+    assert!(row_pinning_plan.uses_split_pinned_layout());
+    assert_eq!(row_pinning_plan.virtualizer().count(), 11);
+    assert_eq!(row_pinning_plan.aria_row_count(), 15);
+    assert_eq!(
+        row_pinning_plan
+            .table()
+            .top_rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["row-pinning-row-003"]
+    );
+    assert_eq!(
+        row_pinning_plan
+            .table()
+            .center_rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "row-pinning-row-024",
+            "row-pinning-row-025",
+            "row-pinning-row-026",
+            "row-pinning-row-027",
+            "row-pinning-row-028",
+            "row-pinning-row-029",
+            "row-pinning-row-031",
+            "row-pinning-row-032",
+            "row-pinning-row-033",
+            "row-pinning-row-034",
+            "row-pinning-row-035",
+        ]
+    );
+    assert_eq!(
+        row_pinning_plan
+            .table()
+            .bottom_rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["row-pinning-row-030", "row-pinning-row-070"]
+    );
+
+    let dependency_tree = table_sample(tables, "dependency-tree");
+    let tree_plan = dependency_tree.render_plan();
+    let tree_summary = dependency_tree.state_summary();
+    assert_eq!(dependency_tree.state.rows().len(), 1);
+    assert_eq!(tree_summary.core_rows, 7);
+    assert_eq!(tree_summary.final_rows, 4);
+    assert_eq!(tree_summary.tree_rows, 4);
+    assert_eq!(tree_summary.tree_branch_rows, 3);
+    assert_eq!(tree_summary.tree_depth, 1);
+    assert_eq!(tree_summary.expanded_tree_inputs, 1);
+    assert_eq!(tree_summary.pinned_left_columns, 1);
+    assert_eq!(tree_summary.pinned_center_columns, 5);
+    assert_eq!(tree_summary.pinned_right_columns, 1);
+    assert_eq!(tree_summary.total_column_width_px, 956);
+    assert_eq!(tree_plan.aria_column_count(), 7);
+    assert_eq!(tree_plan.aria_row_count(), 5);
+    assert_eq!(
+        tree_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "dependency-workspace",
+            "dependency-ui",
+            "dependency-core",
+            "dependency-docs"
+        ]
+    );
+    assert!(
+        tree_plan
+            .table()
+            .final_model()
+            .row(&TableRowId::new("dependency-ui-table"))
+            .is_some(),
+        "collapsed tree descendants should remain addressable by stable row id"
+    );
+    assert_eq!(
+        tree_plan
+            .table()
+            .final_model()
+            .row(&TableRowId::new("dependency-ui"))
+            .and_then(|row| row.tree_expanded()),
+        Some(false)
+    );
+
+    let server_tree = table_sample(tables, "server-tree");
+    let server_plan = server_tree.render_plan();
+    let server_summary = server_tree.state_summary();
+    assert_eq!(
+        server_tree.state.expansion_mode(),
+        TableExpansionMode::Manual
+    );
+    assert_eq!(server_tree.state.rows().len(), 3);
+    assert_eq!(server_summary.core_rows, 3);
+    assert_eq!(server_summary.final_rows, 3);
+    assert_eq!(server_summary.tree_rows, 3);
+    assert_eq!(server_summary.tree_branch_rows, 3);
+    assert_eq!(server_summary.unloaded_tree_branches, 1);
+    assert_eq!(server_summary.loading_tree_rows, 1);
+    assert_eq!(server_summary.failed_tree_rows, 1);
+    assert!(server_summary.manual_expansion);
+    assert_eq!(server_summary.expanded_tree_inputs, 0);
+    assert_eq!(server_summary.pinned_left_columns, 1);
+    assert_eq!(server_summary.pinned_center_columns, 5);
+    assert_eq!(server_summary.pinned_right_columns, 1);
+    assert_eq!(server_summary.total_column_width_px, 956);
+    assert_eq!(server_plan.aria_column_count(), 7);
+    assert_eq!(server_plan.aria_row_count(), 4);
+    assert_eq!(
+        server_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["server-workspace", "server-cache", "server-failed"]
     );
 
     assert_eq!(virtualized_lists.len(), 1);
@@ -1800,11 +2567,11 @@ fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
         .expect("expected SplitterSample selector impl to exist");
     let splitter_struct = &components_source[splitter_struct_start..splitter_struct_end];
     let splitter_section = render_source
-        .split("splitter_samples.into_iter().map(|sample| {")
+        .split("component_page_section(\"splitter\")")
         .nth(1)
         .and_then(|section| {
             section
-                .split("scroll_area_samples.into_iter().map(|sample| {")
+                .split("component_page_section(\"scroll-area\")")
                 .next()
         })
         .expect("expected Splitter section in components render source");
@@ -1839,6 +2606,30 @@ fn component_gallery_shell_reads_choice_active_metadata_from_resolved_state() {
         .nth(1)
         .and_then(|section| section.split("fn resolved_listbox_option").next())
         .expect("expected Command sample section in shell source");
+    let listbox_readout = shell_source
+        .split("fn component_listbox_state_row(")
+        .nth(1)
+        .and_then(|section| section.split("fn component_select_state_row").next())
+        .expect("expected Listbox state row in shell source");
+    let select_readout = shell_source
+        .split("fn component_select_state_row(")
+        .nth(1)
+        .and_then(|section| section.split("fn component_combobox_state_row").next())
+        .expect("expected Select state row in shell source");
+    let combobox_readout = shell_source
+        .split("fn component_combobox_state_row(")
+        .nth(1)
+        .and_then(|section| section.split("fn component_command_state_row").next())
+        .expect("expected Combobox state row in shell source");
+    let command_readout = shell_source
+        .split("fn component_command_state_row(")
+        .nth(1)
+        .and_then(|section| {
+            section
+                .split("pub(crate) fn component_radio_state_row")
+                .next()
+        })
+        .expect("expected Command state row in shell source");
 
     assert!(select_section.contains("if let Some(active) = state.active_value()"));
     assert!(select_section.contains("select = select.active(active);"));
@@ -1846,6 +2637,11 @@ fn component_gallery_shell_reads_choice_active_metadata_from_resolved_state() {
     assert!(combobox_section.contains("combobox = combobox.active(active);"));
     assert!(command_section.contains("if let Some(active) = state.active_value()"));
     assert!(command_section.contains("command = command.active(active);"));
+    assert!(listbox_readout.contains("typeahead_label"));
+    assert!(listbox_readout.contains("first_typeahead_target"));
+    assert!(select_readout.contains("listbox selected"));
+    assert!(combobox_readout.contains("visible {} of {} / typeahead"));
+    assert!(command_readout.contains("selected_values {:?}"));
 }
 
 #[test]
@@ -2003,7 +2799,7 @@ fn components_page_tabs_samples_expose_roving_focus_contract() {
 #[test]
 fn components_page_table_samples_expose_virtualized_row_model_contract() {
     let samples = pages::components::table_samples(ThemeTokens::default());
-    let release_queue = &samples[0];
+    let release_queue = table_sample(samples, "release-queue");
     let release_plan = release_queue.render_plan();
     let release_summary = release_queue.state_summary();
 
@@ -2031,7 +2827,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(release_plan.column_header_role(), Role::ColumnHeader);
     assert_eq!(release_plan.cell_role(), Role::Cell);
 
-    let filter_board = &samples[1];
+    let filter_board = table_sample(samples, "filter-board");
     let filter_plan = filter_board.render_plan();
     let filter_summary = filter_board.state_summary();
 
@@ -2042,14 +2838,197 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(filter_summary.filtered_rows, 60);
     assert_eq!(filter_summary.final_rows, 24);
     assert_eq!(filter_summary.selected_rows, 1);
+    assert_eq!(filter_summary.facet_columns, 4);
+    assert_eq!(filter_summary.manual_facet_columns, 0);
+    assert_eq!(filter_summary.status_facet_values, 4);
+    assert_eq!(filter_summary.status_facet_total_count, 60);
+    assert_eq!(filter_summary.score_facet_min, Some(0));
+    assert_eq!(filter_summary.score_facet_max, Some(177));
     assert_eq!(
         filter_plan.table().final_model().rows()[0].id().as_str(),
         "filter-board-row-177"
     );
     assert_eq!(filter_plan.table().final_model().selected_count(), 1);
     assert_eq!(filter_plan.aria_column_count(), 4);
+    let filter_status_facet = filter_plan
+        .column_facet(&TableColumnId::new("status"))
+        .expect("filter-board status facet should resolve");
+    assert_eq!(filter_status_facet.mode(), TableStageMode::Client);
+    assert_eq!(filter_status_facet.row_count(), 60);
+    assert_eq!(facet_total_count(filter_status_facet), 60);
 
-    let grouped_release = &samples[2];
+    let server_paged = table_sample(samples, "server-paged");
+    let server_page_plan = server_paged.render_plan();
+    let server_page_summary = server_paged.state_summary();
+
+    assert_eq!(server_paged.id, "server-paged");
+    assert_eq!(server_paged.state.rows().len(), 8);
+    assert_eq!(server_page_plan.filtering_mode(), TableStageMode::Manual);
+    assert_eq!(server_page_plan.sorting_mode(), TableStageMode::Manual);
+    assert_eq!(server_page_plan.pagination_mode(), TableStageMode::Manual);
+    assert_eq!(server_page_plan.pagination_row_count(), Some(64));
+    assert_eq!(server_page_plan.pagination_page_count(), Some(8));
+    assert_eq!(server_page_summary.core_rows, 8);
+    assert_eq!(server_page_summary.filtered_rows, 8);
+    assert_eq!(server_page_summary.final_rows, 8);
+    assert_eq!(server_page_summary.selected_rows, 1);
+    assert!(server_page_summary.manual_filtering);
+    assert!(server_page_summary.manual_sorting);
+    assert!(server_page_summary.manual_pagination);
+    assert_eq!(server_page_summary.pagination_page_index, 2);
+    assert_eq!(server_page_summary.pagination_page_size, 8);
+    assert_eq!(server_page_summary.pagination_row_count, Some(64));
+    assert_eq!(server_page_summary.pagination_page_count, Some(8));
+    assert_eq!(server_page_summary.facet_columns, 4);
+    assert_eq!(server_page_summary.manual_facet_columns, 2);
+    assert_eq!(server_page_summary.status_facet_values, 4);
+    assert_eq!(server_page_summary.status_facet_total_count, 64);
+    assert_eq!(server_page_summary.score_facet_min, Some(1));
+    assert_eq!(server_page_summary.score_facet_max, Some(64));
+    let server_status_facet = server_page_plan
+        .column_facet(&TableColumnId::new("status"))
+        .expect("server-paged status facet should resolve");
+    assert_eq!(server_status_facet.mode(), TableStageMode::Manual);
+    assert_eq!(server_status_facet.row_count(), 64);
+    assert_eq!(facet_total_count(server_status_facet), 64);
+    let server_score_range = server_page_plan
+        .column_facet(&TableColumnId::new("score"))
+        .and_then(|facet| facet.numeric_range())
+        .expect("server-paged score facet should resolve");
+    assert_eq!(server_score_range.min(), 1.0);
+    assert_eq!(server_score_range.max(), 64.0);
+    assert_eq!(
+        server_page_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "server-paged-row-0016",
+            "server-paged-row-0017",
+            "server-paged-row-0018",
+            "server-paged-row-0019",
+            "server-paged-row-0020",
+            "server-paged-row-0021",
+            "server-paged-row-0022",
+            "server-paged-row-0023",
+        ],
+        "manual modes should preserve the supplied server page snapshot"
+    );
+    assert_eq!(server_page_plan.table().final_model().selected_count(), 1);
+    assert!(
+        server_page_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .any(|row| row.id().as_str() == "server-paged-row-0018" && row.selected())
+    );
+
+    let release_resize = table_sample(samples, "release-resize");
+    let resize_plan = release_resize.render_plan();
+    let resize_summary = release_resize.state_summary();
+
+    assert_eq!(release_resize.id, "release-resize");
+    assert_eq!(release_resize.state.rows().len(), 160);
+    assert_eq!(resize_plan.table().final_model().rows().len(), 160);
+    assert_eq!(resize_summary.core_rows, 160);
+    assert_eq!(resize_summary.total_column_width_px, 520);
+    assert_eq!(resize_summary.resizable_columns, 3);
+    assert_eq!(resize_plan.columns()[0].width(), ui_px(188.0));
+    assert_eq!(resize_plan.columns()[1].width(), ui_px(116.0));
+    assert_eq!(resize_plan.columns()[2].width(), ui_px(132.0));
+    assert_eq!(resize_plan.columns()[3].width(), ui_px(84.0));
+    assert!(resize_plan.columns()[0].resizable());
+    assert!(resize_plan.columns()[1].resizable());
+    assert!(resize_plan.columns()[2].resizable());
+    assert!(!resize_plan.columns()[3].resizable());
+
+    let content_fit_release = table_sample(samples, "content-fit-release");
+    let content_fit_plan = content_fit_release.render_plan();
+    let content_fit_summary = content_fit_release.state_summary();
+
+    assert_eq!(content_fit_release.id, "content-fit-release");
+    assert_eq!(content_fit_release.state.rows().len(), 32);
+    assert_eq!(content_fit_summary.core_rows, 32);
+    assert_eq!(content_fit_summary.selected_rows, 1);
+    assert_eq!(
+        content_fit_plan.columns()[0].width_policy(),
+        TableColumnWidthPolicy::ContentFit
+    );
+    assert_eq!(content_fit_plan.columns()[3].width(), ui_px(84.0));
+
+    let toggle_release = table_sample(samples, "toggle-release");
+    let toggle_plan = toggle_release.render_plan();
+    let toggle_summary = toggle_release.state_summary();
+
+    assert_eq!(toggle_release.id, "toggle-release");
+    assert_eq!(toggle_release.state.rows().len(), 28);
+    assert_eq!(toggle_summary.core_rows, 28);
+    assert_eq!(toggle_summary.selected_rows, 1);
+    assert_eq!(
+        toggle_plan.columns()[1].editor(),
+        Some(TableCellEditor::Checkbox)
+    );
+    assert_eq!(
+        toggle_plan.rows()[0].cells()[1].editor(),
+        Some(TableCellEditor::Checkbox)
+    );
+    assert_eq!(
+        toggle_plan.table().final_model().rows()[0]
+            .cell(&TableColumnId::new("enabled"))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("true")
+    );
+
+    let select_release = table_sample(samples, "select-release");
+    let select_plan = select_release.render_plan();
+    let select_summary = select_release.state_summary();
+
+    assert_eq!(select_release.id, "select-release");
+    assert_eq!(select_release.state.rows().len(), 28);
+    assert_eq!(select_summary.core_rows, 28);
+    assert_eq!(select_summary.selected_rows, 1);
+    assert_eq!(
+        select_plan.columns()[1].editor(),
+        Some(TableCellEditor::Select)
+    );
+    assert_eq!(
+        select_plan.rows()[0].cells()[1].editor(),
+        Some(TableCellEditor::Select)
+    );
+    assert_eq!(select_plan.rows()[0].cells()[1].text(), "Ready");
+    assert_eq!(select_plan.rows()[0].cells()[1].select_options().len(), 2);
+
+    let multiline_release = table_sample(samples, "multiline-release");
+    let multiline_plan = multiline_release.render_plan();
+    let multiline_summary = multiline_release.state_summary();
+
+    assert_eq!(multiline_release.id, "multiline-release");
+    assert_eq!(multiline_release.state.rows().len(), 24);
+    assert_eq!(multiline_summary.core_rows, 24);
+    assert_eq!(multiline_summary.selected_rows, 1);
+    assert_eq!(multiline_release.row_height, ui_px(82.0));
+    assert_eq!(
+        multiline_plan.columns()[1].editor(),
+        Some(TableCellEditor::MultilineText { rows: 3 })
+    );
+    assert_eq!(
+        multiline_plan.rows()[0].cells()[1].editor(),
+        Some(TableCellEditor::MultilineText { rows: 3 })
+    );
+    assert_eq!(
+        multiline_plan.table().final_model().rows()[0]
+            .cell(&TableColumnId::new("notes"))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("User-visible summary 000\nRollback: pending")
+    );
+
+    let grouped_release = table_sample(samples, "release-rollup");
     let grouped_plan = grouped_release.render_plan();
     let grouped_summary = grouped_release.state_summary();
 
@@ -2077,6 +3056,11 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(grouped_summary.pinned_left_columns, 1);
     assert_eq!(grouped_summary.pinned_center_columns, 2);
     assert_eq!(grouped_summary.pinned_right_columns, 1);
+    assert_eq!(grouped_summary.pinned_left_width_px, 188);
+    assert_eq!(grouped_summary.pinned_center_width_px, 400);
+    assert_eq!(grouped_summary.pinned_right_width_px, 164);
+    assert_eq!(grouped_summary.total_column_width_px, 752);
+    assert!(grouped_plan.uses_split_pinned_layout());
     assert!(grouped_summary.group_rows >= 5);
     assert!(grouped_summary.leaf_rows > 0);
     assert!(grouped_summary.expanded_rows < grouped_summary.grouped_rows);
@@ -2145,6 +3129,341 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
             (TableColumnRegion::Right, vec!["status"]),
         ]
     );
+
+    let custom_grouped = table_sample(samples, "grouped-custom-aggregation");
+    let custom_plan = custom_grouped.render_plan();
+    let custom_summary = custom_grouped.state_summary();
+
+    assert_eq!(custom_grouped.id, "grouped-custom-aggregation");
+    assert_eq!(custom_grouped.state.rows().len(), 8);
+    assert_eq!(custom_grouped.state.grouping()[0].as_str(), "team");
+    assert_eq!(custom_grouped.state.aggregations().len(), 2);
+    assert_eq!(custom_grouped.state.aggregation_fn_count(), 1);
+    assert!(custom_grouped.state.has_aggregation_fn("score_plus_one"));
+    assert_eq!(custom_summary.custom_aggregation_count, 1);
+    assert_eq!(custom_plan.aggregation_fn_count(), 1);
+    assert_eq!(custom_summary.grouping_columns, 1);
+    assert_eq!(custom_summary.aggregation_count, 2);
+    assert_eq!(custom_summary.group_rows, 2);
+    assert_eq!(custom_summary.leaf_rows, 8);
+    assert_eq!(custom_summary.expanded_group_inputs, 2);
+    assert_eq!(custom_plan.table().final_model().rows().len(), 10);
+    let custom_ui_group = custom_plan
+        .table()
+        .final_model()
+        .row(&TableRowId::new("group:team=UI"))
+        .expect("expanded UI custom group should be visible and addressable");
+    assert_eq!(
+        custom_ui_group
+            .cell(&TableColumnId::new("name"))
+            .expect("custom group count aggregate should be present")
+            .filter_text(),
+        "4"
+    );
+    assert_eq!(
+        custom_ui_group
+            .cell(&TableColumnId::new("score"))
+            .expect("custom score aggregate should be present")
+            .filter_text(),
+        "11"
+    );
+    assert_eq!(
+        custom_plan
+            .table()
+            .final_model()
+            .row(&TableRowId::new("group:team=Platform"))
+            .expect("expanded Platform custom group should be visible and addressable")
+            .cell(&TableColumnId::new("score"))
+            .expect("platform custom score aggregate should be present")
+            .filter_text(),
+        "101"
+    );
+
+    let release_matrix = table_sample(samples, "release-matrix");
+    let matrix_plan = release_matrix.render_plan();
+    let matrix_summary = release_matrix.state_summary();
+
+    assert_eq!(release_matrix.id, "release-matrix");
+    assert_eq!(release_matrix.state.rows().len(), 480);
+    assert_eq!(
+        release_matrix.state.sorting()[0].column().as_str(),
+        "metric_13"
+    );
+    assert_eq!(matrix_summary.header_rows, 3);
+    assert_eq!(matrix_summary.header_groups, 4);
+    assert_eq!(matrix_summary.visible_leaf_columns, 16);
+    assert_eq!(matrix_summary.core_rows, 480);
+    assert_eq!(matrix_summary.final_rows, 480);
+    assert_eq!(matrix_summary.selected_rows, 1);
+    assert_eq!(matrix_summary.pinned_left_columns, 1);
+    assert_eq!(matrix_summary.pinned_center_columns, 14);
+    assert_eq!(matrix_summary.pinned_right_columns, 1);
+    assert_eq!(matrix_summary.pinned_left_width_px, 172);
+    assert_eq!(matrix_summary.pinned_center_width_px, 1516);
+    assert_eq!(matrix_summary.pinned_right_width_px, 148);
+    assert_eq!(matrix_summary.total_column_width_px, 1836);
+    assert!(matrix_plan.uses_split_pinned_layout());
+    assert_eq!(matrix_plan.aria_column_count(), 16);
+    assert_eq!(matrix_plan.header_row_count(), 3);
+    assert_eq!(matrix_plan.left_header_groups().header_row_count(), 3);
+    assert_eq!(matrix_plan.center_header_groups().header_row_count(), 3);
+    assert_eq!(matrix_plan.right_header_groups().header_row_count(), 3);
+    assert_eq!(
+        matrix_plan
+            .left_header_groups()
+            .group_at_depth(1)
+            .expect("left header group row should exist")
+            .headers()[0]
+            .label(),
+        "Identity"
+    );
+    assert_eq!(
+        matrix_plan
+            .center_header_groups()
+            .group_at_depth(1)
+            .expect("center header group row should exist")
+            .headers()[0]
+            .label(),
+        "Metrics"
+    );
+    assert_eq!(
+        matrix_plan
+            .right_header_groups()
+            .group_at_depth(1)
+            .expect("right header group row should exist")
+            .headers()[0]
+            .label(),
+        "Delivery"
+    );
+    assert_eq!(
+        matrix_plan
+            .column_regions()
+            .iter()
+            .find(|region| region.region() == TableColumnRegion::Center)
+            .expect("release-matrix should expose a center column region")
+            .columns()
+            .iter()
+            .map(|column| column.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "metric_00",
+            "metric_01",
+            "metric_02",
+            "metric_03",
+            "metric_04",
+            "metric_05",
+            "metric_06",
+            "metric_07",
+            "metric_08",
+            "metric_09",
+            "metric_10",
+            "metric_11",
+            "metric_12",
+            "metric_13",
+        ]
+    );
+    let row_pinning = table_sample(samples, "row-pinning");
+    let row_pinning_plan = row_pinning.render_plan();
+    let row_pinning_summary = row_pinning.state_summary();
+
+    assert_eq!(row_pinning.id, "row-pinning");
+    assert_eq!(row_pinning.state.rows().len(), 96);
+    assert_eq!(row_pinning.state.pagination().page_index(), 2);
+    assert_eq!(row_pinning.state.pagination().page_size(), 12);
+    assert_eq!(row_pinning_summary.core_rows, 96);
+    assert_eq!(row_pinning_summary.final_rows, 14);
+    assert_eq!(row_pinning_summary.pinned_top_rows, 1);
+    assert_eq!(row_pinning_summary.pinned_center_rows, 11);
+    assert_eq!(row_pinning_summary.pinned_bottom_rows, 2);
+    assert!(!row_pinning_summary.row_pinning_page_only);
+    assert_eq!(
+        row_pinning_summary.visible_rows,
+        row_pinning_plan.visible_row_count()
+    );
+    assert_eq!(
+        row_pinning_summary.rendered_rows,
+        row_pinning_plan.rendered_row_count()
+    );
+    assert_eq!(row_pinning_plan.virtualizer().count(), 11);
+    assert_eq!(row_pinning_plan.aria_row_count(), 15);
+    assert!(row_pinning_plan.uses_split_pinned_layout());
+    assert_eq!(
+        row_pinning_plan
+            .top_rows()
+            .iter()
+            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .collect::<Vec<_>>(),
+        [("row-pinning-row-003", TableRowRegion::Top, 0)]
+    );
+    assert_eq!(
+        row_pinning_plan
+            .center_rows()
+            .iter()
+            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .collect::<Vec<_>>(),
+        [
+            ("row-pinning-row-024", TableRowRegion::Center, 0),
+            ("row-pinning-row-025", TableRowRegion::Center, 1),
+            ("row-pinning-row-026", TableRowRegion::Center, 2),
+            ("row-pinning-row-027", TableRowRegion::Center, 3),
+            ("row-pinning-row-028", TableRowRegion::Center, 4),
+            ("row-pinning-row-029", TableRowRegion::Center, 5),
+            ("row-pinning-row-031", TableRowRegion::Center, 6),
+            ("row-pinning-row-032", TableRowRegion::Center, 7),
+            ("row-pinning-row-033", TableRowRegion::Center, 8),
+            ("row-pinning-row-034", TableRowRegion::Center, 9),
+            ("row-pinning-row-035", TableRowRegion::Center, 10),
+        ]
+    );
+    assert_eq!(
+        row_pinning_plan
+            .bottom_rows()
+            .iter()
+            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .collect::<Vec<_>>(),
+        [
+            ("row-pinning-row-030", TableRowRegion::Bottom, 0),
+            ("row-pinning-row-070", TableRowRegion::Bottom, 1),
+        ]
+    );
+
+    let dependency_tree = table_sample(samples, "dependency-tree");
+    let tree_plan = dependency_tree.render_plan();
+    let tree_summary = dependency_tree.state_summary();
+
+    assert_eq!(dependency_tree.state.rows().len(), 1);
+    assert_eq!(tree_summary.core_rows, 7);
+    assert_eq!(tree_summary.final_rows, 4);
+    assert_eq!(tree_summary.tree_rows, 4);
+    assert_eq!(tree_summary.tree_branch_rows, 3);
+    assert_eq!(tree_summary.tree_depth, 1);
+    assert_eq!(tree_summary.expanded_tree_inputs, 1);
+    assert_eq!(tree_summary.pinned_left_columns, 1);
+    assert_eq!(tree_summary.pinned_center_columns, 5);
+    assert_eq!(tree_summary.pinned_right_columns, 1);
+    assert_eq!(tree_summary.pinned_left_width_px, 220);
+    assert_eq!(tree_summary.pinned_center_width_px, 604);
+    assert_eq!(tree_summary.pinned_right_width_px, 132);
+    assert_eq!(tree_summary.total_column_width_px, 956);
+    assert!(tree_plan.uses_split_pinned_layout());
+    assert_eq!(tree_plan.aria_column_count(), 7);
+    assert_eq!(
+        tree_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .map(|row| (
+                row.id().as_str(),
+                row.depth(),
+                row.tree_expanded(),
+                row.is_tree_branch()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("dependency-workspace", 0, Some(true), true),
+            ("dependency-ui", 1, Some(false), true),
+            ("dependency-core", 1, Some(false), true),
+            ("dependency-docs", 1, None, false),
+        ]
+    );
+    assert!(
+        tree_plan
+            .table()
+            .final_model()
+            .row(&TableRowId::new("dependency-ui-table"))
+            .is_some(),
+        "collapsed source-tree descendants should stay addressable by stable row id"
+    );
+
+    let server_tree = table_sample(samples, "server-tree");
+    let server_plan = server_tree.render_plan();
+    let server_summary = server_tree.state_summary();
+
+    assert_eq!(server_tree.state.rows().len(), 3);
+    assert_eq!(
+        server_tree.state.expansion_mode(),
+        TableExpansionMode::Manual
+    );
+    assert_eq!(server_summary.core_rows, 3);
+    assert_eq!(server_summary.final_rows, 3);
+    assert_eq!(server_summary.tree_rows, 3);
+    assert_eq!(server_summary.tree_branch_rows, 3);
+    assert_eq!(server_summary.tree_depth, 0);
+    assert_eq!(server_summary.unloaded_tree_branches, 1);
+    assert_eq!(server_summary.loading_tree_rows, 1);
+    assert_eq!(server_summary.failed_tree_rows, 1);
+    assert!(server_summary.manual_expansion);
+    assert_eq!(server_summary.expanded_tree_inputs, 0);
+    assert_eq!(server_summary.pinned_left_columns, 1);
+    assert_eq!(server_summary.pinned_center_columns, 5);
+    assert_eq!(server_summary.pinned_right_columns, 1);
+    assert_eq!(server_summary.total_column_width_px, 956);
+    assert!(server_plan.uses_split_pinned_layout());
+    assert_eq!(server_plan.aria_column_count(), 7);
+    assert_eq!(server_plan.aria_row_count(), 4);
+    assert_eq!(
+        server_plan
+            .table()
+            .final_model()
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["server-workspace", "server-cache", "server-failed"]
+    );
+
+    let server_workspace = server_plan
+        .table()
+        .final_model()
+        .row(&TableRowId::new("server-workspace"))
+        .expect("server workspace row should resolve");
+    let server_cache = server_plan
+        .table()
+        .final_model()
+        .row(&TableRowId::new("server-cache"))
+        .expect("server cache row should resolve");
+    let server_failed = server_plan
+        .table()
+        .final_model()
+        .row(&TableRowId::new("server-failed"))
+        .expect("server failed row should resolve");
+
+    assert!(server_workspace.is_tree_branch());
+    assert_eq!(server_workspace.loaded_child_count(), 0);
+    assert_eq!(
+        server_workspace.children_load_state(),
+        Some(&TableRowChildrenLoadState::Idle)
+    );
+    assert_eq!(server_workspace.tree_expanded(), Some(false));
+    assert!(server_cache.is_tree_branch());
+    assert_eq!(server_cache.loaded_child_count(), 0);
+    assert_eq!(
+        server_cache
+            .children_load_state()
+            .and_then(TableRowChildrenLoadState::message),
+        Some("Loading cached modules")
+    );
+    assert!(
+        server_cache
+            .children_load_state()
+            .is_some_and(TableRowChildrenLoadState::is_loading)
+    );
+    assert_eq!(server_cache.tree_expanded(), Some(false));
+    assert!(server_failed.is_tree_branch());
+    assert_eq!(server_failed.loaded_child_count(), 0);
+    assert_eq!(
+        server_failed
+            .children_load_state()
+            .and_then(TableRowChildrenLoadState::message),
+        Some("Gateway timeout")
+    );
+    assert!(
+        server_failed
+            .children_load_state()
+            .is_some_and(TableRowChildrenLoadState::is_failed)
+    );
+    assert_eq!(server_failed.tree_expanded(), Some(false));
 }
 
 #[test]
@@ -2445,9 +3764,27 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"open_gpui_ui_components::Table"));
     assert!(signals.contains(&"open_gpui_ui_components::TableState"));
     assert!(signals.contains(&"open_gpui_ui_components::TableAggregation"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableFacetedFilter"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableFacetedFilterChange"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableFacetedFilterState"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableGlobalFilter"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableGlobalFilterChange"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableGlobalFilterState"));
+    assert!(signals.contains(&"open_gpui_ui_components::TablePredicateFilter"));
+    assert!(signals.contains(&"open_gpui_ui_components::TablePredicateFilterChange"));
+    assert!(signals.contains(&"open_gpui_ui_components::TablePredicateFilterOperator"));
+    assert!(signals.contains(&"open_gpui_ui_components::TablePredicateFilterOperatorOptionState"));
+    assert!(signals.contains(&"open_gpui_ui_components::TablePredicateFilterState"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableRangeFilter"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableRangeFilterChange"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableRangeFilterState"));
     assert!(signals.contains(&"open_gpui_ui_components::TableColumnPinning"));
     assert!(signals.contains(&"open_gpui_ui_components::TableColumnRegion"));
     assert!(signals.contains(&"open_gpui_ui_components::TableExpansionState"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableRowPinning"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableRowPinningPolicy"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableRowRegion"));
+    assert!(signals.contains(&"open_gpui_ui_components::TableRowRegions"));
     assert!(signals.contains(&"open_gpui_ui_components::Tree"));
     assert!(signals.contains(&"open_gpui_ui_components::TreeState"));
     assert!(signals.contains(&"open_gpui_ui_components::VirtualizedList"));
@@ -2467,6 +3804,60 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"Role::Cell"));
     assert!(signals.contains(&"Role::Tree"));
     assert!(signals.contains(&"Role::TreeItem"));
+
+    let table_gate = gates
+        .iter()
+        .find(|gate| gate.id == "table-virtualization")
+        .unwrap_or_else(|| panic!("expected table conformance gate"));
+    assert!(table_gate.evidence.contains(&"TableFacetedFilter"));
+    assert!(table_gate.evidence.contains(&"TableGlobalFilter"));
+    assert!(table_gate.evidence.contains(&"TablePredicateFilter"));
+    assert!(table_gate.evidence.contains(&"TableRangeFilter"));
+    assert!(table_gate.evidence.contains(&"TableColumnWidthPolicy"));
+    assert!(table_gate.evidence.contains(&"content-fit-release"));
+    assert!(table_gate.evidence.contains(&"toggle-release"));
+    assert!(table_gate.evidence.contains(&"select-release"));
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_select_table_cell_updates_sample_rows")
+    );
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_global_filter_updates_table_rows")
+    );
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_predicate_filter_updates_table_rows")
+    );
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_faceted_filter_updates_table_rows")
+    );
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_range_filter_updates_table_rows")
+    );
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_content_fit_table_cell_edit_widens_name_column")
+    );
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_checkbox_table_cell_updates_sample_rows")
+    );
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_select_table_cell_updates_sample_rows")
+    );
+    assert!(table_gate.evidence.contains(&"select-release"));
 }
 
 #[open_gpui::test]
@@ -2819,6 +4210,92 @@ fn overlay_gallery_smoke_closes_menu_from_escape_and_outside_press(
 }
 
 #[open_gpui::test]
+fn overlay_gallery_smoke_opens_menu_submenu_from_hover(cx: &mut open_gpui::TestAppContext) {
+    let cx = open_overlay_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:overlay-menu-sample:rich-items");
+    click(cx, "menu:overlay-menu-demo:rich-items:trigger");
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort")
+            .is_some(),
+        "expected the rich menu submenu trigger to render after opening the menu"
+    );
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
+            .is_none(),
+        "expected rich menu submenu child to start hidden before hover"
+    );
+
+    let sort = bounds(cx, "menu:overlay-menu-demo:rich-items:item:3:sort").center();
+    cx.simulate_mouse_move(sort, None, Default::default());
+    redraw(cx);
+
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
+            .is_none(),
+        "expected hovering the rich menu submenu trigger to keep its child rows hidden before the hover delay"
+    );
+
+    advance_and_redraw(cx, Duration::from_millis(200));
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
+            .is_some(),
+        "expected the rich menu submenu child to render after the hover delay"
+    );
+
+    let child = bounds(cx, "menu:overlay-menu-demo:rich-items:item:3:sort/0:name").center();
+    cx.simulate_mouse_move(child, None, Default::default());
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
+            .is_some(),
+        "expected moving into the submenu child to keep the branch open"
+    );
+
+    let group = bounds(cx, "menu:overlay-menu-demo:rich-items:item:4:group").center();
+    cx.simulate_mouse_move(group, None, Default::default());
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:4:group/0:kind")
+            .is_none(),
+        "expected hovering another submenu trigger to keep its child rows hidden before the hover delay"
+    );
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
+            .is_some(),
+        "expected switching submenu triggers to keep the previous branch visible until the new hover delay elapses"
+    );
+
+    advance_and_redraw(cx, Duration::from_millis(200));
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:4:group/0:kind")
+            .is_some(),
+        "expected hovering another submenu trigger to open its branch after the hover delay"
+    );
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:3:sort/0:name")
+            .is_none(),
+        "expected switching submenu triggers to close the previous branch after the hover delay"
+    );
+
+    let root_item = bounds(cx, "menu:overlay-menu-demo:rich-items:item:0:show-hidden").center();
+    cx.simulate_mouse_move(root_item, None, Default::default());
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:4:group/0:kind")
+            .is_some(),
+        "expected hovering another root item to keep the rich menu submenu branch visible until the close delay elapses"
+    );
+
+    advance_and_redraw(cx, Duration::from_millis(200));
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:rich-items:item:4:group/0:kind")
+            .is_none(),
+        "expected hovering another root item to close the rich menu submenu branch after the close delay"
+    );
+}
+
+#[open_gpui::test]
 fn overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -2890,30 +4367,45 @@ fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
         .is_some(),
         "expected Components page to show official primitive entries"
     );
-    for (name, selector) in pages::components::official_sample_selector_pairs() {
-        assert!(
-            cx.debug_bounds(selector).is_some(),
-            "expected Components page to render official {name} sample `{selector}`"
-        );
-    }
-    for (name, selector) in pages::components::state_contract_readout_pairs() {
-        assert!(
-            cx.debug_bounds(selector).is_some(),
-            "expected Components page to render state-contract {name} readout `{selector}`"
-        );
-    }
-    for selector in [
-        "separator:component-separator:section-rule:root",
-        "kbd:component-kbd:command-palette:root",
-        "progress:component-progress:sync:root",
-        "skeleton:component-skeleton:body-line:root",
-        "avatar:component-avatar:ada:root",
-        "status-cue:component-status-cue:sync-warning:root",
-        "empty-state:component-empty-state:no-results:root",
+    assert!(
+        cx.debug_bounds(
+            &pages::components::COMPONENT_CATALOG
+                .iter()
+                .find(|entry| entry.name == "AvatarGroup")
+                .unwrap_or_else(|| panic!("expected catalog entry `AvatarGroup`"))
+                .catalog_selector()
+        )
+        .is_some(),
+        "expected Components page to show AvatarGroup as an official primitive entry"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-button-sample:default")
+            .is_none(),
+        "expected Components all-mode to lazy-render deep samples instead of mounting every section immediately"
+    );
+
+    for (jump, expected_selector) in [
+        (
+            "gallery:component-page-jump:primitives",
+            "separator:component-separator:section-rule:root",
+        ),
+        (
+            "gallery:component-page-jump:feedback",
+            "status-cue:component-status-cue:sync-warning:root",
+        ),
+        (
+            "gallery:component-page-jump:state-contracts",
+            "gallery:component-tree-state-contract:document-outline",
+        ),
+        (
+            "gallery:component-page-jump:button",
+            "gallery:component-button-sample:default",
+        ),
     ] {
+        jump_components_directory_to(cx, jump);
         assert!(
-            cx.debug_bounds(selector).is_some(),
-            "expected Components page to render real component root `{selector}`"
+            cx.debug_bounds(expected_selector).is_some(),
+            "expected Components page jump `{jump}` to render lazy target `{expected_selector}`"
         );
     }
 
@@ -2966,6 +4458,46 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
         "expected focused Table mode to render the grouped Table sample"
     );
     assert!(
+        cx.debug_bounds("gallery:component-table-sample:release-resize")
+            .is_some(),
+        "expected focused Table mode to render the resizable Table sample"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-table-sample:editable-release")
+            .is_some(),
+        "expected focused Table mode to render the editable Table sample"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-table-sample:toggle-release")
+            .is_some(),
+        "expected focused Table mode to render the checkbox Table sample"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-table-sample:select-release")
+            .is_some(),
+        "expected focused Table mode to render the select Table sample"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-table-sample:content-fit-release")
+            .is_some(),
+        "expected focused Table mode to render the content-fit Table sample"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-table-sample:release-matrix")
+            .is_some(),
+        "expected focused Table mode to render the wide matrix Table sample"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-table-sample:grouped-custom-aggregation")
+            .is_some(),
+        "expected focused Table mode to render the custom aggregation Table sample"
+    );
+    assert!(
+        cx.debug_bounds("gallery:component-table-sample:row-pinning")
+            .is_some(),
+        "expected focused Table mode to render the row-pinning Table sample"
+    );
+    assert!(
         cx.debug_bounds("gallery:component-button-sample:default")
             .is_none(),
         "expected focused Table mode to hide unrelated Button samples"
@@ -2989,13 +4521,17 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
     );
     assert!(
         cx.debug_bounds("gallery:component-button-sample:default")
-            .is_some(),
-        "expected all-components mode to restore Button samples"
+            .is_none(),
+        "expected all-components mode to keep deep Button samples lazy after restoration"
     );
     assert!(
         cx.debug_bounds("gallery:component-tabs-sample:workspace-tabs")
-            .is_some(),
-        "expected all-components mode to restore nested Tabs samples"
+            .is_none(),
+        "expected all-components mode to keep nested Tabs samples lazy after restoration"
+    );
+    assert!(
+        cx.debug_bounds("component-catalog:Button").is_some(),
+        "expected all-components mode restoration to show the catalog entry for Button"
     );
 }
 
@@ -3014,7 +4550,7 @@ fn components_gallery_smoke_focuses_every_focusable_catalog_entry(
         .iter()
         .filter(|entry| pages::components::focused_section_for_catalog_entry(entry).is_some())
     {
-        focus_components_catalog_entry(&shell, cx, entry);
+        focus_components_section(&shell, cx, entry);
         visited.push(entry.name);
     }
 
@@ -3031,10 +4567,14 @@ fn components_gallery_smoke_focuses_every_focusable_catalog_entry(
         "gallery:component-tabs-sample:workspace-tabs",
     ] {
         assert!(
-            cx.debug_bounds(selector).is_some(),
-            "expected all-mode restoration after matrix traversal to render `{selector}`"
+            cx.debug_bounds(selector).is_none(),
+            "expected all-mode restoration after matrix traversal to keep deep lazy sample `{selector}` unmounted"
         );
     }
+    assert!(
+        cx.debug_bounds("component-catalog:Button").is_some(),
+        "expected all-mode restoration after matrix traversal to return to the component catalog"
+    );
 
     assert_eq!(
         visited.len(),
@@ -3055,12 +4595,16 @@ fn components_gallery_smoke_focuses_every_focusable_catalog_entry(
 fn components_gallery_smoke_focused_table_scroll_stays_inside_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
-    scroll_page_until_visible(cx, "component-catalog:Table");
+    scroll_page_selector_into_view(&shell, cx, "component-catalog:Table");
     click(cx, "component-catalog:Table");
     settle(cx);
-    scroll_page_until_visible(cx, "gallery:component-table-sample:release-queue");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:table:component-table:release-queue:body-scroll",
+    );
 
     let sample_before = bounds(cx, "gallery:component-table-sample:release-queue");
     let table_viewport = bounds(
@@ -3101,14 +4645,54 @@ fn components_gallery_smoke_focused_table_scroll_stays_inside_sample(
 }
 
 #[open_gpui::test]
+fn components_gallery_smoke_textarea_scroll_stays_inside_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE: &str = "gallery:component-textarea-sample:overflow";
+    const VIEWPORT: &str = "textarea:component-textarea:overflow:root";
+    const LINE: &str = "textarea:component-textarea:overflow:line:2";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+
+    jump_components_directory_to(cx, "gallery:component-page-jump:textarea");
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    scroll_page_selector_into_view(&shell, cx, VIEWPORT);
+
+    let sample_before = bounds(cx, SAMPLE);
+    let line_before = bounds(cx, LINE);
+    let viewport_position = visible_page_interaction_point(cx, VIEWPORT);
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: viewport_position,
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    let line_after = bounds(cx, LINE);
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected Textarea wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert!(
+        line_after.top() < line_before.top(),
+        "expected Textarea wheel input to move the inner multiline content; before={line_before:?} after={line_after:?}"
+    );
+}
+
+#[open_gpui::test]
 fn components_gallery_smoke_focused_command_samples_cover_depth_behaviors(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    let cx = open_components_gallery(cx);
-
-    scroll_page_until_visible(cx, "component-catalog:Command");
-    click(cx, "component-catalog:Command");
-    settle(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    let command_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Command")
+        .unwrap_or_else(|| panic!("expected catalog entry `Command`"));
+    focus_components_section(&shell, cx, command_entry);
 
     for selector in [
         "gallery:component-command-sample:ranked-search",
@@ -3308,7 +4892,7 @@ fn components_gallery_smoke_closes_select_popup_from_outside_press(
 fn components_gallery_smoke_scroll_area_samples_scroll_inside_page(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
     let samples = pages::components::scroll_area_samples(ThemeTokens::default());
     let data_grid = samples
@@ -3326,12 +4910,23 @@ fn components_gallery_smoke_scroll_area_samples_scroll_inside_page(
     assert!(data_grid.state.scrolls_y());
     assert_eq!(data_grid.items.len(), 7);
 
-    scroll_page_until_visible(cx, "gallery:component-scroll-area-sample:release-queue");
+    jump_components_directory_to(cx, "gallery:component-page-jump:scroll-area");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "gallery:component-scroll-area-sample:release-queue",
+    );
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:component-scroll-area:release-queue",
+    );
     let queue_before = bounds(cx, "gallery:component-scroll-area-item:release-queue:2");
-    let queue_viewport = bounds(cx, "scroll-area:component-scroll-area:release-queue");
+    let queue_position =
+        visible_page_interaction_point(cx, "scroll-area:component-scroll-area:release-queue");
 
     cx.simulate_event(ScrollWheelEvent {
-        position: queue_viewport.center(),
+        position: queue_position,
         delta: ScrollDelta::Pixels(point(px(-72.0), px(0.0))),
         ..Default::default()
     });
@@ -3348,15 +4943,26 @@ fn components_gallery_smoke_scroll_area_samples_scroll_inside_page(
 fn components_gallery_smoke_release_queue_scroll_stays_inside_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
-    scroll_page_until_visible(cx, "gallery:component-scroll-area-sample:release-queue");
+    jump_components_directory_to(cx, "gallery:component-page-jump:scroll-area");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "gallery:component-scroll-area-sample:release-queue",
+    );
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:component-scroll-area:release-queue",
+    );
     let sample_before = bounds(cx, "gallery:component-scroll-area-sample:release-queue");
     let queue_before = bounds(cx, "gallery:component-scroll-area-item:release-queue:2");
-    let queue_viewport = bounds(cx, "scroll-area:component-scroll-area:release-queue");
+    let queue_position =
+        visible_page_interaction_point(cx, "scroll-area:component-scroll-area:release-queue");
 
     cx.simulate_event(ScrollWheelEvent {
-        position: queue_viewport.center(),
+        position: queue_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-56.0))),
         ..Default::default()
     });
@@ -3380,9 +4986,14 @@ fn components_gallery_smoke_release_queue_scroll_stays_inside_sample(
 fn components_gallery_smoke_release_queue_card_wheel_does_not_leak_to_page(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
-    scroll_page_until_visible(cx, "gallery:component-scroll-area-sample:release-queue");
+    jump_components_directory_to(cx, "gallery:component-page-jump:scroll-area");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "gallery:component-scroll-area-sample:release-queue",
+    );
     let sample_before = bounds(cx, "gallery:component-scroll-area-sample:release-queue");
     let queue_before = bounds(cx, "gallery:component-scroll-area-item:release-queue:2");
 
@@ -3412,10 +5023,14 @@ fn components_gallery_smoke_release_queue_card_wheel_does_not_leak_to_page(
 
 #[open_gpui::test]
 fn components_gallery_smoke_table_scroll_stays_inside_sample(cx: &mut open_gpui::TestAppContext) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
     jump_components_directory_to(cx, "gallery:component-page-jump:table");
-    scroll_page_until_visible(cx, "gallery:component-table-sample:release-queue");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:table:component-table:release-queue:body-scroll",
+    );
     let sample_before = bounds(cx, "gallery:component-table-sample:release-queue");
     let table_viewport = bounds(
         cx,
@@ -3455,6 +5070,813 @@ fn components_gallery_smoke_table_scroll_stays_inside_sample(cx: &mut open_gpui:
 }
 
 #[open_gpui::test]
+fn components_gallery_smoke_resizable_table_resize_updates_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+
+    jump_components_directory_to(cx, "gallery:component-page-jump:table");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "table:component-table:release-resize:resize:name",
+    );
+    let sample_before = bounds(cx, "gallery:component-table-sample:release-resize");
+    let header_before = bounds(cx, "table:component-table:release-resize:header:name");
+    let cell_before = bounds(
+        cx,
+        "table:component-table:release-resize:cell:release-resize-row-000:name",
+    );
+    let resize_handle = bounds(cx, "table:component-table:release-resize:resize:name");
+
+    assert_eq!(header_before.size.width, cell_before.size.width);
+    assert!(
+        cx.debug_bounds("table:component-table:release-resize:resize:score")
+            .is_none(),
+        "expected the score column to stay non-resizable"
+    );
+
+    drag(
+        cx,
+        resize_handle.center(),
+        point(
+            resize_handle.center().x + px(60.0),
+            resize_handle.center().y,
+        ),
+    );
+
+    let sample_after = bounds(cx, "gallery:component-table-sample:release-resize");
+    let header_after = bounds(cx, "table:component-table:release-resize:header:name");
+    let cell_after = bounds(
+        cx,
+        "table:component-table:release-resize:cell:release-resize-row-000:name",
+    );
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.sizing_changes().to_vec()
+    });
+    let committed_width =
+        cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+            log.committed_sizing("release-resize")
+                .and_then(|sizing| sizing.width(&TableColumnId::new("name")))
+        });
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected Table resize drag to keep the sample card anchored"
+    );
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].sample_id, "release-resize");
+    assert_eq!(changes[0].column_id, "name");
+    assert!(changes[0].width > ui_px(188.0));
+    assert_eq!(committed_width, Some(changes[0].width));
+    assert_eq!(header_after.size.width, cell_after.size.width);
+    assert!(header_after.size.width > header_before.size.width);
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_faceted_filter_updates_table_rows(cx: &mut open_gpui::TestAppContext) {
+    const SAMPLE: &str = "gallery:component-table-sample:filter-board";
+    const TRIGGER: &str = "popover:component-table-faceted-filter:filter-board:status:trigger";
+    const CONTENT: &str =
+        "table-faceted-filter:component-table-faceted-filter:filter-board:status:content";
+    const DONE_OPTION: &str =
+        "table-faceted-filter:component-table-faceted-filter:filter-board:status:option:Done";
+    const INITIAL_ROW: &str = "table:component-table:filter-board:row:filter-board-row-177";
+    const FILTERED_ROW: &str = "table:component-table:filter-board:row:filter-board-row-171";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, TRIGGER);
+
+    let sample_before = bounds(cx, SAMPLE);
+    assert!(
+        cx.debug_bounds(INITIAL_ROW).is_some(),
+        "expected the initial filtered board row to render before selecting a status facet"
+    );
+
+    click(cx, TRIGGER);
+    settle(cx);
+    if cx.debug_bounds(CONTENT).is_none() {
+        click(cx, TRIGGER);
+        settle(cx);
+    }
+    let popup_content = bounds(cx, CONTENT);
+    cx.simulate_event(ScrollWheelEvent {
+        position: popup_content.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-180.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after_popup_wheel = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after_popup_wheel.top(),
+        sample_before.top(),
+        "expected faceted-filter popup wheel input to stay inside the table sample"
+    );
+
+    click(cx, DONE_OPTION);
+    settle(cx);
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.faceted_filter_changes().to_vec()
+    });
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].sample_id, "filter-board");
+    assert_eq!(changes[0].column_id, "status");
+    assert_eq!(changes[0].selected_values, vec!["Done".to_owned()]);
+    assert_eq!(changes[0].toggled_value, Some("Done".to_owned()));
+    assert!(changes[0].selected);
+    assert_eq!(changes[0].filtered_rows, 15);
+    assert_eq!(changes[0].final_rows, 15);
+    assert!(
+        cx.debug_bounds(INITIAL_ROW).is_none(),
+        "expected the Doing row to leave the rendered window after selecting Done"
+    );
+    assert!(
+        cx.debug_bounds(FILTERED_ROW).is_some(),
+        "expected the highest-scoring Done row to render after selecting Done"
+    );
+
+    if cx.debug_bounds(DONE_OPTION).is_none() {
+        click(cx, TRIGGER);
+        settle(cx);
+    }
+    click(cx, DONE_OPTION);
+    settle(cx);
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.faceted_filter_changes().to_vec()
+    });
+    assert_eq!(changes.len(), 2);
+    assert!(changes[1].selected_values.is_empty());
+    assert_eq!(changes[1].toggled_value, Some("Done".to_owned()));
+    assert!(!changes[1].selected);
+    assert_eq!(changes[1].filtered_rows, 60);
+    assert_eq!(changes[1].final_rows, 24);
+    assert!(
+        cx.debug_bounds(INITIAL_ROW).is_some(),
+        "expected clearing the status facet to restore the original filtered board rows"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_global_filter_updates_table_rows(cx: &mut open_gpui::TestAppContext) {
+    const SAMPLE_ID: &str = "filter-board";
+    const SAMPLE: &str = "gallery:component-table-sample:filter-board";
+    const TOOLBAR: &str = "table-toolbar:component-table-toolbar:filter-board:root";
+    const INPUT: &str = "text-input:component-table-global-filter:filter-board-input:root";
+    const INITIAL_ROW: &str = "table:component-table:filter-board:row:filter-board-row-177";
+    const FILTERED_ROW: &str = "table:component-table:filter-board:row:filter-board-row-012";
+
+    let table_samples = pages::components::table_samples(ThemeTokens::default());
+    let sample = table_sample(&table_samples, SAMPLE_ID);
+    let expected_state = TableGlobalFilterChange::new("012").apply_to(sample.state.clone());
+    let expected = expected_state.resolve();
+    let expected_filtered_rows = expected.filtered_model().rows().len();
+    let expected_final_rows = expected.final_model().rows().len();
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, INPUT);
+
+    let sample_before = bounds(cx, SAMPLE);
+    assert!(
+        cx.debug_bounds(TOOLBAR).is_some(),
+        "expected filter-board controls to render inside the table toolbar recipe"
+    );
+    assert!(
+        cx.debug_bounds(INITIAL_ROW).is_some(),
+        "expected the initial filtered board row to render before applying a global search"
+    );
+
+    click(cx, INPUT);
+    settle(cx);
+    cx.simulate_input("012");
+    settle(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected the global-search input to stay inside the table sample"
+    );
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.global_filter_changes().to_vec()
+    });
+    assert!(!changes.is_empty());
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one global-filter change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.query, "012");
+    assert!(!last.cleared);
+    assert_eq!(last.filtered_rows, expected_filtered_rows);
+    assert_eq!(last.final_rows, expected_final_rows);
+
+    let persisted = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.global_filter_override(SAMPLE_ID)
+            .and_then(|state| state.global_filter().map(str::to_owned))
+    });
+    assert_eq!(persisted.as_deref(), Some("012"));
+    assert!(
+        cx.debug_bounds(INITIAL_ROW).is_none(),
+        "expected the initial board row to leave the rendered window after applying global search"
+    );
+    assert!(
+        cx.debug_bounds(FILTERED_ROW).is_some(),
+        "expected the matching board row to render after applying global search"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_predicate_filter_updates_table_rows(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE_ID: &str = "filter-board";
+    const SAMPLE: &str = "gallery:component-table-sample:filter-board";
+    const TOOLBAR: &str = "table-toolbar:component-table-toolbar:filter-board:root";
+    const INPUT: &str = "text-input:component-table-predicate-filter:filter-board:name-value:root";
+    const INITIAL_ROW: &str = "table:component-table:filter-board:row:filter-board-row-177";
+    const FILTERED_ROW: &str = "table:component-table:filter-board:row:filter-board-row-012";
+
+    let table_samples = pages::components::table_samples(ThemeTokens::default());
+    let sample = table_sample(&table_samples, SAMPLE_ID);
+    let expected_state = TablePredicateFilterChange::new(
+        "name",
+        TablePredicateFilterOperator::text(TableTextFilterOperator::Contains),
+        "012",
+    )
+    .apply_to(sample.state.clone());
+    let expected = expected_state.resolve();
+    let expected_filtered_rows = expected.filtered_model().rows().len();
+    let expected_final_rows = expected.final_model().rows().len();
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, INPUT);
+
+    let sample_before = bounds(cx, SAMPLE);
+    assert!(
+        cx.debug_bounds(TOOLBAR).is_some(),
+        "expected filter-board controls to render inside the table toolbar recipe"
+    );
+    assert!(
+        cx.debug_bounds(INITIAL_ROW).is_some(),
+        "expected the initial filtered board row to render before applying a name predicate"
+    );
+
+    click(cx, INPUT);
+    settle(cx);
+    cx.simulate_input("012");
+    settle(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected the predicate input to stay inside the table sample"
+    );
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.predicate_filter_changes().to_vec()
+    });
+    assert!(
+        changes.len() >= "012".len(),
+        "typing a board-item predicate should record controlled changes; changes={changes:?}"
+    );
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one predicate-filter change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.column_id, "name");
+    assert_eq!(last.operator.as_deref(), Some("text:contains"));
+    assert_eq!(last.value, "012");
+    assert!(!last.cleared);
+    assert_eq!(last.filtered_rows, expected_filtered_rows);
+    assert_eq!(last.final_rows, expected_final_rows);
+
+    let persisted = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.predicate_filter_override(SAMPLE_ID).and_then(|state| {
+            state
+                .filters()
+                .iter()
+                .find(|filter| filter.column() == &TableColumnId::new("name"))
+                .and_then(|filter| {
+                    filter
+                        .text_predicate()
+                        .map(|(operator, query, _)| (operator, query.to_owned()))
+                })
+        })
+    });
+    assert_eq!(
+        persisted,
+        Some((TableTextFilterOperator::Contains, "012".to_owned()))
+    );
+    assert!(
+        cx.debug_bounds(INITIAL_ROW).is_none(),
+        "expected the initial board row to leave the rendered window after applying name predicate"
+    );
+    assert!(
+        cx.debug_bounds(FILTERED_ROW).is_some(),
+        "expected the matching board row to render after applying name predicate"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_range_filter_updates_table_rows(cx: &mut open_gpui::TestAppContext) {
+    const SAMPLE_ID: &str = "filter-board";
+    const SAMPLE: &str = "gallery:component-table-sample:filter-board";
+    const TRIGGER: &str = "popover:component-table-range-filter:filter-board:score:trigger";
+    const CONTENT: &str =
+        "table-range-filter:component-table-range-filter:filter-board:score:content";
+    const MIN_INPUT: &str = "text-input:component-table-range-filter:filter-board:score-min:root";
+
+    let table_samples = pages::components::table_samples(ThemeTokens::default());
+    let sample = table_sample(&table_samples, SAMPLE_ID);
+    let baseline = sample.state.resolve();
+    let baseline_rows = baseline.filtered_model().rows().len();
+    let expected_state =
+        TableRangeFilterChange::new("score", "170", "").apply_to(sample.state.clone());
+    let expected = expected_state.resolve();
+    let expected_filtered_rows = expected.filtered_model().rows().len();
+    let expected_final_rows = expected.final_model().rows().len();
+    let expected_page_row_ids = expected
+        .final_model()
+        .rows()
+        .iter()
+        .map(|row| row.id().clone())
+        .collect::<Vec<_>>();
+    let removed_row_id = baseline
+        .final_model()
+        .rows()
+        .iter()
+        .find(|row| !expected_page_row_ids.contains(row.id()))
+        .unwrap_or_else(|| panic!("expected score range to remove at least one initial page row"))
+        .id()
+        .as_str()
+        .to_owned();
+    let removed_row_selector = format!("table:component-table:filter-board:row:{removed_row_id}");
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, TRIGGER);
+
+    let sample_before = bounds(cx, SAMPLE);
+    assert!(
+        cx.debug_bounds(&removed_row_selector).is_some(),
+        "expected the initial filter-board row to render before applying a score range"
+    );
+
+    click(cx, TRIGGER);
+    settle(cx);
+    let popup_content = bounds(cx, CONTENT);
+    cx.simulate_event(ScrollWheelEvent {
+        position: popup_content.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-180.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after_popup_wheel = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after_popup_wheel.top(),
+        sample_before.top(),
+        "expected range-filter popup wheel input to stay inside the table sample"
+    );
+
+    click(cx, MIN_INPUT);
+    settle(cx);
+    cx.simulate_input("170");
+    settle(cx);
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.range_filter_changes().to_vec()
+    });
+    assert!(
+        changes.len() >= 3,
+        "typing a three-digit range minimum should record controlled changes; changes={changes:?}"
+    );
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one range-filter change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.column_id, "score");
+    assert_eq!(last.min_text, "170");
+    assert_eq!(last.max_text, "");
+    assert_eq!(last.min_value, Some(170.0));
+    assert_eq!(last.max_value, None);
+    assert!(!last.cleared);
+    assert_eq!(last.filtered_rows, expected_filtered_rows);
+    assert_eq!(last.final_rows, expected_final_rows);
+    assert!(
+        last.filtered_rows < baseline_rows,
+        "score range should narrow the table row model"
+    );
+
+    let persisted_range =
+        cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+            log.range_filter_override(SAMPLE_ID).and_then(|state| {
+                state
+                    .filters()
+                    .iter()
+                    .find(|filter| filter.column() == &TableColumnId::new("score"))
+                    .and_then(|filter| filter.number_range_bounds())
+            })
+        });
+    assert_eq!(persisted_range, Some((Some(170.0), None)));
+    assert!(
+        cx.debug_bounds(&removed_row_selector).is_none(),
+        "expected lower-score filter-board row to leave the rendered window after applying score range"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_editable_table_cell_updates_sample_rows(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE_ID: &str = "editable-release";
+    const SAMPLE: &str = "gallery:component-table-sample:editable-release";
+    const NAME_INPUT: &str = "text-input:table:component-table:editable-release:cell:editable-release-row-000:name:editor:root";
+    const STATUS_INPUT: &str = "text-input:table:component-table:editable-release:cell:editable-release-row-000:status:editor:root";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, NAME_INPUT);
+
+    assert!(
+        cx.debug_bounds(STATUS_INPUT).is_none(),
+        "read-only status column should not mount a text input"
+    );
+    let sample_before = bounds(cx, SAMPLE);
+    let input = bounds(cx, NAME_INPUT);
+    cx.simulate_click(
+        point(input.right() - px(8.0), input.center().y),
+        Default::default(),
+    );
+    settle(cx);
+    cx.simulate_input(" Prime");
+    settle(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "editing a table cell should not move the sample card"
+    );
+    assert!(
+        cx.debug_bounds(NAME_INPUT).is_some(),
+        "editable input should remain mounted after app-owned state feedback"
+    );
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_changes().to_vec()
+    });
+    assert!(
+        changes.len() >= 2,
+        "gallery edit should record controlled text changes; changes={changes:?}"
+    );
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one edit change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.row_id, "editable-release-row-000");
+    assert_eq!(last.column_id, "name");
+    assert_eq!(last.outcome, "updated");
+    assert!(last.next_text.contains("Prime"));
+
+    let edited_name = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_override(SAMPLE_ID)
+            .and_then(|state| state.rows().first())
+            .and_then(|row| row.cell(&TableColumnId::new("name")))
+            .map(TableCellValue::filter_text)
+    });
+    assert_eq!(edited_name.as_deref(), Some("Editable release 000 Prime"));
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_checkbox_table_cell_updates_sample_rows(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE_ID: &str = "toggle-release";
+    const SAMPLE: &str = "gallery:component-table-sample:toggle-release";
+    const ENABLED_CHECKBOX: &str = "checkbox:table:component-table:toggle-release:cell:toggle-release-row-000:enabled:editor:root";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, ENABLED_CHECKBOX);
+
+    let sample_before = bounds(cx, SAMPLE);
+    let checkbox = bounds(cx, ENABLED_CHECKBOX);
+    cx.simulate_click(checkbox.center(), Default::default());
+    settle(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "toggling a table cell should not move the sample card"
+    );
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_changes().to_vec()
+    });
+    assert_eq!(
+        changes.len(),
+        1,
+        "checkbox toggle should record one controlled change"
+    );
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one checkbox edit change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.row_id, "toggle-release-row-000");
+    assert_eq!(last.column_id, "enabled");
+    assert_eq!(last.outcome, "updated");
+    assert_eq!(last.previous_text, "true");
+    assert_eq!(last.next_text, "false");
+
+    let edited_enabled = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_override(SAMPLE_ID)
+            .and_then(|state| state.rows().first())
+            .and_then(|row| row.cell(&TableColumnId::new("enabled")))
+            .cloned()
+    });
+    assert_eq!(edited_enabled, Some(TableCellValue::Bool(false)));
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_select_table_cell_updates_sample_rows(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE_ID: &str = "select-release";
+    const SAMPLE: &str = "gallery:component-table-sample:select-release";
+    const STATUS_SELECT: &str = "select:table:component-table:select-release:cell:select-release-row-000:status:editor:trigger";
+    const STATUS_CONTENT: &str =
+        "select:Edit status for row select-release-row-000:select-content-scroll:content";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, STATUS_SELECT);
+
+    let sample_before = bounds(cx, SAMPLE);
+    let trigger = bounds(cx, STATUS_SELECT);
+    cx.simulate_click(trigger.center(), Default::default());
+    settle(cx);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    if cx.debug_bounds(STATUS_CONTENT).is_none() {
+        cx.simulate_keystrokes("space");
+        settle(cx);
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+    }
+
+    assert!(
+        cx.debug_bounds(STATUS_CONTENT).is_some(),
+        "select content should open from the table trigger"
+    );
+    let blocked = bounds(
+        cx,
+        "listbox:table:component-table:select-release:cell:select-release-row-000:status:editor-listbox:option:blocked",
+    );
+    cx.simulate_click(blocked.center(), Default::default());
+    settle(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "selecting a table cell should not move the sample card"
+    );
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_changes().to_vec()
+    });
+    assert_eq!(
+        changes.len(),
+        1,
+        "select choice should record one controlled change"
+    );
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one select edit change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.row_id, "select-release-row-000");
+    assert_eq!(last.column_id, "status");
+    assert_eq!(last.outcome, "updated");
+    assert_eq!(last.previous_text, "ready");
+    assert_eq!(last.next_text, "blocked");
+
+    let edited_status = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_override(SAMPLE_ID)
+            .and_then(|state| state.rows().first())
+            .and_then(|row| row.cell(&TableColumnId::new("status")))
+            .map(TableCellValue::filter_text)
+    });
+    assert_eq!(edited_status.as_deref(), Some("blocked"));
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_multiline_table_cell_updates_sample_rows(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE_ID: &str = "multiline-release";
+    const SAMPLE: &str = "gallery:component-table-sample:multiline-release";
+    const NOTES_INPUT: &str = "textarea:table:component-table:multiline-release:cell:multiline-release-row-000:notes:editor:root";
+    const NOTES_TEXT_INPUT: &str = "text-input:table:component-table:multiline-release:cell:multiline-release-row-000:notes:editor:root";
+    const STATUS_TEXTAREA: &str = "textarea:table:component-table:multiline-release:cell:multiline-release-row-000:status:editor:root";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, NOTES_INPUT);
+
+    assert!(
+        cx.debug_bounds(NOTES_TEXT_INPUT).is_none(),
+        "multiline notes column should not mount a single-line text input"
+    );
+    assert!(
+        cx.debug_bounds(STATUS_TEXTAREA).is_none(),
+        "read-only status column should not mount a textarea"
+    );
+    let sample_before = bounds(cx, SAMPLE);
+    let input = bounds(cx, NOTES_INPUT);
+    cx.simulate_click(
+        point(input.right() - px(8.0), input.bottom() - px(12.0)),
+        Default::default(),
+    );
+    settle(cx);
+    cx.simulate_input("\nQA note");
+    settle(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "editing a multiline table cell should not move the sample card"
+    );
+    assert!(
+        cx.debug_bounds(NOTES_INPUT).is_some(),
+        "multiline textarea should remain mounted after app-owned state feedback"
+    );
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_changes().to_vec()
+    });
+    assert!(
+        changes.len() >= 2,
+        "gallery multiline edit should record controlled text changes; changes={changes:?}"
+    );
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one multiline edit change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.row_id, "multiline-release-row-000");
+    assert_eq!(last.column_id, "notes");
+    assert_eq!(last.outcome, "updated");
+    assert!(last.next_text.contains("QA note"));
+    assert!(
+        last.next_text.contains('\n'),
+        "multiline edit payload should preserve newlines"
+    );
+
+    let edited_notes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_override(SAMPLE_ID)
+            .and_then(|state| state.rows().first())
+            .and_then(|row| row.cell(&TableColumnId::new("notes")))
+            .map(TableCellValue::filter_text)
+    });
+    assert!(
+        edited_notes
+            .as_deref()
+            .is_some_and(|notes| notes.contains("QA note") && notes.contains('\n')),
+        "app-owned table state should store the newline-preserving textarea edit; notes={edited_notes:?}"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_content_fit_table_cell_edit_widens_name_column(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE_ID: &str = "content-fit-release";
+    const SAMPLE: &str = "gallery:component-table-sample:content-fit-release";
+    const NAME_INPUT: &str = "text-input:table:component-table:content-fit-release:cell:editable-release-row-000:name:editor:root";
+    const NAME_HEADER: &str = "table:component-table:content-fit-release:header:name";
+    const NAME_CELL: &str =
+        "table:component-table:content-fit-release:cell:editable-release-row-000:name";
+    const SCORE_CELL: &str =
+        "table:component-table:content-fit-release:cell:editable-release-row-000:score";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, NAME_INPUT);
+
+    let sample_before = bounds(cx, SAMPLE);
+    let header_before = bounds(cx, NAME_HEADER);
+    let cell_before = bounds(cx, NAME_CELL);
+    let score_before = bounds(cx, SCORE_CELL);
+    let input = bounds(cx, NAME_INPUT);
+
+    assert_eq!(header_before.size.width, cell_before.size.width);
+    assert_eq!(
+        pages::components::table_samples(ThemeTokens::default())
+            .iter()
+            .find(|sample| sample.id == SAMPLE_ID)
+            .expect("content-fit sample should exist")
+            .render_plan()
+            .columns()[0]
+            .width_policy(),
+        TableColumnWidthPolicy::ContentFit
+    );
+
+    cx.simulate_click(
+        point(input.right() - px(8.0), input.center().y),
+        Default::default(),
+    );
+    settle(cx);
+    cx.simulate_input(" Prime");
+    settle(cx);
+    redraw(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    let header_after = bounds(cx, NAME_HEADER);
+    let cell_after = bounds(cx, NAME_CELL);
+    let score_after = bounds(cx, SCORE_CELL);
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "editing a content-fit table cell should not move the sample card"
+    );
+    assert_eq!(header_after.size.width, cell_after.size.width);
+    assert!(header_after.size.width > header_before.size.width);
+    assert_eq!(score_after.size.width, score_before.size.width);
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_changes().to_vec()
+    });
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected at least one edit change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.row_id, "editable-release-row-000");
+    assert_eq!(last.column_id, "name");
+    assert_eq!(last.outcome, "updated");
+    assert!(last.next_text.contains("Prime"));
+}
+
+#[open_gpui::test]
 fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -3475,46 +5897,837 @@ fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
     let first_row_selector = format!("table:component-table:release-rollup:row:{first_row_id}");
     let later_row_selector = format!("table:component-table:release-rollup:row:{later_row_id}");
 
-    let cx = open_components_gallery(cx);
-
-    jump_components_directory_to(cx, "gallery:component-page-jump:table");
-    scroll_page_until_visible(cx, "gallery:component-table-sample:release-rollup");
-    let sample_before = bounds(cx, "gallery:component-table-sample:release-rollup");
-    let table_viewport = bounds(
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(
+        &shell,
         cx,
         "scroll-area:table:component-table:release-rollup:body-scroll",
+    );
+    let sample_before = bounds(cx, "gallery:component-table-sample:release-rollup");
+    let header_before = bounds(cx, "table:component-table:release-rollup:header-row");
+    let body_viewport = bounds(
+        cx,
+        "scroll-area:table:component-table:release-rollup:body-scroll",
+    );
+    let page_viewport = bounds(cx, "scroll-area:gallery-page-scroll-viewport");
+    let scroll_target_top = body_viewport.top().max(page_viewport.top());
+    let scroll_target_bottom = body_viewport.bottom().min(page_viewport.bottom());
+    let scroll_target = point(
+        body_viewport.left() + px(12.0),
+        scroll_target_top + (scroll_target_bottom - scroll_target_top) * 0.5,
     );
 
     assert!(
         cx.debug_bounds(&first_row_selector).is_some(),
         "expected grouped Table row `{first_row_id}` to render in the initial window"
     );
+    let first_row_before = bounds(cx, &first_row_selector);
     assert!(
         cx.debug_bounds(&later_row_selector).is_none(),
         "expected grouped Table row `{later_row_id}` to start outside the rendered window"
     );
 
     cx.simulate_event(ScrollWheelEvent {
-        position: table_viewport.center(),
-        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        position: scroll_target,
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-520.0))),
         ..Default::default()
     });
     redraw(cx);
 
     let sample_after = bounds(cx, "gallery:component-table-sample:release-rollup");
+    let header_after = bounds(cx, "table:component-table:release-rollup:header-row");
 
     assert_eq!(
         sample_after.top(),
         sample_before.top(),
         "expected grouped Table viewport wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
     );
-    assert!(
-        cx.debug_bounds(&first_row_selector).is_none(),
-        "expected grouped Table row `{first_row_id}` to leave the rendered window after internal scroll"
+    assert_eq!(
+        header_after.top(),
+        header_before.top(),
+        "expected grouped Table header to stay fixed while the body scrolls; before={header_before:?} after={header_after:?}"
     );
+    if let Some(first_row_after) = cx.debug_bounds(&first_row_selector) {
+        assert!(
+            first_row_after.top() < first_row_before.top(),
+            "expected grouped Table row `{first_row_id}` to move up after internal scroll; before={first_row_before:?} after={first_row_after:?}"
+        );
+    }
     assert!(
         cx.debug_bounds(&later_row_selector).is_some(),
         "expected grouped Table row `{later_row_id}` to enter the rendered window after internal scroll"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let sample = pages::components::table_samples(ThemeTokens::default())
+        .iter()
+        .find(|sample| sample.id == "release-rollup")
+        .expect("release-rollup table sample should exist");
+    let plan = sample.render_plan();
+    assert!(
+        plan.uses_split_pinned_layout(),
+        "release-rollup should exercise sticky pinned table lanes"
+    );
+    let first_rendered_row = plan
+        .rows()
+        .iter()
+        .find(|row| row.row().is_leaf())
+        .unwrap_or(&plan.rows()[0]);
+    let first_row_key = first_rendered_row.render_key().to_owned();
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:table:component-table:release-rollup:header-center-scroll",
+    );
+
+    let sample_before = bounds(cx, "gallery:component-table-sample:release-rollup");
+    let left_before = bounds(
+        cx,
+        &format!("table:component-table:release-rollup:cell:{first_row_key}:name"),
+    );
+    let center_header_before = bounds(cx, "table:component-table:release-rollup:header:team");
+    let center_cell_before = bounds(
+        cx,
+        &format!("table:component-table:release-rollup:cell:{first_row_key}:team"),
+    );
+    let right_before = bounds(
+        cx,
+        &format!("table:component-table:release-rollup:cell:{first_row_key}:status"),
+    );
+    assert!(
+        cx.debug_bounds(&format!(
+            "scroll-area:table:component-table:release-rollup:row-center-scroll:{first_row_key}"
+        ))
+        .is_some(),
+        "expected release-rollup body center lane to expose the shared horizontal viewport"
+    );
+    let center_viewport = bounds(
+        cx,
+        "scroll-area:table:component-table:release-rollup:header-center-scroll",
+    );
+
+    assert!(
+        cx.debug_bounds("scroll-area:table:component-table:release-rollup:header-center-scroll")
+            .is_some(),
+        "expected release-rollup header center lane to expose the shared horizontal viewport"
+    );
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-180.0), px(0.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after = bounds(cx, "gallery:component-table-sample:release-rollup");
+    let left_after = bounds(
+        cx,
+        &format!("table:component-table:release-rollup:cell:{first_row_key}:name"),
+    );
+    let center_header_after = bounds(cx, "table:component-table:release-rollup:header:team");
+    let center_cell_after = bounds(
+        cx,
+        &format!("table:component-table:release-rollup:cell:{first_row_key}:team"),
+    );
+    let right_after = bounds(
+        cx,
+        &format!("table:component-table:release-rollup:cell:{first_row_key}:status"),
+    );
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected sticky pinned Table horizontal wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert_eq!(
+        left_after.left(),
+        left_before.left(),
+        "expected left pinned lane to keep its screen-space x position"
+    );
+    assert_eq!(
+        right_after.left(),
+        right_before.left(),
+        "expected right pinned lane to keep its screen-space x position"
+    );
+    assert!(
+        center_header_after.left() < center_header_before.left(),
+        "expected shared horizontal handle to move center header left; before={center_header_before:?} after={center_header_after:?}"
+    );
+    assert!(
+        center_cell_after.left() < center_cell_before.left(),
+        "expected horizontal body center lane to move left; before={center_cell_before:?} after={center_cell_after:?}"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_grouped_table_column_reorder_updates_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE: &str = "gallery:component-table-sample:release-rollup";
+    const SCORE: &str = "table:component-table:release-rollup:header:score";
+
+    let sample = pages::components::table_samples(ThemeTokens::default())
+        .iter()
+        .find(|sample| sample.id == "release-rollup")
+        .expect("release-rollup table sample should exist");
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    let center_viewport = bounds(
+        cx,
+        "scroll-area:table:component-table:release-rollup:header-center-scroll",
+    );
+    cx.simulate_event(ScrollWheelEvent {
+        position: center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-180.0), px(0.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_before = bounds(cx, SAMPLE);
+    let score_before = bounds(cx, SCORE);
+    let team_before = bounds(cx, "table:component-table:release-rollup:header:team");
+    let change = TableColumnOrderChange::move_before("score", "team", TableColumnRegion::Center);
+    cx.update(|_, app| {
+        pages::components::record_table_column_order_change(
+            "release-rollup",
+            &sample.state,
+            &change,
+            app,
+        );
+    });
+    cx.run_until_parked();
+    redraw(cx);
+
+    let sample_after = bounds(cx, SAMPLE);
+    let score_after = bounds(cx, SCORE);
+    let team_after = bounds(cx, "table:component-table:release-rollup:header:team");
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.column_order_changes().to_vec()
+    });
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected release-rollup reorder update to keep the sample card anchored"
+    );
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].sample_id, "release-rollup");
+    assert_eq!(changes[0].column_id, "score");
+    assert_eq!(changes[0].target_column_id, "team");
+    assert_eq!(changes[0].placement, "before");
+    assert_eq!(changes[0].region, "center");
+    assert_eq!(
+        changes[0].column_order,
+        ["name", "score", "team", "status"]
+            .iter()
+            .map(|column| column.to_string())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        score_after.left() < team_after.left(),
+        "expected score to render before team after the reorder; before=({score_before:?}, {team_before:?}) after=({score_after:?}, {team_after:?})"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let sample = pages::components::table_samples(ThemeTokens::default())
+        .iter()
+        .find(|sample| sample.id == "release-matrix")
+        .expect("release-matrix table sample should exist");
+    let plan = sample.render_plan();
+    assert!(
+        plan.uses_split_pinned_layout(),
+        "release-matrix should exercise sticky pinned table lanes"
+    );
+    let first_row_key = plan.rows()[0].render_key().to_owned();
+    let far_header = "table:component-table:release-matrix:header:metric_13";
+    let far_cell = format!("table:component-table:release-matrix:cell:{first_row_key}:metric_13");
+    let left_group = "table:component-table:release-matrix:header-group:left:1:identity";
+    let metrics_group = "table:component-table:release-matrix:header-group:center:1:metrics";
+    let right_group = "table:component-table:release-matrix:header-group:right:1:delivery";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:table:component-table:release-matrix:header-center-scroll",
+    );
+
+    let sample_before = bounds(cx, "gallery:component-table-sample:release-matrix");
+    let left_before = bounds(
+        cx,
+        &format!("table:component-table:release-matrix:cell:{first_row_key}:name"),
+    );
+    let right_before = bounds(
+        cx,
+        &format!("table:component-table:release-matrix:cell:{first_row_key}:status"),
+    );
+    let left_group_before = bounds(cx, left_group);
+    assert!(
+        cx.debug_bounds(metrics_group).is_some(),
+        "expected release-matrix metrics group header to render before horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds(right_group).is_some(),
+        "expected release-matrix delivery group header to render before horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds(left_group).is_some(),
+        "expected release-matrix identity group header to render before horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds("table:component-table:release-matrix:header:metric_00")
+            .is_some(),
+        "expected the initial center column window to mount the first metric"
+    );
+    assert!(
+        cx.debug_bounds(far_header).is_none(),
+        "expected the far metric header to stay unmounted before horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds(&far_cell).is_none(),
+        "expected the far metric cell to stay unmounted before horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds(&format!(
+            "scroll-area:table:component-table:release-matrix:row-center-scroll:{first_row_key}"
+        ))
+        .is_some(),
+        "expected release-matrix body center lane to expose the shared horizontal viewport"
+    );
+    let center_viewport = bounds(
+        cx,
+        "scroll-area:table:component-table:release-matrix:header-center-scroll",
+    );
+
+    for _ in 0..6 {
+        if cx.debug_bounds(far_header).is_some() && cx.debug_bounds(&far_cell).is_some() {
+            break;
+        }
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: center_viewport.center(),
+            delta: ScrollDelta::Pixels(point(px(-360.0), px(0.0))),
+            ..Default::default()
+        });
+        redraw(cx);
+    }
+
+    let sample_after = bounds(cx, "gallery:component-table-sample:release-matrix");
+    let left_after = bounds(
+        cx,
+        &format!("table:component-table:release-matrix:cell:{first_row_key}:name"),
+    );
+    let left_group_after = bounds(cx, left_group);
+    let right_after = bounds(
+        cx,
+        &format!("table:component-table:release-matrix:cell:{first_row_key}:status"),
+    );
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected matrix Table horizontal wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert_eq!(
+        left_after.left(),
+        left_before.left(),
+        "expected matrix Table left pinned lane to keep its screen-space x position"
+    );
+    assert_eq!(
+        left_group_after.left(),
+        left_group_before.left(),
+        "expected matrix Table left header group to keep its screen-space x position"
+    );
+    assert_eq!(
+        right_after.left(),
+        right_before.left(),
+        "expected matrix Table right pinned lane to keep its screen-space x position"
+    );
+    assert!(
+        cx.debug_bounds(far_header).is_some(),
+        "expected the far metric header to enter the rendered center window after horizontal scrolling"
+    );
+    assert!(
+        cx.debug_bounds(metrics_group).is_some(),
+        "expected the metrics group header to stay mounted while the center window scrolls"
+    );
+    assert!(
+        cx.debug_bounds(right_group).is_some(),
+        "expected the delivery group header to stay mounted while the center window scrolls"
+    );
+    assert!(
+        cx.debug_bounds(&far_cell).is_some(),
+        "expected the far metric cell to enter the rendered center window after horizontal scrolling"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_column_visibility_updates_release_matrix(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE_ID: &str = "release-matrix";
+    const SAMPLE: &str = "gallery:component-table-sample:release-matrix";
+    const TOOLBAR: &str = "table-toolbar:component-table-toolbar:release-matrix:root";
+    const TRIGGER: &str = "popover:component-table-column-visibility:release-matrix:trigger";
+    const CONTENT: &str =
+        "table-column-visibility:component-table-column-visibility:release-matrix:content";
+    const METRIC_ROW: &str =
+        "table-column-visibility:component-table-column-visibility:release-matrix:column:metric_03";
+    const SHOW_ALL: &str =
+        "table-column-visibility:component-table-column-visibility:release-matrix:show-all";
+    const METRIC_HEADER: &str = "table:component-table:release-matrix:header:metric_03";
+
+    let table_samples = pages::components::table_samples(ThemeTokens::default());
+    let sample = table_sample(&table_samples, SAMPLE_ID);
+    let plan = sample.render_plan();
+    assert_eq!(plan.aria_column_count(), 16);
+    let first_row_key = plan.rows()[0].render_key().to_owned();
+    let metric_cell =
+        format!("table:component-table:release-matrix:cell:{first_row_key}:metric_03");
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, TRIGGER);
+
+    let sample_before = bounds(cx, SAMPLE);
+    assert!(
+        cx.debug_bounds(TOOLBAR).is_some(),
+        "expected release-matrix controls to render inside the table toolbar recipe"
+    );
+    assert!(
+        cx.debug_bounds(METRIC_HEADER).is_some(),
+        "expected metric_03 header to render before hiding the column"
+    );
+    assert!(
+        cx.debug_bounds(&metric_cell).is_some(),
+        "expected metric_03 cell to render before hiding the column"
+    );
+
+    click(cx, TRIGGER);
+    settle(cx);
+    assert!(
+        cx.debug_bounds(CONTENT).is_some(),
+        "expected the column visibility popover content to open"
+    );
+    click(cx, METRIC_ROW);
+    settle(cx);
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.visibility_changes().to_vec()
+    });
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].sample_id, SAMPLE_ID);
+    assert_eq!(changes[0].action, "toggle_column");
+    assert_eq!(changes[0].column_ids, vec!["metric_03".to_owned()]);
+    assert_eq!(changes[0].next_visible, Some(false));
+    assert_eq!(changes[0].visible_columns, 15);
+    assert_eq!(changes[0].hidden_columns, 1);
+    let metric_hidden = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.visibility_override(SAMPLE_ID)
+            .and_then(|visibility| visibility.override_for(&TableColumnId::new("metric_03")))
+    });
+    assert_eq!(metric_hidden, Some(false));
+    assert!(
+        cx.debug_bounds(METRIC_HEADER).is_none(),
+        "expected metric_03 header to unmount after hiding the column"
+    );
+    assert!(
+        cx.debug_bounds(&metric_cell).is_none(),
+        "expected metric_03 cell to unmount after hiding the column"
+    );
+
+    let popup_content = bounds(cx, CONTENT);
+    cx.simulate_event(ScrollWheelEvent {
+        position: popup_content.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-80.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+    let sample_after_popup_wheel = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after_popup_wheel.top(),
+        sample_before.top(),
+        "expected column-visibility popup wheel input to stay inside the table sample"
+    );
+
+    if cx.debug_bounds(SHOW_ALL).is_none() {
+        click(cx, TRIGGER);
+        settle(cx);
+    }
+    click(cx, SHOW_ALL);
+    settle(cx);
+
+    let changes = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.visibility_changes().to_vec()
+    });
+    assert_eq!(changes.len(), 2);
+    let last = changes
+        .last()
+        .unwrap_or_else(|| panic!("expected show-all visibility change"));
+    assert_eq!(last.sample_id, SAMPLE_ID);
+    assert_eq!(last.action, "show_all");
+    assert!(last.column_ids.contains(&"metric_03".to_owned()));
+    assert_eq!(last.next_visible, Some(true));
+    assert_eq!(last.visible_columns, 16);
+    assert_eq!(last.hidden_columns, 0);
+    assert!(
+        cx.debug_bounds(METRIC_HEADER).is_some(),
+        "expected metric_03 header to return after show-all"
+    );
+    assert!(
+        cx.debug_bounds(&metric_cell).is_some(),
+        "expected metric_03 cell to return after show-all"
+    );
+
+    let sample_after = bounds(cx, SAMPLE);
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected column-visibility interactions to keep the sample card anchored"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let sample = pages::components::table_samples(ThemeTokens::default())
+        .iter()
+        .find(|sample| sample.id == "row-pinning")
+        .expect("row-pinning table sample should exist");
+    let plan = sample.render_plan();
+    assert_eq!(plan.top_rows().len(), 1);
+    assert_eq!(plan.center_rows().len(), 11);
+    assert_eq!(plan.bottom_rows().len(), 2);
+    assert!(
+        plan.uses_split_pinned_layout(),
+        "row-pinning should combine row-pinned bands with pinned column lanes"
+    );
+
+    let top_row_key = plan.top_rows()[0].render_key().to_owned();
+    let bottom_row_key = plan.bottom_rows()[1].render_key().to_owned();
+    let center_cell_selectors = plan
+        .center_rows()
+        .iter()
+        .map(|row| {
+            format!(
+                "table:component-table:row-pinning:cell:{}:name",
+                row.render_key()
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, "gallery:component-table-sample:row-pinning");
+
+    assert!(
+        cx.debug_bounds("table:component-table:row-pinning:body:top")
+            .is_some(),
+        "expected row-pinning top band to render"
+    );
+    assert!(
+        cx.debug_bounds("table:component-table:row-pinning:body:center")
+            .is_some(),
+        "expected row-pinning center band to render"
+    );
+    assert!(
+        cx.debug_bounds("table:component-table:row-pinning:body:bottom")
+            .is_some(),
+        "expected row-pinning bottom band to render"
+    );
+    let collect_center_cells = |cx: &mut VisualTestContext| {
+        center_cell_selectors
+            .iter()
+            .enumerate()
+            .filter_map(|(index, selector)| {
+                cx.debug_bounds(selector)
+                    .map(|bounds| (index, selector.clone(), bounds))
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let center_rows_before = collect_center_cells(cx);
+    assert!(
+        !center_rows_before.is_empty(),
+        "expected row-pinning center body to render at least one center row cell"
+    );
+    let interaction_target = scroll_page_selector_into_view(&shell, cx, &center_rows_before[0].1);
+
+    let sample_before = bounds(cx, "gallery:component-table-sample:row-pinning");
+    let top_row_before = bounds(
+        cx,
+        &format!("table:component-table:row-pinning:row:{top_row_key}"),
+    );
+    let bottom_row_before = bounds(
+        cx,
+        &format!("table:component-table:row-pinning:row:{bottom_row_key}"),
+    );
+    let top_name_before = bounds(
+        cx,
+        &format!("table:component-table:row-pinning:cell:{top_row_key}:name"),
+    );
+    let center_rows_before = collect_center_cells(cx);
+    cx.simulate_event(ScrollWheelEvent {
+        position: interaction_target.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after = bounds(cx, "gallery:component-table-sample:row-pinning");
+    let top_row_after = bounds(
+        cx,
+        &format!("table:component-table:row-pinning:row:{top_row_key}"),
+    );
+    let bottom_row_after = bounds(
+        cx,
+        &format!("table:component-table:row-pinning:row:{bottom_row_key}"),
+    );
+    let center_rows_after = collect_center_cells(cx);
+    assert!(
+        !center_rows_after.is_empty(),
+        "expected row-pinning center body to keep rendering center row cells after scrolling"
+    );
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected row-pinning Table wheel input to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert_eq!(
+        top_row_after.top(),
+        top_row_before.top(),
+        "top pinned row band should stay fixed while center rows scroll"
+    );
+    assert_eq!(
+        bottom_row_after.top(),
+        bottom_row_before.top(),
+        "bottom pinned row band should stay fixed while center rows scroll"
+    );
+    assert_eq!(
+        bounds(
+            cx,
+            &format!("table:component-table:row-pinning:cell:{top_row_key}:name"),
+        )
+        .left(),
+        top_name_before.left(),
+        "left-pinned cells inside pinned rows should stay fixed while center rows scroll"
+    );
+    let center_window_changed = center_rows_before
+        .iter()
+        .map(|(index, _, _)| *index)
+        .collect::<Vec<_>>()
+        != center_rows_after
+            .iter()
+            .map(|(index, _, _)| *index)
+            .collect::<Vec<_>>();
+    let center_row_moved = center_rows_before.iter().any(|(_, selector, before)| {
+        center_rows_after.iter().any(|(_, after_selector, after)| {
+            after_selector == selector && after.top() != before.top()
+        })
+    });
+    assert!(
+        center_window_changed || center_row_moved,
+        "center rows should move inside the center scroll body; before={center_rows_before:?} after={center_rows_after:?}"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_tree_table_expands_and_activates(cx: &mut open_gpui::TestAppContext) {
+    const SAMPLE: &str = "gallery:component-table-sample:dependency-tree";
+    const ROOT_TOGGLE: &str =
+        "table:component-table:dependency-tree:tree-toggle:dependency-workspace";
+    const UI_TOGGLE: &str = "table:component-table:dependency-tree:tree-toggle:dependency-ui";
+    const CHILD_ROW: &str = "table:component-table:dependency-tree:row:dependency-ui-table";
+    const CHILD_CELL: &str = "table:component-table:dependency-tree:cell:dependency-ui-table:name";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    scroll_page_selector_into_view(&shell, cx, UI_TOGGLE);
+
+    assert!(
+        cx.debug_bounds(CHILD_ROW).is_none(),
+        "expected dependency-ui children to start collapsed"
+    );
+    let root_toggle = bounds(cx, ROOT_TOGGLE);
+    let ui_toggle = bounds(cx, UI_TOGGLE);
+    assert!(
+        ui_toggle.left() > root_toggle.left(),
+        "expected nested tree table toggle to be indented; root={root_toggle:?} ui={ui_toggle:?}"
+    );
+
+    click(cx, UI_TOGGLE);
+    settle(cx);
+    let toggles = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.expansion_toggles()
+            .iter()
+            .map(|toggle| {
+                (
+                    toggle.sample_id.clone(),
+                    toggle.row_id.clone(),
+                    toggle.expanded,
+                    toggle.depth,
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    assert!(
+        cx.debug_bounds(CHILD_ROW).is_some(),
+        "expected dependency-ui child row to render after expansion; toggles={toggles:?}"
+    );
+    assert_eq!(
+        toggles,
+        vec![(
+            "dependency-tree".to_owned(),
+            "dependency-ui".to_owned(),
+            true,
+            1
+        )]
+    );
+    let activations_after_toggle =
+        cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+            log.row_activations().to_vec()
+        });
+    assert!(
+        activations_after_toggle.is_empty(),
+        "expected tree disclosure clicks to avoid row activation"
+    );
+
+    click(cx, CHILD_ROW);
+    assert!(
+        cx.debug_selector_is_focused(CHILD_ROW),
+        "expected clicking a tree table row to focus it for keyboard activation; focused={:?} child={:?}",
+        cx.focused_debug_selector(),
+        bounds(cx, CHILD_CELL)
+    );
+    let click_activations =
+        cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+            log.row_activations().to_vec()
+        });
+    assert_eq!(click_activations.len(), 1);
+    assert_eq!(click_activations[0].sample_id, "dependency-tree");
+    assert_eq!(click_activations[0].row_id, "dependency-ui-table");
+    assert_eq!(click_activations[0].kind, "click");
+    assert_eq!(click_activations[0].depth, 2);
+    assert!(!click_activations[0].tree_branch);
+    assert_eq!(click_activations[0].tree_expanded, None);
+
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    let activations = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.row_activations().to_vec()
+    });
+    assert_eq!(activations.len(), 2);
+    assert_eq!(activations[1].sample_id, "dependency-tree");
+    assert_eq!(activations[1].row_id, "dependency-ui-table");
+    assert_eq!(activations[1].kind, "keyboard");
+    assert_eq!(activations[1].depth, 2);
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_table_server_tree_loads_children_from_expansion_request(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE: &str = "gallery:component-table-sample:server-tree";
+    const WORKSPACE_TOGGLE: &str = "table:component-table:server-tree:tree-toggle:server-workspace";
+    const CACHE_TOGGLE: &str = "table:component-table:server-tree:tree-toggle:server-cache";
+    const FAILED_TOGGLE: &str = "table:component-table:server-tree:tree-toggle:server-failed";
+    const CHILD_ROW: &str = "table:component-table:server-tree:row:server-api";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TableSampleRuntimeLog::default());
+    let table_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Table")
+        .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
+    focus_components_catalog_entry(&shell, cx, table_entry);
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    scroll_page_selector_into_view(&shell, cx, WORKSPACE_TOGGLE);
+
+    assert!(
+        cx.debug_bounds(CHILD_ROW).is_none(),
+        "expected server children to start app-unloaded"
+    );
+    assert!(
+        cx.debug_bounds(CACHE_TOGGLE).is_some(),
+        "expected loading server branch to render a disclosure affordance"
+    );
+    assert!(
+        cx.debug_bounds(FAILED_TOGGLE).is_some(),
+        "expected failed server branch to render a disclosure affordance"
+    );
+
+    click(cx, WORKSPACE_TOGGLE);
+    settle(cx);
+    let toggles = cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+        log.expansion_toggles().to_vec()
+    });
+    assert!(
+        cx.debug_bounds(CHILD_ROW).is_some(),
+        "expected server child row to render after the app supplies loaded children; toggles={toggles:?}"
+    );
+    assert_eq!(toggles.len(), 1);
+    assert_eq!(toggles[0].sample_id, "server-tree");
+    assert_eq!(toggles[0].row_id, "server-workspace");
+    assert!(toggles[0].expanded);
+    assert_eq!(toggles[0].depth, 0);
+    assert_eq!(toggles[0].loaded_child_count, 0);
+    assert_eq!(toggles[0].children_load_state, "idle");
+    assert_eq!(toggles[0].children_load_message, None);
+    let activations_after_toggle =
+        cx.read_global::<pages::components::TableSampleRuntimeLog, _>(|log, _| {
+            log.row_activations().to_vec()
+        });
+    assert!(
+        activations_after_toggle.is_empty(),
+        "expected manual expansion disclosure clicks to avoid row activation"
     );
 }
 
@@ -3523,14 +6736,18 @@ fn components_gallery_smoke_tree_expands_and_selects(cx: &mut open_gpui::TestApp
     const SAMPLE: &str = "gallery:component-tree-sample:document-outline";
     const PAPER: &str = "tree:component-tree:document-outline:item:paper";
     const INTRO: &str = "tree:component-tree:document-outline:item:intro";
+    const NOTES: &str = "tree:component-tree:document-outline:item:notes";
 
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     cx.set_global(pages::components::TreeSampleRuntimeLog::default());
+    let tree_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Tree")
+        .unwrap_or_else(|| panic!("expected catalog entry `Tree`"));
+    focus_components_section(&shell, cx, tree_entry);
 
-    scroll_page_until_visible(cx, "component-catalog:Tree");
-    click(cx, "component-catalog:Tree");
-    settle(cx);
-    scroll_page_until_visible(cx, SAMPLE);
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    scroll_page_selector_into_view(&shell, cx, PAPER);
     assert!(
         cx.debug_bounds(INTRO).is_none(),
         "expected collapsed Tree descendants to stay hidden before expansion"
@@ -3595,6 +6812,198 @@ fn components_gallery_smoke_tree_expands_and_selects(cx: &mut open_gpui::TestApp
         vec![("document-outline".to_owned(), "intro".to_owned())],
         "expected Enter to select the focused child row"
     );
+
+    cx.simulate_keystrokes("n o");
+    redraw(cx);
+    assert!(
+        cx.debug_selector_is_focused(NOTES),
+        "expected Tree typeahead to focus the visible Notes row; focused={:?}",
+        cx.focused_debug_selector()
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_tree_drag_updates_sample(cx: &mut open_gpui::TestAppContext) {
+    const CHILD: &str = "tree:component-tree:editable-outline:item:child";
+    const PEER: &str = "tree:component-tree:editable-outline:item:peer";
+    const SIBLING: &str = "tree:component-tree:editable-outline:item:sibling";
+    const DROP: &str = "tree:component-tree:editable-outline:drop:before:sibling";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TreeSampleRuntimeLog::default());
+    let tree_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Tree")
+        .unwrap_or_else(|| panic!("expected catalog entry `Tree`"));
+    focus_components_catalog_entry(&shell, cx, tree_entry);
+
+    scroll_page_selector_into_view(&shell, cx, CHILD);
+    scroll_page_selector_into_view(&shell, cx, DROP);
+    let child_before = visible_page_interaction_point(cx, CHILD);
+    let peer_before = visible_page_interaction_point(cx, PEER);
+    let sibling_before = visible_page_interaction_point(cx, SIBLING);
+    let drop_before = visible_page_interaction_point(cx, DROP);
+    assert!(
+        child_before.y < peer_before.y,
+        "expected child row to render above peer before drag"
+    );
+    assert!(peer_before.y < sibling_before.y);
+
+    cx.simulate_click(child_before, Default::default());
+    redraw(cx);
+    let selections = cx.read_global::<pages::components::TreeSampleRuntimeLog, _>(|log, _| {
+        log.selections().to_vec()
+    });
+    assert_eq!(
+        selections.len(),
+        1,
+        "expected the editable Tree row to accept a normal click before dragging"
+    );
+    assert_eq!(selections[0].sample_id, "editable-outline");
+    assert_eq!(selections[0].value, "child");
+    cx.update_global::<pages::components::TreeSampleRuntimeLog, _>(|log, _| {
+        log.clear();
+    });
+
+    cx.simulate_mouse_down(child_before, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(child_before.x + px(18.0), child_before.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(
+        point(child_before.x + px(42.0), child_before.y + px(2.0)),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(drop_before, MouseButton::Left, Default::default());
+    cx.simulate_mouse_up(drop_before, MouseButton::Left, Default::default());
+    cx.run_until_parked();
+    redraw(cx);
+
+    let moves =
+        cx.read_global::<pages::components::TreeSampleRuntimeLog, _>(|log, _| log.moves().to_vec());
+    assert_eq!(moves.len(), 1);
+    assert_eq!(moves[0].sample_id, "editable-outline");
+    assert_eq!(moves[0].tree_move.value(), "child");
+    assert_eq!(moves[0].tree_move.source_parent_value(), Some("root"));
+    assert_eq!(
+        moves[0].tree_move.position(),
+        open_gpui_ui_components::TreeDropPosition::Before
+    );
+    assert_eq!(moves[0].tree_move.target().target_value(), "sibling");
+    assert_eq!(moves[0].tree_move.target_parent_value(), None);
+    assert_eq!(moves[0].tree_move.sibling_anchor_value(), Some("sibling"));
+
+    redraw(cx);
+    let child_after = bounds(cx, CHILD).center();
+    let peer_after = bounds(cx, PEER).center();
+    let sibling_after = bounds(cx, SIBLING).center();
+    assert!(
+        child_after.y > peer_after.y,
+        "expected child row to move below peer after a before-drop move"
+    );
+    assert!(peer_after.y < sibling_after.y);
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_tree_lazy_branches_emit_load_metadata(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE: &str = "gallery:component-tree-sample:remote-workspace";
+    const UNLOADED_TOGGLE: &str = "tree:component-tree:remote-workspace:toggle:remote-src";
+    const LOADING_TOGGLE: &str = "tree:component-tree:remote-workspace:toggle:remote-crates";
+    const FAILED_TOGGLE: &str = "tree:component-tree:remote-workspace:toggle:remote-build";
+    const UNLOADED_ITEM: &str = "tree:component-tree:remote-workspace:item:remote-src";
+    const LOADING_ITEM: &str = "tree:component-tree:remote-workspace:item:remote-crates";
+    const FAILED_ITEM: &str = "tree:component-tree:remote-workspace:item:remote-build";
+    const LOADING_HINT: &str = "tree:component-tree:remote-workspace:load-state:remote-crates";
+    const FAILED_HINT: &str = "tree:component-tree:remote-workspace:load-state:remote-build";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    cx.set_global(pages::components::TreeSampleRuntimeLog::default());
+    let tree_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Tree")
+        .unwrap_or_else(|| panic!("expected catalog entry `Tree`"));
+    focus_components_catalog_entry(&shell, cx, tree_entry);
+
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    scroll_page_selector_into_view(&shell, cx, UNLOADED_ITEM);
+    assert!(
+        cx.debug_bounds(UNLOADED_TOGGLE).is_some(),
+        "expected unloaded remote branch to render a disclosure affordance"
+    );
+    assert!(
+        cx.debug_bounds(LOADING_TOGGLE).is_some(),
+        "expected loading remote branch to render a disclosure affordance"
+    );
+    assert!(
+        cx.debug_bounds(FAILED_TOGGLE).is_some(),
+        "expected failed remote branch to render a disclosure affordance"
+    );
+    assert!(
+        cx.debug_bounds(LOADING_HINT).is_some(),
+        "expected loading branch to expose a visible load-state hint"
+    );
+    assert!(
+        cx.debug_bounds(FAILED_HINT).is_some(),
+        "expected failed branch to expose a visible load-state hint"
+    );
+    cx.update_global::<pages::components::TreeSampleRuntimeLog, _>(|log, _| {
+        log.clear();
+    });
+
+    click(cx, UNLOADED_ITEM);
+    redraw(cx);
+    assert!(
+        cx.debug_selector_is_focused(UNLOADED_ITEM),
+        "expected unloaded branch row to receive focus before Right; focused={:?}",
+        cx.focused_debug_selector()
+    );
+    cx.simulate_keystrokes("right");
+    redraw(cx);
+    click(cx, LOADING_ITEM);
+    redraw(cx);
+    assert!(
+        cx.debug_selector_is_focused(LOADING_ITEM),
+        "expected loading branch row to receive focus before Right; focused={:?}",
+        cx.focused_debug_selector()
+    );
+    cx.simulate_keystrokes("right");
+    redraw(cx);
+    click(cx, FAILED_ITEM);
+    redraw(cx);
+    assert!(
+        cx.debug_selector_is_focused(FAILED_ITEM),
+        "expected failed branch row to receive focus before Right; focused={:?}",
+        cx.focused_debug_selector()
+    );
+    cx.simulate_keystrokes("right");
+    redraw(cx);
+
+    let toggles = cx
+        .read_global::<pages::components::TreeSampleRuntimeLog, _>(|log, _| log.toggles().to_vec());
+    assert_eq!(
+        toggles.len(),
+        2,
+        "expected unloaded and failed branches to toggle while loading branch is blocked; toggles={toggles:?}"
+    );
+    assert_eq!(toggles[0].sample_id, "remote-workspace");
+    assert_eq!(toggles[0].value, "remote-src");
+    assert!(toggles[0].expanded);
+    assert_eq!(toggles[0].loaded_child_count, 0);
+    assert_eq!(toggles[0].children_load_state, "unloaded");
+    assert_eq!(toggles[0].children_load_message, None);
+    assert_eq!(toggles[1].sample_id, "remote-workspace");
+    assert_eq!(toggles[1].value, "remote-build");
+    assert!(toggles[1].expanded);
+    assert_eq!(toggles[1].loaded_child_count, 0);
+    assert_eq!(toggles[1].children_load_state, "failed");
+    assert_eq!(
+        toggles[1].children_load_message.as_deref(),
+        Some("Network unavailable")
+    );
 }
 
 #[open_gpui::test]
@@ -3605,15 +7014,17 @@ fn components_gallery_smoke_tree_card_wheel_does_not_leak_to_page(
     const VIEWPORT: &str = "scroll-area:tree:component-tree:document-outline:scroll";
     const ITEM: &str = "tree:component-tree:document-outline:item:appendix-01";
 
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
-    scroll_page_until_visible(cx, SAMPLE);
+    jump_components_directory_to(cx, "gallery:component-page-jump:tree");
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    scroll_page_selector_into_view(&shell, cx, VIEWPORT);
     let sample_before = bounds(cx, SAMPLE);
     let item_before = bounds(cx, ITEM);
-    let viewport = bounds(cx, VIEWPORT);
+    let viewport_position = visible_page_interaction_point(cx, VIEWPORT);
 
     cx.simulate_event(ScrollWheelEvent {
-        position: viewport.center(),
+        position: viewport_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
         ..Default::default()
     });
@@ -3630,6 +7041,43 @@ fn components_gallery_smoke_tree_card_wheel_does_not_leak_to_page(
     assert!(
         item_after.top() < item_before.top(),
         "expected Tree card wheel input to move the inner viewport; before={item_before:?} after={item_after:?}"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_virtualized_tree_scrolls_inside_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    const SAMPLE: &str = "gallery:component-tree-sample:release-outline";
+    const ROOT: &str = "tree:component-tree:release-outline:item:release-node-0000";
+    const LAST: &str = "tree:component-tree:release-outline:item:release-node-0239";
+
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
+    let tree_entry = pages::components::COMPONENT_CATALOG
+        .iter()
+        .find(|entry| entry.name == "Tree")
+        .unwrap_or_else(|| panic!("expected catalog entry `Tree`"));
+    focus_components_catalog_entry(&shell, cx, tree_entry);
+
+    scroll_page_selector_into_view(&shell, cx, SAMPLE);
+    let sample_before = bounds(cx, SAMPLE);
+    assert!(cx.debug_bounds(ROOT).is_some());
+    assert!(cx.debug_bounds(LAST).is_none());
+
+    click(cx, ROOT);
+    redraw(cx);
+    cx.simulate_keystrokes("end");
+    redraw(cx);
+    let sample_after = bounds(cx, SAMPLE);
+
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected virtualized Tree keyboard navigation to stay inside the sample card; before={sample_before:?} after={sample_after:?}"
+    );
+    assert!(
+        cx.debug_bounds(LAST).is_none(),
+        "expected the far Tree row to remain outside the initial render window after End"
     );
 }
 
@@ -3889,7 +7337,10 @@ fn components_gallery_smoke_directory_jump_scrolls_to_tabs_section(
             .to_string(),
     );
 
-    let before = bounds(cx, "gallery:components-section:tabs");
+    assert!(
+        cx.debug_bounds("gallery:components-section:tabs").is_none(),
+        "expected all-mode to leave the deep Tabs section unmounted before the directory jump"
+    );
     click(cx, "gallery:component-page-jump:tabs");
     settle(cx);
     settle(cx);
@@ -3900,7 +7351,7 @@ fn components_gallery_smoke_directory_jump_scrolls_to_tabs_section(
 
     assert!(
         (after.top() - viewport.top()).abs() <= px(1.0),
-        "expected the Components page directory jump to align the Tabs section with the viewport top; before={before:?} after={after:?} viewport={viewport:?}"
+        "expected the Components page directory jump to align the Tabs section with the viewport top; after={after:?} viewport={viewport:?}"
     );
     assert!(
         after.bottom() > viewport.top(),
@@ -3945,18 +7396,42 @@ fn components_gallery_smoke_vertical_tabs_scroll_inside_sample(cx: &mut open_gpu
         cx,
         "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
     );
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:tabs:component-tabs:workspace-tabs:tablist-scroll",
+    );
+    let sample_before = bounds(cx, "gallery:component-tabs-sample:workspace-tabs");
     let tablist = bounds(cx, "tabs:component-tabs:workspace-tabs:tablist");
+    let tablist_viewport = bounds(
+        cx,
+        "scroll-area:tabs:component-tabs:workspace-tabs:tablist-scroll",
+    );
+    let tablist_position = visible_page_interaction_point(
+        cx,
+        "scroll-area:tabs:component-tabs:workspace-tabs:tablist-scroll",
+    );
+    assert!(
+        tablist.contains(&tablist_viewport.center()),
+        "expected vertical Tabs ScrollArea viewport to stay inside the tablist shell; tablist={tablist:?} viewport={tablist_viewport:?}"
+    );
 
     cx.simulate_event(ScrollWheelEvent {
-        position: tablist.center(),
+        position: tablist_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-72.0))),
         ..Default::default()
     });
     redraw(cx);
 
+    let sample_after = bounds(cx, "gallery:component-tabs-sample:workspace-tabs");
     let after = bounds(
         cx,
         "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
+    );
+    assert_eq!(
+        sample_after.top(),
+        sample_before.top(),
+        "expected vertical Tabs rail wheel input to stay inside the sample instead of moving the Components page; before={sample_before:?} after={sample_after:?}"
     );
     assert!(
         after.top() < before.top(),
@@ -3968,15 +7443,22 @@ fn components_gallery_smoke_vertical_tabs_scroll_inside_sample(cx: &mut open_gpu
 fn components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample(
     cx: &mut open_gpui::TestAppContext,
 ) {
-    let cx = open_components_gallery(cx);
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
 
-    scroll_page_until_visible(cx, "gallery:component-sidebar-sample:long-sidebar");
+    jump_components_directory_to(cx, "gallery:component-page-jump:sidebar");
+    scroll_page_selector_into_view(&shell, cx, "gallery:component-sidebar-sample:long-sidebar");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:component-sidebar:long-sidebar-scroll",
+    );
     let sample_before = bounds(cx, "gallery:component-sidebar-sample:long-sidebar");
     let segments_before = bounds(cx, "sidebar:component-sidebar:long-sidebar:item:segments");
-    let sidebar_viewport = bounds(cx, "scroll-area:component-sidebar:long-sidebar-scroll");
+    let sidebar_position =
+        visible_page_interaction_point(cx, "scroll-area:component-sidebar:long-sidebar-scroll");
 
     cx.simulate_event(ScrollWheelEvent {
-        position: sidebar_viewport.center(),
+        position: sidebar_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-96.0))),
         ..Default::default()
     });
@@ -4049,13 +7531,21 @@ fn components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_com
         cx,
         "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
     );
-    let tablist = bounds(cx, "tabs:component-tabs:workspace-tabs:tablist");
+    scroll_page_selector_into_view(
+        &shell,
+        cx,
+        "scroll-area:tabs:component-tabs:workspace-tabs:tablist-scroll",
+    );
+    let tablist_position = visible_page_interaction_point(
+        cx,
+        "scroll-area:tabs:component-tabs:workspace-tabs:tablist-scroll",
+    );
     let tab_before = bounds(
         cx,
         "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
     );
     cx.simulate_event(ScrollWheelEvent {
-        position: tablist.center(),
+        position: tablist_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-72.0))),
         ..Default::default()
     });

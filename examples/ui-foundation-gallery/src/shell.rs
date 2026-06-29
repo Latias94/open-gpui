@@ -3,21 +3,22 @@
 use open_gpui::prelude::*;
 
 use open_gpui::{
-    Anchor, App, AppContext, Bounds, Context, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Pixels, Render, ScrollAnchor, ScrollHandle,
-    StatefulInteractiveElement, Styled, Window, WindowBounds, WindowOptions, anchored, deferred,
-    div, px, rgb, size,
+    Anchor, App, AppContext, BorrowAppContext, Bounds, Context, FocusHandle, InteractiveElement,
+    IntoElement, KeyDownEvent, ListAlignment, ListState, ParentElement, Pixels, Render,
+    ScrollHandle, StatefulInteractiveElement, Styled, Window, WindowBounds, WindowOptions,
+    anchored, deferred, div, px, rgb, size,
 };
 
 use open_gpui_ui_components::{
-    AlertDialog, Avatar, AvatarState, BadgeState, Button, ButtonState, ButtonVariant, Checkbox,
-    CheckboxState, ColorIntent, Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption,
-    ComboboxState, Command, CommandGroup, CommandItem, CommandOpenMode, CommandSelectionMode,
-    CommandState, ContextMenu, Dialog, Field, FieldState, FocusRing, HoverCard, IconButtonState,
-    Kbd, KbdState, Label, LabelState, Listbox, ListboxGroup, ListboxOption, ListboxState, Menu,
-    MenuItem, OverlayResolvedState, Popover, Progress, ProgressState, ScrollArea, Select,
-    SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, Skeleton, SkeletonState,
-    SwitchState, TextInput, TextInputState, ToggleState, Tooltip,
+    AlertDialog, Avatar, AvatarGroup, AvatarState, BadgeState, Button, ButtonState, ButtonVariant,
+    Checkbox, CheckboxState, ColorIntent, Combobox, ComboboxGroup, ComboboxOpenMode,
+    ComboboxOption, ComboboxState, Command, CommandGroup, CommandItem, CommandOpenMode,
+    CommandSelectionMode, CommandState, ContextMenu, Dialog, Field, FieldState, FocusRing,
+    HoverCard, IconButtonState, Kbd, KbdState, Label, LabelState, Listbox, ListboxGroup,
+    ListboxOption, ListboxState, Menu, MenuItem, OverlayResolvedState, Popover, Progress,
+    ProgressState, ScrollArea, Select, SelectOpenMode, SelectState, Separator, SeparatorState,
+    Sheet, Skeleton, SkeletonState, SwitchState, TextInput, TextInputState, Textarea,
+    TextareaState, ToggleState, Tooltip,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, focus_ring_shadow,
         gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui, init_text_input,
@@ -115,6 +116,7 @@ pub struct GalleryShell {
     width: Pixels,
     root_focus: FocusHandle,
     page_scroll_handle: ScrollHandle,
+    components_list_state: ListState,
     editable_text_input: open_gpui::Entity<TextInputController>,
     focus_controls: [FocusHandle; 3],
     tooltip_focus_controls: [FocusHandle; 4],
@@ -125,6 +127,9 @@ pub struct GalleryShell {
 
 impl GalleryShell {
     fn build(selected_page: GalleryPage, cx: &mut Context<Self>) -> Self {
+        cx.set_global(pages::components::TableSampleRuntimeLog::default());
+        cx.set_global(pages::components::TreeSampleRuntimeLog::default());
+
         Self {
             selected_page,
 
@@ -132,6 +137,13 @@ impl GalleryShell {
 
             root_focus: cx.focus_handle(),
             page_scroll_handle: ScrollHandle::new(),
+            components_list_state: ListState::new(
+                pages::components::component_page_section_count(
+                    pages::components::ComponentFocusMode::All,
+                ),
+                ListAlignment::Top,
+                px(900.0),
+            ),
 
             editable_text_input: cx.new(|cx| {
                 let mut controller = TextInputController::with_value("", cx);
@@ -188,6 +200,11 @@ impl GalleryShell {
         &self.page_scroll_handle
     }
 
+    /// Returns the Components page lazy section list state used by tests.
+    pub fn components_list_state(&self) -> &ListState {
+        &self.components_list_state
+    }
+
     /// Returns the current foundation snapshot.
 
     pub fn snapshot(&self) -> GalleryShellSnapshot {
@@ -198,6 +215,13 @@ impl GalleryShell {
 
     fn select_page(&mut self, page: GalleryPage, cx: &mut Context<Self>) {
         if self.selected_page != page {
+            if self.selected_page == GalleryPage::Components && page != GalleryPage::Components {
+                self.components_focus = pages::components::ComponentFocusMode::All;
+                self.components_list_state
+                    .reset(pages::components::component_page_section_count(
+                        pages::components::ComponentFocusMode::All,
+                    ));
+            }
             self.selected_page = page;
             self.overlay.reset_on_page_change();
             cx.notify();
@@ -232,15 +256,34 @@ impl GalleryShell {
         }
     }
 
-    pub(crate) fn set_components_focus(
+    /// Updates the Components page focus mode used by catalog cards and focus controls.
+    pub fn set_components_focus(
         &mut self,
         focus: pages::components::ComponentFocusMode,
         cx: &mut Context<Self>,
     ) {
         if self.components_focus != focus {
             self.components_focus = focus;
+            self.components_list_state
+                .reset(pages::components::component_page_section_count(focus));
             cx.notify();
         }
+    }
+
+    pub fn jump_to_components_section(&mut self, id: &'static str, cx: &mut Context<Self>) {
+        let focus = pages::components::ComponentFocusMode::section(id)
+            .unwrap_or(pages::components::ComponentFocusMode::All);
+        if self.components_focus != focus {
+            self.components_focus = focus;
+            self.components_list_state
+                .reset(pages::components::component_page_section_count(focus));
+        }
+        if let Some(index) =
+            pages::components::component_page_section_index(self.components_focus, id)
+        {
+            self.components_list_state.scroll_to_reveal_item(index);
+        }
+        cx.notify();
     }
 }
 
@@ -392,8 +435,6 @@ impl GalleryShell {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let page = snapshot.selected_page;
-        let component_page_anchors =
-            pages::components::ComponentPageAnchors::new(self.page_scroll_handle());
 
         div()
             .id("gallery-content")
@@ -435,11 +476,7 @@ impl GalleryShell {
                     .child(self.render_snapshot_summary(snapshot, cx)),
             )
             .when(page == GalleryPage::Components, |this| {
-                this.child(pages::components::render_components_directory(
-                    &component_page_anchors,
-                    snapshot,
-                    cx,
-                ))
+                this.child(pages::components::render_components_directory(snapshot, cx))
             })
             .child(
                 div()
@@ -449,15 +486,20 @@ impl GalleryShell {
                     .min_w(px(0.0))
                     .min_h(px(0.0))
                     .overflow_hidden()
-                    .child(
-                        ScrollArea::new(
-                            "gallery-page-scroll-viewport",
-                            self.render_page_body(snapshot, window, cx, &component_page_anchors),
+                    .when(page == GalleryPage::Components, |this| {
+                        this.child(self.render_page_body(snapshot, window, cx))
+                    })
+                    .when(page != GalleryPage::Components, |this| {
+                        this.child(
+                            ScrollArea::new(
+                                "gallery-page-scroll-viewport",
+                                self.render_page_body(snapshot, window, cx),
+                            )
+                            .scroll_handle(&self.page_scroll_handle)
+                            .with_size(snapshot.control_size)
+                            .reset_on_key(self.page_scroll_reset_key(snapshot)),
                         )
-                        .scroll_handle(&self.page_scroll_handle)
-                        .with_size(snapshot.control_size)
-                        .reset_on_key(self.page_scroll_reset_key(snapshot)),
-                    ),
+                    }),
             )
     }
 
@@ -481,7 +523,6 @@ impl GalleryShell {
         window: &mut Window,
 
         cx: &mut Context<Self>,
-        component_page_anchors: &pages::components::ComponentPageAnchors,
     ) -> impl IntoElement {
         match snapshot.selected_page {
             GalleryPage::Tokens => self.render_tokens_page(snapshot).into_any_element(),
@@ -498,13 +539,9 @@ impl GalleryShell {
                 .render_overlay_page(snapshot, window, cx)
                 .into_any_element(),
 
-            GalleryPage::Components => pages::components::render_components_page(
-                self,
-                snapshot,
-                component_page_anchors,
-                cx,
-            )
-            .into_any_element(),
+            GalleryPage::Components => {
+                pages::components::render_components_page(self, snapshot, cx).into_any_element()
+            }
         }
     }
 
@@ -3323,6 +3360,7 @@ pub(crate) fn component_text_input(
     let input = TextInput::new(id, label)
         .value(state.value())
         .with_size(state.size())
+        .display_mode(state.display_mode())
         .disabled(state.disabled())
         .read_only(state.read_only())
         .required(state.required())
@@ -3398,6 +3436,66 @@ pub(crate) fn component_text_input_state_row(state: &TextInputState) -> impl Int
                 "display value"
             }
         ))
+        .child(format!("display mode: {}", state.display_mode().as_str()))
+        .child(if state.controller_driven() {
+            "controller"
+        } else {
+            "static"
+        })
+}
+
+pub(crate) fn component_textarea(
+    id: String,
+
+    label: impl Into<open_gpui::SharedString>,
+
+    state: &TextareaState,
+
+    tokens: ThemeTokens,
+) -> Textarea {
+    let textarea = Textarea::new(id, label)
+        .value(state.value())
+        .rows(state.rows())
+        .with_size(state.size())
+        .disabled(state.disabled())
+        .read_only(state.read_only())
+        .required(state.required())
+        .invalid(state.invalid())
+        .tokens(tokens);
+
+    if let Some(placeholder) = state.placeholder() {
+        textarea.placeholder(placeholder)
+    } else {
+        textarea
+    }
+}
+
+pub(crate) fn component_textarea_state_row(state: &TextareaState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} rows / {}",
+            state.size().as_str(),
+            state.rows(),
+            if state.editable() {
+                "editable"
+            } else {
+                "locked"
+            }
+        ))
+        .child(format!(
+            "{} / {}",
+            if state.has_value() { "value" } else { "empty" },
+            if state.displaying_placeholder() {
+                "placeholder"
+            } else {
+                "display value"
+            }
+        ))
         .child(if state.controller_driven() {
             "controller"
         } else {
@@ -3438,6 +3536,46 @@ pub(crate) fn component_field_state_row(
             support
         ))
         .child(if input.editable() {
+            "control editable"
+        } else {
+            "control locked"
+        })
+}
+
+pub(crate) fn component_field_textarea_state_row(
+    field: &FieldState,
+
+    textarea: &TextareaState,
+) -> impl IntoElement {
+    let support = field.support_text().unwrap_or("no support text");
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} / {}",
+            field.size().as_str(),
+            if field.required() {
+                "required"
+            } else {
+                "optional"
+            },
+            if field.invalid() { "invalid" } else { "valid" }
+        ))
+        .child(format!(
+            "{} / {}",
+            if field.support_is_error() {
+                "error"
+            } else {
+                "help"
+            },
+            support
+        ))
+        .child(format!("textarea rows: {}", textarea.rows()))
+        .child(if textarea.editable() {
             "control editable"
         } else {
             "control locked"
@@ -3488,6 +3626,8 @@ pub(crate) fn component_primitive_samples_section(
     skeletons: [pages::components::SkeletonSample; 3],
 
     avatars: [pages::components::AvatarSample; 4],
+
+    avatar_groups: [pages::components::AvatarGroupSample; 1],
 
     tokens: ThemeTokens,
 ) -> impl IntoElement {
@@ -3731,31 +3871,79 @@ pub(crate) fn component_primitive_samples_section(
                     .child(component_avatar_state_row(&state))
                 })),
         )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(avatar_groups.into_iter().map(move |sample| {
+                    let debug_selector = sample.debug_selector();
+
+                    let avatar_names = sample
+                        .avatars
+                        .iter()
+                        .map(|avatar| avatar.state.name().to_owned())
+                        .collect::<Vec<_>>();
+
+                    gallery_card_shell(
+                        format!("component-avatar-group-sample:{}", sample.id),
+                        Some(debug_selector),
+                    )
+                    .min_w(px(280.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child(sample.summary),
+                    )
+                    .child(
+                        AvatarGroup::new(format!("component-avatar-group:{}", sample.id))
+                            .avatars(sample.avatars.iter().map(|avatar| {
+                                Avatar::new(
+                                    format!("component-avatar-group:{}:{}", sample.id, avatar.id),
+                                    avatar.state.name(),
+                                )
+                                .accessible_label(avatar.state.accessible_label())
+                                .fallback(avatar.state.fallback())
+                                .with_size(avatar.state.size())
+                                .tokens(tokens)
+                            }))
+                            .max_visible(sample.avatars.len().saturating_sub(1))
+                            .with_size(Size::Medium)
+                            .tokens(tokens),
+                    )
+                    .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
+                        "{}: {}",
+                        sample.count_label,
+                        avatar_names.join(", ")
+                    )))
+                })),
+        )
 }
 
-pub(crate) fn component_page_section(
-    id: &'static str,
-    anchor: ScrollAnchor,
-) -> open_gpui::Stateful<open_gpui::Div> {
+pub(crate) fn component_page_section(id: &'static str) -> open_gpui::Stateful<open_gpui::Div> {
     div()
         .id(format!("gallery-components-section:{id}"))
         .debug_selector(move || format!("gallery:components-section:{id}"))
-        .anchor_scroll(Some(anchor))
 }
 
 pub(crate) fn component_page_jump(
-    id: &'static str,
-    label: &'static str,
-    anchor: ScrollAnchor,
+    section: pages::components::ComponentPageJump,
     tokens: ThemeTokens,
+    cx: &mut Context<GalleryShell>,
 ) -> open_gpui::Stateful<open_gpui::Div> {
+    let id = section.id;
+    let label = section.label;
     let button = Button::new(format!("gallery-components-jump-button:{id}"), label)
         .variant(ButtonVariant::Ghost)
         .with_size(Size::Small)
         .tokens(tokens)
-        .on_click(move |_, _, _| {
-            anchor.scroll_now();
-        });
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.jump_to_components_section(id, cx);
+        }));
 
     div()
         .id(format!("gallery-components-jump:{id}"))
@@ -4311,6 +4499,20 @@ fn component_listbox_state_row(state: &ListboxState) -> impl IntoElement {
     let selected = state.selected_value().unwrap_or("none");
 
     let active = state.active_value().unwrap_or("none");
+    let typeahead = state.typeahead_query().unwrap_or("");
+    let typeahead_label = if typeahead.is_empty() {
+        "none"
+    } else {
+        typeahead
+    };
+    let first_typeahead_target = if typeahead.is_empty() {
+        "none"
+    } else {
+        state
+            .typeahead_target(typeahead)
+            .map(|option| option.value())
+            .unwrap_or("none")
+    };
 
     let disabled_count = state
         .options()
@@ -4327,6 +4529,10 @@ fn component_listbox_state_row(state: &ListboxState) -> impl IntoElement {
         .child(format!("{:?} / {}", state.role(), state.size().as_str()))
         .child(format!("selected {} / active {}", selected, active))
         .child(format!(
+            "typeahead '{}' / target {}",
+            typeahead_label, first_typeahead_target
+        ))
+        .child(format!(
             "{} groups / {} options / {} disabled",
             state.groups().len(),
             state.options().len(),
@@ -4338,6 +4544,7 @@ fn component_select_state_row(state: &SelectState) -> impl IntoElement {
     let selected = state.selected_value().unwrap_or("none");
 
     let active = state.active_value().unwrap_or("none");
+    let listbox_selected = state.listbox().selected_value().unwrap_or("none");
 
     div()
         .flex()
@@ -4358,13 +4565,17 @@ fn component_select_state_row(state: &SelectState) -> impl IntoElement {
             active
         ))
         .child(format!(
-            "{} options / scroll {} / {:?}",
-            state.listbox().options().len(),
+            "listbox selected {} / scroll {}",
+            listbox_selected,
             if state.scrollable_content() {
                 "enabled"
             } else {
                 "not needed"
-            },
+            }
+        ))
+        .child(format!(
+            "{} options / {:?}",
+            state.listbox().options().len(),
             state.outside_press_policy()
         ))
 }
@@ -4373,6 +4584,8 @@ fn component_combobox_state_row(state: &ComboboxState) -> impl IntoElement {
     let selected = state.selected_value().unwrap_or("none");
 
     let active = state.active_value().unwrap_or("none");
+    let query = state.query();
+    let typeahead = state.listbox().typeahead_query().unwrap_or("none");
 
     div()
         .flex()
@@ -4388,14 +4601,13 @@ fn component_combobox_state_row(state: &ComboboxState) -> impl IntoElement {
         ))
         .child(format!(
             "query '{}' / selected {} / active {}",
-            state.query(),
-            selected,
-            active
+            query, selected, active
         ))
         .child(format!(
-            "{} of {} options / {:?}",
+            "visible {} of {} / typeahead '{}' / {:?}",
             state.filtered_option_count(),
             state.total_option_count(),
+            typeahead,
             state.outside_press_policy()
         ))
 }
@@ -4433,7 +4645,7 @@ fn component_command_state_row(state: &CommandState) -> impl IntoElement {
             state.selection_mode()
         ))
         .child(format!(
-            "{} / index {} / {:?} / {} chips",
+            "{} / index {} / {:?} / {} chips / selected_values {:?}",
             if state.dialog().is_some() {
                 "dialog"
             } else {
@@ -4441,7 +4653,8 @@ fn component_command_state_row(state: &CommandState) -> impl IntoElement {
             },
             revision,
             state.index_mode(),
-            selected_count
+            selected_count,
+            state.selected_values()
         ))
 }
 

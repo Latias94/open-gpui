@@ -2,6 +2,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
@@ -69,6 +70,34 @@ impl From<&str> for TableColumnId {
 }
 
 impl From<String> for TableColumnId {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+/// Stable renderer-neutral identity for a table column group header.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TableColumnGroupId(String);
+
+impl TableColumnGroupId {
+    /// Creates a column-group identity from a stable string.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// Returns the stable string value.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for TableColumnGroupId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for TableColumnGroupId {
     fn from(value: String) -> Self {
         Self::new(value)
     }
@@ -152,14 +181,130 @@ impl From<bool> for TableCellValue {
     }
 }
 
+/// Renderer-neutral select option used by table select editors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSelectOption {
+    value: String,
+    label: String,
+}
+
+impl TableSelectOption {
+    /// Creates a select option from a stable value and visible label.
+    pub fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            label: label.into(),
+        }
+    }
+
+    /// Returns the stable option value.
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// Returns the visible option label.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+}
+
+/// Renderer-neutral cell editor kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableCellEditor {
+    /// Single-line text editing with app-owned values.
+    Text,
+    /// Fixed-row multiline text editing with app-owned values.
+    MultilineText {
+        /// Fixed textarea row count requested by the column.
+        rows: usize,
+    },
+    /// Boolean checkbox editing with app-owned values.
+    Checkbox,
+    /// Fixed-option select editing with app-owned values.
+    Select,
+}
+
+impl TableCellEditor {
+    /// Returns a normalized fixed row count for multiline text editors.
+    pub const fn multiline(rows: usize) -> Self {
+        Self::MultilineText {
+            rows: normalize_table_multiline_editor_rows(rows),
+        }
+    }
+
+    /// Returns a checkbox editor.
+    pub const fn checkbox() -> Self {
+        Self::Checkbox
+    }
+
+    /// Returns a select editor.
+    pub const fn select() -> Self {
+        Self::Select
+    }
+
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::MultilineText { .. } => "multiline-text",
+            Self::Checkbox => "checkbox",
+            Self::Select => "select",
+        }
+    }
+
+    /// Returns true when this editor preserves multiline values.
+    pub const fn multiline_text(self) -> bool {
+        matches!(self, Self::MultilineText { .. })
+    }
+
+    /// Returns the fixed textarea row count for multiline editors.
+    pub const fn rows(self) -> Option<usize> {
+        match self {
+            Self::Text => None,
+            Self::MultilineText { rows } => Some(rows),
+            Self::Checkbox => None,
+            Self::Select => None,
+        }
+    }
+}
+
+const fn normalize_table_multiline_editor_rows(rows: usize) -> usize {
+    if rows == 0 { 1 } else { rows }
+}
+
+/// Renderer-neutral column width policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableColumnWidthPolicy {
+    /// Keep the configured width unless committed sizing overrides it.
+    #[default]
+    Fixed,
+    /// Let adapter-owned content-fit measurement widen the column.
+    ContentFit,
+}
+
+impl TableColumnWidthPolicy {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fixed => "fixed",
+            Self::ContentFit => "content-fit",
+        }
+    }
+}
+
 /// Renderer-neutral column descriptor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableColumn {
     id: TableColumnId,
     label: String,
     visible: bool,
+    hideable: bool,
     sortable: bool,
     filterable: bool,
+    global_filterable: bool,
+    editor: Option<TableCellEditor>,
+    select_options: Vec<TableSelectOption>,
+    width_policy: TableColumnWidthPolicy,
     width: UiPx,
     min_width: UiPx,
     max_width: UiPx,
@@ -173,8 +318,13 @@ impl TableColumn {
             id: id.into(),
             label: label.into(),
             visible: true,
+            hideable: true,
             sortable: true,
             filterable: true,
+            global_filterable: true,
+            editor: None,
+            select_options: Vec::new(),
+            width_policy: TableColumnWidthPolicy::default(),
             width: TABLE_DEFAULT_COLUMN_WIDTH,
             min_width: TABLE_MIN_COLUMN_WIDTH,
             max_width: TABLE_MAX_COLUMN_WIDTH,
@@ -197,6 +347,11 @@ impl TableColumn {
         self.visible
     }
 
+    /// Returns whether user-facing visibility controls may hide this column.
+    pub const fn hideable(&self) -> bool {
+        self.hideable
+    }
+
     /// Returns whether this column accepts sorting.
     pub const fn sortable(&self) -> bool {
         self.sortable
@@ -205,6 +360,36 @@ impl TableColumn {
     /// Returns whether this column accepts filtering.
     pub const fn filterable(&self) -> bool {
         self.filterable
+    }
+
+    /// Returns whether this column participates in global filtering.
+    pub const fn global_filterable(&self) -> bool {
+        self.global_filterable
+    }
+
+    /// Returns the cell editor configured for this column, if any.
+    pub const fn editor(&self) -> Option<TableCellEditor> {
+        self.editor
+    }
+
+    /// Returns the fixed select options configured for this column.
+    pub fn select_options(&self) -> &[TableSelectOption] {
+        &self.select_options
+    }
+
+    /// Returns whether this column renders text-cell editors for editable leaf cells.
+    pub const fn text_editable(&self) -> bool {
+        self.editor.is_some()
+    }
+
+    /// Returns the configured width policy for this column.
+    pub const fn width_policy(&self) -> TableColumnWidthPolicy {
+        self.width_policy
+    }
+
+    /// Returns whether this column should widen from visible content.
+    pub const fn is_content_fit(&self) -> bool {
+        matches!(self.width_policy, TableColumnWidthPolicy::ContentFit)
     }
 
     /// Returns the preferred width before committed sizing is applied.
@@ -233,6 +418,12 @@ impl TableColumn {
         self
     }
 
+    /// Applies user-facing hideability.
+    pub const fn with_hideable(mut self, hideable: bool) -> Self {
+        self.hideable = hideable;
+        self
+    }
+
     /// Applies sorting capability.
     pub const fn with_sortable(mut self, sortable: bool) -> Self {
         self.sortable = sortable;
@@ -242,6 +433,68 @@ impl TableColumn {
     /// Applies filtering capability.
     pub const fn with_filterable(mut self, filterable: bool) -> Self {
         self.filterable = filterable;
+        self
+    }
+
+    /// Applies global filtering capability.
+    pub const fn with_global_filterable(mut self, global_filterable: bool) -> Self {
+        self.global_filterable = global_filterable;
+        self
+    }
+
+    /// Applies cell editor metadata.
+    pub fn with_editor(mut self, editor: Option<TableCellEditor>) -> Self {
+        self.editor = editor;
+        if !matches!(editor, Some(TableCellEditor::Select)) {
+            self.select_options = Vec::new();
+        }
+        self
+    }
+
+    /// Marks this column as content-fit sized.
+    pub const fn with_content_fit(mut self) -> Self {
+        self.width_policy = TableColumnWidthPolicy::ContentFit;
+        self
+    }
+
+    /// Marks this column as fixed-width sized.
+    pub const fn with_fixed_width(mut self) -> Self {
+        self.width_policy = TableColumnWidthPolicy::Fixed;
+        self
+    }
+
+    /// Enables or disables single-line text editing for leaf cells in this column.
+    pub fn with_text_editable(mut self, editable: bool) -> Self {
+        self.editor = if editable {
+            Some(TableCellEditor::Text)
+        } else {
+            None
+        };
+        self.select_options = Vec::new();
+        self
+    }
+
+    /// Enables fixed-row multiline text editing for leaf cells in this column.
+    pub fn with_multiline_text_editor(mut self, rows: usize) -> Self {
+        self.editor = Some(TableCellEditor::multiline(rows));
+        self.select_options = Vec::new();
+        self
+    }
+
+    /// Enables checkbox editing for leaf cells in this column.
+    pub fn with_checkbox_editor(mut self) -> Self {
+        self.editor = Some(TableCellEditor::checkbox());
+        self.select_options = Vec::new();
+        self
+    }
+
+    /// Enables fixed-option select editing for leaf cells in this column.
+    pub fn with_select_editor(
+        mut self,
+        options: impl IntoIterator<Item = TableSelectOption>,
+    ) -> Self {
+        self.editor = Some(TableCellEditor::select());
+        self.select_options = options.into_iter().collect();
         self
     }
 
@@ -276,6 +529,209 @@ impl TableColumn {
     pub fn resolved_width(&self, sizing: &TableColumnSizing) -> UiPx {
         let width = sizing.width(&self.id).unwrap_or(self.width);
         clamp_column_width(width, self.min_width, self.max_width)
+    }
+}
+
+/// One node in a renderer-neutral table column tree.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TableColumnNode {
+    /// Behavioral leaf column.
+    Column(TableColumn),
+    /// Visual group header with nested column nodes.
+    Group(TableColumnGroup),
+}
+
+impl TableColumnNode {
+    /// Creates a leaf column node.
+    pub fn column(column: TableColumn) -> Self {
+        Self::Column(column)
+    }
+
+    /// Creates a group node.
+    pub fn group(group: TableColumnGroup) -> Self {
+        Self::Group(group)
+    }
+
+    /// Returns the leaf column, when this node is a leaf.
+    pub const fn as_column(&self) -> Option<&TableColumn> {
+        match self {
+            Self::Column(column) => Some(column),
+            Self::Group(_) => None,
+        }
+    }
+
+    /// Returns the column group, when this node is a group.
+    pub const fn as_group(&self) -> Option<&TableColumnGroup> {
+        match self {
+            Self::Column(_) => None,
+            Self::Group(group) => Some(group),
+        }
+    }
+
+    /// Returns true when this node is a leaf column.
+    pub const fn is_column(&self) -> bool {
+        matches!(self, Self::Column(_))
+    }
+
+    /// Returns true when this node is a column group.
+    pub const fn is_group(&self) -> bool {
+        matches!(self, Self::Group(_))
+    }
+}
+
+impl From<TableColumn> for TableColumnNode {
+    fn from(value: TableColumn) -> Self {
+        Self::Column(value)
+    }
+}
+
+impl From<TableColumnGroup> for TableColumnNode {
+    fn from(value: TableColumnGroup) -> Self {
+        Self::Group(value)
+    }
+}
+
+/// Renderer-neutral column group descriptor used by nested table headers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableColumnGroup {
+    id: TableColumnGroupId,
+    label: String,
+    children: Vec<TableColumnNode>,
+}
+
+impl TableColumnGroup {
+    /// Creates a column group from stable id, label, and child column nodes.
+    pub fn new<N>(
+        id: impl Into<TableColumnGroupId>,
+        label: impl Into<String>,
+        children: impl IntoIterator<Item = N>,
+    ) -> Self
+    where
+        N: Into<TableColumnNode>,
+    {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            children: children.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    /// Returns the stable group identity.
+    pub const fn id(&self) -> &TableColumnGroupId {
+        &self.id
+    }
+
+    /// Returns the visible group label.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Returns child column-tree nodes.
+    pub fn children(&self) -> &[TableColumnNode] {
+        &self.children
+    }
+
+    /// Adds one child column-tree node.
+    pub fn with_child(mut self, child: impl Into<TableColumnNode>) -> Self {
+        self.children.push(child.into());
+        self
+    }
+
+    /// Adds child column-tree nodes.
+    pub fn with_children<N>(mut self, children: impl IntoIterator<Item = N>) -> Self
+    where
+        N: Into<TableColumnNode>,
+    {
+        self.children.extend(children.into_iter().map(Into::into));
+        self
+    }
+
+    fn with_normalized_children(mut self, children: Vec<TableColumnNode>) -> Self {
+        self.children = children;
+        self
+    }
+}
+
+/// Caller-owned runtime column visibility overrides.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TableColumnVisibilityOverrides {
+    overrides: BTreeMap<TableColumnId, bool>,
+}
+
+impl TableColumnVisibilityOverrides {
+    /// Creates an empty visibility override map.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates visibility state from explicit column overrides.
+    pub fn from_overrides<I, C>(overrides: I) -> Self
+    where
+        I: IntoIterator<Item = (C, bool)>,
+        C: Into<TableColumnId>,
+    {
+        let mut visibility = Self::default();
+        for (column, visible) in overrides {
+            visibility = visibility.with_visibility(column, visible);
+        }
+        visibility
+    }
+
+    /// Returns the runtime override for a column, if present.
+    pub fn override_for(&self, column: &TableColumnId) -> Option<bool> {
+        self.overrides.get(column).copied()
+    }
+
+    /// Returns the full override map.
+    pub fn overrides(&self) -> &BTreeMap<TableColumnId, bool> {
+        &self.overrides
+    }
+
+    /// Returns whether no runtime overrides exist.
+    pub fn is_empty(&self) -> bool {
+        self.overrides.is_empty()
+    }
+
+    /// Returns the number of runtime overrides.
+    pub fn len(&self) -> usize {
+        self.overrides.len()
+    }
+
+    /// Resolves effective visibility for a column descriptor.
+    pub fn is_visible(&self, column: &TableColumn) -> bool {
+        match self.override_for(column.id()) {
+            Some(false) if !column.hideable() => column.visible(),
+            Some(visible) => visible,
+            None => column.visible(),
+        }
+    }
+
+    /// Inserts or updates a runtime column visibility override.
+    pub fn with_visibility(mut self, column: impl Into<TableColumnId>, visible: bool) -> Self {
+        self.overrides.insert(column.into(), visible);
+        self
+    }
+
+    /// Shows a column at runtime.
+    pub fn show(self, column: impl Into<TableColumnId>) -> Self {
+        self.with_visibility(column, true)
+    }
+
+    /// Hides a column at runtime.
+    pub fn hide(self, column: impl Into<TableColumnId>) -> Self {
+        self.with_visibility(column, false)
+    }
+
+    /// Removes the runtime override for a column.
+    pub fn without(mut self, column: impl Into<TableColumnId>) -> Self {
+        self.overrides.remove(&column.into());
+        self
+    }
+
+    /// Removes all runtime overrides.
+    pub fn clear(mut self) -> Self {
+        self.overrides.clear();
+        self
     }
 }
 
@@ -342,6 +798,243 @@ fn clamp_column_width(width: UiPx, min_width: UiPx, max_width: UiPx) -> UiPx {
     let min_width = normalized_column_width(min_width);
     let max_width = normalized_column_width(max_width).max(min_width);
     normalized_column_width(width).max(min_width).min(max_width)
+}
+
+fn finite_ui_px(value: UiPx) -> UiPx {
+    if value.as_f32().is_finite() {
+        value
+    } else {
+        UiPx::ZERO
+    }
+}
+
+/// Determines when drag interactions commit column sizing changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableColumnResizeMode {
+    /// Commit widths while the resize drag is moving.
+    OnChange,
+    /// Commit widths when the resize drag finishes.
+    #[default]
+    OnEnd,
+}
+
+/// Direction used when converting horizontal pointer movement into width deltas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableColumnResizeDirection {
+    /// Positive pointer movement increases width.
+    #[default]
+    Ltr,
+    /// Positive pointer movement decreases width.
+    Rtl,
+}
+
+/// Transient state for an active table column resize interaction.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TableColumnResizeState {
+    column_widths_start: Vec<(TableColumnId, UiPx)>,
+    delta_offset: Option<UiPx>,
+    delta_percentage: Option<f32>,
+    active_column: Option<TableColumnId>,
+    start_offset: Option<UiPx>,
+    start_width: Option<UiPx>,
+}
+
+impl TableColumnResizeState {
+    /// Starts a column resize interaction.
+    pub fn begin(
+        active_column: impl Into<TableColumnId>,
+        start_offset: UiPx,
+        start_width: UiPx,
+        column_widths_start: impl IntoIterator<Item = (impl Into<TableColumnId>, UiPx)>,
+    ) -> Self {
+        Self {
+            column_widths_start: column_widths_start
+                .into_iter()
+                .map(|(column, width)| (column.into(), normalized_column_width(width)))
+                .collect(),
+            delta_offset: Some(UiPx::ZERO),
+            delta_percentage: Some(0.0),
+            active_column: Some(active_column.into()),
+            start_offset: Some(finite_ui_px(start_offset)),
+            start_width: Some(normalized_column_width(start_width)),
+        }
+    }
+
+    /// Returns true when a resize drag is active.
+    pub fn is_resizing(&self) -> bool {
+        self.active_column.is_some()
+    }
+
+    /// Returns the active resize column, if present.
+    pub const fn active_column(&self) -> Option<&TableColumnId> {
+        self.active_column.as_ref()
+    }
+
+    /// Returns the start pointer offset for the drag.
+    pub const fn start_offset(&self) -> Option<UiPx> {
+        self.start_offset
+    }
+
+    /// Returns the starting width of the active header.
+    pub const fn start_width(&self) -> Option<UiPx> {
+        self.start_width
+    }
+
+    /// Returns the latest pointer delta in logical pixels.
+    pub const fn delta_offset(&self) -> Option<UiPx> {
+        self.delta_offset
+    }
+
+    /// Returns the latest pointer delta as a percentage of the start width.
+    pub const fn delta_percentage(&self) -> Option<f32> {
+        self.delta_percentage
+    }
+
+    /// Returns the starting widths captured for this interaction.
+    pub fn column_widths_start(&self) -> &[(TableColumnId, UiPx)] {
+        &self.column_widths_start
+    }
+
+    /// Returns the preview width for a captured column, if the drag has moved.
+    pub fn preview_width(&self, column: &TableColumnId) -> Option<UiPx> {
+        let delta_percentage = self.delta_percentage?;
+        let (_, start_width) = self
+            .column_widths_start
+            .iter()
+            .find(|(id, _)| id == column)?;
+        Some(resized_column_width(*start_width, delta_percentage))
+    }
+}
+
+/// Result of applying a table column resize transition.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableColumnResizeUpdate {
+    state: TableColumnResizeState,
+    committed_sizing: Option<TableColumnSizing>,
+}
+
+impl TableColumnResizeUpdate {
+    fn new(state: TableColumnResizeState, committed_sizing: Option<TableColumnSizing>) -> Self {
+        Self {
+            state,
+            committed_sizing,
+        }
+    }
+
+    /// Returns the next transient resize state.
+    pub const fn state(&self) -> &TableColumnResizeState {
+        &self.state
+    }
+
+    /// Returns committed sizing when the transition should publish widths.
+    pub const fn committed_sizing(&self) -> Option<&TableColumnSizing> {
+        self.committed_sizing.as_ref()
+    }
+
+    /// Consumes the update into owned parts.
+    pub fn into_parts(self) -> (TableColumnResizeState, Option<TableColumnSizing>) {
+        (self.state, self.committed_sizing)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TableColumnResizeEvent {
+    Move,
+    End,
+}
+
+/// Applies a resize drag movement.
+pub fn drag_table_column_resize(
+    mode: TableColumnResizeMode,
+    direction: TableColumnResizeDirection,
+    sizing: &TableColumnSizing,
+    state: &TableColumnResizeState,
+    client_x: UiPx,
+) -> TableColumnResizeUpdate {
+    update_table_column_resize(
+        mode,
+        direction,
+        sizing,
+        state,
+        TableColumnResizeEvent::Move,
+        Some(client_x),
+    )
+}
+
+/// Finishes a resize drag.
+pub fn end_table_column_resize(
+    mode: TableColumnResizeMode,
+    direction: TableColumnResizeDirection,
+    sizing: &TableColumnSizing,
+    state: &TableColumnResizeState,
+    client_x: Option<UiPx>,
+) -> TableColumnResizeUpdate {
+    let update = update_table_column_resize(
+        mode,
+        direction,
+        sizing,
+        state,
+        TableColumnResizeEvent::End,
+        client_x,
+    );
+    TableColumnResizeUpdate::new(TableColumnResizeState::default(), update.committed_sizing)
+}
+
+fn update_table_column_resize(
+    mode: TableColumnResizeMode,
+    direction: TableColumnResizeDirection,
+    sizing: &TableColumnSizing,
+    state: &TableColumnResizeState,
+    event: TableColumnResizeEvent,
+    client_x: Option<UiPx>,
+) -> TableColumnResizeUpdate {
+    let Some(client_x) = client_x else {
+        return TableColumnResizeUpdate::new(state.clone(), None);
+    };
+    let Some(start_offset) = state.start_offset else {
+        return TableColumnResizeUpdate::new(state.clone(), None);
+    };
+    let Some(start_width) = state.start_width else {
+        return TableColumnResizeUpdate::new(state.clone(), None);
+    };
+    if start_width.as_f32() <= 0.0 {
+        return TableColumnResizeUpdate::new(state.clone(), None);
+    }
+
+    let direction_multiplier = match direction {
+        TableColumnResizeDirection::Ltr => 1.0,
+        TableColumnResizeDirection::Rtl => -1.0,
+    };
+    let delta_offset = (client_x - start_offset) * direction_multiplier;
+    let delta_percentage = (delta_offset.as_f32() / start_width.as_f32()).max(-0.999_999);
+    let mut next_state = state.clone();
+    next_state.delta_offset = Some(delta_offset);
+    next_state.delta_percentage = Some(delta_percentage);
+
+    let should_commit =
+        mode == TableColumnResizeMode::OnChange || event == TableColumnResizeEvent::End;
+    let committed_sizing = should_commit.then(|| {
+        let mut next_sizing = sizing.clone();
+        for (column, width) in &state.column_widths_start {
+            next_sizing = next_sizing.with_width(
+                column.clone(),
+                resized_column_width(*width, delta_percentage),
+            );
+        }
+        next_sizing
+    });
+
+    TableColumnResizeUpdate::new(next_state, committed_sizing)
+}
+
+fn resized_column_width(start_width: UiPx, delta_percentage: f32) -> UiPx {
+    let raw = start_width.as_f32() + start_width.as_f32() * delta_percentage;
+    round_column_width(ui_px(raw.max(0.0)))
+}
+
+fn round_column_width(width: UiPx) -> UiPx {
+    let raw = normalized_column_width(width).as_f32();
+    ui_px((raw * 100.0).round() / 100.0)
 }
 
 /// Resolved table column lane for pinning-aware renderers.
@@ -489,6 +1182,210 @@ impl TableColumnRegions {
             .iter()
             .chain(self.center.iter())
             .chain(self.right.iter())
+            .cloned()
+            .collect()
+    }
+}
+
+/// Resolved table row lane for row-pinning-aware renderers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TableRowRegion {
+    /// Rows pinned to the top body band.
+    Top,
+    /// Unpinned center rows.
+    Center,
+    /// Rows pinned to the bottom body band.
+    Bottom,
+}
+
+impl TableRowRegion {
+    /// All row regions in render order.
+    pub const ALL: [Self; 3] = [Self::Top, Self::Center, Self::Bottom];
+
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Center => "center",
+            Self::Bottom => "bottom",
+        }
+    }
+}
+
+/// Policy for resolving pinned rows that are outside the current page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableRowPinningPolicy {
+    /// Pinned rows may resolve from the expanded pre-pagination model.
+    KeepPinnedRows,
+    /// Pinned rows resolve only when they are present in the current page.
+    PageOnly,
+}
+
+impl Default for TableRowPinningPolicy {
+    fn default() -> Self {
+        Self::KeepPinnedRows
+    }
+}
+
+/// Caller-owned pinned row state.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TableRowPinning {
+    top: Vec<TableRowId>,
+    bottom: Vec<TableRowId>,
+}
+
+impl TableRowPinning {
+    /// Creates an empty row pinning state.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Applies top-pinned row ids.
+    pub fn pinned_top(mut self, rows: impl IntoIterator<Item = impl Into<TableRowId>>) -> Self {
+        self.top = unique_row_ids(rows);
+        let top = self.top.iter().cloned().collect::<BTreeSet<_>>();
+        self.bottom.retain(|row| !top.contains(row));
+        self
+    }
+
+    /// Applies bottom-pinned row ids.
+    pub fn pinned_bottom(mut self, rows: impl IntoIterator<Item = impl Into<TableRowId>>) -> Self {
+        self.bottom = unique_row_ids(rows);
+        let bottom = self.bottom.iter().cloned().collect::<BTreeSet<_>>();
+        self.top.retain(|row| !bottom.contains(row));
+        self
+    }
+
+    /// Returns top-pinned row ids.
+    pub fn top(&self) -> &[TableRowId] {
+        &self.top
+    }
+
+    /// Returns bottom-pinned row ids.
+    pub fn bottom(&self) -> &[TableRowId] {
+        &self.bottom
+    }
+
+    /// Returns true when no rows are pinned.
+    pub fn is_empty(&self) -> bool {
+        self.top.is_empty() && self.bottom.is_empty()
+    }
+}
+
+/// Resolved visible rows split into row-pinning regions.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TableRowRegions {
+    top: Vec<TableResolvedRow>,
+    center: Vec<TableResolvedRow>,
+    bottom: Vec<TableResolvedRow>,
+}
+
+impl TableRowRegions {
+    fn from_models(
+        expanded_rows: &[TableResolvedRow],
+        paginated_rows: &[TableResolvedRow],
+        pinning: &TableRowPinning,
+        policy: TableRowPinningPolicy,
+    ) -> Self {
+        if pinning.is_empty() {
+            return Self {
+                top: Vec::new(),
+                center: paginated_rows.to_vec(),
+                bottom: Vec::new(),
+            };
+        }
+
+        let lookup_rows = match policy {
+            TableRowPinningPolicy::KeepPinnedRows => expanded_rows,
+            TableRowPinningPolicy::PageOnly => paginated_rows,
+        };
+        let mut top_seen = BTreeSet::new();
+        let top_ids = pinning
+            .top()
+            .iter()
+            .filter(|row_id| top_seen.insert((*row_id).clone()))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let top = lookup_rows
+            .iter()
+            .filter(|row| top_ids.contains(row.id()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let top_ids = top
+            .iter()
+            .map(|row| row.id().clone())
+            .collect::<BTreeSet<_>>();
+
+        let mut bottom_seen = BTreeSet::new();
+        let bottom_ids = pinning
+            .bottom()
+            .iter()
+            .filter(|row_id| !top_ids.contains(*row_id))
+            .filter(|row_id| bottom_seen.insert((*row_id).clone()))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let bottom = lookup_rows
+            .iter()
+            .filter(|row| bottom_ids.contains(row.id()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let pinned_ids = top
+            .iter()
+            .chain(bottom.iter())
+            .map(|row| row.id().clone())
+            .collect::<BTreeSet<_>>();
+        let center = paginated_rows
+            .iter()
+            .filter(|row| !pinned_ids.contains(row.id()))
+            .cloned()
+            .collect();
+
+        Self {
+            top,
+            center,
+            bottom,
+        }
+    }
+
+    /// Returns top-pinned rows.
+    pub fn top(&self) -> &[TableResolvedRow] {
+        &self.top
+    }
+
+    /// Returns unpinned center rows.
+    pub fn center(&self) -> &[TableResolvedRow] {
+        &self.center
+    }
+
+    /// Returns bottom-pinned rows.
+    pub fn bottom(&self) -> &[TableResolvedRow] {
+        &self.bottom
+    }
+
+    /// Returns rows for a region.
+    pub fn region(&self, region: TableRowRegion) -> &[TableResolvedRow] {
+        match region {
+            TableRowRegion::Top => self.top(),
+            TableRowRegion::Center => self.center(),
+            TableRowRegion::Bottom => self.bottom(),
+        }
+    }
+
+    /// Returns the total number of visual body rows across all regions.
+    pub fn len(&self) -> usize {
+        self.top.len() + self.center.len() + self.bottom.len()
+    }
+
+    /// Returns true when all row regions are empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn flattened(&self) -> Vec<TableResolvedRow> {
+        self.top
+            .iter()
+            .chain(self.center.iter())
+            .chain(self.bottom.iter())
             .cloned()
             .collect()
     }
@@ -677,6 +1574,575 @@ impl TableResolvedColumnSizingRegions {
     }
 }
 
+/// Resolved header cell kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableResolvedHeaderKind {
+    /// A structural group header.
+    Group,
+    /// A visible leaf column header.
+    Leaf,
+    /// A structural placeholder used to keep rows aligned.
+    Placeholder,
+}
+
+impl TableResolvedHeaderKind {
+    /// Returns whether this kind is a placeholder.
+    pub const fn is_placeholder(self) -> bool {
+        matches!(self, Self::Placeholder)
+    }
+
+    /// Returns whether this kind is a leaf header.
+    pub const fn is_leaf(self) -> bool {
+        matches!(self, Self::Leaf)
+    }
+
+    /// Returns whether this kind is a group header.
+    pub const fn is_group(self) -> bool {
+        matches!(self, Self::Group)
+    }
+}
+
+/// Resolved one header cell in a header row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableResolvedHeaderCell {
+    id: String,
+    region: TableColumnRegion,
+    depth: usize,
+    index: usize,
+    kind: TableResolvedHeaderKind,
+    label: String,
+    source_id: String,
+    placeholder_id: Option<String>,
+    col_span: usize,
+    row_span: usize,
+    leaf_column_ids: Vec<TableColumnId>,
+    sub_header_ids: Vec<String>,
+}
+
+impl TableResolvedHeaderCell {
+    fn new(
+        id: impl Into<String>,
+        region: TableColumnRegion,
+        depth: usize,
+        index: usize,
+        kind: TableResolvedHeaderKind,
+        label: impl Into<String>,
+        source_id: impl Into<String>,
+        placeholder_id: Option<impl Into<String>>,
+        col_span: usize,
+        row_span: usize,
+        leaf_column_ids: Vec<TableColumnId>,
+        sub_header_ids: Vec<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            region,
+            depth,
+            index,
+            kind,
+            label: label.into(),
+            source_id: source_id.into(),
+            placeholder_id: placeholder_id.map(Into::into),
+            col_span,
+            row_span,
+            leaf_column_ids,
+            sub_header_ids,
+        }
+    }
+
+    /// Returns the stable header identity.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Returns the render region that owns this header cell.
+    pub const fn region(&self) -> TableColumnRegion {
+        self.region
+    }
+
+    /// Returns the row depth for this header cell.
+    pub const fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// Returns the index within the header row.
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Returns the header cell kind.
+    pub const fn kind(&self) -> TableResolvedHeaderKind {
+        self.kind
+    }
+
+    /// Returns the visible label.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Returns the stable source identity behind this header cell.
+    pub fn source_id(&self) -> &str {
+        &self.source_id
+    }
+
+    /// Returns whether this header is a placeholder.
+    pub const fn is_placeholder(&self) -> bool {
+        self.kind.is_placeholder()
+    }
+
+    /// Returns whether this header is a visible leaf column.
+    pub const fn is_leaf(&self) -> bool {
+        self.kind.is_leaf()
+    }
+
+    /// Returns whether this header is a structural group.
+    pub const fn is_group(&self) -> bool {
+        self.kind.is_group()
+    }
+
+    /// Returns the placeholder id, when this cell is a placeholder.
+    pub fn placeholder_id(&self) -> Option<&str> {
+        self.placeholder_id.as_deref()
+    }
+
+    /// Returns the number of visible leaf columns covered by this cell.
+    pub const fn col_span(&self) -> usize {
+        self.col_span
+    }
+
+    /// Returns the number of header rows spanned by this cell.
+    pub const fn row_span(&self) -> usize {
+        self.row_span
+    }
+
+    /// Returns the visible leaf column ids covered by this cell.
+    pub fn leaf_column_ids(&self) -> &[TableColumnId] {
+        &self.leaf_column_ids
+    }
+
+    /// Returns direct child header ids.
+    pub fn sub_header_ids(&self) -> &[String] {
+        &self.sub_header_ids
+    }
+}
+
+/// Resolved header row metadata for one render region.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableResolvedHeaderGroup {
+    region: TableColumnRegion,
+    depth: usize,
+    id: String,
+    headers: Vec<TableResolvedHeaderCell>,
+}
+
+impl TableResolvedHeaderGroup {
+    fn new(
+        region: TableColumnRegion,
+        depth: usize,
+        id: impl Into<String>,
+        headers: Vec<TableResolvedHeaderCell>,
+    ) -> Self {
+        Self {
+            region,
+            depth,
+            id: id.into(),
+            headers,
+        }
+    }
+
+    /// Returns the render region that owns this header row.
+    pub const fn region(&self) -> TableColumnRegion {
+        self.region
+    }
+
+    /// Returns the row depth.
+    pub const fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// Returns the stable header-row identity.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Returns header cells in this row.
+    pub fn headers(&self) -> &[TableResolvedHeaderCell] {
+        &self.headers
+    }
+}
+
+/// Resolved header rows split into render regions.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TableResolvedHeaderGroupRegions {
+    left: Vec<TableResolvedHeaderGroup>,
+    center: Vec<TableResolvedHeaderGroup>,
+    right: Vec<TableResolvedHeaderGroup>,
+}
+
+impl TableResolvedHeaderGroupRegions {
+    fn from_column_tree(column_tree: &[TableColumnNode], regions: &TableColumnRegions) -> Self {
+        Self {
+            left: resolve_table_header_groups_for_region(
+                column_tree,
+                TableColumnRegion::Left,
+                regions.left(),
+            ),
+            center: resolve_table_header_groups_for_region(
+                column_tree,
+                TableColumnRegion::Center,
+                regions.center(),
+            ),
+            right: resolve_table_header_groups_for_region(
+                column_tree,
+                TableColumnRegion::Right,
+                regions.right(),
+            ),
+        }
+    }
+
+    /// Returns visible left-pinned header rows.
+    pub fn left(&self) -> &[TableResolvedHeaderGroup] {
+        &self.left
+    }
+
+    /// Returns visible unpinned center header rows.
+    pub fn center(&self) -> &[TableResolvedHeaderGroup] {
+        &self.center
+    }
+
+    /// Returns visible right-pinned header rows.
+    pub fn right(&self) -> &[TableResolvedHeaderGroup] {
+        &self.right
+    }
+
+    /// Returns header rows for a region.
+    pub fn region(&self, region: TableColumnRegion) -> &[TableResolvedHeaderGroup] {
+        match region {
+            TableColumnRegion::Left => self.left(),
+            TableColumnRegion::Center => self.center(),
+            TableColumnRegion::Right => self.right(),
+        }
+    }
+
+    /// Returns all header rows in render order.
+    pub fn all(&self) -> impl Iterator<Item = &TableResolvedHeaderGroup> {
+        self.left
+            .iter()
+            .chain(self.center.iter())
+            .chain(self.right.iter())
+    }
+
+    /// Returns the total number of header rows across all regions.
+    pub fn len(&self) -> usize {
+        self.left.len() + self.center.len() + self.right.len()
+    }
+
+    /// Returns true when all regions are empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TableHeaderPath {
+    leaf_id: TableColumnId,
+    nodes: Vec<TableColumnNode>,
+}
+
+#[derive(Debug, Clone)]
+struct TableHeaderSlot {
+    kind: TableResolvedHeaderKind,
+    source_id: String,
+    label: String,
+    placeholder_id: Option<String>,
+    leaf_id: TableColumnId,
+}
+
+fn resolve_table_header_groups_for_region(
+    column_tree: &[TableColumnNode],
+    region: TableColumnRegion,
+    visible_columns: &[TableColumn],
+) -> Vec<TableResolvedHeaderGroup> {
+    if visible_columns.is_empty() {
+        return Vec::new();
+    }
+
+    let leaf_paths = collect_table_leaf_paths(column_tree);
+    let visible_leaf_paths = visible_columns
+        .iter()
+        .filter_map(|column| {
+            leaf_paths.get(column.id()).map(|path| TableHeaderPath {
+                leaf_id: column.id().clone(),
+                nodes: path.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if visible_leaf_paths.is_empty() {
+        return Vec::new();
+    }
+
+    let max_depth = visible_leaf_paths
+        .iter()
+        .map(|path| path.nodes.len())
+        .max()
+        .unwrap_or(0);
+    if max_depth == 0 {
+        return Vec::new();
+    }
+
+    let mut rows = (0..max_depth)
+        .map(|depth| build_table_header_row(region, depth, max_depth, &visible_leaf_paths))
+        .collect::<Vec<_>>();
+    attach_table_header_children(&mut rows);
+
+    rows.into_iter()
+        .enumerate()
+        .filter(|(_, headers)| !headers.is_empty())
+        .map(|(depth, headers)| {
+            TableResolvedHeaderGroup::new(
+                region,
+                depth,
+                format!("table:{}:header:{}", region.as_str(), depth),
+                headers,
+            )
+        })
+        .collect()
+}
+
+fn build_table_header_row(
+    region: TableColumnRegion,
+    depth: usize,
+    max_depth: usize,
+    leaf_paths: &[TableHeaderPath],
+) -> Vec<TableResolvedHeaderCell> {
+    let mut cells = Vec::new();
+    let mut current_key: Option<String> = None;
+    let mut current_kind = TableResolvedHeaderKind::Placeholder;
+    let mut current_source_id = String::new();
+    let mut current_label = String::new();
+    let mut current_placeholder_id = None;
+    let mut current_leaf_ids = Vec::new();
+
+    let flush = |cells: &mut Vec<TableResolvedHeaderCell>,
+                 key: &mut Option<String>,
+                 kind: &mut TableResolvedHeaderKind,
+                 source_id: &mut String,
+                 label: &mut String,
+                 placeholder_id: &mut Option<String>,
+                 leaf_ids: &mut Vec<TableColumnId>| {
+        let Some(key_value) = key.take() else {
+            return;
+        };
+        let col_span = leaf_ids.len();
+        if col_span == 0 {
+            *kind = TableResolvedHeaderKind::Placeholder;
+            *source_id = String::new();
+            *label = String::new();
+            *placeholder_id = None;
+            return;
+        }
+        let first_leaf_id = leaf_ids
+            .first()
+            .expect("header segment should cover at least one leaf")
+            .clone();
+        let id = if kind.is_placeholder() {
+            placeholder_id
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| key_value.clone())
+        } else if kind.is_leaf() && col_span == 1 {
+            source_id.clone()
+        } else {
+            format!(
+                "table:{}:header:{}:{}:{}",
+                region.as_str(),
+                depth,
+                source_id,
+                first_leaf_id.as_str()
+            )
+        };
+        let leaf_column_ids = std::mem::take(leaf_ids);
+        cells.push(TableResolvedHeaderCell::new(
+            id,
+            region,
+            depth,
+            cells.len(),
+            *kind,
+            label.clone(),
+            source_id.clone(),
+            placeholder_id.clone(),
+            col_span,
+            if kind.is_leaf() {
+                max_depth.saturating_sub(depth)
+            } else {
+                1
+            },
+            leaf_column_ids,
+            Vec::new(),
+        ));
+        *kind = TableResolvedHeaderKind::Placeholder;
+        *source_id = String::new();
+        *label = String::new();
+        *placeholder_id = None;
+    };
+
+    for path in leaf_paths {
+        let slot = header_slot_for_path(region, depth, path);
+        let slot_key = if slot.kind.is_placeholder() {
+            slot.placeholder_id
+                .clone()
+                .expect("placeholder headers always carry a placeholder id")
+        } else {
+            slot.source_id.clone()
+        };
+
+        let should_flush = current_key.as_ref() != Some(&slot_key);
+        if should_flush {
+            flush(
+                &mut cells,
+                &mut current_key,
+                &mut current_kind,
+                &mut current_source_id,
+                &mut current_label,
+                &mut current_placeholder_id,
+                &mut current_leaf_ids,
+            );
+            current_key = Some(slot_key);
+            current_kind = slot.kind;
+            current_source_id = slot.source_id;
+            current_label = slot.label;
+            current_placeholder_id = slot.placeholder_id;
+        }
+
+        current_leaf_ids.push(slot.leaf_id);
+    }
+
+    flush(
+        &mut cells,
+        &mut current_key,
+        &mut current_kind,
+        &mut current_source_id,
+        &mut current_label,
+        &mut current_placeholder_id,
+        &mut current_leaf_ids,
+    );
+
+    cells
+}
+
+fn header_slot_for_path(
+    region: TableColumnRegion,
+    depth: usize,
+    path: &TableHeaderPath,
+) -> TableHeaderSlot {
+    let leaf_depth = path.nodes.len().saturating_sub(1);
+
+    if depth == leaf_depth {
+        let leaf = path
+            .nodes
+            .last()
+            .and_then(TableColumnNode::as_column)
+            .expect("leaf paths should end in a column node");
+        return TableHeaderSlot {
+            kind: TableResolvedHeaderKind::Leaf,
+            source_id: leaf.id().as_str().to_owned(),
+            label: leaf.label().to_owned(),
+            placeholder_id: None,
+            leaf_id: leaf.id().clone(),
+        };
+    }
+
+    if let Some(node) = path.nodes.get(depth) {
+        match node {
+            TableColumnNode::Column(column) => TableHeaderSlot {
+                kind: TableResolvedHeaderKind::Leaf,
+                source_id: column.id().as_str().to_owned(),
+                label: column.label().to_owned(),
+                placeholder_id: None,
+                leaf_id: path.leaf_id.clone(),
+            },
+            TableColumnNode::Group(group) => TableHeaderSlot {
+                kind: TableResolvedHeaderKind::Group,
+                source_id: group.id().as_str().to_owned(),
+                label: group.label().to_owned(),
+                placeholder_id: None,
+                leaf_id: path.leaf_id.clone(),
+            },
+        }
+    } else {
+        TableHeaderSlot {
+            kind: TableResolvedHeaderKind::Placeholder,
+            source_id: path.leaf_id.as_str().to_owned(),
+            label: String::new(),
+            placeholder_id: Some(format!(
+                "table:{}:placeholder:{}:{}",
+                region.as_str(),
+                depth,
+                path.leaf_id.as_str()
+            )),
+            leaf_id: path.leaf_id.clone(),
+        }
+    }
+}
+
+fn collect_table_leaf_paths(
+    nodes: &[TableColumnNode],
+) -> BTreeMap<TableColumnId, Vec<TableColumnNode>> {
+    let mut out = BTreeMap::new();
+    collect_table_leaf_paths_inner(nodes, &mut Vec::new(), &mut out);
+    out
+}
+
+fn collect_table_leaf_paths_inner(
+    nodes: &[TableColumnNode],
+    path: &mut Vec<TableColumnNode>,
+    out: &mut BTreeMap<TableColumnId, Vec<TableColumnNode>>,
+) {
+    for node in nodes {
+        path.push(node.clone());
+        match node {
+            TableColumnNode::Column(column) => {
+                out.insert(column.id().clone(), path.clone());
+            }
+            TableColumnNode::Group(group) => {
+                collect_table_leaf_paths_inner(group.children(), path, out);
+            }
+        }
+        path.pop();
+    }
+}
+
+fn attach_table_header_children(rows: &mut [Vec<TableResolvedHeaderCell>]) {
+    if rows.len() < 2 {
+        return;
+    }
+
+    for depth in 0..rows.len() - 1 {
+        let next = rows[depth + 1]
+            .iter()
+            .map(|cell| (cell.id().to_owned(), cell.leaf_column_ids().to_vec()))
+            .collect::<Vec<_>>();
+
+        for cell in &mut rows[depth] {
+            let parent_leaves = cell.leaf_column_ids().to_vec();
+            let parent_leaves = parent_leaves
+                .into_iter()
+                .collect::<BTreeSet<TableColumnId>>();
+            let child_ids = next
+                .iter()
+                .filter(|(_, child_leaves)| {
+                    child_leaves
+                        .iter()
+                        .any(|leaf_id| parent_leaves.contains(leaf_id))
+                })
+                .map(|(child_id, _)| child_id.clone())
+                .collect::<Vec<_>>();
+            cell.sub_header_ids = child_ids;
+        }
+    }
+}
+
 fn resolve_column_sizing_region(
     region: TableColumnRegion,
     columns: &[TableColumn],
@@ -703,11 +2169,85 @@ fn resolve_column_sizing_region(
     (resolved, total_width)
 }
 
+/// Loading state for source row children.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TableRowChildrenLoadState {
+    /// No child load is currently pending or failed.
+    Idle,
+    /// Child rows are being loaded by the caller.
+    Loading {
+        /// Loading status text supplied by the caller.
+        message: String,
+    },
+    /// Child row loading failed.
+    Failed {
+        /// Failure status text supplied by the caller.
+        message: String,
+    },
+}
+
+impl TableRowChildrenLoadState {
+    /// Creates idle child loading metadata.
+    pub const fn idle() -> Self {
+        Self::Idle
+    }
+
+    /// Creates loading child metadata.
+    pub fn loading(message: impl Into<String>) -> Self {
+        Self::Loading {
+            message: message.into(),
+        }
+    }
+
+    /// Creates failed child loading metadata.
+    pub fn failed(message: impl Into<String>) -> Self {
+        Self::Failed {
+            message: message.into(),
+        }
+    }
+
+    /// Returns whether child rows are currently loading.
+    pub const fn is_loading(&self) -> bool {
+        matches!(self, Self::Loading { .. })
+    }
+
+    /// Returns whether child row loading failed.
+    pub const fn is_failed(&self) -> bool {
+        matches!(self, Self::Failed { .. })
+    }
+
+    /// Returns a stable loading-state label.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Loading { .. } => "loading",
+            Self::Failed { .. } => "failed",
+        }
+    }
+
+    /// Returns the loading or failure message, when present.
+    pub fn message(&self) -> Option<&str> {
+        match self {
+            Self::Idle => None,
+            Self::Loading { message } | Self::Failed { message } => Some(message.as_str()),
+        }
+    }
+}
+
+impl Default for TableRowChildrenLoadState {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
 /// Renderer-neutral row descriptor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableRow {
     id: TableRowId,
     cells: BTreeMap<TableColumnId, TableCellValue>,
+    children: Vec<TableRow>,
+    expandable: bool,
+    children_load_state: TableRowChildrenLoadState,
 }
 
 impl TableRow {
@@ -716,6 +2256,9 @@ impl TableRow {
         Self {
             id: id.into(),
             cells: BTreeMap::new(),
+            children: Vec::new(),
+            expandable: false,
+            children_load_state: TableRowChildrenLoadState::Idle,
         }
     }
 
@@ -727,6 +2270,28 @@ impl TableRow {
     /// Returns all cells keyed by column identity.
     pub const fn cells(&self) -> &BTreeMap<TableColumnId, TableCellValue> {
         &self.cells
+    }
+
+    /// Returns nested source rows.
+    pub fn children(&self) -> &[TableRow] {
+        &self.children
+    }
+
+    /// Returns whether this source row has nested children.
+    pub fn has_children(&self) -> bool {
+        !self.children.is_empty()
+    }
+
+    /// Returns whether this source row can be expanded by the caller.
+    pub fn can_expand(&self) -> bool {
+        self.expandable
+            || self.has_children()
+            || !matches!(self.children_load_state, TableRowChildrenLoadState::Idle)
+    }
+
+    /// Returns caller-owned child loading metadata.
+    pub const fn children_load_state(&self) -> &TableRowChildrenLoadState {
+        &self.children_load_state
     }
 
     /// Returns a cell value for the given column.
@@ -742,6 +2307,49 @@ impl TableRow {
     ) -> Self {
         self.cells.insert(column.into(), value.into());
         self
+    }
+
+    /// Adds one nested source row.
+    pub fn with_child(mut self, child: TableRow) -> Self {
+        self.children.push(child);
+        self
+    }
+
+    /// Adds nested source rows.
+    pub fn with_children(mut self, children: impl IntoIterator<Item = TableRow>) -> Self {
+        self.children.extend(children);
+        self
+    }
+
+    /// Replaces nested source rows.
+    pub fn with_replaced_children(mut self, children: impl IntoIterator<Item = TableRow>) -> Self {
+        self.children = children.into_iter().collect();
+        self
+    }
+
+    /// Marks the row as expandable even when no child rows are currently loaded.
+    pub const fn with_expandable(mut self, expandable: bool) -> Self {
+        self.expandable = expandable;
+        self
+    }
+
+    /// Applies caller-owned child loading metadata.
+    pub fn with_children_load_state(mut self, state: TableRowChildrenLoadState) -> Self {
+        if !matches!(state, TableRowChildrenLoadState::Idle) {
+            self.expandable = true;
+        }
+        self.children_load_state = state;
+        self
+    }
+
+    /// Marks child rows as currently loading.
+    pub fn with_children_loading(self, message: impl Into<String>) -> Self {
+        self.with_children_load_state(TableRowChildrenLoadState::loading(message))
+    }
+
+    /// Marks child row loading as failed.
+    pub fn with_children_load_failed(self, message: impl Into<String>) -> Self {
+        self.with_children_load_state(TableRowChildrenLoadState::failed(message))
     }
 }
 
@@ -801,11 +2409,128 @@ impl TableSort {
     }
 }
 
-/// Contains-filter specification for one column.
+/// Column filter kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TableFilterKind {
+    /// Case-insensitive contains filter.
+    Contains {
+        /// Case-insensitive query text.
+        query: String,
+    },
+    /// Exact categorical filter over stable facet tokens.
+    OneOf {
+        /// Exact stable facet tokens.
+        values: BTreeSet<String>,
+    },
+    /// Inclusive numeric range filter with optional finite endpoints.
+    NumberRange {
+        /// Inclusive lower bound.
+        min: Option<TableNumericFilterBound>,
+        /// Inclusive upper bound.
+        max: Option<TableNumericFilterBound>,
+    },
+    /// Text predicate filter.
+    Text {
+        /// Text operator.
+        operator: TableTextFilterOperator,
+        /// Query text.
+        query: String,
+        /// Whether matching should preserve case.
+        case_sensitive: bool,
+    },
+    /// Single-bound numeric comparison filter.
+    NumberComparison {
+        /// Numeric comparison operator.
+        operator: TableNumericFilterOperator,
+        /// Finite comparison value.
+        value: TableNumericFilterBound,
+    },
+}
+
+/// Built-in text predicate operators for table column filters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableTextFilterOperator {
+    /// Cell text contains the query.
+    Contains,
+    /// Cell text does not contain the query.
+    NotContains,
+    /// Cell text equals the query.
+    Equals,
+    /// Cell text does not equal the query.
+    NotEquals,
+    /// Cell text starts with the query.
+    StartsWith,
+    /// Cell text ends with the query.
+    EndsWith,
+}
+
+impl TableTextFilterOperator {
+    /// Returns a stable operator label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Contains => "contains",
+            Self::NotContains => "not_contains",
+            Self::Equals => "equals",
+            Self::NotEquals => "not_equals",
+            Self::StartsWith => "starts_with",
+            Self::EndsWith => "ends_with",
+        }
+    }
+}
+
+/// Built-in numeric comparison operators for table column filters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableNumericFilterOperator {
+    /// Cell number is greater than the value.
+    GreaterThan,
+    /// Cell number is greater than or equal to the value.
+    GreaterThanOrEqual,
+    /// Cell number is less than the value.
+    LessThan,
+    /// Cell number is less than or equal to the value.
+    LessThanOrEqual,
+}
+
+impl TableNumericFilterOperator {
+    /// Returns a stable operator label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GreaterThan => "greater_than",
+            Self::GreaterThanOrEqual => "greater_than_or_equal",
+            Self::LessThan => "less_than",
+            Self::LessThanOrEqual => "less_than_or_equal",
+        }
+    }
+}
+
+/// Finite numeric endpoint for table range filters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TableNumericFilterBound(f64);
+
+impl Eq for TableNumericFilterBound {}
+
+impl TableNumericFilterBound {
+    /// Creates a finite numeric filter bound.
+    pub fn new(value: f64) -> Option<Self> {
+        if !value.is_finite() {
+            return None;
+        }
+
+        let value = if value == 0.0 { 0.0 } else { value };
+        Some(Self(value))
+    }
+
+    /// Returns the numeric endpoint value.
+    pub const fn value(self) -> f64 {
+        self.0
+    }
+}
+
+/// Column filter specification for one column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableFilter {
     column: TableColumnId,
-    query: String,
+    kind: TableFilterKind,
 }
 
 impl TableFilter {
@@ -813,8 +2538,141 @@ impl TableFilter {
     pub fn contains(column: impl Into<TableColumnId>, query: impl Into<String>) -> Self {
         Self {
             column: column.into(),
-            query: query.into(),
+            kind: TableFilterKind::Contains {
+                query: query.into(),
+            },
         }
+    }
+
+    /// Creates an exact categorical filter over stable facet tokens.
+    pub fn exact(column: impl Into<TableColumnId>, value: impl Into<String>) -> Self {
+        Self::one_of(column, [value.into()])
+    }
+
+    /// Creates an exact categorical filter over multiple stable facet tokens.
+    pub fn one_of(
+        column: impl Into<TableColumnId>,
+        values: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            column: column.into(),
+            kind: TableFilterKind::OneOf {
+                values: values.into_iter().map(Into::into).collect(),
+            },
+        }
+    }
+
+    /// Creates a text predicate filter.
+    pub fn text(
+        column: impl Into<TableColumnId>,
+        operator: TableTextFilterOperator,
+        query: impl Into<String>,
+    ) -> Self {
+        Self::text_with_case(column, operator, query, false)
+    }
+
+    /// Creates a text predicate filter with explicit case sensitivity.
+    pub fn text_with_case(
+        column: impl Into<TableColumnId>,
+        operator: TableTextFilterOperator,
+        query: impl Into<String>,
+        case_sensitive: bool,
+    ) -> Self {
+        Self {
+            column: column.into(),
+            kind: TableFilterKind::Text {
+                operator,
+                query: query.into(),
+                case_sensitive,
+            },
+        }
+    }
+
+    /// Creates a case-insensitive not-contains text filter.
+    pub fn not_contains(column: impl Into<TableColumnId>, query: impl Into<String>) -> Self {
+        Self::text(column, TableTextFilterOperator::NotContains, query)
+    }
+
+    /// Creates a case-insensitive exact text filter.
+    pub fn text_equals(column: impl Into<TableColumnId>, query: impl Into<String>) -> Self {
+        Self::text(column, TableTextFilterOperator::Equals, query)
+    }
+
+    /// Creates a case-insensitive not-equals text filter.
+    pub fn text_not_equals(column: impl Into<TableColumnId>, query: impl Into<String>) -> Self {
+        Self::text(column, TableTextFilterOperator::NotEquals, query)
+    }
+
+    /// Creates a case-insensitive starts-with text filter.
+    pub fn starts_with(column: impl Into<TableColumnId>, query: impl Into<String>) -> Self {
+        Self::text(column, TableTextFilterOperator::StartsWith, query)
+    }
+
+    /// Creates a case-insensitive ends-with text filter.
+    pub fn ends_with(column: impl Into<TableColumnId>, query: impl Into<String>) -> Self {
+        Self::text(column, TableTextFilterOperator::EndsWith, query)
+    }
+
+    /// Creates an inclusive numeric range filter.
+    pub fn number_range(
+        column: impl Into<TableColumnId>,
+        min: Option<f64>,
+        max: Option<f64>,
+    ) -> Option<Self> {
+        let min = min.and_then(TableNumericFilterBound::new);
+        let max = max.and_then(TableNumericFilterBound::new);
+        let (min, max) = normalize_table_numeric_filter_bounds(min, max);
+
+        if min.is_none() && max.is_none() {
+            return None;
+        }
+
+        Some(Self {
+            column: column.into(),
+            kind: TableFilterKind::NumberRange { min, max },
+        })
+    }
+
+    /// Creates a single-bound numeric comparison filter.
+    pub fn number_comparison(
+        column: impl Into<TableColumnId>,
+        operator: TableNumericFilterOperator,
+        value: f64,
+    ) -> Option<Self> {
+        Some(Self {
+            column: column.into(),
+            kind: TableFilterKind::NumberComparison {
+                operator,
+                value: TableNumericFilterBound::new(value)?,
+            },
+        })
+    }
+
+    /// Creates a greater-than numeric comparison filter.
+    pub fn number_greater_than(column: impl Into<TableColumnId>, value: f64) -> Option<Self> {
+        Self::number_comparison(column, TableNumericFilterOperator::GreaterThan, value)
+    }
+
+    /// Creates a greater-than-or-equal numeric comparison filter.
+    pub fn number_greater_than_or_equal(
+        column: impl Into<TableColumnId>,
+        value: f64,
+    ) -> Option<Self> {
+        Self::number_comparison(
+            column,
+            TableNumericFilterOperator::GreaterThanOrEqual,
+            value,
+        )
+    }
+
+    /// Creates a less-than numeric comparison filter.
+    pub fn number_less_than(column: impl Into<TableColumnId>, value: f64) -> Option<Self> {
+        Self::number_comparison(column, TableNumericFilterOperator::LessThan, value)
+    }
+
+    /// Creates a less-than-or-equal numeric comparison filter.
+    pub fn number_less_than_or_equal(column: impl Into<TableColumnId>, value: f64) -> Option<Self> {
+        Self::number_comparison(column, TableNumericFilterOperator::LessThanOrEqual, value)
     }
 
     /// Returns the filtered column identity.
@@ -822,24 +2680,471 @@ impl TableFilter {
         &self.column
     }
 
-    /// Returns the filter query.
+    /// Returns the filter kind.
+    pub const fn kind(&self) -> &TableFilterKind {
+        &self.kind
+    }
+
+    /// Returns the contains query when this is a contains filter.
     pub fn query(&self) -> &str {
-        &self.query
+        match &self.kind {
+            TableFilterKind::Contains { query } => query,
+            TableFilterKind::Text { query, .. } => query,
+            TableFilterKind::OneOf { .. } => "",
+            TableFilterKind::NumberRange { .. } => "",
+            TableFilterKind::NumberComparison { .. } => "",
+        }
+    }
+
+    /// Returns text predicate metadata when this is a text filter.
+    pub fn text_predicate(&self) -> Option<(TableTextFilterOperator, &str, bool)> {
+        match &self.kind {
+            TableFilterKind::Contains { query } => {
+                Some((TableTextFilterOperator::Contains, query.as_str(), false))
+            }
+            TableFilterKind::Text {
+                operator,
+                query,
+                case_sensitive,
+            } => Some((*operator, query.as_str(), *case_sensitive)),
+            TableFilterKind::OneOf { .. }
+            | TableFilterKind::NumberRange { .. }
+            | TableFilterKind::NumberComparison { .. } => None,
+        }
+    }
+
+    /// Returns the selected categorical tokens when this is an exact filter.
+    pub fn selected_values(&self) -> Option<&BTreeSet<String>> {
+        match &self.kind {
+            TableFilterKind::Contains { .. } => None,
+            TableFilterKind::Text { .. } => None,
+            TableFilterKind::OneOf { values } => Some(values),
+            TableFilterKind::NumberRange { .. } => None,
+            TableFilterKind::NumberComparison { .. } => None,
+        }
+    }
+
+    /// Returns numeric filter endpoints when this is a range filter.
+    pub fn number_range_bounds(&self) -> Option<(Option<f64>, Option<f64>)> {
+        match &self.kind {
+            TableFilterKind::NumberRange { min, max } => Some((
+                min.map(|bound| bound.value()),
+                max.map(|bound| bound.value()),
+            )),
+            TableFilterKind::Contains { .. }
+            | TableFilterKind::Text { .. }
+            | TableFilterKind::OneOf { .. }
+            | TableFilterKind::NumberComparison { .. } => None,
+        }
+    }
+
+    /// Returns numeric comparison metadata when this is a single-bound comparison filter.
+    pub fn number_comparison_value(&self) -> Option<(TableNumericFilterOperator, f64)> {
+        match &self.kind {
+            TableFilterKind::NumberComparison { operator, value } => {
+                Some((*operator, value.value()))
+            }
+            TableFilterKind::Contains { .. }
+            | TableFilterKind::Text { .. }
+            | TableFilterKind::OneOf { .. }
+            | TableFilterKind::NumberRange { .. } => None,
+        }
     }
 
     fn matches(&self, row: &TableRow) -> bool {
-        if self.query.is_empty() {
-            return true;
+        match &self.kind {
+            TableFilterKind::Contains { query } => {
+                if query.is_empty() {
+                    return true;
+                }
+
+                row.cell(&self.column)
+                    .map(|value| {
+                        value
+                            .filter_text()
+                            .to_lowercase()
+                            .contains(&query.to_lowercase())
+                    })
+                    .unwrap_or(false)
+            }
+            TableFilterKind::Text {
+                operator,
+                query,
+                case_sensitive,
+            } => {
+                if query.is_empty() {
+                    return true;
+                }
+
+                row.cell(&self.column)
+                    .map(|value| {
+                        table_text_filter_matches(
+                            &value.filter_text(),
+                            query,
+                            *operator,
+                            *case_sensitive,
+                        )
+                    })
+                    .unwrap_or(false)
+            }
+            TableFilterKind::OneOf { values } => {
+                if values.is_empty() {
+                    return true;
+                }
+
+                row.cell(&self.column)
+                    .map(|value| values.contains(&value.filter_text()))
+                    .unwrap_or(false)
+            }
+            TableFilterKind::NumberRange { min, max } => {
+                if min.is_none() && max.is_none() {
+                    return true;
+                }
+
+                let Some(TableCellValue::Number(number)) = row.cell(&self.column) else {
+                    return false;
+                };
+                if !number.is_finite() {
+                    return false;
+                }
+                if min.is_some_and(|bound| *number < bound.value()) {
+                    return false;
+                }
+                if max.is_some_and(|bound| *number > bound.value()) {
+                    return false;
+                }
+
+                true
+            }
+            TableFilterKind::NumberComparison { operator, value } => {
+                let Some(TableCellValue::Number(number)) = row.cell(&self.column) else {
+                    return false;
+                };
+                if !number.is_finite() {
+                    return false;
+                }
+
+                match operator {
+                    TableNumericFilterOperator::GreaterThan => *number > value.value(),
+                    TableNumericFilterOperator::GreaterThanOrEqual => *number >= value.value(),
+                    TableNumericFilterOperator::LessThan => *number < value.value(),
+                    TableNumericFilterOperator::LessThanOrEqual => *number <= value.value(),
+                }
+            }
+        }
+    }
+}
+
+fn table_text_filter_matches(
+    value: &str,
+    query: &str,
+    operator: TableTextFilterOperator,
+    case_sensitive: bool,
+) -> bool {
+    let (value, query) = if case_sensitive {
+        (value.to_string(), query.to_string())
+    } else {
+        (value.to_lowercase(), query.to_lowercase())
+    };
+
+    match operator {
+        TableTextFilterOperator::Contains => value.contains(&query),
+        TableTextFilterOperator::NotContains => !value.contains(&query),
+        TableTextFilterOperator::Equals => value == query,
+        TableTextFilterOperator::NotEquals => value != query,
+        TableTextFilterOperator::StartsWith => value.starts_with(&query),
+        TableTextFilterOperator::EndsWith => value.ends_with(&query),
+    }
+}
+
+fn normalize_table_numeric_filter_bounds(
+    min: Option<TableNumericFilterBound>,
+    max: Option<TableNumericFilterBound>,
+) -> (
+    Option<TableNumericFilterBound>,
+    Option<TableNumericFilterBound>,
+) {
+    match (min, max) {
+        (Some(left), Some(right)) if left.value() > right.value() => (Some(right), Some(left)),
+        bounds => bounds,
+    }
+}
+
+fn normalize_table_global_filter_query(query: impl Into<String>) -> Option<String> {
+    let query = query.into();
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Per-stage row-model ownership for client or manual control.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableStageMode {
+    /// The table applies the stage locally.
+    Client,
+    /// The caller supplies the stage output snapshot.
+    Manual,
+}
+
+impl TableStageMode {
+    /// Returns whether the stage is caller-owned.
+    pub const fn is_manual(self) -> bool {
+        matches!(self, Self::Manual)
+    }
+}
+
+impl Default for TableStageMode {
+    fn default() -> Self {
+        Self::Client
+    }
+}
+
+/// Row-selection cardinality for a table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableSelectionMode {
+    /// Multiple rows may be selected at once.
+    #[default]
+    Multiple,
+    /// Exactly one row should be selected at a time.
+    Single,
+}
+
+impl TableSelectionMode {
+    /// Returns whether the table is single-select.
+    pub const fn is_single(self) -> bool {
+        matches!(self, Self::Single)
+    }
+
+    /// Returns whether the table permits multiple selected rows.
+    pub const fn is_multiple(self) -> bool {
+        matches!(self, Self::Multiple)
+    }
+}
+
+/// How row selection is triggered from the table surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableSelectionActivationMode {
+    /// Selection happens through explicit controls such as checkboxes or radios.
+    #[default]
+    ExplicitControl,
+    /// Clicking the row surface toggles selection.
+    RowClick,
+}
+
+impl TableSelectionActivationMode {
+    /// Returns whether row clicks toggle selection.
+    pub const fn is_row_click(self) -> bool {
+        matches!(self, Self::RowClick)
+    }
+}
+
+/// Whether selecting a row propagates to its descendants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableSubRowSelectionPolicy {
+    /// Child rows stay independent unless they are selected directly.
+    #[default]
+    Independent,
+    /// Selecting a row also selects all of its descendants.
+    Descendants,
+}
+
+impl TableSubRowSelectionPolicy {
+    /// Returns whether descendant rows are selected together with their parent.
+    pub const fn propagates_descendants(self) -> bool {
+        matches!(self, Self::Descendants)
+    }
+}
+
+/// Policy for resolving table row selection behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TableSelectionPolicy {
+    selection_mode: TableSelectionMode,
+    activation_mode: TableSelectionActivationMode,
+    sub_row_policy: TableSubRowSelectionPolicy,
+}
+
+impl TableSelectionPolicy {
+    /// Creates a selection policy from explicit mode choices.
+    pub const fn new(
+        selection_mode: TableSelectionMode,
+        activation_mode: TableSelectionActivationMode,
+        sub_row_policy: TableSubRowSelectionPolicy,
+    ) -> Self {
+        Self {
+            selection_mode,
+            activation_mode,
+            sub_row_policy,
+        }
+    }
+
+    /// Returns the selection cardinality.
+    pub const fn selection_mode(self) -> TableSelectionMode {
+        self.selection_mode
+    }
+
+    /// Returns how selection is triggered from the row surface.
+    pub const fn activation_mode(self) -> TableSelectionActivationMode {
+        self.activation_mode
+    }
+
+    /// Returns how selection propagates to descendant rows.
+    pub const fn sub_row_policy(self) -> TableSubRowSelectionPolicy {
+        self.sub_row_policy
+    }
+
+    /// Applies a selection cardinality.
+    pub const fn with_selection_mode(mut self, selection_mode: TableSelectionMode) -> Self {
+        self.selection_mode = selection_mode;
+        self
+    }
+
+    /// Applies a row-surface activation mode.
+    pub const fn with_activation_mode(
+        mut self,
+        activation_mode: TableSelectionActivationMode,
+    ) -> Self {
+        self.activation_mode = activation_mode;
+        self
+    }
+
+    /// Applies a descendant-selection policy.
+    pub const fn with_sub_row_policy(mut self, sub_row_policy: TableSubRowSelectionPolicy) -> Self {
+        self.sub_row_policy = sub_row_policy;
+        self
+    }
+
+    fn resolve_selected_rows(
+        self,
+        rows: &[TableRow],
+        selected_rows: &BTreeSet<TableRowId>,
+    ) -> BTreeSet<TableRowId> {
+        let mut resolved = self.normalize_selected_rows(selected_rows.iter().cloned());
+        if self.selection_mode.is_single() {
+            return resolved;
+        }
+        if self.sub_row_policy.propagates_descendants() {
+            collect_descendant_selected_rows(rows, selected_rows, &mut resolved);
         }
 
-        row.cell(&self.column)
-            .map(|value| {
-                value
-                    .filter_text()
-                    .to_lowercase()
-                    .contains(&self.query.to_lowercase())
-            })
-            .unwrap_or(false)
+        resolved
+    }
+
+    fn normalize_selected_rows(
+        self,
+        selected_rows: impl IntoIterator<Item = impl Into<TableRowId>>,
+    ) -> BTreeSet<TableRowId> {
+        let selected_rows = selected_rows
+            .into_iter()
+            .map(Into::into)
+            .collect::<BTreeSet<_>>();
+        if self.selection_mode.is_single() {
+            return selected_rows.into_iter().next().into_iter().collect();
+        }
+
+        selected_rows
+    }
+}
+
+impl Default for TableSelectionPolicy {
+    fn default() -> Self {
+        Self::new(
+            TableSelectionMode::Multiple,
+            TableSelectionActivationMode::ExplicitControl,
+            TableSubRowSelectionPolicy::Independent,
+        )
+    }
+}
+
+/// The resolved state for one table-selection summary scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableSelectionSummaryState {
+    /// No rows in the scope are selected.
+    None,
+    /// Some but not all rows in the scope are selected.
+    Some,
+    /// Every row in the scope is selected.
+    All,
+}
+
+impl TableSelectionSummaryState {
+    /// Returns a stable label for the summary state.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Some => "some",
+            Self::All => "all",
+        }
+    }
+
+    /// Returns whether the scope has no selected rows.
+    pub const fn is_none(self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    /// Returns whether the scope has some but not all selected rows.
+    pub const fn is_some(self) -> bool {
+        matches!(self, Self::Some)
+    }
+
+    /// Returns whether the scope has every row selected.
+    pub const fn is_all(self) -> bool {
+        matches!(self, Self::All)
+    }
+}
+
+/// Summary of selection across one resolved row-model scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TableSelectionSummary {
+    selected_count: usize,
+    total_count: usize,
+}
+
+impl TableSelectionSummary {
+    /// Creates a selection summary from explicit counts.
+    pub const fn new(selected_count: usize, total_count: usize) -> Self {
+        Self {
+            selected_count,
+            total_count,
+        }
+    }
+
+    /// Returns the number of selected rows in the scope.
+    pub const fn selected_count(self) -> usize {
+        self.selected_count
+    }
+
+    /// Returns the total number of rows in the scope.
+    pub const fn total_count(self) -> usize {
+        self.total_count
+    }
+
+    /// Returns the resolved state for the summary.
+    pub const fn state(self) -> TableSelectionSummaryState {
+        if self.total_count == 0 || self.selected_count == 0 {
+            TableSelectionSummaryState::None
+        } else if self.selected_count == self.total_count {
+            TableSelectionSummaryState::All
+        } else {
+            TableSelectionSummaryState::Some
+        }
+    }
+
+    /// Returns whether the scope has no selected rows.
+    pub const fn is_none_selected(self) -> bool {
+        self.state().is_none()
+    }
+
+    /// Returns whether the scope has some but not all selected rows.
+    pub const fn is_some_selected(self) -> bool {
+        self.state().is_some()
+    }
+
+    /// Returns whether the scope has every row selected.
+    pub const fn is_all_selected(self) -> bool {
+        self.state().is_all()
     }
 }
 
@@ -848,6 +3153,9 @@ impl TableFilter {
 pub struct TablePagination {
     page_index: usize,
     page_size: usize,
+    mode: TableStageMode,
+    row_count: Option<usize>,
+    page_count: Option<usize>,
 }
 
 impl TablePagination {
@@ -856,7 +3164,17 @@ impl TablePagination {
         Self {
             page_index,
             page_size,
+            mode: TableStageMode::Client,
+            row_count: None,
+            page_count: None,
         }
+    }
+
+    /// Creates manual pagination state from a page index, page size, and total row count.
+    pub const fn manual(page_index: usize, page_size: usize, row_count: usize) -> Self {
+        Self::new(page_index, page_size)
+            .with_mode(TableStageMode::Manual)
+            .with_row_count(row_count)
     }
 
     /// Returns pagination that keeps all rows.
@@ -864,6 +3182,9 @@ impl TablePagination {
         Self {
             page_index: 0,
             page_size: usize::MAX,
+            mode: TableStageMode::Client,
+            row_count: None,
+            page_count: None,
         }
     }
 
@@ -872,13 +3193,66 @@ impl TablePagination {
         self.page_index
     }
 
+    /// Returns the same pagination state with the page index reset.
+    pub const fn with_page_index(mut self, page_index: usize) -> Self {
+        self.page_index = page_index;
+        self
+    }
+
     /// Returns the maximum number of rows per page.
     pub const fn page_size(self) -> usize {
         self.page_size
     }
 
+    /// Returns the pagination ownership mode.
+    pub const fn mode(self) -> TableStageMode {
+        self.mode
+    }
+
+    /// Returns whether pagination is caller-owned.
+    pub const fn is_manual(self) -> bool {
+        self.mode.is_manual()
+    }
+
+    /// Returns the total row count when known.
+    pub const fn row_count(self) -> Option<usize> {
+        self.row_count
+    }
+
+    /// Returns the total page count when known or derivable.
+    pub fn page_count(self) -> Option<usize> {
+        if let Some(page_count) = self.page_count {
+            return Some(page_count);
+        }
+
+        let row_count = self.row_count?;
+        if self.page_size == 0 {
+            return Some(0);
+        }
+
+        Some(row_count.div_ceil(self.page_size))
+    }
+
+    /// Applies pagination ownership mode.
+    pub const fn with_mode(mut self, mode: TableStageMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Applies a total row count.
+    pub const fn with_row_count(mut self, row_count: usize) -> Self {
+        self.row_count = Some(row_count);
+        self
+    }
+
+    /// Applies a total page count.
+    pub const fn with_page_count(mut self, page_count: usize) -> Self {
+        self.page_count = Some(page_count);
+        self
+    }
+
     fn apply(self, rows: &[TableResolvedRow]) -> Vec<TableResolvedRow> {
-        if self.page_size == usize::MAX {
+        if self.is_manual() || self.page_size == usize::MAX {
             return rows.to_vec();
         }
         if self.page_size == 0 {
@@ -897,6 +3271,239 @@ impl TablePagination {
 impl Default for TablePagination {
     fn default() -> Self {
         Self::disabled()
+    }
+}
+
+/// Count for one faceted table value.
+#[derive(Debug, Clone)]
+pub struct TableFacetValueCount {
+    value: TableCellValue,
+    count: usize,
+}
+
+impl PartialEq for TableFacetValueCount {
+    fn eq(&self, other: &Self) -> bool {
+        self.count == other.count
+            && TableFacetValueKey::from_value(&self.value)
+                == TableFacetValueKey::from_value(&other.value)
+    }
+}
+
+impl TableFacetValueCount {
+    /// Creates a count entry for one faceted value.
+    pub fn new(value: impl Into<TableCellValue>, count: usize) -> Self {
+        Self {
+            value: value.into(),
+            count,
+        }
+    }
+
+    /// Returns the faceted value.
+    pub const fn value(&self) -> &TableCellValue {
+        &self.value
+    }
+
+    /// Returns the number of rows that produced this value.
+    pub const fn count(&self) -> usize {
+        self.count
+    }
+}
+
+/// Numeric min/max metadata for a faceted column.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TableFacetRange {
+    min: f64,
+    max: f64,
+}
+
+impl TableFacetRange {
+    /// Creates a numeric range when both bounds are finite.
+    pub fn new(left: f64, right: f64) -> Option<Self> {
+        if !left.is_finite() || !right.is_finite() {
+            return None;
+        }
+
+        Some(if left <= right {
+            Self {
+                min: left,
+                max: right,
+            }
+        } else {
+            Self {
+                min: right,
+                max: left,
+            }
+        })
+    }
+
+    /// Returns the lower numeric bound.
+    pub const fn min(self) -> f64 {
+        self.min
+    }
+
+    /// Returns the upper numeric bound.
+    pub const fn max(self) -> f64 {
+        self.max
+    }
+}
+
+/// Faceting metadata for one table column.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableColumnFacets {
+    column: TableColumnId,
+    mode: TableStageMode,
+    row_count: usize,
+    unique_values: Vec<TableFacetValueCount>,
+    numeric_range: Option<TableFacetRange>,
+}
+
+impl TableColumnFacets {
+    /// Creates empty client-derived facet metadata for one column.
+    pub fn new(column: impl Into<TableColumnId>) -> Self {
+        Self {
+            column: column.into(),
+            mode: TableStageMode::Client,
+            row_count: 0,
+            unique_values: Vec::new(),
+            numeric_range: None,
+        }
+    }
+
+    /// Creates empty manual facet metadata for one column.
+    pub fn manual(column: impl Into<TableColumnId>, row_count: usize) -> Self {
+        Self::new(column)
+            .with_mode(TableStageMode::Manual)
+            .with_row_count(row_count)
+    }
+
+    fn client(
+        column: TableColumnId,
+        row_count: usize,
+        unique_values: Vec<TableFacetValueCount>,
+        numeric_range: Option<TableFacetRange>,
+    ) -> Self {
+        Self {
+            column,
+            mode: TableStageMode::Client,
+            row_count,
+            unique_values,
+            numeric_range,
+        }
+    }
+
+    /// Returns the faceted column identity.
+    pub const fn column(&self) -> &TableColumnId {
+        &self.column
+    }
+
+    /// Returns whether this facet summary was locally derived or caller supplied.
+    pub const fn mode(&self) -> TableStageMode {
+        self.mode
+    }
+
+    /// Returns the number of rows covered by this facet summary.
+    pub const fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    /// Returns unique values and their row counts.
+    pub fn unique_values(&self) -> &[TableFacetValueCount] {
+        &self.unique_values
+    }
+
+    /// Returns the numeric min/max range, when any finite numeric values exist.
+    pub const fn numeric_range(&self) -> Option<TableFacetRange> {
+        self.numeric_range
+    }
+
+    /// Applies the facet ownership mode.
+    pub const fn with_mode(mut self, mode: TableStageMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Applies the row count covered by this facet summary.
+    pub const fn with_row_count(mut self, row_count: usize) -> Self {
+        self.row_count = row_count;
+        self
+    }
+
+    /// Applies unique values and their row counts.
+    pub fn with_unique_values(
+        mut self,
+        unique_values: impl IntoIterator<Item = TableFacetValueCount>,
+    ) -> Self {
+        self.unique_values = unique_values.into_iter().collect();
+        self
+    }
+
+    /// Applies a numeric min/max range when both bounds are finite.
+    pub fn with_numeric_range(mut self, min: f64, max: f64) -> Self {
+        self.numeric_range = TableFacetRange::new(min, max);
+        self
+    }
+}
+
+/// Faceting metadata for the global filter context.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableGlobalFacetSummary {
+    mode: TableStageMode,
+    row_count: usize,
+    column_facets: Vec<TableColumnFacets>,
+}
+
+impl TableGlobalFacetSummary {
+    /// Creates an empty client-derived global facet summary.
+    pub fn new() -> Self {
+        Self {
+            mode: TableStageMode::Client,
+            row_count: 0,
+            column_facets: Vec::new(),
+        }
+    }
+
+    fn client(row_count: usize, column_facets: Vec<TableColumnFacets>) -> Self {
+        Self {
+            mode: TableStageMode::Client,
+            row_count,
+            column_facets,
+        }
+    }
+
+    fn manual() -> Self {
+        Self {
+            mode: TableStageMode::Manual,
+            row_count: 0,
+            column_facets: Vec::new(),
+        }
+    }
+
+    /// Returns whether this summary was locally derived or caller supplied.
+    pub const fn mode(&self) -> TableStageMode {
+        self.mode
+    }
+
+    /// Returns the number of rows covered by the global facet basis.
+    pub const fn row_count(&self) -> usize {
+        self.row_count
+    }
+
+    /// Returns per-column facet summaries for globally filterable columns.
+    pub fn column_facets(&self) -> &[TableColumnFacets] {
+        &self.column_facets
+    }
+
+    /// Returns the global facet summary for one globally filterable column.
+    pub fn column_facet(&self, column: &TableColumnId) -> Option<&TableColumnFacets> {
+        self.column_facets
+            .iter()
+            .find(|facet| facet.column() == column)
+    }
+}
+
+impl Default for TableGlobalFacetSummary {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -926,13 +3533,65 @@ impl TableAggregateKind {
             Self::Average => "average",
         }
     }
+
+    /// Resolves a stable label back to a built-in aggregate kind.
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "count" => Some(Self::Count),
+            "sum" => Some(Self::Sum),
+            "min" => Some(Self::Min),
+            "max" => Some(Self::Max),
+            "average" => Some(Self::Average),
+            _ => None,
+        }
+    }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TableAggregationSpec {
+    BuiltIn(TableAggregateKind),
+    Named(String),
+}
+
+#[derive(Clone)]
+struct TableAggregationFn(
+    Arc<dyn Fn(&TableColumnId, &[TableResolvedRow]) -> TableCellValue + Send + Sync>,
+);
+
+impl TableAggregationFn {
+    fn new(
+        aggregation_fn: impl Fn(&TableColumnId, &[TableResolvedRow]) -> TableCellValue
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        Self(Arc::new(aggregation_fn))
+    }
+
+    fn call(&self, column: &TableColumnId, rows: &[TableResolvedRow]) -> TableCellValue {
+        (self.0)(column, rows)
+    }
+}
+
+impl fmt::Debug for TableAggregationFn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("TableAggregationFn(..)")
+    }
+}
+
+impl PartialEq for TableAggregationFn {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for TableAggregationFn {}
 
 /// Aggregate specification for one table column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableAggregation {
     column: TableColumnId,
-    kind: TableAggregateKind,
+    spec: TableAggregationSpec,
 }
 
 impl TableAggregation {
@@ -940,7 +3599,15 @@ impl TableAggregation {
     pub fn new(column: impl Into<TableColumnId>, kind: TableAggregateKind) -> Self {
         Self {
             column: column.into(),
-            kind,
+            spec: TableAggregationSpec::BuiltIn(kind),
+        }
+    }
+
+    /// Creates a named aggregate specification for a column.
+    pub fn named(column: impl Into<TableColumnId>, name: impl Into<String>) -> Self {
+        Self {
+            column: column.into(),
+            spec: TableAggregationSpec::Named(name.into()),
         }
     }
 
@@ -974,9 +3641,20 @@ impl TableAggregation {
         &self.column
     }
 
-    /// Returns the aggregate kind.
-    pub const fn kind(&self) -> TableAggregateKind {
-        self.kind
+    /// Returns the aggregate kind when this is a built-in aggregate.
+    pub fn kind(&self) -> Option<TableAggregateKind> {
+        match self.spec {
+            TableAggregationSpec::BuiltIn(kind) => Some(kind),
+            TableAggregationSpec::Named(_) => None,
+        }
+    }
+
+    /// Returns the named aggregate callback key, when present.
+    pub fn name(&self) -> Option<&str> {
+        match &self.spec {
+            TableAggregationSpec::BuiltIn(_) => None,
+            TableAggregationSpec::Named(name) => Some(name.as_str()),
+        }
     }
 }
 
@@ -1012,6 +3690,28 @@ impl TableExpansionState {
 impl Default for TableExpansionState {
     fn default() -> Self {
         Self::Rows(BTreeSet::new())
+    }
+}
+
+/// Row expansion behavior for resolved table row models.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableExpansionMode {
+    /// The core row model hides descendants of collapsed rows.
+    Client,
+    /// The caller supplies the visible source-tree snapshot.
+    Manual,
+}
+
+impl TableExpansionMode {
+    /// Returns whether local row-model expansion pruning is enabled.
+    pub const fn prunes_collapsed_rows(self) -> bool {
+        matches!(self, Self::Client)
+    }
+}
+
+impl Default for TableExpansionMode {
+    fn default() -> Self {
+        Self::Client
     }
 }
 
@@ -1080,33 +3780,57 @@ pub const TABLE_ROW_MODEL_V0_PIPELINE: [TableRowModelStage; 5] = [
 /// Renderer-neutral input state for table row-model resolution.
 #[derive(Debug, Clone)]
 pub struct TableState {
+    column_tree: Vec<TableColumnNode>,
     columns: Vec<TableColumn>,
     column_order: Vec<TableColumnId>,
+    column_visibility: TableColumnVisibilityOverrides,
     column_pinning: TableColumnPinning,
     column_sizing: TableColumnSizing,
+    row_pinning: TableRowPinning,
+    row_pinning_policy: TableRowPinningPolicy,
     rows: Arc<[TableRow]>,
     rows_identity: u64,
     sorting: Vec<TableSort>,
+    sorting_mode: TableStageMode,
     filters: Vec<TableFilter>,
+    global_filter: Option<String>,
+    filtering_mode: TableStageMode,
+    faceting_mode: TableStageMode,
+    manual_facets: Vec<TableColumnFacets>,
     grouping: Vec<TableColumnId>,
     aggregations: Vec<TableAggregation>,
+    aggregation_fns: BTreeMap<String, TableAggregationFn>,
     expansion: TableExpansionState,
+    expansion_mode: TableExpansionMode,
+    selection_policy: TableSelectionPolicy,
     selected_rows: BTreeSet<TableRowId>,
     pagination: TablePagination,
 }
 
 impl PartialEq for TableState {
     fn eq(&self, other: &Self) -> bool {
-        self.columns == other.columns
+        self.column_tree == other.column_tree
+            && self.columns == other.columns
             && self.column_order == other.column_order
+            && self.column_visibility == other.column_visibility
             && self.column_pinning == other.column_pinning
             && self.column_sizing == other.column_sizing
+            && self.row_pinning == other.row_pinning
+            && self.row_pinning_policy == other.row_pinning_policy
             && self.rows.as_ref() == other.rows.as_ref()
             && self.sorting == other.sorting
+            && self.sorting_mode == other.sorting_mode
             && self.filters == other.filters
+            && self.global_filter == other.global_filter
+            && self.filtering_mode == other.filtering_mode
+            && self.faceting_mode == other.faceting_mode
+            && self.manual_facets == other.manual_facets
             && self.grouping == other.grouping
             && self.aggregations == other.aggregations
+            && self.aggregation_fns == other.aggregation_fns
             && self.expansion == other.expansion
+            && self.expansion_mode == other.expansion_mode
+            && self.selection_policy == other.selection_policy
             && self.selected_rows == other.selected_rows
             && self.pagination == other.pagination
     }
@@ -1118,17 +3842,29 @@ impl TableState {
         let rows = rows.into_iter().collect::<Vec<_>>();
 
         Self {
+            column_tree: Vec::new(),
             columns: Vec::new(),
             column_order: Vec::new(),
+            column_visibility: TableColumnVisibilityOverrides::default(),
             column_pinning: TableColumnPinning::default(),
             column_sizing: TableColumnSizing::default(),
+            row_pinning: TableRowPinning::default(),
+            row_pinning_policy: TableRowPinningPolicy::default(),
             rows: rows.into(),
             rows_identity: next_table_rows_identity(),
             sorting: Vec::new(),
+            sorting_mode: TableStageMode::default(),
             filters: Vec::new(),
+            global_filter: None,
+            filtering_mode: TableStageMode::default(),
+            faceting_mode: TableStageMode::default(),
+            manual_facets: Vec::new(),
             grouping: Vec::new(),
             aggregations: Vec::new(),
+            aggregation_fns: BTreeMap::new(),
             expansion: TableExpansionState::default(),
+            expansion_mode: TableExpansionMode::default(),
+            selection_policy: TableSelectionPolicy::default(),
             selected_rows: BTreeSet::new(),
             pagination: TablePagination::default(),
         }
@@ -1136,7 +3872,28 @@ impl TableState {
 
     /// Applies column descriptors.
     pub fn with_columns(mut self, columns: impl IntoIterator<Item = TableColumn>) -> Self {
-        self.columns = columns.into_iter().collect();
+        let (column_tree, columns) =
+            normalize_table_column_tree(columns.into_iter().map(TableColumnNode::from));
+        self.column_tree = column_tree;
+        self.columns = columns;
+        self
+    }
+
+    /// Applies nested column-tree descriptors.
+    pub fn with_column_tree<N>(mut self, column_tree: impl IntoIterator<Item = N>) -> Self
+    where
+        N: Into<TableColumnNode>,
+    {
+        let (column_tree, columns) = normalize_table_column_tree(column_tree);
+        self.column_tree = column_tree;
+        self.columns = columns;
+        self
+    }
+
+    /// Replaces source rows while preserving the rest of the table configuration.
+    pub fn with_rows(mut self, rows: impl IntoIterator<Item = TableRow>) -> Self {
+        self.rows = rows.into_iter().collect::<Vec<_>>().into();
+        self.rows_identity = next_table_rows_identity();
         self
     }
 
@@ -1149,9 +3906,33 @@ impl TableState {
         self
     }
 
+    /// Applies runtime column visibility overrides.
+    pub fn with_column_visibility(
+        mut self,
+        column_visibility: TableColumnVisibilityOverrides,
+    ) -> Self {
+        self.column_visibility = column_visibility;
+        self
+    }
+
     /// Applies pinned column state.
     pub fn with_column_pinning(mut self, column_pinning: TableColumnPinning) -> Self {
         self.column_pinning = column_pinning;
+        self
+    }
+
+    /// Applies pinned row state.
+    pub fn with_row_pinning(mut self, row_pinning: TableRowPinning) -> Self {
+        self.row_pinning = row_pinning;
+        self
+    }
+
+    /// Applies the pinned row visibility policy.
+    pub const fn with_row_pinning_policy(
+        mut self,
+        row_pinning_policy: TableRowPinningPolicy,
+    ) -> Self {
+        self.row_pinning_policy = row_pinning_policy;
         self
     }
 
@@ -1167,9 +3948,75 @@ impl TableState {
         self
     }
 
+    /// Applies sorting ownership mode.
+    pub const fn with_sorting_mode(mut self, sorting_mode: TableStageMode) -> Self {
+        self.sorting_mode = sorting_mode;
+        self
+    }
+
+    /// Marks sorting as caller-owned.
+    pub const fn with_manual_sorting(mut self) -> Self {
+        self.sorting_mode = TableStageMode::Manual;
+        self
+    }
+
     /// Applies filter specifications.
     pub fn with_filters(mut self, filters: impl IntoIterator<Item = TableFilter>) -> Self {
         self.filters = filters.into_iter().collect();
+        self
+    }
+
+    /// Applies a global text filter query.
+    ///
+    /// Empty or whitespace-only queries clear the global filter state.
+    pub fn with_global_filter(mut self, query: impl Into<String>) -> Self {
+        self.global_filter = normalize_table_global_filter_query(query);
+        self
+    }
+
+    /// Clears the global text filter query.
+    pub fn without_global_filter(mut self) -> Self {
+        self.global_filter = None;
+        self
+    }
+
+    /// Applies filtering ownership mode.
+    pub const fn with_filtering_mode(mut self, filtering_mode: TableStageMode) -> Self {
+        self.filtering_mode = filtering_mode;
+        self
+    }
+
+    /// Marks filtering as caller-owned.
+    pub const fn with_manual_filtering(mut self) -> Self {
+        self.filtering_mode = TableStageMode::Manual;
+        self
+    }
+
+    /// Applies faceting ownership mode.
+    pub const fn with_faceting_mode(mut self, faceting_mode: TableStageMode) -> Self {
+        self.faceting_mode = faceting_mode;
+        self
+    }
+
+    /// Marks faceting as caller-owned.
+    pub const fn with_manual_faceting(mut self) -> Self {
+        self.faceting_mode = TableStageMode::Manual;
+        self
+    }
+
+    /// Applies caller-owned facet payloads keyed by column id.
+    pub fn with_manual_facets(
+        mut self,
+        facets: impl IntoIterator<Item = TableColumnFacets>,
+    ) -> Self {
+        let mut facets_by_column = BTreeMap::new();
+        for facet in facets {
+            facets_by_column.insert(
+                facet.column().clone(),
+                facet.with_mode(TableStageMode::Manual),
+            );
+        }
+        self.manual_facets = facets_by_column.into_values().collect();
         self
     }
 
@@ -1200,6 +4047,20 @@ impl TableState {
         self
     }
 
+    /// Registers a named aggregation callback.
+    pub fn with_aggregation_fn(
+        mut self,
+        name: impl Into<String>,
+        aggregation_fn: impl Fn(&TableColumnId, &[TableResolvedRow]) -> TableCellValue
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.aggregation_fns
+            .insert(name.into(), TableAggregationFn::new(aggregation_fn));
+        self
+    }
+
     /// Applies explicit expanded group row ids.
     pub fn with_expanded_rows(
         mut self,
@@ -1215,12 +4076,63 @@ impl TableState {
         self
     }
 
+    /// Applies expansion behavior for source-tree row models.
+    pub const fn with_expansion_mode(mut self, expansion_mode: TableExpansionMode) -> Self {
+        self.expansion_mode = expansion_mode;
+        self
+    }
+
+    /// Lets callers provide the visible source-tree snapshot directly.
+    pub const fn with_manual_expansion(mut self) -> Self {
+        self.expansion_mode = TableExpansionMode::Manual;
+        self
+    }
+
+    /// Applies the row-selection policy.
+    pub fn with_selection_policy(mut self, selection_policy: TableSelectionPolicy) -> Self {
+        self.selection_policy = selection_policy;
+        self.selected_rows = self
+            .selection_policy
+            .normalize_selected_rows(self.selected_rows.iter().cloned());
+        self
+    }
+
+    /// Applies the selection cardinality.
+    pub fn with_selection_mode(mut self, selection_mode: TableSelectionMode) -> Self {
+        self.selection_policy = self.selection_policy.with_selection_mode(selection_mode);
+        self.selected_rows = self
+            .selection_policy
+            .normalize_selected_rows(self.selected_rows.iter().cloned());
+        self
+    }
+
+    /// Applies the selection activation mode.
+    pub const fn with_selection_activation_mode(
+        mut self,
+        activation_mode: TableSelectionActivationMode,
+    ) -> Self {
+        self.selection_policy = self.selection_policy.with_activation_mode(activation_mode);
+        self
+    }
+
+    /// Applies the sub-row selection policy.
+    pub fn with_sub_row_selection_policy(
+        mut self,
+        sub_row_policy: TableSubRowSelectionPolicy,
+    ) -> Self {
+        self.selection_policy = self.selection_policy.with_sub_row_policy(sub_row_policy);
+        self.selected_rows = self
+            .selection_policy
+            .normalize_selected_rows(self.selected_rows.iter().cloned());
+        self
+    }
+
     /// Applies selected row ids.
     pub fn with_selected_rows(
         mut self,
         selected_rows: impl IntoIterator<Item = impl Into<TableRowId>>,
     ) -> Self {
-        self.selected_rows = selected_rows.into_iter().map(Into::into).collect();
+        self.selected_rows = self.selection_policy.normalize_selected_rows(selected_rows);
         self
     }
 
@@ -1235,6 +4147,21 @@ impl TableState {
         &self.columns
     }
 
+    /// Returns the normalized configured column tree.
+    pub fn column_tree(&self) -> &[TableColumnNode] {
+        &self.column_tree
+    }
+
+    /// Returns explicit column order ids.
+    pub fn column_order(&self) -> &[TableColumnId] {
+        &self.column_order
+    }
+
+    /// Returns runtime column visibility overrides.
+    pub const fn column_visibility(&self) -> &TableColumnVisibilityOverrides {
+        &self.column_visibility
+    }
+
     /// Returns source rows.
     pub fn rows(&self) -> &[TableRow] {
         self.rows.as_ref()
@@ -1245,9 +4172,34 @@ impl TableState {
         &self.sorting
     }
 
+    /// Returns the sorting ownership mode.
+    pub const fn sorting_mode(&self) -> TableStageMode {
+        self.sorting_mode
+    }
+
     /// Returns filter specifications.
     pub fn filters(&self) -> &[TableFilter] {
         &self.filters
+    }
+
+    /// Returns the normalized global text filter query.
+    pub fn global_filter(&self) -> Option<&str> {
+        self.global_filter.as_deref()
+    }
+
+    /// Returns the filtering ownership mode.
+    pub const fn filtering_mode(&self) -> TableStageMode {
+        self.filtering_mode
+    }
+
+    /// Returns the faceting ownership mode.
+    pub const fn faceting_mode(&self) -> TableStageMode {
+        self.faceting_mode
+    }
+
+    /// Returns caller-owned facet payloads.
+    pub fn manual_facets(&self) -> &[TableColumnFacets] {
+        &self.manual_facets
     }
 
     /// Returns grouping column ids in outer-to-inner order.
@@ -1260,9 +4212,29 @@ impl TableState {
         &self.aggregations
     }
 
+    /// Returns the number of named aggregation callbacks.
+    pub fn aggregation_fn_count(&self) -> usize {
+        self.aggregation_fns.len()
+    }
+
+    /// Returns whether a named aggregation callback has been registered.
+    pub fn has_aggregation_fn(&self, name: &str) -> bool {
+        self.aggregation_fns.contains_key(name)
+    }
+
     /// Returns pinned column state.
     pub const fn column_pinning(&self) -> &TableColumnPinning {
         &self.column_pinning
+    }
+
+    /// Returns pinned row state.
+    pub const fn row_pinning(&self) -> &TableRowPinning {
+        &self.row_pinning
+    }
+
+    /// Returns the pinned row visibility policy.
+    pub const fn row_pinning_policy(&self) -> TableRowPinningPolicy {
+        self.row_pinning_policy
     }
 
     /// Returns committed column sizing state.
@@ -1273,6 +4245,16 @@ impl TableState {
     /// Returns caller-owned row expansion state.
     pub const fn expansion(&self) -> &TableExpansionState {
         &self.expansion
+    }
+
+    /// Returns source-tree row expansion behavior.
+    pub const fn expansion_mode(&self) -> TableExpansionMode {
+        self.expansion_mode
+    }
+
+    /// Returns the selection policy.
+    pub const fn selection_policy(&self) -> TableSelectionPolicy {
+        self.selection_policy
     }
 
     /// Returns selected row ids.
@@ -1292,16 +4274,28 @@ impl TableState {
     pub fn cache_key(&self) -> TableStateCacheKey {
         TableStateCacheKey {
             rows_identity: self.rows_identity,
-            row_count: self.rows.len(),
+            row_count: count_table_rows(&self.rows),
+            column_tree: self.column_tree.clone(),
             columns: self.columns.clone(),
             column_order: self.column_order.clone(),
+            column_visibility: self.column_visibility.clone(),
             column_pinning: self.column_pinning.clone(),
             column_sizing: self.column_sizing.clone(),
+            row_pinning: self.row_pinning.clone(),
+            row_pinning_policy: self.row_pinning_policy,
             sorting: self.sorting.clone(),
+            sorting_mode: self.sorting_mode,
             filters: self.filters.clone(),
+            global_filter: self.global_filter.clone(),
+            filtering_mode: self.filtering_mode,
+            faceting_mode: self.faceting_mode,
+            manual_facets: self.manual_facets.clone(),
             grouping: self.grouping.clone(),
             aggregations: self.aggregations.clone(),
+            aggregation_fns: self.aggregation_fns.clone(),
             expansion: self.expansion.clone(),
+            expansion_mode: self.expansion_mode,
+            selection_policy: self.selection_policy,
             selected_rows: self.selected_rows.clone(),
             pagination: self.pagination,
         }
@@ -1325,7 +4319,7 @@ impl TableState {
             return self
                 .columns
                 .iter()
-                .filter(|column| column.visible())
+                .filter(|column| self.column_visibility.is_visible(column))
                 .cloned()
                 .collect();
         }
@@ -1339,7 +4333,7 @@ impl TableState {
         self.column_order
             .iter()
             .filter_map(|id| columns_by_id.get(id))
-            .filter(|column| column.visible())
+            .filter(|column| self.column_visibility.is_visible(column))
             .cloned()
             .collect()
     }
@@ -1348,36 +4342,59 @@ impl TableState {
     pub fn resolve(&self) -> TableResolvedState {
         let mut duplicate_row_ids = BTreeSet::new();
         let mut seen_row_ids = BTreeSet::new();
-        let core_rows: Vec<_> = self
-            .rows
-            .iter()
-            .enumerate()
-            .map(|(source_index, row)| {
-                if !seen_row_ids.insert(row.id().clone()) {
-                    duplicate_row_ids.insert(row.id().clone());
-                }
-                TableResolvedRow::from_row(row, source_index, self.selected_rows.contains(row.id()))
-            })
-            .collect();
+        record_source_row_ids(&self.rows, &mut seen_row_ids, &mut duplicate_row_ids);
+        let include_source_children = self.grouping.is_empty();
+        let global_filterable_columns = self.global_filterable_column_ids();
+        let selected_rows = self
+            .selection_policy
+            .resolve_selected_rows(&self.rows, &self.selected_rows);
+        let mut source_index = 0;
+        let source_nodes = build_source_row_nodes(
+            &self.rows,
+            &selected_rows,
+            &self.expansion,
+            include_source_children,
+            None,
+            0,
+            &mut source_index,
+        );
+        let core_rows = flatten_nodes(&source_nodes);
+        let column_filtered_nodes = if self.filtering_mode.is_manual() {
+            source_nodes.clone()
+        } else {
+            filter_source_row_nodes(&source_nodes, &self.filters, None)
+        };
+        let global_filtered_nodes = if self.filtering_mode.is_manual() {
+            column_filtered_nodes.clone()
+        } else {
+            filter_source_row_nodes_by_global_query(
+                &column_filtered_nodes,
+                self.global_filter.as_deref(),
+                &global_filterable_columns,
+            )
+        };
+        let column_facets = self.resolve_column_facets(&source_nodes, &global_filterable_columns);
+        let global_facet_summary =
+            self.resolve_global_facet_summary(&column_filtered_nodes, &global_filterable_columns);
 
         let core_model = TableRowModel::new(TableRowModelStage::Core, core_rows);
 
-        let filtered_rows: Vec<_> = core_model
-            .rows()
-            .iter()
-            .filter(|row| {
-                row.source()
-                    .is_some_and(|source| self.filters.iter().all(|filter| filter.matches(source)))
-            })
-            .cloned()
-            .collect();
+        let filtered_rows = flatten_nodes(&global_filtered_nodes);
         let filtered_model = TableRowModel::new(TableRowModelStage::Filtered, filtered_rows);
 
-        let grouped_nodes = self.group_nodes(filtered_model.rows());
+        let grouped_nodes = if self.grouping.is_empty() {
+            global_filtered_nodes
+        } else {
+            self.group_nodes(filtered_model.rows())
+        };
         let grouped_rows = flatten_nodes(&grouped_nodes);
         let grouped_model = TableRowModel::new(TableRowModelStage::Grouped, grouped_rows);
 
-        let sorted_nodes = self.sort_nodes(grouped_nodes);
+        let sorted_nodes = if self.sorting_mode.is_manual() {
+            grouped_nodes.clone()
+        } else {
+            self.sort_nodes(grouped_nodes)
+        };
         let sorted_rows = flatten_nodes(&sorted_nodes);
         let sorted_model = TableRowModel::new(TableRowModelStage::Sorted, sorted_rows);
 
@@ -1392,9 +4409,15 @@ impl TableState {
             TableRowModelStage::Paginated,
             self.pagination.apply(expanded_model.rows()),
         );
+        let row_regions = TableRowRegions::from_models(
+            expanded_model.rows(),
+            paginated_model.rows(),
+            &self.row_pinning,
+            self.row_pinning_policy,
+        );
         let final_model = TableRowModel::new_with_lookup(
             TableRowModelStage::Final,
-            paginated_model.rows().to_vec(),
+            row_regions.flattened(),
             expanded_model.rows_by_id().values().cloned(),
         );
 
@@ -1403,12 +4426,22 @@ impl TableState {
             &visible_column_regions,
             &self.column_sizing,
         );
+        let header_groups = TableResolvedHeaderGroupRegions::from_column_tree(
+            &self.column_tree,
+            &visible_column_regions,
+        );
 
         TableResolvedState {
             visible_columns: visible_column_regions.flattened(),
             visible_column_regions,
             visible_column_sizing,
+            header_groups,
             duplicate_row_ids: duplicate_row_ids.into_iter().collect(),
+            faceting_mode: self.faceting_mode,
+            column_facets,
+            global_facet_summary,
+            row_pinning_policy: self.row_pinning_policy,
+            row_regions,
             core_model,
             filtered_model,
             grouped_model,
@@ -1416,6 +4449,7 @@ impl TableState {
             expanded_model,
             paginated_model,
             final_model,
+            selection_policy: self.selection_policy,
         }
     }
 
@@ -1450,7 +4484,15 @@ impl TableState {
                 .collect::<Vec<_>>();
         }
 
-        build_group_nodes(rows, &self.grouping, &self.aggregations, 0, None, None)
+        build_group_nodes(
+            rows,
+            &self.grouping,
+            &self.aggregations,
+            &self.aggregation_fns,
+            0,
+            None,
+            None,
+        )
     }
 
     fn sort_nodes(&self, mut nodes: Vec<TableRowNode>) -> Vec<TableRowNode> {
@@ -1466,11 +4508,76 @@ impl TableState {
     }
 
     fn expand_nodes(&self, nodes: &[TableRowNode]) -> Vec<TableResolvedRow> {
+        if self.grouping.is_empty() && !self.expansion_mode.prunes_collapsed_rows() {
+            return flatten_nodes(nodes);
+        }
+
         let mut rows = Vec::new();
         for node in nodes {
             push_expanded_rows(node, &self.expansion, &mut rows);
         }
         rows
+    }
+
+    fn resolve_column_facets(
+        &self,
+        source_nodes: &[TableRowNode],
+        global_filterable_columns: &[TableColumnId],
+    ) -> Vec<TableColumnFacets> {
+        self.columns
+            .iter()
+            .filter_map(|column| {
+                if let Some(manual) = self
+                    .manual_facets
+                    .iter()
+                    .find(|facet| facet.column() == column.id())
+                {
+                    return Some(manual.clone());
+                }
+
+                if self.faceting_mode.is_manual() {
+                    return None;
+                }
+
+                Some(resolve_client_column_facets(
+                    column.id().clone(),
+                    source_nodes,
+                    &self.filters,
+                    self.global_filter.as_deref(),
+                    global_filterable_columns,
+                    self.filtering_mode,
+                ))
+            })
+            .collect()
+    }
+
+    fn resolve_global_facet_summary(
+        &self,
+        source_nodes: &[TableRowNode],
+        global_filterable_columns: &[TableColumnId],
+    ) -> TableGlobalFacetSummary {
+        if self.faceting_mode.is_manual() {
+            return TableGlobalFacetSummary::manual();
+        }
+
+        let row_count = count_table_row_nodes(source_nodes);
+        let mut column_facets = Vec::new();
+        for column_id in global_filterable_columns {
+            column_facets.push(resolve_client_global_column_facets(
+                column_id.clone(),
+                source_nodes,
+            ));
+        }
+
+        TableGlobalFacetSummary::client(row_count, column_facets)
+    }
+
+    fn global_filterable_column_ids(&self) -> Vec<TableColumnId> {
+        self.columns
+            .iter()
+            .filter(|column| column.global_filterable())
+            .map(|column| column.id().clone())
+            .collect()
     }
 }
 
@@ -1479,15 +4586,27 @@ impl TableState {
 pub struct TableStateCacheKey {
     rows_identity: u64,
     row_count: usize,
+    column_tree: Vec<TableColumnNode>,
     columns: Vec<TableColumn>,
     column_order: Vec<TableColumnId>,
+    column_visibility: TableColumnVisibilityOverrides,
     column_pinning: TableColumnPinning,
     column_sizing: TableColumnSizing,
+    row_pinning: TableRowPinning,
+    row_pinning_policy: TableRowPinningPolicy,
     sorting: Vec<TableSort>,
+    sorting_mode: TableStageMode,
     filters: Vec<TableFilter>,
+    global_filter: Option<String>,
+    filtering_mode: TableStageMode,
+    faceting_mode: TableStageMode,
+    manual_facets: Vec<TableColumnFacets>,
     grouping: Vec<TableColumnId>,
     aggregations: Vec<TableAggregation>,
+    aggregation_fns: BTreeMap<String, TableAggregationFn>,
     expansion: TableExpansionState,
+    expansion_mode: TableExpansionMode,
+    selection_policy: TableSelectionPolicy,
     selected_rows: BTreeSet<TableRowId>,
     pagination: TablePagination,
 }
@@ -1508,6 +4627,54 @@ fn next_table_rows_identity() -> u64 {
     NEXT_TABLE_ROWS_IDENTITY.fetch_add(1, AtomicOrdering::Relaxed)
 }
 
+fn count_table_rows(rows: &[TableRow]) -> usize {
+    rows.iter()
+        .map(|row| 1 + count_table_rows(row.children()))
+        .sum()
+}
+
+fn count_table_row_nodes(nodes: &[TableRowNode]) -> usize {
+    nodes
+        .iter()
+        .map(|node| 1 + count_table_row_nodes(&node.children))
+        .sum()
+}
+
+fn collect_descendant_selected_rows(
+    rows: &[TableRow],
+    selected_rows: &BTreeSet<TableRowId>,
+    resolved: &mut BTreeSet<TableRowId>,
+) {
+    for row in rows {
+        if selected_rows.contains(row.id()) {
+            collect_all_descendant_rows(row.children(), resolved);
+            continue;
+        }
+
+        collect_descendant_selected_rows(row.children(), selected_rows, resolved);
+    }
+}
+
+fn collect_all_descendant_rows(rows: &[TableRow], resolved: &mut BTreeSet<TableRowId>) {
+    for row in rows {
+        resolved.insert(row.id().clone());
+        collect_all_descendant_rows(row.children(), resolved);
+    }
+}
+
+fn record_source_row_ids(
+    rows: &[TableRow],
+    seen: &mut BTreeSet<TableRowId>,
+    duplicates: &mut BTreeSet<TableRowId>,
+) {
+    for row in rows {
+        if !seen.insert(row.id().clone()) {
+            duplicates.insert(row.id().clone());
+        }
+        record_source_row_ids(row.children(), seen, duplicates);
+    }
+}
+
 fn unique_column_ids(
     columns: impl IntoIterator<Item = impl Into<TableColumnId>>,
 ) -> Vec<TableColumnId> {
@@ -1517,6 +4684,292 @@ fn unique_column_ids(
         .map(Into::into)
         .filter(|column| seen.insert(column.clone()))
         .collect()
+}
+
+fn normalize_table_column_tree<N>(
+    column_tree: impl IntoIterator<Item = N>,
+) -> (Vec<TableColumnNode>, Vec<TableColumn>)
+where
+    N: Into<TableColumnNode>,
+{
+    let mut seen = BTreeSet::new();
+    normalize_table_column_nodes(column_tree.into_iter().map(Into::into), &mut seen)
+}
+
+fn normalize_table_column_nodes(
+    column_tree: impl IntoIterator<Item = TableColumnNode>,
+    seen: &mut BTreeSet<TableColumnId>,
+) -> (Vec<TableColumnNode>, Vec<TableColumn>) {
+    let mut normalized_tree = Vec::new();
+    let mut leaf_columns = Vec::new();
+
+    for node in column_tree {
+        match node {
+            TableColumnNode::Column(column) => {
+                if seen.insert(column.id().clone()) {
+                    leaf_columns.push(column.clone());
+                    normalized_tree.push(TableColumnNode::Column(column));
+                }
+            }
+            TableColumnNode::Group(group) => {
+                let (children, leaves) =
+                    normalize_table_column_nodes(group.children().iter().cloned(), seen);
+                if !children.is_empty() {
+                    leaf_columns.extend(leaves);
+                    normalized_tree.push(TableColumnNode::Group(
+                        group.with_normalized_children(children),
+                    ));
+                }
+            }
+        }
+    }
+
+    (normalized_tree, leaf_columns)
+}
+
+fn unique_row_ids(rows: impl IntoIterator<Item = impl Into<TableRowId>>) -> Vec<TableRowId> {
+    let mut seen = BTreeSet::new();
+    rows.into_iter()
+        .map(Into::into)
+        .filter(|row| seen.insert(row.clone()))
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum TableFacetValueKey {
+    Empty,
+    Bool(bool),
+    Number(u64),
+    Text(String),
+}
+
+impl TableFacetValueKey {
+    fn from_value(value: &TableCellValue) -> Self {
+        match value {
+            TableCellValue::Empty => Self::Empty,
+            TableCellValue::Bool(value) => Self::Bool(*value),
+            TableCellValue::Number(value) => Self::Number(table_facet_number_key(*value)),
+            TableCellValue::Text(value) => Self::Text(value.clone()),
+        }
+    }
+}
+
+fn table_facet_number_key(value: f64) -> u64 {
+    let normalized = if value == 0.0 { 0.0 } else { value };
+    let bits = normalized.to_bits();
+    if bits & (1 << 63) != 0 {
+        !bits
+    } else {
+        bits | (1 << 63)
+    }
+}
+
+fn resolve_client_column_facets(
+    column_id: TableColumnId,
+    source_nodes: &[TableRowNode],
+    filters: &[TableFilter],
+    global_filter: Option<&str>,
+    global_filterable_columns: &[TableColumnId],
+    filtering_mode: TableStageMode,
+) -> TableColumnFacets {
+    let mut unique_values = BTreeMap::<TableFacetValueKey, TableFacetValueCount>::new();
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let mut found_numeric = false;
+    let mut row_count = 0;
+
+    {
+        let mut visit = |row: &TableResolvedRow| {
+            record_column_facet_value(
+                row,
+                &column_id,
+                &mut row_count,
+                &mut unique_values,
+                &mut min,
+                &mut max,
+                &mut found_numeric,
+            );
+        };
+
+        visit_facet_rows(
+            source_nodes,
+            filters,
+            &column_id,
+            global_filter,
+            global_filterable_columns,
+            filtering_mode,
+            &mut visit,
+        );
+    }
+
+    let numeric_range = if found_numeric {
+        TableFacetRange::new(min, max)
+    } else {
+        None
+    };
+
+    TableColumnFacets::client(
+        column_id,
+        row_count,
+        unique_values.into_values().collect(),
+        numeric_range,
+    )
+}
+
+fn resolve_client_global_column_facets(
+    column_id: TableColumnId,
+    source_nodes: &[TableRowNode],
+) -> TableColumnFacets {
+    let mut unique_values = BTreeMap::<TableFacetValueKey, TableFacetValueCount>::new();
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let mut found_numeric = false;
+    let mut row_count = 0;
+
+    visit_source_row_nodes(source_nodes, &mut |row| {
+        record_column_facet_value(
+            row,
+            &column_id,
+            &mut row_count,
+            &mut unique_values,
+            &mut min,
+            &mut max,
+            &mut found_numeric,
+        );
+    });
+
+    let numeric_range = if found_numeric {
+        TableFacetRange::new(min, max)
+    } else {
+        None
+    };
+
+    TableColumnFacets::client(
+        column_id,
+        row_count,
+        unique_values.into_values().collect(),
+        numeric_range,
+    )
+}
+
+fn record_column_facet_value(
+    row: &TableResolvedRow,
+    column_id: &TableColumnId,
+    row_count: &mut usize,
+    unique_values: &mut BTreeMap<TableFacetValueKey, TableFacetValueCount>,
+    min: &mut f64,
+    max: &mut f64,
+    found_numeric: &mut bool,
+) {
+    *row_count += 1;
+    let value = row.cell(column_id).cloned().unwrap_or_default();
+    let key = TableFacetValueKey::from_value(&value);
+    unique_values
+        .entry(key)
+        .and_modify(|entry| entry.count += 1)
+        .or_insert_with(|| TableFacetValueCount::new(value.clone(), 1));
+
+    if let TableCellValue::Number(number) = value {
+        if number.is_finite() {
+            *found_numeric = true;
+            if number < *min {
+                *min = number;
+            }
+            if number > *max {
+                *max = number;
+            }
+        }
+    }
+}
+
+fn visit_source_row_nodes(nodes: &[TableRowNode], visit: &mut impl FnMut(&TableResolvedRow)) {
+    for node in nodes {
+        visit(&node.row);
+        visit_source_row_nodes(&node.children, visit);
+    }
+}
+
+fn visit_facet_rows(
+    nodes: &[TableRowNode],
+    filters: &[TableFilter],
+    excluded_column: &TableColumnId,
+    global_filter: Option<&str>,
+    global_filterable_columns: &[TableColumnId],
+    filtering_mode: TableStageMode,
+    visit: &mut impl FnMut(&TableResolvedRow),
+) {
+    for node in nodes {
+        if !filtering_mode.is_manual()
+            && !row_matches_facet_filters(&node.row, filters, excluded_column)
+        {
+            continue;
+        }
+        if !filtering_mode.is_manual()
+            && !resolved_row_matches_global_filter(
+                &node.row,
+                global_filter,
+                global_filterable_columns,
+            )
+        {
+            continue;
+        }
+
+        visit(&node.row);
+        visit_facet_rows(
+            &node.children,
+            filters,
+            excluded_column,
+            global_filter,
+            global_filterable_columns,
+            filtering_mode,
+            visit,
+        );
+    }
+}
+
+fn row_matches_facet_filters(
+    row: &TableResolvedRow,
+    filters: &[TableFilter],
+    excluded_column: &TableColumnId,
+) -> bool {
+    filters.iter().all(|filter| {
+        filter.column() == excluded_column
+            || row.source().is_some_and(|source| filter.matches(source))
+    })
+}
+
+fn resolved_row_matches_global_filter(
+    row: &TableResolvedRow,
+    global_filter: Option<&str>,
+    global_filterable_columns: &[TableColumnId],
+) -> bool {
+    match row.source() {
+        Some(source) => row_matches_global_filter(source, global_filter, global_filterable_columns),
+        None => true,
+    }
+}
+
+fn row_matches_global_filter(
+    row: &TableRow,
+    global_filter: Option<&str>,
+    global_filterable_columns: &[TableColumnId],
+) -> bool {
+    let Some(query) = global_filter else {
+        return true;
+    };
+    if query.is_empty() {
+        return true;
+    }
+    if global_filterable_columns.is_empty() {
+        return false;
+    }
+
+    let query = query.to_lowercase();
+    global_filterable_columns.iter().any(|column| {
+        row.cell(column)
+            .map(|value| value.filter_text().to_lowercase().contains(&query))
+            .unwrap_or(false)
+    })
 }
 
 /// Metadata for a grouped table row.
@@ -1580,6 +5033,83 @@ impl TableGroupRow {
     }
 }
 
+/// Source hierarchy metadata for a resolved table row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableTreeRow {
+    depth: usize,
+    parent_id: Option<TableRowId>,
+    has_children: bool,
+    can_expand: bool,
+    expanded: bool,
+    descendant_count: usize,
+    loaded_child_count: usize,
+    children_load_state: TableRowChildrenLoadState,
+}
+
+impl TableTreeRow {
+    fn new(
+        depth: usize,
+        parent_id: Option<TableRowId>,
+        has_children: bool,
+        can_expand: bool,
+        expanded: bool,
+        descendant_count: usize,
+        loaded_child_count: usize,
+        children_load_state: TableRowChildrenLoadState,
+    ) -> Self {
+        Self {
+            depth,
+            parent_id,
+            has_children,
+            can_expand,
+            expanded,
+            descendant_count,
+            loaded_child_count,
+            children_load_state,
+        }
+    }
+
+    /// Returns this source row's zero-based depth.
+    pub const fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// Returns the parent source row id, if present.
+    pub const fn parent_id(&self) -> Option<&TableRowId> {
+        self.parent_id.as_ref()
+    }
+
+    /// Returns whether this source row has nested children.
+    pub const fn has_children(&self) -> bool {
+        self.has_children
+    }
+
+    /// Returns whether this source row can be expanded.
+    pub const fn can_expand(&self) -> bool {
+        self.can_expand
+    }
+
+    /// Returns whether this source branch is expanded in caller-owned state.
+    pub const fn expanded(&self) -> bool {
+        self.expanded
+    }
+
+    /// Returns the number of nested descendant source rows.
+    pub const fn descendant_count(&self) -> usize {
+        self.descendant_count
+    }
+
+    /// Returns the number of directly loaded child rows.
+    pub const fn loaded_child_count(&self) -> usize {
+        self.loaded_child_count
+    }
+
+    /// Returns caller-owned child loading metadata.
+    pub const fn children_load_state(&self) -> &TableRowChildrenLoadState {
+        &self.children_load_state
+    }
+}
+
 /// Resolved row kind for Open GPUI table row models.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TableResolvedRowKind {
@@ -1598,12 +5128,20 @@ pub struct TableResolvedRow {
     source_index: Option<usize>,
     selected: bool,
     kind: TableResolvedRowKind,
+    tree: Option<TableTreeRow>,
     depth: usize,
     parent_id: Option<TableRowId>,
 }
 
 impl TableResolvedRow {
-    fn from_row(row: &TableRow, source_index: usize, selected: bool) -> Self {
+    fn from_row(
+        row: &TableRow,
+        source_index: usize,
+        selected: bool,
+        tree: Option<TableTreeRow>,
+    ) -> Self {
+        let depth = tree.as_ref().map(TableTreeRow::depth).unwrap_or(0);
+        let parent_id = tree.as_ref().and_then(|tree| tree.parent_id().cloned());
         Self {
             id: row.id().clone(),
             cells: row.cells().clone(),
@@ -1611,8 +5149,9 @@ impl TableResolvedRow {
             source_index: Some(source_index),
             selected,
             kind: TableResolvedRowKind::Leaf,
-            depth: 0,
-            parent_id: None,
+            tree,
+            depth,
+            parent_id,
         }
     }
 
@@ -1636,6 +5175,7 @@ impl TableResolvedRow {
             depth: group.depth(),
             parent_id: group.parent_id().cloned(),
             kind: TableResolvedRowKind::Group(group),
+            tree: None,
         }
     }
 
@@ -1671,6 +5211,40 @@ impl TableResolvedRow {
             TableResolvedRowKind::Group(group) => Some(group),
             TableResolvedRowKind::Leaf => None,
         }
+    }
+
+    /// Returns source hierarchy metadata when this row came from source tree data.
+    pub const fn tree(&self) -> Option<&TableTreeRow> {
+        self.tree.as_ref()
+    }
+
+    /// Returns whether this row is a source row that can expand.
+    pub fn is_tree_branch(&self) -> bool {
+        self.tree().map(TableTreeRow::can_expand).unwrap_or(false)
+    }
+
+    /// Returns whether this source branch is expanded in caller-owned state.
+    pub fn tree_expanded(&self) -> Option<bool> {
+        self.tree()
+            .filter(|tree| tree.can_expand())
+            .map(TableTreeRow::expanded)
+    }
+
+    /// Returns the number of nested source descendants.
+    pub fn descendant_count(&self) -> usize {
+        self.tree().map(TableTreeRow::descendant_count).unwrap_or(0)
+    }
+
+    /// Returns the number of directly loaded child rows.
+    pub fn loaded_child_count(&self) -> usize {
+        self.tree()
+            .map(TableTreeRow::loaded_child_count)
+            .unwrap_or(0)
+    }
+
+    /// Returns caller-owned child loading metadata when this is a source-tree row.
+    pub fn children_load_state(&self) -> Option<&TableRowChildrenLoadState> {
+        self.tree().map(TableTreeRow::children_load_state)
     }
 
     /// Returns the original row descriptor for leaf rows.
@@ -1774,7 +5348,14 @@ pub struct TableResolvedState {
     visible_columns: Vec<TableColumn>,
     visible_column_regions: TableColumnRegions,
     visible_column_sizing: TableResolvedColumnSizingRegions,
+    header_groups: TableResolvedHeaderGroupRegions,
     duplicate_row_ids: Vec<TableRowId>,
+    faceting_mode: TableStageMode,
+    column_facets: Vec<TableColumnFacets>,
+    global_facet_summary: TableGlobalFacetSummary,
+    row_pinning_policy: TableRowPinningPolicy,
+    selection_policy: TableSelectionPolicy,
+    row_regions: TableRowRegions,
     core_model: TableRowModel,
     filtered_model: TableRowModel,
     grouped_model: TableRowModel,
@@ -1798,6 +5379,78 @@ impl TableResolvedState {
     /// Returns resolved visible column sizing split into pinned regions.
     pub const fn visible_column_sizing(&self) -> &TableResolvedColumnSizingRegions {
         &self.visible_column_sizing
+    }
+
+    /// Returns resolved header groups split into pinned regions.
+    pub const fn header_groups(&self) -> &TableResolvedHeaderGroupRegions {
+        &self.header_groups
+    }
+
+    /// Returns resolved left-pinned header groups.
+    pub fn left_header_groups(&self) -> &[TableResolvedHeaderGroup] {
+        self.header_groups.left()
+    }
+
+    /// Returns resolved center header groups.
+    pub fn center_header_groups(&self) -> &[TableResolvedHeaderGroup] {
+        self.header_groups.center()
+    }
+
+    /// Returns resolved right-pinned header groups.
+    pub fn right_header_groups(&self) -> &[TableResolvedHeaderGroup] {
+        self.header_groups.right()
+    }
+
+    /// Returns the faceting ownership mode.
+    pub const fn faceting_mode(&self) -> TableStageMode {
+        self.faceting_mode
+    }
+
+    /// Returns resolved facet metadata for configured columns.
+    pub fn column_facets(&self) -> &[TableColumnFacets] {
+        &self.column_facets
+    }
+
+    /// Returns resolved facet metadata for one configured column.
+    pub fn column_facet(&self, column: &TableColumnId) -> Option<&TableColumnFacets> {
+        self.column_facets
+            .iter()
+            .find(|facet| facet.column() == column)
+    }
+
+    /// Returns resolved facet metadata for the global filter context.
+    pub const fn global_facet_summary(&self) -> &TableGlobalFacetSummary {
+        &self.global_facet_summary
+    }
+
+    /// Returns the pinned row visibility policy.
+    pub const fn row_pinning_policy(&self) -> TableRowPinningPolicy {
+        self.row_pinning_policy
+    }
+
+    /// Returns the row-selection policy.
+    pub const fn selection_policy(&self) -> TableSelectionPolicy {
+        self.selection_policy
+    }
+
+    /// Returns resolved row metadata for pinned and center regions.
+    pub const fn row_regions(&self) -> &TableRowRegions {
+        &self.row_regions
+    }
+
+    /// Returns top-pinned rows.
+    pub fn top_rows(&self) -> &[TableResolvedRow] {
+        self.row_regions.top()
+    }
+
+    /// Returns center rows.
+    pub fn center_rows(&self) -> &[TableResolvedRow] {
+        self.row_regions.center()
+    }
+
+    /// Returns bottom-pinned rows.
+    pub fn bottom_rows(&self) -> &[TableResolvedRow] {
+        self.row_regions.bottom()
     }
 
     /// Returns duplicate source row ids detected during resolution.
@@ -1839,6 +5492,72 @@ impl TableResolvedState {
     pub const fn final_model(&self) -> &TableRowModel {
         &self.final_model
     }
+
+    /// Returns the selection summary for the core row model.
+    pub fn core_selection_summary(&self) -> TableSelectionSummary {
+        TableSelectionSummary::new(
+            self.core_model.selected_count(),
+            self.core_model.rows().len(),
+        )
+    }
+
+    /// Returns the selection summary for the filtered row model.
+    pub fn filtered_selection_summary(&self) -> TableSelectionSummary {
+        TableSelectionSummary::new(
+            self.filtered_model.selected_count(),
+            self.filtered_model.rows().len(),
+        )
+    }
+
+    /// Returns the selection summary for the grouped row model.
+    pub fn grouped_selection_summary(&self) -> TableSelectionSummary {
+        TableSelectionSummary::new(
+            self.grouped_model.selected_count(),
+            self.grouped_model.rows().len(),
+        )
+    }
+
+    /// Returns the selection summary for the sorted row model.
+    pub fn sorted_selection_summary(&self) -> TableSelectionSummary {
+        TableSelectionSummary::new(
+            self.sorted_model.selected_count(),
+            self.sorted_model.rows().len(),
+        )
+    }
+
+    /// Returns the selection summary for the expanded row model.
+    pub fn expanded_selection_summary(&self) -> TableSelectionSummary {
+        TableSelectionSummary::new(
+            self.expanded_model.selected_count(),
+            self.expanded_model.rows().len(),
+        )
+    }
+
+    /// Returns the selection summary for the full resolved model before pagination.
+    pub fn full_selection_summary(&self) -> TableSelectionSummary {
+        self.core_selection_summary()
+    }
+
+    /// Returns the selection summary for the paginated row model.
+    pub fn paginated_selection_summary(&self) -> TableSelectionSummary {
+        TableSelectionSummary::new(
+            self.paginated_model.selected_count(),
+            self.paginated_model.rows().len(),
+        )
+    }
+
+    /// Returns the selection summary for the current page scope.
+    pub fn current_page_selection_summary(&self) -> TableSelectionSummary {
+        self.final_selection_summary()
+    }
+
+    /// Returns the selection summary for the final row model.
+    pub fn final_selection_summary(&self) -> TableSelectionSummary {
+        TableSelectionSummary::new(
+            self.final_model.selected_count(),
+            self.final_model.rows().len(),
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1856,6 +5575,123 @@ impl TableRowNode {
     }
 }
 
+fn build_source_row_nodes(
+    rows: &[TableRow],
+    selected_rows: &BTreeSet<TableRowId>,
+    expansion: &TableExpansionState,
+    include_children: bool,
+    parent_id: Option<TableRowId>,
+    depth: usize,
+    source_index: &mut usize,
+) -> Vec<TableRowNode> {
+    rows.iter()
+        .map(|row| {
+            let current_source_index = *source_index;
+            *source_index += 1;
+            let loaded_child_count = row.children().len();
+            let can_expand = row.can_expand();
+
+            let children = if include_children {
+                build_source_row_nodes(
+                    row.children(),
+                    selected_rows,
+                    expansion,
+                    include_children,
+                    Some(row.id().clone()),
+                    depth + 1,
+                    source_index,
+                )
+            } else {
+                Vec::new()
+            };
+            let tree = (include_children && (parent_id.is_some() || can_expand)).then(|| {
+                TableTreeRow::new(
+                    depth,
+                    parent_id.clone(),
+                    loaded_child_count > 0,
+                    can_expand,
+                    expansion.is_expanded(row.id()),
+                    count_table_rows(row.children()),
+                    loaded_child_count,
+                    row.children_load_state().clone(),
+                )
+            });
+            let resolved = TableResolvedRow::from_row(
+                row,
+                current_source_index,
+                selected_rows.contains(row.id()),
+                tree,
+            );
+
+            TableRowNode {
+                row: resolved,
+                children,
+            }
+        })
+        .collect()
+}
+
+fn filter_source_row_nodes(
+    nodes: &[TableRowNode],
+    filters: &[TableFilter],
+    excluded_column: Option<&TableColumnId>,
+) -> Vec<TableRowNode> {
+    if filters.is_empty()
+        || filters
+            .iter()
+            .all(|filter| excluded_column.is_some_and(|column| filter.column() == column))
+    {
+        return nodes.to_vec();
+    }
+
+    nodes
+        .iter()
+        .filter_map(|node| {
+            let source = node.row.source()?;
+            if !filters.iter().all(|filter| {
+                excluded_column.is_some_and(|column| filter.column() == column)
+                    || filter.matches(source)
+            }) {
+                return None;
+            }
+
+            Some(TableRowNode {
+                row: node.row.clone(),
+                children: filter_source_row_nodes(&node.children, filters, excluded_column),
+            })
+        })
+        .collect()
+}
+
+fn filter_source_row_nodes_by_global_query(
+    nodes: &[TableRowNode],
+    global_filter: Option<&str>,
+    global_filterable_columns: &[TableColumnId],
+) -> Vec<TableRowNode> {
+    if matches!(global_filter, None | Some("")) {
+        return nodes.to_vec();
+    }
+
+    nodes
+        .iter()
+        .filter_map(|node| {
+            let source = node.row.source()?;
+            if !row_matches_global_filter(source, global_filter, global_filterable_columns) {
+                return None;
+            }
+
+            Some(TableRowNode {
+                row: node.row.clone(),
+                children: filter_source_row_nodes_by_global_query(
+                    &node.children,
+                    global_filter,
+                    global_filterable_columns,
+                ),
+            })
+        })
+        .collect()
+}
+
 fn flatten_nodes(nodes: &[TableRowNode]) -> Vec<TableResolvedRow> {
     let mut rows = Vec::new();
     for node in nodes {
@@ -1869,6 +5705,7 @@ fn build_group_nodes(
     rows: &[TableResolvedRow],
     grouping: &[TableColumnId],
     aggregations: &[TableAggregation],
+    aggregation_fns: &BTreeMap<String, TableAggregationFn>,
     depth: usize,
     parent_group_id: Option<TableRowId>,
     inherited_parent_id: Option<TableRowId>,
@@ -1927,11 +5764,12 @@ fn build_group_nodes(
             &bucket_rows,
             &grouping[1..],
             aggregations,
+            aggregation_fns,
             depth + 1,
             Some(group_id.clone()),
             Some(group_id.clone()),
         );
-        let aggregate_cells = resolve_aggregate_cells(&bucket_rows, aggregations);
+        let aggregate_cells = resolve_aggregate_cells(&bucket_rows, aggregations, aggregation_fns);
         let row = TableResolvedRow::from_group(group_id, group, aggregate_cells);
         nodes.push(TableRowNode { row, children });
     }
@@ -1942,13 +5780,14 @@ fn build_group_nodes(
 fn resolve_aggregate_cells(
     rows: &[TableResolvedRow],
     aggregations: &[TableAggregation],
+    aggregation_fns: &BTreeMap<String, TableAggregationFn>,
 ) -> BTreeMap<TableColumnId, TableCellValue> {
     aggregations
         .iter()
         .map(|aggregation| {
             (
                 aggregation.column().clone(),
-                resolve_aggregate_cell(rows, aggregation),
+                resolve_aggregate_cell(rows, aggregation, aggregation_fns),
             )
         })
         .collect()
@@ -1957,12 +5796,35 @@ fn resolve_aggregate_cells(
 fn resolve_aggregate_cell(
     rows: &[TableResolvedRow],
     aggregation: &TableAggregation,
+    aggregation_fns: &BTreeMap<String, TableAggregationFn>,
 ) -> TableCellValue {
     match aggregation.kind() {
+        Some(kind) => resolve_aggregate_cell_builtin(rows, aggregation.column(), kind),
+        None => match aggregation.name() {
+            Some(name) => aggregation_fns
+                .get(name)
+                .map(|aggregation_fn| aggregation_fn.call(aggregation.column(), rows))
+                .or_else(|| {
+                    TableAggregateKind::from_str(name).map(|kind| {
+                        resolve_aggregate_cell_builtin(rows, aggregation.column(), kind)
+                    })
+                })
+                .unwrap_or_default(),
+            None => TableCellValue::Empty,
+        },
+    }
+}
+
+fn resolve_aggregate_cell_builtin(
+    rows: &[TableResolvedRow],
+    column: &TableColumnId,
+    kind: TableAggregateKind,
+) -> TableCellValue {
+    match kind {
         TableAggregateKind::Count => TableCellValue::Number(rows.len() as f64),
         TableAggregateKind::Sum => {
             let mut seen_numeric = false;
-            let sum = numeric_values(rows, aggregation.column()).fold(0.0, |sum, value| {
+            let sum = numeric_values(rows, column).fold(0.0, |sum, value| {
                 seen_numeric = true;
                 sum + value
             });
@@ -1973,17 +5835,17 @@ fn resolve_aggregate_cell(
                 TableCellValue::Empty
             }
         }
-        TableAggregateKind::Min => numeric_values(rows, aggregation.column())
+        TableAggregateKind::Min => numeric_values(rows, column)
             .min_by(f64::total_cmp)
             .map(TableCellValue::Number)
             .unwrap_or_default(),
-        TableAggregateKind::Max => numeric_values(rows, aggregation.column())
+        TableAggregateKind::Max => numeric_values(rows, column)
             .max_by(f64::total_cmp)
             .map(TableCellValue::Number)
             .unwrap_or_default(),
         TableAggregateKind::Average => {
             let mut count = 0_usize;
-            let sum = numeric_values(rows, aggregation.column()).fold(0.0, |sum, value| {
+            let sum = numeric_values(rows, column).fold(0.0, |sum, value| {
                 count += 1;
                 sum + value
             });
@@ -2029,7 +5891,7 @@ fn push_expanded_rows(
         return;
     }
 
-    if node.row.is_group() && !expansion.is_expanded(node.row.id()) {
+    if !expansion.is_expanded(node.row.id()) {
         return;
     }
 
@@ -2041,6 +5903,43 @@ fn push_expanded_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multiline_text_editor_rows_are_normalized() {
+        let column = TableColumn::new("notes", "Notes").with_multiline_text_editor(0);
+
+        assert_eq!(
+            column.editor(),
+            Some(TableCellEditor::MultilineText { rows: 1 })
+        );
+        assert!(column.text_editable());
+        assert_eq!(TableCellEditor::multiline(4).rows(), Some(4));
+        assert!(TableCellEditor::multiline(4).multiline_text());
+    }
+
+    #[test]
+    fn checkbox_editor_is_exposed_as_a_stable_variant() {
+        let column = TableColumn::new("enabled", "Enabled").with_checkbox_editor();
+
+        assert_eq!(column.editor(), Some(TableCellEditor::Checkbox));
+        assert!(column.text_editable());
+        assert_eq!(TableCellEditor::checkbox().as_str(), "checkbox");
+    }
+
+    #[test]
+    fn select_editor_exposes_options_and_stable_labels() {
+        let column = TableColumn::new("status", "Status").with_select_editor([
+            TableSelectOption::new("ready", "Ready"),
+            TableSelectOption::new("blocked", "Blocked"),
+        ]);
+
+        assert_eq!(column.editor(), Some(TableCellEditor::Select));
+        assert_eq!(column.select_options().len(), 2);
+        assert_eq!(column.select_options()[0].value(), "ready");
+        assert_eq!(column.select_options()[0].label(), "Ready");
+        assert_eq!(TableCellEditor::select().as_str(), "select");
+        assert_eq!(TableCellEditor::select().rows(), None);
+    }
 
     fn sample_rows() -> Vec<TableRow> {
         vec![
@@ -2088,6 +5987,52 @@ mod tests {
         ]
     }
 
+    fn tree_rows() -> Vec<TableRow> {
+        vec![
+            TableRow::new("pkg")
+                .with_cell("name", "Workspace")
+                .with_cell("team", "core")
+                .with_cell("score", 100_usize)
+                .with_child(
+                    TableRow::new("pkg-ui")
+                        .with_cell("name", "UI")
+                        .with_cell("team", "ui")
+                        .with_cell("score", 30_usize),
+                )
+                .with_child(
+                    TableRow::new("pkg-core")
+                        .with_cell("name", "Core")
+                        .with_cell("team", "core")
+                        .with_cell("score", 70_usize)
+                        .with_child(
+                            TableRow::new("pkg-core-test")
+                                .with_cell("name", "Core Test")
+                                .with_cell("team", "core")
+                                .with_cell("score", 10_usize),
+                        ),
+                ),
+            TableRow::new("docs")
+                .with_cell("name", "Docs")
+                .with_cell("team", "docs")
+                .with_cell("score", 20_usize),
+        ]
+    }
+
+    fn text_facet_counts(facet: &TableColumnFacets) -> Vec<(String, usize)> {
+        facet
+            .unique_values()
+            .iter()
+            .map(|entry| match entry.value() {
+                TableCellValue::Text(value) => (value.clone(), entry.count()),
+                value => panic!("expected text facet value, got {value:?}"),
+            })
+            .collect()
+    }
+
+    fn row_ids(rows: &[TableResolvedRow]) -> Vec<&str> {
+        rows.iter().map(|row| row.id().as_str()).collect()
+    }
+
     #[test]
     fn row_model_pipeline_names_full_and_v0_stages() {
         assert_eq!(
@@ -2117,10 +6062,16 @@ mod tests {
             .with_width(ui_px(120.0))
             .with_min_width(ui_px(80.0))
             .with_max_width(ui_px(160.0));
+        let content_fit = TableColumn::new("status", "Status").with_content_fit();
 
         assert_eq!(column.width(), ui_px(120.0));
         assert_eq!(column.min_width(), ui_px(80.0));
         assert_eq!(column.max_width(), ui_px(160.0));
+        assert_eq!(
+            content_fit.width_policy(),
+            TableColumnWidthPolicy::ContentFit
+        );
+        assert!(content_fit.is_content_fit());
         assert!(column.resizable());
         assert_eq!(
             column.resolved_width(&TableColumnSizing::new()),
@@ -2147,6 +6098,183 @@ mod tests {
             column.resolved_width(&unrelated),
             ui_px(120.0),
             "unknown committed sizing ids do not affect this column"
+        );
+        assert_eq!(
+            content_fit.resolved_width(&TableColumnSizing::new()),
+            TABLE_DEFAULT_COLUMN_WIDTH,
+            "content-fit columns still resolve to their configured fallback until the adapter overlays measured width"
+        );
+    }
+
+    #[test]
+    fn flat_columns_project_to_a_flat_column_tree() {
+        let state = TableState::new(sample_rows()).with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+        ]);
+
+        assert_eq!(
+            state
+                .columns()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["name", "team"]
+        );
+        assert_eq!(
+            state
+                .visible_columns()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["name", "team"]
+        );
+        assert_eq!(state.column_tree().len(), 2);
+        assert!(state.column_tree().iter().all(TableColumnNode::is_column));
+        assert_eq!(
+            state.column_tree()[0]
+                .as_column()
+                .expect("flat tree should keep the first leaf")
+                .label(),
+            "Name"
+        );
+    }
+
+    #[test]
+    fn column_tree_projects_nested_leaves_and_prunes_duplicates() {
+        let state = TableState::new(sample_rows()).with_column_tree([
+            TableColumnNode::group(TableColumnGroup::new(
+                "identity",
+                "Identity",
+                [
+                    TableColumnNode::column(TableColumn::new("name", "Name")),
+                    TableColumnNode::group(TableColumnGroup::new(
+                        "metrics",
+                        "Metrics",
+                        [
+                            TableColumnNode::column(TableColumn::new("score", "Score")),
+                            TableColumnNode::column(TableColumn::new("score", "Duplicate score")),
+                        ],
+                    )),
+                ],
+            )),
+            TableColumnNode::column(TableColumn::new("team", "Team")),
+            TableColumnNode::group(TableColumnGroup::new(
+                "duplicate-only",
+                "Duplicate only",
+                [TableColumnNode::column(TableColumn::new(
+                    "name",
+                    "Duplicate name",
+                ))],
+            )),
+        ]);
+
+        assert_eq!(
+            state
+                .columns()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["name", "score", "team"],
+            "leaf projection follows first-seen tree order"
+        );
+        assert_eq!(
+            state
+                .visible_columns()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["name", "score", "team"],
+            "group ids do not become behavior columns"
+        );
+        assert_eq!(
+            state.column_tree().len(),
+            2,
+            "groups with no non-duplicate leaves are removed"
+        );
+
+        let identity = state.column_tree()[0]
+            .as_group()
+            .expect("first root node should remain a group");
+        assert_eq!(identity.id().as_str(), "identity");
+        assert_eq!(identity.label(), "Identity");
+        assert_eq!(identity.children().len(), 2);
+        assert_eq!(
+            identity.children()[0]
+                .as_column()
+                .expect("first group child should be a leaf")
+                .id()
+                .as_str(),
+            "name"
+        );
+
+        let metrics = identity.children()[1]
+            .as_group()
+            .expect("second group child should stay nested");
+        assert_eq!(metrics.id().as_str(), "metrics");
+        assert_eq!(metrics.label(), "Metrics");
+        assert_eq!(metrics.children().len(), 1);
+        assert_eq!(
+            metrics.children()[0]
+                .as_column()
+                .expect("duplicate metric leaf should be pruned")
+                .id()
+                .as_str(),
+            "score"
+        );
+    }
+
+    #[test]
+    fn column_tree_participates_in_table_cache_key() {
+        let base = TableState::new(sample_rows());
+        let flat = base.clone().with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+        ]);
+        let grouped = base.with_column_tree([TableColumnGroup::new(
+            "identity",
+            "Identity",
+            [
+                TableColumn::new("name", "Name"),
+                TableColumn::new("team", "Team"),
+            ],
+        )]);
+
+        assert_eq!(
+            flat.columns(),
+            grouped.columns(),
+            "grouped trees keep the same leaf-column contract"
+        );
+        assert_ne!(
+            flat.cache_key(),
+            grouped.cache_key(),
+            "tree shape invalidates header caches even when leaf columns match"
+        );
+    }
+
+    #[test]
+    fn content_fit_width_policy_participates_in_cache_key() {
+        let base = TableState::new(sample_rows()).with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("status", "Status"),
+        ]);
+        let content_fit = base.clone().with_columns([
+            TableColumn::new("name", "Name").with_content_fit(),
+            TableColumn::new("status", "Status"),
+        ]);
+
+        assert_eq!(
+            base.columns()[0].width_policy(),
+            TableColumnWidthPolicy::Fixed
+        );
+        assert_eq!(
+            content_fit.columns()[0].width_policy(),
+            TableColumnWidthPolicy::ContentFit
+        );
+        assert_ne!(
+            base.cache_key(),
+            content_fit.cache_key(),
+            "content-fit policy should invalidate the table cache key"
         );
     }
 
@@ -2264,6 +6392,114 @@ mod tests {
     }
 
     #[test]
+    fn column_resize_on_end_commits_only_when_finished() {
+        let sizing = TableColumnSizing::new().with_width("name", ui_px(100.0));
+        let resize = TableColumnResizeState::begin(
+            "name",
+            ui_px(10.0),
+            ui_px(100.0),
+            [("name", ui_px(100.0))],
+        );
+
+        let moved = drag_table_column_resize(
+            TableColumnResizeMode::OnEnd,
+            TableColumnResizeDirection::Ltr,
+            &sizing,
+            &resize,
+            ui_px(60.0),
+        );
+        assert!(moved.committed_sizing().is_none());
+        assert_eq!(moved.state().delta_offset(), Some(ui_px(50.0)));
+        assert_eq!(moved.state().delta_percentage(), Some(0.5));
+        assert_eq!(
+            moved.state().preview_width(&TableColumnId::new("name")),
+            Some(ui_px(150.0))
+        );
+
+        let ended = end_table_column_resize(
+            TableColumnResizeMode::OnEnd,
+            TableColumnResizeDirection::Ltr,
+            &sizing,
+            moved.state(),
+            Some(ui_px(60.0)),
+        );
+        assert!(!ended.state().is_resizing());
+        assert_eq!(
+            ended
+                .committed_sizing()
+                .and_then(|sizing| sizing.width(&TableColumnId::new("name"))),
+            Some(ui_px(150.0))
+        );
+    }
+
+    #[test]
+    fn column_resize_on_change_commits_during_drag_and_resets_on_end() {
+        let sizing = TableColumnSizing::new().with_width("name", ui_px(100.0));
+        let resize = TableColumnResizeState::begin(
+            "name",
+            ui_px(10.0),
+            ui_px(100.0),
+            [("name", ui_px(100.0))],
+        );
+
+        let moved = drag_table_column_resize(
+            TableColumnResizeMode::OnChange,
+            TableColumnResizeDirection::Ltr,
+            &sizing,
+            &resize,
+            ui_px(60.0),
+        );
+        assert_eq!(
+            moved
+                .committed_sizing()
+                .and_then(|sizing| sizing.width(&TableColumnId::new("name"))),
+            Some(ui_px(150.0))
+        );
+
+        let ended = end_table_column_resize(
+            TableColumnResizeMode::OnChange,
+            TableColumnResizeDirection::Ltr,
+            &sizing,
+            moved.state(),
+            Some(ui_px(60.0)),
+        );
+        assert!(!ended.state().is_resizing());
+        assert_eq!(
+            ended
+                .committed_sizing()
+                .and_then(|sizing| sizing.width(&TableColumnId::new("name"))),
+            Some(ui_px(150.0))
+        );
+    }
+
+    #[test]
+    fn column_resize_rtl_flips_pointer_delta() {
+        let sizing = TableColumnSizing::new().with_width("name", ui_px(100.0));
+        let resize = TableColumnResizeState::begin(
+            "name",
+            ui_px(10.0),
+            ui_px(100.0),
+            [("name", ui_px(100.0))],
+        );
+
+        let moved = drag_table_column_resize(
+            TableColumnResizeMode::OnChange,
+            TableColumnResizeDirection::Rtl,
+            &sizing,
+            &resize,
+            ui_px(60.0),
+        );
+
+        assert_eq!(moved.state().delta_offset(), Some(ui_px(-50.0)));
+        assert_eq!(
+            moved
+                .committed_sizing()
+                .and_then(|sizing| sizing.width(&TableColumnId::new("name"))),
+            Some(ui_px(50.0))
+        );
+    }
+
+    #[test]
     fn stable_row_ids_survive_filtering_sorting_and_pagination() {
         let resolved = TableState::new(sample_rows())
             .with_filters([TableFilter::contains("team", "ops")])
@@ -2307,6 +6543,1297 @@ mod tests {
     }
 
     #[test]
+    fn global_filter_matches_globally_filterable_columns_and_normalizes_queries() {
+        let base = TableState::new([
+            TableRow::new("row-1")
+                .with_cell("name", "Alpha")
+                .with_cell("notes", "done")
+                .with_cell("score", 1_usize),
+            TableRow::new("row-2")
+                .with_cell("name", "Beta")
+                .with_cell("notes", "pending")
+                .with_cell("score", 2_usize),
+            TableRow::new("row-3")
+                .with_cell("name", "Done")
+                .with_cell("notes", "pending")
+                .with_cell("score", 3_usize),
+        ])
+        .with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("notes", "Notes").with_global_filterable(false),
+            TableColumn::new("score", "Score"),
+        ]);
+
+        assert_eq!(base.clone().with_global_filter("   ").global_filter(), None);
+        assert_eq!(
+            base.clone().with_global_filter("  done  ").global_filter(),
+            Some("done")
+        );
+        assert_eq!(
+            base.cache_key(),
+            base.clone().with_global_filter("   ").cache_key(),
+            "whitespace-only global filters normalize to cache-key absence"
+        );
+        assert_ne!(
+            base.cache_key(),
+            base.clone().with_global_filter("done").cache_key(),
+            "non-empty global filters should invalidate row-model caches"
+        );
+
+        let resolved = base.with_global_filter("done").resolve();
+
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-3"],
+            "global filtering should ignore columns opted out of the global scan"
+        );
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-3"],
+            "global filtering should feed the final row model"
+        );
+    }
+
+    #[test]
+    fn global_filter_runs_after_column_filters_before_sorting_and_pagination() {
+        let resolved = TableState::new([
+            TableRow::new("row-1")
+                .with_cell("team", "UI")
+                .with_cell("name", "Done Alpha")
+                .with_cell("score", 40_usize),
+            TableRow::new("row-2")
+                .with_cell("team", "UI")
+                .with_cell("name", "Done Beta")
+                .with_cell("score", 10_usize),
+            TableRow::new("row-3")
+                .with_cell("team", "UI")
+                .with_cell("name", "Gamma")
+                .with_cell("score", 30_usize),
+            TableRow::new("row-4")
+                .with_cell("team", "API")
+                .with_cell("name", "Done Delta")
+                .with_cell("score", 20_usize),
+        ])
+        .with_columns([
+            TableColumn::new("team", "Team"),
+            TableColumn::new("name", "Name"),
+            TableColumn::new("score", "Score"),
+        ])
+        .with_filters([TableFilter::contains("team", "UI")])
+        .with_global_filter("done")
+        .with_sorting([TableSort::descending("score")])
+        .with_pagination(TablePagination::new(0, 1))
+        .resolve();
+
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-1", "row-2"],
+            "global filtering should run after column filtering"
+        );
+        assert_eq!(
+            resolved
+                .sorted_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-1", "row-2"],
+            "sorting should still see the globally filtered row set"
+        );
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-1"],
+            "pagination should apply after global filtering and sorting"
+        );
+    }
+
+    #[test]
+    fn categorical_filters_match_exact_tokens_and_multiple_values() {
+        let resolved = TableState::new([
+            TableRow::new("row-ready")
+                .with_cell("status", "Ready")
+                .with_cell("score", 20_usize)
+                .with_cell("enabled", true),
+            TableRow::new("row-review")
+                .with_cell("status", "Review")
+                .with_cell("score", 30_usize)
+                .with_cell("enabled", false),
+            TableRow::new("row-blocked")
+                .with_cell("status", "Blocked")
+                .with_cell("score", 40_usize)
+                .with_cell("enabled", true),
+        ])
+        .with_columns([
+            TableColumn::new("status", "Status"),
+            TableColumn::new("score", "Score"),
+            TableColumn::new("enabled", "Enabled"),
+        ])
+        .with_filters([
+            TableFilter::one_of("status", ["Ready", "Blocked"]),
+            TableFilter::exact("enabled", "true"),
+        ])
+        .resolve();
+
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-ready", "row-blocked"],
+            "categorical filters use exact facet tokens and compose with other filters"
+        );
+    }
+
+    #[test]
+    fn text_predicate_filters_match_contains_equals_and_boundaries() {
+        let state = TableState::new([
+            TableRow::new("row-alpha")
+                .with_cell("name", "Alpha Release")
+                .with_cell("team", "UI"),
+            TableRow::new("row-beta")
+                .with_cell("name", "beta release")
+                .with_cell("team", "Platform"),
+            TableRow::new("row-gamma")
+                .with_cell("name", "Gamma")
+                .with_cell("team", "UI"),
+        ])
+        .with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+        ]);
+
+        let contains = state
+            .clone()
+            .with_filters([TableFilter::contains("name", "release")]);
+        assert_eq!(
+            contains
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-alpha", "row-beta"],
+            "contains should keep rows whose text includes the query"
+        );
+
+        let starts_with = state
+            .clone()
+            .with_filters([TableFilter::starts_with("name", "Al")]);
+        assert_eq!(
+            starts_with
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-alpha"],
+            "starts_with should match the leading text"
+        );
+
+        let ends_with = state
+            .clone()
+            .with_filters([TableFilter::ends_with("name", "lease")]);
+        assert_eq!(
+            ends_with
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-alpha", "row-beta"],
+            "ends_with should match trailing text"
+        );
+
+        let equals = state
+            .clone()
+            .with_filters([TableFilter::text_equals("name", "alpha release")]);
+        assert_eq!(
+            equals
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-alpha"],
+            "case-insensitive equals should match exact text"
+        );
+
+        let case_sensitive = state.clone().with_filters([TableFilter::text_with_case(
+            "name",
+            TableTextFilterOperator::Equals,
+            "Alpha Release",
+            true,
+        )]);
+        assert_eq!(
+            case_sensitive
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-alpha"],
+            "case-sensitive equals should respect the original case"
+        );
+
+        let not_contains = state
+            .clone()
+            .with_filters([TableFilter::not_contains("name", "alpha")]);
+        assert_eq!(
+            not_contains
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-beta", "row-gamma"],
+            "not_contains should remove matching rows"
+        );
+
+        assert_eq!(
+            state
+                .clone()
+                .with_filters([TableFilter::text_with_case(
+                    "name",
+                    TableTextFilterOperator::NotEquals,
+                    "Alpha Release",
+                    true,
+                )])
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-beta", "row-gamma"],
+            "not_equals should exclude the exact match"
+        );
+    }
+
+    #[test]
+    fn numeric_comparison_filters_match_single_bounds_and_reject_invalid_bounds() {
+        let state = TableState::new([
+            TableRow::new("row-low").with_cell("score", 10_usize),
+            TableRow::new("row-mid").with_cell("score", 20_usize),
+            TableRow::new("row-high").with_cell("score", 30_usize),
+            TableRow::new("row-text").with_cell("score", "30"),
+            TableRow::new("row-missing").with_cell("team", "UI"),
+        ])
+        .with_columns([TableColumn::new("score", "Score")]);
+
+        let greater = state
+            .clone()
+            .with_filters([TableFilter::number_greater_than("score", 10.0).expect("finite bound")]);
+        assert_eq!(
+            greater
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-mid", "row-high"],
+            "greater-than should exclude the threshold value"
+        );
+
+        let greater_or_equal = state.clone().with_filters([
+            TableFilter::number_greater_than_or_equal("score", 20.0).expect("finite bound"),
+        ]);
+        assert_eq!(
+            greater_or_equal
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-mid", "row-high"],
+            "greater-than-or-equal should keep the threshold value"
+        );
+
+        let less = state
+            .clone()
+            .with_filters([TableFilter::number_less_than("score", 30.0).expect("finite bound")]);
+        assert_eq!(
+            less.resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-low", "row-mid"],
+            "less-than should exclude the threshold value"
+        );
+
+        let less_or_equal =
+            state.clone().with_filters([
+                TableFilter::number_less_than_or_equal("score", 20.0).expect("finite bound")
+            ]);
+        assert_eq!(
+            less_or_equal
+                .resolve()
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-low", "row-mid"],
+            "less-than-or-equal should keep the threshold value"
+        );
+
+        assert!(
+            TableFilter::number_greater_than("score", f64::NAN).is_none(),
+            "invalid numeric bounds should not create a filter"
+        );
+        assert!(
+            TableFilter::number_comparison(
+                "score",
+                TableNumericFilterOperator::LessThan,
+                f64::INFINITY,
+            )
+            .is_none(),
+            "infinite numeric bounds should not create a filter"
+        );
+    }
+
+    #[test]
+    fn manual_filtering_preserves_snapshot_and_global_filter_state() {
+        let state = TableState::new([
+            TableRow::new("row-1").with_cell("name", "Alpha"),
+            TableRow::new("row-2").with_cell("name", "Beta"),
+        ])
+        .with_columns([TableColumn::new("name", "Name")])
+        .with_global_filter("beta")
+        .with_manual_filtering();
+        let resolved = state.resolve();
+
+        assert_eq!(state.global_filter(), Some("beta"));
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-1", "row-2"],
+            "manual filtering should preserve the supplied row snapshot"
+        );
+        assert_eq!(resolved.global_facet_summary().row_count(), 2);
+        assert_eq!(
+            resolved
+                .global_facet_summary()
+                .column_facet(&TableColumnId::new("name"))
+                .expect("global facet should resolve for the name column")
+                .row_count(),
+            2,
+            "manual filtering should keep global facet summaries anchored to the supplied snapshot"
+        );
+    }
+
+    #[test]
+    fn categorical_filter_values_are_order_independent_cache_keys() {
+        let left = TableFilter::one_of("status", ["Ready", "Blocked", "Ready"]);
+        let right = TableFilter::one_of("status", ["Blocked", "Ready"]);
+
+        assert_eq!(
+            left, right,
+            "selected categorical tokens are a deterministic set, not click order"
+        );
+        assert_eq!(
+            left.selected_values()
+                .expect("categorical filter should expose selected values")
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            ["Blocked".to_string(), "Ready".to_string()]
+        );
+
+        let base = TableState::new(sample_rows()).with_columns([TableColumn::new("team", "Team")]);
+        assert_eq!(
+            base.clone().with_filters([left]).cache_key(),
+            base.clone().with_filters([right]).cache_key(),
+            "cache keys should not depend on selection order"
+        );
+        assert_ne!(
+            base.clone()
+                .with_filters([TableFilter::one_of("team", ["ops"])])
+                .cache_key(),
+            base.with_filters([TableFilter::one_of("team", ["design"])])
+                .cache_key(),
+            "changing the selected categorical token should invalidate caches"
+        );
+    }
+
+    #[test]
+    fn empty_categorical_filters_are_noops() {
+        let resolved = TableState::new(sample_rows())
+            .with_filters([TableFilter::one_of("team", std::iter::empty::<&str>())])
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-b", "row-a", "row-c"],
+            "an empty categorical filter should behave like no filter"
+        );
+    }
+
+    #[test]
+    fn numeric_range_filters_match_finite_number_cells_inclusively() {
+        let resolved = TableState::new([
+            TableRow::new("row-low").with_cell("score", 10_usize),
+            TableRow::new("row-min").with_cell("score", 20_usize),
+            TableRow::new("row-mid").with_cell("score", 25_usize),
+            TableRow::new("row-max").with_cell("score", 30_usize),
+            TableRow::new("row-high").with_cell("score", 40_usize),
+            TableRow::new("row-text").with_cell("score", "30"),
+            TableRow::new("row-missing").with_cell("team", "UI"),
+            TableRow::new("row-infinite").with_cell("score", f64::INFINITY),
+        ])
+        .with_columns([TableColumn::new("score", "Score")])
+        .with_filters([TableFilter::number_range("score", Some(20.0), Some(30.0))
+            .expect("bounded numeric range should produce a filter")])
+        .resolve();
+
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-min", "row-mid", "row-max"],
+            "range filters are inclusive and only match finite numeric cells"
+        );
+    }
+
+    #[test]
+    fn numeric_range_filters_normalize_open_and_reversed_bounds() {
+        let min_only = TableFilter::number_range("score", Some(20.0), None)
+            .expect("minimum-only range should produce a filter");
+        assert_eq!(min_only.number_range_bounds(), Some((Some(20.0), None)));
+
+        let max_only = TableFilter::number_range("score", Some(f64::NAN), Some(30.0))
+            .expect("invalid minimum should become an open lower bound");
+        assert_eq!(max_only.number_range_bounds(), Some((None, Some(30.0))));
+
+        let reversed = TableFilter::number_range("score", Some(40.0), Some(10.0))
+            .expect("reversed range should normalize");
+        assert_eq!(
+            reversed.number_range_bounds(),
+            Some((Some(10.0), Some(40.0)))
+        );
+
+        assert!(
+            TableFilter::number_range("score", Some(f64::NAN), Some(f64::INFINITY)).is_none(),
+            "filters with no finite endpoints should be removable no-ops"
+        );
+    }
+
+    #[test]
+    fn pagination_total_page_count_uses_row_count_or_explicit_page_count() {
+        let pagination = TablePagination::manual(2, 10, 42);
+
+        assert_eq!(pagination.mode(), TableStageMode::Manual);
+        assert!(pagination.is_manual());
+        assert_eq!(pagination.page_index(), 2);
+        assert_eq!(pagination.page_size(), 10);
+        assert_eq!(pagination.row_count(), Some(42));
+        assert_eq!(pagination.page_count(), Some(5));
+        assert_eq!(pagination.with_page_count(9).page_count(), Some(9));
+        assert_eq!(TablePagination::new(0, 10).page_count(), None);
+        assert_eq!(TablePagination::manual(0, 0, 42).page_count(), Some(0));
+    }
+
+    #[test]
+    fn manual_row_model_modes_preserve_supplied_snapshot() {
+        let resolved = TableState::new(sample_rows())
+            .with_filters([TableFilter::contains("team", "missing")])
+            .with_manual_filtering()
+            .with_sorting([TableSort::ascending("score")])
+            .with_manual_sorting()
+            .with_pagination(TablePagination::manual(2, 1, 30))
+            .resolve();
+
+        let expected = ["row-b", "row-a", "row-c"];
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            resolved
+                .sorted_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    #[test]
+    fn manual_stage_modes_participate_in_cache_keys() {
+        let state = TableState::new(sample_rows())
+            .with_filters([TableFilter::contains("team", "ops")])
+            .with_sorting([TableSort::descending("score")])
+            .with_pagination(TablePagination::new(0, 1));
+
+        assert_ne!(
+            state.cache_key(),
+            state.clone().with_manual_filtering().cache_key()
+        );
+        assert_ne!(
+            state.cache_key(),
+            state.clone().with_manual_sorting().cache_key()
+        );
+        assert_ne!(
+            state.cache_key(),
+            state
+                .with_pagination(TablePagination::manual(0, 1, 30))
+                .cache_key()
+        );
+    }
+
+    #[test]
+    fn row_pinning_state_dedupes_and_moves_rows_between_regions() {
+        let pinning = TableRowPinning::new()
+            .pinned_top(["row-a", "row-b", "row-a"])
+            .pinned_bottom(["row-b", "row-c", "row-c"]);
+
+        assert_eq!(
+            pinning
+                .top()
+                .iter()
+                .map(|row| row.as_str())
+                .collect::<Vec<_>>(),
+            ["row-a"],
+            "bottom pins remove overlapping top pins"
+        );
+        assert_eq!(
+            pinning
+                .bottom()
+                .iter()
+                .map(|row| row.as_str())
+                .collect::<Vec<_>>(),
+            ["row-b", "row-c"]
+        );
+
+        let moved = pinning.pinned_top(["row-c"]);
+        assert_eq!(
+            moved
+                .top()
+                .iter()
+                .map(|row| row.as_str())
+                .collect::<Vec<_>>(),
+            ["row-c"]
+        );
+        assert_eq!(
+            moved
+                .bottom()
+                .iter()
+                .map(|row| row.as_str())
+                .collect::<Vec<_>>(),
+            ["row-b"]
+        );
+    }
+
+    #[test]
+    fn row_pinning_keep_pinned_rows_partitions_final_model_around_page() {
+        let resolved = TableState::new(sample_rows())
+            .with_pagination(TablePagination::new(1, 1))
+            .with_row_pinning(
+                TableRowPinning::new()
+                    .pinned_top(["row-b"])
+                    .pinned_bottom(["row-c"]),
+            )
+            .resolve();
+
+        assert_eq!(
+            resolved.row_pinning_policy(),
+            TableRowPinningPolicy::KeepPinnedRows
+        );
+        assert_eq!(row_ids(resolved.paginated_model().rows()), ["row-a"]);
+        assert_eq!(row_ids(resolved.row_regions().top()), ["row-b"]);
+        assert_eq!(row_ids(resolved.row_regions().center()), ["row-a"]);
+        assert_eq!(row_ids(resolved.row_regions().bottom()), ["row-c"]);
+        assert_eq!(
+            row_ids(resolved.final_model().rows()),
+            ["row-b", "row-a", "row-c"]
+        );
+    }
+
+    #[test]
+    fn row_pinning_page_only_policy_ignores_rows_outside_page() {
+        let resolved = TableState::new(sample_rows())
+            .with_pagination(TablePagination::new(1, 1))
+            .with_row_pinning(
+                TableRowPinning::new()
+                    .pinned_top(["row-b"])
+                    .pinned_bottom(["row-c"]),
+            )
+            .with_row_pinning_policy(TableRowPinningPolicy::PageOnly)
+            .resolve();
+
+        assert_eq!(
+            resolved.row_pinning_policy(),
+            TableRowPinningPolicy::PageOnly
+        );
+        assert!(resolved.row_regions().top().is_empty());
+        assert_eq!(row_ids(resolved.row_regions().center()), ["row-a"]);
+        assert!(resolved.row_regions().bottom().is_empty());
+        assert_eq!(row_ids(resolved.final_model().rows()), ["row-a"]);
+    }
+
+    #[test]
+    fn row_pinning_ignores_unknown_filtered_and_collapsed_rows() {
+        let filtered = TableState::new(sample_rows())
+            .with_filters([TableFilter::contains("team", "ops")])
+            .with_row_pinning(
+                TableRowPinning::new()
+                    .pinned_top(["missing", "row-a"])
+                    .pinned_bottom(["row-c"]),
+            )
+            .with_pagination(TablePagination::disabled())
+            .resolve();
+
+        assert!(filtered.row_regions().top().is_empty());
+        assert_eq!(row_ids(filtered.row_regions().center()), ["row-b"]);
+        assert_eq!(row_ids(filtered.row_regions().bottom()), ["row-c"]);
+        assert_eq!(row_ids(filtered.final_model().rows()), ["row-b", "row-c"]);
+
+        let collapsed = TableState::new(tree_rows())
+            .with_columns([TableColumn::new("name", "Name")])
+            .with_row_pinning(TableRowPinning::new().pinned_top(["pkg-core-test"]))
+            .resolve();
+
+        assert!(
+            collapsed.row_regions().top().is_empty(),
+            "collapsed descendants are not promoted into pinned bands"
+        );
+        assert_eq!(row_ids(collapsed.final_model().rows()), ["pkg", "docs"]);
+        assert!(
+            collapsed
+                .final_model()
+                .row(&TableRowId::new("pkg-core-test"))
+                .is_some(),
+            "collapsed descendants remain addressable through row lookup"
+        );
+    }
+
+    #[test]
+    fn row_pinning_preserves_duplicate_source_row_instances_in_visual_order() {
+        let resolved = TableState::new([
+            TableRow::new("duplicate").with_cell("name", "First"),
+            TableRow::new("unique").with_cell("name", "Middle"),
+            TableRow::new("duplicate").with_cell("name", "Second"),
+        ])
+        .with_row_pinning(TableRowPinning::new().pinned_top(["duplicate"]))
+        .resolve();
+
+        assert_eq!(
+            row_ids(resolved.row_regions().top()),
+            ["duplicate", "duplicate"]
+        );
+        assert_eq!(row_ids(resolved.row_regions().center()), ["unique"]);
+        assert!(resolved.row_regions().bottom().is_empty());
+        assert_eq!(
+            row_ids(resolved.final_model().rows()),
+            ["duplicate", "duplicate", "unique"]
+        );
+    }
+
+    #[test]
+    fn overlapping_raw_row_pinning_state_resolves_without_duplicates() {
+        let resolved = TableState::new(sample_rows())
+            .with_row_pinning(TableRowPinning {
+                top: vec![TableRowId::new("row-a"), TableRowId::new("row-a")],
+                bottom: vec![TableRowId::new("row-a"), TableRowId::new("row-c")],
+            })
+            .resolve();
+
+        assert_eq!(row_ids(resolved.row_regions().top()), ["row-a"]);
+        assert_eq!(row_ids(resolved.row_regions().bottom()), ["row-c"]);
+        assert_eq!(
+            row_ids(resolved.final_model().rows()),
+            ["row-a", "row-b", "row-c"]
+        );
+    }
+
+    #[test]
+    fn selection_policy_single_keeps_only_one_selected_row() {
+        let state = TableState::new(sample_rows())
+            .with_selection_mode(TableSelectionMode::Single)
+            .with_selected_rows(["row-a", "row-c"]);
+
+        assert_eq!(
+            state
+                .selected_rows()
+                .iter()
+                .map(TableRowId::as_str)
+                .collect::<Vec<_>>(),
+            ["row-a"]
+        );
+        assert_eq!(
+            state.selection_policy().selection_mode(),
+            TableSelectionMode::Single
+        );
+    }
+
+    #[test]
+    fn selection_policy_descendants_propagates_to_tree_children() {
+        let resolved = TableState::new(tree_rows())
+            .with_selection_policy(
+                TableSelectionPolicy::default()
+                    .with_sub_row_policy(TableSubRowSelectionPolicy::Descendants),
+            )
+            .with_all_rows_expanded()
+            .with_selected_rows(["pkg"])
+            .resolve();
+
+        let selected_ids = resolved
+            .core_model()
+            .rows()
+            .iter()
+            .filter(|row| row.selected())
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(selected_ids, ["pkg", "pkg-ui", "pkg-core", "pkg-core-test"]);
+        assert_eq!(resolved.core_selection_summary().selected_count(), 4);
+        assert!(resolved.core_selection_summary().is_some_selected());
+        assert_eq!(resolved.final_selection_summary().selected_count(), 4);
+    }
+
+    #[test]
+    fn selection_summaries_report_all_some_and_none() {
+        let all = TableState::new(sample_rows())
+            .with_selected_rows(["row-a", "row-b", "row-c"])
+            .resolve();
+        let some = TableState::new(sample_rows())
+            .with_selected_rows(["row-a"])
+            .resolve();
+        let none = TableState::new(sample_rows()).resolve();
+
+        assert!(all.final_selection_summary().is_all_selected());
+        assert_eq!(all.final_selection_summary().state().as_str(), "all");
+        assert!(some.final_selection_summary().is_some_selected());
+        assert_eq!(some.final_selection_summary().state().as_str(), "some");
+        assert!(none.final_selection_summary().is_none_selected());
+        assert_eq!(none.final_selection_summary().state().as_str(), "none");
+    }
+
+    #[test]
+    fn full_and_current_page_selection_summaries_use_different_scopes() {
+        let resolved = TableState::new(sample_rows())
+            .with_selected_rows(["row-c"])
+            .with_pagination(TablePagination::new(0, 1))
+            .resolve();
+
+        assert_eq!(resolved.full_selection_summary().selected_count(), 1);
+        assert_eq!(
+            resolved.current_page_selection_summary().selected_count(),
+            0
+        );
+        assert!(resolved.full_selection_summary().is_some_selected());
+        assert!(resolved.current_page_selection_summary().is_none_selected());
+    }
+
+    #[test]
+    fn row_pinning_inputs_participate_in_cache_keys() {
+        let state = TableState::new(sample_rows());
+
+        assert_ne!(
+            state.cache_key(),
+            state
+                .clone()
+                .with_row_pinning(TableRowPinning::new().pinned_top(["row-a"]))
+                .cache_key()
+        );
+        assert_ne!(
+            state.cache_key(),
+            state
+                .with_row_pinning_policy(TableRowPinningPolicy::PageOnly)
+                .cache_key()
+        );
+    }
+
+    #[test]
+    fn facet_values_are_deterministic_and_ranges_ignore_non_numeric_values() {
+        let resolved = TableState::new([
+            TableRow::new("row-empty").with_cell("score", 4_usize),
+            TableRow::new("row-bool")
+                .with_cell("mixed", true)
+                .with_cell("score", "n/a"),
+            TableRow::new("row-number")
+                .with_cell("mixed", 1_usize)
+                .with_cell("score", 10_usize),
+            TableRow::new("row-number-2")
+                .with_cell("mixed", 1_usize)
+                .with_cell("score", f64::INFINITY),
+            TableRow::new("row-text")
+                .with_cell("mixed", "1")
+                .with_cell("score", f64::NAN),
+        ])
+        .with_columns([
+            TableColumn::new("mixed", "Mixed"),
+            TableColumn::new("score", "Score"),
+        ])
+        .resolve();
+
+        let mixed = resolved
+            .column_facet(&TableColumnId::new("mixed"))
+            .expect("mixed facet should resolve");
+
+        assert_eq!(mixed.mode(), TableStageMode::Client);
+        assert_eq!(mixed.row_count(), 5);
+        assert_eq!(mixed.unique_values().len(), 4);
+        assert!(matches!(
+            mixed.unique_values()[0].value(),
+            TableCellValue::Empty
+        ));
+        assert_eq!(mixed.unique_values()[0].count(), 1);
+        assert!(matches!(
+            mixed.unique_values()[1].value(),
+            TableCellValue::Bool(true)
+        ));
+        assert_eq!(mixed.unique_values()[1].count(), 1);
+        assert!(matches!(
+            mixed.unique_values()[2].value(),
+            TableCellValue::Number(value) if *value == 1.0
+        ));
+        assert_eq!(mixed.unique_values()[2].count(), 2);
+        assert!(matches!(
+            mixed.unique_values()[3].value(),
+            TableCellValue::Text(value) if value == "1"
+        ));
+        assert_eq!(mixed.unique_values()[3].count(), 1);
+
+        let score = resolved
+            .column_facet(&TableColumnId::new("score"))
+            .expect("score facet should resolve");
+        let range = score
+            .numeric_range()
+            .expect("finite score values should produce a range");
+        assert_eq!(range.min(), 4.0);
+        assert_eq!(range.max(), 10.0);
+    }
+
+    #[test]
+    fn client_facets_exclude_own_filter_and_ignore_pagination() {
+        let resolved = TableState::new([
+            TableRow::new("row-1")
+                .with_cell("team", "UI")
+                .with_cell("status", "Ready")
+                .with_cell("score", 10_usize),
+            TableRow::new("row-2")
+                .with_cell("team", "UI")
+                .with_cell("status", "Blocked")
+                .with_cell("score", 20_usize),
+            TableRow::new("row-3")
+                .with_cell("team", "API")
+                .with_cell("status", "Ready")
+                .with_cell("score", 30_usize),
+            TableRow::new("row-4")
+                .with_cell("team", "UI")
+                .with_cell("status", "Ready")
+                .with_cell("score", 40_usize),
+        ])
+        .with_columns([
+            TableColumn::new("team", "Team"),
+            TableColumn::new("status", "Status"),
+            TableColumn::new("score", "Score"),
+        ])
+        .with_filters([
+            TableFilter::contains("status", "Ready"),
+            TableFilter::contains("team", "UI"),
+        ])
+        .with_pagination(TablePagination::new(0, 1))
+        .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-1"],
+            "pagination still limits the final row model"
+        );
+
+        let status = resolved
+            .column_facet(&TableColumnId::new("status"))
+            .expect("status facet should resolve");
+        assert_eq!(status.row_count(), 3);
+        assert_eq!(
+            text_facet_counts(status),
+            [("Blocked".to_string(), 1), ("Ready".to_string(), 2)],
+            "status facet ignores its own filter and honors the team filter"
+        );
+
+        let team = resolved
+            .column_facet(&TableColumnId::new("team"))
+            .expect("team facet should resolve");
+        assert_eq!(team.row_count(), 3);
+        assert_eq!(
+            text_facet_counts(team),
+            [("API".to_string(), 1), ("UI".to_string(), 2)],
+            "team facet ignores its own filter and honors the status filter"
+        );
+    }
+
+    #[test]
+    fn richer_text_filters_compose_with_facets_and_global_query() {
+        let resolved = TableState::new([
+            TableRow::new("row-1")
+                .with_cell("team", "UI")
+                .with_cell("status", "Ready")
+                .with_cell("name", "Done Alpha"),
+            TableRow::new("row-2")
+                .with_cell("team", "UI")
+                .with_cell("status", "Blocked")
+                .with_cell("name", "Done Beta"),
+            TableRow::new("row-3")
+                .with_cell("team", "API")
+                .with_cell("status", "Ready")
+                .with_cell("name", "Done Gamma"),
+            TableRow::new("row-4")
+                .with_cell("team", "UX")
+                .with_cell("status", "Review")
+                .with_cell("name", "Later"),
+        ])
+        .with_columns([
+            TableColumn::new("team", "Team"),
+            TableColumn::new("status", "Status"),
+            TableColumn::new("name", "Name"),
+        ])
+        .with_filters([
+            TableFilter::starts_with("team", "u"),
+            TableFilter::text_with_case(
+                "status",
+                TableTextFilterOperator::NotEquals,
+                "Blocked",
+                true,
+            ),
+        ])
+        .with_global_filter("done")
+        .resolve();
+
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["row-1"],
+            "rich text predicates should compose with the global filter"
+        );
+
+        let status = resolved
+            .column_facet(&TableColumnId::new("status"))
+            .expect("status facet should resolve");
+        assert_eq!(status.row_count(), 2);
+        assert_eq!(
+            text_facet_counts(status),
+            [("Blocked".to_string(), 1), ("Ready".to_string(), 1)],
+            "status facets should ignore their own richer predicate while honoring other filters"
+        );
+
+        let team = resolved
+            .column_facet(&TableColumnId::new("team"))
+            .expect("team facet should resolve");
+        assert_eq!(team.row_count(), 2);
+        assert_eq!(
+            text_facet_counts(team),
+            [("API".to_string(), 1), ("UI".to_string(), 1)],
+            "team facets should ignore their own richer predicate while honoring the status filter"
+        );
+    }
+
+    #[test]
+    fn richer_text_predicates_participate_in_cache_keys() {
+        let base = TableState::new(sample_rows()).with_columns([TableColumn::new("team", "Team")]);
+        let contains = base.clone().with_filters([TableFilter::text(
+            "team",
+            TableTextFilterOperator::Contains,
+            "ops",
+        )]);
+        let starts = base.clone().with_filters([TableFilter::text(
+            "team",
+            TableTextFilterOperator::StartsWith,
+            "ops",
+        )]);
+        let case_sensitive = base.clone().with_filters([TableFilter::text_with_case(
+            "team",
+            TableTextFilterOperator::Contains,
+            "ops",
+            true,
+        )]);
+
+        assert_ne!(
+            contains.cache_key(),
+            starts.cache_key(),
+            "different text operators should invalidate caches"
+        );
+        assert_ne!(
+            contains.cache_key(),
+            case_sensitive.cache_key(),
+            "case-sensitivity should participate in cache keys"
+        );
+    }
+
+    #[test]
+    fn global_facet_summary_honors_column_filters_and_excludes_global_query() {
+        let resolved = TableState::new([
+            TableRow::new("row-1")
+                .with_cell("team", "UI")
+                .with_cell("status", "Ready")
+                .with_cell("score", 10_usize)
+                .with_cell("enabled", true)
+                .with_cell("tag", "alpha")
+                .with_cell("notes", "ready"),
+            TableRow::new("row-2")
+                .with_cell("team", "UI")
+                .with_cell("status", "Blocked")
+                .with_cell("score", 20_usize)
+                .with_cell("enabled", false)
+                .with_cell("notes", "done"),
+            TableRow::new("row-3")
+                .with_cell("team", "API")
+                .with_cell("status", "Ready")
+                .with_cell("score", 30_usize)
+                .with_cell("enabled", true)
+                .with_cell("tag", "beta")
+                .with_cell("notes", "done"),
+        ])
+        .with_columns([
+            TableColumn::new("team", "Team"),
+            TableColumn::new("status", "Status"),
+            TableColumn::new("score", "Score"),
+            TableColumn::new("enabled", "Enabled"),
+            TableColumn::new("tag", "Tag"),
+            TableColumn::new("notes", "Notes").with_global_filterable(false),
+        ])
+        .with_filters([TableFilter::contains("team", "UI")])
+        .with_global_filter("done")
+        .resolve();
+
+        assert!(
+            resolved.filtered_model().rows().is_empty(),
+            "global query should not match text from columns opted out of global filtering"
+        );
+        assert_eq!(
+            resolved
+                .column_facet(&TableColumnId::new("status"))
+                .expect("status column facet should resolve")
+                .row_count(),
+            0,
+            "column facets should honor the active global query"
+        );
+
+        let summary = resolved.global_facet_summary();
+        assert_eq!(summary.mode(), TableStageMode::Client);
+        assert_eq!(summary.row_count(), 2);
+        assert_eq!(
+            summary
+                .column_facets()
+                .iter()
+                .map(|facet| facet.column().as_str())
+                .collect::<Vec<_>>(),
+            ["team", "status", "score", "enabled", "tag"],
+            "global facets should only include globally filterable columns"
+        );
+        assert!(summary.column_facet(&TableColumnId::new("notes")).is_none());
+
+        let status = summary
+            .column_facet(&TableColumnId::new("status"))
+            .expect("status global facet should resolve");
+        assert_eq!(status.row_count(), 2);
+        assert_eq!(
+            text_facet_counts(status),
+            [("Blocked".to_string(), 1), ("Ready".to_string(), 1)]
+        );
+
+        let score = summary
+            .column_facet(&TableColumnId::new("score"))
+            .expect("score global facet should resolve");
+        let score_range = score
+            .numeric_range()
+            .expect("score global facet should expose a numeric range");
+        assert_eq!(score_range.min(), 10.0);
+        assert_eq!(score_range.max(), 20.0);
+
+        let enabled = summary
+            .column_facet(&TableColumnId::new("enabled"))
+            .expect("enabled global facet should resolve");
+        assert!(matches!(
+            enabled.unique_values()[0].value(),
+            TableCellValue::Bool(false)
+        ));
+        assert_eq!(enabled.unique_values()[0].count(), 1);
+        assert!(matches!(
+            enabled.unique_values()[1].value(),
+            TableCellValue::Bool(true)
+        ));
+        assert_eq!(enabled.unique_values()[1].count(), 1);
+
+        let tag = summary
+            .column_facet(&TableColumnId::new("tag"))
+            .expect("tag global facet should resolve");
+        assert!(matches!(
+            tag.unique_values()[0].value(),
+            TableCellValue::Empty
+        ));
+        assert_eq!(tag.unique_values()[0].count(), 1);
+        assert!(matches!(
+            tag.unique_values()[1].value(),
+            TableCellValue::Text(value) if value == "alpha"
+        ));
+        assert_eq!(tag.unique_values()[1].count(), 1);
+    }
+
+    #[test]
+    fn manual_filtering_client_facets_describe_supplied_snapshot() {
+        let resolved = TableState::new(sample_rows())
+            .with_columns([TableColumn::new("team", "Team")])
+            .with_filters([TableFilter::contains("team", "missing")])
+            .with_manual_filtering()
+            .resolve();
+
+        let team = resolved
+            .column_facet(&TableColumnId::new("team"))
+            .expect("team facet should resolve");
+
+        assert_eq!(team.mode(), TableStageMode::Client);
+        assert_eq!(team.row_count(), 3);
+        assert_eq!(
+            text_facet_counts(team),
+            [("design".to_string(), 1), ("ops".to_string(), 2)],
+            "manual filtering leaves client facets scoped to the supplied snapshot"
+        );
+    }
+
+    #[test]
+    fn manual_facet_payloads_override_client_facets_and_cache_keys() {
+        let base = TableState::new([
+            TableRow::new("row-1").with_cell("status", "Ready"),
+            TableRow::new("row-2").with_cell("status", "Ready"),
+        ])
+        .with_columns([TableColumn::new("status", "Status")]);
+        let server_facets = TableColumnFacets::manual("status", 64).with_unique_values([
+            TableFacetValueCount::new("Blocked", 24),
+            TableFacetValueCount::new("Ready", 40),
+        ]);
+
+        let resolved = base
+            .clone()
+            .with_manual_facets([server_facets.clone()])
+            .resolve();
+        let status = resolved
+            .column_facet(&TableColumnId::new("status"))
+            .expect("status facet should resolve");
+
+        assert_eq!(status.mode(), TableStageMode::Manual);
+        assert_eq!(status.row_count(), 64);
+        assert_eq!(
+            text_facet_counts(status),
+            [("Blocked".to_string(), 24), ("Ready".to_string(), 40)],
+            "manual payloads should not be derived from the current row snapshot"
+        );
+
+        assert_ne!(
+            base.cache_key(),
+            base.clone().with_manual_faceting().cache_key(),
+            "faceting ownership participates in cache keys"
+        );
+        assert_ne!(
+            base.clone().with_manual_facets([server_facets]).cache_key(),
+            base.clone()
+                .with_manual_facets([TableColumnFacets::manual("status", 64)
+                    .with_unique_values([TableFacetValueCount::new("Ready", 64)])])
+                .cache_key(),
+            "manual facet payload content participates in cache keys"
+        );
+
+        let nan_facets = TableColumnFacets::manual("status", 2)
+            .with_unique_values([TableFacetValueCount::new(f64::NAN, 2)]);
+        let same_nan_facets = TableColumnFacets::manual("status", 2)
+            .with_unique_values([TableFacetValueCount::new(f64::NAN, 2)]);
+        assert_eq!(
+            nan_facets, same_nan_facets,
+            "facet equality should use stable numeric keys instead of raw f64 equality"
+        );
+        assert_eq!(
+            base.clone().with_manual_facets([nan_facets]).cache_key(),
+            base.clone()
+                .with_manual_facets([same_nan_facets])
+                .cache_key(),
+            "manual facet NaN payloads should not make cache keys non-reflexive"
+        );
+
+        let unknown = base
+            .with_manual_facets([TableColumnFacets::manual("missing", 10)])
+            .resolve();
+        assert!(
+            unknown
+                .column_facet(&TableColumnId::new("missing"))
+                .is_none()
+        );
+        assert!(
+            unknown
+                .column_facet(&TableColumnId::new("status"))
+                .is_some(),
+            "unknown manual payloads do not corrupt configured-column facets"
+        );
+    }
+
+    #[test]
     fn row_lookup_does_not_depend_on_numeric_index_positions() {
         let resolved = TableState::new(sample_rows())
             .with_sorting([TableSort::ascending("score")])
@@ -2344,6 +7871,389 @@ mod tests {
 
         assert!(selected.selected());
         assert_eq!(resolved.final_model().selected_count(), 1);
+    }
+
+    #[test]
+    fn nested_source_rows_resolve_parent_depth_and_lookup_metadata() {
+        let resolved = TableState::new(tree_rows()).resolve();
+
+        assert_eq!(
+            resolved
+                .core_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "pkg-ui", "pkg-core", "pkg-core-test", "docs"]
+        );
+
+        let pkg = resolved
+            .core_model()
+            .row(&TableRowId::new("pkg"))
+            .expect("root source row should be addressable");
+        let pkg_tree = pkg.tree().expect("source row should expose tree metadata");
+        assert_eq!(pkg.source_index(), Some(0));
+        assert_eq!(pkg.depth(), 0);
+        assert_eq!(pkg.parent_id(), None);
+        assert!(pkg.is_tree_branch());
+        assert_eq!(pkg.tree_expanded(), Some(false));
+        assert_eq!(pkg_tree.descendant_count(), 3);
+
+        let nested = resolved
+            .core_model()
+            .row(&TableRowId::new("pkg-core-test"))
+            .expect("nested descendant should be addressable");
+        assert_eq!(nested.source_index(), Some(3));
+        assert_eq!(nested.depth(), 2);
+        assert_eq!(nested.parent_id().map(TableRowId::as_str), Some("pkg-core"));
+        assert!(!nested.is_tree_branch());
+        assert_eq!(nested.descendant_count(), 0);
+    }
+
+    #[test]
+    fn collapsed_tree_rows_hide_descendants_but_preserve_lookup() {
+        let resolved = TableState::new(tree_rows()).resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "docs"]
+        );
+        assert!(
+            resolved
+                .final_model()
+                .row(&TableRowId::new("pkg-core-test"))
+                .is_some(),
+            "collapsed tree descendants should remain addressable by stable row id"
+        );
+    }
+
+    #[test]
+    fn expanded_tree_rows_show_descendants_with_parent_depth_and_selection() {
+        let resolved = TableState::new(tree_rows())
+            .with_expanded_rows(["pkg", "pkg-core"])
+            .with_selected_rows(["pkg-core-test"])
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "pkg-ui", "pkg-core", "pkg-core-test", "docs"]
+        );
+
+        let pkg_core = resolved
+            .final_model()
+            .row(&TableRowId::new("pkg-core"))
+            .expect("expanded branch should be addressable");
+        assert_eq!(pkg_core.tree_expanded(), Some(true));
+        assert_eq!(pkg_core.depth(), 1);
+        assert_eq!(pkg_core.parent_id().map(TableRowId::as_str), Some("pkg"));
+
+        let nested = resolved
+            .final_model()
+            .rows()
+            .iter()
+            .find(|row| row.id().as_str() == "pkg-core-test")
+            .expect("expanded nested descendant should be visible");
+        assert!(nested.selected());
+        assert_eq!(resolved.final_model().selected_count(), 1);
+    }
+
+    #[test]
+    fn child_expansion_does_not_bypass_collapsed_parent() {
+        let resolved = TableState::new(tree_rows())
+            .with_expanded_rows(["pkg-core"])
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "docs"]
+        );
+    }
+
+    #[test]
+    fn all_rows_expanded_expands_source_tree_branches() {
+        let resolved = TableState::new(tree_rows())
+            .with_all_rows_expanded()
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "pkg-ui", "pkg-core", "pkg-core-test", "docs"]
+        );
+        assert_eq!(
+            resolved
+                .final_model()
+                .row(&TableRowId::new("pkg"))
+                .and_then(TableResolvedRow::tree_expanded),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn expandable_unloaded_source_rows_resolve_as_tree_branches() {
+        let resolved = TableState::new([TableRow::new("remote-root")
+            .with_cell("team", "remote")
+            .with_expandable(true)])
+        .resolve();
+
+        let remote = resolved
+            .final_model()
+            .row(&TableRowId::new("remote-root"))
+            .expect("expandable source row should resolve");
+        let tree = remote
+            .tree()
+            .expect("expandable source row should expose tree metadata");
+
+        assert!(remote.is_tree_branch());
+        assert_eq!(remote.tree_expanded(), Some(false));
+        assert!(!tree.has_children());
+        assert!(tree.can_expand());
+        assert_eq!(tree.loaded_child_count(), 0);
+        assert_eq!(tree.children_load_state(), &TableRowChildrenLoadState::Idle);
+        assert_eq!(remote.loaded_child_count(), 0);
+        assert_eq!(
+            remote.children_load_state(),
+            Some(&TableRowChildrenLoadState::Idle)
+        );
+    }
+
+    #[test]
+    fn child_loading_metadata_survives_row_lookup() {
+        let resolved = TableState::new([
+            TableRow::new("loading").with_children_loading("Loading packages"),
+            TableRow::new("failed").with_children_load_failed("Network unavailable"),
+        ])
+        .resolve();
+
+        let loading = resolved
+            .final_model()
+            .row(&TableRowId::new("loading"))
+            .expect("loading branch should resolve");
+        let failed = resolved
+            .final_model()
+            .row(&TableRowId::new("failed"))
+            .expect("failed branch should resolve");
+
+        assert!(loading.is_tree_branch());
+        assert_eq!(
+            loading
+                .children_load_state()
+                .and_then(|state| state.message()),
+            Some("Loading packages")
+        );
+        assert!(
+            loading
+                .children_load_state()
+                .is_some_and(TableRowChildrenLoadState::is_loading)
+        );
+        assert!(failed.is_tree_branch());
+        assert_eq!(
+            failed
+                .children_load_state()
+                .and_then(|state| state.message()),
+            Some("Network unavailable")
+        );
+        assert!(
+            failed
+                .children_load_state()
+                .is_some_and(TableRowChildrenLoadState::is_failed)
+        );
+    }
+
+    #[test]
+    fn manual_expansion_keeps_supplied_tree_descendants_visible() {
+        let resolved = TableState::new(tree_rows())
+            .with_manual_expansion()
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "pkg-ui", "pkg-core", "pkg-core-test", "docs"]
+        );
+        assert_eq!(
+            resolved
+                .final_model()
+                .row(&TableRowId::new("pkg"))
+                .and_then(TableResolvedRow::tree_expanded),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn manual_expansion_preserves_expanded_metadata_without_pruning() {
+        let resolved = TableState::new(tree_rows())
+            .with_manual_expansion()
+            .with_expanded_rows(["pkg"])
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "pkg-ui", "pkg-core", "pkg-core-test", "docs"]
+        );
+        assert_eq!(
+            resolved
+                .final_model()
+                .row(&TableRowId::new("pkg"))
+                .and_then(TableResolvedRow::tree_expanded),
+            Some(true)
+        );
+        assert_eq!(
+            resolved
+                .final_model()
+                .row(&TableRowId::new("pkg-core"))
+                .and_then(TableResolvedRow::tree_expanded),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn manual_expansion_does_not_bypass_grouped_row_expansion() {
+        let resolved = TableState::new(aggregate_rows())
+            .with_grouping(["team"])
+            .with_manual_expansion()
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["group:team=ops", "group:team=design"]
+        );
+    }
+
+    #[test]
+    fn tree_filtering_uses_parent_to_child_policy() {
+        let resolved = TableState::new(tree_rows())
+            .with_filters([TableFilter::contains("team", "core")])
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .filtered_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "pkg-core", "pkg-core-test"]
+        );
+
+        let leaf_match_without_parent = TableState::new(tree_rows())
+            .with_filters([TableFilter::contains("team", "ui")])
+            .resolve();
+        assert!(
+            leaf_match_without_parent.filtered_model().rows().is_empty(),
+            "first slice keeps TanStack's default parent-to-child filtering policy"
+        );
+    }
+
+    #[test]
+    fn pagination_applies_after_tree_expansion() {
+        let resolved = TableState::new(tree_rows())
+            .with_all_rows_expanded()
+            .with_pagination(TablePagination::new(0, 3))
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["pkg", "pkg-ui", "pkg-core"]
+        );
+        assert!(
+            resolved
+                .final_model()
+                .row(&TableRowId::new("pkg-core-test"))
+                .is_some(),
+            "expanded-but-not-paginated tree descendants should remain addressable"
+        );
+    }
+
+    #[test]
+    fn duplicate_row_ids_are_reported_across_nested_source_rows() {
+        let resolved = TableState::new([
+            TableRow::new("root").with_child(TableRow::new("duplicate")),
+            TableRow::new("duplicate"),
+        ])
+        .resolve();
+
+        assert_eq!(
+            resolved
+                .duplicate_row_ids()
+                .iter()
+                .map(TableRowId::as_str)
+                .collect::<Vec<_>>(),
+            ["duplicate"]
+        );
+    }
+
+    #[test]
+    fn cache_key_row_count_includes_child_topology() {
+        let flat = TableState::new([TableRow::new("root")]);
+        let nested = TableState::new([TableRow::new("root").with_child(TableRow::new("child"))]);
+
+        assert_eq!(flat.cache_key().row_count(), 1);
+        assert_eq!(nested.cache_key().row_count(), 2);
+        assert_ne!(flat.cache_key(), nested.cache_key());
+    }
+
+    #[test]
+    fn grouping_keeps_source_tree_rows_out_of_the_grouped_path() {
+        let resolved = TableState::new(tree_rows())
+            .with_grouping(["team"])
+            .with_all_rows_expanded()
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .final_model()
+                .rows()
+                .iter()
+                .map(|row| row.id().as_str())
+                .collect::<Vec<_>>(),
+            ["group:team=core", "pkg", "group:team=docs", "docs"]
+        );
+        assert!(
+            resolved
+                .final_model()
+                .row(&TableRowId::new("pkg-ui"))
+                .is_none(),
+            "tree plus grouping composition is deferred for a later policy slice"
+        );
     }
 
     #[test]
@@ -2542,6 +8452,56 @@ mod tests {
     }
 
     #[test]
+    fn grouped_rows_resolve_named_custom_aggregation_callbacks() {
+        let state = TableState::new(aggregate_rows())
+            .with_grouping(["team"])
+            .with_aggregations([
+                TableAggregation::count("name"),
+                TableAggregation::named("score", "score_plus_one"),
+                TableAggregation::named("duration", "sum"),
+                TableAggregation::named("noise", "missing_custom"),
+            ])
+            .with_aggregation_fn("score_plus_one", |column, rows| {
+                TableCellValue::Number(
+                    numeric_values(rows, column).fold(0.0, |sum, value| sum + value) + 1.0,
+                )
+            });
+
+        let resolved = state.resolve();
+        let ops = resolved
+            .grouped_model()
+            .row(&TableRowId::new("group:team=ops"))
+            .expect("ops group should resolve");
+
+        assert_eq!(
+            ops.cell(&TableColumnId::new("score")),
+            Some(&TableCellValue::Number(51.0))
+        );
+        assert_eq!(
+            ops.cell(&TableColumnId::new("duration")),
+            Some(&TableCellValue::Number(6.0))
+        );
+        assert_eq!(
+            ops.cell(&TableColumnId::new("noise")),
+            Some(&TableCellValue::Empty)
+        );
+        assert_eq!(state.aggregation_fn_count(), 1);
+        assert!(state.has_aggregation_fn("score_plus_one"));
+        assert!(!state.has_aggregation_fn("missing_custom"));
+        assert_ne!(
+            state.cache_key(),
+            state
+                .clone()
+                .with_aggregation_fn("score_plus_one", |column, rows| {
+                    TableCellValue::Number(
+                        numeric_values(rows, column).fold(0.0, |sum, value| sum + value) + 2.0,
+                    )
+                })
+                .cache_key()
+        );
+    }
+
+    #[test]
     fn grouping_value_overrides_aggregate_on_grouping_column() {
         let resolved = TableState::new(aggregate_rows())
             .with_grouping(["team"])
@@ -2568,6 +8528,11 @@ mod tests {
                 TableColumn::new("score", "Score"),
             ])
             .with_column_order(["score", "team", "name"])
+            .with_column_visibility(
+                TableColumnVisibilityOverrides::new()
+                    .show("team")
+                    .hide("score"),
+            )
             .resolve();
 
         assert_eq!(
@@ -2576,7 +8541,276 @@ mod tests {
                 .iter()
                 .map(|column| column.id().as_str())
                 .collect::<Vec<_>>(),
-            ["score", "name"]
+            ["team", "name"]
+        );
+    }
+
+    #[test]
+    fn flat_table_resolves_a_single_header_row_per_region() {
+        let resolved = TableState::new(sample_rows())
+            .with_columns([
+                TableColumn::new("name", "Name"),
+                TableColumn::new("team", "Team"),
+                TableColumn::new("status", "Status"),
+            ])
+            .resolve();
+
+        assert!(resolved.header_groups().left().is_empty());
+        assert_eq!(resolved.header_groups().center().len(), 1);
+        assert!(resolved.header_groups().right().is_empty());
+        assert_eq!(resolved.center_header_groups()[0].depth(), 0);
+        assert_eq!(resolved.center_header_groups()[0].headers().len(), 3);
+        assert!(
+            resolved.center_header_groups()[0]
+                .headers()
+                .iter()
+                .all(|header| header.is_leaf())
+        );
+        assert_eq!(
+            resolved.center_header_groups()[0]
+                .headers()
+                .iter()
+                .map(|header| header.id().to_owned())
+                .collect::<Vec<_>>(),
+            ["name", "team", "status"]
+        );
+    }
+
+    #[test]
+    fn nested_groups_resolve_group_rows_and_placeholders() {
+        let resolved = TableState::new(sample_rows())
+            .with_column_tree([
+                TableColumnGroup::new(
+                    "identity",
+                    "Identity",
+                    [
+                        TableColumn::new("name", "Name"),
+                        TableColumn::new("team", "Team"),
+                    ],
+                ),
+                TableColumnGroup::new(
+                    "metrics",
+                    "Metrics",
+                    [TableColumnGroup::new(
+                        "scores",
+                        "Scores",
+                        [
+                            TableColumn::new("score", "Score"),
+                            TableColumn::new("status", "Status"),
+                        ],
+                    )],
+                ),
+            ])
+            .resolve();
+
+        let center_groups = resolved.center_header_groups();
+        assert_eq!(center_groups.len(), 3);
+        assert_eq!(center_groups[0].depth(), 0);
+        assert_eq!(center_groups[1].depth(), 1);
+        assert_eq!(center_groups[2].depth(), 2);
+        assert_eq!(
+            center_groups[0]
+                .headers()
+                .iter()
+                .map(|header| (header.label().to_owned(), header.col_span(), header.kind()))
+                .collect::<Vec<_>>(),
+            [
+                ("Identity".to_string(), 2, TableResolvedHeaderKind::Group),
+                ("Metrics".to_string(), 2, TableResolvedHeaderKind::Group),
+            ]
+        );
+        assert_eq!(
+            center_groups[1]
+                .headers()
+                .iter()
+                .map(|header| header.label().to_owned())
+                .collect::<Vec<_>>(),
+            ["Name", "Team", "Scores"]
+        );
+        assert!(
+            center_groups[2]
+                .headers()
+                .iter()
+                .take(2)
+                .all(|header| header.is_placeholder())
+        );
+        assert_eq!(
+            center_groups[2]
+                .headers()
+                .iter()
+                .skip(2)
+                .map(|header| header.label().to_owned())
+                .collect::<Vec<_>>(),
+            ["Score", "Status"]
+        );
+    }
+
+    #[test]
+    fn hidden_leaves_shrink_header_spans_without_empty_groups() {
+        let resolved = TableState::new(sample_rows())
+            .with_column_tree([
+                TableColumnGroup::new(
+                    "identity",
+                    "Identity",
+                    [
+                        TableColumn::new("name", "Name"),
+                        TableColumn::new("team", "Team").with_visible(false),
+                    ],
+                ),
+                TableColumnGroup::new(
+                    "metrics",
+                    "Metrics",
+                    [TableColumnGroup::new(
+                        "scores",
+                        "Scores",
+                        [
+                            TableColumn::new("score", "Score"),
+                            TableColumn::new("status", "Status").with_visible(false),
+                        ],
+                    )],
+                ),
+            ])
+            .resolve();
+
+        let center_groups = resolved.center_header_groups();
+        assert_eq!(center_groups.len(), 3);
+        assert_eq!(center_groups[0].headers()[0].col_span(), 1);
+        assert_eq!(center_groups[0].headers()[0].label(), "Identity");
+        assert_eq!(center_groups[0].headers()[0].leaf_column_ids().len(), 1);
+        assert_eq!(
+            center_groups[1]
+                .headers()
+                .iter()
+                .map(|header| header.label().to_owned())
+                .collect::<Vec<_>>(),
+            ["Name", "Scores"]
+        );
+        assert_eq!(center_groups[2].headers()[0].col_span(), 1);
+        assert!(center_groups[2].headers()[0].is_placeholder());
+        assert_eq!(center_groups[2].headers()[1].label(), "Score");
+    }
+
+    #[test]
+    fn pinned_regions_resolve_independent_header_families() {
+        let resolved = TableState::new(sample_rows())
+            .with_column_tree([
+                TableColumnGroup::new(
+                    "identity",
+                    "Identity",
+                    [
+                        TableColumn::new("name", "Name"),
+                        TableColumn::new("team", "Team"),
+                    ],
+                ),
+                TableColumnGroup::new("metrics", "Metrics", [TableColumn::new("score", "Score")]),
+            ])
+            .with_column_pinning(
+                TableColumnPinning::new()
+                    .pinned_left(["name"])
+                    .pinned_right(["score"]),
+            )
+            .resolve();
+
+        assert_eq!(resolved.left_header_groups().len(), 2);
+        assert_eq!(
+            resolved.left_header_groups()[0].headers()[0].label(),
+            "Identity"
+        );
+        assert_eq!(resolved.left_header_groups()[1].headers()[0].id(), "name");
+        assert_eq!(resolved.right_header_groups().len(), 2);
+        assert_eq!(
+            resolved.right_header_groups()[0].headers()[0].label(),
+            "Metrics"
+        );
+        assert_eq!(resolved.right_header_groups()[1].headers()[0].id(), "score");
+    }
+
+    #[test]
+    fn column_visibility_overrides_descriptor_defaults_and_preserves_other_state() {
+        let base = TableState::new(sample_rows())
+            .with_columns([
+                TableColumn::new("name", "Name"),
+                TableColumn::new("team", "Team").with_visible(false),
+                TableColumn::new("score", "Score"),
+            ])
+            .with_column_order(["score", "team", "name"])
+            .with_sorting([TableSort::descending("score")])
+            .with_filters([TableFilter::contains("team", "ops")])
+            .with_pagination(TablePagination::new(1, 1))
+            .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
+            .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(220.0)));
+        let state = base.clone().with_column_visibility(
+            TableColumnVisibilityOverrides::new()
+                .show("team")
+                .hide("score")
+                .with_visibility("missing", true),
+        );
+
+        assert_eq!(state.column_visibility().len(), 3);
+        assert_eq!(
+            state
+                .column_visibility()
+                .override_for(&TableColumnId::new("score")),
+            Some(false)
+        );
+        assert_eq!(
+            state
+                .column_visibility()
+                .override_for(&TableColumnId::new("team")),
+            Some(true)
+        );
+        assert_eq!(
+            state
+                .column_visibility()
+                .override_for(&TableColumnId::new("missing")),
+            Some(true)
+        );
+        assert_eq!(
+            state
+                .resolve()
+                .visible_columns()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["name", "team"]
+        );
+        assert_eq!(state.sorting(), base.sorting());
+        assert_eq!(state.filters(), base.filters());
+        assert_eq!(state.pagination(), base.pagination());
+        assert_eq!(state.column_pinning(), base.column_pinning());
+        assert_eq!(state.column_sizing(), base.column_sizing());
+        assert_ne!(state.cache_key(), base.cache_key());
+    }
+
+    #[test]
+    fn non_hideable_columns_ignore_hidden_overrides() {
+        let resolved = TableState::new(sample_rows())
+            .with_columns([
+                TableColumn::new("name", "Name").with_hideable(false),
+                TableColumn::new("team", "Team").with_visible(false),
+                TableColumn::new("score", "Score"),
+            ])
+            .with_column_visibility(
+                TableColumnVisibilityOverrides::new()
+                    .hide("name")
+                    .show("team")
+                    .hide("score"),
+            )
+            .resolve();
+
+        assert_eq!(
+            resolved
+                .visible_columns()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["name", "team"]
+        );
+        assert!(
+            !resolved
+                .visible_columns()
+                .iter()
+                .any(|column| column.id().as_str() == "score")
         );
     }
 
@@ -2591,6 +8825,11 @@ mod tests {
                 TableColumn::new("status", "Status"),
             ])
             .with_column_order(["status", "score", "owner", "team", "name"])
+            .with_column_visibility(
+                TableColumnVisibilityOverrides::new()
+                    .show("team")
+                    .hide("score"),
+            )
             .with_column_pinning(
                 TableColumnPinning::new()
                     .pinned_left(["name", "score", "missing"])
@@ -2608,7 +8847,7 @@ mod tests {
                 .iter()
                 .map(|column| column.id().as_str())
                 .collect::<Vec<_>>(),
-            ["score", "name"],
+            ["name"],
             "pinned left columns preserve resolved visible order"
         );
         assert_eq!(
@@ -2617,7 +8856,7 @@ mod tests {
                 .iter()
                 .map(|column| column.id().as_str())
                 .collect::<Vec<_>>(),
-            ["owner"],
+            ["owner", "team"],
             "unknown and invisible pinned ids are ignored"
         );
         assert_eq!(
@@ -2634,7 +8873,7 @@ mod tests {
                 .iter()
                 .map(|column| column.id().as_str())
                 .collect::<Vec<_>>(),
-            ["score", "name", "owner", "status"]
+            ["name", "owner", "team", "status"]
         );
     }
 
