@@ -215,6 +215,13 @@ impl GalleryShell {
 
     fn select_page(&mut self, page: GalleryPage, cx: &mut Context<Self>) {
         if self.selected_page != page {
+            if self.selected_page == GalleryPage::Components && page != GalleryPage::Components {
+                self.components_focus = pages::components::ComponentFocusMode::All;
+                self.components_list_state
+                    .reset(pages::components::component_page_section_count(
+                        pages::components::ComponentFocusMode::All,
+                    ));
+            }
             self.selected_page = page;
             self.overlay.reset_on_page_change();
             cx.notify();

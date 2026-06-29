@@ -38,11 +38,11 @@ use open_gpui_ui_components::{
     TableSortDirection, TableStageMode, TableState, TableTextFilterOperator, TableToolbar,
     TableToolbarState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
     TabsState, TextInput, TextInputDisplayMode, Textarea, ThemeColor, ThemeMode, ThemeResolver,
-    ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
-    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
-    TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeChildrenLoadState, TreeDropPosition,
-    TreeItemDescriptor, TreeMove, TreeMoveTarget, TreeRenderPlan, TreeRowRenderPlan,
-    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    ThemeSnapshot, Toggle, ToggleGroup, ToggleGroupItem, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeChildrenLoadState,
+    TreeDropPosition, TreeItemDescriptor, TreeMove, TreeMoveTarget, TreeRenderPlan,
+    TreeRowRenderPlan, VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
     VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
     VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
     VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, apply_tree_move,
@@ -114,6 +114,22 @@ impl ComponentApiInventoryEntry {
 
 const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     ComponentApiInventoryEntry {
+        component: "Accordion",
+        controlled_inputs: &["open_values"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open_values",
+            runtime_value: "open_values",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &["mode", "collapsible"],
+        callbacks: &[CallbackApi {
+            name: "on_open_change",
+            payload: "AccordionOpenChange",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
         component: "Button",
         controlled_inputs: &[],
         default_seeds: &[],
@@ -137,6 +153,80 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         no_interaction_note: Some("display-only primitive"),
     },
     ComponentApiInventoryEntry {
+        component: "Collapsible",
+        controlled_inputs: &["open"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open",
+            runtime_value: "open",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &["content"],
+        callbacks: &[CallbackApi {
+            name: "on_open_change",
+            payload: "bool",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Link",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["href", "external"],
+        callbacks: &[CallbackApi {
+            name: "on_activate",
+            payload: "LinkActivation",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Breadcrumb",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["item", "disabled"],
+        callbacks: &[CallbackApi {
+            name: "on_activate",
+            payload: "BreadcrumbActivation",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Tag",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["variant", "removable"],
+        callbacks: &[CallbackApi {
+            name: "on_remove",
+            payload: "TagRemove",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "ToastStack",
+        controlled_inputs: &["toasts"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["max_visible", "toast"],
+        callbacks: &[
+            CallbackApi {
+                name: "on_action",
+                payload: "ToastAction",
+            },
+            CallbackApi {
+                name: "on_dismiss",
+                payload: "ToastDismiss",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
         component: "IconButton",
         controlled_inputs: &[],
         default_seeds: &[],
@@ -145,6 +235,32 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         callbacks: &[CallbackApi {
             name: "on_click",
             payload: "ClickEvent",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Slider",
+        controlled_inputs: &["value"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["min", "max", "step"],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "SliderChange",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "NumberInput",
+        controlled_inputs: &["value"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["min", "max", "step", "read_only", "invalid", "required"],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "NumberInputChange",
         }],
         renderer_neutral_state: true,
         no_interaction_note: None,
@@ -200,6 +316,28 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         callbacks: &[CallbackApi {
             name: "on_change",
             payload: "bool",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "ToggleGroup",
+        controlled_inputs: &["selected_values"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_selected_values",
+                runtime_value: "selected_values",
+            },
+            DefaultSeedApi {
+                builder: "default_focused",
+                runtime_value: "focused",
+            },
+        ],
+        legacy_seed_inputs: &[],
+        policy_hints: &["orientation", "mode", "selection_required", "item"],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "ToggleGroupSelectionChange",
         }],
         renderer_neutral_state: true,
         no_interaction_note: None,
@@ -1227,13 +1365,20 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
 
 fn component_source_file(component: &str) -> &'static str {
     match component {
+        "Accordion" => "accordion.rs",
         "Button" => "button.rs",
         "Badge" => "badge.rs",
+        "Breadcrumb" => "breadcrumb.rs",
+        "Collapsible" => "collapsible.rs",
+        "Link" => "link.rs",
+        "Tag" => "tag.rs",
+        "ToastStack" => "toast.rs",
         "IconButton" => "icon_button.rs",
         "Switch" => "switch.rs",
         "Checkbox" => "checkbox.rs",
         "RadioGroup" => "radio.rs",
         "Toggle" => "toggle.rs",
+        "ToggleGroup" => "toggle_group.rs",
         "Toolbar" => "toolbar.rs",
         "Sidebar" => "sidebar.rs",
         "Tree" => "tree.rs",
@@ -1272,16 +1417,75 @@ fn component_source_file(component: &str) -> &'static str {
         "Sheet" => "sheet.rs",
         "Menu" => "menu.rs",
         "ContextMenu" => "context_menu.rs",
+        "Slider" => "slider.rs",
+        "NumberInput" => "number_input.rs",
         _ => panic!("missing source file mapping for `{component}`"),
     }
 }
 
 fn component_public_methods(component: &str) -> &'static [&'static str] {
     match component {
+        "Accordion" => &[
+            "new",
+            "mode",
+            "collapsible",
+            "open_values",
+            "default_open_values",
+            "item",
+            "tokens",
+            "on_open_change",
+            "state",
+        ],
         "Button" => &[
             "new", "variant", "disabled", "selected", "tokens", "on_click", "state",
         ],
         "Badge" => &["new", "variant", "tokens", "state"],
+        "Collapsible" => &[
+            "new",
+            "open",
+            "default_open",
+            "disabled",
+            "content",
+            "tokens",
+            "on_open_change",
+            "state",
+        ],
+        "Link" => &[
+            "new",
+            "disabled",
+            "external",
+            "tokens",
+            "on_activate",
+            "state",
+        ],
+        "Breadcrumb" => &[
+            "new",
+            "disabled",
+            "item",
+            "items",
+            "tokens",
+            "on_activate",
+            "state",
+        ],
+        "Tag" => &[
+            "new",
+            "variant",
+            "removable",
+            "disabled",
+            "tokens",
+            "on_remove",
+            "state",
+        ],
+        "ToastStack" => &[
+            "new",
+            "toast",
+            "toasts",
+            "max_visible",
+            "tokens",
+            "on_action",
+            "on_dismiss",
+            "state",
+        ],
         "IconButton" => &[
             "new",
             "variant",
@@ -1289,6 +1493,31 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "tokens",
             "on_click",
             "accessible_label",
+            "state",
+        ],
+        "Slider" => &[
+            "new",
+            "value",
+            "min",
+            "max",
+            "step",
+            "disabled",
+            "tokens",
+            "on_change",
+            "state",
+        ],
+        "NumberInput" => &[
+            "new",
+            "value",
+            "min",
+            "max",
+            "step",
+            "disabled",
+            "read_only",
+            "invalid",
+            "required",
+            "tokens",
+            "on_change",
             "state",
         ],
         "Switch" => &[
@@ -1332,6 +1561,21 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "pressed",
             "disabled",
             "tokens",
+            "on_change",
+            "state",
+        ],
+        "ToggleGroup" => &[
+            "new",
+            "orientation",
+            "mode",
+            "selected_values",
+            "default_selected_values",
+            "default_focused",
+            "selection_required",
+            "disabled",
+            "tokens",
+            "item",
+            "items",
             "on_change",
             "state",
         ],
@@ -1861,14 +2105,11 @@ fn component_public_methods_from_source(component: &str) -> Vec<String> {
     const MARKER_PREFIX: &str = "impl ";
 
     let source_file = component_source_file(component);
-    let source_path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/");
-    let source_path = format!("{source_path}{source_file}");
-    let source = std::fs::read_to_string(&source_path)
-        .unwrap_or_else(|error| panic!("failed to read {source_path}: {error}"));
+    let (source_path, source) = read_component_source_file(source_file);
     let marker = format!("{MARKER_PREFIX}{component} {{");
     let impl_start = source
         .find(&marker)
-        .unwrap_or_else(|| panic!("missing `{marker}` in {source_file}"));
+        .unwrap_or_else(|| panic!("missing `{marker}` in {source_path}"));
     let body_start = source[impl_start..]
         .find('{')
         .map(|offset| impl_start + offset)
@@ -1921,6 +2162,47 @@ fn component_public_methods_from_source(component: &str) -> Vec<String> {
     }
 
     methods
+}
+
+fn read_component_source_file(source_file: &str) -> (String, String) {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let flat_path = source_dir.join(source_file);
+    if flat_path.is_file() {
+        let source = std::fs::read_to_string(&flat_path)
+            .unwrap_or_else(|error| panic!("failed to read {flat_path:?}: {error}"));
+        return (flat_path.display().to_string(), source);
+    }
+
+    let Some(module_name) = source_file.strip_suffix(".rs") else {
+        panic!("source file mapping must end in .rs: {source_file}");
+    };
+    let mod_path = source_dir.join(module_name).join("mod.rs");
+    let source = std::fs::read_to_string(&mod_path)
+        .unwrap_or_else(|error| panic!("failed to read {mod_path:?}: {error}"));
+    (mod_path.display().to_string(), source)
+}
+
+fn ui_component_source_files() -> Vec<std::path::PathBuf> {
+    fn collect_rs_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        let entries = std::fs::read_dir(dir)
+            .unwrap_or_else(|error| panic!("failed to read source dir {dir:?}: {error}"));
+        for entry in entries {
+            let path = entry
+                .unwrap_or_else(|error| panic!("failed to read source dir entry: {error}"))
+                .path();
+            if path.is_dir() {
+                collect_rs_files(&path, files);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    collect_rs_files(&source_dir, &mut files);
+    files.sort();
+    files
 }
 
 fn custom_tokens() -> ThemeTokens {
@@ -10469,6 +10751,62 @@ fn toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items(
 }
 
 #[open_gpui::test]
+fn toggle_group_controlled_values_override_runtime_selection(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        changes: Rc<RefCell<Vec<Vec<String>>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let changes = self.changes.clone();
+
+            div().size_full().child(
+                ToggleGroup::new("controlled-toggle-group", "Alignment")
+                    .default_selected_values(["right"])
+                    .selected_values(Vec::<String>::new())
+                    .item(ToggleGroupItem::new("left", "Left"))
+                    .item(ToggleGroupItem::new("right", "Right"))
+                    .on_change(move |change, _, _| {
+                        changes.borrow_mut().push(change.selected_values().to_vec());
+                    }),
+            )
+        }
+    }
+
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        changes: changes.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let left = cx
+        .debug_bounds("toggle-group:controlled-toggle-group:item:left")
+        .expect("left toggle item should expose a stable debug selector");
+    cx.simulate_click(left.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(changes.borrow().as_slice(), &[vec!["left".to_string()]]);
+
+    let left = cx
+        .debug_bounds("toggle-group:controlled-toggle-group:item:left")
+        .expect("left toggle item should remain rendered after controlled redraw");
+    cx.simulate_click(left.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        changes.borrow().as_slice(),
+        &[vec!["left".to_string()], vec!["left".to_string()]],
+        "controlled empty selection should reset adapter runtime before each activation"
+    );
+}
+
+#[open_gpui::test]
 fn splitter_runtime_drag_resizes_horizontal_and_vertical_panels(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -10998,6 +11336,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         OverlayLayerPolicy::new(OverlayLayerKind::Tooltip, OverlayPresence::open()),
     );
     let root_button = root::Button::new("save", "Save");
+    let root_accordion = root::Accordion::new("accordion")
+        .mode(root::AccordionMode::Multiple)
+        .item(root::AccordionItem::new("one", "One", "One content"));
     let root_alert_dialog = root::AlertDialog::new(
         "delete",
         "Delete",
@@ -11066,7 +11407,24 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_skeleton = root::Skeleton::new("skeleton");
     let root_status_cue = root::StatusCue::new("status", "Ready");
     let root_empty_state = root::EmptyState::new("empty", "No results");
+    let root_collapsible = root::Collapsible::new("collapsible", "Details").default_open(true);
+    let root_slider = root::Slider::new("slider", "Volume").value(40.0);
+    let root_number_input = root::NumberInput::new("number", "Quantity").value(3.0);
+    let root_link = root::Link::new("link", "Docs", "/docs").external(true);
+    let root_breadcrumb = root::Breadcrumb::new("breadcrumb", "Path")
+        .item(root::BreadcrumbItemDescriptor::new("home", "Home").href("/"))
+        .item(root::BreadcrumbItemDescriptor::new("docs", "Docs").current(true));
+    let root_tag = root::Tag::new("tag", "ready", "Ready").removable(true);
+    let root_toast_stack = root::ToastStack::new("toasts", "Notifications")
+        .toast(root::Toast::new("saved", "Saved").intent(root::ToastIntent::Success));
+    let root_toggle_group = root::ToggleGroup::new("toggle-group", "Alignment")
+        .item(root::ToggleGroupItem::new("left", "Left"))
+        .item(root::ToggleGroupItem::new("right", "Right"))
+        .selected_values(["left"]);
     let prelude_button = prelude::Button::new("save", "Save");
+    let prelude_accordion = prelude::Accordion::new("accordion")
+        .mode(prelude::AccordionMode::Single)
+        .item(prelude::AccordionItem::new("one", "One", "One content"));
     let prelude_alert_dialog = prelude::AlertDialog::new(
         "delete",
         "Delete",
@@ -11140,9 +11498,32 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_skeleton = prelude::Skeleton::new("skeleton");
     let prelude_status_cue = prelude::StatusCue::new("status", "Ready");
     let prelude_empty_state = prelude::EmptyState::new("empty", "No results");
+    let prelude_collapsible =
+        prelude::Collapsible::new("collapsible", "Details").default_open(false);
+    let prelude_slider = prelude::Slider::new("slider", "Volume").value(20.0);
+    let prelude_number_input = prelude::NumberInput::new("number", "Quantity").value(5.0);
+    let prelude_link = prelude::Link::new("link", "Docs", "/docs");
+    let prelude_breadcrumb = prelude::Breadcrumb::new("breadcrumb", "Path")
+        .items([prelude::BreadcrumbItemDescriptor::new("home", "Home")]);
+    let prelude_tag =
+        prelude::Tag::new("tag", "ready", "Ready").variant(prelude::TagVariant::Outline);
+    let prelude_toast_stack =
+        prelude::ToastStack::new("toasts", "Notifications").toasts([prelude::Toast::new(
+            "saved", "Saved",
+        )
+        .action("Undo")
+        .pinned()]);
+    let prelude_toggle_group = prelude::ToggleGroup::new("toggle-group", "Alignment")
+        .mode(prelude::ToggleGroupSelectionMode::Multiple)
+        .items([
+            prelude::ToggleGroupItem::new("bold", "Bold"),
+            prelude::ToggleGroupItem::new("italic", "Italic"),
+        ])
+        .default_selected_values(["bold"]);
 
     let _ = (
         root_button.state(),
+        root_accordion.state(),
         root_alert_dialog.state(),
         root_sheet.state(),
         root_hover_card.state(),
@@ -11171,7 +11552,16 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_skeleton.state(),
         root_status_cue.state(),
         root_empty_state.state(),
+        root_collapsible.state(),
+        root_slider.state(),
+        root_number_input.state(),
+        root_link.state(),
+        root_breadcrumb.state(),
+        root_tag.state(),
+        root_toast_stack.state(),
+        root_toggle_group.state(),
         prelude_button.state(),
+        prelude_accordion.state(),
         prelude_alert_dialog.state(),
         prelude_sheet.state(),
         prelude_hover_card.state(),
@@ -11200,6 +11590,21 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_skeleton.state(),
         prelude_status_cue.state(),
         prelude_empty_state.state(),
+        prelude_collapsible.state(),
+        prelude_slider.state(),
+        prelude_number_input.state(),
+        prelude_link.state(),
+        prelude_breadcrumb.state(),
+        prelude_tag.state(),
+        prelude_toast_stack.state(),
+        prelude_toggle_group.state(),
+        root::toggle_group_navigation_target(Orientation::Horizontal, "right", 0, &[false, false]),
+        prelude::toggle_group_navigation_target(
+            Orientation::Horizontal,
+            "right",
+            0,
+            &[false, false],
+        ),
         root_overlay.policy().kind(),
         prelude_overlay.policy().kind(),
     );
@@ -11208,7 +11613,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
 #[test]
 fn gpui_role_mapping_covers_neutral_image_and_separator_fallback() {
     assert_eq!(gpui_role_from_ui(Role::Image), open_gpui::Role::Image);
+    assert_eq!(gpui_role_from_ui(Role::Link), open_gpui::Role::Link);
     assert_eq!(gpui_role_from_ui(Role::Separator), open_gpui::Role::Group);
+    assert_eq!(gpui_role_from_ui(Role::Slider), open_gpui::Role::Slider);
     assert_eq!(gpui_role_from_ui(Role::Tree), open_gpui::Role::Tree);
     assert_eq!(gpui_role_from_ui(Role::TreeItem), open_gpui::Role::TreeItem);
     assert_eq!(gpui_role_from_ui(Role::Table), open_gpui::Role::Table);
@@ -11339,9 +11746,11 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_cell_edit_change",
         "on_column_order_change",
         "on_column_sizing_change",
+        "on_dismiss",
         "on_move",
         "on_open_change",
         "on_query_change",
+        "on_remove",
         "on_row_activate",
         "on_row_selection_change",
         "on_row_expansion_request",
@@ -11522,19 +11931,8 @@ fn public_resolved_state_contracts_avoid_gpui_runtime_types() {
         "ScrollHandle",
         "Rc<dyn",
     ];
-    let mut source_files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
-        .expect("ui_components src directory should be readable")
-        .map(|entry| {
-            entry
-                .expect("source directory entry should be readable")
-                .path()
-        })
-        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-        .collect::<Vec<_>>();
-    source_files.sort();
-
     let mut checked = 0;
-    for source_file in source_files {
+    for source_file in ui_component_source_files() {
         let source = std::fs::read_to_string(&source_file)
             .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
         let file_name = source_file
@@ -11803,19 +12201,8 @@ fn public_contract_structs<'a>(
 }
 
 fn public_contract_extraction_blockers(tokens: &[&str]) -> Vec<PublicContractBlocker> {
-    let mut source_files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
-        .expect("ui_components src directory should be readable")
-        .map(|entry| {
-            entry
-                .expect("source directory entry should be readable")
-                .path()
-        })
-        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-        .collect::<Vec<_>>();
-    source_files.sort();
-
     let mut blockers = Vec::new();
-    for source_file in source_files {
+    for source_file in ui_component_source_files() {
         let source = std::fs::read_to_string(&source_file)
             .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
         let file_name = source_file
@@ -11840,19 +12227,8 @@ fn public_contract_extraction_blockers(tokens: &[&str]) -> Vec<PublicContractBlo
 }
 
 fn public_surface_blockers(tokens: &[&str]) -> Vec<PublicSurfaceBlocker> {
-    let mut source_files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
-        .expect("ui_components src directory should be readable")
-        .map(|entry| {
-            entry
-                .expect("source directory entry should be readable")
-                .path()
-        })
-        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-        .collect::<Vec<_>>();
-    source_files.sort();
-
     let mut blockers = Vec::new();
-    for source_file in source_files {
+    for source_file in ui_component_source_files() {
         let source = std::fs::read_to_string(&source_file)
             .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
         let file_name = source_file

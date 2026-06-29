@@ -18,13 +18,14 @@ use open_gpui_ui_core::{
 
 use crate::a11y::UiA11yElementExt;
 use crate::focus::focus_ring_shadow;
+use crate::geometry::{gpui_point_from_ui, ui_point_from_gpui};
 use crate::menu::{
     MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuMetrics, MenuOpenMode,
     MenuSelection, MenuState, MenuSubmenuNavigation, visible_menu_items,
 };
 use crate::overlay::{
     GpuiOverlayPlacement, OverlayResolvedState, focus_restore_requests_trigger, gpui_overlay_state,
-    gpui_point_from_ui, outside_press_open_change, ui_point_from_gpui,
+    outside_press_open_change,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::ThemeResolver;

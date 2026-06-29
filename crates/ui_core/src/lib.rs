@@ -7,7 +7,10 @@
 //! across future component crates without depending on the GPUI runtime or renderer types.
 
 pub mod a11y;
+pub mod active_descendant;
 pub mod adaptive;
+pub mod collection;
+pub mod controllable_state;
 pub mod focus;
 pub mod geometry;
 pub mod grid_viewport;
@@ -19,7 +22,10 @@ pub mod tokens;
 pub mod virtualizer;
 
 pub use a11y::*;
+pub use active_descendant::*;
 pub use adaptive::*;
+pub use collection::*;
+pub use controllable_state::*;
 pub use focus::*;
 pub use geometry::*;
 pub use grid_viewport::*;

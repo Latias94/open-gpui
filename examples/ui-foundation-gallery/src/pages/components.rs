@@ -2,27 +2,31 @@
 
 use open_gpui::{App, AppContext, BorrowAppContext, Global, ParentElement, Styled, div, rgb};
 use open_gpui_ui_components::{
-    Avatar, AvatarState, Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant,
-    Checkbox, CheckboxState, ComboboxGroupDescriptor, ComboboxOptionDescriptor, ComboboxState,
-    CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
-    CommandLoadingState, CommandQueryMode, CommandSelectionMode, CommandState, EmptyState,
-    EmptyStateState, FeedbackIntent, Field, FieldState, IconButton, IconButtonState, Kbd, KbdState,
-    Label, LabelState, ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState, Progress,
-    ProgressState, RadioGroupState, RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState,
-    ScrollResetPolicy, SelectState, Separator, SeparatorState, SidebarCollapseMode,
-    SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
-    Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
-    Switch, SwitchState, Table, TableAggregation, TableCellEditApplyOutcome, TableCellEditChange,
-    TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId,
-    TableColumnOrderChange, TableColumnPinning, TableColumnRegion, TableColumnSizing,
-    TableColumnSizingChange, TableColumnVisibilityChange, TableColumnVisibilityOverrides,
-    TableExpansionMode, TableExpansionState, TableFacetValueCount, TableFacetedFilterChange,
-    TableFilter, TableGlobalFilterChange, TablePagination, TablePredicateFilterChange,
-    TableRangeFilterChange, TableRenderPlan, TableRow, TableRowActivation,
-    TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning, TableRowPinningPolicy,
-    TableSelectOption, TableSort, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem,
-    TabsItemDescriptor, TabsState, TextInput, TextInputDisplayMode, TextInputState, Textarea,
-    TextareaState, Toggle, ToggleState, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
+    Accordion, AccordionItem, AccordionMode, AccordionState, Avatar, AvatarState, Badge,
+    BadgeState, BadgeVariant, Breadcrumb, BreadcrumbItemDescriptor, BreadcrumbState, Button,
+    ButtonState, ButtonVariant, Checkbox, CheckboxState, Collapsible, CollapsibleState,
+    ComboboxGroupDescriptor, ComboboxOptionDescriptor, ComboboxState, CommandGroupDescriptor,
+    CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor, CommandLoadingState,
+    CommandQueryMode, CommandSelectionMode, CommandState, EmptyState, EmptyStateState,
+    FeedbackIntent, Field, FieldState, IconButton, IconButtonState, Kbd, KbdState, Label,
+    LabelState, Link, LinkState, ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState,
+    NumberInput, NumberInputState, Progress, ProgressState, RadioGroupState, RadioItemDescriptor,
+    ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, SelectState, Separator, SeparatorState,
+    SidebarCollapseMode, SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide,
+    SidebarState, SidebarVariant, Skeleton, SkeletonState, Slider, SliderState,
+    SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState, Switch, SwitchState, Table,
+    TableAggregation, TableCellEditApplyOutcome, TableCellEditChange, TableCellValue, TableColumn,
+    TableColumnFacets, TableColumnGroup, TableColumnId, TableColumnOrderChange, TableColumnPinning,
+    TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableColumnVisibilityChange,
+    TableColumnVisibilityOverrides, TableExpansionMode, TableExpansionState, TableFacetValueCount,
+    TableFacetedFilterChange, TableFilter, TableGlobalFilterChange, TablePagination,
+    TablePredicateFilterChange, TableRangeFilterChange, TableRenderPlan, TableRow,
+    TableRowActivation, TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning,
+    TableRowPinningPolicy, TableSelectOption, TableSort, TableStageMode, TableState, Tabs,
+    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, Tag, TagState, TagVariant,
+    TextInput, TextInputDisplayMode, TextInputState, Textarea, TextareaState, Toast, ToastStack,
+    ToastStackState, Toggle, ToggleGroup, ToggleGroupItem, ToggleGroupSelectionMode,
+    ToggleGroupState, ToggleState, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
     ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeMove, TreeRenderPlan, TreeState,
     VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
     VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
@@ -34,6 +38,7 @@ use open_gpui_ui_core::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 #[path = "components/render.rs"]
 mod render;
@@ -62,6 +67,24 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Badge",
     "open_gpui_ui_components::BadgeState",
     "open_gpui_ui_components::BadgeVariant",
+    "open_gpui_ui_components::Accordion",
+    "open_gpui_ui_components::AccordionState",
+    "open_gpui_ui_components::Collapsible",
+    "open_gpui_ui_components::CollapsibleState",
+    "open_gpui_ui_components::Slider",
+    "open_gpui_ui_components::SliderState",
+    "open_gpui_ui_components::NumberInput",
+    "open_gpui_ui_components::NumberInputState",
+    "open_gpui_ui_components::ToggleGroup",
+    "open_gpui_ui_components::ToggleGroupState",
+    "open_gpui_ui_components::Link",
+    "open_gpui_ui_components::LinkState",
+    "open_gpui_ui_components::Breadcrumb",
+    "open_gpui_ui_components::BreadcrumbState",
+    "open_gpui_ui_components::Tag",
+    "open_gpui_ui_components::TagState",
+    "open_gpui_ui_components::ToastStack",
+    "open_gpui_ui_components::ToastStackState",
     "open_gpui_ui_components::Separator",
     "open_gpui_ui_components::SeparatorState",
     "open_gpui_ui_components::Kbd",
@@ -247,6 +270,10 @@ pub const COMPONENT_PAGE_JUMPS: &[ComponentPageJump] = &[
     ComponentPageJump {
         id: "feedback",
         label: "Feedback",
+    },
+    ComponentPageJump {
+        id: "foundation-components",
+        label: "Foundation components",
     },
     ComponentPageJump {
         id: "state-contracts",
@@ -597,6 +624,8 @@ impl ComponentCatalogEntry {
     pub fn sample_section_id(self) -> &'static str {
         match self.name {
             "StatusCue" | "EmptyState" => "feedback",
+            "Accordion" | "Collapsible" | "Slider" | "NumberInput" | "ToggleGroup" | "Link"
+            | "Breadcrumb" | "Tag" | "ToastStack" => "foundation-components",
             "TreeState" | "VirtualizedListState" => "state-contracts",
             "RadioGroup" => "radio-group",
             "IconButton" => "icon-button",
@@ -643,6 +672,69 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "BadgeState",
         "exports / gallery / state tests",
         "gallery:component-badge-sample:default",
+    ),
+    ComponentCatalogEntry::official(
+        "Accordion",
+        "disclosure",
+        "AccordionState",
+        "exports / gallery / state tests",
+        "gallery:component-accordion-sample:shipping",
+    ),
+    ComponentCatalogEntry::official(
+        "Collapsible",
+        "disclosure",
+        "CollapsibleState",
+        "exports / gallery / state tests",
+        "gallery:component-collapsible-sample:release-notes",
+    ),
+    ComponentCatalogEntry::official(
+        "Slider",
+        "form",
+        "SliderState",
+        "exports / gallery / keyboard tests",
+        "gallery:component-slider-sample:volume",
+    ),
+    ComponentCatalogEntry::official(
+        "NumberInput",
+        "form",
+        "NumberInputState",
+        "exports / gallery / stepper tests",
+        "gallery:component-number-input-sample:workers",
+    ),
+    ComponentCatalogEntry::official(
+        "ToggleGroup",
+        "action",
+        "ToggleGroupState",
+        "exports / gallery / stable value tests",
+        "gallery:component-toggle-group-sample:alignment",
+    ),
+    ComponentCatalogEntry::official(
+        "Link",
+        "navigation",
+        "LinkState",
+        "exports / gallery / activation tests",
+        "gallery:component-link-sample:docs",
+    ),
+    ComponentCatalogEntry::official(
+        "Breadcrumb",
+        "navigation",
+        "BreadcrumbState",
+        "exports / gallery / activation tests",
+        "gallery:component-breadcrumb-sample:project",
+    ),
+    ComponentCatalogEntry::official(
+        "Tag",
+        "display",
+        "TagState",
+        "exports / gallery / remove tests",
+        "gallery:component-tag-sample:ready",
+    ),
+    ComponentCatalogEntry::official(
+        "ToastStack",
+        "feedback",
+        "ToastStackState",
+        "exports / gallery / stack tests",
+        "gallery:component-toast-stack-sample:notifications",
     ),
     ComponentCatalogEntry::official(
         "IconButton",
@@ -1079,6 +1171,99 @@ pub struct BadgeSample {
     pub label: &'static str,
     /// Resolved state.
     pub state: BadgeState,
+}
+
+/// One accordion sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccordionSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample title.
+    pub title: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Resolved state.
+    pub state: AccordionState,
+    /// Concrete items rendered by the sample.
+    pub items: Vec<AccordionItem>,
+}
+
+/// One collapsible sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CollapsibleSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Resolved state.
+    pub state: CollapsibleState,
+    /// Visible content copy.
+    pub content: &'static str,
+}
+
+/// One slider sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SliderSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Resolved state.
+    pub state: SliderState,
+}
+
+/// One number input sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NumberInputSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Resolved state.
+    pub state: NumberInputState,
+}
+
+/// One toggle group sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToggleGroupSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Resolved state.
+    pub state: ToggleGroupState,
+}
+
+/// One link sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinkSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Resolved state.
+    pub state: LinkState,
+}
+
+/// One breadcrumb sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BreadcrumbSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Resolved state.
+    pub state: BreadcrumbState,
+}
+
+/// One tag sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TagSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Resolved state.
+    pub state: TagState,
+}
+
+/// One toast stack sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToastStackSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Resolved state.
+    pub state: ToastStackState,
 }
 
 /// One icon button sample in the gallery.
@@ -3266,6 +3451,15 @@ macro_rules! impl_component_sample_selectors {
 
 impl_component_sample_selectors!(ButtonSample, "component-button-sample");
 impl_component_sample_selectors!(BadgeSample, "component-badge-sample");
+impl_component_sample_selectors!(AccordionSample, "component-accordion-sample");
+impl_component_sample_selectors!(CollapsibleSample, "component-collapsible-sample");
+impl_component_sample_selectors!(SliderSample, "component-slider-sample");
+impl_component_sample_selectors!(NumberInputSample, "component-number-input-sample");
+impl_component_sample_selectors!(ToggleGroupSample, "component-toggle-group-sample");
+impl_component_sample_selectors!(LinkSample, "component-link-sample");
+impl_component_sample_selectors!(BreadcrumbSample, "component-breadcrumb-sample");
+impl_component_sample_selectors!(TagSample, "component-tag-sample");
+impl_component_sample_selectors!(ToastStackSample, "component-toast-stack-sample");
 impl_component_sample_selectors!(IconButtonSample, "component-icon-button-sample");
 impl_component_sample_selectors!(SwitchSample, "component-switch-sample");
 impl_component_sample_selectors!(CheckboxSample, "component-checkbox-sample");
@@ -3386,6 +3580,284 @@ pub fn badge_samples(tokens: ThemeTokens) -> [BadgeSample; 4] {
             .tokens(tokens)
             .state(),
     })
+}
+
+/// Grouped samples for newly completed foundation components.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FoundationComponentSamples {
+    /// Accordion samples.
+    pub accordions: [AccordionSample; 1],
+    /// Collapsible samples.
+    pub collapsibles: [CollapsibleSample; 1],
+    /// Slider samples.
+    pub sliders: [SliderSample; 2],
+    /// Number input samples.
+    pub number_inputs: [NumberInputSample; 2],
+    /// Toggle group samples.
+    pub toggle_groups: [ToggleGroupSample; 2],
+    /// Link samples.
+    pub links: [LinkSample; 2],
+    /// Breadcrumb samples.
+    pub breadcrumbs: [BreadcrumbSample; 1],
+    /// Tag samples.
+    pub tags: [TagSample; 3],
+    /// Toast stack samples.
+    pub toast_stacks: [ToastStackSample; 1],
+}
+
+/// Returns samples for the foundation component completion slice.
+pub fn foundation_component_samples(tokens: ThemeTokens) -> FoundationComponentSamples {
+    FoundationComponentSamples {
+        accordions: accordion_samples(tokens),
+        collapsibles: collapsible_samples(tokens),
+        sliders: slider_samples(tokens),
+        number_inputs: number_input_samples(tokens),
+        toggle_groups: toggle_group_samples(tokens),
+        links: link_samples(tokens),
+        breadcrumbs: breadcrumb_samples(tokens),
+        tags: tag_samples(tokens),
+        toast_stacks: toast_stack_samples(tokens),
+    }
+}
+
+/// Returns accordion samples backed by real component state.
+pub fn accordion_samples(tokens: ThemeTokens) -> [AccordionSample; 1] {
+    let items = vec![
+        AccordionItem::new("scope", "Scope", "Component contracts, samples, and tests."),
+        AccordionItem::new(
+            "risk",
+            "Risk",
+            "Breaking changes are acceptable before launch.",
+        ),
+        AccordionItem::new(
+            "done",
+            "Done",
+            "Exported state and gallery coverage are required.",
+        )
+        .disabled(true),
+    ];
+    let accordion = Accordion::new("shipping")
+        .mode(AccordionMode::Multiple)
+        .collapsible(true)
+        .default_open_values(["scope", "risk"])
+        .tokens(tokens);
+    let state = items
+        .iter()
+        .cloned()
+        .fold(accordion, |accordion, item| accordion.item(item))
+        .state();
+
+    [AccordionSample {
+        id: "shipping",
+        title: "Shipping checklist",
+        summary: "Multiple open panels with one disabled item.",
+        state,
+        items,
+    }]
+}
+
+/// Returns collapsible samples backed by real component state.
+pub fn collapsible_samples(tokens: ThemeTokens) -> [CollapsibleSample; 1] {
+    [CollapsibleSample {
+        id: "release-notes",
+        summary: "Controlled disclosure content that keeps trigger and panel roles separate.",
+        content: "Release notes stay mounted only when the disclosure is open.",
+        state: Collapsible::new("release-notes", "Release notes")
+            .default_open(true)
+            .tokens(tokens)
+            .state(),
+    }]
+}
+
+/// Returns slider samples backed by real component state.
+pub fn slider_samples(tokens: ThemeTokens) -> [SliderSample; 2] {
+    [
+        (
+            "volume",
+            "Volume",
+            72.0,
+            0.0,
+            100.0,
+            1.0,
+            false,
+            Size::Medium,
+        ),
+        (
+            "threshold",
+            "Threshold",
+            42.0,
+            0.0,
+            50.0,
+            5.0,
+            true,
+            Size::Small,
+        ),
+    ]
+    .map(
+        |(id, label, value, min, max, step, disabled, size)| SliderSample {
+            id,
+            state: Slider::new(id, label)
+                .value(value)
+                .min(min)
+                .max(max)
+                .step(step)
+                .disabled(disabled)
+                .with_size(size)
+                .tokens(tokens)
+                .state(),
+        },
+    )
+}
+
+/// Returns number input samples backed by real component state.
+pub fn number_input_samples(tokens: ThemeTokens) -> [NumberInputSample; 2] {
+    [
+        ("workers", "Workers", 6.0, 1.0, 12.0, 1.0, false, false),
+        ("budget", "Budget", 85.0, 0.0, 100.0, 5.0, false, true),
+    ]
+    .map(
+        |(id, label, value, min, max, step, read_only, invalid)| NumberInputSample {
+            id,
+            state: NumberInput::new(id, label)
+                .value(value)
+                .min(min)
+                .max(max)
+                .step(step)
+                .read_only(read_only)
+                .invalid(invalid)
+                .tokens(tokens)
+                .state(),
+        },
+    )
+}
+
+/// Returns toggle group samples backed by real component state.
+pub fn toggle_group_samples(tokens: ThemeTokens) -> [ToggleGroupSample; 2] {
+    let alignment = ToggleGroup::new("alignment", "Alignment")
+        .item(ToggleGroupItem::new("left", "Left"))
+        .item(ToggleGroupItem::new("center", "Center"))
+        .item(ToggleGroupItem::new("right", "Right").disabled(true))
+        .selected_values(["left"])
+        .default_focused("center")
+        .selection_required(true)
+        .tokens(tokens)
+        .state();
+    let formatting = ToggleGroup::new("formatting", "Formatting")
+        .mode(ToggleGroupSelectionMode::Multiple)
+        .item(ToggleGroupItem::new("bold", "Bold"))
+        .item(ToggleGroupItem::new("italic", "Italic"))
+        .item(ToggleGroupItem::new("code", "Code"))
+        .selected_values(["bold", "code"])
+        .tokens(tokens)
+        .state();
+
+    [
+        ToggleGroupSample {
+            id: "alignment",
+            summary: "Required single selection with disabled item skip.",
+            state: alignment,
+        },
+        ToggleGroupSample {
+            id: "formatting",
+            summary: "Multiple stable values selected at once.",
+            state: formatting,
+        },
+    ]
+}
+
+/// Returns link samples backed by real component state.
+pub fn link_samples(tokens: ThemeTokens) -> [LinkSample; 2] {
+    [
+        LinkSample {
+            id: "docs",
+            state: Link::new("docs", "Component docs", "/docs/components")
+                .external(true)
+                .tokens(tokens)
+                .state(),
+        },
+        LinkSample {
+            id: "disabled",
+            state: Link::new("disabled", "Disabled target", "/disabled")
+                .disabled(true)
+                .tokens(tokens)
+                .state(),
+        },
+    ]
+}
+
+/// Returns breadcrumb samples backed by real component state.
+pub fn breadcrumb_samples(tokens: ThemeTokens) -> [BreadcrumbSample; 1] {
+    [BreadcrumbSample {
+        id: "project",
+        state: Breadcrumb::new("project", "Project path")
+            .item(BreadcrumbItemDescriptor::new("home", "Home").href("/"))
+            .item(BreadcrumbItemDescriptor::new("ui", "UI").href("/ui"))
+            .item(BreadcrumbItemDescriptor::new("components", "Components").current(true))
+            .tokens(tokens)
+            .state(),
+    }]
+}
+
+/// Returns tag samples backed by real component state.
+pub fn tag_samples(tokens: ThemeTokens) -> [TagSample; 3] {
+    [
+        ("ready", "ready", "Ready", TagVariant::Default, true, false),
+        (
+            "blocked",
+            "blocked",
+            "Blocked",
+            TagVariant::Destructive,
+            false,
+            false,
+        ),
+        (
+            "archived",
+            "archived",
+            "Archived",
+            TagVariant::Outline,
+            true,
+            true,
+        ),
+    ]
+    .map(
+        |(id, value, label, variant, removable, disabled)| TagSample {
+            id,
+            state: Tag::new(id, value, label)
+                .variant(variant)
+                .removable(removable)
+                .disabled(disabled)
+                .tokens(tokens)
+                .state(),
+        },
+    )
+}
+
+/// Returns toast stack samples backed by real component state.
+pub fn toast_stack_samples(tokens: ThemeTokens) -> [ToastStackSample; 1] {
+    [ToastStackSample {
+        id: "notifications",
+        state: ToastStack::new("notifications", "Notifications")
+            .max_visible(2)
+            .toast(
+                Toast::new("saved", "Saved")
+                    .description("Settings are synced.")
+                    .intent(FeedbackIntent::Success)
+                    .action("Undo"),
+            )
+            .toast(
+                Toast::new("queued", "Queued")
+                    .description("Release job will start shortly.")
+                    .intent(FeedbackIntent::Info)
+                    .timeout(Duration::from_secs(8)),
+            )
+            .toast(
+                Toast::new("expired", "Expired")
+                    .elapsed(Duration::from_secs(8))
+                    .timeout(Duration::from_secs(2)),
+            )
+            .tokens(tokens)
+            .state(),
+    }]
 }
 
 /// Returns icon button samples backed by real component state.

@@ -2,11 +2,14 @@
 
 pub use crate::{
     a11y::{AccessibleAction, Orientation, Role, Toggled},
+    active_descendant::ActiveDescendant,
     adaptive::{
         AdaptiveQuerySource, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceAdaptiveSnapshot,
         DeviceShellMode, DeviceShellSwitchPolicy, PanelAdaptiveClass, PanelAdaptivePolicy,
         device_adaptive_class, device_adaptive_snapshot, device_shell_mode, panel_adaptive_class,
     },
+    collection::CollectionPosition,
+    controllable_state::ControllableState,
     focus::FocusTargetId,
     geometry::{
         UiEdges, UiPoint, UiPx, UiRect, UiSize, ui_edges, ui_point, ui_px, ui_rect, ui_size,
