@@ -22,7 +22,7 @@ use crate::listbox::{
     Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
     ListboxState,
 };
-use crate::overlay::{
+use crate::primitives::overlay::{
     GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, gpui_overlay_state,
     outside_press_open_change,
 };

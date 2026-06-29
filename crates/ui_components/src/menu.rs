@@ -23,7 +23,7 @@ use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::menu_runtime::{
     MenuRuntime, handle_menu_submenu_surface_hover, update_menu_hover_target,
 };
-use crate::overlay::{
+use crate::primitives::overlay::{
     GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState,
     focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
 };

@@ -21,7 +21,7 @@ use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::listbox::{ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState};
-use crate::overlay::{
+use crate::primitives::overlay::{
     GpuiOverlayAdapterConfig, OverlayResolvedState, escape_open_change, gpui_overlay_state,
     outside_press_open_change,
 };
