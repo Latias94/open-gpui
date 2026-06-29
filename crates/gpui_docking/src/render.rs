@@ -449,10 +449,7 @@ impl DockHost {
             .left(bounds.origin.x)
             .top(bounds.origin.y)
             .w(bounds.size.width)
-            .h(bounds.size.height)
-            .border_1()
-            .border_color(border)
-            .bg(background);
+            .h(bounds.size.height);
 
         if preview.payload_tab
             && let Some(title) = payload_title
@@ -472,11 +469,36 @@ impl DockHost {
             } else {
                 bounds.size.height
             };
+            let body_top = tab_height.min(bounds.size.height);
+            let body_height = (bounds.size.height - body_top).max(px(0.0));
+            let tab_right_inset = if tab_left > px(0.0) {
+                px(10.0)
+            } else {
+                px(0.0)
+            };
+            let body_selector = self.record_debug_selector(
+                DockDebugRegion::DropPreviewBody,
+                format!("{}:drop-preview:body", session.selector_prefix()),
+            );
             let tab_selector = self.record_debug_selector(
                 DockDebugRegion::DropPayloadTabPreview,
                 format!("{}:drop-preview:payload-tab", session.selector_prefix()),
             );
-            element = element.child(
+            let mut body = div()
+                .id(body_selector.clone())
+                .debug_selector(move || body_selector)
+                .absolute()
+                .left(px(0.0))
+                .top(body_top)
+                .w(bounds.size.width)
+                .h(body_height)
+                .border_1()
+                .border_color(border)
+                .bg(background);
+            if body_top > px(0.0) {
+                body = body.rounded_b_sm().border_t_0();
+            }
+            element = element.child(body).child(
                 div()
                     .id(tab_selector.clone())
                     .debug_selector(move || tab_selector)
@@ -485,16 +507,34 @@ impl DockHost {
                     .top(px(0.0))
                     .flex()
                     .items_center()
+                    .justify_between()
                     .h(tab_height)
                     .w(tab_width)
                     .px_2()
+                    .pr(tab_right_inset)
                     .border_1()
                     .border_color(border)
                     .bg(rgb(0xf8fafc))
                     .text_color(rgb(0x334155))
                     .text_sm()
+                    .shadow_sm()
                     .truncate()
+                    .rounded_t_sm()
+                    .rounded_br_sm()
+                    .border_b_0()
                     .child(title),
+            );
+        } else {
+            element = element.child(
+                div()
+                    .absolute()
+                    .left(px(0.0))
+                    .top(px(0.0))
+                    .w(bounds.size.width)
+                    .h(bounds.size.height)
+                    .border_1()
+                    .border_color(border)
+                    .bg(background),
             );
         }
 
@@ -801,27 +841,27 @@ fn drop_guide_palette(kind: geometry::DockDropBoxKind, active: bool) -> DockGuid
     match (kind.is_center(), active) {
         (true, true) => DockGuidePalette {
             border: rgb(0x2563eb),
-            background: rgba(0x93c5fd73),
+            background: rgba(0x93c5fd59),
             cue: rgb(0x1d4ed8),
-            inset: rgba(0xffffff8f),
+            inset: rgba(0xffffff73),
         },
         (true, false) => DockGuidePalette {
-            border: rgba(0x3b82f699),
-            background: rgba(0xdbeafe5c),
-            cue: rgba(0x2563ebcc),
-            inset: rgba(0xffffff66),
+            border: rgba(0x3b82f680),
+            background: rgba(0xdbeafe45),
+            cue: rgba(0x2563ebad),
+            inset: rgba(0xffffff52),
         },
         (false, true) => DockGuidePalette {
             border: rgb(0x1d4ed8),
-            background: rgba(0x60a5fa66),
+            background: rgba(0x60a5fa52),
             cue: rgb(0x1e40af),
-            inset: rgba(0xffffff80),
+            inset: rgba(0xffffff6b),
         },
         (false, false) => DockGuidePalette {
-            border: rgba(0x3b82f680),
-            background: rgba(0xbfdbfe45),
-            cue: rgba(0x2563ebbf),
-            inset: rgba(0xffffff59),
+            border: rgba(0x3b82f666),
+            background: rgba(0xbfdbfe33),
+            cue: rgba(0x2563eb94),
+            inset: rgba(0xffffff40),
         },
     }
 }

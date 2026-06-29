@@ -209,13 +209,33 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
     let mut drag_visual = VisualTestContext::from_window(window.into(), cx);
     let preview = selector_for(&drag_visual, &host, DockDebugRegion::DropPreview)
         .expect("center hover should render a drop preview");
+    let preview_body = selector_for(&drag_visual, &host, DockDebugRegion::DropPreviewBody)
+        .expect("center hover should render a preview body below the payload tab preview");
     let preview_tab = selector_for(&drag_visual, &host, DockDebugRegion::DropPayloadTabPreview)
         .expect("center hover should render a payload tab preview");
     let preview_bounds = debug_bounds(&mut drag_visual, &preview);
+    let preview_body_bounds = debug_bounds(&mut drag_visual, &preview_body);
     let preview_tab_bounds = debug_bounds(&mut drag_visual, &preview_tab);
     assert!(
         preview_bounds.contains(&preview_tab_bounds.center()),
         "payload tab preview should stay inside the center drop preview"
+    );
+    assert_close(
+        f32::from(preview_body_bounds.origin.y),
+        f32::from(preview_tab_bounds.origin.y + preview_tab_bounds.size.height),
+    );
+    assert!(
+        preview_body_bounds.origin.y
+            >= preview_tab_bounds.origin.y + preview_tab_bounds.size.height,
+        "center preview body should start below the payload tab preview"
+    );
+    assert_close(
+        f32::from(preview_body_bounds.origin.x),
+        f32::from(preview_bounds.origin.x),
+    );
+    assert_close(
+        f32::from(preview_body_bounds.size.width),
+        f32::from(preview_bounds.size.width),
     );
 
     let mut visual = VisualTestContext::from_window(window.into(), cx);

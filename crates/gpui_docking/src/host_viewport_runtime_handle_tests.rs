@@ -4384,18 +4384,32 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
     let target_preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
         .expect("target viewport should render the routed drop preview");
     let target_preview_bounds = debug_bounds(&mut target_visual, &target_preview);
+    let target_preview_body = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::DropPreviewBody,
+    )
+    .expect("target viewport should render a preview body below the payload tab preview");
+    let target_preview_body_bounds = debug_bounds(&mut target_visual, &target_preview_body);
+    let target_preview_tab = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::DropPayloadTabPreview,
+    )
+    .expect("target viewport should render the payload tab label inside the routed preview");
+    let target_preview_tab_bounds = debug_bounds(&mut target_visual, &target_preview_tab);
     assert!(
         target_preview_bounds.size.width > px(0.0) && target_preview_bounds.size.height > px(0.0),
         "target routed drop preview should have visible bounds"
     );
+    assert_close(
+        f32::from(target_preview_body_bounds.origin.y),
+        f32::from(target_preview_tab_bounds.origin.y + target_preview_tab_bounds.size.height),
+    );
     assert!(
-        selector_for(
-            &target_visual,
-            &target_host,
-            DockDebugRegion::DropPayloadTabPreview
-        )
-        .is_some(),
-        "target viewport should render the payload tab label inside the routed preview"
+        target_preview_body_bounds.origin.y
+            >= target_preview_tab_bounds.origin.y + target_preview_tab_bounds.size.height,
+        "target routed preview body should start below the payload tab preview"
     );
     assert!(
         selector_for(

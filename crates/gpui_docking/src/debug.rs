@@ -44,6 +44,8 @@ pub(crate) enum DockDebugRegion {
     },
     /// The payload tab label rendered inside a center/tab drop preview.
     DropPayloadTabPreview,
+    /// The body rectangle rendered below a center/tab drop preview tab label.
+    DropPreviewBody,
     /// A viewport route or tear-off preview before host-local target resolution.
     DropRoutePreview {
         /// Preview route category.
