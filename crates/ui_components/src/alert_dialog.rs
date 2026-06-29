@@ -20,7 +20,7 @@ use crate::button::ButtonVariant;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, OverlayResolvedState, escape_open_change,
+    GpuiOverlayAdapterConfig, OverlayResolvedState, consume_overlay_event, escape_open_change,
     focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
 };
 use crate::theme::ThemeResolver;
@@ -944,8 +944,7 @@ impl RenderOnce for AlertDialog {
                             if event.keystroke.key.as_str() == "escape"
                                 && escape_open_change(&escape_policy).is_some()
                             {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 close_alert_dialog(
                                     runtime.clone(),
                                     focus_restore.clone(),
@@ -1047,16 +1046,14 @@ fn alert_dialog_layer_element(
         .bg(ThemeResolver::resolve(colors.barrier()))
         .occlude()
         .on_any_mouse_down(|_, window, cx| {
-            window.prevent_default();
-            cx.stop_propagation();
+            consume_overlay_event(window, cx);
         })
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
             let focus_restore = state.focus_restore_intent().clone();
             this.on_click(move |_: &ClickEvent, window, cx| {
-                window.prevent_default();
-                cx.stop_propagation();
+                consume_overlay_event(window, cx);
                 close_alert_dialog(
                     runtime.clone(),
                     focus_restore.clone(),
@@ -1104,8 +1101,7 @@ fn alert_dialog_layer_element(
                     let focus_restore = state.focus_restore_intent().clone();
                     move |event: &KeyDownEvent, window, cx| {
                         if event.keystroke.key.as_str() == "escape" && escape_change.is_some() {
-                            cx.stop_propagation();
-                            window.prevent_default();
+                            consume_overlay_event(window, cx);
                             close_alert_dialog(
                                 runtime.clone(),
                                 focus_restore.clone(),
