@@ -548,7 +548,7 @@ impl DockInteractionRuntime {
         self.drop.begin_scene(scene, policy)
     }
 
-    pub(crate) fn ensure_drop_scene_with_validator(
+    pub(crate) fn begin_drop_scene_with_validator(
         &mut self,
         scene: DockHostDropScene,
         policy: &DockPolicy,
@@ -556,7 +556,7 @@ impl DockInteractionRuntime {
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
     ) -> bool {
         self.drop
-            .ensure_scene_with_validator(scene, policy, target_validator, edge_plan_resolver)
+            .begin_scene_with_validator(scene, policy, target_validator, edge_plan_resolver)
     }
 
     #[cfg(test)]

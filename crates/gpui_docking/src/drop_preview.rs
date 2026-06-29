@@ -1,5 +1,5 @@
 use crate::{
-    DockViewportDropRoute,
+    DockNodeId, DockViewportDropRoute,
     drop_runtime::resolution_target,
     drop_target::{DockDropResolution, DockResolvedDropTarget, DockResolvedDropTargetKind},
 };
@@ -17,6 +17,8 @@ pub(crate) struct DockDropPreview {
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) rejected: bool,
     pub(crate) payload_tab: bool,
+    pub(crate) target_tabs: Option<DockNodeId>,
+    pub(crate) insert_index: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -58,11 +60,26 @@ impl DockDropPreview {
                     | DockResolvedDropTargetKind::FloatingTitleBar { .. }
                     | DockResolvedDropTargetKind::EmptyDockSpace { .. }
             );
+        let (target_tabs, insert_index) = match target.kind {
+            DockResolvedDropTargetKind::TabBar {
+                target_tabs,
+                insert_index,
+            } => (Some(target_tabs), Some(insert_index)),
+            DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
+            | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => {
+                (Some(target_tabs), None)
+            }
+            DockResolvedDropTargetKind::InnerEdge { .. }
+            | DockResolvedDropTargetKind::RootEdge { .. }
+            | DockResolvedDropTargetKind::EmptyDockSpace { .. } => (None, None),
+        };
 
         Some(Self {
             bounds,
             rejected,
             payload_tab,
+            target_tabs,
+            insert_index,
         })
     }
 }

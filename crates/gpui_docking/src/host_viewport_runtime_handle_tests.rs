@@ -3871,7 +3871,7 @@ fn hovered_host_release_commits_fresh_route_without_cached_delivery(cx: &mut Tes
                 window,
                 cx,
             );
-            host.update_drop_scene_fact_from_render(
+            host.update_local_drop_scene_fact_from_render(
                 &payload,
                 crate::drop_scene_fact::leaf(
                     target_tabs,
@@ -3999,7 +3999,7 @@ fn hovered_host_release_uses_accepted_local_target_instead_of_stale_cached_deliv
                 window,
                 cx,
             );
-            host.update_drop_scene_fact_from_render(
+            host.update_local_drop_scene_fact_from_render(
                 &payload,
                 crate::drop_scene_fact::leaf(
                     target_tabs,
@@ -6768,6 +6768,143 @@ fn runtime_opened_cross_window_inner_edge_drag_closes_vacated_source_viewport(
     assert!(
         source_any_window.update(cx, |_, _, _| ()).is_err(),
         "vacated source viewport should close after commit effects refresh"
+    );
+}
+
+#[open_gpui::test]
+fn runtime_opened_cross_window_center_tab_merge_closes_vacated_source_viewport(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source:center");
+    let target_space = DockSpaceId::from("target:center");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("source viewport should open");
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                viewport_window_options(420.0, 240.0),
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    let source_window = source_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("source viewport should render DockHost");
+    let target_window = target_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("target viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("source viewport should expose DockHost root");
+    let target_host = target_window
+        .root(cx)
+        .expect("target viewport should expose DockHost root");
+    let source_any_window = source_opened.window();
+    cx.run_until_parked();
+
+    let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+    let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let end = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    assert_eq!(
+        runtime.active_payload_drag_session(&DockDragPayload::new_item(
+            source_space.clone(),
+            source_tabs,
+            item("a"),
+            "Panel A".to_string(),
+        )),
+        None,
+        "drag session should finish after center merge release"
+    );
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(controller.graph().root(&source_space), None);
+        assert_eq!(controller.graph().collect_items_in_space(&source_space), []);
+        let DockNode::Tabs { items, selected } = controller
+            .graph()
+            .node(target_tabs)
+            .expect("target tabs should still exist after center merge")
+        else {
+            panic!("center merge target should remain a tabs node");
+        };
+        assert_eq!(
+            items.as_slice(),
+            &[item("b"), item("a")],
+            "center merge should append the source tab to the target tab bar"
+        );
+        assert_eq!(
+            *selected,
+            Some(item("a")),
+            "center merge should select the payload tab after it is merged back"
+        );
+    });
+
+    cx.update(|app| app.refresh_windows());
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&source_space),
+        None,
+        "vacated source viewport should be unregistered after center tab merge"
+    );
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&target_space),
+        Some(target_opened.window()),
+        "target viewport should remain registered after center tab merge"
+    );
+    assert!(
+        source_any_window.update(cx, |_, _, _| ()).is_err(),
+        "vacated source viewport should close after its last tab merges back"
     );
 }
 

@@ -21,8 +21,8 @@ use crate::{
 };
 use open_gpui::{
     AnyElement, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
-    MouseUpEvent, ParentElement, Pixels, Render, Rgba, Styled, Window, WindowId, black, canvas,
-    div, point, px, rgb, rgba,
+    MouseUpEvent, ParentElement, Pixels, Render, Rgba, SharedString, Styled, Window, WindowId,
+    black, canvas, div, point, px, rgb, rgba,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -35,6 +35,20 @@ const DROP_GUIDE_ZONES: [DropZone; 5] = [
     DropZone::Top,
     DropZone::Bottom,
 ];
+
+const DROP_PREVIEW_TAB_HEIGHT: f32 = 26.0;
+const DROP_PREVIEW_TAB_HORIZONTAL_INSET: f32 = 8.0;
+const DROP_PREVIEW_TAB_GAP: f32 = 6.0;
+const DROP_PREVIEW_TAB_MIN_WIDTH: f32 = 72.0;
+const DROP_PREVIEW_TAB_MAX_WIDTH: f32 = 180.0;
+const DROP_PREVIEW_TAB_TEXT_PADDING: f32 = 22.0;
+const DROP_PREVIEW_TAB_MIN_VISIBLE_WIDTH: f32 = 18.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DockDropPreviewTabLayout {
+    body_bounds: Bounds<Pixels>,
+    tab_bounds: Bounds<Pixels>,
+}
 
 impl Render for DockHost {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -188,6 +202,95 @@ impl Render for DockHost {
 }
 
 impl DockHost {
+    fn drop_preview_tab_layout(
+        &self,
+        session: &DockHostRenderSession,
+        preview: &DockDropPreview,
+        payload_title: &str,
+        window: &Window,
+    ) -> Option<DockDropPreviewTabLayout> {
+        if !preview.payload_tab {
+            return None;
+        }
+
+        let target_tabs = preview.target_tabs?;
+        let DockNode::Tabs { items, .. } = session.node(target_tabs)?.clone() else {
+            return None;
+        };
+
+        let preview_bounds = preview.bounds;
+        let tab_height = px(f32::from(preview_bounds.size.height)
+            .min(DROP_PREVIEW_TAB_HEIGHT)
+            .max(0.0));
+        if tab_height <= px(0.0) {
+            return None;
+        }
+
+        let text_style = window.text_style();
+        let font_size = text_style.font_size.to_pixels(window.rem_size());
+        let payload_line = window.text_system().shape_line(
+            SharedString::from(payload_title.to_string()),
+            font_size,
+            &[text_style.to_run(payload_title.len())],
+            None,
+        );
+        let payload_tab_width = preview_tab_width(payload_line.width());
+        let tab_gap = px(DROP_PREVIEW_TAB_GAP);
+        let insert_index = preview.insert_index.unwrap_or(items.len()).min(items.len());
+        let mut tab_left = self
+            .viewport_runtime()
+            .rendered_tab_bar_bounds_for_tabs(self.space(), None, target_tabs)
+            .map(|tab_bar_bounds| tab_bar_bounds.origin.x + px(DROP_PREVIEW_TAB_HORIZONTAL_INSET))
+            .unwrap_or(preview_bounds.origin.x + px(DROP_PREVIEW_TAB_HORIZONTAL_INSET));
+
+        if let Some(label_bounds) = insert_index.checked_sub(1).and_then(|target_index| {
+            self.viewport_runtime().rendered_tab_label_bounds_for_tabs(
+                self.space(),
+                None,
+                target_tabs,
+                target_index,
+            )
+        }) {
+            tab_left = label_bounds.right() + tab_gap;
+        } else {
+            for item in items.iter().take(insert_index) {
+                let title = session.panel_title(item);
+                let title_line = window.text_system().shape_line(
+                    SharedString::from(title.clone()),
+                    font_size,
+                    &[text_style.to_run(title.len())],
+                    None,
+                );
+                tab_left += preview_tab_width(title_line.width()) + tab_gap;
+            }
+        }
+
+        let tab_width = payload_tab_width
+            .min(preview_bounds.size.width)
+            .max(px(0.0));
+        let max_tab_left = (preview_bounds.origin.x + preview_bounds.size.width
+            - px(DROP_PREVIEW_TAB_MIN_VISIBLE_WIDTH))
+        .max(preview_bounds.origin.x);
+        let tab_left = tab_left.clamp(preview_bounds.origin.x, max_tab_left);
+        let tab_bounds = Bounds::new(
+            point(tab_left, preview_bounds.origin.y),
+            open_gpui::size(tab_width, tab_height),
+        );
+
+        let body_origin_y = tab_bounds.origin.y + tab_bounds.size.height;
+        let body_height =
+            (preview_bounds.origin.y + preview_bounds.size.height - body_origin_y).max(px(0.0));
+        let body_bounds = Bounds::new(
+            point(preview_bounds.origin.x, body_origin_y),
+            open_gpui::size(preview_bounds.size.width, body_height),
+        );
+
+        Some(DockDropPreviewTabLayout {
+            body_bounds,
+            tab_bounds,
+        })
+    }
+
     pub(crate) fn render_node(
         &mut self,
         node_id: DockNodeId,
@@ -254,7 +357,10 @@ impl DockHost {
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     let payload = event.drag(cx).clone();
-                    this.update_root_drop_scene_from_render(
+                    if !event.bounds.contains(&event.event.position) {
+                        return;
+                    }
+                    this.update_local_root_drop_scene_from_render(
                         &payload,
                         root,
                         event.bounds,
@@ -304,7 +410,10 @@ impl DockHost {
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     let payload = event.drag(cx).clone();
-                    this.update_empty_space_drop_scene_from_render(
+                    if !event.bounds.contains(&event.event.position) {
+                        return;
+                    }
+                    this.update_local_empty_space_drop_scene_from_render(
                         &payload,
                         event.event.position,
                         event.bounds,
@@ -350,7 +459,10 @@ impl DockHost {
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     let payload = event.drag(cx).clone();
-                    this.update_empty_space_drop_scene_from_render(
+                    if !event.bounds.contains(&event.event.position) {
+                        return;
+                    }
+                    this.update_local_empty_space_drop_scene_from_render(
                         &payload,
                         event.event.position,
                         event.bounds,
@@ -403,7 +515,7 @@ impl DockHost {
     fn render_host_drop_preview(
         &mut self,
         session: &DockHostRenderSession,
-        window: &Window,
+        window: &mut Window,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
         let active_payload_title = cx
@@ -420,11 +532,16 @@ impl DockHost {
             routed_preview.map(|preview| (preview.preview, Some(preview.payload_title)));
 
         if let Some(preview) = local_preview {
-            return Some(self.render_target_drop_preview(session, preview, active_payload_title));
+            return Some(self.render_target_drop_preview(
+                session,
+                preview,
+                active_payload_title,
+                window,
+            ));
         }
 
         if let Some((preview, payload_title)) = routed_target_preview {
-            return Some(self.render_target_drop_preview(session, preview, payload_title));
+            return Some(self.render_target_drop_preview(session, preview, payload_title, window));
         }
 
         route_preview.map(|preview| self.render_route_drop_preview(session, preview))
@@ -435,8 +552,17 @@ impl DockHost {
         session: &DockHostRenderSession,
         preview: DockDropPreview,
         payload_title: Option<String>,
+        window: &Window,
     ) -> AnyElement {
-        let bounds = preview.bounds;
+        let bounds = preview
+            .target_tabs
+            .and_then(|tabs| {
+                preview.payload_tab.then(|| {
+                    self.viewport_runtime()
+                        .rendered_leaf_bounds_for_tabs(self.space(), None, tabs)
+                })?
+            })
+            .unwrap_or(preview.bounds);
         let selector = self.record_debug_selector(
             DockDebugRegion::DropPreview,
             format!("{}:drop-preview", session.selector_prefix()),
@@ -449,33 +575,12 @@ impl DockHost {
             .left(bounds.origin.x)
             .top(bounds.origin.y)
             .w(bounds.size.width)
-            .h(bounds.size.height);
+            .h(bounds.size.height)
+            .overflow_hidden();
 
-        if preview.payload_tab
-            && let Some(title) = payload_title
+        if let Some(title) = payload_title
+            && let Some(layout) = self.drop_preview_tab_layout(session, &preview, &title, window)
         {
-            let tab_left = if bounds.size.width > px(176.0) {
-                px(8.0)
-            } else {
-                px(0.0)
-            };
-            let tab_width = if bounds.size.width > px(176.0) {
-                px(160.0)
-            } else {
-                bounds.size.width
-            };
-            let tab_height = if bounds.size.height > px(26.0) {
-                px(26.0)
-            } else {
-                bounds.size.height
-            };
-            let body_top = tab_height.min(bounds.size.height);
-            let body_height = (bounds.size.height - body_top).max(px(0.0));
-            let tab_right_inset = if tab_left > px(0.0) {
-                px(10.0)
-            } else {
-                px(0.0)
-            };
             let body_selector = self.record_debug_selector(
                 DockDebugRegion::DropPreviewBody,
                 format!("{}:drop-preview:body", session.selector_prefix()),
@@ -488,14 +593,14 @@ impl DockHost {
                 .id(body_selector.clone())
                 .debug_selector(move || body_selector)
                 .absolute()
-                .left(px(0.0))
-                .top(body_top)
-                .w(bounds.size.width)
-                .h(body_height)
+                .left(layout.body_bounds.origin.x - bounds.origin.x)
+                .top(layout.body_bounds.origin.y - bounds.origin.y)
+                .w(layout.body_bounds.size.width)
+                .h(layout.body_bounds.size.height)
                 .border_1()
                 .border_color(border)
                 .bg(background);
-            if body_top > px(0.0) {
+            if layout.body_bounds.size.height > px(0.0) {
                 body = body.rounded_b_sm().border_t_0();
             }
             element = element.child(body).child(
@@ -503,15 +608,14 @@ impl DockHost {
                     .id(tab_selector.clone())
                     .debug_selector(move || tab_selector)
                     .absolute()
-                    .left(tab_left)
-                    .top(px(0.0))
+                    .left(layout.tab_bounds.origin.x - bounds.origin.x)
+                    .top(layout.tab_bounds.origin.y - bounds.origin.y)
                     .flex()
                     .items_center()
-                    .justify_between()
-                    .h(tab_height)
-                    .w(tab_width)
+                    .justify_start()
+                    .h(layout.tab_bounds.size.height)
+                    .w(layout.tab_bounds.size.width)
                     .px_2()
-                    .pr(tab_right_inset)
                     .border_1()
                     .border_color(border)
                     .bg(rgb(0xf8fafc))
@@ -725,22 +829,6 @@ impl DockHost {
                 *frame_slot.borrow_mut() = preparation.frame;
                 if preparation.changed {
                     window.refresh();
-                }
-                if let Some(token) = preparation.render_token {
-                    let runtime = runtime.clone();
-                    window.request_animation_frame();
-                    // The next-frame callback runs before that frame renders. Check one frame later
-                    // so a normally repainted host can publish a newer token first.
-                    window.on_next_frame(move |window, _| {
-                        let runtime = runtime.clone();
-                        window.refresh();
-                        window.on_next_frame(move |window, app| {
-                            if runtime.expire_viewport_host_scene_if_not_rendered_after(token, app)
-                            {
-                                window.refresh();
-                            }
-                        });
-                    });
                 }
             },
             |_, _, _, _| (),
@@ -983,8 +1071,9 @@ fn tabs_drop_guide_target(
         });
     }
 
-    // Central-node side splits are represented by the host-level outer guides.
-    if is_central_region {
+    // Match ImGui: only the root central leaf suppresses inner side splits in favor of
+    // host/root outer guides. Nested central leaves still expose inner side guides.
+    if is_central_region && root == tabs {
         return None;
     }
 
@@ -1059,6 +1148,12 @@ fn drop_preview_colors(preview: &DockDropPreview) -> (Rgba, Rgba) {
     (rgb(0x2563eb), rgba(0x60a5fa47))
 }
 
+fn preview_tab_width(text_width: Pixels) -> Pixels {
+    (text_width + px(DROP_PREVIEW_TAB_TEXT_PADDING))
+        .max(px(DROP_PREVIEW_TAB_MIN_WIDTH))
+        .min(px(DROP_PREVIEW_TAB_MAX_WIDTH))
+}
+
 fn drop_route_preview_colors(preview: &DockDropRoutePreview) -> (Rgba, Rgba) {
     if preview.rejected {
         return (rgb(0xdc2626), rgba(0xfca5a547));
@@ -1086,6 +1181,8 @@ mod tests {
             bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(80.0))),
             rejected,
             payload_tab,
+            target_tabs: None,
+            insert_index: None,
         }
     }
 
@@ -1131,5 +1228,15 @@ mod tests {
         assert_ne!(known, tear_off);
         assert_ne!(known, rejected);
         assert_ne!(tear_off, rejected);
+    }
+
+    #[test]
+    fn preview_tab_width_stays_within_bounds() {
+        assert_eq!(preview_tab_width(px(8.0)), px(DROP_PREVIEW_TAB_MIN_WIDTH));
+        assert_eq!(preview_tab_width(px(240.0)), px(DROP_PREVIEW_TAB_MAX_WIDTH));
+        assert_eq!(
+            preview_tab_width(px(90.0)),
+            px(90.0 + DROP_PREVIEW_TAB_TEXT_PADDING)
+        );
     }
 }

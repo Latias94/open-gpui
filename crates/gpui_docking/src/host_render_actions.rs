@@ -126,7 +126,7 @@ impl DockHost {
         changed || session_changed
     }
 
-    pub(crate) fn update_drop_scene_fact_from_render(
+    pub(crate) fn update_local_drop_scene_fact_from_render(
         &mut self,
         payload: &DockDragPayload,
         fact: DockHostDropSceneFact,
@@ -134,11 +134,7 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let _ = self.record_payload_drag_hovered_viewport_from_render(payload, window);
         self.update_drop_scene_fact_interaction(payload, fact, position, window, cx)
-            .merge(
-                self.update_viewport_drop_route_preview_interaction(payload, position, window, cx),
-            )
             .finish(cx)
     }
 
@@ -161,7 +157,7 @@ impl DockHost {
             .finish(cx)
     }
 
-    pub(crate) fn update_root_drop_scene_from_render(
+    pub(crate) fn update_local_root_drop_scene_from_render(
         &mut self,
         payload: &DockDragPayload,
         root: DockNodeId,
@@ -170,15 +166,11 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let _ = self.record_payload_drag_hovered_viewport_from_render(payload, window);
         self.update_root_drop_scene_interaction(payload, root, bounds, position, window, cx)
-            .merge(
-                self.update_viewport_drop_route_preview_interaction(payload, position, window, cx),
-            )
             .finish(cx)
     }
 
-    pub(crate) fn update_empty_space_drop_scene_from_render(
+    pub(crate) fn update_local_empty_space_drop_scene_from_render(
         &mut self,
         payload: &DockDragPayload,
         position: Point<Pixels>,
@@ -187,11 +179,9 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let _ = self.record_payload_drag_hovered_viewport_from_render(payload, window);
         self.update_empty_space_drop_scene_interaction(
             payload, position, bounds, is_central, window, cx,
         )
-        .merge(self.update_viewport_drop_route_preview_interaction(payload, position, window, cx))
         .finish(cx)
     }
 

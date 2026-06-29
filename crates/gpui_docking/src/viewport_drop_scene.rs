@@ -117,6 +117,26 @@ impl DockViewportHostSceneSnapshot {
             .map(|leaf| leaf.bounds)
     }
 
+    fn tab_bar_bounds_for_tabs(&self, tabs: DockNodeId) -> Option<Bounds<Pixels>> {
+        self.scene
+            .tab_bars
+            .iter()
+            .find(|target| target.target_tabs == tabs)
+            .map(|target| target.bounds)
+    }
+
+    fn tab_label_bounds_for_tabs(
+        &self,
+        tabs: DockNodeId,
+        target_index: usize,
+    ) -> Option<Bounds<Pixels>> {
+        self.scene
+            .tab_labels
+            .iter()
+            .find(|target| target.target_tabs == tabs && target.target_index == target_index)
+            .map(|target| target.bounds)
+    }
+
     #[cfg(test)]
     pub(crate) fn global_screen_position(&self) -> Option<Point<Pixels>> {
         let screen_bounds = self.current_bounds.global_screen_bounds()?;
@@ -194,6 +214,33 @@ impl DockViewportHostSceneRegistry {
             return None;
         }
         snapshot.leaf_bounds_for_tabs(tabs)
+    }
+
+    pub(crate) fn tab_bar_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        let snapshot = self.scenes.get(space)?;
+        if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
+            return None;
+        }
+        snapshot.tab_bar_bounds_for_tabs(tabs)
+    }
+
+    pub(crate) fn tab_label_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+        target_index: usize,
+    ) -> Option<Bounds<Pixels>> {
+        let snapshot = self.scenes.get(space)?;
+        if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
+            return None;
+        }
+        snapshot.tab_label_bounds_for_tabs(tabs, target_index)
     }
 
     pub(crate) fn host_bounds_for_window(

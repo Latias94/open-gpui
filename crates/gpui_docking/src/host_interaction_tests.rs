@@ -261,6 +261,68 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn tab_bar_append_preview_shifts_payload_tab_right_of_existing_tab(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(500.0), px(240.0)));
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: left_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: right_tabs,
+            item: item("b"),
+        },
+    )
+    .expect("target tab selector should be emitted");
+
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let target_bounds = debug_bounds(&mut visual, &target_tab);
+    let append_hover = point(target_bounds.right() + px(16.0), target_bounds.center().y);
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    visual.simulate_mouse_move(append_hover, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    let mut drag_visual = VisualTestContext::from_window(window.into(), cx);
+    let preview_tab = selector_for(&drag_visual, &host, DockDebugRegion::DropPayloadTabPreview)
+        .expect("tab bar append hover should render a payload tab preview");
+    let preview_tab_bounds = debug_bounds(&mut drag_visual, &preview_tab);
+    let runtime_target_tab_bounds = host
+        .update(cx, |host, _| {
+            host.viewport_runtime().rendered_tab_label_bounds_for_tabs(
+                host.space(),
+                Some(window.window_id()),
+                right_tabs,
+                0,
+            )
+        })
+        .expect("runtime should expose target tab label bounds");
+
+    assert!(
+        preview_tab_bounds.origin.x >= runtime_target_tab_bounds.center().x,
+        "append preview should move toward the append slot after the existing tab: preview={preview_tab_bounds:?} runtime_target={runtime_target_tab_bounds:?} debug_target={target_bounds:?}"
+    );
+}
+
+#[open_gpui::test]
 fn local_release_on_first_target_hit_does_not_commit(cx: &mut TestAppContext) {
     let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let workspace =
@@ -284,7 +346,7 @@ fn local_release_on_first_target_hit_does_not_commit(cx: &mut TestAppContext) {
                 window,
                 cx,
             );
-            host.update_drop_scene_fact_from_render(
+            host.update_local_drop_scene_fact_from_render(
                 &payload,
                 drop_scene_fact::leaf(right_tabs, right_tabs, target_bounds, false),
                 release_position,
@@ -338,7 +400,7 @@ fn local_release_after_preview_miss_does_not_commit(cx: &mut TestAppContext) {
                 window,
                 cx,
             );
-            host.update_drop_scene_fact_from_render(
+            host.update_local_drop_scene_fact_from_render(
                 &payload,
                 drop_scene_fact::leaf(right_tabs, right_tabs, target_bounds, false),
                 preview_position,
@@ -394,7 +456,7 @@ fn source_only_release_does_not_commit_cached_local_delivery_without_hover_signa
                 window,
                 cx,
             );
-            host.update_drop_scene_fact_from_render(
+            host.update_local_drop_scene_fact_from_render(
                 &payload,
                 drop_scene_fact::leaf(right_tabs, right_tabs, target_bounds, false),
                 release_position,
@@ -1234,8 +1296,15 @@ fn dragging_tab_to_root_edge_resolves_from_render_leaf_fact_root(cx: &mut TestAp
                     .with_preferred_size(source_bounds.size),
             );
             host.begin_host_drop_scene_from_render(&payload, root_bounds, end, window, cx);
-            host.update_root_drop_scene_from_render(&payload, root, root_bounds, end, window, cx);
-            host.update_drop_scene_fact_from_render(
+            host.update_local_root_drop_scene_from_render(
+                &payload,
+                root,
+                root_bounds,
+                end,
+                window,
+                cx,
+            );
+            host.update_local_drop_scene_fact_from_render(
                 &payload,
                 drop_scene_fact::leaf(root, right_tabs, target_bounds, false),
                 end,

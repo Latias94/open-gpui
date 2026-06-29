@@ -13,12 +13,11 @@ use crate::{
     DockViewportDropActionOutcome, DockViewportDropRoute, DockViewportDropRouteOutcome,
     DockViewportDropRouteRequest, DockViewportDropRouteResolution, DockViewportFocusCoordinator,
     DockViewportFocusRequest, DockViewportFocusStampFallbackPermit, DockViewportFrameCoordinator,
-    DockViewportHostSceneRenderExpiration, DockViewportHostSceneRenderToken, DockViewportIdentity,
-    DockViewportPayloadDragBegin, DockViewportPayloadDragState, DockViewportPlacementLayout,
-    DockViewportPlacementValidationError, DockViewportPlatformFocusRestoreGate,
-    DockViewportPlatformFocusRestorePolicy, DockViewportPlatformSyncRecord,
-    DockViewportRegisterOutcome, DockViewportResolvedDropRoute, DockViewportRestoreReadiness,
-    DockViewportRoutePreview, DockViewportRoutedDropPreview,
+    DockViewportIdentity, DockViewportPayloadDragBegin, DockViewportPayloadDragState,
+    DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportPlatformFocusRestoreGate, DockViewportPlatformFocusRestorePolicy,
+    DockViewportPlatformSyncRecord, DockViewportRegisterOutcome, DockViewportResolvedDropRoute,
+    DockViewportRestoreReadiness, DockViewportRoutePreview, DockViewportRoutedDropPreview,
     DockViewportRoutedDropPreviewReplacement, DockViewportRoutedDropPreviewState,
     DockViewportRuntimeHandle, DockViewportRuntimeStatus, DockViewportRuntimeUpdate,
     DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus, DockViewportTearOffBeginOutcome,
@@ -448,10 +447,6 @@ impl DockViewportRuntime {
         self.payload_drag.active_session_for_payload(payload)
     }
 
-    pub(crate) fn has_active_payload_drag(&self) -> bool {
-        self.payload_drag.has_active_drag()
-    }
-
     fn source_window_accepts_pointer_input(&self, payload: &DockDragPayload) -> Option<bool> {
         let Some(snapshot) = self.adapter.snapshot(payload.identity().source_space()) else {
             return Some(true);
@@ -748,28 +743,6 @@ impl DockViewportRuntime {
         update
     }
 
-    pub(crate) fn expire_viewport_host_scene_if_not_rendered_after(
-        &mut self,
-        token: DockViewportHostSceneRenderToken,
-    ) -> DockViewportRuntimeUpdate {
-        let current_window_id = self
-            .adapter
-            .window_for_space(token.identity().space())
-            .map(|window| window.window_id());
-        match self
-            .frame_coordinator
-            .expire_host_scene_if_not_rendered_after(token, current_window_id)
-        {
-            DockViewportHostSceneRenderExpiration::StillCurrent
-            | DockViewportHostSceneRenderExpiration::StaleIdentity(_) => {
-                DockViewportRuntimeUpdate::default()
-            }
-            DockViewportHostSceneRenderExpiration::Expired(identity) => {
-                self.mark_viewport_window_snapshot_stale(identity.window_id())
-            }
-        }
-    }
-
     pub(crate) fn apply_platform_window_facts(
         &mut self,
         window_id: WindowId,
@@ -910,13 +883,6 @@ impl DockViewportRuntime {
         Some(registration)
     }
 
-    pub(crate) fn mark_rendered_viewport_host_scene(
-        &mut self,
-        identity: DockViewportIdentity,
-    ) -> DockViewportHostSceneRenderToken {
-        self.frame_coordinator.mark_host_scene_rendered(identity)
-    }
-
     #[cfg(test)]
     pub(crate) fn push_viewport_host_scene_fact(
         &mut self,
@@ -945,6 +911,27 @@ impl DockViewportRuntime {
             .leaf_bounds_for_tabs(space, window_id, tabs)
     }
 
+    pub(crate) fn rendered_tab_bar_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        self.frame_coordinator
+            .tab_bar_bounds_for_tabs(space, window_id, tabs)
+    }
+
+    pub(crate) fn rendered_tab_label_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+        target_index: usize,
+    ) -> Option<Bounds<Pixels>> {
+        self.frame_coordinator
+            .tab_label_bounds_for_tabs(space, window_id, tabs, target_index)
+    }
+
     pub(crate) fn rendered_host_bounds_for_window(
         &self,
         space: &DockSpaceId,
@@ -968,10 +955,6 @@ impl DockViewportRuntime {
         window_id: WindowId,
     ) -> Option<crate::drop_preview::DockDropRoutePreview> {
         self.routed_drop_preview.route_preview_for(space, window_id)
-    }
-
-    pub(crate) fn has_routed_drop_preview(&self) -> bool {
-        self.routed_drop_preview.has_preview()
     }
 
     #[cfg(test)]
@@ -1077,12 +1060,7 @@ impl DockViewportRuntime {
             DockViewportDropRoute::Unavailable => None,
             _ => Some(resolution.clone()),
         };
-        let target_window = next
-            .as_ref()
-            .and_then(|preview| self.adapter.window_for_space(preview.space()));
-        let mut update =
-            self.replace_routed_drop_preview(next, next_route_preview, next_resolution);
-        update.extend_windows(target_window);
+        let update = self.replace_routed_drop_preview(next, next_route_preview, next_resolution);
         update
     }
 
@@ -1192,8 +1170,6 @@ impl DockViewportRuntime {
         }
         self.window_ownership.clear_window_state(window_id);
         self.backend_focus.discard_window(window_id);
-        self.frame_coordinator
-            .forget_window_render_epochs(window_id);
         self.frame_coordinator.unregister_space(space);
         self.clear_pending_activation_for(space, window_id);
         self.status.clear_window_references(space, window_id);
@@ -1753,14 +1729,24 @@ impl DockViewportRuntime {
             initial_route_request.request,
             &policy,
         );
-        log::info!(
-            "[DEBUG-docking-native] runtime route snapshot source_space={} source_node={:?} route={:?} initial_changed={} initial_unavailable_reason={:?}",
-            request.source_space().as_str(),
-            request.source_node(),
-            initial_snapshot.route_resolution.route_ref(),
-            initial_route_request.changed,
-            initial_snapshot.route_resolution.unavailable_reason()
-        );
+        let initial_route = initial_snapshot.route_resolution.route_ref();
+        let initial_unavailable_reason = initial_snapshot.route_resolution.unavailable_reason();
+        if initial_route_request.changed
+            || initial_unavailable_reason.is_some()
+            || matches!(
+                initial_route,
+                DockViewportDropRoute::TearOff | DockViewportDropRoute::Rejected(_)
+            )
+        {
+            log::debug!(
+                "[DEBUG-docking-native] runtime route snapshot source_space={} source_node={:?} route={:?} initial_changed={} initial_unavailable_reason={:?}",
+                request.source_space().as_str(),
+                request.source_node(),
+                initial_route,
+                initial_route_request.changed,
+                initial_unavailable_reason
+            );
+        }
 
         let DockViewportDropRouteSnapshotRefresh {
             snapshot: resampled_snapshot,

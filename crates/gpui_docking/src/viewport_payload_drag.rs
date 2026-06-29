@@ -126,10 +126,6 @@ impl DockViewportPayloadDragState {
             .map(|drag| drag.session().clone())
     }
 
-    pub(crate) fn has_active_drag(&self) -> bool {
-        self.active.is_some()
-    }
-
     pub(crate) fn validate_session(
         &self,
         session: Option<&DockRuntimeDragSession>,

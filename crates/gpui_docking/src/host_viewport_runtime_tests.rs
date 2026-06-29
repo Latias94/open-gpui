@@ -968,195 +968,6 @@ fn viewport_runtime_render_registration_cleans_replaced_space_state(cx: &mut Tes
 }
 
 #[open_gpui::test]
-fn viewport_runtime_host_scene_render_token_expires_unrendered_host_scene(cx: &mut TestAppContext) {
-    let target_space = DockSpaceId::from("target");
-    let mut graph = DockGraph::new();
-    let target_tabs = graph.insert_node(DockNode::Tabs {
-        items: vec![item("b")],
-        selected: Some(item("b")),
-    });
-    graph.set_root(target_space.clone(), target_tabs);
-
-    let mut workspace = DockWorkspace::new(target_space.clone(), graph);
-    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-    let controller = cx.new(|_| DockController::new(workspace));
-    let window = handle(4);
-    let mut runtime = DockViewportRuntime::new(controller);
-    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-    let host_position = center_drop_position(host_bounds);
-    let window_facts = DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(
-        floating_bounds(100.0, 100.0, 360.0, 220.0),
-    ));
-
-    assert!(runtime.register_rendered_host_viewport(target_space.clone(), window));
-    assert!(runtime.begin_viewport_host_scene(
-        target_space.clone(),
-        window.window_id(),
-        window_facts,
-        host_bounds,
-        host_position,
-    ));
-    assert!(runtime.push_viewport_host_scene_fact(
-        &target_space,
-        window.window_id(),
-        leaf_host_scene_fact(target_tabs, target_tabs),
-    ));
-    let identity = crate::DockViewportIdentity::new(target_space.clone(), window.window_id());
-    let token = runtime.mark_rendered_viewport_host_scene(identity.clone());
-
-    let update = runtime.expire_viewport_host_scene_if_not_rendered_after(token);
-
-    assert!(update.changed());
-    assert_eq!(update.into_windows(), Vec::<AnyWindowHandle>::new());
-    assert_eq!(
-        runtime.adapter().route_unavailable_reason(&target_space),
-        Some(DockViewportRouteUnavailableReason::Stale(
-            DockViewportStaleReason::WindowFactsChanged
-        ))
-    );
-    assert_eq!(runtime.last_host_scene_screen_position(&target_space), None);
-}
-
-#[open_gpui::test]
-fn viewport_runtime_host_scene_render_token_preserves_scene_after_new_render(
-    cx: &mut TestAppContext,
-) {
-    let target_space = DockSpaceId::from("target");
-    let mut graph = DockGraph::new();
-    let target_tabs = graph.insert_node(DockNode::Tabs {
-        items: vec![item("b")],
-        selected: Some(item("b")),
-    });
-    graph.set_root(target_space.clone(), target_tabs);
-
-    let mut workspace = DockWorkspace::new(target_space.clone(), graph);
-    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
-    let controller = cx.new(|_| DockController::new(workspace));
-    let window = handle(5);
-    let mut runtime = DockViewportRuntime::new(controller);
-    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-    let host_position = center_drop_position(host_bounds);
-    let window_facts = DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(
-        floating_bounds(100.0, 100.0, 360.0, 220.0),
-    ));
-
-    assert!(runtime.register_rendered_host_viewport(target_space.clone(), window));
-    assert!(runtime.begin_viewport_host_scene(
-        target_space.clone(),
-        window.window_id(),
-        window_facts,
-        host_bounds,
-        host_position,
-    ));
-    assert!(runtime.push_viewport_host_scene_fact(
-        &target_space,
-        window.window_id(),
-        leaf_host_scene_fact(target_tabs, target_tabs),
-    ));
-    let identity = crate::DockViewportIdentity::new(target_space.clone(), window.window_id());
-    let stale_token = runtime.mark_rendered_viewport_host_scene(identity.clone());
-    assert!(runtime.begin_viewport_host_scene(
-        target_space.clone(),
-        window.window_id(),
-        window_facts,
-        host_bounds,
-        host_position,
-    ));
-    assert!(runtime.push_viewport_host_scene_fact(
-        &target_space,
-        window.window_id(),
-        leaf_host_scene_fact(target_tabs, target_tabs),
-    ));
-    let _current_token = runtime.mark_rendered_viewport_host_scene(identity.clone());
-
-    let update = runtime.expire_viewport_host_scene_if_not_rendered_after(stale_token);
-
-    assert!(!update.changed());
-    assert_eq!(update.into_windows(), Vec::<AnyWindowHandle>::new());
-    assert_eq!(
-        runtime.adapter().route_unavailable_reason(&target_space),
-        None
-    );
-    assert!(
-        runtime
-            .last_host_scene_screen_position(&target_space)
-            .is_some()
-    );
-}
-
-#[open_gpui::test]
-fn viewport_runtime_host_scene_render_token_is_bound_to_viewport_identity(cx: &mut TestAppContext) {
-    let old_space = DockSpaceId::from("old");
-    let new_space = DockSpaceId::from("new");
-    let mut graph = DockGraph::new();
-    let old_tabs = graph.insert_node(DockNode::Tabs {
-        items: vec![item("old")],
-        selected: Some(item("old")),
-    });
-    let new_tabs = graph.insert_node(DockNode::Tabs {
-        items: vec![item("new")],
-        selected: Some(item("new")),
-    });
-    graph.set_root(old_space.clone(), old_tabs);
-    graph.set_root(new_space.clone(), new_tabs);
-
-    let mut workspace = DockWorkspace::new(old_space.clone(), graph);
-    workspace.register_panel_view(item("old"), "Old", test_view(cx, "Old"));
-    workspace.register_panel_view(item("new"), "New", test_view(cx, "New"));
-    let controller = cx.new(|_| DockController::new(workspace));
-    let window = handle(6);
-    let mut runtime = DockViewportRuntime::new(controller);
-    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-    let host_position = center_drop_position(host_bounds);
-    let window_facts = DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(
-        floating_bounds(100.0, 100.0, 360.0, 220.0),
-    ));
-
-    assert!(runtime.register_rendered_host_viewport(old_space.clone(), window));
-    assert!(runtime.begin_viewport_host_scene(
-        old_space.clone(),
-        window.window_id(),
-        window_facts,
-        host_bounds,
-        host_position,
-    ));
-    assert!(runtime.push_viewport_host_scene_fact(
-        &old_space,
-        window.window_id(),
-        leaf_host_scene_fact(old_tabs, old_tabs),
-    ));
-    let old_identity = crate::DockViewportIdentity::new(old_space.clone(), window.window_id());
-    let stale_old_token = runtime.mark_rendered_viewport_host_scene(old_identity);
-
-    assert!(runtime.register_rendered_host_viewport(new_space.clone(), window));
-    assert!(runtime.begin_viewport_host_scene(
-        new_space.clone(),
-        window.window_id(),
-        window_facts,
-        host_bounds,
-        host_position,
-    ));
-    assert!(runtime.push_viewport_host_scene_fact(
-        &new_space,
-        window.window_id(),
-        leaf_host_scene_fact(new_tabs, new_tabs),
-    ));
-
-    let update = runtime.expire_viewport_host_scene_if_not_rendered_after(stale_old_token);
-
-    assert!(!update.changed());
-    assert_eq!(update.into_windows(), Vec::<AnyWindowHandle>::new());
-    assert_eq!(runtime.last_host_scene_screen_position(&old_space), None);
-    assert!(
-        runtime
-            .last_host_scene_screen_position(&new_space)
-            .is_some(),
-        "an old-space render token for the same window must not expire the replacement viewport"
-    );
-    assert_eq!(runtime.adapter().route_unavailable_reason(&new_space), None);
-}
-
-#[open_gpui::test]
 fn viewport_runtime_reconciles_backend_focus_without_route_order_shadow_state(
     cx: &mut TestAppContext,
 ) {
@@ -9566,6 +9377,93 @@ fn viewport_runtime_current_hovered_window_facts_override_stale_routed_preview(
     assert!(
         release_resolution.delivery().is_some(),
         "current hovered-window facts should mint delivery for the current target"
+    );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_identical_host_routed_preview_does_not_request_refresh_again(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let target_window = handle(190);
+    let mut adapter = DockViewportAdapter::new();
+    register_viewport(&mut adapter, target_space.clone(), target_window);
+    let mut runtime = DockViewportRuntime::from_adapter(
+        controller,
+        adapter,
+        DockViewportClosePolicy::RetainLayout,
+    );
+
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let session = cache_known_viewport_preview_for_test(
+        &mut runtime,
+        source_space.clone(),
+        source_tabs,
+        &target_space,
+        target_window,
+        target_tabs,
+        cx,
+    );
+    let host_position = point(px(220.0), px(200.0));
+    let request = hovered_window_route_request_for_test(
+        source_space,
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        host_position,
+        None,
+        target_window,
+        DockPayloadDropReleaseOrigin::HoveredHost,
+    )
+    .with_drag_session(Some(session.clone()));
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
+
+    let initial = runtime.update_host_routed_drop_preview(
+        &resolution,
+        payload.title(),
+        target_space.clone(),
+        target_window.window_id(),
+        host_position,
+    );
+    assert!(
+        initial.changed(),
+        "the first host-routed preview write should publish the host route marker"
+    );
+
+    let repeated = runtime.update_host_routed_drop_preview(
+        &resolution,
+        payload.title(),
+        target_space.clone(),
+        target_window.window_id(),
+        host_position,
+    );
+
+    assert!(!repeated.changed());
+    assert!(
+        repeated.into_windows().is_empty(),
+        "writing the same host-routed preview twice must not keep refreshing the target window"
     );
 }
 

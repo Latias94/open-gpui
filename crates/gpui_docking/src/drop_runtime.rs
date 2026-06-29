@@ -108,14 +108,6 @@ impl DockHostDropScene {
         }
     }
 
-    fn same_resolution_inputs_as(&self, other: &Self) -> bool {
-        self.position == other.position
-            && self.payload_size == other.payload_size
-            && self.drop_guide_style == other.drop_guide_style
-            && self.excluded_nodes == other.excluded_nodes
-            && self.clear_on_miss == other.clear_on_miss
-    }
-
     fn fact_is_excluded(&self, fact: &DockHostDropSceneFact) -> bool {
         self.excluded_nodes
             .iter()
@@ -192,23 +184,6 @@ impl DockDropRuntime {
         let changed = self.resolve_scene(&scene, policy, target_validator, edge_plan_resolver);
         self.scene = Some(scene);
         changed
-    }
-
-    pub(crate) fn ensure_scene_with_validator(
-        &mut self,
-        scene: DockHostDropScene,
-        policy: &DockPolicy,
-        target_validator: Option<&DockDropTargetValidator<'_>>,
-        edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
-    ) -> bool {
-        if self
-            .scene
-            .as_ref()
-            .is_some_and(|existing| existing.same_resolution_inputs_as(&scene))
-        {
-            return false;
-        }
-        self.begin_scene_with_validator(scene, policy, target_validator, edge_plan_resolver)
     }
 
     #[cfg(test)]
@@ -542,6 +517,62 @@ mod tests {
                 root: second,
                 target_tabs: second,
             }
+        );
+    }
+
+    #[test]
+    fn restarting_scene_at_same_position_discards_previous_facts() {
+        let leaf_tabs = DockNodeId::null();
+        let replacement_root = DockNodeId::from(slotmap::KeyData::from_ffi(2));
+        let replacement_tabs = DockNodeId::from(slotmap::KeyData::from_ffi(3));
+        let mut runtime = DockDropRuntime::default();
+        let original_bounds = bounds(0.0, 0.0, 420.0, 260.0);
+        let replacement_bounds = bounds(160.0, 80.0, 120.0, 120.0);
+        let position = leaf_center_position(original_bounds);
+
+        runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
+        assert!(runtime.push_scene_fact(
+            position,
+            Vec::new(),
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root: leaf_tabs,
+                target_tabs: leaf_tabs,
+                bounds: original_bounds,
+                is_central: false,
+            }),
+            &DockPolicy::default()
+        ));
+        assert_eq!(
+            runtime.resolved_target().map(|target| target.kind.clone()),
+            Some(DockResolvedDropTargetKind::LeafCenter {
+                root: leaf_tabs,
+                target_tabs: leaf_tabs,
+            })
+        );
+
+        assert!(runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default()));
+        assert!(runtime.push_scene_fact(
+            position,
+            Vec::new(),
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root: replacement_root,
+                target_tabs: replacement_tabs,
+                bounds: replacement_bounds,
+                is_central: false,
+            }),
+            &DockPolicy::default()
+        ));
+
+        let target = runtime
+            .take_release_target()
+            .expect("current scene should resolve after restart");
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::LeafCenter {
+                root: replacement_root,
+                target_tabs: replacement_tabs,
+            },
+            "restarting the scene at the same pointer position must drop stale facts from the prior drag-move pass"
         );
     }
 

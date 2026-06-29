@@ -10,6 +10,7 @@ use open_gpui::{
     TestAppContext, VisualTestContext, px, size,
 };
 use slotmap::Key;
+use std::time::Duration;
 
 #[open_gpui::test]
 fn single_tabs_render_selected_panel_and_all_tab_labels(cx: &mut TestAppContext) {
@@ -153,6 +154,42 @@ fn host_scene_expiry_watch_survives_manual_frame_callbacks(cx: &mut TestAppConte
         require_presentation: true,
         ..Default::default()
     }));
+}
+
+#[open_gpui::test]
+fn drag_active_frames_do_not_schedule_background_scene_expiry(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a", "b"]);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+
+    start_tab_drag(&mut visual, &host, root, "a");
+    cx.run_until_parked();
+
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    assert!(visual.simulate_frame(RequestFrameOptions {
+        require_presentation: true,
+        ..Default::default()
+    }));
+
+    cx.executor().advance_clock(Duration::from_millis(64));
+    visual.run_until_parked();
+
+    assert!(
+        selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::DropGuide {
+                node: Some(root),
+                zone: crate::DropZone::Center,
+            },
+        )
+        .is_some(),
+        "drag-active host frames should remain stable after background timers advance"
+    );
 }
 
 #[open_gpui::test]
@@ -438,9 +475,97 @@ fn central_region_drop_guides_hide_center_when_policy_rejects_dock_over(cx: &mut
         crate::DropZone::Top,
         crate::DropZone::Bottom,
     ] {
-        assert_drop_guide_not_emitted(&visual, &host, Some(central_tabs), zone);
+        assert_drop_guide_emitted(&visual, &host, Some(central_tabs), zone);
     }
     assert_drop_guide_emitted(&visual, &host, Some(source_tabs), crate::DropZone::Center);
+}
+
+#[open_gpui::test]
+fn nested_central_region_drop_guides_keep_side_zones(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let central_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let sibling_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let nested = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![central_tabs, sibling_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![source_tabs, nested],
+        fractions: vec![0.35, 0.65],
+    });
+    graph.set_root(space(), root);
+    graph.set_central_region(space(), DockCentralRegion::with_node(central_tabs));
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    workspace
+        .policy_mut()
+        .set_allow_central_region_dock_over(false);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(500.0), px(240.0)));
+
+    start_tab_drag(&mut visual, &host, source_tabs, "a");
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert_drop_guide_not_emitted(&visual, &host, Some(central_tabs), crate::DropZone::Center);
+    for zone in [
+        crate::DropZone::Left,
+        crate::DropZone::Right,
+        crate::DropZone::Top,
+        crate::DropZone::Bottom,
+    ] {
+        assert_drop_guide_emitted(&visual, &host, Some(central_tabs), zone);
+    }
+}
+
+#[open_gpui::test]
+fn root_central_leaf_hides_inner_side_guides(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let central_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(space(), central_tabs);
+    graph.set_central_region(space(), DockCentralRegion::with_node(central_tabs));
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace
+        .policy_mut()
+        .set_allow_central_region_dock_over(false);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(500.0), px(240.0)));
+
+    start_tab_drag(&mut visual, &host, central_tabs, "a");
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert_drop_guide_not_emitted(&visual, &host, Some(central_tabs), crate::DropZone::Center);
+    for zone in [
+        crate::DropZone::Left,
+        crate::DropZone::Right,
+        crate::DropZone::Top,
+        crate::DropZone::Bottom,
+    ] {
+        assert_drop_guide_not_emitted(&visual, &host, Some(central_tabs), zone);
+        assert_drop_guide_emitted(&visual, &host, None, zone);
+    }
 }
 
 #[open_gpui::test]

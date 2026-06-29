@@ -87,9 +87,11 @@ impl DockHost {
                         }
                         this.update_payload_drag_tear_off_geometry_from_render(&payload, geometry);
                     }
-                    if let Some(drop_root) = drop_root {
+                    if event.bounds.contains(&event.event.position)
+                        && let Some(drop_root) = drop_root
+                    {
                         let fact = drop_scene_fact::leaf(drop_root, node, event.bounds, is_central);
-                        this.update_drop_scene_fact_from_render(
+                        this.update_local_drop_scene_fact_from_render(
                             &payload,
                             fact,
                             event.event.position,
@@ -121,9 +123,12 @@ impl DockHost {
             .bg(rgb(0xe7ebf0))
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
+                    if !event.bounds.contains(&event.event.position) {
+                        return;
+                    }
                     let payload = event.drag(cx).clone();
                     let fact = drop_scene_fact::tab_bar(node, tab_count, event.bounds, is_central);
-                    this.update_drop_scene_fact_from_render(
+                    this.update_local_drop_scene_fact_from_render(
                         &payload,
                         fact,
                         event.event.position,
@@ -223,6 +228,9 @@ impl DockHost {
                 }))
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
+                        if !event.bounds.contains(&event.event.position) {
+                            return;
+                        }
                         let payload = event.drag(cx).clone();
                         // The tabs leaf owns tear-off sizing; the tab label is only a drop target.
                         let fact = drop_scene_fact::tab_label(
@@ -231,7 +239,7 @@ impl DockHost {
                             event.bounds,
                             is_central,
                         );
-                        this.update_drop_scene_fact_from_render(
+                        this.update_local_drop_scene_fact_from_render(
                             &payload,
                             fact,
                             event.event.position,

@@ -218,6 +218,9 @@ impl DockHost {
                                 tear_off_geometry,
                             );
                         }
+                        if !event.bounds.contains(&event.event.position) {
+                            return;
+                        }
                         let fact = drop_scene_fact::floating_title_bar(
                             floating,
                             target_tabs,
@@ -227,7 +230,7 @@ impl DockHost {
                                 bounds.size,
                             ),
                         );
-                        this.update_drop_scene_fact_from_render(
+                        this.update_local_drop_scene_fact_from_render(
                             &payload,
                             fact,
                             event.event.position,

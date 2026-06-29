@@ -562,7 +562,9 @@ fn target_from_leaf_geometry(
         });
     }
 
-    if leaf.is_central {
+    // Match ImGui: only the root central leaf suppresses inner side splits in favor of
+    // host/root outer guides. Nested central leaves still allow inner side docking.
+    if leaf.is_central && leaf.root == leaf.target_tabs {
         return None;
     }
 
@@ -2016,7 +2018,7 @@ mod tests {
     }
 
     #[test]
-    fn central_leaf_side_hit_does_not_create_inner_edge_target() {
+    fn root_central_leaf_side_hit_does_not_create_inner_edge_target() {
         let root = tabs();
         let leaf_bounds = bounds(300.0, 200.0);
         let position = drop_box_center(
@@ -2042,7 +2044,53 @@ mod tests {
     }
 
     #[test]
-    fn central_leaf_side_hit_prefers_smaller_leaf_body_over_root_outer_edge() {
+    fn nested_central_leaf_side_hit_creates_inner_edge_target() {
+        let mut graph = DockGraph::new();
+        let central_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("central")],
+            selected: Some(DockItemId::from("central")),
+        });
+        let sibling = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("sibling")],
+            selected: Some(DockItemId::from("sibling")),
+        });
+        let root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![central_tabs, sibling],
+            fractions: vec![0.5, 0.5],
+        });
+        let leaf_bounds = bounds(300.0, 200.0);
+        let position = drop_box_center(
+            leaf_bounds,
+            DockDropBoxSet::Inner,
+            DockDropBoxKind::InnerEdge(DropZone::Left),
+        );
+
+        let target = resolve_layout_drop(DockDropResolverInput {
+            leaves: &[DockLeafDropTarget {
+                root,
+                target_tabs: central_tabs,
+                bounds: leaf_bounds,
+                is_central: true,
+            }],
+            ..DockDropResolverInput::new(position, &policy())
+        })
+        .and_then(DockDropResolution::target)
+        .expect("nested central side hit should still resolve an inner-edge target");
+
+        assert_eq!(target.source, DockDropResolveSource::InnerEdge);
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::InnerEdge {
+                root,
+                target_tabs: central_tabs,
+                zone: DropZone::Left,
+            }
+        );
+    }
+
+    #[test]
+    fn central_leaf_center_hit_prefers_smaller_leaf_body_over_root_outer_edge() {
         let (central_tabs, sibling) = two_node_ids();
         let mut graph = DockGraph::new();
         let root = graph.insert_node(DockNode::Split {

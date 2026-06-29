@@ -3,15 +3,14 @@ use crate::DockViewportActivationTransaction;
 use crate::{
     DockActionApplyError, DockController, DockDropDelivery, DockHost, DockItemId, DockNodeId,
     DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRouteOutcome,
-    DockViewportDropRouteRequest, DockViewportHostSceneRenderToken, DockViewportIdentity,
-    DockViewportOpenOutcome, DockViewportOpenStatus, DockViewportPlacementLayout,
-    DockViewportPlacementValidationError, DockViewportPlatformFocusRestoreGate,
-    DockViewportPointerInputSyncRequest, DockViewportResolvedDropRoute,
-    DockViewportResolvedDropRouteOutcome, DockViewportRestoreReadiness,
-    DockViewportRoutedDropPreview, DockViewportRuntime, DockViewportRuntimeStatus,
-    DockViewportRuntimeUpdate, DockViewportShouldCloseOutcome, DockViewportTearOffCancelReason,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
-    DockViewportWindowEffects, DockViewportWindowFacts,
+    DockViewportDropRouteRequest, DockViewportOpenOutcome, DockViewportOpenStatus,
+    DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportPlatformFocusRestoreGate, DockViewportPointerInputSyncRequest,
+    DockViewportResolvedDropRoute, DockViewportResolvedDropRouteOutcome,
+    DockViewportRestoreReadiness, DockViewportRoutedDropPreview, DockViewportRuntime,
+    DockViewportRuntimeStatus, DockViewportRuntimeUpdate, DockViewportShouldCloseOutcome,
+    DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffPending,
+    DockViewportTearOffRequest, DockViewportWindowEffects, DockViewportWindowFacts,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
@@ -212,7 +211,6 @@ fn apply_pointer_synced_runtime_update<C: open_gpui::AppContext>(
 pub(crate) struct DockViewportRenderedHostScenePreparation {
     pub(crate) changed: bool,
     pub(crate) frame: Option<DockViewportHostSceneFrame>,
-    pub(crate) render_token: Option<DockViewportHostSceneRenderToken>,
 }
 
 fn sync_render_passthrough_pointer_input(
@@ -317,7 +315,7 @@ fn close_windows_after_current_effect(windows: Vec<AnyWindowHandle>, cx: &mut Ap
 }
 
 fn apply_viewport_window_effects(effects: DockViewportWindowEffects, cx: &mut App) {
-    close_windows_quietly(effects.close_now().to_vec(), cx);
+    close_windows_after_current_effect(effects.close_now().to_vec(), cx);
     refresh_windows(effects.refresh().to_vec(), cx);
     close_windows_after_current_effect(effects.close_after_current_effect().to_vec(), cx);
 }
@@ -544,10 +542,6 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow_mut()
             .record_payload_drag_hovered_viewport(session, space, window_id)
-    }
-
-    pub(crate) fn has_active_payload_drag(&self) -> bool {
-        self.runtime.borrow().has_active_payload_drag()
     }
 
     pub(crate) fn active_payload_drag_tear_off_geometry(
@@ -889,17 +883,14 @@ impl DockViewportRuntimeHandle {
         drop_guide_style: crate::DockDropGuideStyle,
         passthrough_pointer_input: bool,
     ) -> DockViewportRenderedHostScenePreparation {
-        let window_handle = window.window_handle();
-        let window_id = window_handle.window_id();
+        let window_id = window.window_handle().window_id();
         let backend_focus_changed = self.reconcile_backend_window_focus(cx);
         let viewport_frame_changed = self.reconcile_viewport_frame_except_window(window_id, cx);
         let pointer_sync_changed =
             sync_render_passthrough_pointer_input(self, window, passthrough_pointer_input);
-        let registration_update =
-            self.register_rendered_host_viewport_with_cleanup(space.clone(), window_handle);
+        let registration_update = self
+            .register_rendered_host_viewport_with_cleanup(space.clone(), window.window_handle());
         let registration_changed = refresh_runtime_update(registration_update, cx);
-        let should_watch_host_scene =
-            self.has_routed_drop_preview() || self.has_active_payload_drag();
         let registration = self.begin_viewport_host_scene_frame(
             space.clone(),
             window_id,
@@ -911,9 +902,6 @@ impl DockViewportRuntimeHandle {
         let (host_scene_changed, frame) = registration
             .map(|registration| (registration.changed, Some(registration.frame)))
             .unwrap_or((false, None));
-        let render_token = should_watch_host_scene.then(|| {
-            self.mark_rendered_viewport_host_scene(DockViewportIdentity::new(space, window_id))
-        });
         DockViewportRenderedHostScenePreparation {
             changed: backend_focus_changed
                 || viewport_frame_changed
@@ -921,7 +909,6 @@ impl DockViewportRuntimeHandle {
                 || registration_changed
                 || host_scene_changed,
             frame,
-            render_token,
         }
     }
 
@@ -933,27 +920,6 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow_mut()
             .register_rendered_host_viewport_with_cleanup(space, window)
-    }
-
-    pub(crate) fn mark_rendered_viewport_host_scene(
-        &self,
-        identity: DockViewportIdentity,
-    ) -> DockViewportHostSceneRenderToken {
-        self.runtime
-            .borrow_mut()
-            .mark_rendered_viewport_host_scene(identity)
-    }
-
-    pub(crate) fn expire_viewport_host_scene_if_not_rendered_after<C: open_gpui::AppContext>(
-        &self,
-        token: DockViewportHostSceneRenderToken,
-        cx: &mut C,
-    ) -> bool {
-        let update = self
-            .runtime
-            .borrow_mut()
-            .expire_viewport_host_scene_if_not_rendered_after(token);
-        refresh_runtime_update(update, cx)
     }
 
     pub(crate) fn reconcile_viewport_frame<C: open_gpui::AppContext>(&self, cx: &mut C) -> bool {
@@ -1004,6 +970,32 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow()
             .rendered_leaf_bounds_for_tabs(space, window_id, tabs)
+    }
+
+    pub(crate) fn rendered_tab_bar_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        self.runtime
+            .borrow()
+            .rendered_tab_bar_bounds_for_tabs(space, window_id, tabs)
+    }
+
+    pub(crate) fn rendered_tab_label_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+        target_index: usize,
+    ) -> Option<Bounds<Pixels>> {
+        self.runtime.borrow().rendered_tab_label_bounds_for_tabs(
+            space,
+            window_id,
+            tabs,
+            target_index,
+        )
     }
 
     pub(crate) fn rendered_host_bounds_for_window(
@@ -1098,24 +1090,21 @@ impl DockViewportRuntimeHandle {
         request: &DockViewportDropRouteRequest,
         cx: &mut C,
     ) -> DockViewportResolvedDropRouteOutcome {
-        log::info!(
-            "[DEBUG-docking-native] begin resolve drop delivery source_space={} source_node={:?} origin={:?} drag_session={:?}",
-            request.source_space().as_str(),
-            request.source_node(),
-            request.release_origin(),
-            request.drag_session().as_ref().map(|session| session.id())
-        );
         let refresh = self
             .runtime
             .borrow_mut()
             .resolve_payload_drop_delivery_with_outcome(request, cx);
-        log::info!(
-            "[DEBUG-docking-native] finish resolve drop delivery source_space={} source_node={:?} route={:?} changed={}",
-            request.source_space().as_str(),
-            request.source_node(),
-            refresh.outcome.resolution().route(),
-            refresh.outcome.changed()
-        );
+        if refresh.outcome.changed() {
+            log::debug!(
+                "[DEBUG-docking-native] resolve drop delivery source_space={} source_node={:?} origin={:?} drag_session={:?} route={:?} changed={}",
+                request.source_space().as_str(),
+                request.source_node(),
+                request.release_origin(),
+                request.drag_session().as_ref().map(|session| session.id()),
+                refresh.outcome.resolution().route(),
+                refresh.outcome.changed()
+            );
+        }
         refresh_viewport_window_effects(refresh.window_effects(), cx);
         refresh.outcome
     }
@@ -1215,10 +1204,6 @@ impl DockViewportRuntimeHandle {
             .routed_drop_route_preview_for(space, window_id)
     }
 
-    pub(crate) fn has_routed_drop_preview(&self) -> bool {
-        self.runtime.borrow().has_routed_drop_preview()
-    }
-
     #[cfg(test)]
     pub(crate) fn has_routed_drop_preview_for_drag_session(
         &self,
@@ -1266,7 +1251,7 @@ impl DockViewportRuntimeHandle {
         request: &DockViewportDropRouteRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        log::info!(
+        log::debug!(
             "[DEBUG-docking-native] resolve commit request source_space={} source_node={:?} release_origin={:?} drag_session={:?} release_position=({}, {})",
             request.source_space().as_str(),
             request.source_node(),
@@ -1276,7 +1261,7 @@ impl DockViewportRuntimeHandle {
             request.release_position().y
         );
         let resolution = self.resolve_payload_drop_delivery_for_request(request, cx);
-        log::info!(
+        log::debug!(
             "[DEBUG-docking-native] resolved commit route source_space={} source_node={:?} route={:?} preview_target={:?}",
             request.source_space().as_str(),
             request.source_node(),
@@ -1286,7 +1271,7 @@ impl DockViewportRuntimeHandle {
         let delivery = match DockDropDelivery::from_resolution(resolution) {
             Ok(delivery) => delivery,
             Err(error) => {
-                log::info!(
+                log::debug!(
                     "[DEBUG-docking-native] commit rejected before delivery source_space={} source_node={:?} error={:?}",
                     request.source_space().as_str(),
                     request.source_node(),
