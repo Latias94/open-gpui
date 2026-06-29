@@ -2,9 +2,9 @@ use std::rc::Rc;
 
 use open_gpui::{App, Entity, Modifiers, Window};
 use open_gpui_ui_core::{
-    TableColumn, TableColumnId, TableColumnRegion, TableColumnSizing, TableRowChildrenLoadState,
-    TableRowId, TableSelectionMode, TableSelectionPolicy, TableSort, TableSortDirection,
-    TableState, UiPx,
+    TableColumn, TableColumnId, TableColumnRegion, TableColumnSizing, TableExpansionState,
+    TableRowChildrenLoadState, TableRowId, TableSelectionMode, TableSelectionPolicy, TableSort,
+    TableSortDirection, TableState, UiPx,
 };
 
 use super::{TableRowRenderPlan, TableRowSelectionHandler, TableRuntime};
@@ -616,6 +616,25 @@ pub(super) fn request_table_row_selection_change(
     }
 
     false
+}
+
+pub(super) fn toggle_table_expansion(
+    expansion: TableExpansionState,
+    row_id: TableRowId,
+    expanded: bool,
+) -> TableExpansionState {
+    match expansion {
+        TableExpansionState::All if expanded => TableExpansionState::All,
+        TableExpansionState::All => TableExpansionState::default(),
+        TableExpansionState::Rows(mut rows) => {
+            if expanded {
+                rows.insert(row_id);
+            } else {
+                rows.remove(&row_id);
+            }
+            TableExpansionState::Rows(rows)
+        }
+    }
 }
 
 fn effective_table_column_order(state: &TableState) -> Vec<TableColumnId> {
