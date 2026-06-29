@@ -1363,7 +1363,7 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
     }
 }
 
-fn component_source_files(component: &str) -> &'static [&'static str] {
+fn component_source_inputs(component: &str) -> &'static [&'static str] {
     match component {
         "Accordion" => &["accordion.rs"],
         "Button" => &["button.rs"],
@@ -1394,11 +1394,11 @@ fn component_source_files(component: &str) -> &'static [&'static str] {
         "ScrollArea" => &["scroll_area.rs"],
         "Splitter" => &["splitter.rs"],
         "Table" => &["table/mod.rs", "table/resolve.rs"],
-        "TableColumnVisibility" => &["table/column_visibility/component.rs"],
-        "TableFacetedFilter" => &["table/faceted_filter/component.rs"],
-        "TableGlobalFilter" => &["table/global_filter/component.rs"],
-        "TablePredicateFilter" => &["table/predicate_filter/component.rs"],
-        "TableRangeFilter" => &["table/range_filter/component.rs"],
+        "TableColumnVisibility" => &["table/column_visibility"],
+        "TableFacetedFilter" => &["table/faceted_filter"],
+        "TableGlobalFilter" => &["table/global_filter"],
+        "TablePredicateFilter" => &["table/predicate_filter"],
+        "TableRangeFilter" => &["table/range_filter"],
         "TableToolbar" => &["table/toolbar.rs"],
         "VirtualizedList" => &["virtualized_list.rs"],
         "StatusCue" => &["feedback.rs"],
@@ -2115,12 +2115,13 @@ fn component_public_methods_from_source(component: &str) -> Vec<String> {
     const MARKER_PREFIX: &str = "impl ";
 
     let marker = format!("{MARKER_PREFIX}{component} {{");
+    let source_paths = component_source_paths(component);
     let mut methods = Vec::new();
+    let mut found_impl = false;
 
-    for source_file in component_source_files(component) {
-        let (source_path, source) = read_component_source_file(source_file);
+    for source_path in &source_paths {
+        let source = read_source_file(source_path);
         let mut search_start = 0usize;
-        let mut found_impl = false;
 
         while let Some(relative_impl_start) = source[search_start..].find(&marker) {
             found_impl = true;
@@ -2177,49 +2178,65 @@ fn component_public_methods_from_source(component: &str) -> Vec<String> {
 
             search_start = body_end + 1;
         }
+    }
 
-        if !found_impl {
-            panic!("missing `{marker}` in {source_path}");
-        }
+    if !found_impl {
+        panic!(
+            "missing `{marker}` in component source mapping for `{component}`: {source_paths:?}"
+        );
     }
 
     methods
 }
 
-fn read_component_source_file(source_file: &str) -> (String, String) {
+fn component_source_paths(component: &str) -> Vec<std::path::PathBuf> {
     let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let flat_path = source_dir.join(source_file);
-    if flat_path.is_file() {
-        let source = std::fs::read_to_string(&flat_path)
-            .unwrap_or_else(|error| panic!("failed to read {flat_path:?}: {error}"));
-        return (flat_path.display().to_string(), source);
-    }
+    let mut paths = Vec::new();
 
-    let Some(module_name) = source_file.strip_suffix(".rs") else {
-        panic!("source file mapping must end in .rs: {source_file}");
-    };
-    let mod_path = source_dir.join(module_name).join("mod.rs");
-    let source = std::fs::read_to_string(&mod_path)
-        .unwrap_or_else(|error| panic!("failed to read {mod_path:?}: {error}"));
-    (mod_path.display().to_string(), source)
-}
-
-fn ui_component_source_files() -> Vec<std::path::PathBuf> {
-    fn collect_rs_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
-        let entries = std::fs::read_dir(dir)
-            .unwrap_or_else(|error| panic!("failed to read source dir {dir:?}: {error}"));
-        for entry in entries {
-            let path = entry
-                .unwrap_or_else(|error| panic!("failed to read source dir entry: {error}"))
-                .path();
-            if path.is_dir() {
-                collect_rs_files(&path, files);
-            } else if path.extension().is_some_and(|extension| extension == "rs") {
-                files.push(path);
+    for source_entry in component_source_inputs(component) {
+        let mapped_path = source_dir.join(source_entry);
+        if mapped_path.is_file() {
+            paths.push(mapped_path);
+        } else if mapped_path.is_dir() {
+            collect_rs_files(&mapped_path, &mut paths);
+        } else if let Some(module_name) = source_entry.strip_suffix(".rs") {
+            let mod_path = source_dir.join(module_name).join("mod.rs");
+            if mod_path.is_file() {
+                paths.push(mod_path);
+            } else {
+                panic!("component source input `{source_entry}` does not exist");
             }
+        } else {
+            panic!("component source input `{source_entry}` must be a .rs file or directory");
         }
     }
 
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn read_source_file(source_path: &std::path::Path) -> String {
+    std::fs::read_to_string(source_path)
+        .unwrap_or_else(|error| panic!("failed to read {source_path:?}: {error}"))
+}
+
+fn collect_rs_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    let entries = std::fs::read_dir(dir)
+        .unwrap_or_else(|error| panic!("failed to read source dir {dir:?}: {error}"));
+    for entry in entries {
+        let path = entry
+            .unwrap_or_else(|error| panic!("failed to read source dir entry: {error}"))
+            .path();
+        if path.is_dir() {
+            collect_rs_files(&path, files);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            files.push(path);
+        }
+    }
+}
+
+fn ui_component_source_files() -> Vec<std::path::PathBuf> {
     let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     collect_rs_files(&source_dir, &mut files);
@@ -11765,7 +11782,7 @@ fn table_component_source_mapping_tracks_split_render_owners() {
         "Table should resolve through table/mod.rs instead of the old single-file adapter"
     );
     assert_eq!(
-        component_source_files("Table"),
+        component_source_inputs("Table"),
         ["table/mod.rs", "table/resolve.rs"]
     );
 
@@ -11775,6 +11792,29 @@ fn table_component_source_mapping_tracks_split_render_owners() {
             "split Table render owner `{owner}` should exist"
         );
     }
+}
+
+#[test]
+fn component_source_mapping_expands_split_component_directories() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let source_files = component_source_paths("TableRangeFilter")
+        .into_iter()
+        .map(|path| {
+            path.strip_prefix(&source_dir)
+                .unwrap_or_else(|error| panic!("failed to strip source dir from {path:?}: {error}"))
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        source_files.contains(&"table/range_filter/component.rs".to_string()),
+        "split component directory mapping should include its public component file"
+    );
+    assert!(
+        source_files.contains(&"table/range_filter/state.rs".to_string()),
+        "split component directory mapping should include adjacent public contract files"
+    );
 }
 
 #[test]

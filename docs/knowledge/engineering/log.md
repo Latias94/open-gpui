@@ -6,6 +6,11 @@ status: active
 
 # Log
 
+- 2026-06-30: Started the P2/P3 fearless component refactor goal on
+  `refactor/component-p2-p3-cleanup` from `main` / `origin/main`. Read-only subagent lanes are
+  `contracts`, `large_modules`, `runtime_patterns`, and `exports_tests`; the first main-thread
+  target is the `ui_components` component contract source-scanning blind spot for split component
+  directories.
 - 2026-06-29: Continued `docs/plans/2026-06-29-002-refactor-table-depth-second-stage-plan.md`
   on `refactor/table-depth-second-stage`. The Table adapter is now split into concern-owned
   modules for header rendering, resize/reorder affordances, body rows, cells, editors, runtime,
