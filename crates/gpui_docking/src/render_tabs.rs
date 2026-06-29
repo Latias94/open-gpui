@@ -42,7 +42,11 @@ impl DockHost {
         } else {
             format!("{} tabs", items.len())
         };
-        let stack_payload = DockDragPayload::new_tabs(session.space().clone(), node, stack_title);
+        let mut stack_payload =
+            DockDragPayload::new_tabs(session.space().clone(), node, stack_title);
+        if let Some(preview_titles) = session.multi_preview_tab_titles_for_node(node) {
+            stack_payload = stack_payload.with_preview_tabs(preview_titles);
+        }
         let tab_count = items.len();
         let anchor_entity = entity.clone();
         let anchor_space = session.space().clone();

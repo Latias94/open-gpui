@@ -45,6 +45,7 @@ impl DockDropGeometry {
 pub(crate) struct DockDropBox {
     pub(crate) kind: DockDropBoxKind,
     pub(crate) hit_bounds: Bounds<Pixels>,
+    pub(crate) draw_bounds: Bounds<Pixels>,
     pub(crate) preview_bounds: Bounds<Pixels>,
 }
 
@@ -599,6 +600,7 @@ fn edge_drop_box(
         | DockDropBoxKind::OuterEdge(DropZone::Center) => return None,
     };
     let hit_bounds = local_bounds(bounds.origin, hit.clamp_to_bounds(width, height)?);
+    let draw_bounds = hit_bounds;
     let preview_bounds = offset_bounds(
         bounds.origin,
         preview_bounds(zone, width, height, metrics.split_preview_extent),
@@ -606,6 +608,7 @@ fn edge_drop_box(
     Some(DockDropBox {
         kind,
         hit_bounds,
+        draw_bounds,
         preview_bounds,
     })
 }
@@ -678,6 +681,7 @@ fn drop_box(
     DockDropBox {
         kind,
         hit_bounds,
+        draw_bounds: hit_bounds,
         preview_bounds: offset_bounds(bounds.origin, preview),
     }
 }
@@ -814,6 +818,25 @@ mod tests {
         assert!(right.preview_bounds().origin.x > left.preview_bounds().origin.x);
         assert_eq!(top.preview_bounds().origin.x, bounds.origin.x);
         assert!(bottom.preview_bounds().origin.y > top.preview_bounds().origin.y);
+    }
+
+    #[test]
+    fn drop_boxes_expose_separate_draw_and_hit_bounds() {
+        let bounds = bounds(300.0, 200.0);
+        let box_set = drop_boxes(bounds, DockDropBoxSet::Inner);
+
+        for drop_box in box_set {
+            assert_eq!(
+                drop_box.draw_bounds, drop_box.hit_bounds,
+                "current draw bounds default to the visible hit box for {:?}",
+                drop_box.kind
+            );
+            assert!(
+                bounds.contains(&drop_box.draw_bounds.center()),
+                "draw bounds should remain inside the target container for {:?}",
+                drop_box.kind
+            );
+        }
     }
 
     #[test]

@@ -170,6 +170,24 @@ impl DockHostRenderSession {
         }
     }
 
+    pub(crate) fn preview_tab_titles_for_node(&self, node_id: DockNodeId) -> Vec<String> {
+        match self.node(node_id) {
+            Some(DockNode::Tabs { items, .. }) => {
+                items.iter().map(|item| self.panel_title(item)).collect()
+            }
+            Some(DockNode::Floating { child }) => self.preview_tab_titles_for_node(*child),
+            Some(DockNode::Split { .. }) | None => Vec::new(),
+        }
+    }
+
+    pub(crate) fn multi_preview_tab_titles_for_node(
+        &self,
+        node_id: DockNodeId,
+    ) -> Option<Vec<String>> {
+        let titles = self.preview_tab_titles_for_node(node_id);
+        (titles.len() > 1).then_some(titles)
+    }
+
     pub(crate) fn floating_chrome_target(
         &self,
         node_id: DockNodeId,

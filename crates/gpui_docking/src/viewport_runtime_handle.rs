@@ -1135,20 +1135,20 @@ impl DockViewportRuntimeHandle {
     pub(crate) fn update_routed_drop_preview(
         &self,
         resolution: &DockViewportResolvedDropRoute,
-        payload_title: &str,
+        payload: &DockDragPayload,
         cx: &mut App,
     ) -> bool {
         let update = self
             .runtime
             .borrow_mut()
-            .update_routed_drop_preview(resolution, payload_title);
+            .update_routed_drop_preview(resolution, payload);
         refresh_runtime_update(update, cx)
     }
 
     pub(crate) fn update_host_routed_drop_preview(
         &self,
         resolution: &DockViewportResolvedDropRoute,
-        payload_title: &str,
+        payload: &DockDragPayload,
         host_space: DockSpaceId,
         host_window_id: WindowId,
         host_position: Point<Pixels>,
@@ -1156,7 +1156,7 @@ impl DockViewportRuntimeHandle {
     ) -> bool {
         let update = self.runtime.borrow_mut().update_host_routed_drop_preview(
             resolution,
-            payload_title,
+            payload,
             host_space,
             host_window_id,
             host_position,

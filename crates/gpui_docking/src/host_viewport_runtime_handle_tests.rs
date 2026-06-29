@@ -91,6 +91,36 @@ fn cache_known_viewport_preview(
     drag_session: Option<DockRuntimeDragSession>,
     payload_title: &str,
 ) -> crate::DockViewportResolvedDropRoute {
+    let drag_payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_node,
+        item("__test__"),
+        payload_title.to_string(),
+    );
+    cache_known_viewport_preview_with_payload(
+        cx,
+        runtime,
+        source_space,
+        source_node,
+        payload,
+        release_position,
+        hovered_window,
+        drag_session,
+        &drag_payload,
+    )
+}
+
+fn cache_known_viewport_preview_with_payload(
+    cx: &mut TestAppContext,
+    runtime: &DockViewportRuntimeHandle,
+    source_space: DockSpaceId,
+    source_node: DockNodeId,
+    payload: DockViewportDropPayload,
+    release_position: open_gpui::Point<open_gpui::Pixels>,
+    hovered_window: impl Into<open_gpui::AnyWindowHandle>,
+    drag_session: Option<DockRuntimeDragSession>,
+    drag_payload: &DockDragPayload,
+) -> crate::DockViewportResolvedDropRoute {
     let request = DockViewportDropRouteRequest::from_target_context(
         source_space,
         source_node,
@@ -110,7 +140,7 @@ fn cache_known_viewport_preview(
         resolution.route()
     );
     let preview_changed =
-        cx.update(|app| runtime.update_routed_drop_preview(&resolution, payload_title, app));
+        cx.update(|app| runtime.update_routed_drop_preview(&resolution, drag_payload, app));
     let preview_target = resolution
         .routed_preview_target_snapshot()
         .expect("known viewport preview should carry a routed preview target");
@@ -132,10 +162,36 @@ fn cache_host_route_preview(
     host_window_id: open_gpui::WindowId,
     host_position: open_gpui::Point<open_gpui::Pixels>,
 ) {
+    let payload = DockDragPayload::new_item(
+        DockSpaceId::from("__test__"),
+        Default::default(),
+        item("__test__"),
+        payload_title.to_string(),
+    );
+    cache_host_route_preview_with_payload(
+        cx,
+        runtime,
+        resolution,
+        &payload,
+        host_space,
+        host_window_id,
+        host_position,
+    );
+}
+
+fn cache_host_route_preview_with_payload(
+    cx: &mut TestAppContext,
+    runtime: &DockViewportRuntimeHandle,
+    resolution: &crate::DockViewportResolvedDropRoute,
+    payload: &DockDragPayload,
+    host_space: DockSpaceId,
+    host_window_id: open_gpui::WindowId,
+    host_position: open_gpui::Point<open_gpui::Pixels>,
+) {
     cx.update(|app| {
         runtime.update_host_routed_drop_preview(
             resolution,
-            payload_title,
+            payload,
             host_space,
             host_window_id,
             host_position,
@@ -4291,7 +4347,7 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
     let target_space = DockSpaceId::from("target");
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
-        items: vec![item("a")],
+        items: vec![item("a"), item("c")],
         selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
@@ -4304,6 +4360,7 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
     let mut workspace = DockWorkspace::new(source_space.clone(), graph);
     workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
     let controller = cx.new(|_| DockController::new(workspace));
     let runtime = DockViewportRuntimeHandle::new(controller);
 
@@ -4351,23 +4408,26 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
 
     let target_screen_position =
         screen_position_for_host_position(target_bounds, target_center_host_position());
-    let resolution = cache_known_viewport_preview(
+    let stack_payload =
+        DockDragPayload::new_tabs(source_space.clone(), source_tabs, "2 tabs".to_string())
+            .with_preview_tabs(["Panel A".to_string(), "Panel C".to_string()]);
+    let resolution = cache_known_viewport_preview_with_payload(
         cx,
         &runtime,
         source_space.clone(),
         source_tabs,
-        DockViewportDropPayload::Item(item("a")),
+        DockViewportDropPayload::Tabs,
         target_screen_position,
         target_opened.window(),
         None,
-        "Panel A",
+        &stack_payload,
     );
 
-    cache_host_route_preview(
+    cache_host_route_preview_with_payload(
         cx,
         &runtime,
         &resolution,
-        "Panel A",
+        &stack_payload,
         source_space.clone(),
         source_opened.window().window_id(),
         target_center_host_position(),
@@ -4379,6 +4439,20 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
         })
         .expect("source host should update route preview");
     cx.run_until_parked();
+
+    let routed_preview = runtime
+        .routed_drop_preview_for(&target_space, target_opened.window().window_id())
+        .expect("target runtime should retain routed preview scene");
+    assert_eq!(
+        routed_preview
+            .preview
+            .scene
+            .payload_tabs
+            .as_ref()
+            .map(|payload_tabs| payload_tabs.tabs.len()),
+        Some(2),
+        "routed preview scene should preserve all stack payload tabs before target render"
+    );
 
     let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
     let target_preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
@@ -4394,13 +4468,27 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
     let target_preview_tab = selector_for(
         &target_visual,
         &target_host,
-        DockDebugRegion::DropPayloadTabPreview,
+        DockDebugRegion::DropPayloadTabPreview { index: 0 },
     )
-    .expect("target viewport should render the payload tab label inside the routed preview");
+    .expect("target viewport should render the first payload tab label inside the routed preview");
+    let target_preview_second_tab = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::DropPayloadTabPreview { index: 1 },
+    )
+    .expect(
+        "target viewport should preserve the second payload tab label inside the routed preview",
+    );
     let target_preview_tab_bounds = debug_bounds(&mut target_visual, &target_preview_tab);
+    let target_preview_second_tab_bounds =
+        debug_bounds(&mut target_visual, &target_preview_second_tab);
     assert!(
         target_preview_bounds.size.width > px(0.0) && target_preview_bounds.size.height > px(0.0),
         "target routed drop preview should have visible bounds"
+    );
+    assert!(
+        target_preview_second_tab_bounds.origin.x >= target_preview_tab_bounds.right(),
+        "target routed payload tab previews should keep stack order: first={target_preview_tab_bounds:?} second={target_preview_second_tab_bounds:?}"
     );
     assert_close(
         f32::from(target_preview_body_bounds.origin.y),
@@ -4533,7 +4621,7 @@ fn local_preview_render_keeps_hidden_routed_preview_deliverable(cx: &mut TestApp
         })
         .expect("target host should publish a local drop preview");
     cx.update(|app| {
-        runtime.update_routed_drop_preview(&preview_resolution, "Panel A", app);
+        runtime.update_routed_drop_preview(&preview_resolution, &payload, app);
     });
     cx.run_until_parked();
     target_window
@@ -5035,7 +5123,7 @@ fn source_only_release_with_known_empty_hover_does_not_commit_from_stale_routed_
         "fresh preview should mint delivery bound to the active drag session"
     );
     cx.update(|app| {
-        runtime.update_routed_drop_preview(&preview_resolution, "Panel A", app);
+        runtime.update_routed_drop_preview(&preview_resolution, &payload, app);
     });
     assert!(
         runtime
@@ -5662,7 +5750,7 @@ fn runtime_opened_viewports_do_not_reuse_previewed_target_when_source_only_relea
         "preview route should target the main viewport"
     );
     cx.update(|app| {
-        runtime.update_routed_drop_preview(&resolution, "Panel A", app);
+        runtime.update_routed_drop_preview(&resolution, &payload, app);
     });
     assert!(
         runtime

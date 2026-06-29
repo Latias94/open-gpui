@@ -224,6 +224,7 @@ mod tests {
         let drop_box = expected_drop_box_kind(&kind).map(|kind| crate::geometry::DockDropBox {
             kind,
             hit_bounds: bounds(),
+            draw_bounds: bounds(),
             preview_bounds: bounds(),
         });
         let edge_sizing = match kind {
@@ -688,6 +689,7 @@ mod tests {
             expected_drop_box_kind(&target.kind).map(|kind| crate::geometry::DockDropBox {
                 kind,
                 hit_bounds: bounds(),
+                draw_bounds: bounds(),
                 preview_bounds: bounds(),
             });
 
@@ -760,6 +762,7 @@ mod tests {
         target.drop_box = Some(crate::geometry::DockDropBox {
             kind: crate::geometry::DockDropBoxKind::InnerEdge(DropZone::Left),
             hit_bounds: bounds(),
+            draw_bounds: bounds(),
             preview_bounds: bounds(),
         });
 

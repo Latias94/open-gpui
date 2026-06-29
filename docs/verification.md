@@ -547,6 +547,18 @@ Manual native docking dogfood should use the same example after the automated ch
     edge.
 15. Drag a tab or stack outside every valid host. Confirm the route marker reads as tear-off or
     rejection only; no fake blue dock target or payload tooltip should appear at the source.
+16. Drag the two-tab `Preview` / `Diff` stack over a compatible target stack center. The
+    destination preview must show a shared preview body plus two selected-tab-like payload tab
+    previews in payload order; the previews should clip to the target tab bar instead of becoming a
+    single dark rectangle.
+17. Repeat the same two-tab stack drag across windows. The target window must render the same
+    payload tab preview structure as a local hover, while the source window shows only route-marker
+    feedback when applicable.
+18. Hover a side drop box for the root central leaf and a side drop box for a nested child leaf.
+    The root central leaf should use outer split semantics; the nested child leaf should keep
+    inner split semantics.
+19. Hover rejected center and route targets. The target preview must use rejected tokens, suppress
+    payload tab previews, and leave the graph unchanged on release.
 
 Current platform caveats for docking multi-viewport dogfood:
 

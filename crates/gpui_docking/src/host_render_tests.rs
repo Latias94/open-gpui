@@ -112,7 +112,7 @@ fn drop_guides_render_while_tab_drag_is_active(cx: &mut TestAppContext) {
             .unwrap_or_else(|| panic!("{zone:?} drop box should exist"));
         assert_bounds_close(
             guide_bounds,
-            expected.hit_bounds,
+            expected.draw_bounds,
             &format!("{zone:?} guide"),
         );
     }
@@ -325,7 +325,7 @@ fn root_drop_guides_use_outer_edge_drop_box_geometry(cx: &mut TestAppContext) {
             .unwrap_or_else(|| panic!("{zone:?} outer drop box should exist"));
         assert_bounds_close(
             guide_bounds,
-            expected.hit_bounds,
+            expected.draw_bounds,
             &format!("{zone:?} root guide"),
         );
     }
@@ -411,7 +411,7 @@ fn empty_host_center_guide_uses_center_drop_box_geometry(cx: &mut TestAppContext
     .expect("empty host center guide selector should be emitted");
     assert_bounds_close(
         debug_bounds(&mut target_visual, &center_guide),
-        expected_center.hit_bounds,
+        expected_center.draw_bounds,
         "empty host center guide",
     );
 }

@@ -372,11 +372,13 @@ fn resolved_target(kind: DockResolvedDropTargetKind) -> DockResolvedDropTarget {
         DockResolvedDropTargetKind::LeafCenter { .. } => Some(DockDropBox {
             kind: DockDropBoxKind::Center,
             hit_bounds: bounds,
+            draw_bounds: bounds,
             preview_bounds: bounds,
         }),
         DockResolvedDropTargetKind::InnerEdge { zone, .. } => Some(DockDropBox {
             kind: DockDropBoxKind::InnerEdge(zone),
             hit_bounds: bounds,
+            draw_bounds: bounds,
             preview_bounds: bounds,
         }),
         DockResolvedDropTargetKind::RootEdge { .. }

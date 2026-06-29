@@ -1153,8 +1153,20 @@ fn assert_known_viewport_route(
         .as_ref()
         .unwrap_or_else(|| panic!("{}: hover/release should record a route", case_name))
         .target;
-    assert_eq!(target.space(), Some(target_space), "{}", case_name);
-    assert_eq!(target.host_position(), Some(host_position), "{}", case_name);
+    assert_eq!(
+        target.space(),
+        Some(target_space),
+        "{}: target={:?}",
+        case_name,
+        target
+    );
+    assert_eq!(
+        target.host_position(),
+        Some(host_position),
+        "{}: target={:?}",
+        case_name,
+        target
+    );
 }
 
 fn assert_target_hover_resolution(

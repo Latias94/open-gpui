@@ -44,9 +44,15 @@ const DROP_PREVIEW_TAB_MAX_WIDTH: f32 = 180.0;
 const DROP_PREVIEW_TAB_TEXT_PADDING: f32 = 22.0;
 const DROP_PREVIEW_TAB_MIN_VISIBLE_WIDTH: f32 = 18.0;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct DockDropPreviewTabLayout {
     body_bounds: Bounds<Pixels>,
+    tab_bounds: Vec<DockDropPreviewTabPlacement>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DockDropPreviewTabPlacement {
+    index: usize,
     tab_bounds: Bounds<Pixels>,
 }
 
@@ -205,20 +211,14 @@ impl DockHost {
     fn drop_preview_tab_layout(
         &self,
         session: &DockHostRenderSession,
-        preview: &DockDropPreview,
-        payload_title: &str,
+        preview_bounds: Bounds<Pixels>,
+        payload_tabs: &crate::drop_preview::DockPreviewPayloadTabs,
         window: &Window,
     ) -> Option<DockDropPreviewTabLayout> {
-        if !preview.payload_tab {
-            return None;
-        }
-
-        let target_tabs = preview.target_tabs?;
+        let target_tabs = payload_tabs.target_tabs?;
         let DockNode::Tabs { items, .. } = session.node(target_tabs)?.clone() else {
             return None;
         };
-
-        let preview_bounds = preview.bounds;
         let tab_height = px(f32::from(preview_bounds.size.height)
             .min(DROP_PREVIEW_TAB_HEIGHT)
             .max(0.0));
@@ -228,15 +228,11 @@ impl DockHost {
 
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
-        let payload_line = window.text_system().shape_line(
-            SharedString::from(payload_title.to_string()),
-            font_size,
-            &[text_style.to_run(payload_title.len())],
-            None,
-        );
-        let payload_tab_width = preview_tab_width(payload_line.width());
         let tab_gap = px(DROP_PREVIEW_TAB_GAP);
-        let insert_index = preview.insert_index.unwrap_or(items.len()).min(items.len());
+        let insert_index = payload_tabs
+            .insert_index
+            .unwrap_or(items.len())
+            .min(items.len());
         let mut tab_left = self
             .viewport_runtime()
             .rendered_tab_bar_bounds_for_tabs(self.space(), None, target_tabs)
@@ -265,19 +261,64 @@ impl DockHost {
             }
         }
 
-        let tab_width = payload_tab_width
-            .min(preview_bounds.size.width)
-            .max(px(0.0));
-        let max_tab_left = (preview_bounds.origin.x + preview_bounds.size.width
-            - px(DROP_PREVIEW_TAB_MIN_VISIBLE_WIDTH))
-        .max(preview_bounds.origin.x);
-        let tab_left = tab_left.clamp(preview_bounds.origin.x, max_tab_left);
-        let tab_bounds = Bounds::new(
-            point(tab_left, preview_bounds.origin.y),
-            open_gpui::size(tab_width, tab_height),
-        );
+        let tab_strip_left = f32::from(preview_bounds.origin.x);
+        let tab_strip_right = f32::from(preview_bounds.origin.x + preview_bounds.size.width);
+        let tab_gap = f32::from(tab_gap);
+        let requested_left = f32::from(tab_left).max(tab_strip_left);
+        let mut tab_widths = Vec::with_capacity(payload_tabs.tabs.len());
+        for payload_tab in &payload_tabs.tabs {
+            let payload_title = payload_tab.title.as_str();
+            let payload_line = window.text_system().shape_line(
+                SharedString::from(payload_title.to_string()),
+                font_size,
+                &[text_style.to_run(payload_title.len())],
+                None,
+            );
+            tab_widths.push(f32::from(preview_tab_width(payload_line.width())));
+        }
+        let mut visible_count = tab_widths.len();
+        while visible_count > 0 {
+            let total_gap = tab_gap * visible_count.saturating_sub(1) as f32;
+            if tab_strip_right - tab_strip_left
+                >= (DROP_PREVIEW_TAB_MIN_VISIBLE_WIDTH * visible_count as f32) + total_gap
+            {
+                break;
+            }
+            visible_count -= 1;
+        }
+        if visible_count == 0 {
+            return None;
+        }
+        tab_widths.truncate(visible_count);
+        let total_gap = tab_gap * visible_count.saturating_sub(1) as f32;
+        let available_width =
+            (tab_strip_right - requested_left).max(tab_strip_right - tab_strip_left);
+        let max_total_tab_width =
+            (available_width - total_gap).max(DROP_PREVIEW_TAB_MIN_VISIBLE_WIDTH);
+        let requested_total_tab_width: f32 = tab_widths.iter().sum();
+        if requested_total_tab_width > max_total_tab_width {
+            let compressed_width = (max_total_tab_width / visible_count as f32)
+                .max(DROP_PREVIEW_TAB_MIN_VISIBLE_WIDTH);
+            tab_widths.fill(compressed_width);
+        }
+        let tab_strip_width = tab_widths.iter().sum::<f32>() + total_gap;
+        let mut tab_left =
+            requested_left.min((tab_strip_right - tab_strip_width).max(tab_strip_left));
+        let mut tab_bounds = Vec::with_capacity(payload_tabs.tabs.len());
+        for (index, tab_width) in tab_widths.into_iter().enumerate() {
+            tab_bounds.push(DockDropPreviewTabPlacement {
+                index,
+                tab_bounds: Bounds::new(
+                    point(px(tab_left), preview_bounds.origin.y),
+                    open_gpui::size(px(tab_width), tab_height),
+                ),
+            });
+            tab_left += tab_width + tab_gap;
+        }
 
-        let body_origin_y = tab_bounds.origin.y + tab_bounds.size.height;
+        let first_tab_bounds = tab_bounds.first()?.tab_bounds;
+
+        let body_origin_y = first_tab_bounds.origin.y + first_tab_bounds.size.height;
         let body_height =
             (preview_bounds.origin.y + preview_bounds.size.height - body_origin_y).max(px(0.0));
         let body_bounds = Bounds::new(
@@ -518,9 +559,7 @@ impl DockHost {
         window: &mut Window,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        let active_payload_title = cx
-            .active_drag_value::<DockDragPayload>()
-            .map(|payload| payload.title().to_string());
+        let active_payload = cx.active_drag_value::<DockDragPayload>().cloned();
         let routed_preview = self
             .viewport_runtime()
             .routed_drop_preview_for(self.space(), window.window_handle().window_id());
@@ -528,20 +567,15 @@ impl DockHost {
         let route_preview = self
             .viewport_runtime()
             .routed_drop_route_preview_for(self.space(), window.window_handle().window_id());
-        let routed_target_preview =
-            routed_preview.map(|preview| (preview.preview, Some(preview.payload_title)));
-
-        if let Some(preview) = local_preview {
-            return Some(self.render_target_drop_preview(
-                session,
-                preview,
-                active_payload_title,
-                window,
-            ));
+        if let Some(mut preview) = local_preview {
+            if let Some(payload) = active_payload.as_ref() {
+                preview.populate_payload_tabs(payload);
+            }
+            return Some(self.render_target_drop_preview(session, preview, window));
         }
 
-        if let Some((preview, payload_title)) = routed_target_preview {
-            return Some(self.render_target_drop_preview(session, preview, payload_title, window));
+        if let Some(routed_preview) = routed_preview {
+            return Some(self.render_target_drop_preview(session, routed_preview.preview, window));
         }
 
         route_preview.map(|preview| self.render_route_drop_preview(session, preview))
@@ -551,23 +585,28 @@ impl DockHost {
         &mut self,
         session: &DockHostRenderSession,
         preview: DockDropPreview,
-        payload_title: Option<String>,
         window: &Window,
     ) -> AnyElement {
-        let bounds = preview
-            .target_tabs
+        let scene = &preview.scene;
+        let scene_bounds = scene
+            .active_drop_box()
+            .map(|drop_box| drop_box.preview_bounds)
+            .unwrap_or(scene.body.future_bounds);
+        let bounds = scene
+            .payload_tabs
+            .as_ref()
+            .and_then(|payload_tabs| payload_tabs.target_tabs)
             .and_then(|tabs| {
-                preview.payload_tab.then(|| {
-                    self.viewport_runtime()
-                        .rendered_leaf_bounds_for_tabs(self.space(), None, tabs)
-                })?
+                self.viewport_runtime()
+                    .rendered_leaf_bounds_for_tabs(self.space(), None, tabs)
             })
-            .unwrap_or(preview.bounds);
+            .unwrap_or(scene_bounds);
         let selector = self.record_debug_selector(
             DockDebugRegion::DropPreview,
             format!("{}:drop-preview", session.selector_prefix()),
         );
-        let (border, background) = drop_preview_colors(&preview);
+        let theme = dock_preview_theme();
+        let palette = theme.target_preview(&scene.decision);
         let mut element = div()
             .id(selector.clone())
             .debug_selector(move || selector)
@@ -578,16 +617,13 @@ impl DockHost {
             .h(bounds.size.height)
             .overflow_hidden();
 
-        if let Some(title) = payload_title
-            && let Some(layout) = self.drop_preview_tab_layout(session, &preview, &title, window)
+        if let Some(payload_tabs) = payload_tabs_for_render(scene)
+            && let Some(layout) =
+                self.drop_preview_tab_layout(session, bounds, &payload_tabs, window)
         {
             let body_selector = self.record_debug_selector(
                 DockDebugRegion::DropPreviewBody,
                 format!("{}:drop-preview:body", session.selector_prefix()),
-            );
-            let tab_selector = self.record_debug_selector(
-                DockDebugRegion::DropPayloadTabPreview,
-                format!("{}:drop-preview:payload-tab", session.selector_prefix()),
             );
             let mut body = div()
                 .id(body_selector.clone())
@@ -598,36 +634,50 @@ impl DockHost {
                 .w(layout.body_bounds.size.width)
                 .h(layout.body_bounds.size.height)
                 .border_1()
-                .border_color(border)
-                .bg(background);
+                .border_color(palette.border)
+                .bg(palette.body_background);
             if layout.body_bounds.size.height > px(0.0) {
                 body = body.rounded_b_sm().border_t_0();
             }
-            element = element.child(body).child(
-                div()
-                    .id(tab_selector.clone())
-                    .debug_selector(move || tab_selector)
-                    .absolute()
-                    .left(layout.tab_bounds.origin.x - bounds.origin.x)
-                    .top(layout.tab_bounds.origin.y - bounds.origin.y)
-                    .flex()
-                    .items_center()
-                    .justify_start()
-                    .h(layout.tab_bounds.size.height)
-                    .w(layout.tab_bounds.size.width)
-                    .px_2()
-                    .border_1()
-                    .border_color(border)
-                    .bg(rgb(0xf8fafc))
-                    .text_color(rgb(0x334155))
-                    .text_sm()
-                    .shadow_sm()
-                    .truncate()
-                    .rounded_t_sm()
-                    .rounded_br_sm()
-                    .border_b_0()
-                    .child(title),
-            );
+            element = element.child(body);
+            for placement in layout.tab_bounds {
+                let tab = &payload_tabs.tabs[placement.index];
+                let tab_selector = self.record_debug_selector(
+                    DockDebugRegion::DropPayloadTabPreview {
+                        index: placement.index,
+                    },
+                    format!(
+                        "{}:drop-preview:payload-tab:{}",
+                        session.selector_prefix(),
+                        placement.index
+                    ),
+                );
+                element = element.child(
+                    div()
+                        .id(tab_selector.clone())
+                        .debug_selector(move || tab_selector)
+                        .absolute()
+                        .left(placement.tab_bounds.origin.x - bounds.origin.x)
+                        .top(placement.tab_bounds.origin.y - bounds.origin.y)
+                        .flex()
+                        .items_center()
+                        .justify_start()
+                        .h(placement.tab_bounds.size.height)
+                        .w(placement.tab_bounds.size.width)
+                        .px_2()
+                        .border_1()
+                        .border_color(palette.border)
+                        .bg(palette.tab_background)
+                        .text_color(palette.tab_text)
+                        .text_sm()
+                        .shadow_sm()
+                        .truncate()
+                        .rounded_t_sm()
+                        .rounded_br_sm()
+                        .border_b_0()
+                        .child(tab.title.clone()),
+                );
+            }
         } else {
             element = element.child(
                 div()
@@ -637,8 +687,8 @@ impl DockHost {
                     .w(bounds.size.width)
                     .h(bounds.size.height)
                     .border_1()
-                    .border_color(border)
-                    .bg(background),
+                    .border_color(palette.border)
+                    .bg(palette.body_background),
             );
         }
 
@@ -655,7 +705,8 @@ impl DockHost {
             DockDebugRegion::DropRoutePreview { kind: preview.kind },
             format!("{}:drop-route-preview", session.selector_prefix()),
         );
-        let (border, background) = drop_route_preview_colors(&preview);
+        let theme = dock_preview_theme();
+        let palette = theme.route_preview(&preview);
 
         div()
             .id(selector.clone())
@@ -666,8 +717,8 @@ impl DockHost {
             .w(bounds.size.width)
             .h(bounds.size.height)
             .border_1()
-            .border_color(border)
-            .bg(background)
+            .border_color(palette.border)
+            .bg(palette.background)
             .into_any_element()
     }
 
@@ -769,8 +820,9 @@ impl DockHost {
             DockDebugRegion::DropGuide { node, zone },
             format!("{}:drop-guide:{selector_suffix}", session.selector_prefix()),
         );
-        let local_bounds = localize_bounds(drop_box.hit_bounds, container_bounds.origin);
-        let palette = drop_guide_palette(drop_box.kind, active);
+        let local_bounds = localize_bounds(drop_box.draw_bounds, container_bounds.origin);
+        let theme = dock_preview_theme();
+        let palette = theme.drop_guide(drop_box.kind, active);
         let cue = guide_directional_cue(zone, local_bounds.size, palette.cue);
         let inset = guide_inset_outline(local_bounds.size, palette.inset);
 
@@ -869,6 +921,16 @@ impl DockHost {
     }
 }
 
+fn payload_tabs_for_render(
+    scene: &crate::drop_preview::DockPreviewScene,
+) -> Option<crate::drop_preview::DockPreviewPayloadTabs> {
+    let payload_tabs = scene.payload_tabs.as_ref()?;
+    if !scene.decision.is_allowed() || scene.active_split().is_some() {
+        return None;
+    }
+    (!payload_tabs.tabs.is_empty()).then(|| payload_tabs.clone())
+}
+
 fn drop_guide_target_for_zone(
     session: &DockHostRenderSession,
     node: Option<DockNodeId>,
@@ -879,14 +941,6 @@ fn drop_guide_target_for_zone(
         Some(tabs) => tabs_drop_guide_target(session, tabs, zone, graph),
         None => host_drop_guide_target(session, zone, graph),
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct DockGuidePalette {
-    border: Rgba,
-    background: Rgba,
-    cue: Rgba,
-    inset: Rgba,
 }
 
 fn drop_guide_box_for_zone(
@@ -923,35 +977,6 @@ fn drop_guide_box_for_zone(
     geometry::drop_boxes_with_style(target_bounds, set, session.drop_guide_style())
         .into_iter()
         .find(|drop_box| drop_box.kind == kind)
-}
-
-fn drop_guide_palette(kind: geometry::DockDropBoxKind, active: bool) -> DockGuidePalette {
-    match (kind.is_center(), active) {
-        (true, true) => DockGuidePalette {
-            border: rgb(0x2563eb),
-            background: rgba(0x93c5fd59),
-            cue: rgb(0x1d4ed8),
-            inset: rgba(0xffffff73),
-        },
-        (true, false) => DockGuidePalette {
-            border: rgba(0x3b82f680),
-            background: rgba(0xdbeafe45),
-            cue: rgba(0x2563ebad),
-            inset: rgba(0xffffff52),
-        },
-        (false, true) => DockGuidePalette {
-            border: rgb(0x1d4ed8),
-            background: rgba(0x60a5fa52),
-            cue: rgb(0x1e40af),
-            inset: rgba(0xffffff6b),
-        },
-        (false, false) => DockGuidePalette {
-            border: rgba(0x3b82f666),
-            background: rgba(0xbfdbfe33),
-            cue: rgba(0x2563eb94),
-            inset: rgba(0xffffff40),
-        },
-    }
 }
 
 fn guide_directional_cue(
@@ -1140,34 +1165,138 @@ fn host_drop_guide_target(
     })
 }
 
-fn drop_preview_colors(preview: &DockDropPreview) -> (Rgba, Rgba) {
-    if preview.rejected {
-        return (rgb(0xdc2626), rgba(0xfca5a547));
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DockPreviewTheme {
+    accepted_target: DockTargetPreviewTokens,
+    rejected_target: DockTargetPreviewTokens,
+    guide_center_active: DockDropGuideTokens,
+    guide_center_inactive: DockDropGuideTokens,
+    guide_edge_active: DockDropGuideTokens,
+    guide_edge_inactive: DockDropGuideTokens,
+    route_known_viewport: DockRoutePreviewTokens,
+    route_tear_off: DockRoutePreviewTokens,
+    route_rejected: DockRoutePreviewTokens,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DockTargetPreviewTokens {
+    border: Rgba,
+    body_background: Rgba,
+    tab_background: Rgba,
+    tab_text: Rgba,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DockDropGuideTokens {
+    border: Rgba,
+    background: Rgba,
+    cue: Rgba,
+    inset: Rgba,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DockRoutePreviewTokens {
+    border: Rgba,
+    background: Rgba,
+}
+
+impl DockPreviewTheme {
+    fn default_tokens() -> Self {
+        Self {
+            accepted_target: DockTargetPreviewTokens {
+                border: rgb(0x2563eb),
+                body_background: rgba(0x3b82f647),
+                tab_background: rgba(0x2563ebd9),
+                tab_text: rgb(0xffffff),
+            },
+            rejected_target: DockTargetPreviewTokens {
+                border: rgb(0xdc2626),
+                body_background: rgba(0xfca5a547),
+                tab_background: rgba(0xdc2626dd),
+                tab_text: rgb(0xffffff),
+            },
+            guide_center_active: DockDropGuideTokens {
+                border: rgb(0x2563eb),
+                background: rgba(0x93c5fd59),
+                cue: rgb(0x1d4ed8),
+                inset: rgba(0xffffff73),
+            },
+            guide_center_inactive: DockDropGuideTokens {
+                border: rgba(0x3b82f680),
+                background: rgba(0xdbeafe45),
+                cue: rgba(0x2563ebad),
+                inset: rgba(0xffffff52),
+            },
+            guide_edge_active: DockDropGuideTokens {
+                border: rgb(0x1d4ed8),
+                background: rgba(0x60a5fa52),
+                cue: rgb(0x1e40af),
+                inset: rgba(0xffffff6b),
+            },
+            guide_edge_inactive: DockDropGuideTokens {
+                border: rgba(0x3b82f666),
+                background: rgba(0xbfdbfe33),
+                cue: rgba(0x2563eb94),
+                inset: rgba(0xffffff40),
+            },
+            route_known_viewport: DockRoutePreviewTokens {
+                border: rgb(0x2563eb),
+                background: rgba(0x3b82f64f),
+            },
+            route_tear_off: DockRoutePreviewTokens {
+                border: rgb(0x475569),
+                background: rgba(0x94a3b847),
+            },
+            route_rejected: DockRoutePreviewTokens {
+                border: rgb(0xdc2626),
+                background: rgba(0xfca5a547),
+            },
+        }
     }
 
-    (rgb(0x2563eb), rgba(0x60a5fa47))
+    fn target_preview(
+        &self,
+        decision: &crate::drop_preview::DockPreviewDecision,
+    ) -> DockTargetPreviewTokens {
+        if decision.is_allowed() {
+            self.accepted_target
+        } else {
+            self.rejected_target
+        }
+    }
+
+    fn drop_guide(&self, kind: geometry::DockDropBoxKind, active: bool) -> DockDropGuideTokens {
+        match (kind.is_center(), active) {
+            (true, true) => self.guide_center_active,
+            (true, false) => self.guide_center_inactive,
+            (false, true) => self.guide_edge_active,
+            (false, false) => self.guide_edge_inactive,
+        }
+    }
+
+    fn route_preview(&self, preview: &DockDropRoutePreview) -> DockRoutePreviewTokens {
+        if preview.rejected {
+            return self.route_rejected;
+        }
+
+        match preview.kind {
+            crate::drop_preview::DockDropRoutePreviewKind::KnownViewport => {
+                self.route_known_viewport
+            }
+            crate::drop_preview::DockDropRoutePreviewKind::TearOff => self.route_tear_off,
+            crate::drop_preview::DockDropRoutePreviewKind::Rejected => self.route_rejected,
+        }
+    }
+}
+
+fn dock_preview_theme() -> DockPreviewTheme {
+    DockPreviewTheme::default_tokens()
 }
 
 fn preview_tab_width(text_width: Pixels) -> Pixels {
     (text_width + px(DROP_PREVIEW_TAB_TEXT_PADDING))
         .max(px(DROP_PREVIEW_TAB_MIN_WIDTH))
         .min(px(DROP_PREVIEW_TAB_MAX_WIDTH))
-}
-
-fn drop_route_preview_colors(preview: &DockDropRoutePreview) -> (Rgba, Rgba) {
-    if preview.rejected {
-        return (rgb(0xdc2626), rgba(0xfca5a547));
-    }
-
-    match preview.kind {
-        crate::drop_preview::DockDropRoutePreviewKind::KnownViewport => {
-            (rgb(0x059669), rgba(0x6ee7b747))
-        }
-        crate::drop_preview::DockDropRoutePreviewKind::TearOff => (rgb(0x7c3aed), rgba(0xc4b5fd47)),
-        crate::drop_preview::DockDropRoutePreviewKind::Rejected => {
-            (rgb(0xdc2626), rgba(0xfca5a547))
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1177,12 +1306,31 @@ mod tests {
     use open_gpui::{point, size};
 
     fn preview(rejected: bool, payload_tab: bool) -> DockDropPreview {
+        let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
+        let target_tabs = None;
+        let insert_index = None;
+        let decision = if rejected {
+            crate::drop_preview::DockPreviewDecision::rejected(None)
+        } else {
+            crate::drop_preview::DockPreviewDecision::allowed()
+        };
+        let payload_tabs = payload_tab.then(|| crate::drop_preview::DockPreviewPayloadTabs {
+            target_tabs,
+            insert_index,
+            tabs: vec![crate::drop_preview::DockPreviewPayloadTab {
+                title: "Panel".to_string(),
+            }],
+        });
         DockDropPreview {
-            bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(80.0))),
-            rejected,
-            payload_tab,
-            target_tabs: None,
-            insert_index: None,
+            scene: crate::drop_preview::DockPreviewScene {
+                decision,
+                layers: Vec::new(),
+                body: crate::drop_preview::DockPreviewBody {
+                    future_bounds: bounds,
+                    body_bounds: bounds,
+                },
+                payload_tabs,
+            },
         }
     }
 
@@ -1196,9 +1344,10 @@ mod tests {
 
     #[test]
     fn active_center_guides_have_stronger_palette_than_inactive_edge_guides() {
-        let active_center = drop_guide_palette(geometry::DockDropBoxKind::Center, true);
+        let theme = dock_preview_theme();
+        let active_center = theme.drop_guide(geometry::DockDropBoxKind::Center, true);
         let inactive_edge =
-            drop_guide_palette(geometry::DockDropBoxKind::InnerEdge(DropZone::Left), false);
+            theme.drop_guide(geometry::DockDropBoxKind::InnerEdge(DropZone::Left), false);
 
         assert_ne!(active_center.border, inactive_edge.border);
         assert_ne!(active_center.background, inactive_edge.background);
@@ -1207,23 +1356,34 @@ mod tests {
 
     #[test]
     fn rejected_drop_preview_uses_rejected_palette() {
-        let accepted = drop_preview_colors(&preview(false, false));
-        let rejected = drop_preview_colors(&preview(true, false));
+        let theme = dock_preview_theme();
+        let accepted = theme.target_preview(&preview(false, false).scene.decision);
+        let rejected = theme.target_preview(&preview(true, false).scene.decision);
 
         assert_ne!(accepted, rejected);
-        assert_eq!(rejected.0, rgb(0xdc2626));
+        assert_eq!(rejected.border, rgb(0xdc2626));
+    }
+
+    #[test]
+    fn payload_tab_preview_uses_stronger_selected_tab_palette() {
+        let theme = dock_preview_theme();
+        let palette = theme.target_preview(&preview(false, true).scene.decision);
+
+        assert!(palette.tab_background.a > palette.body_background.a);
+        assert_eq!(palette.tab_text, rgb(0xffffff));
     }
 
     #[test]
     fn route_preview_kinds_keep_distinct_palettes() {
-        let known = drop_route_preview_colors(&route_preview(
+        let theme = dock_preview_theme();
+        let known = theme.route_preview(&route_preview(
             DockDropRoutePreviewKind::KnownViewport,
             false,
         ));
         let tear_off =
-            drop_route_preview_colors(&route_preview(DockDropRoutePreviewKind::TearOff, false));
+            theme.route_preview(&route_preview(DockDropRoutePreviewKind::TearOff, false));
         let rejected =
-            drop_route_preview_colors(&route_preview(DockDropRoutePreviewKind::Rejected, true));
+            theme.route_preview(&route_preview(DockDropRoutePreviewKind::Rejected, true));
 
         assert_ne!(known, tear_off);
         assert_ne!(known, rejected);

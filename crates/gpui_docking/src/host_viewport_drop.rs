@@ -66,7 +66,7 @@ impl DockHost {
         let resolution = resolution_outcome.resolution();
         let routed_preview_changed = runtime.update_host_routed_drop_preview(
             resolution,
-            payload.title(),
+            payload,
             self.space().clone(),
             window.window_handle().window_id(),
             position,

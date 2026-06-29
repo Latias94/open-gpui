@@ -173,7 +173,7 @@ fn cache_known_viewport_preview_for_test(
     )
     .with_drag_session(Some(session.clone()));
     let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
-    let update = runtime.update_routed_drop_preview(&resolution, "Panel A");
+    let update = runtime.update_routed_drop_preview(&resolution, &payload);
     assert!(update.changed());
 
     session
@@ -5216,7 +5216,7 @@ fn viewport_runtime_window_closed_clears_routed_preview(cx: &mut TestAppContext)
     )
     .with_drag_session(Some(session.clone()));
     let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
-    let update = runtime.update_routed_drop_preview(&resolution, "Panel A");
+    let update = runtime.update_routed_drop_preview(&resolution, &payload);
     assert!(update.changed());
     assert!(
         runtime
@@ -6386,7 +6386,7 @@ fn viewport_runtime_tabs_drop_uses_recorded_payload_focus(cx: &mut TestAppContex
     .with_drag_session(Some(session.clone()));
     let preview_resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     cx.update(|app| {
-        runtime.update_routed_drop_preview(&preview_resolution, "Stack", app);
+        runtime.update_routed_drop_preview(&preview_resolution, &payload, app);
     });
     let outcome = cx
         .update(|app| runtime.commit_payload_drop_from_screen(&request, app))
@@ -6719,7 +6719,7 @@ fn viewport_runtime_rejected_preview_records_last_routed_viewport_identity(
         "rejected hover should still expose the viewport target for routed-preview bookkeeping"
     );
     cx.update(|app| {
-        runtime.update_routed_drop_preview(&preview_resolution, "Panel A", app);
+        runtime.update_routed_drop_preview(&preview_resolution, &payload, app);
     });
     assert_eq!(
         runtime
@@ -6828,7 +6828,7 @@ fn viewport_runtime_unavailable_preview_does_not_clear_last_routed_viewport_iden
         "preview setup should capture a routed target snapshot"
     );
     cx.update(|app| {
-        runtime.update_routed_drop_preview(&preview_resolution, "Panel A", app);
+        runtime.update_routed_drop_preview(&preview_resolution, &payload, app);
     });
     assert_eq!(
         runtime
@@ -6856,7 +6856,7 @@ fn viewport_runtime_unavailable_preview_does_not_clear_last_routed_viewport_iden
         &DockViewportDropRoute::Unavailable
     );
     cx.update(|app| {
-        runtime.update_routed_drop_preview(&unavailable_resolution, "Panel A", app);
+        runtime.update_routed_drop_preview(&unavailable_resolution, &payload, app);
     });
     assert_eq!(
         runtime
@@ -7138,7 +7138,7 @@ fn viewport_runtime_known_viewport_without_scene_is_unavailable(cx: &mut TestApp
         resolution.delivery().is_none(),
         "unavailable route must not carry a delivery"
     );
-    let update = runtime.update_routed_drop_preview(&resolution, "Panel A");
+    let update = runtime.update_routed_drop_preview(&resolution, &payload);
     assert!(!update.changed());
     assert!(update.into_windows().is_empty());
 
@@ -7360,7 +7360,7 @@ fn viewport_runtime_revalidates_routed_preview_release_against_current_policy(
         ),
         "preview setup should resolve the target viewport before policy changes"
     );
-    let update = runtime.update_routed_drop_preview(&preview_resolution, "Panel A");
+    let update = runtime.update_routed_drop_preview(&preview_resolution, &payload);
     assert!(update.changed());
 
     controller.update(cx, |controller, _| {
@@ -7467,14 +7467,14 @@ fn viewport_runtime_preview_respects_payload_dock_class_policy(cx: &mut TestAppC
         resolution.delivery().is_none(),
         "policy-rejected cross-viewport targets must not carry a delivery"
     );
-    let update = runtime.update_routed_drop_preview(&resolution, "Panel A");
+    let update = runtime.update_routed_drop_preview(&resolution, &payload);
     assert!(update.changed());
     assert_eq!(update.into_windows(), vec![target_window]);
     let preview = runtime
         .routed_drop_preview_for(&target_space, target_window.window_id())
         .expect("policy-rejected route should render a target-window preview");
-    assert!(preview.preview.rejected);
-    assert!(!preview.preview.payload_tab);
+    assert!(!preview.preview.scene.decision.is_allowed());
+    assert!(preview.preview.scene.payload_tabs.is_none());
     assert!(
         runtime.has_routed_drop_preview_for_drag_session(Some(&session)),
         "rejected routed previews should stay scoped to the active drag session"
@@ -8214,6 +8214,12 @@ fn viewport_runtime_source_only_release_uses_current_backend_fallback_not_last_r
         target_opened.window().window_id(),
         leaf_host_scene_fact(target_tabs, target_tabs),
     ));
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
     let preview_request = DockViewportDropRouteRequest::from_target_context(
         source_space.clone(),
         source_tabs,
@@ -8224,7 +8230,7 @@ fn viewport_runtime_source_only_release_uses_current_backend_fallback_not_last_r
     );
     let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
     cx.update(|app| {
-        runtime.update_routed_drop_preview(&resolution, "Panel A", app);
+        runtime.update_routed_drop_preview(&resolution, &payload, app);
     });
     assert!(
         runtime
@@ -8427,7 +8433,7 @@ fn viewport_runtime_source_only_release_commits_current_trusted_hovered_window(
     let preview_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
     cx.update(|app| {
-        runtime.update_routed_drop_preview(&preview_resolution, "Panel A", app);
+        runtime.update_routed_drop_preview(&preview_resolution, &payload, app);
     });
 
     let release_request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
@@ -8541,7 +8547,7 @@ fn viewport_runtime_hovered_host_release_uses_last_hovered_viewport_when_hover_b
     .with_drag_session(Some(session.clone()));
     let preview_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
-    runtime.update_routed_drop_preview(&preview_resolution, "Panel A");
+    runtime.update_routed_drop_preview(&preview_resolution, &payload);
 
     let release_request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
         source_space,
@@ -8654,7 +8660,7 @@ fn viewport_runtime_hovered_host_release_ignores_last_hovered_viewport_from_stal
     .with_drag_session(Some(stale_session.clone()));
     let preview_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
-    runtime.update_routed_drop_preview(&preview_resolution, "Panel A");
+    runtime.update_routed_drop_preview(&preview_resolution, &payload);
     assert!(
         runtime.finish_payload_drag(&stale_session).changed(),
         "ending the drag should clear last-hovered viewport fallback"
@@ -8756,7 +8762,7 @@ fn viewport_runtime_source_only_release_does_not_use_last_hovered_viewport_as_ro
     .with_drag_session(Some(session.clone()));
     let preview_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
-    runtime.update_routed_drop_preview(&preview_resolution, "Panel A");
+    runtime.update_routed_drop_preview(&preview_resolution, &payload);
 
     let release_request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
         source_space,
@@ -8880,7 +8886,7 @@ fn viewport_runtime_source_only_release_retargets_current_position(cx: &mut Test
     .with_drag_session(Some(session.clone()));
     let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
     cx.update(|app| {
-        runtime.update_routed_drop_preview(&resolution, "Panel A", app);
+        runtime.update_routed_drop_preview(&resolution, &payload, app);
     });
     assert!(
         runtime.has_routed_drop_preview_for_drag_session(Some(&session)),
@@ -8994,7 +9000,7 @@ fn viewport_runtime_source_only_release_requires_current_route_facts(cx: &mut Te
     .with_drag_session(Some(session.clone()));
     let preview_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
-    let update = runtime.update_routed_drop_preview(&preview_resolution, "Panel A");
+    let update = runtime.update_routed_drop_preview(&preview_resolution, &payload);
     assert!(update.changed());
 
     let release_request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
@@ -9118,7 +9124,7 @@ fn viewport_runtime_source_only_known_empty_hover_rejects_stale_routed_preview(
     );
     assert!(cx.update(|app| runtime.update_routed_drop_preview(
         &preview_resolution,
-        "Panel A",
+        &payload,
         app
     )));
 
@@ -9216,7 +9222,7 @@ fn viewport_runtime_current_hover_rejects_stale_routed_preview_after_resampling(
     .with_drag_session(Some(session.clone()));
     let preview_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
-    let update = runtime.update_routed_drop_preview(&preview_resolution, "Panel A");
+    let update = runtime.update_routed_drop_preview(&preview_resolution, &payload);
     assert!(update.changed());
     assert_eq!(update.into_windows(), vec![target_window]);
 
@@ -9341,7 +9347,7 @@ fn viewport_runtime_current_hovered_window_facts_override_stale_routed_preview(
     .with_drag_session(Some(session.clone()));
     let preview_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
-    let update = runtime.update_routed_drop_preview(&preview_resolution, "Panel A");
+    let update = runtime.update_routed_drop_preview(&preview_resolution, &payload);
     assert!(update.changed());
     assert_eq!(update.into_windows(), vec![target_window]);
     assert!(runtime.update_viewport_snapshot(
@@ -9442,7 +9448,7 @@ fn viewport_runtime_identical_host_routed_preview_does_not_request_refresh_again
 
     let initial = runtime.update_host_routed_drop_preview(
         &resolution,
-        payload.title(),
+        &payload,
         target_space.clone(),
         target_window.window_id(),
         host_position,
@@ -9454,7 +9460,7 @@ fn viewport_runtime_identical_host_routed_preview_does_not_request_refresh_again
 
     let repeated = runtime.update_host_routed_drop_preview(
         &resolution,
-        payload.title(),
+        &payload,
         target_space.clone(),
         target_window.window_id(),
         host_position,
@@ -9533,7 +9539,7 @@ fn viewport_runtime_hovered_host_known_empty_hover_rejects_stale_routed_preview(
     .with_drag_session(Some(session.clone()));
     let preview_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
-    let update = runtime.update_routed_drop_preview(&preview_resolution, "Panel A");
+    let update = runtime.update_routed_drop_preview(&preview_resolution, &payload);
     assert!(update.changed());
 
     let release_request = DockViewportDropRouteRequest::from_target_context(
@@ -9640,7 +9646,7 @@ fn viewport_runtime_stale_routed_preview_does_not_route_through_front_viewport_w
     .with_drag_session(Some(session.clone()));
     let preview_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
-    let update = runtime.update_routed_drop_preview(&preview_resolution, "Panel A");
+    let update = runtime.update_routed_drop_preview(&preview_resolution, &payload);
     assert!(update.changed());
 
     let release_request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
@@ -9736,7 +9742,7 @@ fn viewport_runtime_scopes_routed_preview_delivery_to_drag_session(cx: &mut Test
         ),
         "preview setup should resolve a known target viewport"
     );
-    runtime.update_routed_drop_preview(&resolution, "Panel A");
+    runtime.update_routed_drop_preview(&resolution, &payload);
     assert!(runtime.has_routed_drop_preview_for_drag_session(Some(&session)));
     assert!(!runtime.has_routed_drop_preview_for_drag_session(None));
 
@@ -9749,10 +9755,10 @@ fn viewport_runtime_scopes_routed_preview_delivery_to_drag_session(cx: &mut Test
         },
         None,
     );
-    runtime.update_routed_drop_preview(&local_resolution, "Panel A");
+    runtime.update_routed_drop_preview(&local_resolution, &payload);
     assert!(!runtime.has_routed_drop_preview_for_drag_session(Some(&session)));
 
-    runtime.update_routed_drop_preview(&resolution, "Panel A");
+    runtime.update_routed_drop_preview(&resolution, &payload);
 
     assert!(runtime.finish_payload_drag(&session).changed());
     assert!(!runtime.has_routed_drop_preview_for_drag_session(Some(&session)));
@@ -9771,7 +9777,7 @@ fn viewport_runtime_scopes_routed_preview_delivery_to_drag_session(cx: &mut Test
     .with_drag_session(Some(next_session.clone()));
     let next_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&next_request, app));
-    runtime.update_routed_drop_preview(&next_resolution, "Panel A");
+    runtime.update_routed_drop_preview(&next_resolution, &payload);
     assert!(runtime.has_routed_drop_preview_for_drag_session(Some(&next_session)));
     assert!(!runtime.has_routed_drop_preview_for_drag_session(Some(&session)));
 }
@@ -9840,7 +9846,7 @@ fn viewport_runtime_begin_payload_drag_clears_previous_routed_preview(cx: &mut T
     )
     .with_drag_session(Some(first_session.clone()));
     let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
-    runtime.update_routed_drop_preview(&resolution, "Panel A");
+    runtime.update_routed_drop_preview(&resolution, &first_payload);
 
     assert!(
         runtime

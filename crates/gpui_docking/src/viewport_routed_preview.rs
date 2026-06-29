@@ -1,7 +1,7 @@
 use crate::{
     DockSpaceId, DockViewportIdentity, DockViewportResolvedDropRoute,
-    DockViewportResolvedDropTargetSnapshot, drop_preview::DockDropRoutePreview,
-    interaction::DockRuntimeDragSession,
+    DockViewportResolvedDropTargetSnapshot, drag::DockDragPayload,
+    drop_preview::DockDropRoutePreview, interaction::DockRuntimeDragSession,
 };
 use open_gpui::{AnyWindowHandle, Point, WindowId};
 
@@ -196,7 +196,6 @@ pub(crate) struct DockViewportRoutedDropPreview {
     identity: DockViewportIdentity,
     pub(crate) preview: crate::drop_preview::DockDropPreview,
     drag_session_id: Option<u64>,
-    pub(crate) payload_title: String,
 }
 
 impl DockViewportRoutedDropPreview {
@@ -205,13 +204,11 @@ impl DockViewportRoutedDropPreview {
         window_id: WindowId,
         preview: crate::drop_preview::DockDropPreview,
         drag_session_id: Option<u64>,
-        payload_title: impl Into<String>,
     ) -> Self {
         Self {
             identity: DockViewportIdentity::new(space, window_id),
             preview,
             drag_session_id,
-            payload_title: payload_title.into(),
         }
     }
 
@@ -235,34 +232,34 @@ impl DockViewportRoutedDropPreview {
 pub(crate) fn routed_drop_preview_from_target(
     target: &DockViewportResolvedDropTargetSnapshot,
     drag_session_id: Option<u64>,
-    payload_title: String,
+    payload: &DockDragPayload,
 ) -> Option<DockViewportRoutedDropPreview> {
     let window_id = target.target_window_id()?;
     let space = target.target_space().clone();
-    let preview = crate::drop_preview::DockDropPreview::from_resolved_target(target.target())?;
+    let mut preview = crate::drop_preview::DockDropPreview::from_resolved_target(target.target())?;
+    preview.populate_payload_tabs(payload);
     Some(DockViewportRoutedDropPreview::new(
         space,
         window_id,
         preview,
         drag_session_id,
-        payload_title,
     ))
 }
 
 pub(crate) fn routed_rejected_drop_preview_from_target(
     target: &DockViewportResolvedDropTargetSnapshot,
     drag_session_id: Option<u64>,
-    payload_title: String,
+    payload: &DockDragPayload,
 ) -> Option<DockViewportRoutedDropPreview> {
     let window_id = target.target_window_id()?;
     let space = target.target_space().clone();
-    let preview = crate::drop_preview::DockDropPreview::from_rejected_target(target.target())?;
+    let mut preview = crate::drop_preview::DockDropPreview::from_rejected_target(target.target())?;
+    preview.populate_payload_tabs(payload);
     Some(DockViewportRoutedDropPreview::new(
         space,
         window_id,
         preview,
         drag_session_id,
-        payload_title,
     ))
 }
 

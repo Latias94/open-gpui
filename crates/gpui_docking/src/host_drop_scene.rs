@@ -14,7 +14,7 @@ impl DockHost {
         &mut self,
         payload: &DockDragPayload,
         position: Point<Pixels>,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
         let (policy, payload_classes, drop_guide_style, graph) =
             self.with_workspace(cx, |workspace| {
@@ -53,7 +53,7 @@ impl DockHost {
         fact: DockHostDropSceneFact,
         position: Point<Pixels>,
         window: &Window,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
         let (policy, payload_classes, drop_guide_style, graph) =
             self.with_workspace(cx, |workspace| {
@@ -73,17 +73,23 @@ impl DockHost {
                 graph.edge_dock_plan_with_sizing(&edge_plan_space, target_node, zone, sizing)
             };
         let payload_size = self.active_payload_drag_size(payload);
-        DockHostInteractionOutcome::from_session_changed(self.push_drop_scene_fact_interaction(
-            position,
-            payload_size,
-            drop_guide_style,
-            excluded_nodes,
-            fact,
-            window,
-            &policy,
-            Some(&target_validator),
-            Some(&edge_plan_resolver),
-        ))
+        let scene_outcome = DockHostInteractionOutcome::from_session_changed(
+            self.push_drop_scene_fact_interaction(
+                position,
+                payload_size,
+                drop_guide_style,
+                excluded_nodes,
+                fact,
+                window,
+                &policy,
+                Some(&target_validator),
+                Some(&edge_plan_resolver),
+            ),
+        );
+        let route_outcome =
+            self.update_viewport_drop_route_preview_interaction(payload, position, window, cx);
+
+        scene_outcome.merge(route_outcome)
     }
 
     pub(crate) fn update_root_drop_scene_interaction(
@@ -93,7 +99,7 @@ impl DockHost {
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
         window: &Window,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
         let fact = drop_scene_fact::root(root, bounds);
         self.update_drop_scene_fact_interaction(payload, fact, position, window, cx)
@@ -106,7 +112,7 @@ impl DockHost {
         bounds: Bounds<Pixels>,
         is_central: bool,
         window: &Window,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
         let space = self.space().clone();
         let fact = if is_central {

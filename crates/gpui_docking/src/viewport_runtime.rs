@@ -970,22 +970,22 @@ impl DockViewportRuntime {
     pub(crate) fn update_routed_drop_preview(
         &mut self,
         resolution: &DockViewportResolvedDropRoute,
-        payload_title: impl Into<String>,
+        payload: &DockDragPayload,
     ) -> DockViewportRuntimeUpdate {
-        self.update_routed_drop_preview_inner(resolution, payload_title, None, None, None)
+        self.update_routed_drop_preview_inner(resolution, payload, None, None, None)
     }
 
     pub(crate) fn update_host_routed_drop_preview(
         &mut self,
         resolution: &DockViewportResolvedDropRoute,
-        payload_title: impl Into<String>,
+        payload: &DockDragPayload,
         host_space: DockSpaceId,
         host_window_id: WindowId,
         host_position: Point<Pixels>,
     ) -> DockViewportRuntimeUpdate {
         self.update_routed_drop_preview_inner(
             resolution,
-            payload_title,
+            payload,
             Some(host_space),
             Some(host_window_id),
             Some(host_position),
@@ -995,12 +995,11 @@ impl DockViewportRuntime {
     fn update_routed_drop_preview_inner(
         &mut self,
         resolution: &DockViewportResolvedDropRoute,
-        payload_title: impl Into<String>,
+        payload: &DockDragPayload,
         host_space: Option<DockSpaceId>,
         host_window_id: Option<WindowId>,
         host_position: Option<Point<Pixels>>,
     ) -> DockViewportRuntimeUpdate {
-        let payload_title = payload_title.into();
         let active_drag_session_id = self.payload_drag.active_session_id();
         if let Some(active_drag_session) = self.payload_drag.active_session()
             && let Some(identity) = crate::last_routed_viewport_identity_from_resolution(
@@ -1028,7 +1027,7 @@ impl DockViewportRuntime {
                         crate::routed_drop_preview_from_target(
                             target,
                             active_drag_session_id,
-                            payload_title,
+                            payload,
                         )
                     })
             }
@@ -1038,7 +1037,7 @@ impl DockViewportRuntime {
                     crate::routed_rejected_drop_preview_from_target(
                         target,
                         active_drag_session_id,
-                        payload_title,
+                        payload,
                     )
                 }),
             DockViewportDropRoute::TearOff => None,
