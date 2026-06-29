@@ -258,6 +258,18 @@ That gate checks that every official Components catalog entry has a matching API
 that overlay families are explicitly listed, that public method baselines catch top-level builder
 drift, that render/controlled/default/policy vocabulary stays consistent, and that
 renderer-neutral resolved state remains free of GPUI runtime types.
+
+The foundation component family gate covers the shipped disclosure, numeric, navigation, display,
+action, and feedback additions: Accordion, Collapsible, Slider, NumberInput, ToggleGroup, Link,
+Breadcrumb, Tag, and ToastStack. These tests keep one canonical API per family, explicit
+root/prelude exports, ownership vocabulary, resolved-state purity, official catalog metadata, and
+focused Components-page rendering aligned:
+
+```powershell
+cargo nextest run -p open-gpui-ui-components accordion collapsible slider number_input link tag breadcrumb toggle_group toast component_api_inventory_uses_stable_ownership_vocabulary crate_root_and_prelude_exports_remain_explicit public_resolved_state_contracts_avoid_gpui_runtime_types
+cargo nextest run -p open-gpui-ui-foundation-gallery official_component_catalog_entries_have_signals_and_sample_selectors components_gallery_smoke_focuses_every_focusable_catalog_entry components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
+```
+
 The choice and runtime seams are guarded separately: `choice.rs` owns stable-value and normalized
 query helpers for `Command`, `Combobox`, and `Select`; `roving_focus.rs` owns the shared enabled-item
 navigation targets used across listbox-like surfaces; and `menu_runtime.rs` owns submenu hover
@@ -498,13 +510,22 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    press or Escape.
 6. Open `Components`, or start there directly with
    `cargo run -p open-gpui-ui-foundation-gallery -- --page components`, and confirm Button, Badge,
+   Accordion, Collapsible, Slider, NumberInput, ToggleGroup, Link, Breadcrumb, Tag, ToastStack,
    IconButton, Separator, Kbd, Progress, Skeleton, Avatar, ScrollArea, Splitter, Switch, Checkbox,
    RadioGroup, Toggle, Label, TextInput, Textarea, Field, Tabs, Toolbar, Sidebar, Listbox, Select,
    Combobox, Command, Table, and VirtualizedList samples render with enabled, disabled, selected, checked, unchecked,
    indeterminate, pressed, invalid, required, read-only, placeholder, value, help, error,
    control-association, decorative, semantic, indeterminate-progress, fallback-initial,
    source-metadata, roving-focus, popup, overflow-axis, scroll-reset, resize-constraint, row-model,
-   and virtualized-viewport states. The Badge, Kbd, and Skeleton samples should remain display-only.
+   and virtualized-viewport states. The Badge, Kbd, Skeleton, and non-removable Tag samples should
+   remain display-only.
+   The Accordion and Collapsible samples should expose stable disclosure values, disabled rows, and
+   open-state readouts. Slider and NumberInput samples should expose clamped min/max/step metadata,
+   disabled/read-only or invalid states, and keyboard or step payload semantics. ToggleGroup should
+   expose single and multiple stable-value selection with disabled-item skipping. Link and
+   Breadcrumb should expose accessible navigation labels and activation metadata. Tag should expose
+   removable and disabled-remove metadata. ToastStack should expose visible stack ordering,
+   overflow, timeout pruning, dismiss reasons, and action metadata without owning timers.
    Use a few catalog cards, such as Table, Tree, and VirtualizedList, to enter focused
    component-family mode; confirm unrelated samples are hidden, the section directory stays
    available, nested sample scrolling still stays inside the sample, and `All components` restores

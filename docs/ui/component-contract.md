@@ -275,6 +275,13 @@ GPUI-specific helpers that remain public for concrete applications must be reach
 and GPUI overlay scheduling helpers. The crate root and prelude default interface are reserved for
 official components and renderer-neutral contracts.
 
+The current foundation refactor makes these names shipped high-value component families:
+`Accordion`, `Collapsible`, `Slider`, `NumberInput`, `ToggleGroup`, `Link`, `Breadcrumb`, `Tag`,
+and `ToastStack`. They deliberately choose one canonical API per family: ToggleGroup instead of a
+parallel ButtonGroup, Tag instead of a separate Chip, ToastStack instead of a separate Notification
+surface, and NumberInput instead of a separate Stepper. Aliases may remain as narrow type aliases
+only when they preserve semantic vocabulary without creating a second component contract.
+
 ## Official Component Completion
 
 A component is official only when it satisfies the current-crate completion contract:
@@ -308,6 +315,23 @@ They may sit beside an official adapter, as `TreeState` does for `Tree`. They mu
 `state_contract_selector`, not the official `sample_selector`, and they must not satisfy the
 official rendered-component gate by accident. Entries marked `deferred` are planned components
 that must not be treated as shipped API until they satisfy the checklist.
+
+The foundation component families above are official rendered components. Their resolved states
+must stay aligned with the same ownership vocabulary as the older components:
+
+- `AccordionState` and `CollapsibleState` own disclosure semantics, stable item values, disabled
+  rows, and controlled/default open state without storing callbacks or GPUI handles.
+- `SliderState` and `NumberInputState` own clamped numeric value, min/max/step metadata, disabled
+  and read-only or invalid state, and keyboard/step payload shape while keeping formatting and app
+  persistence caller-owned.
+- `ToggleGroupState` owns single or multiple selection over stable item values, disabled-item
+  skipping, optional selection-required policy, and roving-focus targets.
+- `LinkState` and `BreadcrumbState` own accessible navigation text, disabled/current state, stable
+  activation payloads, and renderer-neutral roles.
+- `TagState` owns display variant, removable metadata, disabled remove affordance, and badge-family
+  color/metric vocabulary.
+- `ToastStackState` owns stack ordering, visible overflow, timeout pruning, dismiss reasons, and
+  action metadata; timers and notification delivery remain application-owned.
 
 ## Theme Resolution
 
@@ -602,6 +626,13 @@ not implicitly change the focused family. The page should also keep these gates 
 - Splitter runtime fractions continue to share one constraint solver;
 - Tabs keep overflow and roving-focus behavior visible in the page;
 - icon-only affordances and labels keep their accessible metadata explicit.
+
+Large or behavior-heavy sections must use the same lazy or virtualized rendering primitives that
+the component library exposes to applications. The Components page mounts sections through a
+`ListState`-backed page list and keeps heavyweight families such as Tabs, Table, VirtualizedList,
+Signals, and the foundation component samples behind stable section ids. A focused catalog entry
+must render the target family and its state readouts without forcing unrelated heavy sections to
+mount, while the all-components page still remains a complete conformance surface.
 
 ## Headless Readiness Checkpoint
 
