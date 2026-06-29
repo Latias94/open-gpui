@@ -1396,7 +1396,7 @@ fn component_source_files(component: &str) -> &'static [&'static str] {
         "Table" => &["table/mod.rs", "table/resolve.rs"],
         "TableColumnVisibility" => &["table/column_visibility/component.rs"],
         "TableFacetedFilter" => &["table/faceted_filter/component.rs"],
-        "TableGlobalFilter" => &["table/global_filter.rs"],
+        "TableGlobalFilter" => &["table/global_filter/component.rs"],
         "TablePredicateFilter" => &["table/predicate_filter/component.rs"],
         "TableRangeFilter" => &["table/range_filter/component.rs"],
         "TableToolbar" => &["table/toolbar.rs"],
