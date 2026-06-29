@@ -52,6 +52,7 @@ pub mod switch;
 pub mod table;
 pub mod tabs;
 pub mod tag;
+mod text_editing;
 pub mod text_input;
 pub mod textarea;
 pub mod theme;

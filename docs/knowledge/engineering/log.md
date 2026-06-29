@@ -46,6 +46,10 @@ status: active
   interpretation, keeping each adapter's runtime close/focus/selection side effects local instead
   of adding a shallow shared application helper. Verified focused menu/context-menu keyboard tests
   and `cargo check -p open-gpui-ui-components --tests`.
+- 2026-06-30: Extracted crate-private `text_editing` UTF-16/range helpers from TextInput and
+  Textarea controllers, keeping controller/runtime responsibilities unchanged while centralizing
+  platform text offset conversion. Verified focused text editing, TextInput, and Textarea tests plus
+  `cargo check -p open-gpui-ui-components --tests`.
 - 2026-06-29: Continued `docs/plans/2026-06-29-002-refactor-table-depth-second-stage-plan.md`
   on `refactor/table-depth-second-stage`. The Table adapter is now split into concern-owned
   modules for header rendering, resize/reorder affordances, body rows, cells, editors, runtime,
