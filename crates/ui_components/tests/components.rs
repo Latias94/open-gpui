@@ -182,6 +182,32 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         no_interaction_note: None,
     },
     ComponentApiInventoryEntry {
+        component: "Slider",
+        controlled_inputs: &["value"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["min", "max", "step"],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "SliderChange",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "NumberInput",
+        controlled_inputs: &["value"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["min", "max", "step", "read_only", "invalid", "required"],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "NumberInputChange",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
         component: "Switch",
         controlled_inputs: &["checked"],
         default_seeds: &[],
@@ -1306,6 +1332,8 @@ fn component_source_file(component: &str) -> &'static str {
         "Sheet" => "sheet.rs",
         "Menu" => "menu.rs",
         "ContextMenu" => "context_menu.rs",
+        "Slider" => "slider.rs",
+        "NumberInput" => "number_input.rs",
         _ => panic!("missing source file mapping for `{component}`"),
     }
 }
@@ -1344,6 +1372,31 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "tokens",
             "on_click",
             "accessible_label",
+            "state",
+        ],
+        "Slider" => &[
+            "new",
+            "value",
+            "min",
+            "max",
+            "step",
+            "disabled",
+            "tokens",
+            "on_change",
+            "state",
+        ],
+        "NumberInput" => &[
+            "new",
+            "value",
+            "min",
+            "max",
+            "step",
+            "disabled",
+            "read_only",
+            "invalid",
+            "required",
+            "tokens",
+            "on_change",
             "state",
         ],
         "Switch" => &[
@@ -11163,6 +11216,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_status_cue = root::StatusCue::new("status", "Ready");
     let root_empty_state = root::EmptyState::new("empty", "No results");
     let root_collapsible = root::Collapsible::new("collapsible", "Details").default_open(true);
+    let root_slider = root::Slider::new("slider", "Volume").value(40.0);
+    let root_number_input = root::NumberInput::new("number", "Quantity").value(3.0);
     let prelude_button = prelude::Button::new("save", "Save");
     let prelude_accordion = prelude::Accordion::new("accordion")
         .mode(prelude::AccordionMode::Single)
@@ -11242,6 +11297,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_empty_state = prelude::EmptyState::new("empty", "No results");
     let prelude_collapsible =
         prelude::Collapsible::new("collapsible", "Details").default_open(false);
+    let prelude_slider = prelude::Slider::new("slider", "Volume").value(20.0);
+    let prelude_number_input = prelude::NumberInput::new("number", "Quantity").value(5.0);
 
     let _ = (
         root_button.state(),
@@ -11275,6 +11332,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_status_cue.state(),
         root_empty_state.state(),
         root_collapsible.state(),
+        root_slider.state(),
+        root_number_input.state(),
         prelude_button.state(),
         prelude_accordion.state(),
         prelude_alert_dialog.state(),
@@ -11306,6 +11365,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_status_cue.state(),
         prelude_empty_state.state(),
         prelude_collapsible.state(),
+        prelude_slider.state(),
+        prelude_number_input.state(),
         root_overlay.policy().kind(),
         prelude_overlay.policy().kind(),
     );
@@ -11316,6 +11377,7 @@ fn gpui_role_mapping_covers_neutral_image_and_separator_fallback() {
     assert_eq!(gpui_role_from_ui(Role::Image), open_gpui::Role::Image);
     assert_eq!(gpui_role_from_ui(Role::Link), open_gpui::Role::Link);
     assert_eq!(gpui_role_from_ui(Role::Separator), open_gpui::Role::Group);
+    assert_eq!(gpui_role_from_ui(Role::Slider), open_gpui::Role::Slider);
     assert_eq!(gpui_role_from_ui(Role::Tree), open_gpui::Role::Tree);
     assert_eq!(gpui_role_from_ui(Role::TreeItem), open_gpui::Role::TreeItem);
     assert_eq!(gpui_role_from_ui(Role::Table), open_gpui::Role::Table);

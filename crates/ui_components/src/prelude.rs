@@ -55,6 +55,10 @@ pub use crate::menu::{
     MenuOpenMode, MenuSafeHoverCorridor, MenuSelection, MenuState, MenuSubmenuNavigation,
     MenuSubmenuSurface, menu_navigation_target,
 };
+pub use crate::number_input::{
+    NumberInput, NumberInputChange, NumberInputColors, NumberInputMetrics, NumberInputState,
+    NumberInputStepAction,
+};
 pub use crate::overlay::OverlayResolvedState;
 pub use crate::popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
 pub use crate::primitives::{
@@ -88,6 +92,7 @@ pub use crate::sidebar::{
     sidebar_navigation_target,
 };
 pub use crate::skeleton::{Skeleton, SkeletonColors, SkeletonMetrics, SkeletonState};
+pub use crate::slider::{Slider, SliderChange, SliderColors, SliderMetrics, SliderState};
 pub use crate::splitter::{
     Splitter, SplitterHandleState, SplitterMetrics, SplitterPanel, SplitterPanelDescriptor,
     SplitterPanelState, SplitterState,

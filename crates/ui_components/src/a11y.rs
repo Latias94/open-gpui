@@ -39,6 +39,7 @@ pub fn gpui_role_from_ui(role: Role) -> GpuiRole {
         Role::ProgressIndicator => GpuiRole::ProgressIndicator,
         Role::Separator => GpuiRole::Group,
         Role::SpinButton => GpuiRole::SpinButton,
+        Role::Slider => GpuiRole::Slider,
         Role::TabList => GpuiRole::TabList,
         Role::Tab => GpuiRole::Tab,
         Role::TabPanel => GpuiRole::TabPanel,

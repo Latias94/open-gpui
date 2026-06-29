@@ -63,6 +63,8 @@ pub enum Role {
     Separator,
     /// A numeric spin button.
     SpinButton,
+    /// A numeric slider.
+    Slider,
     /// A tab list container.
     TabList,
     /// A tab item.

@@ -30,6 +30,7 @@ pub mod label;
 pub mod listbox;
 pub mod menu;
 mod menu_runtime;
+pub mod number_input;
 mod overlay;
 pub mod popover;
 pub mod prelude;
@@ -43,6 +44,7 @@ pub mod separator;
 pub mod sheet;
 pub mod sidebar;
 pub mod skeleton;
+pub mod slider;
 pub mod splitter;
 pub mod switch;
 pub mod table;
@@ -128,6 +130,10 @@ pub use menu::{
     MenuOpenMode, MenuSafeHoverCorridor, MenuSelection, MenuState, MenuSubmenuNavigation,
     MenuSubmenuSurface, menu_navigation_target,
 };
+pub use number_input::{
+    NumberInput, NumberInputChange, NumberInputColors, NumberInputMetrics, NumberInputState,
+    NumberInputStepAction,
+};
 pub use open_gpui_ui_core::{
     GridViewport2D, TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
     TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind, TableAggregation,
@@ -178,6 +184,7 @@ pub use sidebar::{
     sidebar_navigation_target,
 };
 pub use skeleton::{Skeleton, SkeletonColors, SkeletonMetrics, SkeletonState};
+pub use slider::{Slider, SliderChange, SliderColors, SliderMetrics, SliderState};
 pub use splitter::{
     Splitter, SplitterHandleState, SplitterMetrics, SplitterPanel, SplitterPanelDescriptor,
     SplitterPanelState, SplitterState,
