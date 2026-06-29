@@ -1348,6 +1348,15 @@ fn components_page_samples_expose_component_metadata() {
     let gates = pages::components::CONFORMANCE_GATES;
     let buttons = pages::components::button_samples(tokens);
     let badges = pages::components::badge_samples(tokens);
+    let accordions = pages::components::accordion_samples(tokens);
+    let collapsibles = pages::components::collapsible_samples(tokens);
+    let sliders = pages::components::slider_samples(tokens);
+    let number_inputs = pages::components::number_input_samples(tokens);
+    let toggle_groups = pages::components::toggle_group_samples(tokens);
+    let links = pages::components::link_samples(tokens);
+    let breadcrumbs = pages::components::breadcrumb_samples(tokens);
+    let tags = pages::components::tag_samples(tokens);
+    let toast_stacks = pages::components::toast_stack_samples(tokens);
     let icon_buttons = pages::components::icon_button_samples(tokens);
     let separators = pages::components::separator_samples(tokens);
     let kbds = pages::components::kbd_samples(tokens);
@@ -1387,6 +1396,15 @@ fn components_page_samples_expose_component_metadata() {
         vec![
             "Button",
             "Badge",
+            "Accordion",
+            "Collapsible",
+            "Slider",
+            "NumberInput",
+            "ToggleGroup",
+            "Link",
+            "Breadcrumb",
+            "Tag",
+            "ToastStack",
             "IconButton",
             "Switch",
             "Checkbox",
@@ -1440,6 +1458,23 @@ fn components_page_samples_expose_component_metadata() {
             .all(|name| catalog.iter().any(|entry| entry.name == *name
                 && entry.status == pages::components::ComponentCatalogStatus::Official
                 && entry.coverage == "exports / gallery / state tests"))
+    );
+    assert!(
+        [
+            "Accordion",
+            "Collapsible",
+            "Slider",
+            "NumberInput",
+            "ToggleGroup",
+            "Link",
+            "Breadcrumb",
+            "Tag",
+            "ToastStack"
+        ]
+        .iter()
+        .all(|name| catalog.iter().any(|entry| entry.name == *name
+            && entry.status == pages::components::ComponentCatalogStatus::Official
+            && entry.sample_section_id() == "foundation-components"))
     );
     let state_contract_names: Vec<_> = catalog
         .iter()
@@ -1525,6 +1560,90 @@ fn components_page_samples_expose_component_metadata() {
     );
     assert_eq!(badges[3].state.variant(), BadgeVariant::Outline);
     assert_eq!(badges[3].state.size(), Size::Small);
+
+    assert_eq!(accordions.len(), 1);
+    assert_eq!(accordions[0].id, "shipping");
+    assert_eq!(accordions[0].state.role(), Role::Group);
+    assert_eq!(accordions[0].state.mode().as_str(), "multiple");
+    assert!(accordions[0].state.collapsible());
+    assert_eq!(accordions[0].state.open_values(), ["scope", "risk"]);
+    assert!(accordions[0].state.items()[2].disabled());
+    assert!(!accordions[0].state.items()[2].activation_enabled());
+
+    assert_eq!(collapsibles.len(), 1);
+    assert_eq!(collapsibles[0].id, "release-notes");
+    assert!(collapsibles[0].state.open());
+    assert_eq!(collapsibles[0].state.trigger_role(), Role::Button);
+    assert_eq!(collapsibles[0].state.content_role(), Role::Group);
+
+    assert_eq!(sliders.len(), 2);
+    assert_eq!(sliders[0].id, "volume");
+    assert_eq!(sliders[0].state.role(), Role::Slider);
+    assert_eq!(sliders[0].state.value(), 72.0);
+    assert_eq!(sliders[0].state.min(), 0.0);
+    assert_eq!(sliders[0].state.max(), 100.0);
+    assert!(sliders[0].state.activation_enabled());
+    assert_eq!(sliders[1].state.step(), 5.0);
+    assert!(sliders[1].state.disabled());
+
+    assert_eq!(number_inputs.len(), 2);
+    assert_eq!(number_inputs[0].id, "workers");
+    assert_eq!(number_inputs[0].state.role(), Role::SpinButton);
+    assert_eq!(number_inputs[0].state.display_value(), "6");
+    assert!(number_inputs[0].state.input_enabled());
+    assert!(number_inputs[1].state.invalid());
+
+    assert_eq!(toggle_groups.len(), 2);
+    assert_eq!(toggle_groups[0].id, "alignment");
+    assert_eq!(toggle_groups[0].state.role(), Role::Group);
+    assert_eq!(toggle_groups[0].state.mode().as_str(), "single");
+    assert!(toggle_groups[0].state.selection_required());
+    assert_eq!(toggle_groups[0].state.selected_values(), ["left"]);
+    assert_eq!(toggle_groups[0].state.focused_value(), Some("center"));
+    assert!(toggle_groups[0].state.items()[2].disabled());
+    assert_eq!(toggle_groups[1].state.mode().as_str(), "multiple");
+    assert_eq!(toggle_groups[1].state.selected_values(), ["bold", "code"]);
+
+    assert_eq!(links.len(), 2);
+    assert_eq!(links[0].id, "docs");
+    assert_eq!(links[0].state.role(), Role::Link);
+    assert!(links[0].state.external());
+    assert!(links[0].state.activation().is_some());
+    assert!(links[1].state.disabled());
+    assert!(links[1].state.activation().is_none());
+
+    assert_eq!(breadcrumbs.len(), 1);
+    assert_eq!(breadcrumbs[0].id, "project");
+    assert_eq!(breadcrumbs[0].state.role(), Role::Navigation);
+    assert_eq!(breadcrumbs[0].state.current_index(), Some(2));
+    assert_eq!(breadcrumbs[0].state.items()[2].role(), Role::Label);
+    assert!(breadcrumbs[0].state.items()[2].current());
+
+    assert_eq!(tags.len(), 3);
+    assert_eq!(tags[0].id, "ready");
+    assert_eq!(tags[0].state.role(), Role::Label);
+    assert!(tags[0].state.removable());
+    assert!(tags[0].state.remove().is_some());
+    assert_eq!(tags[1].state.variant(), BadgeVariant::Destructive);
+    assert!(tags[2].state.disabled());
+    assert!(tags[2].state.remove().is_none());
+
+    assert_eq!(toast_stacks.len(), 1);
+    assert_eq!(toast_stacks[0].id, "notifications");
+    assert_eq!(toast_stacks[0].state.role(), Role::Section);
+    assert_eq!(toast_stacks[0].state.max_visible(), 2);
+    assert_eq!(toast_stacks[0].state.visible_toasts().len(), 2);
+    assert_eq!(toast_stacks[0].state.overflow_count(), 0);
+    assert_eq!(toast_stacks[0].state.expired_dismissals().len(), 1);
+    assert_eq!(
+        toast_stacks[0].state.expired_dismissals()[0]
+            .reason()
+            .as_str(),
+        "timeout"
+    );
+    assert_eq!(toast_stacks[0].state.visible_toasts()[0].id(), "queued");
+    assert_eq!(toast_stacks[0].state.visible_toasts()[1].id(), "saved");
+    assert!(toast_stacks[0].state.visible_toasts()[1].action().is_some());
 
     assert_eq!(separators.len(), 3);
     assert_eq!(separators[0].id, "section-rule");
