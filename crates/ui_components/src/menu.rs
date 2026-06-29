@@ -2134,7 +2134,8 @@ fn menu_content_element(
             }
 
             if let Some(target) = key_state.submenu_navigation_target(key) {
-                consume_overlay_event(window, cx);
+                cx.stop_propagation();
+                window.prevent_default();
                 key_runtime.update(cx, |runtime, _| {
                     runtime.apply_submenu_target(&target);
                 });
@@ -2142,7 +2143,8 @@ fn menu_content_element(
             }
 
             if let Some(target) = key_state.navigation_target(key) {
-                consume_overlay_event(window, cx);
+                cx.stop_propagation();
+                window.prevent_default();
                 let target_value = target.value().to_owned();
                 let target_path = target.path().to_vec();
                 key_runtime.update(cx, |runtime, _| {
@@ -2153,7 +2155,8 @@ fn menu_content_element(
             }
 
             if let Some(selection) = key_state.activation_for_key(key) {
-                consume_overlay_event(window, cx);
+                cx.stop_propagation();
+                window.prevent_default();
                 if let Some(item_handler) = key_items
                     .iter()
                     .zip(key_state.visible_items())

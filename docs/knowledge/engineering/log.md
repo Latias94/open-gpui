@@ -25,10 +25,11 @@ status: active
   pairs across Dialog, Popover, HoverCard, Select, Combobox, Menu, ContextMenu, and Sheet close/barrier
   paths without changing each component's open/close runtime decisions. Verified with focused
   overlay/component nextest coverage and `cargo check -p open-gpui-ui-components --tests`.
-- 2026-06-30: Extended `consume_overlay_event` to overlay keyboard navigation and activation
-  paths in Select, Combobox, Menu, and ContextMenu, keeping non-overlay list/tree/table keyboard
-  handling out of this helper. Verified with focused select/combobox/menu/context-menu nextest
-  coverage and `cargo check -p open-gpui-ui-components --tests`.
+- 2026-06-30: Kept `consume_overlay_event` scoped to overlay open/close and barrier handling:
+  Select and Combobox trigger open/close paths use the helper, while Menu and ContextMenu submenu
+  navigation/focus/activation still consume keyboard events locally. Verified with focused
+  select/combobox/menu/context-menu nextest coverage and
+  `cargo check -p open-gpui-ui-components --tests`.
 - 2026-06-30: Split the broad component API inventory contract test into focused checks for
   row uniqueness/classification, public method surface drift, ownership vocabulary, and stateful
   regression sentinels. Verified the four focused inventory tests and
