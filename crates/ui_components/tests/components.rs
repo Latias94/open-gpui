@@ -38,11 +38,11 @@ use open_gpui_ui_components::{
     TableSortDirection, TableStageMode, TableState, TableTextFilterOperator, TableToolbar,
     TableToolbarState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
     TabsState, TextInput, TextInputDisplayMode, Textarea, ThemeColor, ThemeMode, ThemeResolver,
-    ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
-    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
-    TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeChildrenLoadState, TreeDropPosition,
-    TreeItemDescriptor, TreeMove, TreeMoveTarget, TreeRenderPlan, TreeRowRenderPlan,
-    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    ThemeSnapshot, Toggle, ToggleGroup, ToggleGroupItem, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeChildrenLoadState,
+    TreeDropPosition, TreeItemDescriptor, TreeMove, TreeMoveTarget, TreeRenderPlan,
+    TreeRowRenderPlan, VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
     VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
     VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
     VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, apply_tree_move,
@@ -10748,6 +10748,62 @@ fn toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items(
     assert_eq!(after_home.len(), 4);
     assert_eq!(after_home[3].value(), "undo");
     assert_eq!(after_home[3].kind(), ToolbarItemKind::Action);
+}
+
+#[open_gpui::test]
+fn toggle_group_controlled_values_override_runtime_selection(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        changes: Rc<RefCell<Vec<Vec<String>>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let changes = self.changes.clone();
+
+            div().size_full().child(
+                ToggleGroup::new("controlled-toggle-group", "Alignment")
+                    .default_selected_values(["right"])
+                    .selected_values(Vec::<String>::new())
+                    .item(ToggleGroupItem::new("left", "Left"))
+                    .item(ToggleGroupItem::new("right", "Right"))
+                    .on_change(move |change, _, _| {
+                        changes.borrow_mut().push(change.selected_values().to_vec());
+                    }),
+            )
+        }
+    }
+
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        changes: changes.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let left = cx
+        .debug_bounds("toggle-group:controlled-toggle-group:item:left")
+        .expect("left toggle item should expose a stable debug selector");
+    cx.simulate_click(left.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(changes.borrow().as_slice(), &[vec!["left".to_string()]]);
+
+    let left = cx
+        .debug_bounds("toggle-group:controlled-toggle-group:item:left")
+        .expect("left toggle item should remain rendered after controlled redraw");
+    cx.simulate_click(left.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        changes.borrow().as_slice(),
+        &[vec!["left".to_string()], vec!["left".to_string()]],
+        "controlled empty selection should reset adapter runtime before each activation"
+    );
 }
 
 #[open_gpui::test]

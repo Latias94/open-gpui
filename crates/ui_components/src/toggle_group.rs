@@ -455,7 +455,8 @@ pub struct ToggleGroup {
     label: SharedString,
     orientation: Orientation,
     mode: ToggleGroupSelectionMode,
-    selected_values: Vec<String>,
+    selected_values: Option<Vec<String>>,
+    default_selected_values: Vec<String>,
     focused_value: Option<String>,
     selection_required: bool,
     disabled: bool,
@@ -473,7 +474,8 @@ impl ToggleGroup {
             label: label.into(),
             orientation: Orientation::Horizontal,
             mode: ToggleGroupSelectionMode::Single,
-            selected_values: Vec::new(),
+            selected_values: None,
+            default_selected_values: Vec::new(),
             focused_value: None,
             selection_required: false,
             disabled: false,
@@ -501,7 +503,7 @@ impl ToggleGroup {
         mut self,
         selected_values: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
-        self.selected_values = selected_values.into_iter().map(Into::into).collect();
+        self.selected_values = Some(selected_values.into_iter().map(Into::into).collect());
         self
     }
 
@@ -510,7 +512,7 @@ impl ToggleGroup {
         mut self,
         selected_values: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
-        self.selected_values = selected_values.into_iter().map(Into::into).collect();
+        self.default_selected_values = selected_values.into_iter().map(Into::into).collect();
         self
     }
 
@@ -567,7 +569,9 @@ impl ToggleGroup {
             self.selection_required,
             self.disabled,
             self.label.to_string(),
-            self.selected_values.clone(),
+            self.selected_values
+                .clone()
+                .unwrap_or_else(|| self.default_selected_values.clone()),
             self.focused_value.as_deref(),
             self.items.iter().map(ToggleGroupItem::descriptor),
             self.size,
@@ -591,6 +595,7 @@ impl RenderOnce for ToggleGroup {
             orientation,
             mode,
             selected_values,
+            default_selected_values,
             focused_value,
             selection_required,
             disabled,
@@ -604,7 +609,9 @@ impl RenderOnce for ToggleGroup {
             let label_text = label.to_string();
             let descriptors: Vec<ToggleGroupItemDescriptor> =
                 items.iter().map(ToggleGroupItem::descriptor).collect();
-            let selected_seed = selected_values.clone();
+            let selected_seed = selected_values
+                .clone()
+                .unwrap_or_else(|| default_selected_values.clone());
             let focused_seed = focused_value.clone();
             let runtime = window.use_keyed_state("runtime", cx, |_, _| ToggleGroupRuntime {
                 selected_values: selected_seed,
@@ -624,7 +631,7 @@ impl RenderOnce for ToggleGroup {
                 selection_required,
                 disabled,
                 label_text.clone(),
-                runtime_selected,
+                selected_values.clone().unwrap_or(runtime_selected),
                 runtime_focused.as_deref(),
                 descriptors.clone(),
                 size,
@@ -1016,6 +1023,20 @@ mod tests {
             Some("right")
         );
         assert_eq!(state.colors().border().token(), semantic::BORDER);
+    }
+
+    #[test]
+    fn controlled_selected_values_take_precedence_over_default_seed() {
+        let state = ToggleGroup::new("align", "Alignment")
+            .items(sample_items())
+            .selected_values(std::iter::empty::<&str>())
+            .default_selected_values(["right"])
+            .state();
+
+        assert!(
+            state.selected_values().is_empty(),
+            "controlled empty selection should not be replaced by default_selected_values"
+        );
     }
 
     #[test]
