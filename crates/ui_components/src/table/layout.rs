@@ -2,9 +2,7 @@ use std::collections::BTreeMap;
 
 use open_gpui_ui_core::{TableColumnRegion, UiPx};
 
-use super::{
-    TableCenterColumnWindowPlan, TableColumnRegionRenderPlan, TableColumnRenderPlan, nonnegative_px,
-};
+use super::{TableColumnRegionRenderPlan, TableColumnRenderPlan, nonnegative_px};
 
 pub(super) fn resolve_column_region_render_plans(
     columns: &[TableColumnRenderPlan],
@@ -53,23 +51,4 @@ pub(super) fn resolve_table_column_offsets(
             column.with_offsets(start, after)
         })
         .collect()
-}
-
-pub(super) fn resolve_center_column_window(
-    regions: &[TableColumnRegionRenderPlan],
-    scroll_offset: Option<UiPx>,
-    viewport_extent: Option<UiPx>,
-    overscan: usize,
-) -> Option<TableCenterColumnWindowPlan> {
-    let center = regions
-        .iter()
-        .find(|plan| plan.region() == TableColumnRegion::Center)?;
-    let viewport_extent = viewport_extent.unwrap_or_else(|| center.total_width());
-
-    TableCenterColumnWindowPlan::resolve(
-        center.columns(),
-        scroll_offset.unwrap_or(UiPx::ZERO),
-        viewport_extent,
-        overscan,
-    )
 }
