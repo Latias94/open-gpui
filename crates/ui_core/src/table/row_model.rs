@@ -1,8 +1,13 @@
 //! Row-model stage, pagination, and expansion vocabulary.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use super::{TableResolvedRow, TableRowId};
+use super::aggregation::{TableAggregation, TableAggregationFn, resolve_aggregate_cells};
+use super::faceting::row_matches_global_filter;
+use super::filtering::TableFilter;
+use super::resolved::{TableGroupRow, TableResolvedRow, TableTreeRow};
+use super::rows::{TableRow, count_table_rows};
+use super::{TableCellValue, TableColumnId, TableRowId};
 
 /// Per-stage row-model ownership for client or manual control.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -270,3 +275,251 @@ pub const TABLE_ROW_MODEL_V0_PIPELINE: [TableRowModelStage; 5] = [
     TableRowModelStage::Paginated,
     TableRowModelStage::Final,
 ];
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct TableRowNode {
+    pub(super) row: TableResolvedRow,
+    pub(super) children: Vec<TableRowNode>,
+}
+
+impl TableRowNode {
+    pub(super) fn leaf(row: TableResolvedRow) -> Self {
+        Self {
+            row,
+            children: Vec::new(),
+        }
+    }
+}
+
+pub(super) fn build_source_row_nodes(
+    rows: &[TableRow],
+    selected_rows: &BTreeSet<TableRowId>,
+    expansion: &TableExpansionState,
+    include_children: bool,
+    parent_id: Option<TableRowId>,
+    depth: usize,
+    source_index: &mut usize,
+) -> Vec<TableRowNode> {
+    rows.iter()
+        .map(|row| {
+            let current_source_index = *source_index;
+            *source_index += 1;
+            let loaded_child_count = row.children().len();
+            let can_expand = row.can_expand();
+
+            let children = if include_children {
+                build_source_row_nodes(
+                    row.children(),
+                    selected_rows,
+                    expansion,
+                    include_children,
+                    Some(row.id().clone()),
+                    depth + 1,
+                    source_index,
+                )
+            } else {
+                Vec::new()
+            };
+            let tree = (include_children && (parent_id.is_some() || can_expand)).then(|| {
+                TableTreeRow::new(
+                    depth,
+                    parent_id.clone(),
+                    loaded_child_count > 0,
+                    can_expand,
+                    expansion.is_expanded(row.id()),
+                    count_table_rows(row.children()),
+                    loaded_child_count,
+                    row.children_load_state().clone(),
+                )
+            });
+            let resolved = TableResolvedRow::from_row(
+                row,
+                current_source_index,
+                selected_rows.contains(row.id()),
+                tree,
+            );
+
+            TableRowNode {
+                row: resolved,
+                children,
+            }
+        })
+        .collect()
+}
+
+pub(super) fn filter_source_row_nodes(
+    nodes: &[TableRowNode],
+    filters: &[TableFilter],
+    excluded_column: Option<&TableColumnId>,
+) -> Vec<TableRowNode> {
+    if filters.is_empty()
+        || filters
+            .iter()
+            .all(|filter| excluded_column.is_some_and(|column| filter.column() == column))
+    {
+        return nodes.to_vec();
+    }
+
+    nodes
+        .iter()
+        .filter_map(|node| {
+            let source = node.row.source()?;
+            if !filters.iter().all(|filter| {
+                excluded_column.is_some_and(|column| filter.column() == column)
+                    || filter.matches(source)
+            }) {
+                return None;
+            }
+
+            Some(TableRowNode {
+                row: node.row.clone(),
+                children: filter_source_row_nodes(&node.children, filters, excluded_column),
+            })
+        })
+        .collect()
+}
+
+pub(super) fn filter_source_row_nodes_by_global_query(
+    nodes: &[TableRowNode],
+    global_filter: Option<&str>,
+    global_filterable_columns: &[TableColumnId],
+) -> Vec<TableRowNode> {
+    if matches!(global_filter, None | Some("")) {
+        return nodes.to_vec();
+    }
+
+    nodes
+        .iter()
+        .filter_map(|node| {
+            let source = node.row.source()?;
+            if !row_matches_global_filter(source, global_filter, global_filterable_columns) {
+                return None;
+            }
+
+            Some(TableRowNode {
+                row: node.row.clone(),
+                children: filter_source_row_nodes_by_global_query(
+                    &node.children,
+                    global_filter,
+                    global_filterable_columns,
+                ),
+            })
+        })
+        .collect()
+}
+
+pub(super) fn flatten_nodes(nodes: &[TableRowNode]) -> Vec<TableResolvedRow> {
+    let mut rows = Vec::new();
+    for node in nodes {
+        rows.push(node.row.clone());
+        rows.extend(flatten_nodes(&node.children));
+    }
+    rows
+}
+
+pub(super) fn build_group_nodes(
+    rows: &[TableResolvedRow],
+    grouping: &[TableColumnId],
+    aggregations: &[TableAggregation],
+    aggregation_fns: &BTreeMap<String, TableAggregationFn>,
+    depth: usize,
+    parent_group_id: Option<TableRowId>,
+    inherited_parent_id: Option<TableRowId>,
+) -> Vec<TableRowNode> {
+    if grouping.is_empty() {
+        return rows
+            .iter()
+            .cloned()
+            .map(|row| {
+                let row = match inherited_parent_id.as_ref() {
+                    Some(parent_id) => row.with_parent(parent_id.clone(), depth),
+                    None => row,
+                };
+                TableRowNode::leaf(row)
+            })
+            .collect();
+    }
+
+    let grouping_column = grouping[0].clone();
+    let mut buckets: Vec<(String, TableCellValue, Vec<TableResolvedRow>)> = Vec::new();
+    let mut bucket_index_by_key = BTreeMap::new();
+
+    for row in rows {
+        let value = row.cell(&grouping_column).cloned().unwrap_or_default();
+        let key = value.filter_text();
+        let index = match bucket_index_by_key.get(&key).copied() {
+            Some(index) => index,
+            None => {
+                let index = buckets.len();
+                bucket_index_by_key.insert(key.clone(), index);
+                buckets.push((key.clone(), value.clone(), Vec::new()));
+                index
+            }
+        };
+        buckets[index].2.push(row.clone());
+    }
+
+    let mut nodes = Vec::new();
+    for (value_text, value, bucket_rows) in buckets {
+        let group_id = build_group_row_id(parent_group_id.as_ref(), &grouping_column, &value_text);
+        let first_leaf_row_id = bucket_rows
+            .first()
+            .map(|row| row.id().clone())
+            .unwrap_or_else(|| group_id.clone());
+        let leaf_row_count = bucket_rows.len();
+        let parent_id = inherited_parent_id.clone();
+        let group = TableGroupRow::new(
+            grouping_column.clone(),
+            value,
+            depth,
+            parent_id.clone(),
+            first_leaf_row_id,
+            leaf_row_count,
+        );
+        let children = build_group_nodes(
+            &bucket_rows,
+            &grouping[1..],
+            aggregations,
+            aggregation_fns,
+            depth + 1,
+            Some(group_id.clone()),
+            Some(group_id.clone()),
+        );
+        let aggregate_cells = resolve_aggregate_cells(&bucket_rows, aggregations, aggregation_fns);
+        let row = TableResolvedRow::from_group(group_id, group, aggregate_cells);
+        nodes.push(TableRowNode { row, children });
+    }
+
+    nodes
+}
+
+fn build_group_row_id(
+    parent_id: Option<&TableRowId>,
+    column: &TableColumnId,
+    value_text: &str,
+) -> TableRowId {
+    let segment = format!("{}={}", column.as_str(), value_text);
+    match parent_id {
+        Some(parent) => TableRowId::new(format!("{}>{segment}", parent.as_str())),
+        None => TableRowId::new(format!("group:{segment}")),
+    }
+}
+
+pub(super) fn push_expanded_rows(
+    node: &TableRowNode,
+    expansion: &TableExpansionState,
+    rows: &mut Vec<TableResolvedRow>,
+) {
+    rows.push(node.row.clone());
+    if node.children.is_empty() {
+        return;
+    }
+
+    if !expansion.is_expanded(node.row.id()) {
+        return;
+    }
+
+    for child in &node.children {
+        push_expanded_rows(child, expansion, rows);
+    }
+}

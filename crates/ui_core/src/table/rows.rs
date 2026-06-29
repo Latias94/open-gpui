@@ -412,3 +412,9 @@ pub(super) fn unique_row_ids(
         .filter(|row| seen.insert(row.clone()))
         .collect()
 }
+
+pub(super) fn count_table_rows(rows: &[TableRow]) -> usize {
+    rows.iter()
+        .map(|row| 1 + count_table_rows(row.children()))
+        .sum()
+}
