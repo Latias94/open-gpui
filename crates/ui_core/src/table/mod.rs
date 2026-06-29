@@ -1,5 +1,17 @@
 //! Renderer-neutral table row-model contracts for Open GPUI components.
 
+mod columns;
+mod faceting;
+mod filtering;
+mod identity;
+mod resolved;
+mod row_model;
+mod rows;
+mod selection;
+
+pub use columns::{TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH};
+pub use identity::{TableColumnGroupId, TableColumnId, TableRowId};
+
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -9,99 +21,6 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use crate::geometry::{UiPx, ui_px};
 
 static NEXT_TABLE_ROWS_IDENTITY: AtomicU64 = AtomicU64::new(1);
-
-/// Default preferred width for a table column.
-pub const TABLE_DEFAULT_COLUMN_WIDTH: UiPx = ui_px(128.0);
-
-/// Default minimum width for a table column.
-pub const TABLE_MIN_COLUMN_WIDTH: UiPx = ui_px(40.0);
-
-/// Default maximum width for a table column.
-pub const TABLE_MAX_COLUMN_WIDTH: UiPx = ui_px(1_000_000.0);
-
-/// Stable renderer-neutral identity for a table row.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TableRowId(String);
-
-impl TableRowId {
-    /// Creates a row identity from a stable string.
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
-    /// Returns the stable string value.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<&str> for TableRowId {
-    fn from(value: &str) -> Self {
-        Self::new(value)
-    }
-}
-
-impl From<String> for TableRowId {
-    fn from(value: String) -> Self {
-        Self::new(value)
-    }
-}
-
-/// Stable renderer-neutral identity for a table column.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TableColumnId(String);
-
-impl TableColumnId {
-    /// Creates a column identity from a stable string.
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
-    /// Returns the stable string value.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<&str> for TableColumnId {
-    fn from(value: &str) -> Self {
-        Self::new(value)
-    }
-}
-
-impl From<String> for TableColumnId {
-    fn from(value: String) -> Self {
-        Self::new(value)
-    }
-}
-
-/// Stable renderer-neutral identity for a table column group header.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TableColumnGroupId(String);
-
-impl TableColumnGroupId {
-    /// Creates a column-group identity from a stable string.
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
-    /// Returns the stable string value.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<&str> for TableColumnGroupId {
-    fn from(value: &str) -> Self {
-        Self::new(value)
-    }
-}
-
-impl From<String> for TableColumnGroupId {
-    fn from(value: String) -> Self {
-        Self::new(value)
-    }
-}
 
 /// Renderer-neutral scalar value used by table filtering and sorting.
 #[derive(Debug, Clone, PartialEq)]
