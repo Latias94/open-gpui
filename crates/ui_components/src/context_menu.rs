@@ -24,8 +24,8 @@ use crate::menu::{
     MenuSelection, MenuState, MenuSubmenuNavigation, visible_menu_items,
 };
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayResolvedState, focus_restore_requests_trigger, gpui_overlay_state,
-    outside_press_open_change,
+    GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
+    focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::ThemeResolver;
@@ -425,8 +425,7 @@ impl RenderOnce for ContextMenu {
             .p_3()
             .cursor_context_menu()
             .on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                cx.stop_propagation();
-                window.prevent_default();
+                consume_overlay_event(window, cx);
                 open_runtime.update(cx, |runtime, _| {
                     runtime.open_at(event.position);
                 });
@@ -555,8 +554,7 @@ fn context_menu_surface(
             move |event: &KeyDownEvent, window, cx| {
                 let key = event.keystroke.key.as_str();
                 if key == "escape" {
-                    cx.stop_propagation();
-                    window.prevent_default();
+                    consume_overlay_event(window, cx);
                     if let Some(target) = key_state.close_submenu_target() {
                         key_runtime.update(cx, |runtime, _| {
                             runtime.apply_submenu_target(&target);

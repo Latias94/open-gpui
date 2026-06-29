@@ -20,6 +20,10 @@ status: active
   recursively to source paths, and public method scanning requires the target impl to exist across
   the expanded set instead of every mapped file. Verified with focused component contract nextest
   runs and `cargo check -p open-gpui-ui-components --tests`.
+- 2026-06-30: Added the crate-private `consume_overlay_event` helper in
+  `crates/ui_components/src/overlay.rs` and replaced repeated keyboard overlay event-consumption
+  pairs across popover, hover card, select, combobox, menu, context menu, and sheet without
+  changing each component's open/close runtime decisions.
 - 2026-06-29: Continued `docs/plans/2026-06-29-002-refactor-table-depth-second-stage-plan.md`
   on `refactor/table-depth-second-stage`. The Table adapter is now split into concern-owned
   modules for header rendering, resize/reorder affordances, body rows, cells, editors, runtime,

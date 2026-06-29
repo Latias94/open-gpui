@@ -23,8 +23,8 @@ use crate::listbox::{
     ListboxState,
 };
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, gpui_overlay_state,
-    outside_press_open_change,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
+    gpui_overlay_state, outside_press_open_change,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::theme::ThemeResolver;
@@ -814,8 +814,7 @@ impl RenderOnce for Select {
                                     on_open_change(true, window, cx);
                                 }
                             } else if key == "escape" {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 close_select(runtime.clone(), on_open_change.clone(), window, cx);
                             }
                         }
@@ -955,8 +954,7 @@ fn select_content_element(
         .occlude()
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             if event.keystroke.key.as_str() == "escape" {
-                cx.stop_propagation();
-                window.prevent_default();
+                consume_overlay_event(window, cx);
                 close_select(
                     escape_runtime.clone(),
                     escape_open_change.clone(),
