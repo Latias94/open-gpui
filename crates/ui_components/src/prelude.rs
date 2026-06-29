@@ -13,6 +13,10 @@ pub use crate::avatar::{
     AvatarGroupCountState, AvatarGroupState, AvatarMetrics, AvatarSource, AvatarState,
 };
 pub use crate::badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVariant};
+pub use crate::breadcrumb::{
+    Breadcrumb, BreadcrumbActivation, BreadcrumbColors, BreadcrumbItemDescriptor,
+    BreadcrumbItemState, BreadcrumbMetrics, BreadcrumbState,
+};
 pub use crate::button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use crate::checkbox::{Checkbox, CheckboxColors, CheckboxMetrics, CheckboxState};
 pub use crate::collapsible::{
@@ -45,6 +49,7 @@ pub use crate::hover_card::{
 pub use crate::icon_button::{IconButton, IconButtonColors, IconButtonMetrics, IconButtonState};
 pub use crate::kbd::{Kbd, KbdColors, KbdMetrics, KbdState};
 pub use crate::label::{Label, LabelColors, LabelMetrics, LabelState};
+pub use crate::link::{Link, LinkActivation, LinkColors, LinkMetrics, LinkState};
 pub use crate::listbox::{
     Listbox, ListboxColors, ListboxGroup, ListboxGroupDescriptor, ListboxGroupState,
     ListboxMetrics, ListboxOption, ListboxOptionDescriptor, ListboxOptionKind, ListboxOptionState,
@@ -120,12 +125,18 @@ pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
     TabsSelection, TabsState,
 };
+pub use crate::tag::{Tag, TagColors, TagMetrics, TagRemove, TagState, TagVariant};
 pub use crate::text_input::{
     TextInput, TextInputColors, TextInputDisplayMode, TextInputMetrics, TextInputState,
 };
 pub use crate::textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
 pub use crate::theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
 pub use crate::toggle::{Toggle, ToggleColors, ToggleMetrics, ToggleState, ToggleVariant};
+pub use crate::toggle_group::{
+    ToggleGroup, ToggleGroupColors, ToggleGroupItem, ToggleGroupItemDescriptor,
+    ToggleGroupItemState, ToggleGroupMetrics, ToggleGroupSelectionChange, ToggleGroupSelectionMode,
+    ToggleGroupState, toggle_group_navigation_target,
+};
 pub use crate::toolbar::{
     Toolbar, ToolbarColors, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarItemState,
     ToolbarMetrics, ToolbarSelection, ToolbarState, toolbar_navigation_target,

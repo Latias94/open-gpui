@@ -10,6 +10,7 @@ pub mod accordion;
 pub mod alert_dialog;
 pub mod avatar;
 pub mod badge;
+pub mod breadcrumb;
 pub mod button;
 pub mod checkbox;
 mod choice;
@@ -27,6 +28,7 @@ pub mod hover_card;
 pub mod icon_button;
 pub mod kbd;
 pub mod label;
+pub mod link;
 pub mod listbox;
 pub mod menu;
 mod menu_runtime;
@@ -49,10 +51,12 @@ pub mod splitter;
 pub mod switch;
 pub mod table;
 pub mod tabs;
+pub mod tag;
 pub mod text_input;
 pub mod textarea;
 pub mod theme;
 pub mod toggle;
+pub mod toggle_group;
 pub mod toolbar;
 pub mod tooltip;
 pub mod tree;
@@ -90,6 +94,10 @@ pub use avatar::{
     AvatarGroupCountState, AvatarGroupState, AvatarMetrics, AvatarSource, AvatarState,
 };
 pub use badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVariant};
+pub use breadcrumb::{
+    Breadcrumb, BreadcrumbActivation, BreadcrumbColors, BreadcrumbItemDescriptor,
+    BreadcrumbItemState, BreadcrumbMetrics, BreadcrumbState,
+};
 pub use button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use checkbox::{Checkbox, CheckboxColors, CheckboxMetrics, CheckboxState};
 pub use collapsible::{Collapsible, CollapsibleColors, CollapsibleMetrics, CollapsibleState};
@@ -120,6 +128,7 @@ pub use hover_card::{
 pub use icon_button::{IconButton, IconButtonColors, IconButtonMetrics, IconButtonState};
 pub use kbd::{Kbd, KbdColors, KbdMetrics, KbdState};
 pub use label::{Label, LabelColors, LabelMetrics, LabelState};
+pub use link::{Link, LinkActivation, LinkColors, LinkMetrics, LinkState};
 pub use listbox::{
     Listbox, ListboxColors, ListboxGroup, ListboxGroupDescriptor, ListboxGroupState,
     ListboxMetrics, ListboxOption, ListboxOptionDescriptor, ListboxOptionKind, ListboxOptionState,
@@ -211,12 +220,18 @@ pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
     TabsSelection, TabsState,
 };
+pub use tag::{Tag, TagColors, TagMetrics, TagRemove, TagState, TagVariant};
 pub use text_input::{
     TextInput, TextInputColors, TextInputDisplayMode, TextInputMetrics, TextInputState,
 };
 pub use textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
 pub use theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
 pub use toggle::{Toggle, ToggleColors, ToggleMetrics, ToggleState, ToggleVariant};
+pub use toggle_group::{
+    ToggleGroup, ToggleGroupColors, ToggleGroupItem, ToggleGroupItemDescriptor,
+    ToggleGroupItemState, ToggleGroupMetrics, ToggleGroupSelectionChange, ToggleGroupSelectionMode,
+    ToggleGroupState, toggle_group_navigation_target,
+};
 pub use toolbar::{
     Toolbar, ToolbarColors, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarItemState,
     ToolbarMetrics, ToolbarSelection, ToolbarState, toolbar_navigation_target,

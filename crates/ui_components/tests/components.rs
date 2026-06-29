@@ -169,6 +169,45 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         no_interaction_note: None,
     },
     ComponentApiInventoryEntry {
+        component: "Link",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["href", "external"],
+        callbacks: &[CallbackApi {
+            name: "on_activate",
+            payload: "LinkActivation",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Breadcrumb",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["item", "disabled"],
+        callbacks: &[CallbackApi {
+            name: "on_activate",
+            payload: "BreadcrumbActivation",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Tag",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["variant", "removable"],
+        callbacks: &[CallbackApi {
+            name: "on_remove",
+            payload: "TagRemove",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
         component: "IconButton",
         controlled_inputs: &[],
         default_seeds: &[],
@@ -258,6 +297,28 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         callbacks: &[CallbackApi {
             name: "on_change",
             payload: "bool",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "ToggleGroup",
+        controlled_inputs: &["selected_values"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_selected_values",
+                runtime_value: "selected_values",
+            },
+            DefaultSeedApi {
+                builder: "default_focused",
+                runtime_value: "focused",
+            },
+        ],
+        legacy_seed_inputs: &[],
+        policy_hints: &["orientation", "mode", "selection_required", "item"],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "ToggleGroupSelectionChange",
         }],
         renderer_neutral_state: true,
         no_interaction_note: None,
@@ -1288,12 +1349,16 @@ fn component_source_file(component: &str) -> &'static str {
         "Accordion" => "accordion.rs",
         "Button" => "button.rs",
         "Badge" => "badge.rs",
+        "Breadcrumb" => "breadcrumb.rs",
         "Collapsible" => "collapsible.rs",
+        "Link" => "link.rs",
+        "Tag" => "tag.rs",
         "IconButton" => "icon_button.rs",
         "Switch" => "switch.rs",
         "Checkbox" => "checkbox.rs",
         "RadioGroup" => "radio.rs",
         "Toggle" => "toggle.rs",
+        "ToggleGroup" => "toggle_group.rs",
         "Toolbar" => "toolbar.rs",
         "Sidebar" => "sidebar.rs",
         "Tree" => "tree.rs",
@@ -1363,6 +1428,32 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "content",
             "tokens",
             "on_open_change",
+            "state",
+        ],
+        "Link" => &[
+            "new",
+            "disabled",
+            "external",
+            "tokens",
+            "on_activate",
+            "state",
+        ],
+        "Breadcrumb" => &[
+            "new",
+            "disabled",
+            "item",
+            "items",
+            "tokens",
+            "on_activate",
+            "state",
+        ],
+        "Tag" => &[
+            "new",
+            "variant",
+            "removable",
+            "disabled",
+            "tokens",
+            "on_remove",
             "state",
         ],
         "IconButton" => &[
@@ -1440,6 +1531,21 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "pressed",
             "disabled",
             "tokens",
+            "on_change",
+            "state",
+        ],
+        "ToggleGroup" => &[
+            "new",
+            "orientation",
+            "mode",
+            "selected_values",
+            "default_selected_values",
+            "default_focused",
+            "selection_required",
+            "disabled",
+            "tokens",
+            "item",
+            "items",
             "on_change",
             "state",
         ],
@@ -11218,6 +11324,15 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_collapsible = root::Collapsible::new("collapsible", "Details").default_open(true);
     let root_slider = root::Slider::new("slider", "Volume").value(40.0);
     let root_number_input = root::NumberInput::new("number", "Quantity").value(3.0);
+    let root_link = root::Link::new("link", "Docs", "/docs").external(true);
+    let root_breadcrumb = root::Breadcrumb::new("breadcrumb", "Path")
+        .item(root::BreadcrumbItemDescriptor::new("home", "Home").href("/"))
+        .item(root::BreadcrumbItemDescriptor::new("docs", "Docs").current(true));
+    let root_tag = root::Tag::new("tag", "ready", "Ready").removable(true);
+    let root_toggle_group = root::ToggleGroup::new("toggle-group", "Alignment")
+        .item(root::ToggleGroupItem::new("left", "Left"))
+        .item(root::ToggleGroupItem::new("right", "Right"))
+        .selected_values(["left"]);
     let prelude_button = prelude::Button::new("save", "Save");
     let prelude_accordion = prelude::Accordion::new("accordion")
         .mode(prelude::AccordionMode::Single)
@@ -11299,6 +11414,18 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude::Collapsible::new("collapsible", "Details").default_open(false);
     let prelude_slider = prelude::Slider::new("slider", "Volume").value(20.0);
     let prelude_number_input = prelude::NumberInput::new("number", "Quantity").value(5.0);
+    let prelude_link = prelude::Link::new("link", "Docs", "/docs");
+    let prelude_breadcrumb = prelude::Breadcrumb::new("breadcrumb", "Path")
+        .items([prelude::BreadcrumbItemDescriptor::new("home", "Home")]);
+    let prelude_tag =
+        prelude::Tag::new("tag", "ready", "Ready").variant(prelude::TagVariant::Outline);
+    let prelude_toggle_group = prelude::ToggleGroup::new("toggle-group", "Alignment")
+        .mode(prelude::ToggleGroupSelectionMode::Multiple)
+        .items([
+            prelude::ToggleGroupItem::new("bold", "Bold"),
+            prelude::ToggleGroupItem::new("italic", "Italic"),
+        ])
+        .default_selected_values(["bold"]);
 
     let _ = (
         root_button.state(),
@@ -11334,6 +11461,10 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_collapsible.state(),
         root_slider.state(),
         root_number_input.state(),
+        root_link.state(),
+        root_breadcrumb.state(),
+        root_tag.state(),
+        root_toggle_group.state(),
         prelude_button.state(),
         prelude_accordion.state(),
         prelude_alert_dialog.state(),
@@ -11367,6 +11498,17 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_collapsible.state(),
         prelude_slider.state(),
         prelude_number_input.state(),
+        prelude_link.state(),
+        prelude_breadcrumb.state(),
+        prelude_tag.state(),
+        prelude_toggle_group.state(),
+        root::toggle_group_navigation_target(Orientation::Horizontal, "right", 0, &[false, false]),
+        prelude::toggle_group_navigation_target(
+            Orientation::Horizontal,
+            "right",
+            0,
+            &[false, false],
+        ),
         root_overlay.policy().kind(),
         prelude_overlay.policy().kind(),
     );
@@ -11511,6 +11653,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
         "on_move",
         "on_open_change",
         "on_query_change",
+        "on_remove",
         "on_row_activate",
         "on_row_selection_change",
         "on_row_expansion_request",
