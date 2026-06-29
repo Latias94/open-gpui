@@ -1,6 +1,7 @@
 //! Table component backed by renderer-neutral row-model and virtualizer contracts.
 
 mod content_fit;
+mod metrics;
 
 use crate::a11y::UiA11yElementExt;
 use crate::button::{Button, ButtonVariant};
@@ -47,6 +48,7 @@ use content_fit::{
     TableContentFitMeasureCache, apply_table_content_fit_widths, content_fit_measure_key,
     table_content_fit_rendered_rows,
 };
+pub use metrics::TableMetrics;
 
 type TableSortHandler = Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>;
 type TableColumnSizingHandler = Rc<dyn Fn(TableColumnSizingChange, &mut Window, &mut App)>;
@@ -4302,82 +4304,6 @@ fn table_range_filter_bound_placeholder(prefix: &str, value: Option<f64>) -> Str
     }
 }
 
-/// Resolved table sizing and virtualization metrics.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TableMetrics {
-    size: Size,
-    header_height: UiPx,
-    row_height: UiPx,
-    cell_padding_x: UiPx,
-    min_column_width: UiPx,
-    viewport_extent: UiPx,
-    overscan: usize,
-}
-
-impl TableMetrics {
-    /// Resolves table metrics from the shared component size vocabulary.
-    pub const fn from_size(size: Size) -> Self {
-        Self {
-            size,
-            header_height: size.button_h(),
-            row_height: size.list_row_h(),
-            cell_padding_x: size.list_px(),
-            min_column_width: match size {
-                Size::XSmall => ui_px(96.0),
-                Size::Small => ui_px(112.0),
-                Size::Medium => ui_px(128.0),
-                Size::Large => ui_px(144.0),
-            },
-            viewport_extent: match size {
-                Size::XSmall => ui_px(160.0),
-                Size::Small => ui_px(200.0),
-                Size::Medium => ui_px(240.0),
-                Size::Large => ui_px(280.0),
-            },
-            overscan: match size {
-                Size::XSmall | Size::Small => 4,
-                Size::Medium => 6,
-                Size::Large => 8,
-            },
-        }
-    }
-
-    /// Returns the foundation size.
-    pub const fn size(self) -> Size {
-        self.size
-    }
-
-    /// Returns the fixed header row height.
-    pub const fn header_height(self) -> UiPx {
-        self.header_height
-    }
-
-    /// Returns the estimated body row height used by the virtualizer.
-    pub const fn row_height(self) -> UiPx {
-        self.row_height
-    }
-
-    /// Returns horizontal cell padding.
-    pub const fn cell_padding_x(self) -> UiPx {
-        self.cell_padding_x
-    }
-
-    /// Returns the minimum visual column width.
-    pub const fn min_column_width(self) -> UiPx {
-        self.min_column_width
-    }
-
-    /// Returns the viewport extent used to resolve the virtual window.
-    pub const fn viewport_extent(self) -> UiPx {
-        self.viewport_extent
-    }
-
-    /// Returns the overscan row budget.
-    pub const fn overscan(self) -> usize {
-        self.overscan
-    }
-}
-
 /// One resolved table column in render order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableColumnRenderPlan {
@@ -6707,25 +6633,27 @@ impl Table {
 
     /// Applies the overscan row budget.
     pub fn overscan(mut self, overscan: usize) -> Self {
-        self.metrics.overscan = overscan;
+        self.metrics.set_overscan(overscan);
         self
     }
 
     /// Applies a fixed row height.
     pub fn row_height(mut self, row_height: UiPx) -> Self {
-        self.metrics.row_height = nonnegative_px(row_height);
+        self.metrics.set_row_height(nonnegative_px(row_height));
         self
     }
 
     /// Applies a fixed header height.
     pub fn header_height(mut self, header_height: UiPx) -> Self {
-        self.metrics.header_height = nonnegative_px(header_height);
+        self.metrics
+            .set_header_height(nonnegative_px(header_height));
         self
     }
 
     /// Applies the fallback viewport extent used before layout metrics exist.
     pub fn viewport_extent(mut self, viewport_extent: UiPx) -> Self {
-        self.metrics.viewport_extent = nonnegative_px(viewport_extent);
+        self.metrics
+            .set_viewport_extent(nonnegative_px(viewport_extent));
         self
     }
 
@@ -6737,7 +6665,8 @@ impl Table {
 
     /// Applies the minimum visual column width.
     pub fn min_column_width(mut self, min_column_width: UiPx) -> Self {
-        self.metrics.min_column_width = nonnegative_px(min_column_width);
+        self.metrics
+            .set_min_column_width(nonnegative_px(min_column_width));
         self
     }
 
@@ -6982,7 +6911,7 @@ impl Table {
         let mut metrics = self.metrics;
         let viewport_extent = nonnegative_px(viewport_extent);
         if viewport_extent.as_f32() > 0.0 {
-            metrics.viewport_extent = viewport_extent;
+            metrics.set_viewport_extent(viewport_extent);
         }
         metrics
     }
