@@ -1363,62 +1363,62 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
     }
 }
 
-fn component_source_file(component: &str) -> &'static str {
+fn component_source_files(component: &str) -> &'static [&'static str] {
     match component {
-        "Accordion" => "accordion.rs",
-        "Button" => "button.rs",
-        "Badge" => "badge.rs",
-        "Breadcrumb" => "breadcrumb.rs",
-        "Collapsible" => "collapsible.rs",
-        "Link" => "link.rs",
-        "Tag" => "tag.rs",
-        "ToastStack" => "toast.rs",
-        "IconButton" => "icon_button.rs",
-        "Switch" => "switch.rs",
-        "Checkbox" => "checkbox.rs",
-        "RadioGroup" => "radio.rs",
-        "Toggle" => "toggle.rs",
-        "ToggleGroup" => "toggle_group.rs",
-        "Toolbar" => "toolbar.rs",
-        "Sidebar" => "sidebar.rs",
-        "Tree" => "tree.rs",
-        "Listbox" => "listbox.rs",
-        "Select" => "select.rs",
-        "Combobox" => "combobox.rs",
-        "Command" => "command.rs",
-        "Label" => "label.rs",
-        "TextInput" => "text_input.rs",
-        "Textarea" => "textarea.rs",
-        "Field" => "field.rs",
-        "Tabs" => "tabs.rs",
-        "ScrollArea" => "scroll_area.rs",
-        "Splitter" => "splitter.rs",
-        "Table" => "table.rs",
-        "TableColumnVisibility" => "table/column_visibility.rs",
-        "TableFacetedFilter" => "table/faceted_filter.rs",
-        "TableGlobalFilter" => "table/global_filter.rs",
-        "TablePredicateFilter" => "table/predicate_filter.rs",
-        "TableRangeFilter" => "table/range_filter.rs",
-        "TableToolbar" => "table/toolbar.rs",
-        "VirtualizedList" => "virtualized_list.rs",
-        "StatusCue" => "feedback.rs",
-        "EmptyState" => "feedback.rs",
-        "Separator" => "separator.rs",
-        "Kbd" => "kbd.rs",
-        "Progress" => "progress.rs",
-        "Skeleton" => "skeleton.rs",
-        "Avatar" => "avatar.rs",
-        "AvatarGroup" => "avatar.rs",
-        "Tooltip" => "tooltip.rs",
-        "HoverCard" => "hover_card.rs",
-        "Popover" => "popover.rs",
-        "Dialog" => "dialog.rs",
-        "AlertDialog" => "alert_dialog.rs",
-        "Sheet" => "sheet.rs",
-        "Menu" => "menu.rs",
-        "ContextMenu" => "context_menu.rs",
-        "Slider" => "slider.rs",
-        "NumberInput" => "number_input.rs",
+        "Accordion" => &["accordion.rs"],
+        "Button" => &["button.rs"],
+        "Badge" => &["badge.rs"],
+        "Breadcrumb" => &["breadcrumb.rs"],
+        "Collapsible" => &["collapsible.rs"],
+        "Link" => &["link.rs"],
+        "Tag" => &["tag.rs"],
+        "ToastStack" => &["toast.rs"],
+        "IconButton" => &["icon_button.rs"],
+        "Switch" => &["switch.rs"],
+        "Checkbox" => &["checkbox.rs"],
+        "RadioGroup" => &["radio.rs"],
+        "Toggle" => &["toggle.rs"],
+        "ToggleGroup" => &["toggle_group.rs"],
+        "Toolbar" => &["toolbar.rs"],
+        "Sidebar" => &["sidebar.rs"],
+        "Tree" => &["tree.rs"],
+        "Listbox" => &["listbox.rs"],
+        "Select" => &["select.rs"],
+        "Combobox" => &["combobox.rs"],
+        "Command" => &["command.rs"],
+        "Label" => &["label.rs"],
+        "TextInput" => &["text_input.rs"],
+        "Textarea" => &["textarea.rs"],
+        "Field" => &["field.rs"],
+        "Tabs" => &["tabs.rs"],
+        "ScrollArea" => &["scroll_area.rs"],
+        "Splitter" => &["splitter.rs"],
+        "Table" => &["table.rs", "table/resolve.rs"],
+        "TableColumnVisibility" => &["table/column_visibility.rs"],
+        "TableFacetedFilter" => &["table/faceted_filter.rs"],
+        "TableGlobalFilter" => &["table/global_filter.rs"],
+        "TablePredicateFilter" => &["table/predicate_filter.rs"],
+        "TableRangeFilter" => &["table/range_filter.rs"],
+        "TableToolbar" => &["table/toolbar.rs"],
+        "VirtualizedList" => &["virtualized_list.rs"],
+        "StatusCue" => &["feedback.rs"],
+        "EmptyState" => &["feedback.rs"],
+        "Separator" => &["separator.rs"],
+        "Kbd" => &["kbd.rs"],
+        "Progress" => &["progress.rs"],
+        "Skeleton" => &["skeleton.rs"],
+        "Avatar" => &["avatar.rs"],
+        "AvatarGroup" => &["avatar.rs"],
+        "Tooltip" => &["tooltip.rs"],
+        "HoverCard" => &["hover_card.rs"],
+        "Popover" => &["popover.rs"],
+        "Dialog" => &["dialog.rs"],
+        "AlertDialog" => &["alert_dialog.rs"],
+        "Sheet" => &["sheet.rs"],
+        "Menu" => &["menu.rs"],
+        "ContextMenu" => &["context_menu.rs"],
+        "Slider" => &["slider.rs"],
+        "NumberInput" => &["number_input.rs"],
         _ => panic!("missing source file mapping for `{component}`"),
     }
 }
@@ -2104,60 +2104,72 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
 fn component_public_methods_from_source(component: &str) -> Vec<String> {
     const MARKER_PREFIX: &str = "impl ";
 
-    let source_file = component_source_file(component);
-    let (source_path, source) = read_component_source_file(source_file);
     let marker = format!("{MARKER_PREFIX}{component} {{");
-    let impl_start = source
-        .find(&marker)
-        .unwrap_or_else(|| panic!("missing `{marker}` in {source_path}"));
-    let body_start = source[impl_start..]
-        .find('{')
-        .map(|offset| impl_start + offset)
-        .expect("impl body should open with `{`");
-
-    let mut depth = 0usize;
-    let mut body_end = None;
-    for (index, ch) in source[body_start..].char_indices() {
-        match ch {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    body_end = Some(body_start + index);
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-    let body_end = body_end.expect("impl body should close");
-    let body = &source[body_start + 1..body_end];
     let mut methods = Vec::new();
 
-    for line in body.lines() {
-        let trimmed = line.trim_start();
-        if let Some(signature) = trimmed.strip_prefix("pub const fn ") {
-            let before_paren = signature
-                .split_once('(')
-                .map(|(name, _)| name)
-                .unwrap_or(signature);
-            let name = before_paren
-                .split_once('<')
-                .map(|(name, _)| name)
-                .unwrap_or(before_paren)
-                .trim();
-            methods.push(name.to_string());
-        } else if let Some(signature) = trimmed.strip_prefix("pub fn ") {
-            let before_paren = signature
-                .split_once('(')
-                .map(|(name, _)| name)
-                .unwrap_or(signature);
-            let name = before_paren
-                .split_once('<')
-                .map(|(name, _)| name)
-                .unwrap_or(before_paren)
-                .trim();
-            methods.push(name.to_string());
+    for source_file in component_source_files(component) {
+        let (source_path, source) = read_component_source_file(source_file);
+        let mut search_start = 0usize;
+        let mut found_impl = false;
+
+        while let Some(relative_impl_start) = source[search_start..].find(&marker) {
+            found_impl = true;
+            let impl_start = search_start + relative_impl_start;
+            let body_start = source[impl_start..]
+                .find('{')
+                .map(|offset| impl_start + offset)
+                .expect("impl body should open with `{`");
+
+            let mut depth = 0usize;
+            let mut body_end = None;
+            for (index, ch) in source[body_start..].char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            body_end = Some(body_start + index);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let body_end = body_end.expect("impl body should close");
+            let body = &source[body_start + 1..body_end];
+
+            for line in body.lines() {
+                let trimmed = line.trim_start();
+                if let Some(signature) = trimmed.strip_prefix("pub const fn ") {
+                    let before_paren = signature
+                        .split_once('(')
+                        .map(|(name, _)| name)
+                        .unwrap_or(signature);
+                    let name = before_paren
+                        .split_once('<')
+                        .map(|(name, _)| name)
+                        .unwrap_or(before_paren)
+                        .trim();
+                    methods.push(name.to_string());
+                } else if let Some(signature) = trimmed.strip_prefix("pub fn ") {
+                    let before_paren = signature
+                        .split_once('(')
+                        .map(|(name, _)| name)
+                        .unwrap_or(signature);
+                    let name = before_paren
+                        .split_once('<')
+                        .map(|(name, _)| name)
+                        .unwrap_or(before_paren)
+                        .trim();
+                    methods.push(name.to_string());
+                }
+            }
+
+            search_start = body_end + 1;
+        }
+
+        if !found_impl {
+            panic!("missing `{marker}` in {source_path}");
         }
     }
 

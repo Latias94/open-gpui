@@ -12,6 +12,8 @@ mod metrics;
 mod predicate_filter;
 mod range_filter;
 mod render_plan;
+mod resolve;
+mod runtime;
 mod toolbar;
 mod virtualization;
 
@@ -25,7 +27,7 @@ use crate::text_input::TextInput;
 use crate::textarea::Textarea;
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, Context, CursorStyle, DragMoveEvent, Empty, Entity, FocusHandle,
+    AnyElement, App, ClickEvent, CursorStyle, DragMoveEvent, Empty, Entity, FocusHandle,
     FontWeight, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels,
     RenderOnce, ScrollHandle, ScrollWheelEvent, SharedString, StatefulInteractiveElement, Styled,
     Window, div, point, px, rgb, rgba,
@@ -33,11 +35,9 @@ use open_gpui::{
 use open_gpui_ui_core::{
     Role, Sizable, Size, TableCellEditor, TableCellValue, TableColumnId, TableColumnRegion,
     TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState, TableColumnSizing,
-    TableExpansionMode, TableExpansionState, TableResolvedRow, TableResolvedState,
-    TableRowChildrenLoadState, TableRowId, TableRowRegion, TableSelectionPolicy,
-    TableSortDirection, TableState, TableStateCacheKey, TableTreeRow, Toggled, UiPx,
-    VirtualizerItemKey, VirtualizerResolvedState, VirtualizerSnapshot, VirtualizerState,
-    drag_table_column_resize, end_table_column_resize, ui_px,
+    TableExpansionMode, TableExpansionState, TableResolvedRow, TableRowChildrenLoadState,
+    TableRowId, TableRowRegion, TableSelectionPolicy, TableSortDirection, TableState, TableTreeRow,
+    Toggled, UiPx, VirtualizerSnapshot, drag_table_column_resize, end_table_column_resize, ui_px,
 };
 pub use open_gpui_ui_core::{
     TableResolvedHeaderCell, TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions,
@@ -50,10 +50,7 @@ pub use column_visibility::{
     TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
     TableColumnVisibilityItemState, TableColumnVisibilityState,
 };
-use content_fit::{
-    TableContentFitMeasureCache, apply_table_content_fit_widths, content_fit_measure_key,
-    table_content_fit_rendered_rows,
-};
+use content_fit::apply_table_content_fit_widths;
 pub use editing::{TableCellEditApplyOutcome, TableCellEditChange};
 pub use faceted_filter::{
     TableFacetedFilter, TableFacetedFilterChange, TableFacetedFilterOptionState,
@@ -79,8 +76,9 @@ pub use render_plan::{
     TableHeaderGroupRegionsRenderPlan, TableHeaderGroupRenderPlan, TablePinnedLayoutPlan,
     TableRenderPlan, TableRowRenderPlan,
 };
+use runtime::TableRuntime;
 pub use toolbar::{TableToolbar, TableToolbarState};
-use virtualization::{measured_virtualizer_state, row_render_key, table_rows_virtual_size};
+use virtualization::table_rows_virtual_size;
 
 type TableSortHandler = Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>;
 type TableColumnSizingHandler = Rc<dyn Fn(TableColumnSizingChange, &mut Window, &mut App)>;
@@ -89,84 +87,6 @@ type TableRowActivationHandler = Rc<dyn Fn(TableRowActivation, &mut Window, &mut
 type TableRowExpansionHandler = Rc<dyn Fn(TableRowExpansionToggle, &mut Window, &mut App)>;
 type TableRowSelectionHandler = Rc<dyn Fn(TableRowSelectionChange, &mut Window, &mut App)>;
 type TableCellEditHandler = Rc<dyn Fn(TableCellEditChange, &mut Window, &mut App)>;
-
-#[derive(Debug, Clone)]
-struct TableResolvedCache {
-    key: TableStateCacheKey,
-    table: Rc<TableResolvedState>,
-    columns: Vec<TableColumnRenderPlan>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct TableRuntime {
-    scroll_handle: ScrollHandle,
-    horizontal_scroll_handle: ScrollHandle,
-    resolved: Option<TableResolvedCache>,
-    content_fit: TableContentFitMeasureCache,
-    row_measurements: BTreeMap<String, UiPx>,
-    column_resize: TableColumnResizeState,
-    focused_row: Option<TableRowId>,
-    focus_handles: BTreeMap<TableRowId, FocusHandle>,
-    expansion_override: Option<TableExpansionState>,
-    selection_anchor: Option<TableRowId>,
-}
-
-impl TableRuntime {
-    fn sync_rows(&mut self, plan: &TableRenderPlan, cx: &mut Context<Self>) {
-        let rendered_row_ids = plan
-            .rendered_rows()
-            .map(|row| row.id().clone())
-            .collect::<BTreeSet<_>>();
-        self.focus_handles
-            .retain(|row_id, _| rendered_row_ids.contains(row_id));
-
-        for row in plan.rendered_rows() {
-            self.focus_handles
-                .entry(row.id().clone())
-                .or_insert_with(|| cx.focus_handle());
-        }
-
-        if self.focused_row.is_none() {
-            self.focused_row = plan.rendered_rows().next().map(|row| row.id().clone());
-        }
-    }
-
-    fn set_focused(&mut self, row_id: TableRowId, cx: &mut Context<Self>) -> Option<FocusHandle> {
-        let changed = self.focused_row.as_ref() != Some(&row_id);
-        self.focused_row = Some(row_id.clone());
-        if changed {
-            cx.notify();
-        }
-        self.focus_handles.get(&row_id).cloned()
-    }
-
-    fn set_expansion_override(&mut self, expansion: TableExpansionState, cx: &mut Context<Self>) {
-        if self.expansion_override.as_ref() != Some(&expansion) {
-            self.expansion_override = Some(expansion);
-            self.resolved = None;
-            cx.notify();
-        }
-    }
-
-    fn set_row_measurement(&mut self, render_key: String, height: UiPx, cx: &mut Context<Self>) {
-        let height = nonnegative_px(height);
-        if self.row_measurements.get(&render_key).copied() != Some(height) {
-            self.row_measurements.insert(render_key, height);
-            cx.notify();
-        }
-    }
-
-    fn clear_row_measurements(&mut self) {
-        self.row_measurements.clear();
-    }
-
-    fn set_selection_anchor(&mut self, row_id: Option<TableRowId>, cx: &mut Context<Self>) {
-        if self.selection_anchor != row_id {
-            self.selection_anchor = row_id;
-            cx.notify();
-        }
-    }
-}
 
 #[derive(Clone)]
 struct TableResizeRenderConfig {
@@ -217,12 +137,12 @@ impl TableRowMeasureMode {
 /// A concrete GPUI table renderer using the Open GPUI row-model and virtualizer contracts.
 #[derive(IntoElement)]
 pub struct Table {
-    id: String,
-    label: SharedString,
-    state: TableState,
-    metrics: TableMetrics,
-    row_measure_mode: TableRowMeasureMode,
-    snapshot: Option<VirtualizerSnapshot>,
+    pub(super) id: String,
+    pub(super) label: SharedString,
+    pub(super) state: TableState,
+    pub(super) metrics: TableMetrics,
+    pub(super) row_measure_mode: TableRowMeasureMode,
+    pub(super) snapshot: Option<VirtualizerSnapshot>,
     default_focused_row: Option<TableRowId>,
     on_sort_requested: Option<TableSortHandler>,
     on_column_order_change: Option<TableColumnOrderHandler>,
@@ -416,211 +336,6 @@ impl Table {
     pub fn state(&self) -> TableRenderPlan {
         self.render_plan(UiPx::ZERO, self.metrics.viewport_extent())
     }
-
-    /// Resolves table row models and the virtual render window for a viewport.
-    pub fn render_plan(&self, scroll_offset: UiPx, viewport_extent: UiPx) -> TableRenderPlan {
-        let metrics = self.metrics_for_viewport(viewport_extent);
-        let table = Rc::new(self.state.resolve());
-        let columns = self.resolve_columns(&table);
-        let duplicate_row_ids = table
-            .duplicate_row_ids()
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        let virtualizer = if self.row_measure_mode.measured() {
-            measured_virtualizer_state(
-                table.center_rows(),
-                self.row_measure_mode,
-                &BTreeMap::new(),
-                metrics.row_height(),
-                metrics.overscan(),
-                nonnegative_px(scroll_offset),
-                metrics.viewport_extent(),
-                &duplicate_row_ids,
-            )
-        } else {
-            self.resolve_virtualizer(&table, metrics, scroll_offset)
-        };
-
-        TableRenderPlan::resolve(
-            self.id.clone(),
-            self.label.to_string(),
-            metrics,
-            self.row_measure_mode,
-            &self.state,
-            table,
-            virtualizer,
-            columns,
-            BTreeMap::new(),
-            None,
-            None,
-            &BTreeMap::new(),
-        )
-    }
-
-    fn render_plan_with_runtime(
-        &self,
-        scroll_offset: UiPx,
-        viewport_extent: UiPx,
-        horizontal_scroll_handle: ScrollHandle,
-        window: &Window,
-        runtime: &mut TableRuntime,
-    ) -> TableRenderPlan {
-        let metrics = self.metrics_for_viewport(viewport_extent);
-        let state = runtime
-            .expansion_override
-            .as_ref()
-            .cloned()
-            .map(|expansion| apply_table_expansion(self.state.clone(), expansion))
-            .unwrap_or_else(|| self.state.clone());
-        let cache_key = state.cache_key();
-        let needs_resolve = runtime
-            .resolved
-            .as_ref()
-            .map(|cache| cache.key != cache_key)
-            .unwrap_or(true);
-        if needs_resolve {
-            let table = Rc::new(state.resolve());
-            let columns = self.resolve_columns(&table);
-            runtime.clear_row_measurements();
-            runtime.resolved = Some(TableResolvedCache {
-                key: cache_key,
-                table,
-                columns,
-            });
-        }
-
-        let cache = runtime
-            .resolved
-            .as_ref()
-            .expect("table runtime cache should be initialized");
-        let virtualizer = if self.row_measure_mode.measured() {
-            measured_virtualizer_state(
-                cache.table.center_rows(),
-                self.row_measure_mode,
-                &runtime.row_measurements,
-                metrics.row_height(),
-                metrics.overscan(),
-                nonnegative_px(scroll_offset),
-                metrics.viewport_extent(),
-                &cache.table.duplicate_row_ids().iter().cloned().collect(),
-            )
-        } else {
-            self.resolve_virtualizer(&cache.table, metrics, scroll_offset)
-        };
-        let rendered_rows = table_content_fit_rendered_rows(&cache.table, &virtualizer);
-        let center_scroll_offset =
-            ui_px((-ui_px_from_gpui(horizontal_scroll_handle.offset().x).as_f32()).max(0.0));
-        let center_viewport_extent = ui_px_from_gpui(horizontal_scroll_handle.bounds().size.width);
-        let center_viewport_extent =
-            (center_viewport_extent.as_f32() > 0.0).then_some(center_viewport_extent);
-        let center_scroll_offset = center_viewport_extent.map(|_| center_scroll_offset);
-        let content_fit_widths = runtime
-            .content_fit
-            .widths_for(
-                content_fit_measure_key(
-                    cache.key.clone(),
-                    metrics,
-                    &cache.columns,
-                    &rendered_rows,
-                    window,
-                ),
-                &cache.columns,
-                &rendered_rows,
-                metrics,
-                window,
-            )
-            .clone();
-
-        TableRenderPlan::resolve(
-            self.id.clone(),
-            self.label.to_string(),
-            metrics,
-            self.row_measure_mode,
-            &state,
-            cache.table.clone(),
-            virtualizer,
-            cache.columns.clone(),
-            content_fit_widths,
-            center_scroll_offset,
-            center_viewport_extent,
-            &runtime.row_measurements,
-        )
-    }
-
-    fn metrics_for_viewport(&self, viewport_extent: UiPx) -> TableMetrics {
-        let mut metrics = self.metrics;
-        let viewport_extent = nonnegative_px(viewport_extent);
-        if viewport_extent.as_f32() > 0.0 {
-            metrics.set_viewport_extent(viewport_extent);
-        }
-        metrics
-    }
-
-    fn resolve_virtualizer(
-        &self,
-        table: &TableResolvedState,
-        metrics: TableMetrics,
-        scroll_offset: UiPx,
-    ) -> VirtualizerResolvedState {
-        let center_rows = table.center_rows();
-        let duplicate_row_ids = table
-            .duplicate_row_ids()
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        let virtualizer = VirtualizerState::new(center_rows.len(), metrics.row_height())
-            .with_viewport_extent(metrics.viewport_extent())
-            .with_overscan(metrics.overscan())
-            .with_scroll_offset(nonnegative_px(scroll_offset));
-
-        if let Some(snapshot) = self.snapshot.clone() {
-            let row_keys = center_rows
-                .iter()
-                .map(|row| row_render_key(row, &duplicate_row_ids));
-            return virtualizer
-                .with_item_keys(row_keys)
-                .with_snapshot(snapshot)
-                .with_scroll_offset(nonnegative_px(scroll_offset))
-                .resolve();
-        }
-
-        virtualizer.resolve_fixed_window(|index| {
-            let row = &center_rows[index];
-            VirtualizerItemKey::new(row_render_key(row, &duplicate_row_ids))
-        })
-    }
-
-    fn resolve_columns(&self, table: &TableResolvedState) -> Vec<TableColumnRenderPlan> {
-        let mut aria_column_index = 1;
-        let mut columns = Vec::new();
-        let visible_regions = table.visible_column_regions();
-        let visible_sizing = table.visible_column_sizing();
-
-        for region in TableColumnRegion::ALL {
-            for column in visible_regions.region(region) {
-                let sizing = visible_sizing
-                    .column(column.id())
-                    .expect("visible column sizing should resolve for visible columns");
-                let sort_direction = self
-                    .state
-                    .sorting()
-                    .iter()
-                    .find(|sort| sort.column() == column.id())
-                    .map(|sort| sort.direction());
-                columns.push(TableColumnRenderPlan::new(
-                    column,
-                    sizing,
-                    region,
-                    aria_column_index,
-                    sort_direction,
-                ));
-                aria_column_index += 1;
-            }
-        }
-
-        columns
-    }
 }
 
 impl Sizable for Table {
@@ -634,17 +349,8 @@ impl RenderOnce for Table {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let runtime_id = format!("table:{}:runtime", self.id);
         let default_focused_row = self.default_focused_row.clone();
-        let runtime = window.use_keyed_state(runtime_id, cx, |_, _| TableRuntime {
-            scroll_handle: ScrollHandle::new(),
-            horizontal_scroll_handle: ScrollHandle::new(),
-            resolved: None,
-            content_fit: TableContentFitMeasureCache::default(),
-            row_measurements: BTreeMap::new(),
-            column_resize: TableColumnResizeState::default(),
-            focused_row: default_focused_row,
-            focus_handles: BTreeMap::new(),
-            expansion_override: None,
-            selection_anchor: None,
+        let runtime = window.use_keyed_state(runtime_id, cx, |_, _| {
+            TableRuntime::new(default_focused_row)
         });
         let scroll_handle = runtime.read(cx).scroll_handle.clone();
         let horizontal_scroll_handle = runtime.read(cx).horizontal_scroll_handle.clone();
@@ -1369,13 +1075,6 @@ fn table_column_sizing_change(
 ) -> TableColumnSizingChange {
     let width = sizing.width(&drag.column_id).unwrap_or(drag.start_width);
     TableColumnSizingChange::new(drag.column_id.clone(), width, sizing)
-}
-
-fn apply_table_expansion(state: TableState, expansion: TableExpansionState) -> TableState {
-    match expansion {
-        TableExpansionState::All => state.with_all_rows_expanded(),
-        TableExpansionState::Rows(rows) => state.with_expanded_rows(rows),
-    }
 }
 
 fn toggle_table_expansion(
@@ -2451,6 +2150,7 @@ const fn nonnegative_px(value: UiPx) -> UiPx {
 
 #[cfg(test)]
 mod tests {
+    use super::virtualization::measured_virtualizer_state;
     use super::*;
     use open_gpui_ui_core::{
         TableColumn, TableColumnPinning, TableRow, TableSort, VirtualizerRange,

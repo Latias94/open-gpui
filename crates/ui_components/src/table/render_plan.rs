@@ -13,9 +13,10 @@ use open_gpui_ui_core::{
 
 use crate::table::layout::resolve_column_region_render_plans;
 
+use super::virtualization::row_render_key;
 use super::{
     TableHeaderAction, TableMetrics, TableRowMeasureMode, apply_table_content_fit_widths,
-    nonnegative_px, row_render_key,
+    nonnegative_px,
 };
 
 /// One resolved table column in render order.
