@@ -3857,6 +3857,42 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
             .evidence
             .contains(&"components_gallery_smoke_select_table_cell_updates_sample_rows")
     );
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_multiline_table_cell_updates_sample_rows")
+    );
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_column_visibility_updates_release_matrix")
+    );
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_focused_table_scroll_stays_inside_sample")
+    );
+    assert!(table_gate.evidence.contains(
+        &"components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample"
+    ));
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_grouped_table_column_reorder_updates_sample")
+    );
+    assert!(table_gate.evidence.contains(
+        &"components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample"
+    ));
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample")
+    );
+    assert!(
+        table_gate
+            .evidence
+            .contains(&"components_gallery_smoke_resizable_table_resize_updates_sample")
+    );
     assert!(table_gate.evidence.contains(&"select-release"));
 }
 

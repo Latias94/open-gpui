@@ -1393,7 +1393,7 @@ fn component_source_files(component: &str) -> &'static [&'static str] {
         "Tabs" => &["tabs.rs"],
         "ScrollArea" => &["scroll_area.rs"],
         "Splitter" => &["splitter.rs"],
-        "Table" => &["table.rs", "table/resolve.rs"],
+        "Table" => &["table/mod.rs", "table/resolve.rs"],
         "TableColumnVisibility" => &["table/column_visibility.rs"],
         "TableFacetedFilter" => &["table/faceted_filter.rs"],
         "TableGlobalFilter" => &["table/global_filter.rs"],
@@ -1421,6 +1421,16 @@ fn component_source_files(component: &str) -> &'static [&'static str] {
         "NumberInput" => &["number_input.rs"],
         _ => panic!("missing source file mapping for `{component}`"),
     }
+}
+
+fn table_render_owner_files() -> &'static [&'static str] {
+    &[
+        "table/body.rs",
+        "table/cell.rs",
+        "table/editors.rs",
+        "table/header.rs",
+        "table/resize.rs",
+    ]
 }
 
 fn component_public_methods(component: &str) -> &'static [&'static str] {
@@ -11742,6 +11752,27 @@ fn component_api_inventory_covers_official_gallery_catalog() {
         assert!(
             inventory_names.contains(overlay),
             "overlay component `{overlay}` needs a public API inventory row"
+        );
+    }
+}
+
+#[test]
+fn table_component_source_mapping_tracks_split_render_owners() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    assert!(
+        !source_dir.join("table.rs").exists(),
+        "Table should resolve through table/mod.rs instead of the old single-file adapter"
+    );
+    assert_eq!(
+        component_source_files("Table"),
+        ["table/mod.rs", "table/resolve.rs"]
+    );
+
+    for owner in table_render_owner_files() {
+        assert!(
+            source_dir.join(owner).is_file(),
+            "split Table render owner `{owner}` should exist"
         );
     }
 }

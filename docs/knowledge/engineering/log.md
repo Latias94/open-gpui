@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-06-29: Continued `docs/plans/2026-06-29-002-refactor-table-depth-second-stage-plan.md`
+  on `refactor/table-depth-second-stage`. The Table adapter is now split into concern-owned
+  modules for header rendering, resize/reorder affordances, body rows, cells, editors, runtime,
+  resolution, render plans, filtering recipes, column visibility, toolbar, layout, metrics, and
+  virtualization. Added source-owner and gallery conformance assertions so the old
+  `ui_components/src/table.rs` adapter path cannot reappear silently. Verified the U6/U7 focused
+  surface with `cargo fmt -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-components --tests`, `cargo nextest run -p open-gpui-ui-components table`, and the
+  public inventory focused nextest commands before the final full verification pass.
 - 2026-06-28: Completed the choice-surface refactor implementation for
   `docs/plans/2026-06-28-001-refactor-ui-choice-surface-plan.md` in the working tree.
   `ui_components::choice` now centralizes stable-value projection, query normalization, and
@@ -35,8 +44,7 @@ status: active
   root, pads the body by the same band height, and keeps vertical wheel input inside the table
   body while the header stays fixed. Updated the runtime and gallery proofs so the pinned body
   scroll test and the `release-rollup` smoke both assert stable header bounds across vertical
-  scroll. Verified with `cargo fmt --all -- crates/ui_components/src/table.rs
-  crates/ui_components/tests/components.rs examples/ui-foundation-gallery/tests/foundation_gallery.rs`,
+  scroll. Verified with focused table adapter formatting and gallery smoke coverage,
   `cargo nextest run -p open-gpui-ui-components table`,
   `cargo nextest run -p open-gpui-ui-foundation-gallery table`, and `git diff --check`.
 - 2026-06-27: Added adapter-owned submenu hover timers and close timing on
