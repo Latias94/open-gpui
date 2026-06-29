@@ -29,6 +29,10 @@ status: active
   paths in Select, Combobox, Menu, and ContextMenu, keeping non-overlay list/tree/table keyboard
   handling out of this helper. Verified with focused select/combobox/menu/context-menu nextest
   coverage and `cargo check -p open-gpui-ui-components --tests`.
+- 2026-06-30: Split the broad component API inventory contract test into focused checks for
+  row uniqueness/classification, public method surface drift, ownership vocabulary, and stateful
+  regression sentinels. Verified the four focused inventory tests and
+  `cargo check -p open-gpui-ui-components --tests`.
 - 2026-06-29: Continued `docs/plans/2026-06-29-002-refactor-table-depth-second-stage-plan.md`
   on `refactor/table-depth-second-stage`. The Table adapter is now split into concern-owned
   modules for header rendering, resize/reorder affordances, body rows, cells, editors, runtime,

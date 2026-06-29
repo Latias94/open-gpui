@@ -11818,6 +11818,44 @@ fn component_source_mapping_expands_split_component_directories() {
 }
 
 #[test]
+fn component_api_inventory_rows_are_unique_and_classified() {
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in COMPONENT_API_INVENTORY {
+        assert!(
+            seen.insert(entry.component),
+            "component API inventory contains duplicate row for `{}`",
+            entry.component
+        );
+        assert!(
+            entry.has_classification(),
+            "{} must document at least one API ownership bucket or no-interaction note",
+            entry.component
+        );
+        assert!(
+            entry.renderer_neutral_state,
+            "{} resolved state must remain renderer-neutral",
+            entry.component
+        );
+    }
+}
+
+#[test]
+fn component_api_inventory_tracks_public_method_surface() {
+    for entry in COMPONENT_API_INVENTORY {
+        let source_methods = component_public_methods_from_source(entry.component);
+        let expected_methods = component_public_methods(entry.component)
+            .iter()
+            .map(|method| method.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            source_methods, expected_methods,
+            "{} public method surface drifted; update COMPONENT_API_INVENTORY and the method baseline together",
+            entry.component
+        );
+    }
+}
+
+#[test]
 fn component_api_inventory_uses_stable_ownership_vocabulary() {
     const CURRENT_CALLBACK_NAMES: &[&str] = &[
         "on_activate",
@@ -11845,34 +11883,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
     ];
     const CURRENT_LEGACY_SEED_INPUTS: &[(&str, &str)] = &[];
 
-    let mut seen = std::collections::BTreeSet::new();
     for entry in COMPONENT_API_INVENTORY {
-        assert!(
-            seen.insert(entry.component),
-            "component API inventory contains duplicate row for `{}`",
-            entry.component
-        );
-        assert!(
-            entry.has_classification(),
-            "{} must document at least one API ownership bucket or no-interaction note",
-            entry.component
-        );
-        assert!(
-            entry.renderer_neutral_state,
-            "{} resolved state must remain renderer-neutral",
-            entry.component
-        );
-        let source_methods = component_public_methods_from_source(entry.component);
-        let expected_methods = component_public_methods(entry.component)
-            .iter()
-            .map(|method| method.to_string())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            source_methods, expected_methods,
-            "{} public method surface drifted; update COMPONENT_API_INVENTORY and the method baseline together",
-            entry.component
-        );
-
         for seed in entry.default_seeds {
             assert!(
                 seed.builder.starts_with("default_"),
@@ -11912,7 +11923,10 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
             );
         }
     }
+}
 
+#[test]
+fn component_api_inventory_keeps_regression_sentinels_for_stateful_components() {
     assert_inventory_contains_controlled_input("TextInput", "value");
     assert_inventory_contains_callback("TextInput", "on_change", "String");
     assert_inventory_contains_controlled_input("Textarea", "value");
