@@ -125,7 +125,7 @@ pub struct SplitterPanelState {
 impl SplitterPanelState {
     fn from_descriptor(descriptor: SplitterPanelDescriptor) -> Self {
         let min_fraction = sanitize_fraction(descriptor.min_fraction).min(1.0);
-        let max_fraction = sanitize_fraction(descriptor.max_fraction)
+        let max_fraction = sanitize_max_fraction(descriptor.max_fraction)
             .max(min_fraction)
             .min(1.0);
         let collapsible = descriptor.collapsible;
@@ -293,7 +293,8 @@ impl SplitterState {
 
     /// Returns a new state after applying a fraction delta to a handle.
     pub fn resized_by(&self, handle_index: usize, delta_fraction: f32) -> Self {
-        if !delta_fraction.is_finite()
+        if self.handles.get(handle_index).is_none_or(|handle| handle.disabled)
+            || !delta_fraction.is_finite()
             || delta_fraction.abs() <= EPSILON
             || handle_index + 1 >= self.panels.len()
         {
@@ -706,6 +707,14 @@ fn sanitize_fraction(fraction: f32) -> f32 {
         fraction.max(0.0)
     } else {
         0.0
+    }
+}
+
+fn sanitize_max_fraction(fraction: f32) -> f32 {
+    if fraction.is_finite() {
+        fraction.max(0.0)
+    } else {
+        1.0
     }
 }
 

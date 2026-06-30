@@ -11043,6 +11043,72 @@ fn splitter_resize_delta_clamps_to_adjacent_min_max() {
 }
 
 #[test]
+fn splitter_resize_ignores_disabled_and_invalid_deltas() {
+    let disabled = SplitterState::resolve(
+        "disabled-editor",
+        Orientation::Horizontal,
+        Size::Small,
+        true,
+        [
+            SplitterPanelDescriptor::new("left", 0.4),
+            SplitterPanelDescriptor::new("right", 0.6),
+        ],
+    );
+
+    assert!(disabled.disabled());
+    assert!(disabled.handles()[0].disabled());
+    assert_eq!(disabled.resized_by(0, 0.2), disabled);
+
+    let enabled = SplitterState::resolve(
+        "enabled-editor",
+        Orientation::Horizontal,
+        Size::Small,
+        false,
+        [
+            SplitterPanelDescriptor::new("left", 0.4),
+            SplitterPanelDescriptor::new("right", 0.6),
+        ],
+    );
+
+    assert_eq!(enabled.resized_by(0, f32::NAN), enabled);
+    assert_eq!(enabled.resized_by(0, f32::INFINITY), enabled);
+    assert_eq!(enabled.resized_by(4, 0.2), enabled);
+}
+
+#[test]
+fn splitter_state_sanitizes_non_finite_panel_inputs() {
+    let state = SplitterState::resolve(
+        "unstable-inputs",
+        Orientation::Vertical,
+        Size::Medium,
+        false,
+        [
+            SplitterPanelDescriptor::new("nan", f32::NAN)
+                .min_fraction(f32::NAN)
+                .max_fraction(f32::INFINITY),
+            SplitterPanelDescriptor::new("negative", -0.8)
+                .min_fraction(-0.2)
+                .max_fraction(0.7),
+            SplitterPanelDescriptor::new("valid", 0.5)
+                .min_fraction(0.2)
+                .max_fraction(0.8),
+        ],
+    );
+
+    let sum: f32 = state.panels().iter().map(|panel| panel.fraction()).sum();
+    assert!((sum - 1.0).abs() < 0.001);
+    assert!(state.panels().iter().all(|panel| {
+        panel.fraction().is_finite()
+            && panel.min_fraction().is_finite()
+            && panel.max_fraction().is_finite()
+            && panel.fraction() >= panel.min_fraction()
+            && panel.fraction() <= panel.max_fraction()
+    }));
+    assert_eq!(state.panels()[0].min_fraction(), 0.0);
+    assert_eq!(state.panels()[0].max_fraction(), 1.0);
+}
+
+#[test]
 fn splitter_runtime_fraction_overrides_still_use_resize_constraints() {
     let state = SplitterState::resolve(
         "runtime-editor",
