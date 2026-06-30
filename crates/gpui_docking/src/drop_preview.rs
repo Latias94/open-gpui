@@ -115,7 +115,22 @@ pub(crate) struct DockPreviewBody {
 pub(crate) struct DockPreviewPayloadTabs {
     pub(crate) target_tabs: Option<DockNodeId>,
     pub(crate) insert_index: Option<usize>,
+    pub(crate) insertion: Option<DockPreviewTabInsertion>,
     pub(crate) tabs: Vec<DockPreviewPayloadTab>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPreviewTabInsertion {
+    pub(crate) target_tabs: Option<DockNodeId>,
+    pub(crate) index: DockPreviewTabInsertionIndex,
+    pub(crate) slot_bounds: Option<Bounds<Pixels>>,
+    pub(crate) clipping_bounds: Bounds<Pixels>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockPreviewTabInsertionIndex {
+    At(usize),
+    Append,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,6 +142,47 @@ pub(crate) struct DockPreviewPayloadTab {
 pub(crate) struct DockDropRoutePreview {
     pub(crate) kind: DockDropRoutePreviewKind,
     pub(crate) bounds: Bounds<Pixels>,
+    pub(crate) rejected: bool,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPreviewVisualDescriptor {
+    pub(crate) decision: DockPreviewVisualDecision,
+    pub(crate) active_layer: Option<DockPreviewLayerKind>,
+    pub(crate) active_zone: Option<DropZone>,
+    pub(crate) tab_insertion: Option<DockPreviewTabInsertionVisualDescriptor>,
+    pub(crate) payload_tabs: Vec<DockPreviewPayloadTabVisualDescriptor>,
+    pub(crate) has_body: bool,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockPreviewVisualDecision {
+    Allowed,
+    Rejected,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockPreviewPayloadTabVisualDescriptor {
+    pub(crate) index: usize,
+    pub(crate) title: String,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPreviewTabInsertionVisualDescriptor {
+    pub(crate) target_tabs: Option<DockNodeId>,
+    pub(crate) index: DockPreviewTabInsertionIndex,
+    pub(crate) has_slot_bounds: bool,
+    pub(crate) clipping_bounds: Bounds<Pixels>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DockRoutePreviewVisualDescriptor {
+    pub(crate) kind: DockDropRoutePreviewKind,
     pub(crate) rejected: bool,
 }
 
@@ -206,8 +262,14 @@ impl DockDropPreview {
         *payload_tabs = DockPreviewPayloadTabs::from_payload(
             payload_tabs.target_tabs,
             payload_tabs.insert_index,
+            payload_tabs.insertion.clone(),
             payload,
         );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn visual_descriptor(&self) -> DockPreviewVisualDescriptor {
+        self.scene.visual_descriptor()
     }
 }
 
@@ -221,7 +283,8 @@ impl DockPreviewScene {
         decision: DockPreviewDecision,
         style: DockDropGuideStyle,
     ) -> Self {
-        let payload_tabs = payload_tabs_for_target(target, target_tabs, insert_index, &decision);
+        let payload_tabs =
+            payload_tabs_for_target(target, target_tabs, insert_index, &decision, body_bounds);
         let layers = preview_layers_for_target(target, target_bounds, &decision, style);
         Self {
             decision,
@@ -241,11 +304,47 @@ impl DockPreviewScene {
     }
 
     #[cfg(test)]
+    pub(crate) fn visual_descriptor(&self) -> DockPreviewVisualDescriptor {
+        let active_drop_box = self
+            .layers
+            .iter()
+            .flat_map(|layer| layer.drop_boxes.iter())
+            .find(|drop_box| drop_box.active);
+        DockPreviewVisualDescriptor {
+            decision: DockPreviewVisualDecision::from(&self.decision),
+            active_layer: active_drop_box.map(|drop_box| drop_box.layer),
+            active_zone: active_drop_box.map(|drop_box| drop_box.zone),
+            tab_insertion: self
+                .payload_tabs
+                .as_ref()
+                .and_then(|payload_tabs| payload_tabs.insertion.as_ref())
+                .map(DockPreviewTabInsertionVisualDescriptor::from),
+            payload_tabs: self
+                .payload_tabs
+                .as_ref()
+                .map(|payload_tabs| payload_tabs.visual_descriptors())
+                .unwrap_or_default(),
+            has_body: self.body.body_bounds.size.width > px(0.0)
+                && self.body.body_bounds.size.height > px(0.0),
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn active_drop_box(&self) -> Option<&DockPreviewDropBox> {
         self.layers
             .iter()
             .flat_map(|layer| layer.drop_boxes.iter())
             .find(|drop_box| drop_box.active)
+    }
+}
+
+#[cfg(test)]
+impl From<&DockPreviewDecision> for DockPreviewVisualDecision {
+    fn from(decision: &DockPreviewDecision) -> Self {
+        match decision {
+            DockPreviewDecision::Allowed => Self::Allowed,
+            DockPreviewDecision::Rejected { .. } => Self::Rejected,
+        }
     }
 }
 
@@ -275,6 +374,7 @@ impl DockPreviewPayloadTabs {
     pub(crate) fn from_payload(
         target_tabs: Option<DockNodeId>,
         insert_index: Option<usize>,
+        insertion: Option<DockPreviewTabInsertion>,
         payload: &DockDragPayload,
     ) -> Self {
         let tabs = payload
@@ -287,7 +387,32 @@ impl DockPreviewPayloadTabs {
         Self {
             target_tabs,
             insert_index,
+            insertion,
             tabs,
+        }
+    }
+
+    #[cfg(test)]
+    fn visual_descriptors(&self) -> Vec<DockPreviewPayloadTabVisualDescriptor> {
+        self.tabs
+            .iter()
+            .enumerate()
+            .map(|(index, tab)| DockPreviewPayloadTabVisualDescriptor {
+                index,
+                title: tab.title.clone(),
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+impl From<&DockPreviewTabInsertion> for DockPreviewTabInsertionVisualDescriptor {
+    fn from(insertion: &DockPreviewTabInsertion) -> Self {
+        Self {
+            target_tabs: insertion.target_tabs,
+            index: insertion.index,
+            has_slot_bounds: insertion.slot_bounds.is_some(),
+            clipping_bounds: insertion.clipping_bounds,
         }
     }
 }
@@ -297,6 +422,7 @@ fn payload_tabs_for_target(
     target_tabs: Option<DockNodeId>,
     insert_index: Option<usize>,
     decision: &DockPreviewDecision,
+    clipping_bounds: Bounds<Pixels>,
 ) -> Option<DockPreviewPayloadTabs> {
     if !decision.is_allowed() {
         return None;
@@ -309,6 +435,14 @@ fn payload_tabs_for_target(
         | DockResolvedDropTargetKind::EmptyDockSpace { .. } => Some(DockPreviewPayloadTabs {
             target_tabs,
             insert_index,
+            insertion: Some(DockPreviewTabInsertion {
+                target_tabs,
+                index: insert_index
+                    .map(DockPreviewTabInsertionIndex::At)
+                    .unwrap_or(DockPreviewTabInsertionIndex::Append),
+                slot_bounds: None,
+                clipping_bounds,
+            }),
             tabs: Vec::new(),
         }),
         DockResolvedDropTargetKind::InnerEdge { .. }
@@ -564,6 +698,14 @@ impl DockDropRoutePreview {
             bounds: route_bounds(host_position),
             rejected,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn visual_descriptor(&self) -> DockRoutePreviewVisualDescriptor {
+        DockRoutePreviewVisualDescriptor {
+            kind: self.kind,
+            rejected: self.rejected,
+        }
     }
 }
 

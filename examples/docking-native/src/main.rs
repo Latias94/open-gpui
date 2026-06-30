@@ -200,6 +200,7 @@ impl Render for RuntimeStatusPanel {
                     "last platform sync: {}",
                     platform_sync_summary(status.last_platform_sync.as_ref())
                 ),
+                format!("preview proof: {}", preview_proof_summary()),
                 format!(
                     "placement restore: {}",
                     placement_restore_summary(status.placement_restore.as_ref())
@@ -616,6 +617,10 @@ fn platform_sync_summary(sync: Option<&DockViewportPlatformSyncRecord>) -> Strin
         )
     })
     .unwrap_or_else(|| "none".to_string())
+}
+
+fn preview_proof_summary() -> &'static str {
+    "presentation-scene+overlay-layers+tab-insertion+motion+zoom+divider-hit-map+a11y+reduced-motion"
 }
 
 fn tear_off_placement_summary(source: Option<&DockViewportTearOffPlacementRecord>) -> &'static str {
@@ -2232,6 +2237,10 @@ mod tests {
                 unsupported_requests: Vec::new(),
             })),
             "applied=0, skipped=0, unsupported=0"
+        );
+        assert_eq!(
+            preview_proof_summary(),
+            "presentation-scene+overlay-layers+tab-insertion+motion+zoom+divider-hit-map+a11y+reduced-motion"
         );
         assert_eq!(
             placement_restore_summary(Some(&DockViewportRestoreReadinessRecord {

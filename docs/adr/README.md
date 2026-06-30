@@ -16,3 +16,5 @@ platform strategy, or ecosystem compatibility.
 - [ADR 0006: Open GPUI UI Headless Extraction Checkpoint](0006-open-gpui-ui-headless-extraction-checkpoint.md)
 - [ADR 0007: Open GPUI UI Headless Boundary Design](0007-open-gpui-ui-headless-boundary-design.md)
 - [ADR 0008: Open GPUI UI Component Productization Roadmap](0008-open-gpui-ui-component-productization-roadmap.md)
+- [ADR 0009: Open GPUI Table and Virtualizer Product Shape](0009-open-gpui-table-and-virtualizer-product-shape.md)
+- [ADR 0010: Docking Presentation Scene And Motion Model](0010-docking-presentation-scene-motion-model.md)

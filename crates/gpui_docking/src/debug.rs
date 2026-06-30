@@ -47,6 +47,8 @@ pub(crate) enum DockDebugRegion {
         /// Payload tab preview index in drag payload order.
         index: usize,
     },
+    /// The insertion slot rendered before payload tab previews during center/tab docking.
+    DropTabInsertionPreview,
     /// The body rectangle rendered below a center/tab drop preview tab label.
     DropPreviewBody,
     /// A viewport route or tear-off preview before host-local target resolution.

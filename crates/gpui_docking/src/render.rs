@@ -10,6 +10,7 @@ use crate::{
         DockPayloadDropRelease, DockRenderedOutsideReleaseDecision,
         DockRenderedOutsideReleaseRequest,
     },
+    overlay_scene::DockOverlayScene,
     render_split::DockRenderSplitInput,
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
@@ -33,6 +34,7 @@ const DROP_PREVIEW_TAB_MIN_VISIBLE_WIDTH: f32 = 18.0;
 #[derive(Debug, Clone, PartialEq)]
 struct DockDropPreviewTabLayout {
     body_bounds: Bounds<Pixels>,
+    insertion_bounds: Bounds<Pixels>,
     tab_bounds: Vec<DockDropPreviewTabPlacement>,
 }
 
@@ -303,6 +305,14 @@ impl DockHost {
         }
 
         let first_tab_bounds = tab_bounds.first()?.tab_bounds;
+        let insertion_width = px(3.0);
+        let insertion_bounds = Bounds::new(
+            point(
+                first_tab_bounds.origin.x - insertion_width / 2.0,
+                first_tab_bounds.origin.y,
+            ),
+            open_gpui::size(insertion_width, first_tab_bounds.size.height),
+        );
 
         let body_origin_y = first_tab_bounds.origin.y + first_tab_bounds.size.height;
         let body_height =
@@ -314,6 +324,7 @@ impl DockHost {
 
         Some(DockDropPreviewTabLayout {
             body_bounds,
+            insertion_bounds,
             tab_bounds,
         })
     }
@@ -559,6 +570,7 @@ impl DockHost {
         window: &Window,
     ) -> AnyElement {
         let scene = &preview.scene;
+        let overlay_scene = DockOverlayScene::from_preview(scene);
         let bounds = scene
             .payload_tabs
             .as_ref()
@@ -607,6 +619,22 @@ impl DockHost {
                 body = body.rounded_b_sm().border_t_0();
             }
             element = element.child(body);
+            let insertion_selector = self.record_debug_selector(
+                DockDebugRegion::DropTabInsertionPreview,
+                format!("{}:drop-preview:tab-insertion", session.selector_prefix()),
+            );
+            element = element.child(
+                div()
+                    .id(insertion_selector.clone())
+                    .debug_selector(move || insertion_selector)
+                    .absolute()
+                    .left(layout.insertion_bounds.origin.x - bounds.origin.x)
+                    .top(layout.insertion_bounds.origin.y - bounds.origin.y)
+                    .w(layout.insertion_bounds.size.width)
+                    .h(layout.insertion_bounds.size.height)
+                    .rounded_sm()
+                    .bg(palette.border),
+            );
             for placement in layout.tab_bounds {
                 let tab = &payload_tabs.tabs[placement.index];
                 let tab_selector = self.record_debug_selector(
@@ -666,10 +694,8 @@ impl DockHost {
             );
         }
 
-        for layer in &scene.layers {
-            for drop_box in &layer.drop_boxes {
-                element = element.child(self.render_scene_drop_guide(session, bounds, *drop_box));
-            }
+        for drop_box in overlay_scene.guide_drop_boxes() {
+            element = element.child(self.render_scene_drop_guide(session, bounds, drop_box));
         }
 
         element.into_any_element()
@@ -680,7 +706,12 @@ impl DockHost {
         session: &DockHostRenderSession,
         preview: DockDropRoutePreview,
     ) -> AnyElement {
-        let bounds = preview.bounds;
+        let overlay_scene = DockOverlayScene::from_route_preview(&preview);
+        let bounds = overlay_scene
+            .layers
+            .first()
+            .map(|layer| layer.bounds)
+            .unwrap_or(preview.bounds);
         let selector = self.record_debug_selector(
             DockDebugRegion::DropRoutePreview { kind: preview.kind },
             format!("{}:drop-route-preview", session.selector_prefix()),
@@ -1044,6 +1075,7 @@ mod tests {
         let payload_tabs = payload_tab.then(|| crate::drop_preview::DockPreviewPayloadTabs {
             target_tabs,
             insert_index,
+            insertion: None,
             tabs: vec![crate::drop_preview::DockPreviewPayloadTab {
                 title: "Panel".to_string(),
             }],

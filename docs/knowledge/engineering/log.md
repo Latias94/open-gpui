@@ -6,6 +6,19 @@ status: active
 
 # Log
 
+- 2026-06-30: Completed and verified the docking presentation scene and motion model implementation
+  for `docs/plans/2026-06-30-002-refactor-docking-presentation-scene-motion-plan.md`. Added
+  crate-private presentation, overlay, transition, zoom/focus, divider-hit-map, and accessibility
+  descriptor models; added tab insertion preview descriptors/rendering; and fixed zoomed
+  presentation geometry so tab labels, focus regions, and overlay anchors use zoomed bounds. Final
+  checks passed for docking nextest, docking-native nextest/check, `open-gpui` check, formatting,
+  diff whitespace, and engineering wiki validation.
+- 2026-06-30: Wrote `docs/plans/2026-06-30-002-refactor-docking-presentation-scene-motion-plan.md`
+  and `docs/adr/0010-docking-presentation-scene-motion-model.md` for the next docking UI/UX
+  capability refactor. The plan uses the SuperSplit notes and local BonSplit reference as
+  capability inputs, keeps `DockGraph` and current-facts delivery as authorities, and makes a flat
+  `DockPresentationScene` the planned geometry source for overlay, tab insertion, motion,
+  zoom/focus, divider hit maps, accessibility, reduced motion, native dogfood, and deletion cleanup.
 - 2026-06-30: Started the P2/P3 fearless component refactor goal on
   `refactor/component-p2-p3-cleanup` from `main` / `origin/main`. Read-only subagent lanes are
   `contracts`, `large_modules`, `runtime_patterns`, and `exports_tests`; the first main-thread
@@ -509,6 +522,7 @@ status: active
   `cargo nextest run -p open-gpui-ui-components table component_api_inventory`, and
   `cargo nextest run -p open-gpui-ui-foundation-gallery table`. Next action is docs validation and
   commit.
+- 2026-06-30: Implemented the descriptor-first docking presentation scene and motion model from `docs/plans/2026-06-30-002-refactor-docking-presentation-scene-motion-plan.md`. Added crate-private `DockPresentationScene`, `DockOverlayScene`, `DockTransitionPlan`, `DockZoomState`, `DockDividerHitMap`, and `DockAccessibilityScene`; center/tab preview now carries and renders a tab-insertion affordance while edge/root previews suppress payload tab insertion. Focused gates passed: 24/24 `open-gpui-docking` presentation/overlay/motion/zoom/divider/a11y tests and 1/1 native runtime proof-summary test. Next action is final broad verification, simplification, review, and commit.
 - 2026-06-23: Wrote `docs/plans/2026-06-23-006-feat-ui-table-manual-expansion-plan.md` for the next Table slice. The plan narrows the follow-up to manual expansion and async child metadata: source rows can be expandable before children load, the core resolver keeps the current client-expanded path intact, and the gallery proof will simulate app-owned child loading instead of introducing a real fetch layer.
 - 2026-06-23: Completed U5 of `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` in the working tree. The Components gallery now includes `dependency-tree`, a nested source-tree Table sample with pinned identity/status lanes, controlled expansion, row activation logging, tree-depth summary metadata, and a focused smoke that proves disclosure expansion and keyboard activation work on the rendered sample. Focused Table tests now pass in `open-gpui-ui-components` and `open-gpui-ui-foundation-gallery`. Next action is U6: update the component contract, verification docs, and engineering memory, then run the final broad verification set and commit.
 - 2026-06-23: Wrote `docs/plans/2026-06-23-005-feat-ui-table-tree-data-plan.md` for the next Table slice. The plan keeps source tree rows separate from synthetic grouped rows, reuses `TableExpansionState` for nested source hierarchy, adds row focus / activation / expansion payloads, and scopes the first gallery proof to a focused tree-data Table sample. Next action is U1: add source-row hierarchy to the core Table contract.

@@ -79,12 +79,14 @@
 //! ```
 #![warn(missing_docs)]
 
+mod accessibility_scene;
 mod action;
 mod builder;
 mod controller;
 #[cfg(test)]
 mod controller_builder_tests;
 mod debug;
+mod divider_hit_map;
 #[cfg(test)]
 mod dock_op_fixture_tests;
 mod drag;
@@ -117,16 +119,19 @@ mod ids;
 mod interaction;
 mod layout;
 mod op;
+mod overlay_scene;
 mod panel;
 mod panel_catalog;
 mod panel_registry;
 mod panel_view;
 mod policy;
+mod presentation_scene;
 mod render;
 mod render_floating;
 mod render_split;
 mod render_tabs;
 mod split_fraction;
+mod transition_geometry;
 mod viewport;
 mod viewport_activation;
 mod viewport_backend_focus;
@@ -170,7 +175,12 @@ mod workspace_move_validation;
 mod workspace_panel_lifecycle;
 mod workspace_panel_transaction;
 mod workspace_resize_transaction;
+mod zoom_state;
 
+#[cfg(test)]
+mod host_accessibility_tests;
+#[cfg(test)]
+mod host_divider_hit_map_tests;
 #[cfg(test)]
 mod host_floating_tests;
 #[cfg(test)]
@@ -178,11 +188,15 @@ mod host_interaction_tests;
 #[cfg(test)]
 mod host_panel_tests;
 #[cfg(test)]
+mod host_presentation_scene_tests;
+#[cfg(test)]
 mod host_render_tests;
 #[cfg(test)]
 mod host_test_support;
 #[cfg(test)]
 mod host_tests;
+#[cfg(test)]
+mod host_transition_tests;
 #[cfg(test)]
 mod host_viewport_close_tests;
 #[cfg(test)]
@@ -198,11 +212,15 @@ mod host_viewport_platform_capability_tests;
 #[cfg(test)]
 mod host_viewport_preview_tests;
 #[cfg(test)]
+mod host_viewport_preview_visual_tests;
+#[cfg(test)]
 mod host_viewport_route_tests;
 #[cfg(test)]
 mod host_viewport_runtime_test_support;
 #[cfg(test)]
 mod host_viewport_tests;
+#[cfg(test)]
+mod host_zoom_focus_tests;
 #[cfg(test)]
 mod layout_tests;
 #[cfg(test)]

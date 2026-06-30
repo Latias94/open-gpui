@@ -699,6 +699,13 @@ cargo check -p open-gpui-docking-native
 cargo run -p open-gpui-docking-native
 ```
 
+For docking presentation/preview/motion work, the focused semantic gates are:
+
+```sh
+cargo nextest run -p open-gpui-docking host_presentation_scene_tests host_viewport_preview_visual_tests host_transition_tests host_zoom_focus_tests host_divider_hit_map_tests host_accessibility_tests --no-fail-fast
+cargo nextest run -p open-gpui-docking-native runtime_status_panel_formats_platform_capabilities --no-fail-fast
+```
+
 The docking native example exercises the public multi-window setup: applications build one
 `DockController`, wrap it in a `DockViewportRuntimeHandle`, register window-close cleanup, and open
 controller-backed primary and secondary `DockHost` viewports. The runtime panel reports both the
@@ -711,12 +718,17 @@ reports whether a viewport opened from suggested bounds or drag-source geometry,
 authority regressions are visible in the same panel.
 
 Docking target previews are scene-owned. During dogfood, every target-window preview should be
-explainable from one `DockPreviewScene`: the preview body, payload tab previews, active and inactive
-drop boxes, rejected state, inner/outer layer identity, and routed target preview shape. Rendering
-must not recreate guide availability independently from the scene. Debug selectors reflect that
-contract: target-stack guides use `dock:<space>:drop-guide:inner:<tabs>:<zone>`, root/host guides
-use `dock:<space>:drop-guide:outer:<zone>`, and the split body is exposed separately from the
-full target preview container as `dock:<space>:drop-preview:body`.
+explainable from the same capability model: `DockPresentationScene` resolves panes, tab bars,
+tab labels, splitters, floating containers, focus regions, and overlay anchors; `DockPreviewScene`
+describes allowed/rejected target facts; `DockOverlayScene` gives stable layer order for preview
+bodies, guide boxes, tab insertion, payload tabs, route markers, and rejected state;
+`DockTransitionPlan` describes motion/reduced-motion semantics; divider hit maps, zoom/focus state,
+and accessibility descriptors derive from the presentation scene. Rendering must not recreate guide
+availability independently from those descriptors. Debug selectors reflect that contract:
+target-stack guides use `dock:<space>:drop-guide:inner:<tabs>:<zone>`, root/host guides use
+`dock:<space>:drop-guide:outer:<zone>`, the split body is exposed separately from the full target
+preview container as `dock:<space>:drop-preview:body`, and center/tab docking exposes a
+`dock:<space>:drop-preview:tab-insertion` affordance before payload tab previews.
 
 Manual native docking dogfood should use the same example after the automated checks pass:
 
@@ -789,18 +801,26 @@ Current docking multi-viewport capability states:
   `host_viewport_platform_capability_tests`,
   `viewport_runtime_syncs_supported_options_when_reusing_window`, and
   `empty_central_passthrough_syncs_window_pointer_input`.
-- Test ownership is split by concern. Route, lifecycle, placement, close, preview, and platform
-  capability assertions live in focused `host_viewport_*_tests` modules; the old monolithic runtime
-  test files have been deleted. Rendered native dogfood tests remain end-to-end integration coverage.
+- Preview proof is semantic rather than pixel-perfect. `DockPreviewVisualDescriptor` records the
+  allowed/rejected decision, active layer, active zone, tab insertion descriptor, payload tab
+  previews, and route-preview marker shape, while debug selectors continue to anchor rendered
+  dogfood checks. Presentation, overlay, transition, zoom/focus, divider hit map, and accessibility
+  descriptors are covered by focused tests. The native runtime panel exposes this as
+  `preview proof: presentation-scene+overlay-layers+tab-insertion+motion+zoom+divider-hit-map+a11y+reduced-motion`.
+  Automated owners: `host_presentation_scene_tests`, `host_viewport_preview_visual_tests`,
+  `host_transition_tests`, `host_zoom_focus_tests`, `host_divider_hit_map_tests`, and
+  `host_accessibility_tests`. Transparent payload-window rendering, platform accessibility mapping,
+  and screenshot or pixel-regression baselines remain explicitly deferred follow-up work.
+- Test ownership is split by concern. Route, lifecycle, placement, close, preview, platform
+  capability, and visual-proof assertions live in focused `host_viewport_*_tests` modules; the old
+  monolithic runtime test files have been deleted. Rendered native dogfood tests remain
+  end-to-end integration coverage.
 - `DockViewportRuntimeHandle` remains the application-facing facade. Platform sync and pointer-input
   requests now live behind `viewport_platform_sync`, window effects live behind
   `viewport_runtime_effects`, route/scene/close handle methods are split into
   `viewport_runtime_handle::{route_ops,scene_ops,close_ops}`, and coordinate facts live with the
   viewport registry/status model. New tests should target those owning modules instead of adding
   crate-private pass-throughs to the handle.
-- Transparent platform payload-window rendering and screenshot or pixel-regression infrastructure
-  remain deferred. Current verification locks preview capability and semantic selectors rather than
-  pixel-perfect Dear ImGui styling.
 
 Before publishing a crate, confirm that the packaged archive carries the expected attribution files:
 
