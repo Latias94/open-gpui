@@ -59,11 +59,6 @@ impl ContextMenuState {
         focus_restore_intent: FocusRestoreIntent,
         tokens: ThemeTokens,
     ) -> Self {
-        let open_mode = if open.is_some() {
-            MenuOpenMode::Controlled
-        } else {
-            MenuOpenMode::Uncontrolled
-        };
         let descriptors: Vec<MenuItemDescriptor> = items.into_iter().collect();
         let menu = MenuState::resolve(
             size,
@@ -86,7 +81,7 @@ impl ContextMenuState {
             size,
             open: menu.open(),
             default_open,
-            open_mode,
+            open_mode: menu.open_mode(),
             anchor_point,
             menu,
             placement_input,

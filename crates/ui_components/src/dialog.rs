@@ -11,16 +11,16 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
-    OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
+    Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, OverlayResolvedState, consume_overlay_event,
-    emit_overlay_open_change, escape_open_change, gpui_overlay_state, outside_press_open_change,
-    resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
+    OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
+    consume_overlay_event, emit_overlay_open_change, escape_open_change, gpui_overlay_state,
+    outside_press_open_change, resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
 };
 use crate::theme::ThemeResolver;
 
@@ -41,6 +41,13 @@ impl DialogOpenMode {
             Self::Uncontrolled => "uncontrolled",
             Self::Controlled => "controlled",
         }
+    }
+}
+
+const fn dialog_open_mode_from_disclosure(mode: OverlayDisclosureOpenMode) -> DialogOpenMode {
+    match mode {
+        OverlayDisclosureOpenMode::Uncontrolled => DialogOpenMode::Uncontrolled,
+        OverlayDisclosureOpenMode::Controlled => DialogOpenMode::Controlled,
     }
 }
 
@@ -218,23 +225,18 @@ impl DialogState {
         focus_restore_intent: FocusRestoreIntent,
         tokens: ThemeTokens,
     ) -> Self {
-        let open_mode = if open.is_some() {
-            DialogOpenMode::Controlled
-        } else {
-            DialogOpenMode::Uncontrolled
-        };
-        let open = open.unwrap_or(default_open) && !disabled;
-        let presence = if open {
-            OverlayPresence::open()
-        } else {
-            OverlayPresence::hidden()
-        };
-        let overlay = GpuiOverlayAdapterConfig::new(OverlayLayerKind::Modal, presence)
+        let disclosure = OverlayDisclosureConfig::new(OverlayLayerKind::Modal)
+            .controlled_open(open)
+            .default_open(default_open)
+            .disabled(disabled)
             .outside_press_policy(outside_press_policy)
             .escape_key_policy(escape_key_policy)
             .initial_focus_intent(initial_focus_intent.clone())
             .focus_restore_intent(focus_restore_intent.clone())
-            .resolved_state();
+            .resolve();
+        let open = disclosure.open();
+        let open_mode = dialog_open_mode_from_disclosure(disclosure.open_mode());
+        let overlay = disclosure.overlay().clone();
         let colors = ThemeResolver::dialog_colors(tokens, open);
 
         Self {

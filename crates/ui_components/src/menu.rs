@@ -13,8 +13,8 @@ use open_gpui::{
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
     OverlayAnchorInput, OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementInput,
-    OverlayPlacementSide, OverlayPresence, Rect, Role, Sizable, Size, ThemeTokens, Toggled, UiPx,
-    ui_point, ui_px, ui_size,
+    OverlayPlacementSide, Rect, Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_point, ui_px,
+    ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -24,8 +24,8 @@ use crate::menu_runtime::{
     MenuRuntime, handle_menu_submenu_surface_hover, update_menu_hover_target,
 };
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
-    emit_overlay_open_change, gpui_overlay_state, outside_press_open_change,
+    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
+    consume_overlay_event, emit_overlay_open_change, gpui_overlay_state, outside_press_open_change,
     resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
 };
 use crate::roving_focus::{typeahead_target, vertical_roving_navigation_target};
@@ -52,6 +52,13 @@ impl MenuOpenMode {
             Self::Uncontrolled => "uncontrolled",
             Self::Controlled => "controlled",
         }
+    }
+}
+
+const fn menu_open_mode_from_disclosure(mode: OverlayDisclosureOpenMode) -> MenuOpenMode {
+    match mode {
+        OverlayDisclosureOpenMode::Uncontrolled => MenuOpenMode::Uncontrolled,
+        OverlayDisclosureOpenMode::Controlled => MenuOpenMode::Controlled,
     }
 }
 
@@ -1054,14 +1061,19 @@ impl MenuState {
         focus_restore_intent: FocusRestoreIntent,
         tokens: ThemeTokens,
     ) -> Self {
-        let open_mode = if open.is_some() {
-            MenuOpenMode::Controlled
-        } else {
-            MenuOpenMode::Uncontrolled
-        };
         let descriptors: Vec<MenuItemDescriptor> = items.into_iter().collect();
-        let requested_open = open.unwrap_or(default_open);
-        let open = requested_open && !disabled && !descriptors.is_empty();
+        let disclosure = OverlayDisclosureConfig::new(OverlayLayerKind::Menu)
+            .controlled_open(open)
+            .default_open(default_open)
+            .disabled(disabled)
+            .openable(!descriptors.is_empty())
+            .outside_press_policy(outside_press_policy)
+            .escape_key_policy(escape_key_policy)
+            .initial_focus_intent(initial_focus_intent.clone())
+            .focus_restore_intent(focus_restore_intent.clone())
+            .resolve();
+        let open = disclosure.open();
+        let open_mode = menu_open_mode_from_disclosure(disclosure.open_mode());
         let mut open_path = if open { open_path.to_vec() } else { Vec::new() };
         let provisional_items = menu_item_states_from_descriptors(&descriptors, None, &open_path);
         if !menu_path_is_openable(&provisional_items, &open_path) {
@@ -1091,17 +1103,7 @@ impl MenuState {
                 .iter()
                 .position(|item| item.path() == focused_path.as_slice())
         });
-        let presence = if open {
-            OverlayPresence::open()
-        } else {
-            OverlayPresence::hidden()
-        };
-        let overlay = GpuiOverlayAdapterConfig::new(OverlayLayerKind::Menu, presence)
-            .outside_press_policy(outside_press_policy)
-            .escape_key_policy(escape_key_policy)
-            .initial_focus_intent(initial_focus_intent.clone())
-            .focus_restore_intent(focus_restore_intent.clone())
-            .resolved_state();
+        let overlay = disclosure.overlay().clone();
         let colors = ThemeResolver::menu_colors(tokens, open);
 
         Self {

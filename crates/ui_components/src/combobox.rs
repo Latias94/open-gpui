@@ -12,8 +12,8 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayAnchorInput,
-    OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
-    OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, rect, ui_point, ui_px, ui_size,
+    OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, Role,
+    Sizable, Size, ThemeTokens, UiPx, rect, ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -24,8 +24,8 @@ use crate::listbox::{
     ListboxState,
 };
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
-    emit_overlay_open_change, gpui_overlay_state, outside_press_open_change,
+    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
+    consume_overlay_event, emit_overlay_open_change, gpui_overlay_state, outside_press_open_change,
     resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
@@ -45,6 +45,13 @@ pub enum ComboboxOpenMode {
     Uncontrolled,
     /// Open state is provided by the caller.
     Controlled,
+}
+
+const fn combobox_open_mode_from_disclosure(mode: OverlayDisclosureOpenMode) -> ComboboxOpenMode {
+    match mode {
+        OverlayDisclosureOpenMode::Uncontrolled => ComboboxOpenMode::Uncontrolled,
+        OverlayDisclosureOpenMode::Controlled => ComboboxOpenMode::Controlled,
+    }
 }
 
 /// Pure descriptor for one combobox option.
@@ -337,12 +344,16 @@ impl ComboboxState {
         let query = query.into();
         let query = TextEditingPolicy::single_line().normalize_text(query.as_str());
         let empty_label = empty_label.into();
-        let open_mode = if open.is_some() {
-            ComboboxOpenMode::Controlled
-        } else {
-            ComboboxOpenMode::Uncontrolled
-        };
-        let open = open.unwrap_or(default_open) && !disabled;
+        let disclosure = OverlayDisclosureConfig::new(OverlayLayerKind::NonModalDismissible)
+            .controlled_open(open)
+            .default_open(default_open)
+            .disabled(disabled)
+            .outside_press_policy(outside_press_policy)
+            .initial_focus_intent(initial_focus_intent.clone())
+            .focus_restore_intent(focus_restore_intent.clone())
+            .resolve();
+        let open = disclosure.open();
+        let open_mode = combobox_open_mode_from_disclosure(disclosure.open_mode());
         let normalized_query = choice::normalize_query(query.as_str());
         let raw_groups = groups.into_iter().collect::<Vec<_>>();
         let raw_options = options.into_iter().collect::<Vec<_>>();
@@ -407,17 +418,7 @@ impl ComboboxState {
             false,
             tokens,
         );
-        let presence = if open {
-            OverlayPresence::open()
-        } else {
-            OverlayPresence::hidden()
-        };
-        let overlay =
-            GpuiOverlayAdapterConfig::new(OverlayLayerKind::NonModalDismissible, presence)
-                .outside_press_policy(outside_press_policy)
-                .initial_focus_intent(initial_focus_intent.clone())
-                .focus_restore_intent(focus_restore_intent.clone())
-                .resolved_state();
+        let overlay = disclosure.overlay().clone();
         let scroll_area = ScrollAreaState::resolve(
             format!("{label}:combobox-content-scroll"),
             ScrollAreaAxis::Vertical,

@@ -16,7 +16,7 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
-    OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
+    Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -24,8 +24,8 @@ use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::listbox::{ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState};
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, OverlayResolvedState, emit_overlay_open_change, gpui_overlay_state,
-    resolve_overlay_open_state, set_overlay_open,
+    OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
+    emit_overlay_open_change, gpui_overlay_state, resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_area::{ScrollAreaAxis, ScrollAreaState};
 use crate::text_editing::TextEditingPolicy;
@@ -47,6 +47,13 @@ pub enum CommandOpenMode {
     Uncontrolled,
     /// Open state is provided by the caller.
     Controlled,
+}
+
+const fn command_open_mode_from_disclosure(mode: OverlayDisclosureOpenMode) -> CommandOpenMode {
+    match mode {
+        OverlayDisclosureOpenMode::Uncontrolled => CommandOpenMode::Uncontrolled,
+        OverlayDisclosureOpenMode::Controlled => CommandOpenMode::Controlled,
+    }
 }
 
 /// Command query ownership.
@@ -1137,12 +1144,17 @@ impl CommandState {
         let query = query.into();
         let query = TextEditingPolicy::single_line().normalize_text(query.as_str());
         let empty_label = empty_label.into();
-        let open_mode = if open.is_some() {
-            CommandOpenMode::Controlled
-        } else {
-            CommandOpenMode::Uncontrolled
-        };
-        let open = open.unwrap_or(default_open) && !disabled;
+        let disclosure = OverlayDisclosureConfig::new(OverlayLayerKind::NonModalDismissible)
+            .controlled_open(open)
+            .default_open(default_open)
+            .disabled(disabled)
+            .outside_press_policy(outside_press_policy)
+            .escape_key_policy(escape_key_policy)
+            .initial_focus_intent(initial_focus_intent.clone())
+            .focus_restore_intent(focus_restore_intent.clone())
+            .resolve();
+        let open = disclosure.open();
+        let open_mode = command_open_mode_from_disclosure(disclosure.open_mode());
         let normalized_query = choice::normalize_query(query.as_str());
         let query_is_empty = normalized_query.is_empty();
         let CommandDataSource {
@@ -1368,24 +1380,26 @@ impl CommandState {
             true,
             tokens,
         );
-        let presence = if dialog_enabled && open {
-            OverlayPresence::open()
-        } else {
-            OverlayPresence::hidden()
-        };
-        let overlay =
-            GpuiOverlayAdapterConfig::new(OverlayLayerKind::NonModalDismissible, presence)
-                .outside_press_policy(outside_press_policy)
-                .escape_key_policy(escape_key_policy)
-                .initial_focus_intent(initial_focus_intent.clone())
-                .focus_restore_intent(focus_restore_intent.clone())
-                .resolved_state();
-        let dialog_overlay = GpuiOverlayAdapterConfig::new(OverlayLayerKind::Modal, presence)
+        let overlay = OverlayDisclosureConfig::new(OverlayLayerKind::NonModalDismissible)
+            .controlled_open(Some(open))
+            .openable(dialog_enabled)
+            .outside_press_policy(outside_press_policy)
+            .escape_key_policy(escape_key_policy)
+            .initial_focus_intent(initial_focus_intent.clone())
+            .focus_restore_intent(focus_restore_intent.clone())
+            .resolve()
+            .overlay()
+            .clone();
+        let dialog_overlay = OverlayDisclosureConfig::new(OverlayLayerKind::Modal)
+            .controlled_open(Some(open))
+            .openable(dialog_enabled)
             .outside_press_policy(outside_press_policy)
             .escape_key_policy(escape_key_policy)
             .initial_focus_intent(initial_focus_intent)
             .focus_restore_intent(focus_restore_intent.clone())
-            .resolved_state();
+            .resolve()
+            .overlay()
+            .clone();
         let dialog = dialog_enabled.then(|| CommandDialogState {
             enabled: true,
             open,

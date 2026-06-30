@@ -11,8 +11,7 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    OverlayFocusTarget, OverlayLayerKind, OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx,
-    ui_px,
+    OverlayFocusTarget, OverlayLayerKind, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -20,9 +19,9 @@ use crate::button::ButtonVariant;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, OverlayResolvedState, consume_overlay_event,
-    emit_overlay_open_change, escape_open_change, gpui_overlay_state, outside_press_open_change,
-    resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
+    OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
+    consume_overlay_event, emit_overlay_open_change, escape_open_change, gpui_overlay_state,
+    outside_press_open_change, resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
 };
 use crate::theme::ThemeResolver;
 
@@ -49,6 +48,15 @@ impl AlertDialogOpenMode {
             Self::Uncontrolled => "uncontrolled",
             Self::Controlled => "controlled",
         }
+    }
+}
+
+const fn alert_dialog_open_mode_from_disclosure(
+    mode: OverlayDisclosureOpenMode,
+) -> AlertDialogOpenMode {
+    match mode {
+        OverlayDisclosureOpenMode::Uncontrolled => AlertDialogOpenMode::Uncontrolled,
+        OverlayDisclosureOpenMode::Controlled => AlertDialogOpenMode::Controlled,
     }
 }
 
@@ -417,11 +425,12 @@ impl AlertDialogState {
         focus_restore_intent: FocusRestoreIntent,
         tokens: ThemeTokens,
     ) -> Self {
-        let open_mode = if open.is_some() {
-            AlertDialogOpenMode::Controlled
-        } else {
-            AlertDialogOpenMode::Uncontrolled
-        };
+        let open_mode = alert_dialog_open_mode_from_disclosure(
+            OverlayDisclosureConfig::new(OverlayLayerKind::Modal)
+                .controlled_open(open)
+                .resolve()
+                .open_mode(),
+        );
         Self::resolve_with_open_mode(
             size,
             disabled,
@@ -463,14 +472,17 @@ impl AlertDialogState {
         focus_restore_intent: FocusRestoreIntent,
         tokens: ThemeTokens,
     ) -> Self {
-        let open = open && !disabled;
-        let presence = OverlayPresence::from_open(open);
-        let overlay = GpuiOverlayAdapterConfig::new(OverlayLayerKind::Modal, presence)
+        let disclosure = OverlayDisclosureConfig::new(OverlayLayerKind::Modal)
+            .controlled_open(Some(open))
+            .default_open(default_open)
+            .disabled(disabled)
             .outside_press_policy(outside_press_policy)
             .escape_key_policy(escape_key_policy)
             .initial_focus_intent(initial_focus_intent.clone())
             .focus_restore_intent(focus_restore_intent.clone())
-            .resolved_state();
+            .resolve();
+        let open = disclosure.open();
+        let overlay = disclosure.overlay().clone();
         let colors = ThemeResolver::alert_dialog_colors(tokens, intent, open);
         let cancel_disabled = cancel_disabled || disabled;
         let action_disabled = action_disabled || disabled;
