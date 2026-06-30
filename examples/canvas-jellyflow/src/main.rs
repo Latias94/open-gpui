@@ -256,7 +256,7 @@ impl JellyflowCanvasView {
                         div()
                             .text_sm()
                             .text_color(rgb(0x111827))
-                            .child("Jellyflow gpui proof"),
+                            .child("Jellyflow GPUI adapter fixture"),
                     )
                     .child(
                         div()
@@ -513,7 +513,7 @@ impl JellyflowCanvasView {
 
         match event.keystroke.key.as_str() {
             "c" => {
-                // CanvasEditor currently manages clipboard, but this proof stays read-only.
+                // CanvasEditor currently manages clipboard, but this fixture stays read-only.
                 Ok(true)
             }
             "z" if modifiers.shift => {
@@ -1016,7 +1016,7 @@ fn surface_slot_descriptor_for_projection(
     surface: &NodeSurfaceSummary,
     slot: &NodeSurfaceSlotProjection,
 ) -> Option<NodeSurfaceSlotDescriptor> {
-    // The GPUI proof currently keeps descriptor lookup local to the projected surface summary.
+    // The GPUI fixture keeps descriptor lookup local to the projected surface summary.
     // The cloned slot descriptor lets local components render controls without carrying runtime
     // widget types across the headless boundary.
     surface
@@ -1907,9 +1907,9 @@ fn project_store(
         canvas_nodes: document.nodes().count(),
         canvas_edges: document.edges().count(),
         layout_preset: "tree -> tidy_tree".to_string(),
-        last_commit: "node-kit gpui proof now uses builtin semantic descriptors".to_string(),
+        last_commit: "jellyflow-open-gpui owns reusable adapter gates".to_string(),
         source: "jellyflow graph v1".to_string(),
-        adapter: "open-gpui-canvas component-layout projection example".to_string(),
+        adapter: "open-gpui-canvas consumer of jellyflow-open-gpui".to_string(),
         kit: "workflow.automation / erd.table / shader.blueprint / mind-map.knowledge-canvas"
             .to_string(),
         capability: GpuiAuthoringCapabilitySummary {
