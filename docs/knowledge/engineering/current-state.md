@@ -1,11 +1,12 @@
 ---
 type: Current State
-title: Docking split motion primitive refactor state
+title: Docking runtime capability follow-up state
 status: active
-timestamp: 2026-06-30T19:30:00+08:00
-source_session: 019f09c8-a122-7d42-b250-053c40f9c513
-git_branch: feat/docking-split-motion-primitives
-related_plan: docs/plans/2026-06-30-003-refactor-docking-split-motion-primitives-plan.md
+timestamp: 2026-06-30T23:45:34+08:00
+git_branch: main
+related_plan:
+  - docs/plans/2026-06-30-003-refactor-docking-split-motion-primitives-plan.md
+  - docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md
 related_adr:
   - docs/adr/0010-docking-presentation-scene-motion-model.md
   - docs/adr/0011-docking-split-motion-primitive-boundary.md
@@ -23,31 +24,33 @@ verified_by:
 
 # Current State
 
-- Goal: Complete `docs/plans/2026-06-30-003-refactor-docking-split-motion-primitives-plan.md`
-  through its Definition of Done using `compound-engineering:ce-work`.
-- Branch: `feat/docking-split-motion-primitives`.
-- Done: U1-U9 are committed through `8373b99` (`refactor(docking): unify divider resize
-  transactions`).
-- Done: Shared split and motion primitives now live in `open_gpui_ui_core`; `ui_components::Splitter`
-  renders through core state; docking presentation, overlay, motion, zoom/focus, divider hit maps,
-  and resize transactions consume those primitives.
-- In progress: U10 accessibility, documentation, deletion cleanup, final verification, and review.
-- Latest cleanup: docking removed the old split handle-center / handle-hit geometry path; graph
-  layout now keeps only pane-bound calculation while divider and junction hit testing flows through
-  presentation scene data plus `SplitterHitMap`.
-- Last verified: the plan's required focused gates pass locally, including full
-  `open-gpui-ui-core`, focused `open-gpui-ui-components` splitter/API inventory, docking
-  presentation/preview/motion/zoom/divider/a11y, native docking check, formatting, diff whitespace,
-  and engineering wiki validation. `cargo check -p open-gpui-docking-native` still reports existing
-  macOS/objc `unexpected cfg cargo-clippy` warnings.
+- Goal: Local `main` now includes the completed split/motion primitive refactor and has a new
+  implementation-ready follow-up plan for docking runtime capability alignment.
+- Branch: `main`, fast-forwarded to `3497a85` (`docs(docking): record split motion primitive
+  boundary`), ahead of `origin/main` by 12 local commits.
+- Done: `docs/plans/2026-06-30-003-refactor-docking-split-motion-primitives-plan.md` is implemented
+  and committed through `3497a85`.
+- Done: Shared split and motion primitives live in `open_gpui_ui_core`; `ui_components::Splitter`
+  renders through core state; docking presentation, overlay, transition descriptors, zoom/focus,
+  divider hit maps, accessibility descriptors, and resize transactions consume those primitives.
+- Done: Read-only subagent research synthesized the next capability gaps: real transition timeline
+  sampling, sampled overlay/clip/divider render integration, precise tab insertion, payload ghost
+  cleanup, zoom/focus user surfaces, GPUI accessibility mapping, corner-drag proof, and continued
+  split primitive cleanup.
+- In progress: Planning only. `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md`
+  is the next executable plan; no implementation has started for it in this state record.
+- Last verified: previous focused gates for split/motion primitives passed locally. This planning
+  update did not rerun cargo tests.
 - Blocked: None.
-- Next action: finish U10 docs and memory, run the plan's required gates, perform `ce-code-review`,
-  apply eligible findings, commit, and mark the goal complete only after the final gates pass.
+- Next action: run `compound-engineering:ce-work` or a goal against the `004` plan when ready; push
+  local `main` separately if remote publication is desired.
 
 # Citations
 
-- [Plan](../../plans/2026-06-30-003-refactor-docking-split-motion-primitives-plan.md)
+- [Split primitive plan](../../plans/2026-06-30-003-refactor-docking-split-motion-primitives-plan.md)
+- [Runtime capability follow-up plan](../../plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md)
 - [ADR 0010](../../adr/0010-docking-presentation-scene-motion-model.md)
 - [ADR 0011](../../adr/0011-docking-split-motion-primitive-boundary.md)
 - [Progress note](progress/2026-06-30-docking-split-motion-primitives.md)
 - [Verification evidence](verification/docking-split-motion-primitives-20260630.md)
+- [Follow-up subagent synthesis](subagents/docking-runtime-capability-followup-20260630.md)

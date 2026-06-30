@@ -21,6 +21,7 @@
 * [Gallery scroll and viewport hardening verification](verification/gallery-scroll-viewport-hardening-20260621.md) - Verification evidence for navigation rail, ScrollArea, and vertical Tabs scroll regressions.
 * [Docking nested inner-edge ImGui alignment verification](verification/docking-nested-inner-edge-20260628.md) - Verification evidence for mixed-axis nested inner-edge docking staying scoped to the hit leaf.
 * [Docking presentation prior art synthesis](subagents/docking-presentation-prior-art-20260630.md) - Subagent synthesis of SuperSplit, BonSplit, and current docking UI/UX capability gaps.
+* [Docking runtime capability follow-up synthesis](subagents/docking-runtime-capability-followup-20260630.md) - Subagent and local synthesis for the post-merge runtime animation, tab insertion, accessibility, split primitive, and dogfood plan.
 * [Docking presentation scene and motion model planning](progress/2026-06-30-docking-presentation-scene-motion-plan.md) - Planning note for the next docking presentation scene, overlay, motion, zoom/focus, divider, and accessibility refactor.
 * [Docking split motion primitive refactor](progress/2026-06-30-docking-split-motion-primitives.md) - Current progress note for the shared split/motion primitive boundary and U10 cleanup.
 * [Docking split motion primitive verification](verification/docking-split-motion-primitives-20260630.md) - Verification evidence for the split/motion primitive refactor gates.

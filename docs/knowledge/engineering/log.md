@@ -6,6 +6,14 @@ status: active
 
 # Log
 
+- 2026-06-30: Fast-forwarded local `main` to `3497a85`, merging
+  `feat/docking-split-motion-primitives` into the local main branch. Spawned read-only research
+  lanes for animation/a11y, docking UX, split core fit, BonSplit/ImGui reference, and docs follow-up.
+  Created `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` for the
+  next runtime capability alignment pass: real transition sampling, sampled overlay/clip/divider
+  rendering, precise tab insertion, payload ghost cleanup, zoom/focus user surfaces, GPUI
+  accessibility mapping, corner drag proof, split primitive continuation, native dogfood, and
+  documentation cleanup.
 - 2026-06-30: Continued `docs/plans/2026-06-30-003-refactor-docking-split-motion-primitives-plan.md`
   on `feat/docking-split-motion-primitives` through U10. U1-U9 are committed through `8373b99`.
   U10 now extends docking accessibility descriptors with orientation, selected/disabled state, and

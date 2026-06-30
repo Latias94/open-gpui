@@ -649,7 +649,7 @@ stateDiagram-v2
 - `crates/gpui_docking/src/host_accessibility_tests.rs`
 - `crates/ui_core/src/a11y.rs`
 - `crates/ui_components/src/a11y.rs`
-- `docs/adr/0011-docking-split-motion-primitives.md`
+- `docs/adr/0011-docking-split-motion-primitive-boundary.md`
 - `docs/adr/README.md`
 - `docs/ui/component-contract.md`
 - `docs/verification.md`
