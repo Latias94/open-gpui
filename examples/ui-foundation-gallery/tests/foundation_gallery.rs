@@ -25,7 +25,7 @@ use open_gpui_ui_core::{
 };
 use open_gpui_ui_foundation_gallery::{
     DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, GalleryShell, GalleryShellSnapshot,
-    foundation_snapshot, pages,
+    StoryContract, StoryProbeOperation, foundation_snapshot, pages,
 };
 use std::time::Duration;
 
@@ -108,6 +108,112 @@ fn facet_total_count(facet: &TableColumnFacets) -> usize {
         .iter()
         .map(|entry| entry.count())
         .sum()
+}
+
+fn component_story_contract(name: &str) -> StoryContract {
+    pages::components::component_story_contracts()
+        .into_iter()
+        .find(|story| story.owner_name() == name)
+        .unwrap_or_else(|| panic!("expected component story contract `{name}`"))
+}
+
+fn overlay_story_contract(name: &str) -> StoryContract {
+    pages::overlay::overlay_story_contracts()
+        .into_iter()
+        .find(|story| story.owner_name() == name)
+        .unwrap_or_else(|| panic!("expected overlay story contract `{name}`"))
+}
+
+struct StoryRuntimeProbe<'a> {
+    cx: &'a mut VisualTestContext,
+}
+
+impl<'a> StoryRuntimeProbe<'a> {
+    fn new(cx: &'a mut VisualTestContext) -> Self {
+        Self { cx }
+    }
+
+    fn render_bounds(&mut self, selector: &str) -> Bounds<Pixels> {
+        bounds(self.cx, selector)
+    }
+
+    fn assert_rendered(&mut self, selector: &str, label: &str) -> Bounds<Pixels> {
+        let rendered = self.render_bounds(selector);
+        assert!(
+            rendered.size.width > px(0.0) && rendered.size.height > px(0.0),
+            "expected story probe target `{label}` to render selector `{selector}`"
+        );
+        rendered
+    }
+
+    fn assert_not_rendered(&mut self, selector: &str, label: &str) {
+        assert!(
+            self.cx.debug_bounds(selector).is_none(),
+            "expected story probe target `{label}` to hide selector `{selector}`"
+        );
+    }
+
+    fn assert_focused(&mut self, selector: &str, label: &str) {
+        assert!(
+            self.cx.debug_selector_is_focused(selector),
+            "expected story probe target `{label}` to focus selector `{selector}`; focused={:?}",
+            self.cx.focused_debug_selector()
+        );
+    }
+
+    fn scroll_page_to(&mut self, selector: &str) -> Bounds<Pixels> {
+        scroll_page_until_visible(self.cx, selector)
+    }
+
+    fn click(&mut self, selector: &str) {
+        click(self.cx, selector);
+    }
+
+    fn settle(&mut self) {
+        settle(self.cx);
+    }
+
+    fn redraw(&mut self) {
+        redraw(self.cx);
+    }
+
+    fn click_point(&mut self, position: open_gpui::Point<Pixels>) {
+        click_point(self.cx, position);
+    }
+
+    fn right_click(&mut self, selector: &str) {
+        right_click(self.cx, selector);
+    }
+
+    fn move_mouse_to(&mut self, selector: &str) {
+        let target = self.render_bounds(selector).center();
+        self.cx
+            .simulate_mouse_move(target, MouseButton::Left, Default::default());
+        self.redraw();
+    }
+
+    fn move_mouse_to_point(&mut self, position: open_gpui::Point<Pixels>) {
+        self.cx
+            .simulate_mouse_move(position, MouseButton::Left, Default::default());
+        self.redraw();
+    }
+
+    fn press_escape(&mut self) {
+        press_escape(self.cx);
+    }
+
+    fn assert_story_can(&self, story: &StoryContract, operation: StoryProbeOperation) {
+        assert!(
+            story.has_operation(operation),
+            "story `{}` should declare `{}` probe support",
+            story.owner_name(),
+            operation.as_str()
+        );
+    }
+
+    fn outside_gallery_point(&mut self) -> open_gpui::Point<Pixels> {
+        self.render_bounds("gallery:content").center()
+    }
 }
 
 fn scroll_until_visible(
@@ -284,14 +390,23 @@ fn focus_components_catalog_entry(
     cx: &mut VisualTestContext,
     entry: &pages::components::ComponentCatalogEntry,
 ) -> pages::components::ComponentFocusMode {
-    let catalog_selector = entry.catalog_selector();
+    let story = component_story_contract(entry.name);
+    let catalog_selector = story.selectors().catalog_selector().unwrap_or_else(|| {
+        panic!(
+            "expected story `{}` to declare a catalog selector",
+            entry.name
+        )
+    });
     let focus = pages::components::focused_section_for_catalog_entry(entry)
         .unwrap_or_else(|| panic!("expected focusable catalog entry `{}`", entry.name));
     let expected_focus = pages::components::ComponentFocusMode::Section(focus);
 
-    scroll_page_until_visible(cx, catalog_selector.as_str());
-    click(cx, catalog_selector.as_str());
-    settle(cx);
+    {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        probe.scroll_page_to(catalog_selector);
+        probe.click(catalog_selector);
+        probe.settle();
+    }
 
     assert_eq!(
         shell_snapshot(shell, cx).components_focus,
@@ -300,15 +415,12 @@ fn focus_components_catalog_entry(
         entry.name
     );
 
-    let focus_selector = entry
-        .sample_selector
-        .or(entry.state_contract_selector)
-        .unwrap_or_else(|| {
-            panic!(
-                "expected focused selector for catalog entry `{}`",
-                entry.name
-            )
-        });
+    let focus_selector = story.selectors().primary_selector().unwrap_or_else(|| {
+        panic!(
+            "expected focused selector for catalog entry `{}`",
+            entry.name
+        )
+    });
     let section_selector = format!("gallery:components-section:{focus}");
 
     assert!(
@@ -335,6 +447,7 @@ fn focus_components_section(
     cx: &mut VisualTestContext,
     entry: &pages::components::ComponentCatalogEntry,
 ) -> pages::components::ComponentFocusMode {
+    let story = component_story_contract(entry.name);
     let focus = pages::components::focused_section_for_catalog_entry(entry)
         .unwrap_or_else(|| panic!("expected focusable catalog entry `{}`", entry.name));
     let expected_focus = pages::components::ComponentFocusMode::Section(focus);
@@ -353,15 +466,12 @@ fn focus_components_section(
         entry.name
     );
 
-    let focus_selector = entry
-        .sample_selector
-        .or(entry.state_contract_selector)
-        .unwrap_or_else(|| {
-            panic!(
-                "expected focused selector for catalog entry `{}`",
-                entry.name
-            )
-        });
+    let focus_selector = story.selectors().primary_selector().unwrap_or_else(|| {
+        panic!(
+            "expected focused selector for catalog entry `{}`",
+            entry.name
+        )
+    });
     let section_selector = format!("gallery:components-section:{focus}");
 
     assert!(
@@ -2597,6 +2707,7 @@ fn verification_docs_list_current_ui_architecture_focused_gates() {
         "components_catalog_metadata_is_separate_from_rendering",
         "official_component_catalog_entries_have_signals_and_sample_selectors",
         "state_contract_catalog_entries_have_signals_and_readout_selectors",
+        "gallery_story_contracts_cover_components_state_readouts_and_overlays",
     ] {
         assert!(
             verification.contains(required),
@@ -2836,6 +2947,114 @@ fn state_contract_catalog_entries_have_signals_and_readout_selectors() {
             "expected state-contract signal `{signal}`"
         );
     }
+}
+
+#[test]
+fn gallery_story_contracts_cover_components_state_readouts_and_overlays() {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let component_stories = pages::components::component_story_contracts();
+    let overlay_stories = pages::overlay::overlay_story_contracts();
+
+    let component_story_names = component_stories
+        .iter()
+        .map(|story| story.owner_name())
+        .collect::<BTreeSet<_>>();
+    let expected_component_story_names = pages::components::COMPONENT_CATALOG
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry.status,
+                pages::components::ComponentCatalogStatus::Official
+                    | pages::components::ComponentCatalogStatus::StateContract
+            )
+        })
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(component_story_names, expected_component_story_names);
+
+    let overlay_story_names = overlay_stories
+        .iter()
+        .map(|story| story.owner_name())
+        .collect::<BTreeSet<_>>();
+    let expected_overlay_story_names = pages::overlay::OVERLAY_CATALOG
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(overlay_story_names, expected_overlay_story_names);
+
+    for story in component_stories.iter().chain(overlay_stories.iter()) {
+        assert!(
+            story.selectors().catalog_selector().is_some(),
+            "story `{}` should expose a catalog selector",
+            story.owner_name()
+        );
+        assert!(
+            story.selectors().primary_selector().is_some(),
+            "story `{}` should expose a primary user-observable selector",
+            story.owner_name()
+        );
+        assert!(
+            !story.probes().is_empty(),
+            "story `{}` should declare runtime probe operations",
+            story.owner_name()
+        );
+        assert!(
+            story.has_operation(StoryProbeOperation::ReadPublicPayload),
+            "story `{}` should expose a public payload/readout probe",
+            story.owner_name()
+        );
+    }
+
+    let operation_counts = component_stories
+        .iter()
+        .chain(overlay_stories.iter())
+        .flat_map(|story| story.probes().iter().map(|probe| probe.operation()))
+        .fold(BTreeMap::new(), |mut counts, operation| {
+            *counts.entry(operation).or_insert(0usize) += 1;
+            counts
+        });
+    for operation in open_gpui_ui_foundation_gallery::STORY_PROBE_OPERATIONS {
+        assert!(
+            operation_counts.contains_key(operation),
+            "gallery stories should cover runtime probe operation `{}`",
+            operation.as_str()
+        );
+    }
+
+    let table_story = component_stories
+        .iter()
+        .find(|story| story.owner_name() == "Table")
+        .expect("Table story contract should exist");
+    assert!(table_story.has_operation(StoryProbeOperation::Scroll));
+    assert!(table_story.has_operation(StoryProbeOperation::Edit));
+    assert!(table_story.has_operation(StoryProbeOperation::Open));
+
+    let tree_state_story = component_stories
+        .iter()
+        .find(|story| story.owner_name() == "TreeState")
+        .expect("TreeState story contract should exist");
+    assert_eq!(
+        tree_state_story.kind(),
+        open_gpui_ui_foundation_gallery::StoryContractKind::StateContract
+    );
+    assert_eq!(
+        tree_state_story.selectors().state_readout_selector(),
+        Some("gallery:component-tree-state-contract:document-outline")
+    );
+
+    let dialog_story = overlay_stories
+        .iter()
+        .find(|story| story.owner_name() == "Dialog")
+        .expect("Dialog story contract should exist");
+    assert_eq!(
+        dialog_story.selectors().trigger_selector(),
+        Some("dialog:overlay-dialog-demo:controlled-modal:trigger")
+    );
+    assert_eq!(
+        dialog_story.selectors().surface_selector(),
+        Some("dialog:overlay-dialog-demo:controlled-modal:surface")
+    );
 }
 
 #[test]
@@ -4058,37 +4277,36 @@ fn overlay_gallery_smoke_renders_catalog_entries_and_official_samples(
 #[open_gpui::test]
 fn overlay_gallery_smoke_dismisses_popover_from_outside_press(cx: &mut open_gpui::TestAppContext) {
     let cx = open_overlay_gallery(cx);
+    let story = overlay_story_contract("Popover");
+    let trigger = story
+        .selectors()
+        .trigger_selector()
+        .expect("Popover story should declare a trigger selector");
+    let content = story
+        .selectors()
+        .surface_selector()
+        .expect("Popover story should declare a surface selector");
 
-    scroll_page_until_visible(cx, "popover:overlay-popover-demo:controlled:trigger");
-    click(cx, "popover:overlay-popover-demo:controlled:trigger");
-    settle(cx);
-    assert!(
-        cx.debug_bounds("popover:overlay-popover-demo:controlled:content")
-            .is_some(),
-        "expected controlled Popover content to open from its real trigger"
-    );
-    assert!(
-        cx.debug_selector_is_focused("popover:overlay-popover-demo:controlled:trigger"),
-        "expected controlled Popover trigger to remain focused while opened by default policy"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_can(&story, StoryProbeOperation::Focus);
+    probe.scroll_page_to(trigger);
+    probe.click(trigger);
+    probe.settle();
+    probe.assert_rendered(content, "opened Popover content");
+    probe.assert_focused(trigger, "opened Popover trigger");
 
-    let popover_content = bounds(cx, "popover:overlay-popover-demo:controlled:content");
+    let popover_content = probe.render_bounds(content);
     let outside_target = point(
         popover_content.right() + px(24.0),
         popover_content.bottom() + px(24.0),
     );
-    click_point(cx, outside_target);
-    settle(cx);
+    probe.click_point(outside_target);
+    probe.settle();
 
-    assert!(
-        cx.debug_bounds("popover:overlay-popover-demo:controlled:content")
-            .is_none(),
-        "expected outside press to dismiss the controlled Popover"
-    );
-    assert!(
-        cx.debug_selector_is_focused("popover:overlay-popover-demo:controlled:trigger"),
-        "expected outside-dismissed Popover to restore focus to its trigger"
-    );
+    probe.assert_not_rendered(content, "outside-dismissed Popover content");
+    probe.assert_focused(trigger, "outside-dismissed Popover trigger");
 }
 
 #[open_gpui::test]
@@ -4096,52 +4314,46 @@ fn overlay_gallery_smoke_opens_tooltip_from_hover_focus_and_ignores_disabled(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
+    let story = overlay_story_contract("Tooltip");
+    let hover_trigger = story
+        .selectors()
+        .trigger_selector()
+        .expect("Tooltip story should declare a trigger selector");
+    let hover_content = story
+        .selectors()
+        .surface_selector()
+        .expect("Tooltip story should declare a surface selector");
 
-    scroll_page_until_visible(cx, "gallery:overlay-tooltip-trigger:hover-focus");
-    let hover_trigger = bounds(cx, "gallery:overlay-tooltip-trigger:hover-focus").center();
-    cx.simulate_mouse_move(hover_trigger, MouseButton::Left, Default::default());
-    redraw(cx);
-    assert!(
-        cx.debug_bounds("tooltip:overlay-tooltip-content:hover-focus:content")
-            .is_some(),
-        "expected hover tooltip content to open from pointer hover"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_can(&story, StoryProbeOperation::Focus);
+    probe.scroll_page_to(hover_trigger);
+    probe.move_mouse_to(hover_trigger);
+    probe.assert_rendered(hover_content, "hover-opened Tooltip content");
 
-    let outside_target = bounds(cx, "gallery:content").center();
-    cx.simulate_mouse_move(outside_target, MouseButton::Left, Default::default());
-    redraw(cx);
-    assert!(
-        cx.debug_bounds("tooltip:overlay-tooltip-content:hover-focus:content")
-            .is_none(),
-        "expected hover tooltip content to dismiss after leaving the trigger"
-    );
+    let outside_target = probe.outside_gallery_point();
+    probe.move_mouse_to_point(outside_target);
+    probe.assert_not_rendered(hover_content, "hover-dismissed Tooltip content");
 
-    scroll_page_until_visible(cx, "gallery:overlay-tooltip-trigger:focus-only");
-    click(cx, "gallery:overlay-tooltip-trigger:focus-only");
-    redraw(cx);
-    assert!(
-        cx.debug_bounds("tooltip:overlay-tooltip-content:focus-only:content")
-            .is_some(),
-        "expected focus-only tooltip content to open from keyboard focus"
-    );
+    let focus_trigger = "gallery:overlay-tooltip-trigger:focus-only";
+    let focus_content = "tooltip:overlay-tooltip-content:focus-only:content";
+    probe.scroll_page_to(focus_trigger);
+    probe.click(focus_trigger);
+    probe.redraw();
+    probe.assert_rendered(focus_content, "focus-opened Tooltip content");
 
-    let content_center = bounds(cx, "gallery:content").center();
-    click_point(cx, content_center);
-    redraw(cx);
-    assert!(
-        cx.debug_bounds("tooltip:overlay-tooltip-content:focus-only:content")
-            .is_none(),
-        "expected focus-only tooltip content to dismiss after focus leaves"
-    );
+    let content_center = probe.outside_gallery_point();
+    probe.click_point(content_center);
+    probe.redraw();
+    probe.assert_not_rendered(focus_content, "focus-dismissed Tooltip content");
 
-    scroll_page_until_visible(cx, "gallery:overlay-tooltip-trigger:disabled");
-    let disabled_trigger = bounds(cx, "gallery:overlay-tooltip-trigger:disabled").center();
-    cx.simulate_mouse_move(disabled_trigger, MouseButton::Left, Default::default());
-    redraw(cx);
-    assert!(
-        cx.debug_bounds("tooltip:overlay-tooltip-content:disabled:content")
-            .is_none(),
-        "expected disabled tooltip trigger to stay closed"
+    let disabled_trigger = "gallery:overlay-tooltip-trigger:disabled";
+    probe.scroll_page_to(disabled_trigger);
+    probe.move_mouse_to(disabled_trigger);
+    probe.assert_not_rendered(
+        "tooltip:overlay-tooltip-content:disabled:content",
+        "disabled Tooltip content",
     );
 }
 
@@ -4149,12 +4361,12 @@ fn overlay_gallery_smoke_opens_tooltip_from_hover_focus_and_ignores_disabled(
 fn overlay_gallery_smoke_renders_manual_tooltip_from_state(cx: &mut open_gpui::TestAppContext) {
     let cx = open_overlay_gallery(cx);
 
-    scroll_page_until_visible(cx, "gallery:overlay-tooltip-sample:delayed-manual");
-    redraw(cx);
-    assert!(
-        cx.debug_bounds("tooltip:overlay-tooltip-content:delayed-manual:content")
-            .is_some(),
-        "expected manual delayed tooltip content to render from gallery state"
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.scroll_page_to("gallery:overlay-tooltip-sample:delayed-manual");
+    probe.redraw();
+    probe.assert_rendered(
+        "tooltip:overlay-tooltip-content:delayed-manual:content",
+        "manual Tooltip content",
     );
 }
 
@@ -4163,38 +4375,33 @@ fn overlay_gallery_smoke_opens_hover_card_from_real_trigger_and_dismisses(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
+    let story = overlay_story_contract("HoverCard");
+    let trigger = story
+        .selectors()
+        .trigger_selector()
+        .expect("HoverCard story should declare a trigger selector");
+    let content = story
+        .selectors()
+        .surface_selector()
+        .expect("HoverCard story should declare a surface selector");
 
-    scroll_page_until_visible(
-        cx,
-        "hover-card:overlay-hover-card-demo:manual-controlled:trigger",
-    );
-    click(
-        cx,
-        "hover-card:overlay-hover-card-demo:manual-controlled:trigger",
-    );
-    settle(cx);
-    assert!(
-        cx.debug_bounds("hover-card:overlay-hover-card-demo:manual-controlled:content")
-            .is_some(),
-        "expected controlled HoverCard content to open from its real trigger"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.scroll_page_to(trigger);
+    probe.click(trigger);
+    probe.settle();
+    probe.assert_rendered(content, "opened HoverCard content");
 
-    let hover_card_content = bounds(
-        cx,
-        "hover-card:overlay-hover-card-demo:manual-controlled:content",
-    );
+    let hover_card_content = probe.render_bounds(content);
     let outside_target = point(
         hover_card_content.right() + px(24.0),
         hover_card_content.bottom() + px(24.0),
     );
-    click_point(cx, outside_target);
-    settle(cx);
+    probe.click_point(outside_target);
+    probe.settle();
 
-    assert!(
-        cx.debug_bounds("hover-card:overlay-hover-card-demo:manual-controlled:content")
-            .is_none(),
-        "expected outside press to dismiss the controlled HoverCard"
-    );
+    probe.assert_not_rendered(content, "outside-dismissed HoverCard content");
 }
 
 #[open_gpui::test]
@@ -4202,22 +4409,26 @@ fn overlay_gallery_smoke_toggles_hover_card_from_control_surface(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
+    let story = overlay_story_contract("HoverCard");
+    let control = story
+        .selectors()
+        .control_selector()
+        .expect("HoverCard story should declare a control selector");
+    let content = story
+        .selectors()
+        .surface_selector()
+        .expect("HoverCard story should declare a surface selector");
 
-    scroll_page_until_visible(cx, "gallery:overlay-hover-card-controlled-toggle");
-    click(cx, "gallery:overlay-hover-card-controlled-toggle");
-    settle(cx);
-    assert!(
-        cx.debug_bounds("hover-card:overlay-hover-card-demo:manual-controlled:content")
-            .is_some(),
-        "expected the controlled HoverCard toggle to open its content"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.scroll_page_to(control);
+    probe.click(control);
+    probe.settle();
+    probe.assert_rendered(content, "controlled HoverCard content");
 
-    press_escape(cx);
-    assert!(
-        cx.debug_bounds("hover-card:overlay-hover-card-demo:manual-controlled:content")
-            .is_none(),
-        "expected Escape to close the controlled HoverCard after opening it from the toggle"
-    );
+    probe.press_escape();
+    probe.assert_not_rendered(content, "escape-dismissed HoverCard content");
 }
 
 #[open_gpui::test]
@@ -4225,50 +4436,39 @@ fn overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
+    let story = overlay_story_contract("Dialog");
+    let trigger = story
+        .selectors()
+        .trigger_selector()
+        .expect("Dialog story should declare a trigger selector");
+    let surface = story
+        .selectors()
+        .surface_selector()
+        .expect("Dialog story should declare a surface selector");
+    let layer = "dialog:overlay-dialog-demo:controlled-modal:layer";
 
-    scroll_page_until_visible(cx, "dialog:overlay-dialog-demo:controlled-modal:trigger");
-    click(cx, "dialog:overlay-dialog-demo:controlled-modal:trigger");
-    settle(cx);
-    let dialog_layer = bounds(cx, "dialog:overlay-dialog-demo:controlled-modal:layer");
-    assert!(
-        cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
-            .is_some(),
-        "expected controlled Dialog surface to open from its real trigger"
-    );
-    assert!(
-        cx.debug_selector_is_focused("dialog:overlay-dialog-demo:controlled-modal:surface"),
-        "expected opened Dialog to move focus to its first focusable surface"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_can(&story, StoryProbeOperation::Focus);
+    probe.scroll_page_to(trigger);
+    probe.click(trigger);
+    probe.settle();
+    let dialog_layer = probe.render_bounds(layer);
+    probe.assert_rendered(surface, "opened Dialog surface");
+    probe.assert_focused(surface, "opened Dialog surface");
 
-    click_point(cx, outside_top_left(dialog_layer));
-    settle(cx);
-    assert!(
-        cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
-            .is_none(),
-        "expected modal barrier outside press to dismiss the controlled Dialog"
-    );
-    assert!(
-        cx.debug_selector_is_focused("dialog:overlay-dialog-demo:controlled-modal:trigger"),
-        "expected barrier-dismissed Dialog to restore focus to its trigger"
-    );
+    probe.click_point(outside_top_left(dialog_layer));
+    probe.settle();
+    probe.assert_not_rendered(surface, "barrier-dismissed Dialog surface");
+    probe.assert_focused(trigger, "barrier-dismissed Dialog trigger");
 
-    click(cx, "dialog:overlay-dialog-demo:controlled-modal:trigger");
-    settle(cx);
-    assert!(
-        cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
-            .is_some(),
-        "expected controlled Dialog surface to reopen after barrier dismissal"
-    );
-    press_escape(cx);
-    assert!(
-        cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
-            .is_none(),
-        "expected Escape to dismiss the controlled Dialog"
-    );
-    assert!(
-        cx.debug_selector_is_focused("dialog:overlay-dialog-demo:controlled-modal:trigger"),
-        "expected Escape-dismissed Dialog to restore focus to its trigger"
-    );
+    probe.click(trigger);
+    probe.settle();
+    probe.assert_rendered(surface, "reopened Dialog surface");
+    probe.press_escape();
+    probe.assert_not_rendered(surface, "escape-dismissed Dialog surface");
+    probe.assert_focused(trigger, "escape-dismissed Dialog trigger");
 }
 
 #[open_gpui::test]
@@ -4276,49 +4476,40 @@ fn overlay_gallery_smoke_closes_alert_dialog_from_action_and_escape(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
-    let trigger = "alert-dialog:overlay-alert-dialog-demo:destructive-confirm:trigger";
-    let surface = "alert-dialog:overlay-alert-dialog-demo:destructive-confirm:surface";
+    let story = overlay_story_contract("AlertDialog");
+    let trigger = story
+        .selectors()
+        .trigger_selector()
+        .expect("AlertDialog story should declare a trigger selector");
+    let surface = story
+        .selectors()
+        .surface_selector()
+        .expect("AlertDialog story should declare a surface selector");
     let cancel = "alert-dialog:overlay-alert-dialog-demo:destructive-confirm:cancel";
     let action = "alert-dialog:overlay-alert-dialog-demo:destructive-confirm:action";
 
-    scroll_page_until_visible(cx, trigger);
-    click(cx, trigger);
-    settle(cx);
-    assert!(
-        cx.debug_bounds(surface).is_some(),
-        "expected controlled AlertDialog surface to open from its real trigger"
-    );
-    assert!(
-        cx.debug_selector_is_focused(cancel),
-        "expected opened AlertDialog to move focus to the default cancel action"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_can(&story, StoryProbeOperation::Activate);
+    probe.assert_story_can(&story, StoryProbeOperation::Focus);
+    probe.scroll_page_to(trigger);
+    probe.click(trigger);
+    probe.settle();
+    probe.assert_rendered(surface, "opened AlertDialog surface");
+    probe.assert_focused(cancel, "opened AlertDialog cancel action");
 
-    click(cx, action);
-    settle(cx);
-    assert!(
-        cx.debug_bounds(surface).is_none(),
-        "expected the primary action to close the controlled AlertDialog"
-    );
-    assert!(
-        cx.debug_selector_is_focused(trigger),
-        "expected action-dismissed AlertDialog to restore focus to its trigger"
-    );
+    probe.click(action);
+    probe.settle();
+    probe.assert_not_rendered(surface, "action-dismissed AlertDialog surface");
+    probe.assert_focused(trigger, "action-dismissed AlertDialog trigger");
 
-    click(cx, trigger);
-    settle(cx);
-    assert!(
-        cx.debug_bounds(surface).is_some(),
-        "expected controlled AlertDialog surface to reopen after gallery control dismissal"
-    );
-    press_escape(cx);
-    assert!(
-        cx.debug_bounds(surface).is_none(),
-        "expected Escape to dismiss the controlled AlertDialog"
-    );
-    assert!(
-        cx.debug_selector_is_focused(trigger),
-        "expected Escape-dismissed AlertDialog to restore focus to its trigger"
-    );
+    probe.click(trigger);
+    probe.settle();
+    probe.assert_rendered(surface, "reopened AlertDialog surface");
+    probe.press_escape();
+    probe.assert_not_rendered(surface, "escape-dismissed AlertDialog surface");
+    probe.assert_focused(trigger, "escape-dismissed AlertDialog trigger");
 }
 
 #[open_gpui::test]
@@ -4326,23 +4517,27 @@ fn overlay_gallery_smoke_closes_non_modal_sheet_from_outside_press(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
+    let story = overlay_story_contract("Sheet");
+    let trigger = story
+        .selectors()
+        .trigger_selector()
+        .expect("Sheet story should declare a trigger selector");
+    let surface = story
+        .selectors()
+        .surface_selector()
+        .expect("Sheet story should declare a surface selector");
 
-    scroll_page_until_visible(cx, "gallery:overlay-sheet-control:right-non-modal");
-    click(cx, "gallery:overlay-sheet-control:right-non-modal");
-    assert!(
-        cx.debug_bounds("sheet:overlay-sheet-demo:right-non-modal:surface")
-            .is_some(),
-        "expected controlled non-modal Sheet surface to open from its real trigger"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.scroll_page_to(trigger);
+    probe.click(trigger);
+    probe.assert_rendered(surface, "opened Sheet surface");
 
-    let outside_target = bounds(cx, "gallery:content").center();
-    click_point(cx, outside_target);
+    let outside_target = probe.outside_gallery_point();
+    probe.click_point(outside_target);
 
-    assert!(
-        cx.debug_bounds("sheet:overlay-sheet-demo:right-non-modal:surface")
-            .is_none(),
-        "expected outside press to dismiss the controlled non-modal Sheet"
-    );
+    probe.assert_not_rendered(surface, "outside-dismissed Sheet surface");
 }
 
 #[open_gpui::test]
@@ -4350,34 +4545,30 @@ fn overlay_gallery_smoke_closes_menu_from_escape_and_outside_press(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
+    let story = overlay_story_contract("Menu");
+    let trigger = story
+        .selectors()
+        .trigger_selector()
+        .expect("Menu story should declare a trigger selector");
+    let content = story
+        .selectors()
+        .surface_selector()
+        .expect("Menu story should declare a surface selector");
 
-    scroll_page_until_visible(cx, "gallery:overlay-menu-control:controlled");
-    click(cx, "gallery:overlay-menu-control:controlled");
-    assert!(
-        cx.debug_bounds("menu:overlay-menu-demo:controlled:content")
-            .is_some(),
-        "expected controlled Menu content to open from its real trigger"
-    );
-    press_escape(cx);
-    assert!(
-        cx.debug_bounds("menu:overlay-menu-demo:controlled:content")
-            .is_none(),
-        "expected Escape to dismiss the controlled Menu"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.scroll_page_to(trigger);
+    probe.click(trigger);
+    probe.assert_rendered(content, "opened Menu content");
+    probe.press_escape();
+    probe.assert_not_rendered(content, "escape-dismissed Menu content");
 
-    click(cx, "gallery:overlay-menu-control:controlled");
-    assert!(
-        cx.debug_bounds("menu:overlay-menu-demo:controlled:content")
-            .is_some(),
-        "expected controlled Menu content to reopen after Escape"
-    );
-    let outside_target = bounds(cx, "gallery:content").center();
-    click_point(cx, outside_target);
-    assert!(
-        cx.debug_bounds("menu:overlay-menu-demo:controlled:content")
-            .is_none(),
-        "expected outside press to dismiss the controlled Menu"
-    );
+    probe.click(trigger);
+    probe.assert_rendered(content, "reopened Menu content");
+    let outside_target = probe.outside_gallery_point();
+    probe.click_point(outside_target);
+    probe.assert_not_rendered(content, "outside-dismissed Menu content");
 }
 
 #[open_gpui::test]
@@ -4471,32 +4662,34 @@ fn overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
-    let hotspot = "context-menu:overlay-context-menu-demo:controlled:hotspot";
-    let surface = "context-menu:overlay-context-menu-demo:controlled:surface";
+    let story = overlay_story_contract("ContextMenu");
+    let hotspot = story
+        .selectors()
+        .trigger_selector()
+        .expect("ContextMenu story should declare a hotspot selector");
+    let surface = story
+        .selectors()
+        .surface_selector()
+        .expect("ContextMenu story should declare a surface selector");
 
-    scroll_page_until_visible(cx, hotspot);
-    right_click(cx, hotspot);
-    assert!(
-        cx.debug_bounds(surface).is_some(),
-        "expected controlled ContextMenu surface to open from right-clicking its real hotspot"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.scroll_page_to(hotspot);
+    probe.right_click(hotspot);
+    probe.assert_rendered(surface, "right-click opened ContextMenu surface");
 
-    press_escape(cx);
+    probe.press_escape();
 
-    assert!(
-        cx.debug_bounds(surface).is_none(),
-        "expected Escape to dismiss the controlled ContextMenu"
-    );
+    probe.assert_not_rendered(surface, "escape-dismissed ContextMenu surface");
 
-    right_click(cx, hotspot);
-    let surface_bounds = bounds(cx, surface);
-    let outside_target = visible_outside_point(bounds(cx, "gallery:content"), surface_bounds);
-    click_point(cx, outside_target);
+    probe.right_click(hotspot);
+    let surface_bounds = probe.render_bounds(surface);
+    let outside_target =
+        visible_outside_point(probe.render_bounds("gallery:content"), surface_bounds);
+    probe.click_point(outside_target);
 
-    assert!(
-        cx.debug_bounds(surface).is_none(),
-        "expected outside press to dismiss the controlled ContextMenu"
-    );
+    probe.assert_not_rendered(surface, "outside-dismissed ContextMenu surface");
 }
 
 #[open_gpui::test]
@@ -4618,91 +4811,62 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
         .find(|entry| entry.name == "Table")
         .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
     focus_components_catalog_entry(&shell, cx, table_entry);
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:release-queue")
-            .is_some(),
-        "expected focused Table mode to render the Table sample"
+    let table_story = component_story_contract("Table");
+    let button_story = component_story_contract("Button");
+    let tabs_story = component_story_contract("Tabs");
+    let table_samples = pages::components::table_samples(ThemeTokens::default());
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&table_story, StoryProbeOperation::Scroll);
+    probe.assert_story_can(&table_story, StoryProbeOperation::Edit);
+    for sample in table_samples {
+        probe.assert_rendered(
+            &sample.debug_selector(),
+            &format!("focused Table sample `{}`", sample.id),
+        );
+    }
+    probe.assert_not_rendered(
+        button_story
+            .selectors()
+            .primary_selector()
+            .expect("Button story should declare a sample selector"),
+        "unrelated Button sample",
     );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:release-rollup")
-            .is_some(),
-        "expected focused Table mode to render the grouped Table sample"
+    probe.assert_not_rendered(
+        tabs_story
+            .selectors()
+            .primary_selector()
+            .expect("Tabs story should declare a sample selector"),
+        "sibling Tabs sample",
     );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:release-resize")
-            .is_some(),
-        "expected focused Table mode to render the resizable Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:editable-release")
-            .is_some(),
-        "expected focused Table mode to render the editable Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:toggle-release")
-            .is_some(),
-        "expected focused Table mode to render the checkbox Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:select-release")
-            .is_some(),
-        "expected focused Table mode to render the select Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:content-fit-release")
-            .is_some(),
-        "expected focused Table mode to render the content-fit Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:release-matrix")
-            .is_some(),
-        "expected focused Table mode to render the wide matrix Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:grouped-custom-aggregation")
-            .is_some(),
-        "expected focused Table mode to render the custom aggregation Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:row-pinning")
-            .is_some(),
-        "expected focused Table mode to render the row-pinning Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-button-sample:default")
-            .is_none(),
-        "expected focused Table mode to hide unrelated Button samples"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-tabs-sample:workspace-tabs")
-            .is_none(),
-        "expected focused Table mode to hide sibling Field-group samples"
-    );
-    assert!(
-        cx.debug_bounds("gallery:components-directory").is_some(),
-        "expected focused mode to preserve the section directory"
-    );
+    probe.assert_rendered("gallery:components-directory", "focused mode directory");
 
-    click(cx, "gallery:component-focus:all");
-    settle(cx);
+    probe.click("gallery:component-focus:all");
+    probe.settle();
 
     assert_eq!(
-        shell_snapshot(&shell, cx).components_focus,
+        shell_snapshot(&shell, probe.cx).components_focus,
         pages::components::ComponentFocusMode::All
     );
-    assert!(
-        cx.debug_bounds("gallery:component-button-sample:default")
-            .is_none(),
-        "expected all-components mode to keep deep Button samples lazy after restoration"
+    probe.assert_not_rendered(
+        button_story
+            .selectors()
+            .primary_selector()
+            .expect("Button story should declare a sample selector"),
+        "lazy Button sample after all-mode restoration",
     );
-    assert!(
-        cx.debug_bounds("gallery:component-tabs-sample:workspace-tabs")
-            .is_none(),
-        "expected all-components mode to keep nested Tabs samples lazy after restoration"
+    probe.assert_not_rendered(
+        tabs_story
+            .selectors()
+            .primary_selector()
+            .expect("Tabs story should declare a sample selector"),
+        "lazy Tabs sample after all-mode restoration",
     );
-    assert!(
-        cx.debug_bounds("component-catalog:Button").is_some(),
-        "expected all-components mode restoration to show the catalog entry for Button"
+    probe.assert_rendered(
+        button_story
+            .selectors()
+            .catalog_selector()
+            .expect("Button story should declare a catalog selector"),
+        "Button catalog card after all-mode restoration",
     );
 }
 
@@ -4734,17 +4898,27 @@ fn components_gallery_smoke_focuses_every_focusable_catalog_entry(
         "expected `All components` to restore all-mode after matrix traversal"
     );
     for selector in [
-        "gallery:component-button-sample:default",
-        "gallery:component-tabs-sample:workspace-tabs",
+        component_story_contract("Button")
+            .selectors()
+            .primary_selector()
+            .expect("Button story should declare a sample selector"),
+        component_story_contract("Tabs")
+            .selectors()
+            .primary_selector()
+            .expect("Tabs story should declare a sample selector"),
     ] {
         assert!(
             cx.debug_bounds(selector).is_none(),
             "expected all-mode restoration after matrix traversal to keep deep lazy sample `{selector}` unmounted"
         );
     }
-    assert!(
-        cx.debug_bounds("component-catalog:Button").is_some(),
-        "expected all-mode restoration after matrix traversal to return to the component catalog"
+    let button_story = component_story_contract("Button");
+    StoryRuntimeProbe::new(cx).assert_rendered(
+        button_story
+            .selectors()
+            .catalog_selector()
+            .expect("Button story should declare a catalog selector"),
+        "Button catalog card after matrix all-mode restoration",
     );
 
     assert_eq!(

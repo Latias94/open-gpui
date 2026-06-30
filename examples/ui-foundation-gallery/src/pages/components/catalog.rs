@@ -1,5 +1,7 @@
 //! Component catalog metadata for the foundation gallery.
 
+use crate::story::{StoryContract, StoryContractKind, StoryProbeContract, StoryProbeOperation::*};
+
 /// Stable jump targets for the Components page navigator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ComponentPageJump {
@@ -729,4 +731,115 @@ pub fn state_contract_readout_pairs() -> impl Iterator<Item = (&'static str, &'s
             .state_contract_selector
             .map(|selector| (entry.name, selector))
     })
+}
+
+const ACTION_STORY_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Activate, "primary control", "activation state"),
+    StoryProbeContract::new(Focus, "sample", "focusable control"),
+    StoryProbeContract::new(ReadPublicPayload, "state", "resolved component state"),
+];
+
+const CHOICE_STORY_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Open, "trigger", "choice popup or active option"),
+    StoryProbeContract::new(Select, "option", "selected value"),
+    StoryProbeContract::new(Focus, "active option", "roving focus"),
+    StoryProbeContract::new(ReadPublicPayload, "state", "resolved choice state"),
+];
+
+const TEXT_STORY_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Edit, "input", "edited text"),
+    StoryProbeContract::new(Focus, "input", "input focus"),
+    StoryProbeContract::new(ReadPublicPayload, "state", "resolved text state"),
+];
+
+const TABLE_STORY_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Scroll, "body viewport", "stable sample position"),
+    StoryProbeContract::new(Select, "row or cell", "row activation or cell payload"),
+    StoryProbeContract::new(Edit, "cell editor", "cell edit payload"),
+    StoryProbeContract::new(Open, "table filter or select editor", "popup surface"),
+    StoryProbeContract::new(ReadPublicPayload, "runtime log", "table callback payload"),
+];
+
+const TREE_STORY_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Open, "disclosure", "expanded branch"),
+    StoryProbeContract::new(Select, "tree item", "selection payload"),
+    StoryProbeContract::new(Scroll, "tree viewport", "stable sample position"),
+    StoryProbeContract::new(Focus, "tree item", "roving focus"),
+    StoryProbeContract::new(ReadPublicPayload, "runtime log", "tree callback payload"),
+];
+
+const VIRTUALIZED_STORY_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Scroll, "virtualized viewport", "windowed rows"),
+    StoryProbeContract::new(Activate, "active row", "activation payload"),
+    StoryProbeContract::new(Focus, "list root", "keyboard focus"),
+    StoryProbeContract::new(ReadPublicPayload, "state", "virtualized state summary"),
+];
+
+const STATE_CONTRACT_STORY_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Select, "state row", "selection metadata"),
+    StoryProbeContract::new(Focus, "state row", "focus metadata"),
+    StoryProbeContract::new(
+        ReadPublicPayload,
+        "readout",
+        "renderer-neutral state contract",
+    ),
+];
+
+const DISPLAY_STORY_PROBES: &[StoryProbeContract] = &[
+    StoryProbeContract::new(Focus, "sample", "accessible role metadata"),
+    StoryProbeContract::new(ReadPublicPayload, "state", "resolved display state"),
+];
+
+fn component_story_probes(entry: &ComponentCatalogEntry) -> &'static [StoryProbeContract] {
+    match entry.status {
+        ComponentCatalogStatus::StateContract => STATE_CONTRACT_STORY_PROBES,
+        ComponentCatalogStatus::Official => match entry.name {
+            "Listbox" | "Select" | "Combobox" | "Command" | "RadioGroup" | "ToggleGroup"
+            | "Tabs" | "Toolbar" | "Sidebar" => CHOICE_STORY_PROBES,
+            "TextInput" | "Textarea" | "Field" | "NumberInput" | "Slider" => TEXT_STORY_PROBES,
+            "Table" => TABLE_STORY_PROBES,
+            "Tree" => TREE_STORY_PROBES,
+            "VirtualizedList" => VIRTUALIZED_STORY_PROBES,
+            "Button" | "IconButton" | "Switch" | "Checkbox" | "Toggle" | "Accordion"
+            | "Collapsible" | "Link" | "Breadcrumb" | "Tag" | "ToastStack" => ACTION_STORY_PROBES,
+            _ => DISPLAY_STORY_PROBES,
+        },
+        ComponentCatalogStatus::AdapterOnly
+        | ComponentCatalogStatus::InternalAnatomy
+        | ComponentCatalogStatus::Deferred => &[],
+    }
+}
+
+/// Returns user-observable story contracts for official component samples and state readouts.
+pub fn component_story_contracts() -> Vec<StoryContract> {
+    COMPONENT_CATALOG
+        .iter()
+        .filter_map(|entry| match entry.status {
+            ComponentCatalogStatus::Official => Some(StoryContract::component(
+                StoryContractKind::Component,
+                entry.name,
+                entry.family,
+                entry.state,
+                focused_section_for_catalog_entry(entry),
+                entry.catalog_selector(),
+                entry.sample_selector,
+                None,
+                component_story_probes(entry),
+            )),
+            ComponentCatalogStatus::StateContract => Some(StoryContract::component(
+                StoryContractKind::StateContract,
+                entry.name,
+                entry.family,
+                entry.state,
+                focused_section_for_catalog_entry(entry),
+                entry.catalog_selector(),
+                None,
+                entry.state_contract_selector,
+                component_story_probes(entry),
+            )),
+            ComponentCatalogStatus::AdapterOnly
+            | ComponentCatalogStatus::InternalAnatomy
+            | ComponentCatalogStatus::Deferred => None,
+        })
+        .collect()
 }

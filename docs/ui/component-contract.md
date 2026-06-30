@@ -679,6 +679,9 @@ these gates visible:
   selector;
 - every official overlay entry keeps matching catalog metadata, component/state signals, rendered
   sample selectors, and visible catalog cards on the Overlay page;
+- every official component, state readout, and overlay sample has a `StoryContract` that declares
+  the selectors and runtime probes tests may use for open, dismiss, select, edit, scroll, focus,
+  activate, and public-payload assertions;
 - gallery samples continue to show real resolved state for each shipped component;
 - all-components and focused component-family modes preserve the catalog, section directory, page
   scroll reset, and nested scroll containment contracts;

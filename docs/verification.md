@@ -297,6 +297,11 @@ real `status-cue:*:root` and `empty-state:*:root` debug selectors render.
 gate for catalog drift: every official `COMPONENT_CATALOG` entry must have matching component and
 resolved-state `SIGNALS` entries plus one rendered `gallery:component-*-sample:{id}` selector in
 the Components page.
+`gallery_story_contracts_cover_components_state_readouts_and_overlays` is the story-probe contract
+gate. It requires official component samples, renderer-neutral state readouts, and overlay samples
+to expose a reusable `StoryContract` with public selectors and user-observable probe operations:
+open, dismiss, select, edit, scroll, focus, activate, and read-public-payload. Gallery smokes should
+prefer these contracts before falling back to raw debug selectors for adapter-internal details.
 `state_contract_catalog_entries_have_signals_and_readout_selectors` is the companion pre-renderer
 contract gate. Entries marked `state-contract` must declare `state_contract_selector`, must not
 declare official `sample_selector`, and must stay disjoint from `official_sample_selector_pairs`.
@@ -461,7 +466,7 @@ cargo nextest run -p open-gpui-ui-core virtualizer
 cargo nextest run -p open-gpui-ui-components row_window virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts virtualized_list_component_render_plan_applies_builder_metrics tree_runtime table_diagnostics_exposes_center_column_window_metadata table_diagnostics_exposes_row_pinning_regions
 cargo nextest run -p open-gpui-ui-components theme_registry theme_resolver default_theme theme_snapshots
 cargo run -p xtask -- scan-theme-drift
-cargo nextest run -p open-gpui-ui-foundation-gallery token_page_exposes_runtime_theme_mode_metadata token_page_samples_follow_theme_token_order components_page_samples_expose_component_metadata components_catalog_metadata_is_separate_from_rendering official_component_catalog_entries_have_signals_and_sample_selectors state_contract_catalog_entries_have_signals_and_readout_selectors components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_focuses_every_focusable_catalog_entry
+cargo nextest run -p open-gpui-ui-foundation-gallery token_page_exposes_runtime_theme_mode_metadata token_page_samples_follow_theme_token_order components_page_samples_expose_component_metadata components_catalog_metadata_is_separate_from_rendering official_component_catalog_entries_have_signals_and_sample_selectors state_contract_catalog_entries_have_signals_and_readout_selectors gallery_story_contracts_cover_components_state_readouts_and_overlays components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_focuses_every_focusable_catalog_entry
 ```
 
 The theme drift scan is the focused gate for component color recipes and built-in theme token
