@@ -19,22 +19,23 @@ use jellyflow::{
             measurement::NodeHandleMeasurementSource,
         },
         schema::{
-            NodeChromeKind, NodeKitRegistry, NodeRegistry, NodeSurfaceProjection,
-            NodeSurfaceSlotDescriptor, NodeSurfaceSlotKind, NodeSurfaceSlotProjection,
+            MenuSurface, NodeChromeKind, NodeKindViewDescriptor, NodeKitRegistry, NodeRegistry,
+            NodeSurfaceProjection, NodeSurfaceSlotDescriptor, NodeSurfaceSlotKind,
+            NodeSurfaceSlotProjection,
         },
     },
 };
 use jellyflow_open_gpui::{
-    OpenGpuiControlPlan, OpenGpuiControlPrimitive, OpenGpuiDynamicPortPolicy,
-    OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
-    OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
+    OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiControlPlan, OpenGpuiControlPrimitive,
+    OpenGpuiDynamicPortPolicy, OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
+    OpenGpuiMenuPlan, OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout,
     OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
     OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
     OpenGpuiRepeatableSurfaceLayout as NodeRepeatableSurfaceLayout,
     OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection,
-    project_node_measurement, project_slot_controls, repeatable_item_projection,
-    repeatable_surface_projection,
+    project_actions_for_surface, project_menu, project_node_measurement, project_slot_controls,
+    repeatable_item_projection, repeatable_surface_projection,
 };
 use open_gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Pixels, Window,
@@ -49,8 +50,8 @@ use open_gpui_canvas::{
 use open_gpui_platform::application;
 use open_gpui_ui_components::prelude::Sizable;
 use open_gpui_ui_components::{
-    Badge, BadgeVariant, Button, ButtonVariant, ListboxOption, NumberInput, Progress, Select,
-    Slider, Switch, TextInput, Textarea,
+    Badge, BadgeVariant, Button, ButtonVariant, ListboxOption, Menu, MenuItem, NumberInput,
+    Progress, Select, Slider, Switch, TextInput, Textarea,
 };
 use open_gpui_ui_core::Size;
 use serde_json::Value;
@@ -113,6 +114,8 @@ struct NodeSurfaceSummary {
     projection: NodeSurfaceProjection,
     actions: usize,
     menus: usize,
+    action_menus: Vec<OpenGpuiMenuPlan>,
+    toolbar_menu: OpenGpuiMenuPlan,
     inspectors: usize,
     blackboards: usize,
     repeatables: Vec<NodeRepeatableSurfaceProjection>,
@@ -621,20 +624,25 @@ fn render_node_surface(bounds: Bounds<Pixels>, surface: NodeSurfaceSummary) -> i
                 .min_w(px(0.0))
                 .child(surface.summary.clone()),
         )
+        .child(render_surface_action_summary(&surface))
         .child(
             div()
                 .absolute()
                 .left(px(8.0))
                 .top(px(64.0))
-                .right(px(8.0))
+                .right(px(150.0))
                 .text_xs()
                 .text_color(rgb(0x94a3b8))
                 .truncate()
                 .flex_shrink_1()
                 .min_w(px(0.0))
                 .child(format!(
-                    "a{} m{} i{} b{}",
-                    surface.actions, surface.menus, surface.inspectors, surface.blackboards
+                    "a{} m{} i{} b{} · {} plans",
+                    surface.actions,
+                    surface.menus,
+                    surface.inspectors,
+                    surface.blackboards,
+                    surface_action_plan_count(&surface)
                 )),
         )
         .children(render_surface_chrome(&surface, bounds))
@@ -686,6 +694,8 @@ fn node_surface_summary_for_node(
         .or_else(|| data_string(node, "description"))
         .unwrap_or("Jellyflow node projected into open-gpui-canvas")
         .to_string();
+    let action_menus = node_action_menus(&descriptor);
+    let toolbar_menu = node_toolbar_menu(&descriptor);
 
     Some(NodeSurfaceSummary {
         node_kind: descriptor.kind.0.clone(),
@@ -701,6 +711,8 @@ fn node_surface_summary_for_node(
         projection,
         actions: descriptor.actions.len(),
         menus: descriptor.menus.len(),
+        action_menus,
+        toolbar_menu,
         inspectors: descriptor.inspectors.len(),
         blackboards: descriptor.blackboards.len(),
         repeatables,
@@ -720,6 +732,145 @@ fn render_surface_chrome(
         .collect()
 }
 
+fn render_surface_action_summary(surface: &NodeSurfaceSummary) -> AnyElement {
+    let visible = surface
+        .action_menus
+        .iter()
+        .flat_map(|menu| menu.actions.iter())
+        .chain(surface.toolbar_menu.actions.iter())
+        .take(2)
+        .map(|action| {
+            Badge::new(
+                format!("jellyflow-action-summary:{}", action.key),
+                action_summary_label(action),
+            )
+            .variant(if action.dispatchable() {
+                BadgeVariant::Default
+            } else {
+                BadgeVariant::Outline
+            })
+            .with_size(Size::XSmall)
+            .into_any_element()
+        })
+        .collect::<Vec<_>>();
+
+    div()
+        .absolute()
+        .top(px(62.0))
+        .right(px(8.0))
+        .max_w(px(138.0))
+        .flex()
+        .items_center()
+        .justify_end()
+        .gap_1()
+        .overflow_hidden()
+        .children(visible)
+        .into_any_element()
+}
+
+fn surface_action_plan_count(surface: &NodeSurfaceSummary) -> usize {
+    surface
+        .action_menus
+        .iter()
+        .map(|menu| menu.actions.len())
+        .sum::<usize>()
+        + surface.toolbar_menu.actions.len()
+}
+
+fn render_action_button(action: &OpenGpuiActionPlan, index: usize) -> AnyElement {
+    Button::new(
+        format!("jellyflow-action-button:{}:{index}", action.key),
+        action_button_label(action),
+    )
+    .variant(action_button_variant(action, index))
+    .disabled(!action.dispatchable())
+    .with_size(Size::XSmall)
+    .into_any_element()
+}
+
+fn render_action_menu(menu: &OpenGpuiMenuPlan, id_suffix: &str) -> AnyElement {
+    let items = menu
+        .actions
+        .iter()
+        .map(|action| {
+            MenuItem::action(action.key.clone(), action_menu_item_label(action))
+                .disabled(!action.dispatchable())
+        })
+        .collect::<Vec<_>>();
+
+    Menu::new(
+        format!("jellyflow-action-menu:{}:{id_suffix}", menu.key),
+        format!("{} {}", menu.label, menu.actions.len()),
+    )
+    .items(items)
+    .disabled(menu.actions.is_empty())
+    .with_size(Size::XSmall)
+    .into_any_element()
+}
+
+fn render_chrome_action_buttons(
+    surface: &NodeSurfaceSummary,
+    fallback_label: &str,
+) -> Vec<AnyElement> {
+    let actions = surface
+        .action_menus
+        .iter()
+        .flat_map(|menu| menu.actions.iter())
+        .take(2)
+        .enumerate()
+        .map(|(index, action)| render_action_button(action, index))
+        .collect::<Vec<_>>();
+
+    if actions.is_empty() {
+        return vec![
+            Button::new(
+                format!("jellyflow-chrome-run-fallback:{}", surface.node_kind),
+                fallback_label.to_owned(),
+            )
+            .variant(ButtonVariant::Default)
+            .with_size(Size::XSmall)
+            .into_any_element(),
+        ];
+    }
+
+    actions
+}
+
+fn action_button_variant(action: &OpenGpuiActionPlan, index: usize) -> ButtonVariant {
+    if action.danger {
+        ButtonVariant::Destructive
+    } else if index == 0 {
+        ButtonVariant::Default
+    } else {
+        ButtonVariant::Secondary
+    }
+}
+
+fn action_button_label(action: &OpenGpuiActionPlan) -> String {
+    action
+        .icon_key
+        .as_ref()
+        .map(|icon| format!("{icon} {}", action.label))
+        .unwrap_or_else(|| action.label.clone())
+}
+
+fn action_summary_label(action: &OpenGpuiActionPlan) -> String {
+    action
+        .shortcut
+        .as_ref()
+        .map(|shortcut| format!("{} {}", action.label, shortcut))
+        .unwrap_or_else(|| action.label.clone())
+}
+
+fn action_menu_item_label(action: &OpenGpuiActionPlan) -> String {
+    match (&action.shortcut, &action.disabled_reason) {
+        (Some(shortcut), Some(reason)) => format!("{} · {} · {}", action.label, shortcut, reason),
+        (Some(shortcut), None) => format!("{} · {}", action.label, shortcut),
+        (None, Some(reason)) => format!("{} · {}", action.label, reason),
+        (None, None) => action.label.clone(),
+    }
+}
+
 fn surface_slot_descriptor_for_projection(
     surface: &NodeSurfaceSummary,
     slot: &NodeSurfaceSlotProjection,
@@ -732,6 +883,42 @@ fn surface_slot_descriptor_for_projection(
         .iter()
         .find(|candidate| candidate.key == slot.key)
         .cloned()
+}
+
+fn node_action_menus(descriptor: &NodeKindViewDescriptor) -> Vec<OpenGpuiMenuPlan> {
+    let surface = OpenGpuiActionSurface::Node {
+        node_kind: descriptor.kind.0.clone(),
+    };
+    let mut menus = descriptor
+        .menus
+        .iter()
+        .filter(|menu| menu.surface == MenuSurface::Node)
+        .map(|menu| project_menu(descriptor, menu, &surface))
+        .filter(|menu| !menu.actions.is_empty())
+        .collect::<Vec<_>>();
+
+    if menus.is_empty() {
+        let synthetic = project_actions_for_surface(descriptor, &surface);
+        if !synthetic.actions.is_empty() {
+            menus.push(synthetic);
+        }
+    }
+
+    menus
+}
+
+fn node_toolbar_menu(descriptor: &NodeKindViewDescriptor) -> OpenGpuiMenuPlan {
+    let surface = OpenGpuiActionSurface::Toolbar {
+        node_kind: Some(descriptor.kind.0.clone()),
+    };
+    let explicit = descriptor
+        .menus
+        .iter()
+        .find(|menu| menu.surface == MenuSurface::Toolbar)
+        .map(|menu| project_menu(descriptor, menu, &surface))
+        .filter(|menu| !menu.actions.is_empty());
+
+    explicit.unwrap_or_else(|| project_actions_for_surface(descriptor, &surface))
 }
 
 fn render_node_chrome(
@@ -770,25 +957,12 @@ fn render_node_chrome(
         NodeChromeKind::RunActionStrip => base
             .justify_start()
             .gap_1()
-            .child(
-                Button::new(format!("jellyflow-chrome-run:{}", chrome.key), label)
-                    .variant(ButtonVariant::Default)
-                    .with_size(Size::XSmall),
-            )
-            .child(
-                Button::new(format!("jellyflow-chrome-trace:{}", chrome.key), "Trace")
-                    .variant(ButtonVariant::Secondary)
-                    .with_size(Size::XSmall),
-            )
+            .children(render_chrome_action_buttons(surface, &label))
             .into_any_element(),
         NodeChromeKind::Toolbar => base
             .justify_end()
             .gap_1()
-            .child(
-                Badge::new(format!("jellyflow-chrome-toolbar:{}", chrome.key), "tools")
-                    .variant(BadgeVariant::Outline)
-                    .with_size(Size::XSmall),
-            )
+            .child(render_action_menu(&surface.toolbar_menu, &chrome.key))
             .into_any_element(),
         NodeChromeKind::Resizer => base
             .rounded_sm()
@@ -2155,7 +2329,10 @@ mod tests {
         runtime::measurement::{MeasuredSurfaceAnchor, NodeMeasurement},
         schema::NodeControlKind,
     };
-    use jellyflow_open_gpui::projected_node_surface_component_layout;
+    use jellyflow_open_gpui::{
+        plan_action_dispatch, plan_dropped_wire_insert, project_dropped_wire_menu,
+        projected_node_surface_component_layout,
+    };
 
     #[test]
     fn projects_jellyflow_store_into_canvas_document() {
@@ -2274,6 +2451,28 @@ mod tests {
                 .chrome
                 .iter()
                 .any(|chrome| chrome.key == "actions.run" && chrome.interactive)
+        );
+        assert!(surface.action_menus.iter().any(|menu| {
+            menu.key == "menu.node.llm"
+                && menu
+                    .actions
+                    .iter()
+                    .any(|action| action.key == "action.llm.run")
+        }));
+        assert!(
+            surface
+                .toolbar_menu
+                .actions
+                .iter()
+                .any(|action| action.key == "action.llm.run")
+        );
+        assert_eq!(
+            plan_action_dispatch(&surface.toolbar_menu, "action.llm.run")
+                .expect("toolbar action dispatch")
+                .target,
+            jellyflow::runtime::schema::ActionTarget::Node {
+                node_kind: "demo.llm".to_owned(),
+            }
         );
     }
 
@@ -2509,6 +2708,11 @@ mod tests {
         );
         assert!(surface.actions >= 3);
         assert!(surface.menus >= 1);
+        assert!(surface.action_menus.iter().any(|menu| {
+            menu.actions
+                .iter()
+                .any(|action| action.key == "action.column.add")
+        }));
         assert_eq!(
             projection.capability.layout_measurement,
             NodeSurfaceMeasurementSource::ProjectionFallback
@@ -2520,6 +2724,36 @@ mod tests {
                 .layout_gap
                 .contains("element-bounds callback")
         );
+    }
+
+    #[test]
+    fn gpui_dropped_wire_insert_menu_dispatches_semantic_insert_plan() {
+        let registry = NodeKitRegistry::builtin().node_registry();
+        let source = ConnectionHandleRef::new(
+            JellyNodeId::from_u128(3),
+            JellyPortId::from_u128(31),
+            PortDirection::Out,
+        );
+        let pointer = JellyPoint { x: 420.0, y: 180.0 };
+        let menu = project_dropped_wire_menu(
+            &registry,
+            source,
+            Some(&PortKey::new("completion")),
+            pointer,
+        );
+
+        assert_eq!(menu.surface, MenuSurface::DroppedWire);
+        assert!(
+            menu.actions
+                .iter()
+                .any(|action| action.key == "action.insert.llm" && action.dispatchable())
+        );
+        let insert = plan_dropped_wire_insert(&menu, "action.insert.llm", source, pointer)
+            .expect("enabled dropped-wire action should dispatch");
+
+        assert_eq!(insert.node_kind, "demo.llm");
+        assert_eq!(insert.source, source);
+        assert_eq!(insert.pointer, pointer);
     }
 
     #[test]
