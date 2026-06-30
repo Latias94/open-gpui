@@ -56,6 +56,25 @@ pub(crate) enum DockDebugRegion {
         /// Preview route category.
         kind: DockDropRoutePreviewKind,
     },
+    /// Root visual layer rendered from a sampled transition frame.
+    TransitionLayer,
+    /// A sampled pane reveal/occlusion rectangle.
+    TransitionPaneClip {
+        /// Runtime tabs or pane node id.
+        node: DockNodeId,
+    },
+    /// A sampled divider rectangle.
+    TransitionDivider {
+        /// Runtime split node id.
+        split: DockNodeId,
+        /// Handle index between child `index` and child `index + 1`.
+        index: usize,
+    },
+    /// A sampled overlay rectangle.
+    TransitionOverlay {
+        /// Overlay sample index in the sampled transition.
+        index: usize,
+    },
     /// A tab label for one dock item.
     Tab {
         /// Runtime tabs node id containing the item.

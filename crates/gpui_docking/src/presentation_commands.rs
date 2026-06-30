@@ -1,6 +1,7 @@
 use crate::{
     DockHost, DockItemId, DockNode, DockNodeId, DockViewportFocusCommand, DockViewportFocusRequest,
-    transition_executor::DockTransitionExecutionState, transition_geometry::DockTransitionPlan,
+    transition_executor::{DockTransitionExecutionState, DockTransitionSample},
+    transition_geometry::DockTransitionPlan,
 };
 use open_gpui::{Context, Window};
 use open_gpui_ui_core::MotionSpec;
@@ -61,10 +62,21 @@ impl DockHost {
         plan: DockTransitionPlan,
         spec: MotionSpec,
         window: Option<&Window>,
+        cx: &mut Context<Self>,
     ) -> DockTransitionExecutionState {
-        self.transition_executor_mut()
+        let state = self
+            .transition_executor_mut()
             .execute(plan, spec, window)
-            .state
+            .state;
+        cx.notify();
+        state
+    }
+
+    pub(crate) fn sample_transition_for_render(
+        &mut self,
+        window: Option<&Window>,
+    ) -> Option<DockTransitionSample> {
+        self.transition_executor_mut().sample(window)
     }
 
     #[cfg(test)]
@@ -72,6 +84,14 @@ impl DockHost {
         &mut self,
     ) -> Option<crate::transition_executor::DockTransitionExecution> {
         self.transition_executor_mut().clear()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sample_transition_for_test(
+        &mut self,
+        now: std::time::Duration,
+    ) -> Option<DockTransitionSample> {
+        self.transition_executor_mut().sample_for_test(now)
     }
 
     #[cfg(test)]

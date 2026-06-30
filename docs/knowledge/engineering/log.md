@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-07-01: Implemented Phase A / P0 for
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md`.
+  `DockTransitionExecutor` now samples deterministic transition progress, reduced motion completes
+  through a one-shot final sample, entering pane content stays final-size while reveal clips animate,
+  and `DockHost::render` consumes sampled overlay/clip/divider output through a root transition
+  layer. Important runtime decision: transition execution notifies the host, while continuous
+  `request_animation_frame` calls happen only during render-time sampling so GPUI render-phase
+  invariants are respected. Verified with focused `host_transition_tests` / `host_render_tests`,
+  `cargo fmt --all -- --check`, `cargo check -p open-gpui-docking --tests`, and `git diff --check`.
 - 2026-06-30: Fast-forwarded local `main` to `3497a85`, merging
   `feat/docking-split-motion-primitives` into the local main branch. Spawned read-only research
   lanes for animation/a11y, docking UX, split core fit, BonSplit/ImGui reference, and docs follow-up.

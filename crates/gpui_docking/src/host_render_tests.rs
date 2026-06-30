@@ -1,14 +1,19 @@
 use crate::{
     DockCentralRegion, DockController, DockFloatingContainer, DockGraph, DockHost, DockNode,
-    DockNodeId, DockPanelDescriptor, DockSpaceId, DockViewportActivationTransaction,
-    DockViewportFocusCommand, DockViewportFocusRequest, DockViewportPlatformSyncAction,
-    DockViewportRuntimeHandle, DockWorkspace, SplitAxis, debug::DockDebugRegion,
-    drag::DockDragPayload, host_test_support::*,
+    DockNodeId, DockPanelDescriptor, DockSpaceId, DockTransitionExecutionState,
+    DockViewportActivationTransaction, DockViewportFocusCommand, DockViewportFocusRequest,
+    DockViewportPlatformSyncAction, DockViewportRuntimeHandle, DockWorkspace, SplitAxis,
+    debug::DockDebugRegion,
+    drag::DockDragPayload,
+    host_test_support::*,
+    overlay_scene::{DockOverlayLayer, DockOverlayLayerKind, DockOverlayScene},
+    transition_geometry::{DockMotionPreference, DockTransitionPlan},
 };
 use open_gpui::{
     AppContext as _, Entity, Focusable, Modifiers, MouseButton, RequestFrameOptions,
     TestAppContext, VisualTestContext, px, size,
 };
+use open_gpui_ui_core::MotionSpec;
 use slotmap::Key;
 use std::time::Duration;
 
@@ -157,6 +162,68 @@ fn host_scene_expiry_watch_survives_manual_frame_callbacks(cx: &mut TestAppConte
         require_presentation: true,
         ..Default::default()
     }));
+}
+
+#[open_gpui::test]
+fn transition_sample_overlay_renders_from_executor(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a"]);
+    let (window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A")],
+        size(px(400.0), px(240.0)),
+    );
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(floating_bounds(0.0, 0.0, 400.0, 240.0), cx)
+    });
+    let overlay_bounds = floating_bounds(32.0, 16.0, 90.0, 26.0);
+    let overlay = DockOverlayScene {
+        layers: vec![DockOverlayLayer {
+            kind: DockOverlayLayerKind::PayloadGhost,
+            bounds: overlay_bounds,
+            target_node: Some(root),
+            zone: Some(crate::DropZone::Center),
+            preview_layer: None,
+            active: true,
+            payload_index: Some(0),
+            payload_title: Some("Panel A".to_string()),
+            drop_box: None,
+            tab_insertion: None,
+        }],
+    };
+    let plan =
+        DockTransitionPlan::from_overlay_scene(&scene, &overlay, DockMotionPreference::Animated);
+
+    window
+        .update(cx, |host, window, cx| {
+            assert_eq!(
+                host.execute_transition_plan(
+                    plan,
+                    MotionSpec::layout(DockMotionPreference::Animated),
+                    Some(window),
+                    cx,
+                ),
+                DockTransitionExecutionState::Scheduled
+            );
+        })
+        .expect("host should execute transition plan");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+
+    let transition_layer = selector_for(&visual, &host, DockDebugRegion::TransitionLayer)
+        .expect("transition layer selector should be emitted");
+    assert!(debug_bounds(&mut visual, &transition_layer).size.width > px(0.0));
+    let transition_overlay = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TransitionOverlay { index: 0 },
+    )
+    .expect("sampled overlay selector should be emitted");
+    assert_bounds_close(
+        debug_bounds(&mut visual, &transition_overlay),
+        overlay_bounds,
+        "sampled transition overlay",
+    );
 }
 
 #[open_gpui::test]

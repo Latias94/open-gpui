@@ -12,8 +12,9 @@ use crate::{
     },
 };
 use open_gpui::{Bounds, TestAppContext, point, px, size};
-use open_gpui_ui_core::MotionSpec;
+use open_gpui_ui_core::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
 use slotmap::Key;
+use std::time::Duration;
 
 fn host_bounds(width: f32, height: f32) -> Bounds<open_gpui::Pixels> {
     Bounds::new(point(px(0.0), px(0.0)), size(px(width), px(height)))
@@ -148,11 +149,12 @@ fn transition_executor_reduces_or_schedules_without_changing_final_scene(cx: &mu
     let previous = single_pane_scene(left_tabs, bounds);
     let next = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
     let animated = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
-    let animated_state = host.update(cx, |host, _| {
+    let animated_state = host.update(cx, |host, cx| {
         host.execute_transition_plan(
             animated,
             MotionSpec::layout(DockMotionPreference::Animated),
             None,
+            cx,
         )
     });
     assert_eq!(animated_state, DockTransitionExecutionState::Scheduled);
@@ -162,18 +164,214 @@ fn transition_executor_reduces_or_schedules_without_changing_final_scene(cx: &mu
     assert_eq!(stored.plan.final_scene, next);
 
     let reduced = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Reduced);
-    let reduced_state = host.update(cx, |host, _| {
-        host.execute_transition_plan(
+    let reduced_sample = host.update(cx, |host, cx| {
+        let reduced_state = host.execute_transition_plan(
             reduced,
             MotionSpec::layout(DockMotionPreference::Reduced),
             None,
-        )
+            cx,
+        );
+        assert_eq!(reduced_state, DockTransitionExecutionState::Immediate);
+        host.sample_transition_for_test(Duration::from_millis(0))
+            .expect("reduced transition should expose a final sample")
     });
-    assert_eq!(reduced_state, DockTransitionExecutionState::Immediate);
-    let stored = host
-        .update(cx, |host, _| host.clear_transition_execution_for_test())
-        .expect("reduced transition should be stored");
-    assert_eq!(stored.plan.final_scene, next);
+    assert_eq!(reduced_sample.final_scene, next);
+    assert_eq!(reduced_sample.progress, 1.0);
+    assert!(reduced_sample.complete);
+}
+
+#[open_gpui::test]
+fn transition_executor_samples_timeline_and_reveal_geometry(cx: &mut TestAppContext) {
+    let (graph, root, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+
+    let bounds = host_bounds(400.0, 240.0);
+    let previous = single_pane_scene(left_tabs, bounds);
+    let next = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
+    let plan = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
+    let spec = MotionSpec::new(
+        MotionPreference::Animated,
+        MotionDuration::Custom(Duration::from_millis(200)),
+        MotionEasing::Linear,
+    );
+
+    host.update(cx, |host, cx| {
+        assert_eq!(
+            host.execute_transition_plan(plan, spec, None, cx),
+            DockTransitionExecutionState::Scheduled
+        );
+
+        let start = host
+            .sample_transition_for_test(Duration::from_millis(0))
+            .expect("animated execution should expose a start sample");
+        assert_eq!(start.progress, 0.0);
+        assert!(!start.complete);
+        assert!(start.needs_frame);
+        assert_eq!(start.final_scene, next);
+        let entering = start
+            .pane_clips
+            .iter()
+            .find(|clip| clip.node == right_tabs)
+            .expect("entering pane should expose reveal clip");
+        let final_bounds = next
+            .pane_for_node(right_tabs)
+            .expect("right pane should be in final scene")
+            .bounds;
+        assert_eq!(
+            entering.content_bounds, final_bounds,
+            "entering pane content must be final-size from the first frame"
+        );
+        assert_eq!(entering.visible_bounds.size.width, px(0.0));
+        assert_eq!(
+            entering.visible_bounds.size.height,
+            final_bounds.size.height
+        );
+
+        let midpoint = host
+            .sample_transition_for_test(Duration::from_millis(100))
+            .expect("animated execution should expose a midpoint sample");
+        assert_eq!(midpoint.progress, 0.5);
+        assert!(!midpoint.complete);
+        assert!(midpoint.needs_frame);
+        let midpoint_clip = midpoint
+            .pane_clips
+            .iter()
+            .find(|clip| clip.node == right_tabs)
+            .expect("entering pane should still expose reveal clip");
+        assert_eq!(midpoint_clip.content_bounds, final_bounds);
+        assert_eq!(
+            midpoint_clip.visible_bounds.size.width,
+            final_bounds.size.width * 0.5
+        );
+        assert_eq!(
+            midpoint_clip.visible_bounds.size.height,
+            final_bounds.size.height
+        );
+        assert!(
+            midpoint
+                .dividers
+                .iter()
+                .any(|divider| divider.split == root && divider.progress == 0.5),
+            "appearing divider should sample through midpoint progress"
+        );
+
+        let end = host
+            .sample_transition_for_test(Duration::from_millis(200))
+            .expect("completion sample should be returned before clearing");
+        assert_eq!(end.progress, 1.0);
+        assert!(end.complete);
+        assert!(!end.needs_frame);
+        assert_eq!(end.final_scene, next);
+        assert!(
+            host.sample_transition_for_test(Duration::from_millis(201))
+                .is_none(),
+            "completed transition should clear itself after the completion sample"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn transition_executor_replaces_active_execution_and_completes_reduced_motion_immediately(
+    cx: &mut TestAppContext,
+) {
+    let (graph, _root, left_tabs, _right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+
+    let bounds = host_bounds(400.0, 240.0);
+    let previous = single_pane_scene(left_tabs, bounds);
+    let next = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
+    let animated = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
+    let replacement = DockTransitionPlan::from_overlay_scene(
+        &next,
+        &DockOverlayScene {
+            layers: vec![DockOverlayLayer {
+                kind: DockOverlayLayerKind::PayloadGhost,
+                bounds: floating_bounds(40.0, 10.0, 90.0, 26.0),
+                target_node: Some(left_tabs),
+                zone: Some(DropZone::Center),
+                preview_layer: None,
+                active: true,
+                payload_index: Some(0),
+                payload_title: Some("Replacement".to_string()),
+                drop_box: None,
+                tab_insertion: None,
+            }],
+        },
+        DockMotionPreference::Animated,
+    );
+
+    host.update(cx, |host, cx| {
+        assert_eq!(
+            host.execute_transition_plan(
+                animated,
+                MotionSpec::new(
+                    MotionPreference::Animated,
+                    MotionDuration::Custom(Duration::from_millis(400)),
+                    MotionEasing::Linear,
+                ),
+                None,
+                cx,
+            ),
+            DockTransitionExecutionState::Scheduled
+        );
+        assert!(
+            host.sample_transition_for_test(Duration::from_millis(100))
+                .is_some()
+        );
+
+        assert_eq!(
+            host.execute_transition_plan(
+                replacement,
+                MotionSpec::new(
+                    MotionPreference::Animated,
+                    MotionDuration::Custom(Duration::from_millis(200)),
+                    MotionEasing::Linear,
+                ),
+                None,
+                cx,
+            ),
+            DockTransitionExecutionState::Scheduled
+        );
+        let sample = host
+            .sample_transition_for_test(Duration::from_millis(100))
+            .expect("replacement transition should start a new timeline");
+        assert_eq!(
+            sample.progress, 0.0,
+            "replacement transition should reset the timeline"
+        );
+        assert_eq!(sample.overlays.len(), 1);
+        assert_eq!(
+            sample.overlays[0].kind,
+            DockOverlayTransitionKind::PayloadGhost
+        );
+
+        let reduced = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Reduced);
+        assert_eq!(
+            host.execute_transition_plan(reduced, MotionSpec::immediate(), None, cx),
+            DockTransitionExecutionState::Immediate
+        );
+        let reduced_sample = host
+            .sample_transition_for_test(Duration::from_millis(999))
+            .expect("reduced transition should expose a final sample once");
+        assert_eq!(reduced_sample.progress, 1.0);
+        assert!(reduced_sample.complete);
+        assert!(!reduced_sample.needs_frame);
+        assert!(
+            host.sample_transition_for_test(Duration::from_millis(1000))
+                .is_none(),
+            "reduced transition should clear after final sample"
+        );
+    });
 }
 
 #[test]

@@ -16,6 +16,7 @@ use crate::{
     overlay_scene::{DockOverlayLayer, DockOverlayScene},
     presentation_scene::DockPresentationScene,
     render_split::DockRenderSplitInput,
+    transition_executor::{DockDividerSample, DockOverlaySample, DockPaneClipSample},
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{
@@ -66,6 +67,7 @@ impl Render for DockHost {
         let drop_host_space = session.space().clone();
         let outside_release_host_space = session.space().clone();
         let viewport_host_scene_frame = Rc::new(RefCell::new(None));
+        let transition_sample = self.sample_transition_for_render(Some(window));
 
         let selector = self.record_debug_selector(
             DockDebugRegion::Host,
@@ -197,6 +199,10 @@ impl Render for DockHost {
         }
 
         host = host.child(self.render_divider_event_layer(&session, cx));
+
+        if let Some(sample) = transition_sample.as_ref() {
+            host = host.child(self.render_transition_sample_layer(&session, sample));
+        }
 
         if let Some(preview) = self.render_host_drop_preview(&session, window, cx) {
             host = host.child(preview);
@@ -511,6 +517,117 @@ impl DockHost {
         .left(px(0.0))
         .size_full()
         .into_any_element()
+    }
+
+    fn render_transition_sample_layer(
+        &mut self,
+        session: &DockHostRenderSession,
+        sample: &crate::transition_executor::DockTransitionSample,
+    ) -> AnyElement {
+        let selector = self.record_debug_selector(
+            DockDebugRegion::TransitionLayer,
+            format!("{}:transition-layer", session.selector_prefix()),
+        );
+        let mut layer = div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .absolute()
+            .top(px(0.0))
+            .left(px(0.0))
+            .size_full()
+            .overflow_hidden();
+
+        for clip in &sample.pane_clips {
+            layer = layer.child(self.render_transition_pane_clip(session, clip));
+        }
+        for divider in &sample.dividers {
+            layer = layer.child(self.render_transition_divider(session, divider));
+        }
+        for (index, overlay) in sample.overlays.iter().enumerate() {
+            layer = layer.child(self.render_transition_overlay(session, index, overlay));
+        }
+
+        layer.into_any_element()
+    }
+
+    fn render_transition_pane_clip(
+        &mut self,
+        session: &DockHostRenderSession,
+        clip: &DockPaneClipSample,
+    ) -> AnyElement {
+        let selector = self.record_debug_selector(
+            DockDebugRegion::TransitionPaneClip { node: clip.node },
+            format!(
+                "{}:transition:pane-clip:{}",
+                session.selector_prefix(),
+                clip.node.as_u64()
+            ),
+        );
+        div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .absolute()
+            .left(clip.visible_bounds.origin.x)
+            .top(clip.visible_bounds.origin.y)
+            .w(clip.visible_bounds.size.width)
+            .h(clip.visible_bounds.size.height)
+            .bg(rgba(0xffffff66))
+            .into_any_element()
+    }
+
+    fn render_transition_divider(
+        &mut self,
+        session: &DockHostRenderSession,
+        divider: &DockDividerSample,
+    ) -> AnyElement {
+        let selector = self.record_debug_selector(
+            DockDebugRegion::TransitionDivider {
+                split: divider.split,
+                index: divider.index,
+            },
+            format!(
+                "{}:transition:divider:{}:{}",
+                session.selector_prefix(),
+                divider.split.as_u64(),
+                divider.index
+            ),
+        );
+        div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .absolute()
+            .left(divider.bounds.origin.x)
+            .top(divider.bounds.origin.y)
+            .w(divider.bounds.size.width)
+            .h(divider.bounds.size.height)
+            .rounded_sm()
+            .bg(rgba(0x2563ebcc))
+            .into_any_element()
+    }
+
+    fn render_transition_overlay(
+        &mut self,
+        session: &DockHostRenderSession,
+        index: usize,
+        overlay: &DockOverlaySample,
+    ) -> AnyElement {
+        let selector = self.record_debug_selector(
+            DockDebugRegion::TransitionOverlay { index },
+            format!("{}:transition:overlay:{index}", session.selector_prefix()),
+        );
+        div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .absolute()
+            .left(overlay.bounds.origin.x)
+            .top(overlay.bounds.origin.y)
+            .w(overlay.bounds.size.width)
+            .h(overlay.bounds.size.height)
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(0x2563eb))
+            .bg(rgba(0x3b82f633))
+            .into_any_element()
     }
 
     fn render_empty_space(
