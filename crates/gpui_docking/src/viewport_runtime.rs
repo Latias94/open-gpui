@@ -932,15 +932,6 @@ impl DockViewportRuntime {
             .tab_label_bounds_for_tabs(space, window_id, tabs, target_index)
     }
 
-    pub(crate) fn rendered_host_bounds_for_window(
-        &self,
-        space: &DockSpaceId,
-        window_id: Option<WindowId>,
-    ) -> Option<Bounds<Pixels>> {
-        self.frame_coordinator
-            .host_bounds_for_window(space, window_id)
-    }
-
     pub(crate) fn routed_drop_preview_for(
         &self,
         space: &DockSpaceId,

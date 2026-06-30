@@ -153,6 +153,13 @@ pub(crate) struct DockViewportHostSceneRegistry {
     next_generation: u64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockViewportResolvedFrame {
+    pub(crate) frame: DockViewportHostSceneFrame,
+    pub(crate) drop_guide_style: DockDropGuideStyle,
+    pub(crate) resolution: DockDropResolution,
+}
+
 impl DockViewportHostSceneRegistry {
     pub(crate) fn register(
         &mut self,
@@ -243,18 +250,6 @@ impl DockViewportHostSceneRegistry {
         snapshot.tab_label_bounds_for_tabs(tabs, target_index)
     }
 
-    pub(crate) fn host_bounds_for_window(
-        &self,
-        space: &DockSpaceId,
-        window_id: Option<WindowId>,
-    ) -> Option<Bounds<Pixels>> {
-        let snapshot = self.scenes.get(space)?;
-        if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
-            return None;
-        }
-        Some(snapshot.host_bounds)
-    }
-
     #[cfg(test)]
     fn current_frame(
         &self,
@@ -297,7 +292,7 @@ impl DockViewportHostSceneRegistry {
             target_validator,
             None,
         )
-        .and_then(|(_, resolution)| resolution.target())
+        .and_then(|resolved| resolved.resolution.target())
     }
 
     pub(crate) fn resolve_frame_for_window(
@@ -310,12 +305,13 @@ impl DockViewportHostSceneRegistry {
         policy: &DockPolicy,
         target_validator: Option<&DockDropTargetValidator<'_>>,
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
-    ) -> Option<(DockViewportHostSceneFrame, DockDropResolution)> {
+    ) -> Option<DockViewportResolvedFrame> {
         let snapshot = self.scenes.get(space)?;
         if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
             return None;
         }
         let frame = snapshot.frame();
+        let drop_guide_style = snapshot.scene.drop_guide_style();
         let mut scene = snapshot.scene.clone().excluding_nodes(excluded_nodes);
         scene.position = point(
             snapshot.host_bounds.origin.x + host_position.x,
@@ -324,7 +320,11 @@ impl DockViewportHostSceneRegistry {
         scene = scene.with_payload_size(payload_size);
         let resolution =
             scene.resolve_drop_with_validator(policy, target_validator, edge_plan_resolver)?;
-        Some((frame, resolution))
+        Some(DockViewportResolvedFrame {
+            frame,
+            drop_guide_style,
+            resolution,
+        })
     }
 
     #[cfg(test)]

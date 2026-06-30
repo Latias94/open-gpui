@@ -505,6 +505,14 @@ placement restore line reports matched and missing restored windows, and the tea
 reports whether a viewport opened from suggested bounds or drag-source geometry, so placement
 authority regressions are visible in the same panel.
 
+Docking target previews are scene-owned. During dogfood, every target-window preview should be
+explainable from one `DockPreviewScene`: the preview body, payload tab previews, active and inactive
+drop boxes, rejected state, inner/outer layer identity, and routed target preview shape. Rendering
+must not recreate guide availability independently from the scene. Debug selectors reflect that
+contract: target-stack guides use `dock:<space>:drop-guide:inner:<tabs>:<zone>`, root/host guides
+use `dock:<space>:drop-guide:outer:<zone>`, and the split body is exposed separately from the
+full target preview container as `dock:<space>:drop-preview:body`.
+
 Manual native docking dogfood should use the same example after the automated checks pass:
 
 1. Launch `cargo run -p open-gpui-docking-native` and confirm the app opens `Docking demo`,
@@ -567,6 +575,9 @@ Current platform caveats for docking multi-viewport dogfood:
   follow-up platform API work, not as proof of full ImGui PlatformIO parity.
 - No-input, no-focus-on-appearing, alpha, topmost, and no-taskbar viewport flags are not modeled in
   GPUI's platform trait yet.
+- Transparent platform payload-window rendering and screenshot or pixel-regression infrastructure
+  remain deferred. Current verification locks preview capability and semantic selectors rather than
+  pixel-perfect Dear ImGui styling.
 
 Before publishing a crate, confirm that the packaged archive carries the expected attribution files:
 

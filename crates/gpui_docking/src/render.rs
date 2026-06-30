@@ -1,15 +1,10 @@
 use crate::{
-    DockEdgeDockSizing, DockGraph, DockHost, DockNode, DockNodeId, DropZone,
+    DockHost, DockNode, DockNodeId, DropZone,
     debug::DockDebugRegion,
     drag::DockDragPayload,
-    drop_preview::{DockDropPreview, DockDropRoutePreview},
+    drop_preview::{DockDropPreview, DockDropRoutePreview, DockPreviewDropBox},
     drop_runtime::DockHostDropSceneFact,
-    drop_scene_fact,
-    drop_target::{
-        DockDropResolution, DockDropResolveSource, DockResolvedDropTarget,
-        DockResolvedDropTargetKind, validate_resolved_drop_target,
-    },
-    geometry,
+    drop_scene_fact, geometry,
     host_render_session::{DockHostRenderSession, selected_index},
     interaction::{
         DockPayloadDropRelease, DockRenderedOutsideReleaseDecision,
@@ -17,24 +12,15 @@ use crate::{
     },
     render_split::DockRenderSplitInput,
     viewport_drop_scene::DockViewportHostSceneFrame,
-    workspace_move_validation::dock_target_validator,
 };
 use open_gpui::{
     AnyElement, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
-    MouseUpEvent, ParentElement, Pixels, Render, Rgba, SharedString, Styled, Window, WindowId,
-    black, canvas, div, point, px, rgb, rgba,
+    MouseUpEvent, ParentElement, Pixels, Render, Rgba, SharedString, Styled, Window, black, canvas,
+    div, point, px, rgb, rgba,
 };
 use std::{cell::RefCell, rc::Rc};
 
 pub(crate) type DockViewportHostSceneFrameSlot = Rc<RefCell<Option<DockViewportHostSceneFrame>>>;
-
-const DROP_GUIDE_ZONES: [DropZone; 5] = [
-    DropZone::Center,
-    DropZone::Left,
-    DropZone::Right,
-    DropZone::Top,
-    DropZone::Bottom,
-];
 
 const DROP_PREVIEW_TAB_HEIGHT: f32 = 26.0;
 const DROP_PREVIEW_TAB_HORIZONTAL_INSET: f32 = 8.0;
@@ -417,11 +403,6 @@ impl DockHost {
             }),
         );
         root_container = root_container.child(root_child);
-        if let Some(guides) =
-            self.render_drop_guides(session, None, window.window_handle().window_id(), cx)
-        {
-            root_container = root_container.child(guides);
-        }
         root_container.into_any_element()
     }
 
@@ -429,7 +410,7 @@ impl DockHost {
         &mut self,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -470,11 +451,6 @@ impl DockHost {
             }),
         );
         empty = empty.child(session.empty_message().to_string());
-        if let Some(guides) =
-            self.render_drop_guides(session, None, window.window_handle().window_id(), cx)
-        {
-            empty = empty.child(guides);
-        }
         empty.into_any_element()
     }
 
@@ -482,7 +458,7 @@ impl DockHost {
         &mut self,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -518,11 +494,6 @@ impl DockHost {
                 drop_scene_fact::empty_central_space(space, bounds)
             }),
         );
-        if let Some(guides) =
-            self.render_drop_guides(session, None, window.window_handle().window_id(), cx)
-        {
-            empty = empty.child(guides);
-        }
         empty.into_any_element()
     }
 
@@ -588,10 +559,6 @@ impl DockHost {
         window: &Window,
     ) -> AnyElement {
         let scene = &preview.scene;
-        let scene_bounds = scene
-            .active_drop_box()
-            .map(|drop_box| drop_box.preview_bounds)
-            .unwrap_or(scene.body.future_bounds);
         let bounds = scene
             .payload_tabs
             .as_ref()
@@ -600,7 +567,7 @@ impl DockHost {
                 self.viewport_runtime()
                     .rendered_leaf_bounds_for_tabs(self.space(), None, tabs)
             })
-            .unwrap_or(scene_bounds);
+            .unwrap_or(scene.body.future_bounds);
         let selector = self.record_debug_selector(
             DockDebugRegion::DropPreview,
             format!("{}:drop-preview", session.selector_prefix()),
@@ -679,17 +646,30 @@ impl DockHost {
                 );
             }
         } else {
+            let body_selector = self.record_debug_selector(
+                DockDebugRegion::DropPreviewBody,
+                format!("{}:drop-preview:body", session.selector_prefix()),
+            );
+            let body_bounds = localize_bounds(scene.body.body_bounds, bounds.origin);
             element = element.child(
                 div()
+                    .id(body_selector.clone())
+                    .debug_selector(move || body_selector)
                     .absolute()
-                    .left(px(0.0))
-                    .top(px(0.0))
-                    .w(bounds.size.width)
-                    .h(bounds.size.height)
+                    .left(body_bounds.origin.x)
+                    .top(body_bounds.origin.y)
+                    .w(body_bounds.size.width)
+                    .h(body_bounds.size.height)
                     .border_1()
                     .border_color(palette.border)
                     .bg(palette.body_background),
             );
+        }
+
+        for layer in &scene.layers {
+            for drop_box in &layer.drop_boxes {
+                element = element.child(self.render_scene_drop_guide(session, bounds, *drop_box));
+            }
         }
 
         element.into_any_element()
@@ -722,107 +702,22 @@ impl DockHost {
             .into_any_element()
     }
 
-    pub(crate) fn render_drop_guides(
+    fn render_scene_drop_guide(
         &mut self,
         session: &DockHostRenderSession,
-        node: Option<DockNodeId>,
-        window_id: WindowId,
-        cx: &Context<Self>,
-    ) -> Option<AnyElement> {
-        let payload = cx.active_drag_value::<DockDragPayload>()?;
-        let zones = self.available_drop_guide_zones(session, node, payload, cx);
-        if zones.is_empty() {
-            return None;
-        }
-        let target_bounds = self.drop_guide_target_bounds(session, node, window_id)?;
-        let active_target = self.interaction().resolved_drop_target().cloned();
-
-        let mut overlay = div().absolute().top(px(0.0)).left(px(0.0)).size_full();
-        for zone in zones {
-            let Some(drop_box) = drop_guide_box_for_zone(session, node, target_bounds, zone) else {
-                continue;
-            };
-            let active = active_target
-                .as_ref()
-                .is_some_and(|target| drop_target_matches_guide(target, node, zone));
-            overlay = overlay.child(self.render_drop_guide(
-                zone,
-                session,
-                node,
-                target_bounds,
-                drop_box,
-                active,
-            ));
-        }
-        Some(overlay.into_any_element())
-    }
-
-    fn drop_guide_target_bounds(
-        &self,
-        session: &DockHostRenderSession,
-        node: Option<DockNodeId>,
-        window_id: WindowId,
-    ) -> Option<Bounds<Pixels>> {
-        match node {
-            Some(tabs) => self.viewport_runtime().rendered_leaf_bounds_for_tabs(
-                session.space(),
-                Some(window_id),
-                tabs,
-            ),
-            None => self
-                .viewport_runtime()
-                .rendered_host_bounds_for_window(session.space(), Some(window_id)),
-        }
-    }
-
-    fn available_drop_guide_zones(
-        &self,
-        session: &DockHostRenderSession,
-        node: Option<DockNodeId>,
-        payload: &DockDragPayload,
-        cx: &Context<Self>,
-    ) -> Vec<DropZone> {
-        self.with_workspace(cx, |workspace| {
-            let policy = workspace.policy();
-            let payload_classes = workspace.payload_dock_classes_for_drag_payload(payload);
-            let target_validator = dock_target_validator(session.space(), &payload_classes, policy);
-            DROP_GUIDE_ZONES
-                .into_iter()
-                .filter(|zone| {
-                    let Some(target) =
-                        drop_guide_target_for_zone(session, node, *zone, workspace.graph())
-                    else {
-                        return false;
-                    };
-                    matches!(
-                        validate_resolved_drop_target(target, policy, Some(&target_validator)),
-                        DockDropResolution::Valid(_)
-                    )
-                })
-                .collect()
-        })
-    }
-
-    fn render_drop_guide(
-        &mut self,
-        zone: DropZone,
-        session: &DockHostRenderSession,
-        node: Option<DockNodeId>,
         container_bounds: Bounds<Pixels>,
-        drop_box: geometry::DockDropBox,
-        active: bool,
+        drop_box: DockPreviewDropBox,
     ) -> AnyElement {
-        let selector_suffix = match node {
-            Some(node) => format!("{}:{zone:?}", node.as_u64()),
-            None => format!("{zone:?}"),
-        };
+        let node = drop_box.debug_node;
+        let zone = drop_box.zone;
+        let selector_suffix = drop_box_selector_suffix(drop_box);
         let selector = self.record_debug_selector(
             DockDebugRegion::DropGuide { node, zone },
             format!("{}:drop-guide:{selector_suffix}", session.selector_prefix()),
         );
         let local_bounds = localize_bounds(drop_box.draw_bounds, container_bounds.origin);
         let theme = dock_preview_theme();
-        let palette = theme.drop_guide(drop_box.kind, active);
+        let palette = theme.drop_guide(drop_box.kind, drop_box.active);
         let cue = guide_directional_cue(zone, local_bounds.size, palette.cue);
         let inset = guide_inset_outline(local_bounds.size, palette.inset);
 
@@ -931,54 +826,6 @@ fn payload_tabs_for_render(
     (!payload_tabs.tabs.is_empty()).then(|| payload_tabs.clone())
 }
 
-fn drop_guide_target_for_zone(
-    session: &DockHostRenderSession,
-    node: Option<DockNodeId>,
-    zone: DropZone,
-    graph: &DockGraph,
-) -> Option<DockResolvedDropTarget> {
-    match node {
-        Some(tabs) => tabs_drop_guide_target(session, tabs, zone, graph),
-        None => host_drop_guide_target(session, zone, graph),
-    }
-}
-
-fn drop_guide_box_for_zone(
-    session: &DockHostRenderSession,
-    node: Option<DockNodeId>,
-    target_bounds: Bounds<Pixels>,
-    zone: DropZone,
-) -> Option<geometry::DockDropBox> {
-    let kind = match node {
-        Some(_) => match zone {
-            DropZone::Center => geometry::DockDropBoxKind::Center,
-            DropZone::Left | DropZone::Right | DropZone::Top | DropZone::Bottom => {
-                geometry::DockDropBoxKind::InnerEdge(zone)
-            }
-        },
-        None if session.root().is_some() => match zone {
-            DropZone::Center => return None,
-            DropZone::Left | DropZone::Right | DropZone::Top | DropZone::Bottom => {
-                geometry::DockDropBoxKind::OuterEdge(zone)
-            }
-        },
-        None => {
-            if zone != DropZone::Center {
-                return None;
-            }
-            geometry::DockDropBoxKind::Center
-        }
-    };
-    let set = if matches!(kind, geometry::DockDropBoxKind::OuterEdge(_)) {
-        geometry::DockDropBoxSet::Outer
-    } else {
-        geometry::DockDropBoxSet::Inner
-    };
-    geometry::drop_boxes_with_style(target_bounds, set, session.drop_guide_style())
-        .into_iter()
-        .find(|drop_box| drop_box.kind == kind)
-}
-
 fn guide_directional_cue(
     zone: DropZone,
     box_size: open_gpui::Size<Pixels>,
@@ -1034,135 +881,15 @@ fn localize_bounds(bounds: Bounds<Pixels>, origin: open_gpui::Point<Pixels>) -> 
     )
 }
 
-fn drop_target_matches_guide(
-    target: &DockResolvedDropTarget,
-    node: Option<DockNodeId>,
-    zone: DropZone,
-) -> bool {
-    match (&target.kind, node, zone) {
-        (DockResolvedDropTargetKind::EmptyDockSpace { .. }, None, DropZone::Center) => true,
-        (
-            DockResolvedDropTargetKind::RootEdge {
-                zone: active_zone, ..
-            },
-            None,
-            zone,
-        ) => *active_zone == zone,
-        (
-            DockResolvedDropTargetKind::TabBar { target_tabs, .. }
-            | DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
-            | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. },
-            Some(node),
-            DropZone::Center,
-        ) => *target_tabs == node,
-        (
-            DockResolvedDropTargetKind::InnerEdge {
-                target_tabs,
-                zone: active_zone,
-                ..
-            },
-            Some(node),
-            zone,
-        ) => *target_tabs == node && *active_zone == zone,
-        _ => false,
+fn drop_box_selector_suffix(drop_box: DockPreviewDropBox) -> String {
+    let layer = match drop_box.layer {
+        crate::drop_preview::DockPreviewLayerKind::Inner => "inner",
+        crate::drop_preview::DockPreviewLayerKind::Outer => "outer",
+    };
+    match drop_box.debug_node {
+        Some(node) => format!("{layer}:{}:{:?}", node.as_u64(), drop_box.zone),
+        None => format!("{layer}:{:?}", drop_box.zone),
     }
-}
-
-fn tabs_drop_guide_target(
-    session: &DockHostRenderSession,
-    tabs: DockNodeId,
-    zone: DropZone,
-    graph: &DockGraph,
-) -> Option<DockResolvedDropTarget> {
-    if !matches!(session.node(tabs), Some(DockNode::Tabs { .. })) {
-        return None;
-    }
-
-    let root = session.drop_root_for_tabs(tabs)?;
-    let is_central_region = session.is_central_tabs(tabs);
-
-    if zone == DropZone::Center {
-        return Some(DockResolvedDropTarget {
-            kind: DockResolvedDropTargetKind::LeafCenter {
-                root,
-                target_tabs: tabs,
-            },
-            source: DockDropResolveSource::LeafBody,
-            drop_box: None,
-            preview_bounds: None,
-            edge_sizing: None,
-            edge_plan: None,
-            is_central_region,
-        });
-    }
-
-    // Match ImGui: only the root central leaf suppresses inner side splits in favor of
-    // host/root outer guides. Nested central leaves still expose inner side guides.
-    if is_central_region && root == tabs {
-        return None;
-    }
-
-    let edge_sizing = DockEdgeDockSizing::fallback();
-    let edge_plan = graph.edge_dock_plan_with_sizing(session.space(), tabs, zone, edge_sizing)?;
-    Some(DockResolvedDropTarget {
-        kind: DockResolvedDropTargetKind::InnerEdge {
-            root,
-            target_tabs: tabs,
-            zone,
-        },
-        source: DockDropResolveSource::InnerEdge,
-        drop_box: None,
-        preview_bounds: None,
-        edge_sizing: Some(edge_sizing),
-        edge_plan: Some(edge_plan),
-        is_central_region,
-    })
-}
-
-fn host_drop_guide_target(
-    session: &DockHostRenderSession,
-    zone: DropZone,
-    graph: &DockGraph,
-) -> Option<DockResolvedDropTarget> {
-    if let Some(root) = session.root() {
-        if zone == DropZone::Center {
-            return None;
-        }
-
-        let edge_sizing = DockEdgeDockSizing::fallback();
-        let edge_plan =
-            graph.edge_dock_plan_with_sizing(session.space(), root, zone, edge_sizing)?;
-        return Some(DockResolvedDropTarget {
-            kind: DockResolvedDropTargetKind::RootEdge {
-                root,
-                leaf_tabs: None,
-                zone,
-            },
-            source: DockDropResolveSource::RootEdge,
-            drop_box: None,
-            preview_bounds: None,
-            edge_sizing: Some(edge_sizing),
-            edge_plan: Some(edge_plan),
-            is_central_region: false,
-        });
-    }
-
-    if zone != DropZone::Center {
-        return None;
-    }
-
-    let is_central = session.has_empty_central_region();
-    Some(DockResolvedDropTarget {
-        kind: DockResolvedDropTargetKind::EmptyDockSpace {
-            space: session.space().clone(),
-        },
-        source: DockDropResolveSource::EmptyDockSpace,
-        drop_box: None,
-        preview_bounds: None,
-        edge_sizing: None,
-        edge_plan: None,
-        is_central_region: is_central,
-    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -334,11 +334,6 @@ impl DockHost {
         tabs = tabs
             .child(tab_bar)
             .child(self.render_panel(&selected_item, session, window, cx));
-        if let Some(guides) =
-            self.render_drop_guides(session, Some(node), window.window_handle().window_id(), cx)
-        {
-            tabs = tabs.child(guides);
-        }
         tabs.into_any_element()
     }
 

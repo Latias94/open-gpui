@@ -802,9 +802,9 @@ impl DockInteractionRuntime {
     }
 
     pub(crate) fn drop_preview(&self) -> Option<DockDropPreview> {
-        self.drop
-            .drop_resolution()
-            .and_then(DockDropPreview::from_resolution)
+        self.drop.drop_resolution().and_then(|resolution| {
+            DockDropPreview::from_resolution(resolution, self.drop.drop_guide_style())
+        })
     }
 
     #[cfg(test)]
@@ -817,6 +817,7 @@ impl DockInteractionRuntime {
         self.floating_drag.as_ref()
     }
 
+    #[cfg(test)]
     pub(crate) fn resolved_drop_target(&self) -> Option<&DockResolvedDropTarget> {
         self.drop.resolved_target()
     }

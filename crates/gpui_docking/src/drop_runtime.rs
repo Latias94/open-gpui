@@ -91,6 +91,10 @@ impl DockHostDropScene {
         self
     }
 
+    pub(crate) fn drop_guide_style(&self) -> DockDropGuideStyle {
+        self.drop_guide_style
+    }
+
     pub(crate) fn push_fact(&mut self, fact: DockHostDropSceneFact) {
         if self.fact_is_excluded(&fact) {
             return;
@@ -320,6 +324,13 @@ impl DockDropRuntime {
         self.resolution.as_ref()
     }
 
+    pub(crate) fn drop_guide_style(&self) -> DockDropGuideStyle {
+        self.scene
+            .as_ref()
+            .map(|scene| scene.drop_guide_style)
+            .unwrap_or_default()
+    }
+
     fn scene_for_position(
         &mut self,
         position: Point<Pixels>,
@@ -352,6 +363,7 @@ impl DockDropRuntime {
         true
     }
 
+    #[cfg(test)]
     pub(crate) fn resolved_target(&self) -> Option<&DockResolvedDropTarget> {
         self.resolution.as_ref().and_then(resolution_target)
     }

@@ -240,6 +240,9 @@ mod tests {
         DockResolvedDropTarget {
             kind,
             source: DockDropResolveSource::LeafBody,
+            target_bounds: Some(bounds()),
+            inner_target_bounds: Some(bounds()),
+            availability: crate::drop_target::DockResolvedDropTargetAvailability::all(),
             drop_box,
             preview_bounds: Some(bounds()),
             edge_sizing,

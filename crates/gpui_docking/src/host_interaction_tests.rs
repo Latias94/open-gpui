@@ -964,9 +964,17 @@ fn cross_window_tab_drag_to_bottom_edge_creates_vertical_split(cx: &mut TestAppC
     let preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
         .expect("target host should render a vertical split preview during cross-window drag");
     let preview_bounds = debug_bounds(&mut target_visual, &preview);
+    let preview_body = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::DropPreviewBody,
+    )
+    .expect("edge split preview should render a split body");
+    let preview_body_bounds = debug_bounds(&mut target_visual, &preview_body);
     assert!(preview_bounds.size.width > px(0.0));
+    assert!(preview_bounds.contains(&preview_body_bounds.center()));
     assert!(
-        preview_bounds.size.height < target_bounds.size.height,
+        preview_body_bounds.size.height < target_bounds.size.height,
         "bottom-edge preview should occupy only a horizontal band"
     );
 
@@ -1113,9 +1121,17 @@ fn cross_window_tab_drag_into_existing_split_reorients_target_child(cx: &mut Tes
     let preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
         .expect("nested target should render a vertical preview during the drag");
     let preview_bounds = debug_bounds(&mut target_visual, &preview);
+    let preview_body = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::DropPreviewBody,
+    )
+    .expect("nested edge split preview should render a split body");
+    let preview_body_bounds = debug_bounds(&mut target_visual, &preview_body);
     assert!(preview_bounds.size.width > px(0.0));
+    assert!(preview_bounds.contains(&preview_body_bounds.center()));
     assert!(
-        preview_bounds.size.height < right_child_bounds.size.height,
+        preview_body_bounds.size.height < right_child_bounds.size.height,
         "nested bottom-edge preview should occupy only a horizontal band"
     );
 
@@ -1277,15 +1293,23 @@ fn cross_window_tab_drag_to_edge_creates_split(
     let preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
         .expect("target host should render a split preview during the cross-window drag");
     let preview_bounds = debug_bounds(&mut target_visual, &preview);
+    let preview_body = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::DropPreviewBody,
+    )
+    .expect("edge split preview should render a split body");
+    let preview_body_bounds = debug_bounds(&mut target_visual, &preview_body);
     assert!(preview_bounds.size.width > px(0.0));
     assert!(preview_bounds.size.height > px(0.0));
+    assert!(preview_bounds.contains(&preview_body_bounds.center()));
     match zone {
         DropZone::Left | DropZone::Right => assert!(
-            preview_bounds.size.width < target_bounds.size.width,
+            preview_body_bounds.size.width < target_bounds.size.width,
             "side-edge preview should occupy only a vertical band"
         ),
         DropZone::Top | DropZone::Bottom => assert!(
-            preview_bounds.size.height < target_bounds.size.height,
+            preview_body_bounds.size.height < target_bounds.size.height,
             "top/bottom-edge preview should occupy only a horizontal band"
         ),
         DropZone::Center => unreachable!("center is not an edge drop"),
@@ -1412,10 +1436,14 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
     let preview = selector_for(&visual, &host, DockDebugRegion::DropPreview)
         .expect("drop preview selector should be emitted");
     let preview_bounds = debug_bounds(&mut visual, &preview);
+    let preview_body = selector_for(&visual, &host, DockDebugRegion::DropPreviewBody)
+        .expect("edge split preview should render a split body");
+    let preview_body_bounds = debug_bounds(&mut visual, &preview_body);
     assert!(preview_bounds.size.width > px(0.0));
     assert!(preview_bounds.size.height > px(0.0));
+    assert!(preview_bounds.contains(&preview_body_bounds.center()));
     assert!(
-        preview_bounds.size.width < target_bounds.size.width,
+        preview_body_bounds.size.width < target_bounds.size.width,
         "edge preview should occupy only an edge band"
     );
     assert!(

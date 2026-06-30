@@ -1095,7 +1095,7 @@ mod tests {
     }
 
     fn drop_guide_selector(space: &str, tabs: DockNodeId, zone: DropZone) -> String {
-        format!("dock:{space}:drop-guide:{}:{zone:?}", tabs.as_u64())
+        format!("dock:{space}:drop-guide:inner:{}:{zone:?}", tabs.as_u64())
     }
 
     fn debug_bounds(cx: &mut VisualTestContext, selector: impl Into<String>) -> Bounds<Pixels> {

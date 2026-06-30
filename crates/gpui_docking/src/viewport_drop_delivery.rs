@@ -194,6 +194,7 @@ pub(crate) struct DockViewportResolvedDropTargetSnapshot {
     target_space: DockSpaceId,
     target_window_id: Option<WindowId>,
     frame: DockViewportHostSceneFrame,
+    drop_guide_style: crate::DockDropGuideStyle,
     facts_generation: Option<u64>,
     host_position: Point<Pixels>,
     payload_size: Option<Size<Pixels>>,
@@ -236,6 +237,7 @@ impl DockViewportResolvedDropTargetSnapshot {
         target_space: DockSpaceId,
         target_window_id: Option<WindowId>,
         frame: DockViewportHostSceneFrame,
+        drop_guide_style: crate::DockDropGuideStyle,
         facts_generation: Option<u64>,
         host_position: Point<Pixels>,
         payload_size: Option<Size<Pixels>>,
@@ -246,6 +248,7 @@ impl DockViewportResolvedDropTargetSnapshot {
             target_space,
             target_window_id,
             frame,
+            drop_guide_style,
             facts_generation,
             host_position,
             payload_size,
@@ -260,6 +263,10 @@ impl DockViewportResolvedDropTargetSnapshot {
 
     pub(crate) fn frame(&self) -> &DockViewportHostSceneFrame {
         &self.frame
+    }
+
+    pub(crate) fn drop_guide_style(&self) -> crate::DockDropGuideStyle {
+        self.drop_guide_style
     }
 
     pub(crate) fn host_position(&self) -> Point<Pixels> {
@@ -595,7 +602,7 @@ fn resolve_existing_viewport_workspace_target(
     let excluded_nodes = request
         .payload()
         .excluded_nodes_for_drop_scene(workspace.graph(), request.source_node());
-    let Some((frame, resolution)) = host_scenes.resolve_frame_for_window(
+    let Some(resolved_frame) = host_scenes.resolve_frame_for_window(
         target.space,
         Some(target.window_id),
         target.host_position,
@@ -611,13 +618,14 @@ fn resolve_existing_viewport_workspace_target(
     match resolved_target_snapshot(
         target.space.clone(),
         Some(target.window_id),
-        frame,
+        resolved_frame.frame,
+        resolved_frame.drop_guide_style,
         target
             .route_facts_source
             .facts_generation_for_snapshot(target.facts_generation),
         target.host_position,
         payload_size,
-        resolution,
+        resolved_frame.resolution,
     ) {
         DockResolvedViewportTarget::Valid(target) => {
             DockViewportWorkspaceRouteTarget::Resolved(target)
@@ -741,7 +749,7 @@ fn current_resolved_target_key_matches_snapshot(
             graph.edge_dock_plan_with_sizing(&target_space, target_node, zone, sizing)
         };
     let excluded_nodes = payload.excluded_nodes_for_drop_scene(workspace.graph(), source_node);
-    let Some((current_frame, resolution)) = host_scenes.resolve_frame_for_window(
+    let Some(resolved_frame) = host_scenes.resolve_frame_for_window(
         target.target_space(),
         target.target_window_id(),
         target.host_position(),
@@ -753,10 +761,10 @@ fn current_resolved_target_key_matches_snapshot(
     ) else {
         return false;
     };
-    if &current_frame != target.frame() {
+    if &resolved_frame.frame != target.frame() {
         return false;
     }
-    match resolution {
+    match resolved_frame.resolution {
         DockDropResolution::Valid(current) => current.target_key() == *target.target_key(),
         DockDropResolution::Rejected(rejection) => {
             rejection.target.target_key() == *target.target_key()
@@ -768,6 +776,7 @@ fn resolved_target_snapshot(
     target_space: DockSpaceId,
     target_window_id: Option<WindowId>,
     frame: DockViewportHostSceneFrame,
+    drop_guide_style: crate::DockDropGuideStyle,
     facts_generation: Option<u64>,
     host_position: open_gpui::Point<Pixels>,
     payload_size: Option<Size<Pixels>>,
@@ -779,6 +788,7 @@ fn resolved_target_snapshot(
                 target_space,
                 target_window_id,
                 frame,
+                drop_guide_style,
                 facts_generation,
                 host_position,
                 payload_size,
@@ -790,6 +800,7 @@ fn resolved_target_snapshot(
                 target_space,
                 target_window_id,
                 frame,
+                drop_guide_style,
                 facts_generation,
                 host_position,
                 payload_size,
@@ -1849,6 +1860,7 @@ mod tests {
             target_space.clone(),
             Some(target_window.window_id()),
             frame,
+            crate::DockDropGuideStyle::default(),
             Some(facts_generation),
             host_position,
             None,
@@ -1858,6 +1870,9 @@ mod tests {
                     target_tabs: stale_tabs,
                 },
                 source: DockDropResolveSource::LeafBody,
+                target_bounds: Some(bounds(0.0, 0.0, 320.0, 240.0)),
+                inner_target_bounds: Some(bounds(0.0, 0.0, 320.0, 240.0)),
+                availability: crate::drop_target::DockResolvedDropTargetAvailability::all(),
                 drop_box: None,
                 preview_bounds: Some(bounds(0.0, 0.0, 320.0, 240.0)),
                 edge_sizing: None,
@@ -1934,6 +1949,7 @@ mod tests {
             target_space.clone(),
             Some(target_window.window_id()),
             stale_frame,
+            crate::DockDropGuideStyle::default(),
             Some(facts_generation),
             host_position,
             None,
@@ -1943,6 +1959,9 @@ mod tests {
                     target_tabs,
                 },
                 source: DockDropResolveSource::LeafBody,
+                target_bounds: Some(bounds(0.0, 0.0, 320.0, 240.0)),
+                inner_target_bounds: Some(bounds(0.0, 0.0, 320.0, 240.0)),
+                availability: crate::drop_target::DockResolvedDropTargetAvailability::all(),
                 drop_box: None,
                 preview_bounds: Some(bounds(0.0, 0.0, 320.0, 240.0)),
                 edge_sizing: None,
@@ -2187,6 +2206,7 @@ mod tests {
             target_space.clone(),
             Some(target_window_id),
             frame,
+            crate::DockDropGuideStyle::default(),
             Some(facts_generation),
             point(px(0.0), px(0.0)),
             None,
@@ -2195,6 +2215,9 @@ mod tests {
                     space: target_space,
                 },
                 source: DockDropResolveSource::EmptyDockSpace,
+                target_bounds: Some(bounds(0.0, 0.0, 320.0, 240.0)),
+                inner_target_bounds: None,
+                availability: crate::drop_target::DockResolvedDropTargetAvailability::all(),
                 drop_box: None,
                 preview_bounds: Some(bounds(0.0, 0.0, 320.0, 240.0)),
                 edge_sizing: None,
