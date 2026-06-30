@@ -805,9 +805,6 @@ name = "bitflags"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
-dependencies = [
- "serde_core",
-]
 
 [[package]]
 name = "bitstream-io"
@@ -1790,30 +1787,6 @@ name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
-
-[[package]]
-name = "dugong"
-version = "0.8.0-alpha.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f37104ca9210b94a0a77531665d468d770caa1db34989edece81efb700344a47"
-dependencies = [
- "dugong-graphlib",
- "rustc-hash 2.1.2",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "dugong-graphlib"
-version = "0.8.0-alpha.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed7c1e853c28a06c5d6a0b48a538e5ec87817c608a40ab4bda44f820a8e28e71"
-dependencies = [
- "hashbrown 0.16.1",
- "rustc-hash 2.1.2",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "dunce"
@@ -3144,48 +3117,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
-name = "jellyflow"
-version = "0.3.0"
-dependencies = [
- "jellyflow-core",
- "jellyflow-layout",
- "jellyflow-runtime",
-]
-
-[[package]]
-name = "jellyflow-core"
-version = "0.3.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
-name = "jellyflow-layout"
-version = "0.3.0"
-dependencies = [
- "dugong",
- "jellyflow-core",
- "serde",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "jellyflow-runtime"
-version = "0.3.0"
-dependencies = [
- "jellyflow-core",
- "jellyflow-layout",
- "keyboard-types",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
 name = "jiff"
 version = "0.2.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3273,16 +3204,6 @@ dependencies = [
  "futures-util",
  "once_cell",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "keyboard-types"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
-dependencies = [
- "bitflags 2.13.0",
- "serde",
 ]
 
 [[package]]
@@ -4321,19 +4242,6 @@ dependencies = [
  "serde_json",
  "static_aabb2d_index",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "open-gpui-canvas-jellyflow"
-version = "0.1.0"
-dependencies = [
- "jellyflow",
- "open-gpui",
- "open-gpui-canvas",
- "open-gpui-platform",
- "open-gpui-ui-components",
- "open-gpui-ui-core",
- "serde_json",
 ]
 
 [[package]]

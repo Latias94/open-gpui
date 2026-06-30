@@ -40,6 +40,7 @@ pub mod primitives;
 pub mod progress;
 pub mod radio;
 pub mod roving_focus;
+mod row_window;
 pub mod scroll_area;
 pub mod select;
 pub mod separator;
@@ -202,21 +203,21 @@ pub use splitter::{
 };
 pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use table::{
-    Table, TableCellEditApplyOutcome, TableCellEditChange, TableCellRenderPlan,
-    TableCenterColumnWindowPlan, TableColumnOrderChange, TableColumnOrderPlacement,
-    TableColumnRegionRenderPlan, TableColumnRenderPlan, TableColumnSizingChange,
+    Table, TableBehaviorSnapshot, TableCellBehaviorSnapshot, TableCellEditApplyOutcome,
+    TableCellEditChange, TableColumnBehaviorSnapshot, TableColumnOrderChange,
+    TableColumnOrderPlacement, TableColumnRegionSnapshot, TableColumnSizingChange,
     TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
     TableColumnVisibilityItemState, TableColumnVisibilityState, TableFacetedFilter,
     TableFacetedFilterChange, TableFacetedFilterOptionState, TableFacetedFilterState,
     TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction,
-    TableHeaderCellRenderPlan, TableHeaderGroupRegionRenderPlan, TableHeaderGroupRegionsRenderPlan,
-    TableHeaderGroupRenderPlan, TableInputModifiers, TableMetrics, TablePinnedLayoutPlan,
-    TablePredicateFilter, TablePredicateFilterChange, TablePredicateFilterOperator,
+    TableHeaderSummarySnapshot, TableInputModifiers, TableMetrics, TablePredicateFilter,
+    TablePredicateFilterChange, TablePredicateFilterOperator,
     TablePredicateFilterOperatorOptionState, TablePredicateFilterState, TableRangeFilter,
-    TableRangeFilterChange, TableRangeFilterState, TableRenderPlan, TableRowAction,
-    TableRowActivation, TableRowActivationKind, TableRowExpansionToggle, TableRowMeasureMode,
-    TableRowRenderPlan, TableRowSelectionChange, TableSelectionScope, TableToolbar,
-    TableToolbarState,
+    TableRangeFilterChange, TableRangeFilterState, TableRowAction, TableRowActivation,
+    TableRowActivationKind, TableRowBehaviorSnapshot, TableRowCountSnapshot,
+    TableRowExpansionToggle, TableRowMeasureMode, TableRowSelectionChange, TableSelectionScope,
+    TableToolbar, TableToolbarColors, TableToolbarState, TableTreeSummarySnapshot,
+    TableVisibleRowsSnapshot,
 };
 pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
@@ -227,7 +228,10 @@ pub use text_input::{
     TextInput, TextInputColors, TextInputDisplayMode, TextInputMetrics, TextInputState,
 };
 pub use textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
-pub use theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
+pub use theme::{
+    ThemeColor, ThemeDefinition, ThemeMode, ThemeRegistrationDiagnostics, ThemeRegistry,
+    ThemeRegistryEntry, ThemeResolver, ThemeSnapshot, ThemeValidationError,
+};
 pub use toast::{
     Toast, ToastAction, ToastColors, ToastDismiss, ToastDismissReason, ToastIntent, ToastMetrics,
     ToastStack, ToastStackState, ToastState,

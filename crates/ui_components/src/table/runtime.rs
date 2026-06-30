@@ -8,7 +8,7 @@ use open_gpui_ui_core::{
 };
 
 use super::content_fit::TableContentFitMeasureCache;
-use super::{TableColumnRenderPlan, TableRenderPlan, nonnegative_px};
+use super::{TableColumnRenderPlan, TableRenderDiagnostics, nonnegative_px};
 
 #[derive(Debug, Clone)]
 pub(super) struct TableResolvedCache {
@@ -47,7 +47,7 @@ impl TableRuntime {
         }
     }
 
-    pub(super) fn sync_rows(&mut self, plan: &TableRenderPlan, cx: &mut Context<Self>) {
+    pub(super) fn sync_rows(&mut self, plan: &TableRenderDiagnostics, cx: &mut Context<Self>) {
         let rendered_row_ids = plan
             .rendered_rows()
             .map(|row| row.id().clone())

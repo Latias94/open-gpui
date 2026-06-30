@@ -1,4 +1,5 @@
 use super::{TreeItemState, TreeMetrics, TreeState, nonnegative_px};
+use crate::row_window::RowWindow;
 use open_gpui_ui_core::{
     Role, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerResolvedState,
     VirtualizerState,
@@ -90,6 +91,8 @@ pub struct TreeRenderPlan {
     metrics: TreeMetrics,
     virtualizer: VirtualizerResolvedState,
     rows: Vec<TreeRowRenderPlan>,
+    visible_row_count: usize,
+    overscan_count: usize,
     role: Role,
     row_role: Role,
 }
@@ -121,17 +124,16 @@ impl TreeRenderPlan {
 
                 VirtualizerItemKey::new(key)
             });
-        let rows = virtualizer
-            .items()
-            .iter()
-            .filter_map(|measurement| {
-                state.items().get(measurement.index()).cloned().map(|item| {
-                    TreeRowRenderPlan::new(
-                        item.clone(),
-                        tree_row_render_key(&item, measurement.index()),
-                        measurement.clone(),
-                    )
-                })
+        let row_window =
+            RowWindow::project(&virtualizer, |index| state.items().get(index).cloned());
+        let visible_row_count = row_window.visible_row_count();
+        let overscan_count = row_window.overscan_count();
+        let rows = row_window
+            .into_rows()
+            .into_iter()
+            .map(|projected| {
+                let (_, render_key, measurement, item) = projected.into_parts();
+                TreeRowRenderPlan::new(item, render_key, measurement)
             })
             .collect();
 
@@ -142,6 +144,8 @@ impl TreeRenderPlan {
             metrics,
             virtualizer,
             rows,
+            visible_row_count,
+            overscan_count,
             role: Role::Tree,
             row_role: Role::TreeItem,
         }
@@ -193,13 +197,13 @@ impl TreeRenderPlan {
     }
 
     /// Returns the number of rows visible before overscan.
-    pub fn visible_row_count(&self) -> usize {
-        self.virtualizer.visible_items().len()
+    pub const fn visible_row_count(&self) -> usize {
+        self.visible_row_count
     }
 
     /// Returns the overscan item budget.
     pub const fn overscan_count(&self) -> usize {
-        self.virtualizer.overscan()
+        self.overscan_count
     }
 
     /// Returns the focused row when it is inside the rendered window.

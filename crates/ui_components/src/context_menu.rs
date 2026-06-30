@@ -24,8 +24,9 @@ use crate::menu::{
     MenuOpenMode, MenuSelection, MenuState, MenuSubmenuNavigation, visible_menu_items,
 };
 use crate::overlay::{
-    GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
-    focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
+    GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event, emit_overlay_open_change,
+    gpui_overlay_state, outside_press_open_change, resolve_overlay_open_state,
+    restore_overlay_focus, set_overlay_open,
 };
 use crate::scroll_area::ScrollArea;
 use crate::theme::ThemeResolver;
@@ -58,11 +59,6 @@ impl ContextMenuState {
         focus_restore_intent: FocusRestoreIntent,
         tokens: ThemeTokens,
     ) -> Self {
-        let open_mode = if open.is_some() {
-            MenuOpenMode::Controlled
-        } else {
-            MenuOpenMode::Uncontrolled
-        };
         let descriptors: Vec<MenuItemDescriptor> = items.into_iter().collect();
         let menu = MenuState::resolve(
             size,
@@ -85,7 +81,7 @@ impl ContextMenuState {
             size,
             open: menu.open(),
             default_open,
-            open_mode,
+            open_mode: menu.open_mode(),
             anchor_point,
             menu,
             placement_input,
@@ -334,15 +330,15 @@ impl RenderOnce for ContextMenu {
             )
         });
         let runtime_state = runtime.read(cx).clone();
-        let controlled_open = self.open;
-        let resolved_open = controlled_open.unwrap_or(runtime_state.open);
+        let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
+        let resolved_open = open_state.open();
         let resolved_anchor = if resolved_open {
             runtime_state.anchor_point
         } else {
             self.anchor_point
         };
 
-        if controlled_open.is_some() && runtime_state.open != resolved_open {
+        if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
                 runtime.sync_controlled_open(resolved_open);
             });
@@ -428,10 +424,9 @@ impl RenderOnce for ContextMenu {
                 consume_overlay_event(window, cx);
                 open_runtime.update(cx, |runtime, _| {
                     runtime.open_at(event.position);
+                    set_overlay_open(&mut runtime.open, true);
                 });
-                if let Some(on_open_change) = open_change.as_ref() {
-                    on_open_change(true, window, cx);
-                }
+                emit_overlay_open_change(true, open_change.as_deref(), window, cx);
             })
             .child(
                 div()
@@ -803,15 +798,11 @@ fn close_context_menu(
     cx: &mut App,
 ) {
     runtime.update(cx, |runtime, _| {
-        runtime.open = false;
+        set_overlay_open(&mut runtime.open, false);
         runtime.reset_closed_state();
     });
-    if let Some(on_open_change) = on_open_change.as_ref() {
-        on_open_change(false, window, cx);
-    }
-    if focus_restore_requests_trigger(&focus_restore) {
-        window.defer(cx, move |window, cx| trigger_focus.focus(window, cx));
-    }
+    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+    restore_overlay_focus(&focus_restore, Some(trigger_focus), true, window, cx);
 }
 
 fn context_menu_initial_focus_handle(

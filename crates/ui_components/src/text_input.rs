@@ -12,17 +12,17 @@ use open_gpui::{
     TextRun, UTF16Selection, Window, actions, div, fill, point, px, relative, rgba,
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
-use unicode_segmentation::UnicodeSegmentation;
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::text_editing;
+use crate::text_editing::{
+    self, EditableTextDocument, TextDisplayPolicy, TextDisplayProjection, TextEditingPolicy,
+    TextEditingProjection, TextSelection,
+};
 use crate::theme::ThemeResolver;
 
 type TextInputChangeHandler = Rc<dyn Fn(String, &mut Window, &mut App)>;
-
-const TEXT_INPUT_PASSWORD_MASK_CHAR: char = '•';
 
 /// Controls how a text input value is displayed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -45,6 +45,15 @@ impl TextInputDisplayMode {
         match self {
             Self::Plain => "plain",
             Self::Password => "password",
+        }
+    }
+}
+
+impl From<TextInputDisplayMode> for TextDisplayPolicy {
+    fn from(value: TextInputDisplayMode) -> Self {
+        match value {
+            TextInputDisplayMode::Plain => Self::Plain,
+            TextInputDisplayMode::Password => Self::Masked,
         }
     }
 }
@@ -266,8 +275,11 @@ pub(crate) mod adapter {
         /// Creates a new controller with an initial value.
         pub fn with_value(value: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
             let mut this = Self::new(cx);
-            this.content = sanitize_single_line(value.into().as_ref()).into();
-            this.selected_range = this.content.len()..this.content.len();
+            let value = value.into();
+            let projection =
+                EditableTextDocument::new(value.as_ref(), TextEditingPolicy::single_line())
+                    .into_projection();
+            this.apply_editing_projection(projection);
             this
         }
 
@@ -310,10 +322,11 @@ pub(crate) mod adapter {
 
         /// Sets the full input value and moves the caret to the end.
         pub fn set_value(&mut self, value: impl Into<SharedString>, cx: &mut Context<Self>) {
-            self.content = sanitize_single_line(value.into().as_ref()).into();
-            self.selected_range = self.content.len()..self.content.len();
-            self.selection_reversed = false;
-            self.marked_range = None;
+            let value = value.into();
+            let projection =
+                EditableTextDocument::new(value.as_ref(), TextEditingPolicy::single_line())
+                    .into_projection();
+            self.apply_editing_projection(projection);
             cx.notify();
         }
 
@@ -401,8 +414,14 @@ pub(crate) mod adapter {
         pub fn select_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
             let start = text_editing::clamp_to_char_boundary(self.value(), range.start);
             let end = text_editing::clamp_to_char_boundary(self.value(), range.end);
-            self.selected_range = start.min(end)..start.max(end);
-            self.selection_reversed = end < start;
+            let projection = EditableTextDocument::from_parts(
+                self.value(),
+                TextSelection::from_offsets(start, end),
+                self.marked_range.clone(),
+                self.editing_policy(),
+            )
+            .into_projection();
+            self.apply_editing_projection(projection);
             cx.notify();
         }
 
@@ -422,15 +441,10 @@ pub(crate) mod adapter {
             if !self.accepts_editing() {
                 return;
             }
-            if self.selected_range.is_empty() {
-                let previous = self.previous_boundary(self.cursor_offset());
-                if previous == self.cursor_offset() {
-                    return;
-                }
-                self.selected_range = previous..self.cursor_offset();
+            if let Some(projection) = self.document().delete_backward() {
+                self.apply_editing_projection(projection);
+                cx.notify();
             }
-            self.replace_text_in_range_inner(None, "");
-            cx.notify();
         }
 
         /// Deletes the next grapheme or selected text.
@@ -438,15 +452,10 @@ pub(crate) mod adapter {
             if !self.accepts_editing() {
                 return;
             }
-            if self.selected_range.is_empty() {
-                let next = self.next_boundary(self.cursor_offset());
-                if next == self.cursor_offset() {
-                    return;
-                }
-                self.selected_range = self.cursor_offset()..next;
+            if let Some(projection) = self.document().delete_forward() {
+                self.apply_editing_projection(projection);
+                cx.notify();
             }
-            self.replace_text_in_range_inner(None, "");
-            cx.notify();
         }
 
         pub(crate) fn sync_adapter_state(
@@ -468,7 +477,7 @@ pub(crate) mod adapter {
             }
 
             if let Some(value) = controlled_value {
-                let value = sanitize_single_line(value);
+                let value = text_editing::sanitize_single_line(value);
                 if self.content.as_ref() != value {
                     self.content = value.into();
                     let cursor =
@@ -500,19 +509,41 @@ pub(crate) mod adapter {
             text_editing::range_to_utf16(self.value(), range)
         }
 
+        fn editing_policy(&self) -> TextEditingPolicy {
+            TextEditingPolicy::single_line()
+        }
+
+        fn selection(&self) -> TextSelection {
+            let anchor = if self.selection_reversed {
+                self.selected_range.end
+            } else {
+                self.selected_range.start
+            };
+            TextSelection::from_offsets(anchor, self.cursor_offset())
+        }
+
+        fn document(&self) -> EditableTextDocument {
+            EditableTextDocument::from_parts(
+                self.value(),
+                self.selection(),
+                self.marked_range.clone(),
+                self.editing_policy(),
+            )
+        }
+
+        fn apply_editing_projection(&mut self, projection: TextEditingProjection) {
+            self.content = projection.text().into();
+            self.selected_range = projection.selection().range();
+            self.selection_reversed = projection.selection().reversed();
+            self.marked_range = projection.marked_range();
+        }
+
         fn previous_boundary(&self, offset: usize) -> usize {
-            self.content
-                .grapheme_indices(true)
-                .rev()
-                .find_map(|(idx, _)| (idx < offset).then_some(idx))
-                .unwrap_or(0)
+            self.document().previous_grapheme_boundary(offset)
         }
 
         fn next_boundary(&self, offset: usize) -> usize {
-            self.content
-                .grapheme_indices(true)
-                .find_map(|(idx, _)| (idx > offset).then_some(idx))
-                .unwrap_or(self.content.len())
+            self.document().next_grapheme_boundary(offset)
         }
 
         fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
@@ -531,28 +562,19 @@ pub(crate) mod adapter {
                 return self.content.len();
             }
             let display_index = line.closest_index_for_x(position.x - bounds.left());
-            TextDisplayProjection::for_mode(self.content.as_ref(), self.display_mode)
+            TextDisplayProjection::for_policy(self.content.as_ref(), self.display_mode.into())
                 .display_to_stored_offset(display_index)
         }
 
         fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
-            let offset = text_editing::clamp_to_char_boundary(self.value(), offset);
-            self.selected_range = offset..offset;
-            self.selection_reversed = false;
+            let projection = self.document().move_to(offset);
+            self.apply_editing_projection(projection);
             cx.notify();
         }
 
         fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
-            let offset = text_editing::clamp_to_char_boundary(self.value(), offset);
-            if self.selection_reversed {
-                self.selected_range.start = offset;
-            } else {
-                self.selected_range.end = offset;
-            }
-            if self.selected_range.end < self.selected_range.start {
-                self.selection_reversed = !self.selection_reversed;
-                self.selected_range = self.selected_range.end..self.selected_range.start;
-            }
+            let projection = self.document().select_to(offset);
+            self.apply_editing_projection(projection);
             cx.notify();
         }
 
@@ -561,20 +583,8 @@ pub(crate) mod adapter {
             range_utf16: Option<Range<usize>>,
             new_text: &str,
         ) {
-            let range = range_utf16
-                .as_ref()
-                .map(|range| self.range_from_utf16(range))
-                .or(self.marked_range.clone())
-                .unwrap_or_else(|| self.selected_range.clone());
-            let new_text = sanitize_single_line(new_text);
-            let new_end = range.start + new_text.len();
-
-            self.content =
-                (self.content[0..range.start].to_owned() + &new_text + &self.content[range.end..])
-                    .into();
-            self.selected_range = new_end..new_end;
-            self.selection_reversed = false;
-            self.marked_range = None;
+            let projection = self.document().replace_text_in_range(range_utf16, new_text);
+            self.apply_editing_projection(projection);
         }
 
         fn replace_and_mark_text_in_range_inner(
@@ -583,26 +593,12 @@ pub(crate) mod adapter {
             new_text: &str,
             selected_utf16: Option<Range<usize>>,
         ) {
-            let range = range_utf16
-                .as_ref()
-                .map(|range| self.range_from_utf16(range))
-                .or(self.marked_range.clone())
-                .unwrap_or_else(|| self.selected_range.clone());
-            let new_text = sanitize_single_line(new_text);
-            let new_end = range.start + new_text.len();
-
-            self.content =
-                (self.content[0..range.start].to_owned() + &new_text + &self.content[range.end..])
-                    .into();
-            self.marked_range = (!new_text.is_empty()).then_some(range.start..new_end);
-            self.selected_range = selected_utf16
-                .as_ref()
-                .map(|selected| {
-                    range.start + text_editing::offset_from_utf16(&new_text, selected.start)
-                        ..range.start + text_editing::offset_from_utf16(&new_text, selected.end)
-                })
-                .unwrap_or(new_end..new_end);
-            self.selection_reversed = false;
+            let projection = self.document().replace_and_mark_text_in_range(
+                range_utf16,
+                new_text,
+                selected_utf16,
+            );
+            self.apply_editing_projection(projection);
         }
 
         fn dispatch_change(&self, window: &mut Window, cx: &mut App) {
@@ -861,7 +857,7 @@ pub(crate) mod adapter {
             let last_layout = self.last_layout.as_ref()?;
             let range = self.range_from_utf16(&range_utf16);
             let display_range =
-                TextDisplayProjection::for_mode(self.content.as_ref(), self.display_mode)
+                TextDisplayProjection::for_policy(self.content.as_ref(), self.display_mode.into())
                     .stored_range_to_display_range(&range);
             Some(Bounds::from_corners(
                 point(
@@ -891,7 +887,7 @@ pub(crate) mod adapter {
             }
             let display_index = last_layout.index_for_x(point.x - bounds.left())?;
             let stored_index =
-                TextDisplayProjection::for_mode(self.content.as_ref(), self.display_mode)
+                TextDisplayProjection::for_policy(self.content.as_ref(), self.display_mode.into())
                     .display_to_stored_offset(display_index);
             Some(self.offset_to_utf16(stored_index))
         }
@@ -965,9 +961,10 @@ impl TextInputState {
         tokens: ThemeTokens,
     ) -> Self {
         let colors = ThemeResolver::text_input_colors(tokens, disabled, read_only, invalid);
+        let value = value.into();
 
         Self {
-            value: value.into(),
+            value: TextEditingPolicy::single_line().normalize_text(value.as_str()),
             placeholder: placeholder.map(Into::into),
             size,
             display_mode,
@@ -1017,7 +1014,7 @@ impl TextInputState {
         if self.placeholder_visible() {
             Cow::Borrowed(self.placeholder().unwrap_or(""))
         } else {
-            TextDisplayProjection::for_mode(self.value(), self.display_mode).display_text()
+            TextDisplayProjection::for_policy(self.value(), self.display_mode.into()).display_text()
         }
     }
 
@@ -1145,7 +1142,10 @@ impl TextInput {
 
     /// Sets the displayed value.
     pub fn value(mut self, value: impl Into<SharedString>) -> Self {
-        self.value = value.into();
+        let value = value.into();
+        self.value = TextEditingPolicy::single_line()
+            .normalize_text(value.as_ref())
+            .into();
         self
     }
 
@@ -1270,7 +1270,7 @@ impl RenderOnce for TextInput {
         let static_display_text = if show_placeholder {
             placeholder.clone()
         } else {
-            TextDisplayProjection::for_mode(self.value.as_ref(), state.display_mode())
+            TextDisplayProjection::for_policy(self.value.as_ref(), state.display_mode().into())
                 .display_text()
                 .into_owned()
                 .into()
@@ -1504,7 +1504,7 @@ impl Element for EditableTextElement {
         ) = if content.is_empty() {
             (self.placeholder.clone(), self.placeholder_color, 0, 0..0)
         } else {
-            let projection = TextDisplayProjection::for_mode(content, self.display_mode);
+            let projection = TextDisplayProjection::for_policy(content, self.display_mode.into());
             (
                 projection.display_text().into_owned().into(),
                 self.text_color,
@@ -1603,242 +1603,5 @@ impl Element for EditableTextElement {
             controller.last_layout = Some(line);
             controller.last_bounds = Some(bounds);
         });
-    }
-}
-
-fn sanitize_single_line(text: &str) -> String {
-    text.replace(['\r', '\n'], " ")
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TextDisplayProjection<'a> {
-    stored_text: &'a str,
-    display_text: Cow<'a, str>,
-    display_mode: TextInputDisplayMode,
-}
-
-impl<'a> TextDisplayProjection<'a> {
-    fn for_mode(text: &'a str, display_mode: TextInputDisplayMode) -> Self {
-        match display_mode {
-            TextInputDisplayMode::Plain => Self::plain(text),
-            TextInputDisplayMode::Password => Self::password(text),
-        }
-    }
-
-    fn plain(text: &'a str) -> Self {
-        Self {
-            stored_text: text,
-            display_text: Cow::Borrowed(text),
-            display_mode: TextInputDisplayMode::Plain,
-        }
-    }
-
-    fn password(text: &'a str) -> Self {
-        let display_text = text
-            .graphemes(true)
-            .map(|_| TEXT_INPUT_PASSWORD_MASK_CHAR)
-            .collect::<String>();
-        Self {
-            stored_text: text,
-            display_text: Cow::Owned(display_text),
-            display_mode: TextInputDisplayMode::Password,
-        }
-    }
-
-    fn display_text(&self) -> Cow<'a, str> {
-        self.display_text.clone()
-    }
-
-    fn stored_to_display_offset(&self, offset: usize) -> usize {
-        match self.display_mode {
-            TextInputDisplayMode::Plain => {
-                debug_assert_eq!(self.stored_text, self.display_text.as_ref());
-                text_editing::clamp_to_char_boundary(self.display_text.as_ref(), offset)
-            }
-            TextInputDisplayMode::Password => {
-                let offset = clamp_to_grapheme_boundary(self.stored_text, offset);
-                self.stored_text[..offset].graphemes(true).count()
-                    * TEXT_INPUT_PASSWORD_MASK_CHAR.len_utf8()
-            }
-        }
-    }
-
-    fn display_to_stored_offset(&self, offset: usize) -> usize {
-        match self.display_mode {
-            TextInputDisplayMode::Plain => {
-                debug_assert_eq!(self.stored_text, self.display_text.as_ref());
-                text_editing::clamp_to_char_boundary(self.stored_text, offset)
-            }
-            TextInputDisplayMode::Password => {
-                if offset >= self.display_text.len() {
-                    return self.stored_text.len();
-                }
-                let offset =
-                    text_editing::clamp_to_char_boundary(self.display_text.as_ref(), offset);
-                let grapheme_count = self.display_text[..offset].chars().count();
-                stored_offset_after_graphemes(self.stored_text, grapheme_count)
-            }
-        }
-    }
-
-    fn stored_range_to_display_range(&self, range: &Range<usize>) -> Range<usize> {
-        self.stored_to_display_offset(range.start)..self.stored_to_display_offset(range.end)
-    }
-}
-
-fn clamp_to_grapheme_boundary(text: &str, offset: usize) -> usize {
-    if offset >= text.len() {
-        return text.len();
-    }
-
-    let offset = text_editing::clamp_to_char_boundary(text, offset);
-    let mut boundary = 0;
-    for (start, grapheme) in text.grapheme_indices(true) {
-        let end = start + grapheme.len();
-        if end <= offset {
-            boundary = end;
-        } else {
-            break;
-        }
-    }
-    boundary
-}
-
-fn stored_offset_after_graphemes(text: &str, grapheme_count: usize) -> usize {
-    if grapheme_count == 0 {
-        return 0;
-    }
-
-    let mut consumed = 0;
-    for (start, grapheme) in text.grapheme_indices(true) {
-        consumed += 1;
-        if consumed >= grapheme_count {
-            return start + grapheme.len();
-        }
-    }
-    text.len()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn plain_text_display_projection_uses_identity_display_text() {
-        let projection = TextDisplayProjection::plain("release-2026");
-
-        assert_eq!(projection.display_text().as_ref(), "release-2026");
-        assert_eq!(projection.stored_to_display_offset(0), 0);
-        assert_eq!(projection.stored_to_display_offset(7), 7);
-        assert_eq!(
-            projection.stored_to_display_offset(99),
-            "release-2026".len()
-        );
-        assert_eq!(projection.stored_range_to_display_range(&(0..7)), 0..7);
-    }
-
-    #[test]
-    fn plain_text_display_projection_clamps_offsets_to_char_boundaries() {
-        let value = "a🙂中";
-        let projection = TextDisplayProjection::plain(value);
-
-        assert_eq!(projection.display_text().as_ref(), value);
-        assert_eq!(projection.stored_to_display_offset(0), 0);
-        assert_eq!(projection.stored_to_display_offset(1), 1);
-        assert_eq!(projection.stored_to_display_offset(2), 1);
-        assert_eq!(
-            projection.stored_to_display_offset("a🙂".len()),
-            "a🙂".len()
-        );
-        assert_eq!(
-            projection.stored_to_display_offset("a🙂中".len() - 1),
-            "a🙂".len()
-        );
-        assert_eq!(projection.stored_to_display_offset(usize::MAX), value.len());
-        assert_eq!(
-            projection.stored_range_to_display_range(&(2..value.len() - 1)),
-            1.."a🙂".len()
-        );
-    }
-
-    #[test]
-    fn plain_text_display_projection_handles_zwj_family_values() {
-        let value = "a👨‍👩‍👧‍👦b";
-        let projection = TextDisplayProjection::plain(value);
-
-        assert_eq!(projection.display_text().as_ref(), value);
-        assert_eq!(projection.stored_to_display_offset(0), 0);
-        assert_eq!(projection.stored_to_display_offset(2), 1);
-        assert_eq!(
-            projection.stored_to_display_offset("a👨‍👩‍👧‍👦".len()),
-            "a👨‍👩‍👧‍👦".len()
-        );
-        assert_eq!(
-            projection.stored_to_display_offset(value.len()),
-            value.len()
-        );
-    }
-
-    #[test]
-    fn password_text_display_projection_masks_one_glyph_per_grapheme() {
-        let value = "a🙂中";
-        let projection = TextDisplayProjection::password(value);
-
-        assert_eq!(projection.display_text().as_ref(), "•••");
-        assert_eq!(projection.stored_to_display_offset(0), 0);
-        assert_eq!(
-            projection.stored_to_display_offset(1),
-            TEXT_INPUT_PASSWORD_MASK_CHAR.len_utf8()
-        );
-        assert_eq!(
-            projection.stored_to_display_offset(2),
-            TEXT_INPUT_PASSWORD_MASK_CHAR.len_utf8()
-        );
-        assert_eq!(
-            projection.stored_to_display_offset("a🙂".len()),
-            TEXT_INPUT_PASSWORD_MASK_CHAR.len_utf8() * 2
-        );
-        assert_eq!(
-            projection.stored_to_display_offset(value.len()),
-            TEXT_INPUT_PASSWORD_MASK_CHAR.len_utf8() * 3
-        );
-    }
-
-    #[test]
-    fn password_text_display_projection_maps_display_offsets_to_stored_graphemes() {
-        let value = "a🙂中";
-        let projection = TextDisplayProjection::password(value);
-        let mask_len = TEXT_INPUT_PASSWORD_MASK_CHAR.len_utf8();
-
-        assert_eq!(projection.display_to_stored_offset(0), 0);
-        assert_eq!(projection.display_to_stored_offset(1), 0);
-        assert_eq!(projection.display_to_stored_offset(mask_len), 1);
-        assert_eq!(
-            projection.display_to_stored_offset(mask_len * 2),
-            "a🙂".len()
-        );
-        assert_eq!(projection.display_to_stored_offset(usize::MAX), value.len());
-    }
-
-    #[test]
-    fn password_text_display_projection_keeps_zwj_sequences_atomic() {
-        let value = "a👨‍👩‍👧‍👦b";
-        let projection = TextDisplayProjection::password(value);
-        let mask_len = TEXT_INPUT_PASSWORD_MASK_CHAR.len_utf8();
-
-        assert_eq!(projection.display_text().as_ref(), "•••");
-        assert_eq!(
-            projection.stored_to_display_offset("a👨‍👩‍👧‍👦".len()),
-            mask_len * 2
-        );
-        assert_eq!(
-            projection.stored_to_display_offset("a👨‍👩‍👧‍👦".len() - 1),
-            mask_len
-        );
-        assert_eq!(projection.display_to_stored_offset(mask_len), 1);
-        assert_eq!(
-            projection.display_to_stored_offset(mask_len * 2),
-            "a👨‍👩‍👧‍👦".len()
-        );
     }
 }

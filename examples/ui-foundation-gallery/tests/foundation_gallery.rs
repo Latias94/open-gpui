@@ -25,7 +25,7 @@ use open_gpui_ui_core::{
 };
 use open_gpui_ui_foundation_gallery::{
     DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, GalleryShell, GalleryShellSnapshot,
-    foundation_snapshot, pages,
+    StoryContract, StoryProbeOperation, foundation_snapshot, pages,
 };
 use std::time::Duration;
 
@@ -108,6 +108,112 @@ fn facet_total_count(facet: &TableColumnFacets) -> usize {
         .iter()
         .map(|entry| entry.count())
         .sum()
+}
+
+fn component_story_contract(name: &str) -> StoryContract {
+    pages::components::component_story_contracts()
+        .into_iter()
+        .find(|story| story.owner_name() == name)
+        .unwrap_or_else(|| panic!("expected component story contract `{name}`"))
+}
+
+fn overlay_story_contract(name: &str) -> StoryContract {
+    pages::overlay::overlay_story_contracts()
+        .into_iter()
+        .find(|story| story.owner_name() == name)
+        .unwrap_or_else(|| panic!("expected overlay story contract `{name}`"))
+}
+
+struct StoryRuntimeProbe<'a> {
+    cx: &'a mut VisualTestContext,
+}
+
+impl<'a> StoryRuntimeProbe<'a> {
+    fn new(cx: &'a mut VisualTestContext) -> Self {
+        Self { cx }
+    }
+
+    fn render_bounds(&mut self, selector: &str) -> Bounds<Pixels> {
+        bounds(self.cx, selector)
+    }
+
+    fn assert_rendered(&mut self, selector: &str, label: &str) -> Bounds<Pixels> {
+        let rendered = self.render_bounds(selector);
+        assert!(
+            rendered.size.width > px(0.0) && rendered.size.height > px(0.0),
+            "expected story probe target `{label}` to render selector `{selector}`"
+        );
+        rendered
+    }
+
+    fn assert_not_rendered(&mut self, selector: &str, label: &str) {
+        assert!(
+            self.cx.debug_bounds(selector).is_none(),
+            "expected story probe target `{label}` to hide selector `{selector}`"
+        );
+    }
+
+    fn assert_focused(&mut self, selector: &str, label: &str) {
+        assert!(
+            self.cx.debug_selector_is_focused(selector),
+            "expected story probe target `{label}` to focus selector `{selector}`; focused={:?}",
+            self.cx.focused_debug_selector()
+        );
+    }
+
+    fn scroll_page_to(&mut self, selector: &str) -> Bounds<Pixels> {
+        scroll_page_until_visible(self.cx, selector)
+    }
+
+    fn click(&mut self, selector: &str) {
+        click(self.cx, selector);
+    }
+
+    fn settle(&mut self) {
+        settle(self.cx);
+    }
+
+    fn redraw(&mut self) {
+        redraw(self.cx);
+    }
+
+    fn click_point(&mut self, position: open_gpui::Point<Pixels>) {
+        click_point(self.cx, position);
+    }
+
+    fn right_click(&mut self, selector: &str) {
+        right_click(self.cx, selector);
+    }
+
+    fn move_mouse_to(&mut self, selector: &str) {
+        let target = self.render_bounds(selector).center();
+        self.cx
+            .simulate_mouse_move(target, MouseButton::Left, Default::default());
+        self.redraw();
+    }
+
+    fn move_mouse_to_point(&mut self, position: open_gpui::Point<Pixels>) {
+        self.cx
+            .simulate_mouse_move(position, MouseButton::Left, Default::default());
+        self.redraw();
+    }
+
+    fn press_escape(&mut self) {
+        press_escape(self.cx);
+    }
+
+    fn assert_story_can(&self, story: &StoryContract, operation: StoryProbeOperation) {
+        assert!(
+            story.has_operation(operation),
+            "story `{}` should declare `{}` probe support",
+            story.owner_name(),
+            operation.as_str()
+        );
+    }
+
+    fn outside_gallery_point(&mut self) -> open_gpui::Point<Pixels> {
+        self.render_bounds("gallery:content").center()
+    }
 }
 
 fn scroll_until_visible(
@@ -284,14 +390,23 @@ fn focus_components_catalog_entry(
     cx: &mut VisualTestContext,
     entry: &pages::components::ComponentCatalogEntry,
 ) -> pages::components::ComponentFocusMode {
-    let catalog_selector = entry.catalog_selector();
+    let story = component_story_contract(entry.name);
+    let catalog_selector = story.selectors().catalog_selector().unwrap_or_else(|| {
+        panic!(
+            "expected story `{}` to declare a catalog selector",
+            entry.name
+        )
+    });
     let focus = pages::components::focused_section_for_catalog_entry(entry)
         .unwrap_or_else(|| panic!("expected focusable catalog entry `{}`", entry.name));
     let expected_focus = pages::components::ComponentFocusMode::Section(focus);
 
-    scroll_page_until_visible(cx, catalog_selector.as_str());
-    click(cx, catalog_selector.as_str());
-    settle(cx);
+    {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        probe.scroll_page_to(catalog_selector);
+        probe.click(catalog_selector);
+        probe.settle();
+    }
 
     assert_eq!(
         shell_snapshot(shell, cx).components_focus,
@@ -300,15 +415,12 @@ fn focus_components_catalog_entry(
         entry.name
     );
 
-    let focus_selector = entry
-        .sample_selector
-        .or(entry.state_contract_selector)
-        .unwrap_or_else(|| {
-            panic!(
-                "expected focused selector for catalog entry `{}`",
-                entry.name
-            )
-        });
+    let focus_selector = story.selectors().primary_selector().unwrap_or_else(|| {
+        panic!(
+            "expected focused selector for catalog entry `{}`",
+            entry.name
+        )
+    });
     let section_selector = format!("gallery:components-section:{focus}");
 
     assert!(
@@ -335,6 +447,7 @@ fn focus_components_section(
     cx: &mut VisualTestContext,
     entry: &pages::components::ComponentCatalogEntry,
 ) -> pages::components::ComponentFocusMode {
+    let story = component_story_contract(entry.name);
     let focus = pages::components::focused_section_for_catalog_entry(entry)
         .unwrap_or_else(|| panic!("expected focusable catalog entry `{}`", entry.name));
     let expected_focus = pages::components::ComponentFocusMode::Section(focus);
@@ -353,15 +466,12 @@ fn focus_components_section(
         entry.name
     );
 
-    let focus_selector = entry
-        .sample_selector
-        .or(entry.state_contract_selector)
-        .unwrap_or_else(|| {
-            panic!(
-                "expected focused selector for catalog entry `{}`",
-                entry.name
-            )
-        });
+    let focus_selector = story.selectors().primary_selector().unwrap_or_else(|| {
+        panic!(
+            "expected focused selector for catalog entry `{}`",
+            entry.name
+        )
+    });
     let section_selector = format!("gallery:components-section:{focus}");
 
     assert!(
@@ -2020,7 +2130,7 @@ fn components_page_samples_expose_component_metadata() {
         release_queue.state.sorting()[0].direction().as_str(),
         "descending"
     );
-    let release_plan = release_queue.render_plan();
+    let release_plan = release_queue.behavior_snapshot();
     assert_eq!(release_plan.role(), Role::Table);
     assert_eq!(release_plan.column_header_role(), Role::ColumnHeader);
     assert_eq!(release_plan.cell_role(), Role::Cell);
@@ -2029,11 +2139,11 @@ fn components_page_samples_expose_component_metadata() {
     assert!(release_plan.rendered_row_count() <= release_plan.visible_row_count() + 5);
 
     let filter_board = table_sample(tables, "filter-board");
-    let filter_plan = filter_board.render_plan();
+    let filter_plan = filter_board.behavior_snapshot();
     let filter_summary = filter_board.state_summary();
-    assert_eq!(filter_plan.table().filtered_model().rows().len(), 60);
-    assert_eq!(filter_plan.table().final_model().rows().len(), 24);
-    assert_eq!(filter_plan.table().final_model().selected_count(), 1);
+    assert_eq!(filter_plan.row_counts().filtered_rows(), 60);
+    assert_eq!(filter_plan.row_counts().final_rows(), 24);
+    assert_eq!(filter_plan.row_counts().selected_rows(), 1);
     assert_eq!(filter_summary.facet_columns, 4);
     assert_eq!(filter_summary.manual_facet_columns, 0);
     assert_eq!(filter_summary.status_facet_values, 4);
@@ -2069,7 +2179,7 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(score_range.max(), 177.0);
 
     let server_paged = table_sample(tables, "server-paged");
-    let server_page_plan = server_paged.render_plan();
+    let server_page_plan = server_paged.behavior_snapshot();
     let server_page_summary = server_paged.state_summary();
     assert_eq!(server_paged.state.rows().len(), 8);
     assert_eq!(server_page_plan.filtering_mode(), TableStageMode::Manual);
@@ -2122,8 +2232,6 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(server_score_range.max(), 64.0);
     assert_eq!(
         server_page_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .map(|row| row.id().as_str())
@@ -2141,7 +2249,7 @@ fn components_page_samples_expose_component_metadata() {
     );
 
     let release_resize = table_sample(tables, "release-resize");
-    let resize_plan = release_resize.render_plan();
+    let resize_plan = release_resize.behavior_snapshot();
     assert_eq!(release_resize.state.rows().len(), 160);
     assert_eq!(
         resize_plan.columns()[0].width(),
@@ -2158,7 +2266,7 @@ fn components_page_samples_expose_component_metadata() {
     );
 
     let editable_release = table_sample(tables, "editable-release");
-    let editable_plan = editable_release.render_plan();
+    let editable_plan = editable_release.behavior_snapshot();
     assert_eq!(editable_release.state.rows().len(), 32);
     assert!(
         editable_plan.columns()[0].text_editable(),
@@ -2178,7 +2286,7 @@ fn components_page_samples_expose_component_metadata() {
     );
 
     let toggle_release = table_sample(tables, "toggle-release");
-    let toggle_plan = toggle_release.render_plan();
+    let toggle_plan = toggle_release.behavior_snapshot();
     assert_eq!(toggle_release.state.rows().len(), 28);
     assert_eq!(
         toggle_plan.columns()[1].editor(),
@@ -2191,15 +2299,15 @@ fn components_page_samples_expose_component_metadata() {
         "toggle-release first visible enabled cell should render as a checkbox editor"
     );
     assert_eq!(
-        toggle_plan.table().final_model().rows()[0]
+        toggle_plan.rows()[0]
             .cell(&TableColumnId::new("enabled"))
-            .map(TableCellValue::filter_text)
+            .map(|cell| cell.text())
             .as_deref(),
         Some("true")
     );
 
     let multiline_release = table_sample(tables, "multiline-release");
-    let multiline_plan = multiline_release.render_plan();
+    let multiline_plan = multiline_release.behavior_snapshot();
     assert_eq!(multiline_release.state.rows().len(), 24);
     assert_eq!(
         multiline_plan.columns()[1].editor(),
@@ -2217,7 +2325,7 @@ fn components_page_samples_expose_component_metadata() {
     );
 
     let select_release = table_sample(tables, "select-release");
-    let select_plan = select_release.render_plan();
+    let select_plan = select_release.behavior_snapshot();
     assert_eq!(select_release.state.rows().len(), 28);
     assert_eq!(
         select_plan.columns()[1].editor(),
@@ -2241,7 +2349,7 @@ fn components_page_samples_expose_component_metadata() {
     );
 
     let grouped_release = table_sample(tables, "release-rollup");
-    let grouped_plan = grouped_release.render_plan();
+    let grouped_plan = grouped_release.behavior_snapshot();
     assert_eq!(grouped_release.state.grouping()[0].as_str(), "team");
     assert_eq!(grouped_release.state.aggregations().len(), 2);
     assert_eq!(
@@ -2264,37 +2372,17 @@ fn components_page_samples_expose_component_metadata() {
         grouped_plan.column_region_width(TableColumnRegion::Right),
         ui_px(164.0)
     );
-    assert!(grouped_plan.uses_split_pinned_layout());
-    let grouped_layout = grouped_plan
-        .pinned_layout()
-        .expect("release-rollup should render through the split sticky pinned layout");
-    assert_eq!(grouped_layout.left_width(), ui_px(188.0));
-    assert_eq!(grouped_layout.center_width(), ui_px(400.0));
-    assert_eq!(grouped_layout.right_width(), ui_px(164.0));
-    assert_eq!(grouped_layout.total_width(), ui_px(752.0));
-    assert!(
-        grouped_plan
-            .table()
-            .final_model()
-            .rows()
-            .iter()
-            .any(|row| row.is_group())
-    );
-    assert!(
-        grouped_plan
-            .table()
-            .final_model()
-            .rows()
-            .iter()
-            .any(|row| row.is_leaf())
-    );
+    assert!(grouped_plan.uses_split_pinned_columns());
+    assert_eq!(grouped_plan.column_regions().total_width(), ui_px(752.0));
+    assert!(grouped_plan.row_counts().group_rows() >= 1);
+    assert!(grouped_plan.row_counts().leaf_rows() > 0);
     assert!(
         grouped_plan.rendered_row_count()
             <= grouped_plan.visible_row_count() + grouped_release.overscan
     );
 
     let release_matrix = table_sample(tables, "release-matrix");
-    let matrix_plan = release_matrix.render_plan();
+    let matrix_plan = release_matrix.behavior_snapshot();
     assert_eq!(release_matrix.state.rows().len(), 480);
     assert_eq!(
         release_matrix.state.column_pinning().left()[0].as_str(),
@@ -2320,14 +2408,8 @@ fn components_page_samples_expose_component_metadata() {
         matrix_plan.column_region_width(TableColumnRegion::Right),
         ui_px(148.0)
     );
-    assert!(matrix_plan.uses_split_pinned_layout());
-    let matrix_layout = matrix_plan
-        .pinned_layout()
-        .expect("release-matrix should render through the split sticky pinned layout");
-    assert_eq!(matrix_layout.left_width(), ui_px(172.0));
-    assert_eq!(matrix_layout.center_width(), ui_px(1516.0));
-    assert_eq!(matrix_layout.right_width(), ui_px(148.0));
-    assert_eq!(matrix_layout.total_width(), ui_px(1836.0));
+    assert!(matrix_plan.uses_split_pinned_columns());
+    assert_eq!(matrix_plan.column_regions().total_width(), ui_px(1836.0));
     assert_eq!(matrix_plan.aria_column_count(), 16);
     assert_eq!(matrix_plan.columns().len(), 16);
     assert!(
@@ -2336,10 +2418,10 @@ fn components_page_samples_expose_component_metadata() {
             .iter()
             .any(|column| column.id().as_str() == "metric_13")
     );
-    assert_eq!(matrix_plan.table().final_model().selected_count(), 1);
+    assert_eq!(matrix_plan.row_counts().selected_rows(), 1);
 
     let row_pinning = table_sample(tables, "row-pinning");
-    let row_pinning_plan = row_pinning.render_plan();
+    let row_pinning_plan = row_pinning.behavior_snapshot();
     let row_pinning_summary = row_pinning.state_summary();
     assert_eq!(row_pinning.state.rows().len(), 96);
     assert_eq!(row_pinning_summary.core_rows, 96);
@@ -2355,23 +2437,19 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(row_pinning_summary.pinned_center_width_px, 1516);
     assert_eq!(row_pinning_summary.pinned_right_width_px, 148);
     assert_eq!(row_pinning_summary.total_column_width_px, 1836);
-    assert!(row_pinning_plan.uses_split_pinned_layout());
-    assert_eq!(row_pinning_plan.virtualizer().count(), 11);
+    assert!(row_pinning_plan.uses_split_pinned_columns());
+    assert_eq!(row_pinning_plan.row_counts().pinned_center_rows(), 11);
     assert_eq!(row_pinning_plan.aria_row_count(), 15);
     assert_eq!(
         row_pinning_plan
-            .table()
-            .top_rows()
-            .iter()
+            .rows_for_region(TableRowRegion::Top)
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
         ["row-pinning-row-003"]
     );
     assert_eq!(
         row_pinning_plan
-            .table()
-            .center_rows()
-            .iter()
+            .rows_for_region(TableRowRegion::Center)
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
         [
@@ -2390,16 +2468,14 @@ fn components_page_samples_expose_component_metadata() {
     );
     assert_eq!(
         row_pinning_plan
-            .table()
-            .bottom_rows()
-            .iter()
+            .rows_for_region(TableRowRegion::Bottom)
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
         ["row-pinning-row-030", "row-pinning-row-070"]
     );
 
     let dependency_tree = table_sample(tables, "dependency-tree");
-    let tree_plan = dependency_tree.render_plan();
+    let tree_plan = dependency_tree.behavior_snapshot();
     let tree_summary = dependency_tree.state_summary();
     assert_eq!(dependency_tree.state.rows().len(), 1);
     assert_eq!(tree_summary.core_rows, 7);
@@ -2416,8 +2492,6 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(tree_plan.aria_row_count(), 5);
     assert_eq!(
         tree_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .map(|row| row.id().as_str())
@@ -2429,25 +2503,15 @@ fn components_page_samples_expose_component_metadata() {
             "dependency-docs"
         ]
     );
-    assert!(
-        tree_plan
-            .table()
-            .final_model()
-            .row(&TableRowId::new("dependency-ui-table"))
-            .is_some(),
-        "collapsed tree descendants should remain addressable by stable row id"
-    );
     assert_eq!(
         tree_plan
-            .table()
-            .final_model()
             .row(&TableRowId::new("dependency-ui"))
             .and_then(|row| row.tree_expanded()),
         Some(false)
     );
 
     let server_tree = table_sample(tables, "server-tree");
-    let server_plan = server_tree.render_plan();
+    let server_plan = server_tree.behavior_snapshot();
     let server_summary = server_tree.state_summary();
     assert_eq!(
         server_tree.state.expansion_mode(),
@@ -2471,8 +2535,6 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(server_plan.aria_row_count(), 4);
     assert_eq!(
         server_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .map(|row| row.id().as_str())
@@ -2551,6 +2613,67 @@ fn components_page_state_contract_samples_expose_tree_and_virtualized_list_contr
             .activation_for_key("space")
             .map(|activation| activation.index()),
         Some(42)
+    );
+}
+
+#[test]
+fn components_catalog_metadata_is_separate_from_rendering() {
+    let components_source = include_str!("../src/pages/components.rs");
+    let catalog_source = include_str!("../src/pages/components/catalog.rs");
+    let render_source = include_str!("../src/pages/components/render.rs");
+
+    assert!(components_source.contains("pub mod catalog;"));
+    assert!(components_source.contains("pub use catalog::{"));
+    assert!(catalog_source.contains("pub const COMPONENT_CATALOG"));
+    assert!(catalog_source.contains("ComponentCatalogEntry::official("));
+    assert!(catalog_source.contains("ComponentCatalogEntry::state_contract("));
+    assert!(!components_source.contains("ComponentCatalogEntry::official("));
+    assert!(!render_source.contains("pub const COMPONENT_CATALOG"));
+    assert!(
+        render_source.contains("pages::components::COMPONENT_CATALOG"),
+        "rendering should consume catalog metadata instead of owning it"
+    );
+}
+
+#[test]
+fn verification_docs_list_current_ui_architecture_focused_gates() {
+    let verification = include_str!("../../../docs/verification.md");
+
+    for required in [
+        "primitive_deletion_target_inventory_blocks_removed_shallow_reexports",
+        "primitive_modules_do_not_reexport_ui_core_as_pass_through_aliases",
+        "surface_manifest_classifies_public_surface_once",
+        "surface_manifest_aligns_adjacent_gallery_statuses",
+        "surface_manifest_tracks_exports_gallery_and_docs_contracts",
+        "overlay_open_change_helpers_match_core_policies",
+        "dialog_runtime_respects_escape_policy_and_restores_trigger_focus",
+        "choice_surfaces_share_stable_value_resolution_and_query_normalization",
+        "table_behavior_snapshot_exposes_faceting_metadata",
+        "table_behavior_snapshot_exposes_editable_leaf_cell_kinds_for_leaf_cells_only",
+        "table_component_source_mapping_tracks_split_render_owners",
+        "row_window",
+        "virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts",
+        "theme_registry",
+        "theme_resolver",
+        "theme_snapshots",
+        "components_catalog_metadata_is_separate_from_rendering",
+        "official_component_catalog_entries_have_signals_and_sample_selectors",
+        "state_contract_catalog_entries_have_signals_and_readout_selectors",
+        "gallery_story_contracts_cover_components_state_readouts_and_overlays",
+    ] {
+        assert!(
+            verification.contains(required),
+            "verification docs should list focused UI architecture gate `{required}`"
+        );
+    }
+
+    assert!(
+        !verification.contains("table_render_plan_exposes_"),
+        "verification docs should use Table diagnostics gates, not removed render-plan test names"
+    );
+    assert!(
+        verification.contains("cargo run -p xtask -- verify"),
+        "verification docs should keep the final integration gate visible"
     );
 }
 
@@ -2779,6 +2902,189 @@ fn state_contract_catalog_entries_have_signals_and_readout_selectors() {
 }
 
 #[test]
+fn gallery_story_contracts_cover_components_state_readouts_and_overlays() {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let component_stories = pages::components::component_story_contracts();
+    let overlay_stories = pages::overlay::overlay_story_contracts();
+
+    let component_story_names = component_stories
+        .iter()
+        .map(|story| story.owner_name())
+        .collect::<BTreeSet<_>>();
+    let expected_component_story_names = pages::components::COMPONENT_CATALOG
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry.status,
+                pages::components::ComponentCatalogStatus::Official
+                    | pages::components::ComponentCatalogStatus::StateContract
+            )
+        })
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(component_story_names, expected_component_story_names);
+
+    let overlay_story_names = overlay_stories
+        .iter()
+        .map(|story| story.owner_name())
+        .collect::<BTreeSet<_>>();
+    let expected_overlay_story_names = pages::overlay::OVERLAY_CATALOG
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(overlay_story_names, expected_overlay_story_names);
+
+    for story in component_stories.iter().chain(overlay_stories.iter()) {
+        assert!(
+            story.selectors().catalog_selector().is_some(),
+            "story `{}` should expose a catalog selector",
+            story.owner_name()
+        );
+        assert!(
+            story.selectors().primary_selector().is_some(),
+            "story `{}` should expose a primary user-observable selector",
+            story.owner_name()
+        );
+        assert!(
+            !story.probes().is_empty(),
+            "story `{}` should declare runtime probe operations",
+            story.owner_name()
+        );
+        assert!(
+            story.has_operation(StoryProbeOperation::ReadPublicPayload),
+            "story `{}` should expose a public payload/readout probe",
+            story.owner_name()
+        );
+    }
+
+    let operation_counts = component_stories
+        .iter()
+        .chain(overlay_stories.iter())
+        .flat_map(|story| story.probes().iter().map(|probe| probe.operation()))
+        .fold(BTreeMap::new(), |mut counts, operation| {
+            *counts.entry(operation).or_insert(0usize) += 1;
+            counts
+        });
+    for operation in open_gpui_ui_foundation_gallery::STORY_PROBE_OPERATIONS {
+        assert!(
+            operation_counts.contains_key(operation),
+            "gallery stories should cover runtime probe operation `{}`",
+            operation.as_str()
+        );
+    }
+
+    let table_story = component_stories
+        .iter()
+        .find(|story| story.owner_name() == "Table")
+        .expect("Table story contract should exist");
+    assert!(table_story.has_operation(StoryProbeOperation::Scroll));
+    assert!(table_story.has_operation(StoryProbeOperation::Edit));
+    assert!(table_story.has_operation(StoryProbeOperation::Open));
+
+    let tree_state_story = component_stories
+        .iter()
+        .find(|story| story.owner_name() == "TreeState")
+        .expect("TreeState story contract should exist");
+    assert_eq!(
+        tree_state_story.kind(),
+        open_gpui_ui_foundation_gallery::StoryContractKind::StateContract
+    );
+    assert_eq!(
+        tree_state_story.selectors().state_readout_selector(),
+        Some("gallery:component-tree-state-contract:document-outline")
+    );
+
+    let dialog_story = overlay_stories
+        .iter()
+        .find(|story| story.owner_name() == "Dialog")
+        .expect("Dialog story contract should exist");
+    assert_eq!(
+        dialog_story.selectors().trigger_selector(),
+        Some("dialog:overlay-dialog-demo:controlled-modal:trigger")
+    );
+    assert_eq!(
+        dialog_story.selectors().surface_selector(),
+        Some("dialog:overlay-dialog-demo:controlled-modal:surface")
+    );
+}
+
+#[test]
+fn gallery_catalog_manifest_tracks_components_and_overlay_catalogs() {
+    use std::collections::BTreeSet;
+
+    let component_names = pages::components::COMPONENT_CATALOG
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    let component_official = pages::components::COMPONENT_CATALOG
+        .iter()
+        .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
+        .count();
+    let component_adjacent = pages::components::COMPONENT_CATALOG
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry.status,
+                pages::components::ComponentCatalogStatus::AdapterOnly
+                    | pages::components::ComponentCatalogStatus::InternalAnatomy
+                    | pages::components::ComponentCatalogStatus::StateContract
+            )
+        })
+        .count();
+
+    assert!(
+        component_official >= 40,
+        "Components catalog should keep broad official component coverage"
+    );
+    assert!(
+        component_adjacent >= 6,
+        "Components catalog should keep adjacent adapter/anatomy/state-contract rows"
+    );
+    for required in [
+        "Button",
+        "Table",
+        "VirtualizedList",
+        "TextInputController",
+        "ToolbarItem",
+        "ListboxOption",
+        "TreeState",
+        "VirtualizedListState",
+    ] {
+        assert!(
+            component_names.contains(required),
+            "Components catalog manifest should include `{required}`"
+        );
+    }
+
+    let overlay_names = pages::overlay::OVERLAY_CATALOG
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        overlay_names,
+        BTreeSet::from([
+            "AlertDialog",
+            "ContextMenu",
+            "Dialog",
+            "HoverCard",
+            "Menu",
+            "Popover",
+            "Sheet",
+            "Tooltip",
+        ])
+    );
+    assert!(pages::overlay::OVERLAY_CATALOG.iter().all(|entry| {
+        let component_signal = format!("open_gpui_ui_components::{}", entry.name);
+        let state_signal = format!("open_gpui_ui_components::{}", entry.state);
+        pages::overlay::SIGNALS.contains(&component_signal.as_str())
+            && pages::overlay::SIGNALS.contains(&state_signal.as_str())
+            && !entry.sample_selector.trim().is_empty()
+            && !entry.catalog_selector().trim().is_empty()
+    }));
+}
+
+#[test]
 fn components_page_tabs_samples_expose_roving_focus_contract() {
     let tokens = ThemeTokens::default();
     let tabs = pages::components::tabs_samples(tokens);
@@ -2800,12 +3106,12 @@ fn components_page_tabs_samples_expose_roving_focus_contract() {
 fn components_page_table_samples_expose_virtualized_row_model_contract() {
     let samples = pages::components::table_samples(ThemeTokens::default());
     let release_queue = table_sample(samples, "release-queue");
-    let release_plan = release_queue.render_plan();
+    let release_plan = release_queue.behavior_snapshot();
     let release_summary = release_queue.state_summary();
 
     assert_eq!(release_queue.id, "release-queue");
     assert_eq!(release_queue.state.rows().len(), 10_000);
-    assert_eq!(release_plan.table().final_model().rows().len(), 10_000);
+    assert_eq!(release_plan.row_counts().final_rows(), 10_000);
     assert_eq!(release_summary.core_rows, 10_000);
     assert_eq!(release_summary.final_rows, 10_000);
     assert_eq!(
@@ -2817,24 +3123,24 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         release_plan.visible_row_count()
     );
     assert_eq!(
-        release_plan.table().final_model().rows()[0].id().as_str(),
+        release_plan.rows()[0].id().as_str(),
         "release-queue-row-0000"
     );
-    assert_eq!(release_plan.virtualizer().count(), 10_000);
-    assert!(!release_plan.virtualizer().visible_range().is_empty());
+    assert_eq!(release_plan.row_counts().pinned_center_rows(), 10_000);
+    assert!(!release_plan.visible_rows().visible_range().is_empty());
     assert!(release_plan.rendered_row_count() <= release_plan.visible_row_count() + 5);
     assert_eq!(release_plan.row_role(), Role::Row);
     assert_eq!(release_plan.column_header_role(), Role::ColumnHeader);
     assert_eq!(release_plan.cell_role(), Role::Cell);
 
     let filter_board = table_sample(samples, "filter-board");
-    let filter_plan = filter_board.render_plan();
+    let filter_plan = filter_board.behavior_snapshot();
     let filter_summary = filter_board.state_summary();
 
     assert_eq!(filter_board.id, "filter-board");
     assert_eq!(filter_board.state.rows().len(), 180);
-    assert_eq!(filter_plan.table().filtered_model().rows().len(), 60);
-    assert_eq!(filter_plan.table().final_model().rows().len(), 24);
+    assert_eq!(filter_plan.row_counts().filtered_rows(), 60);
+    assert_eq!(filter_plan.row_counts().final_rows(), 24);
     assert_eq!(filter_summary.filtered_rows, 60);
     assert_eq!(filter_summary.final_rows, 24);
     assert_eq!(filter_summary.selected_rows, 1);
@@ -2844,11 +3150,8 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(filter_summary.status_facet_total_count, 60);
     assert_eq!(filter_summary.score_facet_min, Some(0));
     assert_eq!(filter_summary.score_facet_max, Some(177));
-    assert_eq!(
-        filter_plan.table().final_model().rows()[0].id().as_str(),
-        "filter-board-row-177"
-    );
-    assert_eq!(filter_plan.table().final_model().selected_count(), 1);
+    assert_eq!(filter_plan.rows()[0].id().as_str(), "filter-board-row-177");
+    assert_eq!(filter_plan.row_counts().selected_rows(), 1);
     assert_eq!(filter_plan.aria_column_count(), 4);
     let filter_status_facet = filter_plan
         .column_facet(&TableColumnId::new("status"))
@@ -2858,7 +3161,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(facet_total_count(filter_status_facet), 60);
 
     let server_paged = table_sample(samples, "server-paged");
-    let server_page_plan = server_paged.render_plan();
+    let server_page_plan = server_paged.behavior_snapshot();
     let server_page_summary = server_paged.state_summary();
 
     assert_eq!(server_paged.id, "server-paged");
@@ -2899,8 +3202,6 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(server_score_range.max(), 64.0);
     assert_eq!(
         server_page_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .map(|row| row.id().as_str())
@@ -2917,23 +3218,21 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         ],
         "manual modes should preserve the supplied server page snapshot"
     );
-    assert_eq!(server_page_plan.table().final_model().selected_count(), 1);
+    assert_eq!(server_page_plan.row_counts().selected_rows(), 1);
     assert!(
         server_page_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .any(|row| row.id().as_str() == "server-paged-row-0018" && row.selected())
     );
 
     let release_resize = table_sample(samples, "release-resize");
-    let resize_plan = release_resize.render_plan();
+    let resize_plan = release_resize.behavior_snapshot();
     let resize_summary = release_resize.state_summary();
 
     assert_eq!(release_resize.id, "release-resize");
     assert_eq!(release_resize.state.rows().len(), 160);
-    assert_eq!(resize_plan.table().final_model().rows().len(), 160);
+    assert_eq!(resize_plan.row_counts().final_rows(), 160);
     assert_eq!(resize_summary.core_rows, 160);
     assert_eq!(resize_summary.total_column_width_px, 520);
     assert_eq!(resize_summary.resizable_columns, 3);
@@ -2947,7 +3246,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert!(!resize_plan.columns()[3].resizable());
 
     let content_fit_release = table_sample(samples, "content-fit-release");
-    let content_fit_plan = content_fit_release.render_plan();
+    let content_fit_plan = content_fit_release.behavior_snapshot();
     let content_fit_summary = content_fit_release.state_summary();
 
     assert_eq!(content_fit_release.id, "content-fit-release");
@@ -2961,7 +3260,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(content_fit_plan.columns()[3].width(), ui_px(84.0));
 
     let toggle_release = table_sample(samples, "toggle-release");
-    let toggle_plan = toggle_release.render_plan();
+    let toggle_plan = toggle_release.behavior_snapshot();
     let toggle_summary = toggle_release.state_summary();
 
     assert_eq!(toggle_release.id, "toggle-release");
@@ -2977,15 +3276,15 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         Some(TableCellEditor::Checkbox)
     );
     assert_eq!(
-        toggle_plan.table().final_model().rows()[0]
+        toggle_plan.rows()[0]
             .cell(&TableColumnId::new("enabled"))
-            .map(TableCellValue::filter_text)
+            .map(|cell| cell.text())
             .as_deref(),
         Some("true")
     );
 
     let select_release = table_sample(samples, "select-release");
-    let select_plan = select_release.render_plan();
+    let select_plan = select_release.behavior_snapshot();
     let select_summary = select_release.state_summary();
 
     assert_eq!(select_release.id, "select-release");
@@ -3004,7 +3303,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(select_plan.rows()[0].cells()[1].select_options().len(), 2);
 
     let multiline_release = table_sample(samples, "multiline-release");
-    let multiline_plan = multiline_release.render_plan();
+    let multiline_plan = multiline_release.behavior_snapshot();
     let multiline_summary = multiline_release.state_summary();
 
     assert_eq!(multiline_release.id, "multiline-release");
@@ -3021,15 +3320,15 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         Some(TableCellEditor::MultilineText { rows: 3 })
     );
     assert_eq!(
-        multiline_plan.table().final_model().rows()[0]
+        multiline_plan.rows()[0]
             .cell(&TableColumnId::new("notes"))
-            .map(TableCellValue::filter_text)
+            .map(|cell| cell.text())
             .as_deref(),
         Some("User-visible summary 000\nRollback: pending")
     );
 
     let grouped_release = table_sample(samples, "release-rollup");
-    let grouped_plan = grouped_release.render_plan();
+    let grouped_plan = grouped_release.behavior_snapshot();
     let grouped_summary = grouped_release.state_summary();
 
     assert_eq!(grouped_release.id, "release-rollup");
@@ -3060,14 +3359,12 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(grouped_summary.pinned_center_width_px, 400);
     assert_eq!(grouped_summary.pinned_right_width_px, 164);
     assert_eq!(grouped_summary.total_column_width_px, 752);
-    assert!(grouped_plan.uses_split_pinned_layout());
+    assert!(grouped_plan.uses_split_pinned_columns());
     assert!(grouped_summary.group_rows >= 5);
     assert!(grouped_summary.leaf_rows > 0);
     assert!(grouped_summary.expanded_rows < grouped_summary.grouped_rows);
 
     let ui_group = grouped_plan
-        .table()
-        .final_model()
         .row(&TableRowId::new("group:team=UI"))
         .expect("expanded UI group should be visible and addressable");
     assert!(ui_group.is_group());
@@ -3075,63 +3372,45 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         ui_group
             .cell(&TableColumnId::new("name"))
             .expect("group count aggregate should be present")
-            .filter_text(),
+            .text(),
         "64"
     );
     assert!(
         !ui_group
             .cell(&TableColumnId::new("score"))
             .expect("group score aggregate should be present")
-            .filter_text()
+            .text()
             .is_empty()
     );
     assert!(
         grouped_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .any(|row| row.id().as_str() == "grouped-release-row-000" && row.is_leaf())
     );
     assert!(
         grouped_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .all(|row| row.id().as_str() != "grouped-release-row-001"),
         "Runtime leaf row should stay hidden because that group starts collapsed"
     );
-    assert!(
-        grouped_plan
-            .table()
-            .final_model()
-            .row(&TableRowId::new("grouped-release-row-001"))
-            .is_some(),
-        "collapsed descendants should stay addressable by stable row id"
-    );
     assert_eq!(
         grouped_plan
-            .column_regions()
+            .columns()
             .iter()
-            .map(|region| (
-                region.region(),
-                region
-                    .columns()
-                    .iter()
-                    .map(|column| column.id().as_str())
-                    .collect::<Vec<_>>()
-            ))
+            .map(|column| (column.region(), column.id().as_str()))
             .collect::<Vec<_>>(),
         [
-            (TableColumnRegion::Left, vec!["name"]),
-            (TableColumnRegion::Center, vec!["team", "score"]),
-            (TableColumnRegion::Right, vec!["status"]),
+            (TableColumnRegion::Left, "name"),
+            (TableColumnRegion::Center, "team"),
+            (TableColumnRegion::Center, "score"),
+            (TableColumnRegion::Right, "status"),
         ]
     );
 
     let custom_grouped = table_sample(samples, "grouped-custom-aggregation");
-    let custom_plan = custom_grouped.render_plan();
+    let custom_plan = custom_grouped.behavior_snapshot();
     let custom_summary = custom_grouped.state_summary();
 
     assert_eq!(custom_grouped.id, "grouped-custom-aggregation");
@@ -3147,40 +3426,36 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(custom_summary.group_rows, 2);
     assert_eq!(custom_summary.leaf_rows, 8);
     assert_eq!(custom_summary.expanded_group_inputs, 2);
-    assert_eq!(custom_plan.table().final_model().rows().len(), 10);
+    assert_eq!(custom_plan.row_counts().final_rows(), 10);
     let custom_ui_group = custom_plan
-        .table()
-        .final_model()
         .row(&TableRowId::new("group:team=UI"))
         .expect("expanded UI custom group should be visible and addressable");
     assert_eq!(
         custom_ui_group
             .cell(&TableColumnId::new("name"))
             .expect("custom group count aggregate should be present")
-            .filter_text(),
+            .text(),
         "4"
     );
     assert_eq!(
         custom_ui_group
             .cell(&TableColumnId::new("score"))
             .expect("custom score aggregate should be present")
-            .filter_text(),
+            .text(),
         "11"
     );
     assert_eq!(
         custom_plan
-            .table()
-            .final_model()
             .row(&TableRowId::new("group:team=Platform"))
             .expect("expanded Platform custom group should be visible and addressable")
             .cell(&TableColumnId::new("score"))
             .expect("platform custom score aggregate should be present")
-            .filter_text(),
+            .text(),
         "101"
     );
 
     let release_matrix = table_sample(samples, "release-matrix");
-    let matrix_plan = release_matrix.render_plan();
+    let matrix_plan = release_matrix.behavior_snapshot();
     let matrix_summary = release_matrix.state_summary();
 
     assert_eq!(release_matrix.id, "release-matrix");
@@ -3202,47 +3477,15 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(matrix_summary.pinned_center_width_px, 1516);
     assert_eq!(matrix_summary.pinned_right_width_px, 148);
     assert_eq!(matrix_summary.total_column_width_px, 1836);
-    assert!(matrix_plan.uses_split_pinned_layout());
+    assert!(matrix_plan.uses_split_pinned_columns());
     assert_eq!(matrix_plan.aria_column_count(), 16);
-    assert_eq!(matrix_plan.header_row_count(), 3);
-    assert_eq!(matrix_plan.left_header_groups().header_row_count(), 3);
-    assert_eq!(matrix_plan.center_header_groups().header_row_count(), 3);
-    assert_eq!(matrix_plan.right_header_groups().header_row_count(), 3);
+    assert_eq!(matrix_plan.header_summary().header_rows(), 3);
+    assert_eq!(matrix_plan.header_summary().visible_group_headers(), 4);
     assert_eq!(
         matrix_plan
-            .left_header_groups()
-            .group_at_depth(1)
-            .expect("left header group row should exist")
-            .headers()[0]
-            .label(),
-        "Identity"
-    );
-    assert_eq!(
-        matrix_plan
-            .center_header_groups()
-            .group_at_depth(1)
-            .expect("center header group row should exist")
-            .headers()[0]
-            .label(),
-        "Metrics"
-    );
-    assert_eq!(
-        matrix_plan
-            .right_header_groups()
-            .group_at_depth(1)
-            .expect("right header group row should exist")
-            .headers()[0]
-            .label(),
-        "Delivery"
-    );
-    assert_eq!(
-        matrix_plan
-            .column_regions()
-            .iter()
-            .find(|region| region.region() == TableColumnRegion::Center)
-            .expect("release-matrix should expose a center column region")
             .columns()
             .iter()
+            .filter(|column| column.region() == TableColumnRegion::Center)
             .map(|column| column.id().as_str())
             .collect::<Vec<_>>(),
         [
@@ -3263,7 +3506,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         ]
     );
     let row_pinning = table_sample(samples, "row-pinning");
-    let row_pinning_plan = row_pinning.render_plan();
+    let row_pinning_plan = row_pinning.behavior_snapshot();
     let row_pinning_summary = row_pinning.state_summary();
 
     assert_eq!(row_pinning.id, "row-pinning");
@@ -3284,21 +3527,19 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         row_pinning_summary.rendered_rows,
         row_pinning_plan.rendered_row_count()
     );
-    assert_eq!(row_pinning_plan.virtualizer().count(), 11);
+    assert_eq!(row_pinning_plan.row_counts().pinned_center_rows(), 11);
     assert_eq!(row_pinning_plan.aria_row_count(), 15);
-    assert!(row_pinning_plan.uses_split_pinned_layout());
+    assert!(row_pinning_plan.uses_split_pinned_columns());
     assert_eq!(
         row_pinning_plan
-            .top_rows()
-            .iter()
+            .rows_for_region(TableRowRegion::Top)
             .map(|row| (row.id().as_str(), row.region(), row.region_index()))
             .collect::<Vec<_>>(),
         [("row-pinning-row-003", TableRowRegion::Top, 0)]
     );
     assert_eq!(
         row_pinning_plan
-            .center_rows()
-            .iter()
+            .rows_for_region(TableRowRegion::Center)
             .map(|row| (row.id().as_str(), row.region(), row.region_index()))
             .collect::<Vec<_>>(),
         [
@@ -3317,8 +3558,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     );
     assert_eq!(
         row_pinning_plan
-            .bottom_rows()
-            .iter()
+            .rows_for_region(TableRowRegion::Bottom)
             .map(|row| (row.id().as_str(), row.region(), row.region_index()))
             .collect::<Vec<_>>(),
         [
@@ -3328,7 +3568,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     );
 
     let dependency_tree = table_sample(samples, "dependency-tree");
-    let tree_plan = dependency_tree.render_plan();
+    let tree_plan = dependency_tree.behavior_snapshot();
     let tree_summary = dependency_tree.state_summary();
 
     assert_eq!(dependency_tree.state.rows().len(), 1);
@@ -3345,12 +3585,10 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(tree_summary.pinned_center_width_px, 604);
     assert_eq!(tree_summary.pinned_right_width_px, 132);
     assert_eq!(tree_summary.total_column_width_px, 956);
-    assert!(tree_plan.uses_split_pinned_layout());
+    assert!(tree_plan.uses_split_pinned_columns());
     assert_eq!(tree_plan.aria_column_count(), 7);
     assert_eq!(
         tree_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .map(|row| (
@@ -3367,17 +3605,9 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
             ("dependency-docs", 1, None, false),
         ]
     );
-    assert!(
-        tree_plan
-            .table()
-            .final_model()
-            .row(&TableRowId::new("dependency-ui-table"))
-            .is_some(),
-        "collapsed source-tree descendants should stay addressable by stable row id"
-    );
 
     let server_tree = table_sample(samples, "server-tree");
-    let server_plan = server_tree.render_plan();
+    let server_plan = server_tree.behavior_snapshot();
     let server_summary = server_tree.state_summary();
 
     assert_eq!(server_tree.state.rows().len(), 3);
@@ -3399,13 +3629,11 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(server_summary.pinned_center_columns, 5);
     assert_eq!(server_summary.pinned_right_columns, 1);
     assert_eq!(server_summary.total_column_width_px, 956);
-    assert!(server_plan.uses_split_pinned_layout());
+    assert!(server_plan.uses_split_pinned_columns());
     assert_eq!(server_plan.aria_column_count(), 7);
     assert_eq!(server_plan.aria_row_count(), 4);
     assert_eq!(
         server_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .map(|row| row.id().as_str())
@@ -3414,18 +3642,12 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     );
 
     let server_workspace = server_plan
-        .table()
-        .final_model()
         .row(&TableRowId::new("server-workspace"))
         .expect("server workspace row should resolve");
     let server_cache = server_plan
-        .table()
-        .final_model()
         .row(&TableRowId::new("server-cache"))
         .expect("server cache row should resolve");
     let server_failed = server_plan
-        .table()
-        .final_model()
         .row(&TableRowId::new("server-failed"))
         .expect("server failed row should resolve");
 
@@ -3923,37 +4145,36 @@ fn overlay_gallery_smoke_renders_catalog_entries_and_official_samples(
 #[open_gpui::test]
 fn overlay_gallery_smoke_dismisses_popover_from_outside_press(cx: &mut open_gpui::TestAppContext) {
     let cx = open_overlay_gallery(cx);
+    let story = overlay_story_contract("Popover");
+    let trigger = story
+        .selectors()
+        .trigger_selector()
+        .expect("Popover story should declare a trigger selector");
+    let content = story
+        .selectors()
+        .surface_selector()
+        .expect("Popover story should declare a surface selector");
 
-    scroll_page_until_visible(cx, "popover:overlay-popover-demo:controlled:trigger");
-    click(cx, "popover:overlay-popover-demo:controlled:trigger");
-    settle(cx);
-    assert!(
-        cx.debug_bounds("popover:overlay-popover-demo:controlled:content")
-            .is_some(),
-        "expected controlled Popover content to open from its real trigger"
-    );
-    assert!(
-        cx.debug_selector_is_focused("popover:overlay-popover-demo:controlled:trigger"),
-        "expected controlled Popover trigger to remain focused while opened by default policy"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_can(&story, StoryProbeOperation::Focus);
+    probe.scroll_page_to(trigger);
+    probe.click(trigger);
+    probe.settle();
+    probe.assert_rendered(content, "opened Popover content");
+    probe.assert_focused(trigger, "opened Popover trigger");
 
-    let popover_content = bounds(cx, "popover:overlay-popover-demo:controlled:content");
+    let popover_content = probe.render_bounds(content);
     let outside_target = point(
         popover_content.right() + px(24.0),
         popover_content.bottom() + px(24.0),
     );
-    click_point(cx, outside_target);
-    settle(cx);
+    probe.click_point(outside_target);
+    probe.settle();
 
-    assert!(
-        cx.debug_bounds("popover:overlay-popover-demo:controlled:content")
-            .is_none(),
-        "expected outside press to dismiss the controlled Popover"
-    );
-    assert!(
-        cx.debug_selector_is_focused("popover:overlay-popover-demo:controlled:trigger"),
-        "expected outside-dismissed Popover to restore focus to its trigger"
-    );
+    probe.assert_not_rendered(content, "outside-dismissed Popover content");
+    probe.assert_focused(trigger, "outside-dismissed Popover trigger");
 }
 
 #[open_gpui::test]
@@ -3961,52 +4182,46 @@ fn overlay_gallery_smoke_opens_tooltip_from_hover_focus_and_ignores_disabled(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
+    let story = overlay_story_contract("Tooltip");
+    let hover_trigger = story
+        .selectors()
+        .trigger_selector()
+        .expect("Tooltip story should declare a trigger selector");
+    let hover_content = story
+        .selectors()
+        .surface_selector()
+        .expect("Tooltip story should declare a surface selector");
 
-    scroll_page_until_visible(cx, "gallery:overlay-tooltip-trigger:hover-focus");
-    let hover_trigger = bounds(cx, "gallery:overlay-tooltip-trigger:hover-focus").center();
-    cx.simulate_mouse_move(hover_trigger, MouseButton::Left, Default::default());
-    redraw(cx);
-    assert!(
-        cx.debug_bounds("tooltip:overlay-tooltip-content:hover-focus:content")
-            .is_some(),
-        "expected hover tooltip content to open from pointer hover"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_can(&story, StoryProbeOperation::Focus);
+    probe.scroll_page_to(hover_trigger);
+    probe.move_mouse_to(hover_trigger);
+    probe.assert_rendered(hover_content, "hover-opened Tooltip content");
 
-    let outside_target = bounds(cx, "gallery:content").center();
-    cx.simulate_mouse_move(outside_target, MouseButton::Left, Default::default());
-    redraw(cx);
-    assert!(
-        cx.debug_bounds("tooltip:overlay-tooltip-content:hover-focus:content")
-            .is_none(),
-        "expected hover tooltip content to dismiss after leaving the trigger"
-    );
+    let outside_target = probe.outside_gallery_point();
+    probe.move_mouse_to_point(outside_target);
+    probe.assert_not_rendered(hover_content, "hover-dismissed Tooltip content");
 
-    scroll_page_until_visible(cx, "gallery:overlay-tooltip-trigger:focus-only");
-    click(cx, "gallery:overlay-tooltip-trigger:focus-only");
-    redraw(cx);
-    assert!(
-        cx.debug_bounds("tooltip:overlay-tooltip-content:focus-only:content")
-            .is_some(),
-        "expected focus-only tooltip content to open from keyboard focus"
-    );
+    let focus_trigger = "gallery:overlay-tooltip-trigger:focus-only";
+    let focus_content = "tooltip:overlay-tooltip-content:focus-only:content";
+    probe.scroll_page_to(focus_trigger);
+    probe.click(focus_trigger);
+    probe.redraw();
+    probe.assert_rendered(focus_content, "focus-opened Tooltip content");
 
-    let content_center = bounds(cx, "gallery:content").center();
-    click_point(cx, content_center);
-    redraw(cx);
-    assert!(
-        cx.debug_bounds("tooltip:overlay-tooltip-content:focus-only:content")
-            .is_none(),
-        "expected focus-only tooltip content to dismiss after focus leaves"
-    );
+    let content_center = probe.outside_gallery_point();
+    probe.click_point(content_center);
+    probe.redraw();
+    probe.assert_not_rendered(focus_content, "focus-dismissed Tooltip content");
 
-    scroll_page_until_visible(cx, "gallery:overlay-tooltip-trigger:disabled");
-    let disabled_trigger = bounds(cx, "gallery:overlay-tooltip-trigger:disabled").center();
-    cx.simulate_mouse_move(disabled_trigger, MouseButton::Left, Default::default());
-    redraw(cx);
-    assert!(
-        cx.debug_bounds("tooltip:overlay-tooltip-content:disabled:content")
-            .is_none(),
-        "expected disabled tooltip trigger to stay closed"
+    let disabled_trigger = "gallery:overlay-tooltip-trigger:disabled";
+    probe.scroll_page_to(disabled_trigger);
+    probe.move_mouse_to(disabled_trigger);
+    probe.assert_not_rendered(
+        "tooltip:overlay-tooltip-content:disabled:content",
+        "disabled Tooltip content",
     );
 }
 
@@ -4014,12 +4229,12 @@ fn overlay_gallery_smoke_opens_tooltip_from_hover_focus_and_ignores_disabled(
 fn overlay_gallery_smoke_renders_manual_tooltip_from_state(cx: &mut open_gpui::TestAppContext) {
     let cx = open_overlay_gallery(cx);
 
-    scroll_page_until_visible(cx, "gallery:overlay-tooltip-sample:delayed-manual");
-    redraw(cx);
-    assert!(
-        cx.debug_bounds("tooltip:overlay-tooltip-content:delayed-manual:content")
-            .is_some(),
-        "expected manual delayed tooltip content to render from gallery state"
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.scroll_page_to("gallery:overlay-tooltip-sample:delayed-manual");
+    probe.redraw();
+    probe.assert_rendered(
+        "tooltip:overlay-tooltip-content:delayed-manual:content",
+        "manual Tooltip content",
     );
 }
 
@@ -4028,38 +4243,33 @@ fn overlay_gallery_smoke_opens_hover_card_from_real_trigger_and_dismisses(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
+    let story = overlay_story_contract("HoverCard");
+    let trigger = story
+        .selectors()
+        .trigger_selector()
+        .expect("HoverCard story should declare a trigger selector");
+    let content = story
+        .selectors()
+        .surface_selector()
+        .expect("HoverCard story should declare a surface selector");
 
-    scroll_page_until_visible(
-        cx,
-        "hover-card:overlay-hover-card-demo:manual-controlled:trigger",
-    );
-    click(
-        cx,
-        "hover-card:overlay-hover-card-demo:manual-controlled:trigger",
-    );
-    settle(cx);
-    assert!(
-        cx.debug_bounds("hover-card:overlay-hover-card-demo:manual-controlled:content")
-            .is_some(),
-        "expected controlled HoverCard content to open from its real trigger"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.scroll_page_to(trigger);
+    probe.click(trigger);
+    probe.settle();
+    probe.assert_rendered(content, "opened HoverCard content");
 
-    let hover_card_content = bounds(
-        cx,
-        "hover-card:overlay-hover-card-demo:manual-controlled:content",
-    );
+    let hover_card_content = probe.render_bounds(content);
     let outside_target = point(
         hover_card_content.right() + px(24.0),
         hover_card_content.bottom() + px(24.0),
     );
-    click_point(cx, outside_target);
-    settle(cx);
+    probe.click_point(outside_target);
+    probe.settle();
 
-    assert!(
-        cx.debug_bounds("hover-card:overlay-hover-card-demo:manual-controlled:content")
-            .is_none(),
-        "expected outside press to dismiss the controlled HoverCard"
-    );
+    probe.assert_not_rendered(content, "outside-dismissed HoverCard content");
 }
 
 #[open_gpui::test]
@@ -4067,22 +4277,26 @@ fn overlay_gallery_smoke_toggles_hover_card_from_control_surface(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
+    let story = overlay_story_contract("HoverCard");
+    let control = story
+        .selectors()
+        .control_selector()
+        .expect("HoverCard story should declare a control selector");
+    let content = story
+        .selectors()
+        .surface_selector()
+        .expect("HoverCard story should declare a surface selector");
 
-    scroll_page_until_visible(cx, "gallery:overlay-hover-card-controlled-toggle");
-    click(cx, "gallery:overlay-hover-card-controlled-toggle");
-    settle(cx);
-    assert!(
-        cx.debug_bounds("hover-card:overlay-hover-card-demo:manual-controlled:content")
-            .is_some(),
-        "expected the controlled HoverCard toggle to open its content"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.scroll_page_to(control);
+    probe.click(control);
+    probe.settle();
+    probe.assert_rendered(content, "controlled HoverCard content");
 
-    press_escape(cx);
-    assert!(
-        cx.debug_bounds("hover-card:overlay-hover-card-demo:manual-controlled:content")
-            .is_none(),
-        "expected Escape to close the controlled HoverCard after opening it from the toggle"
-    );
+    probe.press_escape();
+    probe.assert_not_rendered(content, "escape-dismissed HoverCard content");
 }
 
 #[open_gpui::test]
@@ -4090,50 +4304,39 @@ fn overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
+    let story = overlay_story_contract("Dialog");
+    let trigger = story
+        .selectors()
+        .trigger_selector()
+        .expect("Dialog story should declare a trigger selector");
+    let surface = story
+        .selectors()
+        .surface_selector()
+        .expect("Dialog story should declare a surface selector");
+    let layer = "dialog:overlay-dialog-demo:controlled-modal:layer";
 
-    scroll_page_until_visible(cx, "dialog:overlay-dialog-demo:controlled-modal:trigger");
-    click(cx, "dialog:overlay-dialog-demo:controlled-modal:trigger");
-    settle(cx);
-    let dialog_layer = bounds(cx, "dialog:overlay-dialog-demo:controlled-modal:layer");
-    assert!(
-        cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
-            .is_some(),
-        "expected controlled Dialog surface to open from its real trigger"
-    );
-    assert!(
-        cx.debug_selector_is_focused("dialog:overlay-dialog-demo:controlled-modal:surface"),
-        "expected opened Dialog to move focus to its first focusable surface"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_can(&story, StoryProbeOperation::Focus);
+    probe.scroll_page_to(trigger);
+    probe.click(trigger);
+    probe.settle();
+    let dialog_layer = probe.render_bounds(layer);
+    probe.assert_rendered(surface, "opened Dialog surface");
+    probe.assert_focused(surface, "opened Dialog surface");
 
-    click_point(cx, outside_top_left(dialog_layer));
-    settle(cx);
-    assert!(
-        cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
-            .is_none(),
-        "expected modal barrier outside press to dismiss the controlled Dialog"
-    );
-    assert!(
-        cx.debug_selector_is_focused("dialog:overlay-dialog-demo:controlled-modal:trigger"),
-        "expected barrier-dismissed Dialog to restore focus to its trigger"
-    );
+    probe.click_point(outside_top_left(dialog_layer));
+    probe.settle();
+    probe.assert_not_rendered(surface, "barrier-dismissed Dialog surface");
+    probe.assert_focused(trigger, "barrier-dismissed Dialog trigger");
 
-    click(cx, "dialog:overlay-dialog-demo:controlled-modal:trigger");
-    settle(cx);
-    assert!(
-        cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
-            .is_some(),
-        "expected controlled Dialog surface to reopen after barrier dismissal"
-    );
-    press_escape(cx);
-    assert!(
-        cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
-            .is_none(),
-        "expected Escape to dismiss the controlled Dialog"
-    );
-    assert!(
-        cx.debug_selector_is_focused("dialog:overlay-dialog-demo:controlled-modal:trigger"),
-        "expected Escape-dismissed Dialog to restore focus to its trigger"
-    );
+    probe.click(trigger);
+    probe.settle();
+    probe.assert_rendered(surface, "reopened Dialog surface");
+    probe.press_escape();
+    probe.assert_not_rendered(surface, "escape-dismissed Dialog surface");
+    probe.assert_focused(trigger, "escape-dismissed Dialog trigger");
 }
 
 #[open_gpui::test]
@@ -4141,49 +4344,40 @@ fn overlay_gallery_smoke_closes_alert_dialog_from_action_and_escape(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
-    let trigger = "alert-dialog:overlay-alert-dialog-demo:destructive-confirm:trigger";
-    let surface = "alert-dialog:overlay-alert-dialog-demo:destructive-confirm:surface";
+    let story = overlay_story_contract("AlertDialog");
+    let trigger = story
+        .selectors()
+        .trigger_selector()
+        .expect("AlertDialog story should declare a trigger selector");
+    let surface = story
+        .selectors()
+        .surface_selector()
+        .expect("AlertDialog story should declare a surface selector");
     let cancel = "alert-dialog:overlay-alert-dialog-demo:destructive-confirm:cancel";
     let action = "alert-dialog:overlay-alert-dialog-demo:destructive-confirm:action";
 
-    scroll_page_until_visible(cx, trigger);
-    click(cx, trigger);
-    settle(cx);
-    assert!(
-        cx.debug_bounds(surface).is_some(),
-        "expected controlled AlertDialog surface to open from its real trigger"
-    );
-    assert!(
-        cx.debug_selector_is_focused(cancel),
-        "expected opened AlertDialog to move focus to the default cancel action"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.assert_story_can(&story, StoryProbeOperation::Activate);
+    probe.assert_story_can(&story, StoryProbeOperation::Focus);
+    probe.scroll_page_to(trigger);
+    probe.click(trigger);
+    probe.settle();
+    probe.assert_rendered(surface, "opened AlertDialog surface");
+    probe.assert_focused(cancel, "opened AlertDialog cancel action");
 
-    click(cx, action);
-    settle(cx);
-    assert!(
-        cx.debug_bounds(surface).is_none(),
-        "expected the primary action to close the controlled AlertDialog"
-    );
-    assert!(
-        cx.debug_selector_is_focused(trigger),
-        "expected action-dismissed AlertDialog to restore focus to its trigger"
-    );
+    probe.click(action);
+    probe.settle();
+    probe.assert_not_rendered(surface, "action-dismissed AlertDialog surface");
+    probe.assert_focused(trigger, "action-dismissed AlertDialog trigger");
 
-    click(cx, trigger);
-    settle(cx);
-    assert!(
-        cx.debug_bounds(surface).is_some(),
-        "expected controlled AlertDialog surface to reopen after gallery control dismissal"
-    );
-    press_escape(cx);
-    assert!(
-        cx.debug_bounds(surface).is_none(),
-        "expected Escape to dismiss the controlled AlertDialog"
-    );
-    assert!(
-        cx.debug_selector_is_focused(trigger),
-        "expected Escape-dismissed AlertDialog to restore focus to its trigger"
-    );
+    probe.click(trigger);
+    probe.settle();
+    probe.assert_rendered(surface, "reopened AlertDialog surface");
+    probe.press_escape();
+    probe.assert_not_rendered(surface, "escape-dismissed AlertDialog surface");
+    probe.assert_focused(trigger, "escape-dismissed AlertDialog trigger");
 }
 
 #[open_gpui::test]
@@ -4191,23 +4385,27 @@ fn overlay_gallery_smoke_closes_non_modal_sheet_from_outside_press(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
+    let story = overlay_story_contract("Sheet");
+    let trigger = story
+        .selectors()
+        .trigger_selector()
+        .expect("Sheet story should declare a trigger selector");
+    let surface = story
+        .selectors()
+        .surface_selector()
+        .expect("Sheet story should declare a surface selector");
 
-    scroll_page_until_visible(cx, "gallery:overlay-sheet-control:right-non-modal");
-    click(cx, "gallery:overlay-sheet-control:right-non-modal");
-    assert!(
-        cx.debug_bounds("sheet:overlay-sheet-demo:right-non-modal:surface")
-            .is_some(),
-        "expected controlled non-modal Sheet surface to open from its real trigger"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.scroll_page_to(trigger);
+    probe.click(trigger);
+    probe.assert_rendered(surface, "opened Sheet surface");
 
-    let outside_target = bounds(cx, "gallery:content").center();
-    click_point(cx, outside_target);
+    let outside_target = probe.outside_gallery_point();
+    probe.click_point(outside_target);
 
-    assert!(
-        cx.debug_bounds("sheet:overlay-sheet-demo:right-non-modal:surface")
-            .is_none(),
-        "expected outside press to dismiss the controlled non-modal Sheet"
-    );
+    probe.assert_not_rendered(surface, "outside-dismissed Sheet surface");
 }
 
 #[open_gpui::test]
@@ -4215,34 +4413,30 @@ fn overlay_gallery_smoke_closes_menu_from_escape_and_outside_press(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
+    let story = overlay_story_contract("Menu");
+    let trigger = story
+        .selectors()
+        .trigger_selector()
+        .expect("Menu story should declare a trigger selector");
+    let content = story
+        .selectors()
+        .surface_selector()
+        .expect("Menu story should declare a surface selector");
 
-    scroll_page_until_visible(cx, "gallery:overlay-menu-control:controlled");
-    click(cx, "gallery:overlay-menu-control:controlled");
-    assert!(
-        cx.debug_bounds("menu:overlay-menu-demo:controlled:content")
-            .is_some(),
-        "expected controlled Menu content to open from its real trigger"
-    );
-    press_escape(cx);
-    assert!(
-        cx.debug_bounds("menu:overlay-menu-demo:controlled:content")
-            .is_none(),
-        "expected Escape to dismiss the controlled Menu"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.scroll_page_to(trigger);
+    probe.click(trigger);
+    probe.assert_rendered(content, "opened Menu content");
+    probe.press_escape();
+    probe.assert_not_rendered(content, "escape-dismissed Menu content");
 
-    click(cx, "gallery:overlay-menu-control:controlled");
-    assert!(
-        cx.debug_bounds("menu:overlay-menu-demo:controlled:content")
-            .is_some(),
-        "expected controlled Menu content to reopen after Escape"
-    );
-    let outside_target = bounds(cx, "gallery:content").center();
-    click_point(cx, outside_target);
-    assert!(
-        cx.debug_bounds("menu:overlay-menu-demo:controlled:content")
-            .is_none(),
-        "expected outside press to dismiss the controlled Menu"
-    );
+    probe.click(trigger);
+    probe.assert_rendered(content, "reopened Menu content");
+    let outside_target = probe.outside_gallery_point();
+    probe.click_point(outside_target);
+    probe.assert_not_rendered(content, "outside-dismissed Menu content");
 }
 
 #[open_gpui::test]
@@ -4336,32 +4530,34 @@ fn overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
-    let hotspot = "context-menu:overlay-context-menu-demo:controlled:hotspot";
-    let surface = "context-menu:overlay-context-menu-demo:controlled:surface";
+    let story = overlay_story_contract("ContextMenu");
+    let hotspot = story
+        .selectors()
+        .trigger_selector()
+        .expect("ContextMenu story should declare a hotspot selector");
+    let surface = story
+        .selectors()
+        .surface_selector()
+        .expect("ContextMenu story should declare a surface selector");
 
-    scroll_page_until_visible(cx, hotspot);
-    right_click(cx, hotspot);
-    assert!(
-        cx.debug_bounds(surface).is_some(),
-        "expected controlled ContextMenu surface to open from right-clicking its real hotspot"
-    );
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&story, StoryProbeOperation::Open);
+    probe.assert_story_can(&story, StoryProbeOperation::Dismiss);
+    probe.scroll_page_to(hotspot);
+    probe.right_click(hotspot);
+    probe.assert_rendered(surface, "right-click opened ContextMenu surface");
 
-    press_escape(cx);
+    probe.press_escape();
 
-    assert!(
-        cx.debug_bounds(surface).is_none(),
-        "expected Escape to dismiss the controlled ContextMenu"
-    );
+    probe.assert_not_rendered(surface, "escape-dismissed ContextMenu surface");
 
-    right_click(cx, hotspot);
-    let surface_bounds = bounds(cx, surface);
-    let outside_target = visible_outside_point(bounds(cx, "gallery:content"), surface_bounds);
-    click_point(cx, outside_target);
+    probe.right_click(hotspot);
+    let surface_bounds = probe.render_bounds(surface);
+    let outside_target =
+        visible_outside_point(probe.render_bounds("gallery:content"), surface_bounds);
+    probe.click_point(outside_target);
 
-    assert!(
-        cx.debug_bounds(surface).is_none(),
-        "expected outside press to dismiss the controlled ContextMenu"
-    );
+    probe.assert_not_rendered(surface, "outside-dismissed ContextMenu surface");
 }
 
 #[open_gpui::test]
@@ -4483,91 +4679,62 @@ fn components_gallery_smoke_focuses_catalog_family_and_restores_all_mode(
         .find(|entry| entry.name == "Table")
         .unwrap_or_else(|| panic!("expected catalog entry `Table`"));
     focus_components_catalog_entry(&shell, cx, table_entry);
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:release-queue")
-            .is_some(),
-        "expected focused Table mode to render the Table sample"
+    let table_story = component_story_contract("Table");
+    let button_story = component_story_contract("Button");
+    let tabs_story = component_story_contract("Tabs");
+    let table_samples = pages::components::table_samples(ThemeTokens::default());
+    let mut probe = StoryRuntimeProbe::new(cx);
+    probe.assert_story_can(&table_story, StoryProbeOperation::Scroll);
+    probe.assert_story_can(&table_story, StoryProbeOperation::Edit);
+    for sample in table_samples {
+        probe.assert_rendered(
+            &sample.debug_selector(),
+            &format!("focused Table sample `{}`", sample.id),
+        );
+    }
+    probe.assert_not_rendered(
+        button_story
+            .selectors()
+            .primary_selector()
+            .expect("Button story should declare a sample selector"),
+        "unrelated Button sample",
     );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:release-rollup")
-            .is_some(),
-        "expected focused Table mode to render the grouped Table sample"
+    probe.assert_not_rendered(
+        tabs_story
+            .selectors()
+            .primary_selector()
+            .expect("Tabs story should declare a sample selector"),
+        "sibling Tabs sample",
     );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:release-resize")
-            .is_some(),
-        "expected focused Table mode to render the resizable Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:editable-release")
-            .is_some(),
-        "expected focused Table mode to render the editable Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:toggle-release")
-            .is_some(),
-        "expected focused Table mode to render the checkbox Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:select-release")
-            .is_some(),
-        "expected focused Table mode to render the select Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:content-fit-release")
-            .is_some(),
-        "expected focused Table mode to render the content-fit Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:release-matrix")
-            .is_some(),
-        "expected focused Table mode to render the wide matrix Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:grouped-custom-aggregation")
-            .is_some(),
-        "expected focused Table mode to render the custom aggregation Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-table-sample:row-pinning")
-            .is_some(),
-        "expected focused Table mode to render the row-pinning Table sample"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-button-sample:default")
-            .is_none(),
-        "expected focused Table mode to hide unrelated Button samples"
-    );
-    assert!(
-        cx.debug_bounds("gallery:component-tabs-sample:workspace-tabs")
-            .is_none(),
-        "expected focused Table mode to hide sibling Field-group samples"
-    );
-    assert!(
-        cx.debug_bounds("gallery:components-directory").is_some(),
-        "expected focused mode to preserve the section directory"
-    );
+    probe.assert_rendered("gallery:components-directory", "focused mode directory");
 
-    click(cx, "gallery:component-focus:all");
-    settle(cx);
+    probe.click("gallery:component-focus:all");
+    probe.settle();
 
     assert_eq!(
-        shell_snapshot(&shell, cx).components_focus,
+        shell_snapshot(&shell, probe.cx).components_focus,
         pages::components::ComponentFocusMode::All
     );
-    assert!(
-        cx.debug_bounds("gallery:component-button-sample:default")
-            .is_none(),
-        "expected all-components mode to keep deep Button samples lazy after restoration"
+    probe.assert_not_rendered(
+        button_story
+            .selectors()
+            .primary_selector()
+            .expect("Button story should declare a sample selector"),
+        "lazy Button sample after all-mode restoration",
     );
-    assert!(
-        cx.debug_bounds("gallery:component-tabs-sample:workspace-tabs")
-            .is_none(),
-        "expected all-components mode to keep nested Tabs samples lazy after restoration"
+    probe.assert_not_rendered(
+        tabs_story
+            .selectors()
+            .primary_selector()
+            .expect("Tabs story should declare a sample selector"),
+        "lazy Tabs sample after all-mode restoration",
     );
-    assert!(
-        cx.debug_bounds("component-catalog:Button").is_some(),
-        "expected all-components mode restoration to show the catalog entry for Button"
+    probe.assert_rendered(
+        button_story
+            .selectors()
+            .catalog_selector()
+            .expect("Button story should declare a catalog selector"),
+        "Button catalog card after all-mode restoration",
     );
 }
 
@@ -4599,17 +4766,27 @@ fn components_gallery_smoke_focuses_every_focusable_catalog_entry(
         "expected `All components` to restore all-mode after matrix traversal"
     );
     for selector in [
-        "gallery:component-button-sample:default",
-        "gallery:component-tabs-sample:workspace-tabs",
+        component_story_contract("Button")
+            .selectors()
+            .primary_selector()
+            .expect("Button story should declare a sample selector"),
+        component_story_contract("Tabs")
+            .selectors()
+            .primary_selector()
+            .expect("Tabs story should declare a sample selector"),
     ] {
         assert!(
             cx.debug_bounds(selector).is_none(),
             "expected all-mode restoration after matrix traversal to keep deep lazy sample `{selector}` unmounted"
         );
     }
-    assert!(
-        cx.debug_bounds("component-catalog:Button").is_some(),
-        "expected all-mode restoration after matrix traversal to return to the component catalog"
+    let button_story = component_story_contract("Button");
+    StoryRuntimeProbe::new(cx).assert_rendered(
+        button_story
+            .selectors()
+            .catalog_selector()
+            .expect("Button story should declare a catalog selector"),
+        "Button catalog card after matrix all-mode restoration",
     );
 
     assert_eq!(
@@ -5870,7 +6047,7 @@ fn components_gallery_smoke_content_fit_table_cell_edit_widens_name_column(
             .iter()
             .find(|sample| sample.id == SAMPLE_ID)
             .expect("content-fit sample should exist")
-            .render_plan()
+            .behavior_snapshot()
             .columns()[0]
             .width_policy(),
         TableColumnWidthPolicy::ContentFit
@@ -5920,13 +6097,11 @@ fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
         .iter()
         .find(|sample| sample.id == "release-rollup")
         .expect("release-rollup table sample should exist");
-    let plan = sample.render_plan();
+    let plan = sample.behavior_snapshot();
     let later_row_index = plan.visible_row_count() + sample.overscan + 5;
-    let first_row_id = plan.table().final_model().rows()[0]
-        .id()
-        .as_str()
-        .to_owned();
-    let later_row_id = plan.table().final_model().rows()[later_row_index]
+    let first_row_id = plan.rows()[0].id().as_str().to_owned();
+    let resolved = sample.state.resolve();
+    let later_row_id = resolved.final_model().rows()[later_row_index]
         .id()
         .as_str()
         .to_owned();
@@ -6008,17 +6183,17 @@ fn components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_samp
         .iter()
         .find(|sample| sample.id == "release-rollup")
         .expect("release-rollup table sample should exist");
-    let plan = sample.render_plan();
+    let plan = sample.behavior_snapshot();
     assert!(
-        plan.uses_split_pinned_layout(),
+        plan.uses_split_pinned_columns(),
         "release-rollup should exercise sticky pinned table lanes"
     );
     let first_rendered_row = plan
         .rows()
         .iter()
-        .find(|row| row.row().is_leaf())
+        .find(|row| row.is_leaf())
         .unwrap_or(&plan.rows()[0]);
-    let first_row_key = first_rendered_row.render_key().to_owned();
+    let first_row_key = first_rendered_row.id().as_str().to_owned();
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     let table_entry = pages::components::COMPONENT_CATALOG
@@ -6195,12 +6370,12 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
         .iter()
         .find(|sample| sample.id == "release-matrix")
         .expect("release-matrix table sample should exist");
-    let plan = sample.render_plan();
+    let plan = sample.behavior_snapshot();
     assert!(
-        plan.uses_split_pinned_layout(),
+        plan.uses_split_pinned_columns(),
         "release-matrix should exercise sticky pinned table lanes"
     );
-    let first_row_key = plan.rows()[0].render_key().to_owned();
+    let first_row_key = plan.rows()[0].id().as_str().to_owned();
     let far_header = "table:component-table:release-matrix:header:metric_13";
     let far_cell = format!("table:component-table:release-matrix:cell:{first_row_key}:metric_13");
     let left_group = "table:component-table:release-matrix:header-group:left:1:identity";
@@ -6346,9 +6521,9 @@ fn components_gallery_smoke_column_visibility_updates_release_matrix(
 
     let table_samples = pages::components::table_samples(ThemeTokens::default());
     let sample = table_sample(&table_samples, SAMPLE_ID);
-    let plan = sample.render_plan();
+    let plan = sample.behavior_snapshot();
     assert_eq!(plan.aria_column_count(), 16);
-    let first_row_key = plan.rows()[0].render_key().to_owned();
+    let first_row_key = plan.rows()[0].id().as_str().to_owned();
     let metric_cell =
         format!("table:component-table:release-matrix:cell:{first_row_key}:metric_03");
 
@@ -6467,24 +6642,35 @@ fn components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample(
         .iter()
         .find(|sample| sample.id == "row-pinning")
         .expect("row-pinning table sample should exist");
-    let plan = sample.render_plan();
-    assert_eq!(plan.top_rows().len(), 1);
-    assert_eq!(plan.center_rows().len(), 11);
-    assert_eq!(plan.bottom_rows().len(), 2);
+    let plan = sample.behavior_snapshot();
+    assert_eq!(plan.row_counts().pinned_top_rows(), 1);
+    assert_eq!(plan.row_counts().pinned_center_rows(), 11);
+    assert_eq!(plan.row_counts().pinned_bottom_rows(), 2);
     assert!(
-        plan.uses_split_pinned_layout(),
+        plan.uses_split_pinned_columns(),
         "row-pinning should combine row-pinned bands with pinned column lanes"
     );
 
-    let top_row_key = plan.top_rows()[0].render_key().to_owned();
-    let bottom_row_key = plan.bottom_rows()[1].render_key().to_owned();
+    let top_row_key = plan
+        .rows_for_region(TableRowRegion::Top)
+        .next()
+        .expect("row-pinning should render a top-pinned row")
+        .id()
+        .as_str()
+        .to_owned();
+    let bottom_row_key = plan
+        .rows_for_region(TableRowRegion::Bottom)
+        .nth(1)
+        .expect("row-pinning should render two bottom-pinned rows")
+        .id()
+        .as_str()
+        .to_owned();
     let center_cell_selectors = plan
-        .center_rows()
-        .iter()
+        .rows_for_region(TableRowRegion::Center)
         .map(|row| {
             format!(
                 "table:component-table:row-pinning:cell:{}:name",
-                row.render_key()
+                row.id().as_str()
             )
         })
         .collect::<Vec<_>>();

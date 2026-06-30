@@ -2,9 +2,11 @@
 
 use crate::a11y::UiA11yElementExt;
 use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
+use crate::choice::{
+    self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection, ChoiceSelectionMode,
+};
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::geometry::gpui_px_from_ui;
-use crate::roving_focus::{active_index_from_str_keys, roving_navigation_target};
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
 use open_gpui::{
@@ -242,19 +244,22 @@ impl ToggleGroupState {
         tokens: ThemeTokens,
     ) -> Self {
         let descriptors: Vec<ToggleGroupItemDescriptor> = items.into_iter().collect();
-        let values: Vec<String> = descriptors.iter().map(|item| item.value.clone()).collect();
-        let disabled_map: Vec<bool> = descriptors
-            .iter()
-            .map(|item| disabled || item.disabled)
-            .collect();
-        let selected_values =
-            normalize_toggle_group_selection(mode, selected_values, &values, &disabled_map);
+        let choice_items = toggle_group_choice_items(disabled, &descriptors);
+        let selected_values = choice::resolve_projected_selected_values(
+            toggle_group_choice_selection_mode(mode),
+            &choice_items,
+            None,
+            selected_values,
+        );
         let first_selected = selected_values.first().map(String::as_str);
-        let focused_index = if disabled {
-            None
-        } else {
-            active_index_from_str_keys(&values, focused_value.or(first_selected), &disabled_map)
-        };
+        let collection = ChoiceCollection::resolve(
+            disabled,
+            choice_items,
+            None,
+            focused_value.or(first_selected),
+            toggle_group_choice_policy(orientation, mode, selection_required),
+        );
+        let focused_index = collection.active_index();
         let colors = ThemeResolver::button_colors(tokens, ButtonVariant::Outline, false);
         let selected_colors = ThemeResolver::button_colors(tokens, ButtonVariant::Outline, true);
         let selected_set: BTreeSet<&str> = selected_values.iter().map(String::as_str).collect();
@@ -366,8 +371,8 @@ impl ToggleGroupState {
             .iter()
             .find(|item| item.value() == value && item.focusable())?
             .clone();
-        let next_selected = next_toggle_group_selection(
-            self.mode,
+        let next_selected = choice::next_selected_values(
+            toggle_group_choice_selection_mode(self.mode),
             self.selection_required,
             &self.selected_values,
             item.value(),
@@ -418,7 +423,49 @@ pub fn toggle_group_navigation_target(
     current: usize,
     disabled: &[bool],
 ) -> Option<usize> {
-    roving_navigation_target(orientation, key, current, disabled)
+    ChoiceInteractionPolicy::roving(orientation).navigation_target_index(key, current, disabled)
+}
+
+fn toggle_group_choice_selection_mode(mode: ToggleGroupSelectionMode) -> ChoiceSelectionMode {
+    match mode {
+        ToggleGroupSelectionMode::Single => ChoiceSelectionMode::Single,
+        ToggleGroupSelectionMode::Multiple => ChoiceSelectionMode::Multiple,
+    }
+}
+
+fn toggle_group_choice_policy(
+    orientation: Orientation,
+    mode: ToggleGroupSelectionMode,
+    selection_required: bool,
+) -> ChoiceInteractionPolicy {
+    match mode {
+        ToggleGroupSelectionMode::Single => ChoiceInteractionPolicy::single_optional(orientation)
+            .with_selection_required(selection_required),
+        ToggleGroupSelectionMode::Multiple => ChoiceInteractionPolicy::multiple(orientation)
+            .with_selection_required(selection_required),
+    }
+}
+
+fn toggle_group_choice_items(
+    disabled: bool,
+    items: &[ToggleGroupItemDescriptor],
+) -> Vec<ChoiceItemProjection<()>> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let label = item.label().to_owned();
+            ChoiceItemProjection::new(
+                index,
+                None,
+                item.value(),
+                label.clone(),
+                disabled || item.disabled_state(),
+                (),
+            )
+            .text_value(label)
+        })
+        .collect()
 }
 
 /// A concrete GPUI toggle group item.
@@ -929,64 +976,6 @@ impl ToggleGroupRuntime {
         self.selected_values = change.selected_values().to_vec();
         let focus_handle = self.set_focused(descriptor.value(), cx);
         Some((change, focus_handle))
-    }
-}
-
-fn normalize_toggle_group_selection(
-    mode: ToggleGroupSelectionMode,
-    selected_values: impl IntoIterator<Item = impl Into<String>>,
-    values: &[String],
-    disabled: &[bool],
-) -> Vec<String> {
-    let valid_values: BTreeSet<&str> = values
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| !disabled.get(*index).copied().unwrap_or(true))
-        .map(|(_, value)| value.as_str())
-        .collect();
-    let mut seen = BTreeSet::new();
-    let mut selected = Vec::new();
-
-    for value in selected_values {
-        let value = value.into();
-        if valid_values.contains(value.as_str()) && seen.insert(value.clone()) {
-            selected.push(value);
-            if mode == ToggleGroupSelectionMode::Single {
-                break;
-            }
-        }
-    }
-
-    selected
-}
-
-fn next_toggle_group_selection(
-    mode: ToggleGroupSelectionMode,
-    selection_required: bool,
-    current: &[String],
-    value: &str,
-) -> Vec<String> {
-    let selected = current.iter().any(|selected| selected == value);
-
-    match mode {
-        ToggleGroupSelectionMode::Single if selected && selection_required => current.to_vec(),
-        ToggleGroupSelectionMode::Single if selected => Vec::new(),
-        ToggleGroupSelectionMode::Single => vec![value.to_owned()],
-        ToggleGroupSelectionMode::Multiple
-            if selected && selection_required && current.len() <= 1 =>
-        {
-            current.to_vec()
-        }
-        ToggleGroupSelectionMode::Multiple if selected => current
-            .iter()
-            .filter(|selected| selected.as_str() != value)
-            .cloned()
-            .collect(),
-        ToggleGroupSelectionMode::Multiple => {
-            let mut next = current.to_vec();
-            next.push(value.to_owned());
-            next
-        }
     }
 }
 

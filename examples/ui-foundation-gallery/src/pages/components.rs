@@ -15,34 +15,41 @@ use open_gpui_ui_components::{
     SidebarCollapseMode, SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide,
     SidebarState, SidebarVariant, Skeleton, SkeletonState, Slider, SliderState,
     SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState, Switch, SwitchState, Table,
-    TableAggregation, TableCellEditApplyOutcome, TableCellEditChange, TableCellValue, TableColumn,
-    TableColumnFacets, TableColumnGroup, TableColumnId, TableColumnOrderChange, TableColumnPinning,
-    TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableColumnVisibilityChange,
-    TableColumnVisibilityOverrides, TableExpansionMode, TableExpansionState, TableFacetValueCount,
-    TableFacetedFilterChange, TableFilter, TableGlobalFilterChange, TablePagination,
-    TablePredicateFilterChange, TableRangeFilterChange, TableRenderPlan, TableRow,
+    TableAggregation, TableBehaviorSnapshot, TableCellEditApplyOutcome, TableCellEditChange,
+    TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId,
+    TableColumnOrderChange, TableColumnPinning, TableColumnSizing, TableColumnSizingChange,
+    TableColumnVisibilityChange, TableColumnVisibilityOverrides, TableExpansionState,
+    TableFacetValueCount, TableFacetedFilterChange, TableFilter, TableGlobalFilterChange,
+    TablePagination, TablePredicateFilterChange, TableRangeFilterChange, TableRow,
     TableRowActivation, TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning,
-    TableRowPinningPolicy, TableSelectOption, TableSort, TableStageMode, TableState, Tabs,
-    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, Tag, TagState, TagVariant,
-    TextInput, TextInputDisplayMode, TextInputState, Textarea, TextareaState, Toast, ToastStack,
-    ToastStackState, Toggle, ToggleGroup, ToggleGroupItem, ToggleGroupSelectionMode,
-    ToggleGroupState, ToggleState, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
-    ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeMove, TreeRenderPlan, TreeState,
-    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
-    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
-    apply_tree_move,
+    TableSelectOption, TableSort, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem,
+    TabsItemDescriptor, TabsState, Tag, TagState, TagVariant, TextInput, TextInputDisplayMode,
+    TextInputState, Textarea, TextareaState, Toast, ToastStack, ToastStackState, Toggle,
+    ToggleGroup, ToggleGroupItem, ToggleGroupSelectionMode, ToggleGroupState, ToggleState,
+    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
+    Tree, TreeItemDescriptor, TreeMove, TreeRenderPlan, TreeState, VirtualizedList,
+    VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRenderPlan,
+    VirtualizedListScrollStrategy, VirtualizedListState, apply_tree_move,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
     OverlayPlacementAlignment, OverlayPlacementSide, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
+#[path = "components/catalog.rs"]
+pub mod catalog;
 #[path = "components/render.rs"]
 mod render;
 
+pub use catalog::{
+    COMPONENT_CATALOG, COMPONENT_PAGE_JUMPS, ComponentCatalogEntry, ComponentCatalogStatus,
+    ComponentFocusMode, ComponentPageJump, component_story_contracts,
+    focused_section_for_catalog_entry, focused_section_for_id, official_sample_selector_pairs,
+    state_contract_readout_pairs,
+};
 pub(crate) use render::{
     component_page_section_count, component_page_section_index, render_components_directory,
     render_components_page,
@@ -60,7 +67,11 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_foundation_gallery::pages::components::ComponentCatalogEntry",
     "open_gpui_ui_foundation_gallery::pages::components::ComponentCatalogStatus",
     "open_gpui_ui_foundation_gallery::pages::components::ComponentFocusMode",
+    "open_gpui_ui_foundation_gallery::pages::components::component_story_contracts",
     "open_gpui_ui_foundation_gallery::pages::components::state_contract_readout_pairs",
+    "open_gpui_ui_foundation_gallery::StoryContract",
+    "open_gpui_ui_foundation_gallery::StoryProbeContract",
+    "open_gpui_ui_foundation_gallery::StoryProbeOperation",
     "open_gpui_ui_components::Button",
     "open_gpui_ui_components::ButtonState",
     "open_gpui_ui_components::ButtonVariant",
@@ -247,737 +258,6 @@ pub const SIGNALS: &[&str] = &[
     "Role::Tree",
     "Role::TreeItem",
 ];
-
-/// Stable jump targets for the Components page navigator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ComponentPageJump {
-    /// Stable jump id used by the page directory and section anchors.
-    pub id: &'static str,
-    /// Visible label.
-    pub label: &'static str,
-}
-
-/// Page jump targets matching the Components page section order.
-pub const COMPONENT_PAGE_JUMPS: &[ComponentPageJump] = &[
-    ComponentPageJump {
-        id: "catalog",
-        label: "Component catalog",
-    },
-    ComponentPageJump {
-        id: "primitives",
-        label: "Primitives",
-    },
-    ComponentPageJump {
-        id: "feedback",
-        label: "Feedback",
-    },
-    ComponentPageJump {
-        id: "foundation-components",
-        label: "Foundation components",
-    },
-    ComponentPageJump {
-        id: "state-contracts",
-        label: "State contracts",
-    },
-    ComponentPageJump {
-        id: "gates",
-        label: "Conformance gates",
-    },
-    ComponentPageJump {
-        id: "sidebar",
-        label: "Sidebar",
-    },
-    ComponentPageJump {
-        id: "tree",
-        label: "Tree",
-    },
-    ComponentPageJump {
-        id: "toolbar",
-        label: "Toolbar",
-    },
-    ComponentPageJump {
-        id: "listbox",
-        label: "Listbox",
-    },
-    ComponentPageJump {
-        id: "select",
-        label: "Select",
-    },
-    ComponentPageJump {
-        id: "combobox",
-        label: "Combobox",
-    },
-    ComponentPageJump {
-        id: "command",
-        label: "Command",
-    },
-    ComponentPageJump {
-        id: "button",
-        label: "Button",
-    },
-    ComponentPageJump {
-        id: "splitter",
-        label: "Splitter",
-    },
-    ComponentPageJump {
-        id: "scroll-area",
-        label: "ScrollArea",
-    },
-    ComponentPageJump {
-        id: "badge",
-        label: "Badge",
-    },
-    ComponentPageJump {
-        id: "switch",
-        label: "Switch",
-    },
-    ComponentPageJump {
-        id: "checkbox",
-        label: "Checkbox",
-    },
-    ComponentPageJump {
-        id: "radio-group",
-        label: "RadioGroup",
-    },
-    ComponentPageJump {
-        id: "toggle",
-        label: "Toggle",
-    },
-    ComponentPageJump {
-        id: "icon-button",
-        label: "IconButton",
-    },
-    ComponentPageJump {
-        id: "label",
-        label: "Label",
-    },
-    ComponentPageJump {
-        id: "text-input",
-        label: "TextInput",
-    },
-    ComponentPageJump {
-        id: "textarea",
-        label: "Textarea",
-    },
-    ComponentPageJump {
-        id: "field",
-        label: "Field",
-    },
-    ComponentPageJump {
-        id: "tabs",
-        label: "Tabs",
-    },
-    ComponentPageJump {
-        id: "table",
-        label: "Table",
-    },
-    ComponentPageJump {
-        id: "virtualized-list",
-        label: "VirtualizedList",
-    },
-    ComponentPageJump {
-        id: "signals",
-        label: "Signals",
-    },
-];
-
-/// Components page rendering mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ComponentFocusMode {
-    /// Render the full conformance page.
-    All,
-    /// Render one component section plus its local metadata.
-    Section(&'static str),
-}
-
-impl Default for ComponentFocusMode {
-    fn default() -> Self {
-        Self::All
-    }
-}
-
-impl ComponentFocusMode {
-    /// Creates a focus mode for a known Components page section.
-    pub fn section(id: &'static str) -> Option<Self> {
-        focused_section_for_id(id).map(Self::Section)
-    }
-
-    /// Returns the stable reset key used by the outer gallery page viewport.
-    pub const fn reset_key(self) -> &'static str {
-        match self {
-            Self::All => "all",
-            Self::Section(id) => id,
-        }
-    }
-
-    /// Returns true when the section should render for this mode.
-    pub const fn shows_section(self, id: &'static str) -> bool {
-        match self {
-            Self::All => true,
-            Self::Section(focused) => str_eq(focused, id),
-        }
-    }
-
-    /// Returns the focused section id when one is active.
-    pub const fn focused_section(self) -> Option<&'static str> {
-        match self {
-            Self::All => None,
-            Self::Section(id) => Some(id),
-        }
-    }
-}
-
-const fn str_eq(left: &str, right: &str) -> bool {
-    let left = left.as_bytes();
-    let right = right.as_bytes();
-    if left.len() != right.len() {
-        return false;
-    }
-
-    let mut index = 0;
-    while index < left.len() {
-        if left[index] != right[index] {
-            return false;
-        }
-        index += 1;
-    }
-
-    true
-}
-
-/// Returns a section id that can be shown in focused mode.
-pub fn focused_section_for_id(id: &'static str) -> Option<&'static str> {
-    COMPONENT_PAGE_JUMPS
-        .iter()
-        .map(|jump| jump.id)
-        .find(|candidate| {
-            *candidate == id
-                && *candidate != "catalog"
-                && *candidate != "gates"
-                && *candidate != "signals"
-        })
-}
-
-/// Returns the focused section represented by a catalog entry.
-pub fn focused_section_for_catalog_entry(entry: &ComponentCatalogEntry) -> Option<&'static str> {
-    match entry.status {
-        ComponentCatalogStatus::Official | ComponentCatalogStatus::StateContract => {
-            focused_section_for_id(entry.sample_section_id())
-        }
-        ComponentCatalogStatus::AdapterOnly
-        | ComponentCatalogStatus::InternalAnatomy
-        | ComponentCatalogStatus::Deferred => None,
-    }
-}
-
-/// Component catalog status shown by the Components page.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ComponentCatalogStatus {
-    /// Official component with resolved state, exports, gallery sample, docs, and verification.
-    Official,
-    /// Public adapter helper or implementation detail that is not an official standalone component.
-    AdapterOnly,
-    /// Public anatomy used by an official component family, not a standalone gallery component.
-    InternalAnatomy,
-    /// Public renderer-neutral state contract that does not yet have an official renderer.
-    StateContract,
-    /// Planned component not present in the current official catalog.
-    Deferred,
-}
-
-impl ComponentCatalogStatus {
-    /// Stable status label used by tests and the gallery.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Official => "official",
-            Self::AdapterOnly => "adapter-only",
-            Self::InternalAnatomy => "internal-anatomy",
-            Self::StateContract => "state-contract",
-            Self::Deferred => "deferred",
-        }
-    }
-
-    /// Pill colors used by the gallery to render the catalog status badge.
-    pub const fn badge_colors(self) -> (u32, u32, u32) {
-        match self {
-            Self::Official => (0xe8f3ef, 0x9ccdbd, 0x1f5f4d),
-            Self::AdapterOnly => (0xf4f1ea, 0xd9c7a8, 0x6a512b),
-            Self::InternalAnatomy => (0xf2f4f8, 0xc6cfdd, 0x475569),
-            Self::StateContract => (0xeaf3fb, 0xa8c7df, 0x28516a),
-            Self::Deferred => (0xf7f7f2, 0xd6d8ce, 0x5a6472),
-        }
-    }
-}
-
-/// One component catalog entry shown by the Components page.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ComponentCatalogEntry {
-    /// Public component or helper name.
-    pub name: &'static str,
-    /// Current catalog status.
-    pub status: ComponentCatalogStatus,
-    /// Component family or ownership area.
-    pub family: &'static str,
-    /// Resolved state or public contract type, when applicable.
-    pub state: Option<&'static str>,
-    /// Gallery, adapter, or follow-up coverage note.
-    pub coverage: &'static str,
-    /// Stable rendered sample selector for official catalog entries.
-    pub sample_selector: Option<&'static str>,
-    /// Stable gallery readout selector for renderer-neutral state contracts.
-    pub state_contract_selector: Option<&'static str>,
-}
-
-impl ComponentCatalogEntry {
-    /// Creates an official catalog entry with a stable sample selector.
-    pub const fn official(
-        name: &'static str,
-        family: &'static str,
-        state: &'static str,
-        coverage: &'static str,
-        sample_selector: &'static str,
-    ) -> Self {
-        Self {
-            name,
-            status: ComponentCatalogStatus::Official,
-            family,
-            state: Some(state),
-            coverage,
-            sample_selector: Some(sample_selector),
-            state_contract_selector: None,
-        }
-    }
-
-    /// Creates a renderer-neutral state-contract catalog entry.
-    pub const fn state_contract(
-        name: &'static str,
-        family: &'static str,
-        state: &'static str,
-        coverage: &'static str,
-        state_contract_selector: &'static str,
-    ) -> Self {
-        Self {
-            name,
-            status: ComponentCatalogStatus::StateContract,
-            family,
-            state: Some(state),
-            coverage,
-            sample_selector: None,
-            state_contract_selector: Some(state_contract_selector),
-        }
-    }
-
-    /// Creates an adapter-only catalog entry.
-    pub const fn adapter_only(
-        name: &'static str,
-        family: &'static str,
-        coverage: &'static str,
-    ) -> Self {
-        Self {
-            name,
-            status: ComponentCatalogStatus::AdapterOnly,
-            family,
-            state: None,
-            coverage,
-            sample_selector: None,
-            state_contract_selector: None,
-        }
-    }
-
-    /// Creates an internal-anatomy catalog entry.
-    pub const fn internal_anatomy(
-        name: &'static str,
-        family: &'static str,
-        coverage: &'static str,
-    ) -> Self {
-        Self {
-            name,
-            status: ComponentCatalogStatus::InternalAnatomy,
-            family,
-            state: None,
-            coverage,
-            sample_selector: None,
-            state_contract_selector: None,
-        }
-    }
-
-    /// Returns the label the gallery should render for this entry's state row.
-    pub const fn display_state_label(self) -> &'static str {
-        match self.state {
-            Some(state) => state,
-            None => match self.status {
-                ComponentCatalogStatus::AdapterOnly => "adapter-owned",
-                ComponentCatalogStatus::InternalAnatomy => "internal-anatomy",
-                ComponentCatalogStatus::StateContract => "state-contract",
-                ComponentCatalogStatus::Deferred => "deferred",
-                ComponentCatalogStatus::Official => "unclassified",
-            },
-        }
-    }
-
-    /// Returns the stable selector used for the visible catalog card.
-    pub fn catalog_selector(self) -> String {
-        format!("component-catalog:{}", self.name)
-    }
-
-    /// Returns the Components page section that contains this entry's rendered sample or readout.
-    pub fn sample_section_id(self) -> &'static str {
-        match self.name {
-            "StatusCue" | "EmptyState" => "feedback",
-            "Accordion" | "Collapsible" | "Slider" | "NumberInput" | "ToggleGroup" | "Link"
-            | "Breadcrumb" | "Tag" | "ToastStack" => "foundation-components",
-            "TreeState" | "VirtualizedListState" => "state-contracts",
-            "RadioGroup" => "radio-group",
-            "IconButton" => "icon-button",
-            "TextInput" => "text-input",
-            "ScrollArea" => "scroll-area",
-            "VirtualizedList" => "virtualized-list",
-            "Button" => "button",
-            "Badge" => "badge",
-            "Switch" => "switch",
-            "Checkbox" => "checkbox",
-            "Toggle" => "toggle",
-            "Toolbar" => "toolbar",
-            "Sidebar" => "sidebar",
-            "Tree" => "tree",
-            "Listbox" => "listbox",
-            "Select" => "select",
-            "Combobox" => "combobox",
-            "Command" => "command",
-            "Label" => "label",
-            "Field" => "field",
-            "Tabs" => "tabs",
-            "Splitter" => "splitter",
-            "Table" => "table",
-            "Separator" | "Kbd" | "Progress" | "Skeleton" | "Avatar" | "AvatarGroup" => {
-                "primitives"
-            }
-            _ => "catalog",
-        }
-    }
-}
-
-/// Official component catalog and adjacent public surfaces.
-pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
-    ComponentCatalogEntry::official(
-        "Button",
-        "action",
-        "ButtonState",
-        "exports / gallery / state tests",
-        "gallery:component-button-sample:default",
-    ),
-    ComponentCatalogEntry::official(
-        "Badge",
-        "display",
-        "BadgeState",
-        "exports / gallery / state tests",
-        "gallery:component-badge-sample:default",
-    ),
-    ComponentCatalogEntry::official(
-        "Accordion",
-        "disclosure",
-        "AccordionState",
-        "exports / gallery / state tests",
-        "gallery:component-accordion-sample:shipping",
-    ),
-    ComponentCatalogEntry::official(
-        "Collapsible",
-        "disclosure",
-        "CollapsibleState",
-        "exports / gallery / state tests",
-        "gallery:component-collapsible-sample:release-notes",
-    ),
-    ComponentCatalogEntry::official(
-        "Slider",
-        "form",
-        "SliderState",
-        "exports / gallery / keyboard tests",
-        "gallery:component-slider-sample:volume",
-    ),
-    ComponentCatalogEntry::official(
-        "NumberInput",
-        "form",
-        "NumberInputState",
-        "exports / gallery / stepper tests",
-        "gallery:component-number-input-sample:workers",
-    ),
-    ComponentCatalogEntry::official(
-        "ToggleGroup",
-        "action",
-        "ToggleGroupState",
-        "exports / gallery / stable value tests",
-        "gallery:component-toggle-group-sample:alignment",
-    ),
-    ComponentCatalogEntry::official(
-        "Link",
-        "navigation",
-        "LinkState",
-        "exports / gallery / activation tests",
-        "gallery:component-link-sample:docs",
-    ),
-    ComponentCatalogEntry::official(
-        "Breadcrumb",
-        "navigation",
-        "BreadcrumbState",
-        "exports / gallery / activation tests",
-        "gallery:component-breadcrumb-sample:project",
-    ),
-    ComponentCatalogEntry::official(
-        "Tag",
-        "display",
-        "TagState",
-        "exports / gallery / remove tests",
-        "gallery:component-tag-sample:ready",
-    ),
-    ComponentCatalogEntry::official(
-        "ToastStack",
-        "feedback",
-        "ToastStackState",
-        "exports / gallery / stack tests",
-        "gallery:component-toast-stack-sample:notifications",
-    ),
-    ComponentCatalogEntry::official(
-        "IconButton",
-        "action",
-        "IconButtonState",
-        "exports / gallery / a11y metadata",
-        "gallery:component-icon-button-sample:search",
-    ),
-    ComponentCatalogEntry::official(
-        "Switch",
-        "form",
-        "SwitchState",
-        "exports / gallery / state tests",
-        "gallery:component-switch-sample:off",
-    ),
-    ComponentCatalogEntry::official(
-        "Checkbox",
-        "form",
-        "CheckboxState",
-        "exports / gallery / state tests",
-        "gallery:component-checkbox-sample:unchecked",
-    ),
-    ComponentCatalogEntry::official(
-        "RadioGroup",
-        "choice",
-        "RadioGroupState",
-        "exports / gallery / runtime smoke",
-        "gallery:component-radio-sample:persona-radios",
-    ),
-    ComponentCatalogEntry::official(
-        "Toggle",
-        "action",
-        "ToggleState",
-        "exports / gallery / state tests",
-        "gallery:component-toggle-sample:ghost-off",
-    ),
-    ComponentCatalogEntry::official(
-        "Toolbar",
-        "shell",
-        "ToolbarState",
-        "exports / gallery / runtime smoke",
-        "gallery:component-toolbar-sample:editor-toolbar",
-    ),
-    ComponentCatalogEntry::official(
-        "Sidebar",
-        "shell",
-        "SidebarState",
-        "exports / gallery / scroll smoke",
-        "gallery:component-sidebar-sample:workspace-sidebar",
-    ),
-    ComponentCatalogEntry::official(
-        "Tree",
-        "hierarchy",
-        "TreeState",
-        "exports / gallery / tree runtime smoke",
-        "gallery:component-tree-sample:document-outline",
-    ),
-    ComponentCatalogEntry::official(
-        "Listbox",
-        "choice",
-        "ListboxState",
-        "exports / gallery / shared navigation smoke",
-        "gallery:component-listbox-sample:assignee-listbox",
-    ),
-    ComponentCatalogEntry::official(
-        "Select",
-        "choice",
-        "SelectState",
-        "exports / gallery / stable value smoke",
-        "gallery:component-select-sample:priority-select",
-    ),
-    ComponentCatalogEntry::official(
-        "Combobox",
-        "choice-search",
-        "ComboboxState",
-        "exports / gallery / stable value smoke",
-        "gallery:component-combobox-sample:framework-combobox",
-    ),
-    ComponentCatalogEntry::official(
-        "Command",
-        "choice-search",
-        "CommandState",
-        "exports / gallery / stable value and runtime smoke",
-        "gallery:component-command-sample:ranked-search",
-    ),
-    ComponentCatalogEntry::official(
-        "Label",
-        "form",
-        "LabelState",
-        "exports / gallery / a11y metadata",
-        "gallery:component-label-sample:email",
-    ),
-    ComponentCatalogEntry::official(
-        "TextInput",
-        "form",
-        "TextInputState",
-        "exports / gallery / controller tests",
-        "gallery:component-text-input-sample:default",
-    ),
-    ComponentCatalogEntry::official(
-        "Textarea",
-        "form",
-        "TextareaState",
-        "exports / gallery / controlled multiline tests",
-        "gallery:component-textarea-sample:default",
-    ),
-    ComponentCatalogEntry::official(
-        "Field",
-        "form",
-        "FieldState",
-        "exports / gallery / composition tests",
-        "gallery:component-field-sample:email",
-    ),
-    ComponentCatalogEntry::official(
-        "Tabs",
-        "navigation",
-        "TabsState",
-        "exports / gallery / runtime smoke",
-        "gallery:component-tabs-sample:overview-tabs",
-    ),
-    ComponentCatalogEntry::official(
-        "ScrollArea",
-        "layout",
-        "ScrollAreaState",
-        "exports / gallery / redraw smoke",
-        "gallery:component-scroll-area-sample:activity-log",
-    ),
-    ComponentCatalogEntry::official(
-        "Splitter",
-        "layout",
-        "SplitterState",
-        "exports / gallery / drag smoke",
-        "gallery:component-splitter-sample:workspace-split",
-    ),
-    ComponentCatalogEntry::official(
-        "Table",
-        "data",
-        "TableState",
-        "exports / gallery / virtualized scroll and resize smoke",
-        "gallery:component-table-sample:release-queue",
-    ),
-    ComponentCatalogEntry::official(
-        "VirtualizedList",
-        "data",
-        "VirtualizedListState",
-        "exports / gallery / virtualized scroll smoke",
-        "gallery:component-virtualized-list-sample:release-navigation",
-    ),
-    ComponentCatalogEntry::official(
-        "StatusCue",
-        "feedback",
-        "StatusCueState",
-        "exports / gallery / token intents",
-        "gallery:component-status-cue-sample:sync-warning",
-    ),
-    ComponentCatalogEntry::official(
-        "EmptyState",
-        "feedback",
-        "EmptyStateState",
-        "exports / gallery / token intents",
-        "gallery:component-empty-state-sample:no-results",
-    ),
-    ComponentCatalogEntry::adapter_only(
-        "TextInputController",
-        "form-adapter",
-        "gpui_adapter export / controller tests",
-    ),
-    ComponentCatalogEntry::internal_anatomy("ToolbarItem", "shell", "Toolbar anatomy"),
-    ComponentCatalogEntry::internal_anatomy("SidebarItem", "shell", "Sidebar anatomy"),
-    ComponentCatalogEntry::internal_anatomy("ListboxOption", "choice", "Listbox anatomy"),
-    ComponentCatalogEntry::official(
-        "Separator",
-        "layout",
-        "SeparatorState",
-        "exports / gallery / state tests",
-        "gallery:component-separator-sample:section-rule",
-    ),
-    ComponentCatalogEntry::official(
-        "Kbd",
-        "display",
-        "KbdState",
-        "exports / gallery / state tests",
-        "gallery:component-kbd-sample:command-palette",
-    ),
-    ComponentCatalogEntry::official(
-        "Progress",
-        "status",
-        "ProgressState",
-        "exports / gallery / state tests",
-        "gallery:component-progress-sample:sync",
-    ),
-    ComponentCatalogEntry::official(
-        "Skeleton",
-        "status",
-        "SkeletonState",
-        "exports / gallery / state tests",
-        "gallery:component-skeleton-sample:body-line",
-    ),
-    ComponentCatalogEntry::official(
-        "Avatar",
-        "identity",
-        "AvatarState",
-        "exports / gallery / state tests",
-        "gallery:component-avatar-sample:ada",
-    ),
-    ComponentCatalogEntry::official(
-        "AvatarGroup",
-        "identity",
-        "AvatarGroupState",
-        "exports / gallery / state tests",
-        "gallery:component-avatar-group-sample:team",
-    ),
-    ComponentCatalogEntry::state_contract(
-        "TreeState",
-        "hierarchy",
-        "TreeState",
-        "state contract / renderer readout",
-        "gallery:component-tree-state-contract:document-outline",
-    ),
-    ComponentCatalogEntry::state_contract(
-        "VirtualizedListState",
-        "data",
-        "VirtualizedListState",
-        "state contract / virtualizer boundary",
-        "gallery:component-virtualized-list-state-contract:release-navigation",
-    ),
-];
-
-/// Returns the official catalog entries that own rendered sample selectors.
-pub fn official_sample_selector_pairs() -> impl Iterator<Item = (&'static str, &'static str)> {
-    COMPONENT_CATALOG
-        .iter()
-        .filter_map(|entry| entry.sample_selector.map(|selector| (entry.name, selector)))
-}
-
-/// Returns renderer-neutral state contracts that own visible gallery readouts.
-pub fn state_contract_readout_pairs() -> impl Iterator<Item = (&'static str, &'static str)> {
-    COMPONENT_CATALOG.iter().filter_map(|entry| {
-        entry
-            .state_contract_selector
-            .map(|selector| (entry.name, selector))
-    })
-}
 
 /// One component conformance gate shown by the Components page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2962,134 +2242,61 @@ pub struct TableSampleStateSummary {
 }
 
 impl TableSampleStateSummary {
-    fn from_plan(plan: &TableRenderPlan, state: &TableState) -> Self {
-        let visible = plan.virtualizer().visible_range();
-        let overscan = plan.virtualizer().overscan_range();
-        let final_rows = plan.table().final_model().rows();
-        let row_regions = plan.table().row_regions();
-        let group_rows = final_rows.iter().filter(|row| row.is_group()).count();
-        let tree_rows = final_rows.iter().filter(|row| row.tree().is_some()).count();
-        let tree_branch_rows = final_rows.iter().filter(|row| row.is_tree_branch()).count();
-        let unloaded_tree_branches = final_rows
-            .iter()
-            .filter(|row| {
-                row.is_tree_branch()
-                    && row.loaded_child_count() == 0
-                    && row
-                        .children_load_state()
-                        .is_some_and(|state| *state == TableRowChildrenLoadState::Idle)
-            })
-            .count();
-        let loading_tree_rows = final_rows
-            .iter()
-            .filter(|row| {
-                row.children_load_state()
-                    .is_some_and(TableRowChildrenLoadState::is_loading)
-            })
-            .count();
-        let failed_tree_rows = final_rows
-            .iter()
-            .filter(|row| {
-                row.children_load_state()
-                    .is_some_and(TableRowChildrenLoadState::is_failed)
-            })
-            .count();
-        let tree_depth = final_rows.iter().map(|row| row.depth()).max().unwrap_or(0);
-        let regions = plan.table().visible_column_regions();
-        let header_groups = plan.table().header_groups();
-        let visible_group_ids = header_groups
-            .all()
-            .flat_map(|group| group.headers().iter())
-            .filter(|cell| cell.is_group())
-            .map(|cell| cell.source_id().to_owned())
-            .collect::<BTreeSet<_>>();
+    fn from_snapshot(snapshot: &TableBehaviorSnapshot) -> Self {
+        let visible = snapshot.visible_rows();
+        let rows = snapshot.row_counts();
+        let columns = snapshot.column_regions();
+        let header = snapshot.header_summary();
+        let tree = snapshot.tree_summary();
         let status_column = TableColumnId::new("status");
         let score_column = TableColumnId::new("score");
-        let status_facet = plan.column_facet(&status_column);
-        let score_range = plan
+        let status_facet = snapshot.column_facet(&status_column);
+        let score_range = snapshot
             .column_facet(&score_column)
             .and_then(|facet| facet.numeric_range());
         let score_facet_min = score_range.map(|range| range.min().round() as usize);
         let score_facet_max = score_range.map(|range| range.max().round() as usize);
-        let (all_rows_expanded, expanded_group_inputs, expanded_tree_inputs) =
-            match state.expansion() {
-                TableExpansionState::All => (
-                    true,
-                    plan.table()
-                        .grouped_model()
-                        .rows()
-                        .iter()
-                        .filter(|row| row.is_group())
-                        .count(),
-                    plan.table()
-                        .core_model()
-                        .rows()
-                        .iter()
-                        .filter(|row| row.is_tree_branch())
-                        .count(),
-                ),
-                TableExpansionState::Rows(rows) => (
-                    false,
-                    rows.iter()
-                        .filter(|row_id| {
-                            plan.table()
-                                .grouped_model()
-                                .row(row_id)
-                                .is_some_and(|row| row.is_group())
-                        })
-                        .count(),
-                    rows.iter()
-                        .filter(|row_id| {
-                            plan.table()
-                                .core_model()
-                                .row(row_id)
-                                .is_some_and(|row| row.is_tree_branch())
-                        })
-                        .count(),
-                ),
-            };
 
         Self {
-            core_rows: plan.table().core_model().rows().len(),
-            filtered_rows: plan.table().filtered_model().rows().len(),
-            final_rows: plan.table().final_model().rows().len(),
-            pinned_top_rows: row_regions.top().len(),
-            pinned_center_rows: row_regions.center().len(),
-            pinned_bottom_rows: row_regions.bottom().len(),
-            row_pinning_page_only: plan.table().row_pinning_policy()
-                == TableRowPinningPolicy::PageOnly,
-            rendered_rows: plan.rendered_row_count(),
-            visible_rows: plan.visible_row_count(),
-            visible_start: visible.start(),
-            visible_end: visible.end(),
-            overscan_start: overscan.start(),
-            overscan_end: overscan.end(),
-            aria_columns: plan.aria_column_count(),
-            aria_rows: plan.aria_row_count(),
-            selected_rows: plan.table().final_model().selected_count(),
-            header_rows: plan.header_row_count(),
-            header_groups: visible_group_ids.len(),
-            visible_leaf_columns: plan.columns().len(),
-            grouped_rows: plan.table().grouped_model().rows().len(),
-            expanded_rows: plan.table().expanded_model().rows().len(),
-            group_rows,
-            leaf_rows: final_rows.len().saturating_sub(group_rows),
-            tree_rows,
-            tree_branch_rows,
-            unloaded_tree_branches,
-            loading_tree_rows,
-            failed_tree_rows,
-            tree_depth,
-            manual_expansion: state.expansion_mode() == TableExpansionMode::Manual,
-            manual_filtering: plan.filtering_mode() == TableStageMode::Manual,
-            manual_sorting: plan.sorting_mode() == TableStageMode::Manual,
-            manual_pagination: plan.pagination_mode() == TableStageMode::Manual,
-            pagination_page_index: state.pagination().page_index(),
-            pagination_page_size: state.pagination().page_size(),
-            pagination_row_count: plan.pagination_row_count(),
-            pagination_page_count: plan.pagination_page_count(),
-            facet_columns: plan.column_facets().len(),
-            manual_facet_columns: plan
+            core_rows: rows.core_rows(),
+            filtered_rows: rows.filtered_rows(),
+            final_rows: rows.final_rows(),
+            pinned_top_rows: rows.pinned_top_rows(),
+            pinned_center_rows: rows.pinned_center_rows(),
+            pinned_bottom_rows: rows.pinned_bottom_rows(),
+            row_pinning_page_only: columns.row_pinning_page_only(),
+            rendered_rows: rows.rendered_rows(),
+            visible_rows: rows.visible_rows(),
+            visible_start: visible.visible_start(),
+            visible_end: visible.visible_end(),
+            overscan_start: visible.overscan_start(),
+            overscan_end: visible.overscan_end(),
+            aria_columns: snapshot.aria_column_count(),
+            aria_rows: snapshot.aria_row_count(),
+            selected_rows: rows.selected_rows(),
+            header_rows: header.header_rows(),
+            header_groups: header.visible_group_headers(),
+            visible_leaf_columns: snapshot.columns().len(),
+            grouped_rows: rows.grouped_rows(),
+            expanded_rows: rows.expanded_rows(),
+            group_rows: rows.group_rows(),
+            leaf_rows: rows.leaf_rows(),
+            tree_rows: tree.tree_rows(),
+            tree_branch_rows: tree.tree_branch_rows(),
+            unloaded_tree_branches: tree.unloaded_tree_branches(),
+            loading_tree_rows: tree.loading_tree_rows(),
+            failed_tree_rows: tree.failed_tree_rows(),
+            tree_depth: tree.tree_depth(),
+            manual_expansion: snapshot.manual_expansion(),
+            manual_filtering: snapshot.filtering_mode() == TableStageMode::Manual,
+            manual_sorting: snapshot.sorting_mode() == TableStageMode::Manual,
+            manual_pagination: snapshot.pagination_mode() == TableStageMode::Manual,
+            pagination_page_index: snapshot.pagination_page_index(),
+            pagination_page_size: snapshot.pagination_page_size(),
+            pagination_row_count: snapshot.pagination_row_count(),
+            pagination_page_count: snapshot.pagination_page_count(),
+            facet_columns: snapshot.column_facets().len(),
+            manual_facet_columns: snapshot
                 .column_facets()
                 .iter()
                 .filter(|facet| facet.mode() == TableStageMode::Manual)
@@ -3108,33 +2315,20 @@ impl TableSampleStateSummary {
                 .unwrap_or(0),
             score_facet_min,
             score_facet_max,
-            grouping_columns: state.grouping().len(),
-            aggregation_count: state.aggregations().len(),
-            custom_aggregation_count: plan.aggregation_fn_count(),
-            expanded_group_inputs,
-            expanded_tree_inputs,
-            all_rows_expanded,
-            pinned_left_columns: regions.left().len(),
-            pinned_center_columns: regions.center().len(),
-            pinned_right_columns: regions.right().len(),
-            pinned_left_width_px: plan
-                .column_region_width(TableColumnRegion::Left)
-                .as_f32()
-                .round() as usize,
-            pinned_center_width_px: plan
-                .column_region_width(TableColumnRegion::Center)
-                .as_f32()
-                .round() as usize,
-            pinned_right_width_px: plan
-                .column_region_width(TableColumnRegion::Right)
-                .as_f32()
-                .round() as usize,
-            total_column_width_px: plan.total_column_width().as_f32().round() as usize,
-            resizable_columns: plan
-                .columns()
-                .iter()
-                .filter(|column| column.resizable())
-                .count(),
+            grouping_columns: snapshot.grouping_columns().len(),
+            aggregation_count: snapshot.aggregation_count(),
+            custom_aggregation_count: snapshot.aggregation_fn_count(),
+            expanded_group_inputs: snapshot.expanded_group_inputs(),
+            expanded_tree_inputs: snapshot.expanded_tree_inputs(),
+            all_rows_expanded: snapshot.all_rows_expanded(),
+            pinned_left_columns: columns.left_columns(),
+            pinned_center_columns: columns.center_columns(),
+            pinned_right_columns: columns.right_columns(),
+            pinned_left_width_px: columns.left_width().as_f32().round() as usize,
+            pinned_center_width_px: columns.center_width().as_f32().round() as usize,
+            pinned_right_width_px: columns.right_width().as_f32().round() as usize,
+            total_column_width_px: columns.total_width().as_f32().round() as usize,
+            resizable_columns: columns.resizable_columns(),
         }
     }
 }
@@ -3159,10 +2353,10 @@ impl TableSample {
             .overscan(self.overscan)
     }
 
-    /// Resolves the table plan used by gallery tests and state rows.
-    pub fn render_plan(&self) -> TableRenderPlan {
+    /// Resolves the public table behavior used by gallery tests and state rows.
+    pub fn behavior_snapshot(&self) -> TableBehaviorSnapshot {
         self.build_table()
-            .render_plan(UiPx::ZERO, self.viewport_extent)
+            .behavior_snapshot(UiPx::ZERO, self.viewport_extent)
     }
 
     /// Returns the precomputed state summary used by the gallery page.
@@ -3172,10 +2366,10 @@ impl TableSample {
 
     /// Resolves the summary for a caller-supplied table state using this sample's layout settings.
     pub fn state_summary_for_state(&self, state: &TableState) -> TableSampleStateSummary {
-        let plan = self
+        let snapshot = self
             .build_table_with_state(state.clone())
-            .render_plan(UiPx::ZERO, self.viewport_extent);
-        TableSampleStateSummary::from_plan(&plan, state)
+            .behavior_snapshot(UiPx::ZERO, self.viewport_extent);
+        TableSampleStateSummary::from_snapshot(&snapshot)
     }
 }
 
@@ -5445,11 +4639,11 @@ fn build_table_samples() -> Vec<TableSample> {
 
 impl TableSample {
     fn with_state_summary(self) -> Self {
-        let plan = self
+        let snapshot = self
             .build_table()
-            .render_plan(UiPx::ZERO, self.viewport_extent);
+            .behavior_snapshot(UiPx::ZERO, self.viewport_extent);
         Self {
-            state_summary: TableSampleStateSummary::from_plan(&plan, &self.state),
+            state_summary: TableSampleStateSummary::from_snapshot(&snapshot),
             ..self
         }
     }

@@ -2,12 +2,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use open_gpui_ui_core::{
-    GridViewport2D, Role, TableColumnFacets, TableColumnId, TableColumnRegion,
-    TableGlobalFacetSummary, TableResolvedRow, TableResolvedState, TableRowId, TableRowRegion,
-    TableSelectionPolicy, TableSelectionSummary, TableStageMode, TableState, UiPx,
-    VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerResolvedState,
+    Role, TableColumnFacets, TableColumnId, TableColumnRegion, TableGlobalFacetSummary,
+    TableResolvedRow, TableResolvedState, TableRowId, TableRowRegion, TableSelectionPolicy,
+    TableSelectionSummary, TableStageMode, TableState, UiPx, VirtualizerItemKey,
+    VirtualizerItemMeasurement, VirtualizerResolvedState,
 };
 
+use crate::row_window::RowWindow;
 use crate::table::layout::resolve_column_region_render_plans;
 
 use super::virtualization::row_render_key;
@@ -21,15 +22,12 @@ pub use columns::{
     TableCenterColumnWindowPlan, TableColumnRegionRenderPlan, TableColumnRenderPlan,
     TablePinnedLayoutPlan,
 };
-pub use header::{
-    TableHeaderCellRenderPlan, TableHeaderGroupRegionRenderPlan, TableHeaderGroupRegionsRenderPlan,
-    TableHeaderGroupRenderPlan,
-};
+pub use header::{TableHeaderCellRenderPlan, TableHeaderGroupRegionsRenderPlan};
 pub use rows::{TableCellRenderPlan, TableRowRenderPlan};
 
 /// Fully resolved render contract for a concrete [`Table`] instance.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TableRenderPlan {
+pub struct TableRenderDiagnostics {
     table_id: String,
     label: String,
     metrics: TableMetrics,
@@ -42,7 +40,6 @@ pub struct TableRenderPlan {
     header_groups: TableHeaderGroupRegionsRenderPlan,
     pinned_layout: Option<TablePinnedLayoutPlan>,
     center_column_window: Option<TableCenterColumnWindowPlan>,
-    grid_viewport: Option<GridViewport2D>,
     total_column_width: UiPx,
     filtering_mode: TableStageMode,
     sorting_mode: TableStageMode,
@@ -56,13 +53,15 @@ pub struct TableRenderPlan {
     top_rows: Vec<TableRowRenderPlan>,
     rows: Vec<TableRowRenderPlan>,
     bottom_rows: Vec<TableRowRenderPlan>,
+    center_visible_row_count: usize,
+    center_overscan_count: usize,
     role: Role,
     header_row_role: Role,
     column_header_role: Role,
     cell_role: Role,
 }
 
-impl TableRenderPlan {
+impl TableRenderDiagnostics {
     pub(super) fn resolve(
         table_id: String,
         label: String,
@@ -106,9 +105,6 @@ impl TableRenderPlan {
                 metrics.overscan(),
             )
         });
-        let grid_viewport = center_column_window.as_ref().map(|center_window| {
-            GridViewport2D::new(virtualizer.clone(), center_window.virtualizer().clone())
-        });
         let duplicate_row_ids = table
             .duplicate_row_ids()
             .iter()
@@ -127,11 +123,10 @@ impl TableRenderPlan {
             0,
             UiPx::ZERO,
         );
-        let rows = virtualized_center_row_render_plans(
+        let center_window = virtualized_center_row_window(
             table.center_rows(),
-            virtualizer.items(),
             &columns,
-            &duplicate_row_ids,
+            &virtualizer,
             top_row_count,
         );
         let top_height = top_rows
@@ -164,7 +159,6 @@ impl TableRenderPlan {
             header_groups,
             pinned_layout,
             center_column_window,
-            grid_viewport,
             total_column_width,
             filtering_mode: state.filtering_mode(),
             sorting_mode: state.sorting_mode(),
@@ -176,8 +170,10 @@ impl TableRenderPlan {
             selection_summary,
             aggregation_fn_count: state.aggregation_fn_count(),
             top_rows,
-            rows,
+            rows: center_window.rows,
             bottom_rows,
+            center_visible_row_count: center_window.visible_row_count,
+            center_overscan_count: center_window.overscan_count,
             role: Role::Table,
             header_row_role: Role::Row,
             column_header_role: Role::ColumnHeader,
@@ -260,11 +256,6 @@ impl TableRenderPlan {
         self.table.column_facets()
     }
 
-    /// Returns resolved facet metadata for one configured column.
-    pub fn column_facet(&self, column: &TableColumnId) -> Option<&TableColumnFacets> {
-        self.table.column_facet(column)
-    }
-
     /// Returns resolved facet metadata for the global filter context.
     pub fn global_facet_summary(&self) -> &TableGlobalFacetSummary {
         self.table.global_facet_summary()
@@ -280,11 +271,6 @@ impl TableRenderPlan {
         &self.columns
     }
 
-    /// Returns the measured content-fit widths that informed this render plan.
-    pub fn content_fit_widths(&self) -> &BTreeMap<TableColumnId, UiPx> {
-        &self.content_fit_widths
-    }
-
     /// Returns visible columns split into render regions.
     pub fn column_regions(&self) -> &[TableColumnRegionRenderPlan] {
         &self.column_regions
@@ -293,21 +279,6 @@ impl TableRenderPlan {
     /// Returns nested header groups split into render regions.
     pub fn header_groups(&self) -> &TableHeaderGroupRegionsRenderPlan {
         &self.header_groups
-    }
-
-    /// Returns left-pinned header rows.
-    pub fn left_header_groups(&self) -> &TableHeaderGroupRegionRenderPlan {
-        self.header_groups.left()
-    }
-
-    /// Returns center header rows.
-    pub fn center_header_groups(&self) -> &TableHeaderGroupRegionRenderPlan {
-        self.header_groups.center()
-    }
-
-    /// Returns right-pinned header rows.
-    pub fn right_header_groups(&self) -> &TableHeaderGroupRegionRenderPlan {
-        self.header_groups.right()
     }
 
     /// Returns the maximum header row count across all regions.
@@ -328,16 +299,6 @@ impl TableRenderPlan {
     /// Returns center-column window metadata, when the center lane exists.
     pub fn center_column_window(&self) -> Option<&TableCenterColumnWindowPlan> {
         self.center_column_window.as_ref()
-    }
-
-    /// Returns the combined row and center-column viewport when both axes are available.
-    pub fn grid_viewport(&self) -> Option<&GridViewport2D> {
-        self.grid_viewport.as_ref()
-    }
-
-    /// Returns whether this render plan needs split pinned-column layout.
-    pub fn uses_split_pinned_layout(&self) -> bool {
-        self.pinned_layout.is_some()
     }
 
     /// Returns the summed resolved width of all visible columns.
@@ -361,11 +322,6 @@ impl TableRenderPlan {
 
     /// Returns virtualized center rows in render order.
     pub fn rows(&self) -> &[TableRowRenderPlan] {
-        &self.rows
-    }
-
-    /// Returns virtualized center rows in render order.
-    pub fn center_rows(&self) -> &[TableRowRenderPlan] {
         &self.rows
     }
 
@@ -419,34 +375,53 @@ impl TableRenderPlan {
 
     /// Returns the visible body row count before overscan.
     pub fn visible_row_count(&self) -> usize {
-        self.top_rows.len() + self.virtualizer.visible_items().len() + self.bottom_rows.len()
+        self.top_rows.len() + self.center_visible_row_count + self.bottom_rows.len()
+    }
+
+    /// Returns the center-row overscan budget used by the vertical virtualizer.
+    pub const fn center_overscan_count(&self) -> usize {
+        self.center_overscan_count
     }
 }
 
-fn virtualized_center_row_render_plans(
+#[derive(Debug, Clone, PartialEq)]
+struct TableCenterRowWindow {
+    rows: Vec<TableRowRenderPlan>,
+    visible_row_count: usize,
+    overscan_count: usize,
+}
+
+fn virtualized_center_row_window(
     rows: &[TableResolvedRow],
-    measurements: &[VirtualizerItemMeasurement],
     columns: &[TableColumnRenderPlan],
-    duplicate_row_ids: &BTreeSet<TableRowId>,
+    virtualizer: &VirtualizerResolvedState,
     model_index_start: usize,
-) -> Vec<TableRowRenderPlan> {
-    measurements
-        .iter()
-        .filter_map(|measurement| {
-            rows.get(measurement.index()).cloned().map(|row| {
-                let render_key = row_render_key(&row, duplicate_row_ids);
-                let model_index = model_index_start + measurement.index();
-                TableRowRenderPlan::new(
-                    row,
-                    TableRowRegion::Center,
-                    render_key,
-                    model_index,
-                    measurement.clone(),
-                    columns,
-                )
-            })
+) -> TableCenterRowWindow {
+    let row_window = RowWindow::project(virtualizer, |index| rows.get(index).cloned());
+    let visible_row_count = row_window.visible_row_count();
+    let overscan_count = row_window.overscan_count();
+    let rows = row_window
+        .into_rows()
+        .into_iter()
+        .map(|projected| {
+            let (index, render_key, measurement, row) = projected.into_parts();
+            let model_index = model_index_start + index;
+            TableRowRenderPlan::new(
+                row,
+                TableRowRegion::Center,
+                render_key,
+                model_index,
+                measurement,
+                columns,
+            )
         })
-        .collect()
+        .collect();
+
+    TableCenterRowWindow {
+        rows,
+        visible_row_count,
+        overscan_count,
+    }
 }
 
 fn row_render_plans(

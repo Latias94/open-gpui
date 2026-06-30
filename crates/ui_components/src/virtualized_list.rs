@@ -3,6 +3,7 @@
 use crate::a11y::UiA11yElementExt;
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use crate::roving_focus::paged_navigation_target;
+use crate::row_window::RowWindow;
 use crate::scroll_area::ScrollArea;
 use open_gpui::prelude::*;
 use open_gpui::{
@@ -391,6 +392,8 @@ pub struct VirtualizedListRenderPlan {
     metrics: VirtualizedListMetrics,
     virtualizer: VirtualizerResolvedState,
     rows: Vec<VirtualizedListRowRenderPlan>,
+    visible_row_count: usize,
+    overscan_count: usize,
     role: Role,
     row_role: Role,
 }
@@ -426,22 +429,22 @@ impl VirtualizedListRenderPlan {
                 let item = &items[index];
                 VirtualizerItemKey::new(virtualized_list_render_key(item, index, &duplicate_keys))
             });
-        let rows = virtualizer
-            .items()
-            .iter()
-            .filter_map(|measurement| {
-                items.get(measurement.index()).cloned().map(|item| {
-                    let render_key =
-                        virtualized_list_render_key(&item, measurement.index(), &duplicate_keys);
-                    VirtualizedListRowRenderPlan::new(
-                        item,
-                        render_key,
-                        measurement.index(),
-                        measurement.clone(),
-                        state.item_count(),
-                        &state,
-                    )
-                })
+        let row_window = RowWindow::project(&virtualizer, |index| items.get(index).cloned());
+        let visible_row_count = row_window.visible_row_count();
+        let overscan_count = row_window.overscan_count();
+        let rows = row_window
+            .into_rows()
+            .into_iter()
+            .map(|projected| {
+                let (index, render_key, measurement, item) = projected.into_parts();
+                VirtualizedListRowRenderPlan::new(
+                    item,
+                    render_key,
+                    index,
+                    measurement,
+                    state.item_count(),
+                    &state,
+                )
             })
             .collect();
 
@@ -452,6 +455,8 @@ impl VirtualizedListRenderPlan {
             metrics,
             virtualizer,
             rows,
+            visible_row_count,
+            overscan_count,
             role: Role::ListBox,
             row_role: Role::ListBoxOption,
         }
@@ -503,13 +508,13 @@ impl VirtualizedListRenderPlan {
     }
 
     /// Returns the number of rows visible before overscan.
-    pub fn visible_row_count(&self) -> usize {
-        self.virtualizer.visible_items().len()
+    pub const fn visible_row_count(&self) -> usize {
+        self.visible_row_count
     }
 
     /// Returns the overscan budget.
     pub const fn overscan_count(&self) -> usize {
-        self.virtualizer.overscan()
+        self.overscan_count
     }
 
     /// Returns the active row, when one is resolved.

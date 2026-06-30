@@ -1,6 +1,6 @@
 //! Combobox component built from editable text input, overlay, and listbox state.
 
-use crate::choice;
+use crate::choice::{self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
 use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
@@ -12,22 +12,24 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayAnchorInput,
-    OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
-    OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, rect, ui_point, ui_px, ui_size,
+    OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, Role,
+    Sizable, Size, ThemeTokens, UiPx, rect, ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::color::{ColorIntent, ColorState};
+use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::listbox::{
     Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
     ListboxState,
 };
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
-    gpui_overlay_state, outside_press_open_change,
+    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
+    consume_overlay_event, emit_overlay_open_change, gpui_overlay_state, outside_press_open_change,
+    resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
+use crate::text_editing::TextEditingPolicy;
 use crate::text_input::adapter::TextInputController;
 use crate::text_input::{TextInput, TextInputState};
 use crate::theme::ThemeResolver;
@@ -43,6 +45,13 @@ pub enum ComboboxOpenMode {
     Uncontrolled,
     /// Open state is provided by the caller.
     Controlled,
+}
+
+const fn combobox_open_mode_from_disclosure(mode: OverlayDisclosureOpenMode) -> ComboboxOpenMode {
+    match mode {
+        OverlayDisclosureOpenMode::Uncontrolled => ComboboxOpenMode::Uncontrolled,
+        OverlayDisclosureOpenMode::Controlled => ComboboxOpenMode::Controlled,
+    }
 }
 
 /// Pure descriptor for one combobox option.
@@ -103,18 +112,14 @@ impl ComboboxOptionDescriptor {
         self.disabled
     }
 
-    fn matches_query(&self, query: &str) -> bool {
-        let query = choice::normalize_query(query);
-        if query.is_empty() {
-            return true;
-        }
-
-        self.value.to_lowercase().contains(query.as_str())
-            || self.label.to_lowercase().contains(query.as_str())
-            || self
-                .keywords
-                .iter()
-                .any(|keyword| keyword.to_lowercase().contains(query.as_str()))
+    fn matches_normalized_query(&self, normalized_query: &str) -> bool {
+        let base_sources = [self.value.as_str(), self.label.as_str()];
+        choice::query_matches_sources(
+            normalized_query,
+            base_sources
+                .into_iter()
+                .chain(self.keywords.iter().map(String::as_str)),
+        )
     }
 
     fn to_listbox_descriptor(&self) -> ListboxOptionDescriptor {
@@ -172,10 +177,10 @@ impl ComboboxGroupDescriptor {
 /// Resolved combobox color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ComboboxColors {
-    popup_background: ColorIntent,
-    popup_foreground: ColorIntent,
-    popup_border: ColorIntent,
-    focus_ring: ColorIntent,
+    pub(crate) popup_background: ColorIntent,
+    pub(crate) popup_foreground: ColorIntent,
+    pub(crate) popup_border: ColorIntent,
+    pub(crate) focus_ring: ColorIntent,
 }
 
 impl ComboboxColors {
@@ -337,13 +342,19 @@ impl ComboboxState {
         let label = label.into();
         let placeholder = placeholder.into();
         let query = query.into();
+        let query = TextEditingPolicy::single_line().normalize_text(query.as_str());
         let empty_label = empty_label.into();
-        let open_mode = if open.is_some() {
-            ComboboxOpenMode::Controlled
-        } else {
-            ComboboxOpenMode::Uncontrolled
-        };
-        let open = open.unwrap_or(default_open) && !disabled;
+        let disclosure = OverlayDisclosureConfig::new(OverlayLayerKind::NonModalDismissible)
+            .controlled_open(open)
+            .default_open(default_open)
+            .disabled(disabled)
+            .outside_press_policy(outside_press_policy)
+            .initial_focus_intent(initial_focus_intent.clone())
+            .focus_restore_intent(focus_restore_intent.clone())
+            .resolve();
+        let open = disclosure.open();
+        let open_mode = combobox_open_mode_from_disclosure(disclosure.open_mode());
+        let normalized_query = choice::normalize_query(query.as_str());
         let raw_groups = groups.into_iter().collect::<Vec<_>>();
         let raw_options = options.into_iter().collect::<Vec<_>>();
         let total_option_count = raw_options.len()
@@ -353,7 +364,7 @@ impl ComboboxState {
                 .sum::<usize>();
         let filtered_options = raw_options
             .iter()
-            .filter(|option| option.matches_query(query.as_str()))
+            .filter(|option| option.matches_normalized_query(normalized_query.as_str()))
             .map(ComboboxOptionDescriptor::to_listbox_descriptor)
             .collect::<Vec<_>>();
         let filtered_groups = raw_groups
@@ -362,7 +373,7 @@ impl ComboboxState {
                 let options = group
                     .options_ref()
                     .iter()
-                    .filter(|option| option.matches_query(query.as_str()))
+                    .filter(|option| option.matches_normalized_query(normalized_query.as_str()))
                     .map(ComboboxOptionDescriptor::to_listbox_descriptor)
                     .collect::<Vec<_>>();
                 (!options.is_empty()).then(|| {
@@ -376,21 +387,21 @@ impl ComboboxState {
                 .iter()
                 .map(|group| group.options_ref().len())
                 .sum::<usize>();
-        let selected_option = choice::resolve_enabled_value(
-            &raw_options,
-            raw_groups.iter().map(|group| group.options_ref()),
+        let raw_collection = ChoiceCollection::resolve(
+            false,
+            flatten_combobox_choice_options(&raw_groups, &raw_options),
             selected_value,
-            ComboboxOptionDescriptor::value,
-            ComboboxOptionDescriptor::disabled_state,
+            active_value,
+            ChoiceInteractionPolicy::listbox(),
         );
-        let selected_value = selected_option.map(|option| option.value().to_owned());
+        let selected_value = raw_collection.selected_value().map(str::to_owned);
         let listbox = ListboxState::resolve(
             size,
             disabled,
             label.clone(),
             selected_value.as_deref(),
             active_value,
-            (!query.is_empty()).then_some(query.as_str()),
+            (!normalized_query.is_empty()).then_some(normalized_query.as_str()),
             empty_label.clone(),
             filtered_groups,
             filtered_options,
@@ -407,17 +418,7 @@ impl ComboboxState {
             false,
             tokens,
         );
-        let presence = if open {
-            OverlayPresence::open()
-        } else {
-            OverlayPresence::hidden()
-        };
-        let overlay =
-            GpuiOverlayAdapterConfig::new(OverlayLayerKind::NonModalDismissible, presence)
-                .outside_press_policy(outside_press_policy)
-                .initial_focus_intent(initial_focus_intent.clone())
-                .focus_restore_intent(focus_restore_intent.clone())
-                .resolved_state();
+        let overlay = disclosure.overlay().clone();
         let scroll_area = ScrollAreaState::resolve(
             format!("{label}:combobox-content-scroll"),
             ScrollAreaAxis::Vertical,
@@ -731,7 +732,8 @@ impl Combobox {
 
     /// Applies the default query text for adapter-owned input state.
     pub fn default_query(mut self, query: impl Into<String>) -> Self {
-        self.default_query = query.into();
+        let query = query.into();
+        self.default_query = TextEditingPolicy::single_line().normalize_text(query.as_str());
         self
     }
 
@@ -841,10 +843,10 @@ impl RenderOnce for Combobox {
             input
         });
         let runtime_state = runtime.read(cx).clone();
-        let controlled_open = self.open;
-        let resolved_open = controlled_open.unwrap_or(runtime_state.open);
+        let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
+        let resolved_open = open_state.open();
 
-        if controlled_open.is_some() && runtime_state.open != resolved_open {
+        if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
             });
@@ -951,13 +953,16 @@ impl RenderOnce for Combobox {
                             ComboboxKeyboardAction::Navigate(value) => {
                                 consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
-                                    runtime.open = true;
+                                    set_overlay_open(&mut runtime.open, true);
                                     runtime.active_value = Some(value);
                                 });
                                 if !key_state.open() {
-                                    if let Some(on_open_change) = on_open_change.as_ref() {
-                                        on_open_change(true, window, cx);
-                                    }
+                                    emit_overlay_open_change(
+                                        true,
+                                        on_open_change.as_deref(),
+                                        window,
+                                        cx,
+                                    );
                                 }
                             }
                             ComboboxKeyboardAction::Select(selection) => {
@@ -965,7 +970,7 @@ impl RenderOnce for Combobox {
                                 runtime.update(cx, |runtime, _| {
                                     runtime.selected_value = Some(selection.value().to_owned());
                                     runtime.active_value = Some(selection.value().to_owned());
-                                    runtime.open = false;
+                                    set_overlay_open(&mut runtime.open, false);
                                 });
                                 input_controller.update(cx, |controller, cx| {
                                     controller.set_value(selection.label().to_owned(), cx);
@@ -973,18 +978,24 @@ impl RenderOnce for Combobox {
                                 if let Some(on_select) = on_select.as_ref() {
                                     on_select(selection, window, cx);
                                 }
-                                if let Some(on_open_change) = on_open_change.as_ref() {
-                                    on_open_change(false, window, cx);
-                                }
+                                emit_overlay_open_change(
+                                    false,
+                                    on_open_change.as_deref(),
+                                    window,
+                                    cx,
+                                );
                             }
                             ComboboxKeyboardAction::Open => {
                                 consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
-                                    runtime.open = true;
+                                    set_overlay_open(&mut runtime.open, true);
                                 });
-                                if let Some(on_open_change) = on_open_change.as_ref() {
-                                    on_open_change(true, window, cx);
-                                }
+                                emit_overlay_open_change(
+                                    true,
+                                    on_open_change.as_deref(),
+                                    window,
+                                    cx,
+                                );
                             }
                             ComboboxKeyboardAction::Close => {
                                 consume_overlay_event(window, cx);
@@ -1035,11 +1046,14 @@ impl RenderOnce for Combobox {
                                         cx.stop_propagation();
                                         let next_open = !open;
                                         runtime.update(cx, |runtime, _| {
-                                            runtime.open = next_open;
+                                            set_overlay_open(&mut runtime.open, next_open);
                                         });
-                                        if let Some(on_open_change) = on_open_change.as_ref() {
-                                            on_open_change(next_open, window, cx);
-                                        }
+                                        emit_overlay_open_change(
+                                            next_open,
+                                            on_open_change.as_deref(),
+                                            window,
+                                            cx,
+                                        );
                                     },
                                 )
                             })
@@ -1129,10 +1143,15 @@ fn combobox_content_element(
     let selected_value = state.selected_value().map(str::to_owned);
     let active_value = state.active_value().map(str::to_owned);
     let query = state.query().to_owned();
+    let normalized_query = choice::normalize_query(query.as_str());
     let label = state.label().to_owned();
     let listbox = options
         .into_iter()
-        .filter(|option| option.descriptor.matches_query(query.as_str()))
+        .filter(|option| {
+            option
+                .descriptor
+                .matches_normalized_query(normalized_query.as_str())
+        })
         .fold(
             Listbox::new(listbox_id, label.clone()),
             |listbox, option| listbox.option(option.listbox_option()),
@@ -1140,7 +1159,7 @@ fn combobox_content_element(
         .groups(
             groups
                 .into_iter()
-                .filter_map(|group| group.filtered_listbox_group(query.as_str())),
+                .filter_map(|group| group.filtered_listbox_group(normalized_query.as_str())),
         )
         .tokens(tokens)
         .with_size(state.size())
@@ -1159,7 +1178,7 @@ fn combobox_content_element(
                 runtime.update(cx, |runtime, _| {
                     runtime.selected_value = Some(payload.value().to_owned());
                     runtime.active_value = Some(payload.value().to_owned());
-                    runtime.open = false;
+                    set_overlay_open(&mut runtime.open, false);
                 });
                 input_controller.update(cx, |controller, cx| {
                     controller.set_value(payload.label().to_owned(), cx);
@@ -1167,9 +1186,7 @@ fn combobox_content_element(
                 if let Some(on_select) = on_select.as_ref() {
                     on_select(payload, window, cx);
                 }
-                if let Some(on_open_change) = on_open_change.as_ref() {
-                    on_open_change(false, window, cx);
-                }
+                emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
             }
         });
     let listbox = if let Some(selected_value) = selected_value {
@@ -1237,11 +1254,50 @@ fn close_combobox(
     cx: &mut App,
 ) {
     runtime.update(cx, |runtime, _| {
-        runtime.open = false;
+        set_overlay_open(&mut runtime.open, false);
     });
-    if let Some(on_open_change) = on_open_change.as_ref() {
-        on_open_change(false, window, cx);
+    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+}
+
+fn flatten_combobox_choice_options(
+    groups: &[ComboboxGroupDescriptor],
+    standalone_options: &[ComboboxOptionDescriptor],
+) -> Vec<ChoiceItemProjection<()>> {
+    let mut flattened = standalone_options
+        .iter()
+        .enumerate()
+        .map(|(source_index, descriptor)| {
+            let text_value = descriptor.label().to_owned();
+            ChoiceItemProjection::new(
+                source_index,
+                None,
+                descriptor.value(),
+                text_value.clone(),
+                descriptor.disabled_state(),
+                (),
+            )
+            .text_value(text_value)
+        })
+        .collect::<Vec<_>>();
+
+    for (group_index, group) in groups.iter().enumerate() {
+        flattened.extend(group.options_ref().iter().enumerate().map(
+            |(source_index, descriptor)| {
+                let text_value = descriptor.label().to_owned();
+                ChoiceItemProjection::new(
+                    source_index,
+                    Some(group_index),
+                    descriptor.value(),
+                    text_value.clone(),
+                    descriptor.disabled_state(),
+                    (),
+                )
+                .text_value(text_value)
+            },
+        ));
     }
+
+    flattened
 }
 
 /// A concrete GPUI combobox option.
@@ -1320,31 +1376,16 @@ impl ComboboxGroup {
             })
     }
 
-    fn filtered_listbox_group(self, query: &str) -> Option<ListboxGroup> {
+    fn filtered_listbox_group(self, normalized_query: &str) -> Option<ListboxGroup> {
         let mut group = ListboxGroup::new(self.descriptor.value, self.descriptor.label);
         let mut has_options = false;
         for option in self.options {
-            if option.descriptor.matches_query(query) {
+            if option.descriptor.matches_normalized_query(normalized_query) {
                 has_options = true;
                 group = group.option(option.listbox_option());
             }
         }
         has_options.then_some(group)
-    }
-}
-
-impl ThemeResolver {
-    pub(crate) const fn combobox_colors(tokens: ThemeTokens) -> ComboboxColors {
-        ComboboxColors {
-            popup_background: ColorIntent::new(tokens.surface, 0xffffff),
-            popup_foreground: ColorIntent::new(tokens.text, 0x18202a),
-            popup_border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            focus_ring: ColorIntent::with_state(
-                tokens.focus_ring,
-                ColorState::FocusVisible,
-                0x2f80ed,
-            ),
-        }
     }
 }
 

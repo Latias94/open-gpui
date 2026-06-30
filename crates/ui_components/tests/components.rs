@@ -21,32 +21,31 @@ use open_gpui_ui_components::{
     SidebarCollapseMode, SidebarItem, SidebarItemDescriptor, SidebarSection,
     SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton, Splitter,
     SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
-    TableCellEditApplyOutcome, TableCellEditChange, TableCellEditor, TableCellValue,
-    TableCenterColumnWindowPlan, TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId,
-    TableColumnOrderChange, TableColumnOrderPlacement, TableColumnPinning, TableColumnRegion,
-    TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableColumnVisibility,
-    TableColumnVisibilityAction, TableColumnVisibilityChange, TableColumnVisibilityOverrides,
-    TableColumnVisibilityState, TableExpansionMode, TableFacetValueCount, TableFacetedFilter,
-    TableFacetedFilterChange, TableFacetedFilterState, TableFilter, TableGlobalFacetSummary,
-    TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction,
-    TableNumericFilterOperator, TablePagination, TablePredicateFilter, TablePredicateFilterChange,
+    TableCellEditApplyOutcome, TableCellEditChange, TableCellEditor, TableCellValue, TableColumn,
+    TableColumnFacets, TableColumnGroup, TableColumnId, TableColumnOrderChange,
+    TableColumnOrderPlacement, TableColumnPinning, TableColumnRegion, TableColumnResizeMode,
+    TableColumnSizing, TableColumnSizingChange, TableColumnVisibility, TableColumnVisibilityAction,
+    TableColumnVisibilityChange, TableColumnVisibilityOverrides, TableColumnVisibilityState,
+    TableExpansionMode, TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange,
+    TableFacetedFilterState, TableFilter, TableGlobalFacetSummary, TableGlobalFilter,
+    TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction, TableNumericFilterOperator,
+    TablePagination, TablePredicateFilter, TablePredicateFilterChange,
     TablePredicateFilterOperator, TablePredicateFilterOperatorOptionState,
     TablePredicateFilterState, TableRangeFilter, TableRangeFilterChange, TableRangeFilterState,
-    TableResolvedHeaderKind, TableRow, TableRowChildrenLoadState, TableRowId, TableRowMeasureMode,
-    TableRowPinning, TableRowPinningPolicy, TableRowRegion, TableSelectOption,
-    TableSelectionActivationMode, TableSelectionMode, TableSelectionScope, TableSort,
-    TableSortDirection, TableStageMode, TableState, TableTextFilterOperator, TableToolbar,
-    TableToolbarState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
-    TabsState, TextInput, TextInputDisplayMode, Textarea, ThemeColor, ThemeMode, ThemeResolver,
-    ThemeSnapshot, Toggle, ToggleGroup, ToggleGroupItem, ToggleVariant, Toolbar, ToolbarItem,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TableRow, TableRowChildrenLoadState, TableRowId, TableRowMeasureMode, TableRowPinning,
+    TableRowPinningPolicy, TableRowRegion, TableSelectOption, TableSelectionActivationMode,
+    TableSelectionMode, TableSelectionScope, TableSort, TableSortDirection, TableStageMode,
+    TableState, TableTextFilterOperator, TableToolbar, TableToolbarState, Tabs, TabsActivationMode,
+    TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput, TextInputDisplayMode,
+    Textarea, ThemeColor, ThemeDefinition, ThemeMode, ThemeRegistry, ThemeResolver, ThemeSnapshot,
+    ThemeValidationError, Toggle, ToggleGroup, ToggleGroupItem, ToggleVariant, Toolbar,
+    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
     TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeChildrenLoadState,
     TreeDropPosition, TreeItemDescriptor, TreeMove, TreeMoveTarget, TreeRenderPlan,
     TreeRowRenderPlan, VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
     VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
     VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
-    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, apply_tree_move,
-    first_enabled,
+    VirtualizerSnapshotItem, active_index_from_str_keys, apply_tree_move, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -111,6 +110,197 @@ impl ComponentApiInventoryEntry {
             || self.no_interaction_note.is_some()
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum PublicSurfaceOwnerClass {
+    OfficialComponent,
+    OfficialComponentRecipe,
+    RendererNeutralStateContract,
+    GpuiAdapterHelper,
+    DiagnosticSurface,
+    DeprecatedRemovalTarget,
+    InternalImplementationDetail,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PublicSurfaceOwnerEntry {
+    name: &'static str,
+    owner: PublicSurfaceOwnerClass,
+    home: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SurfacePrimitiveStatus {
+    NotPrimitive,
+    PublicPrimitiveModule,
+    RemovedPrimitiveModule,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SurfaceGalleryStatus {
+    OfficialComponent,
+    OfficialOverlay,
+    AdapterOnly,
+    InternalAnatomy,
+    StateContract,
+    NotInGallery,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SurfaceDocsStatus {
+    ComponentCatalog,
+    ComponentContract,
+    ComponentContractOrVerification,
+    Verification,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SurfaceManifestEntry {
+    name: String,
+    owner: PublicSurfaceOwnerClass,
+    home: String,
+    root_export: bool,
+    prelude_export: bool,
+    primitive_status: SurfacePrimitiveStatus,
+    adapter_only: bool,
+    diagnostic_only: bool,
+    gallery_status: SurfaceGalleryStatus,
+    docs_status: SurfaceDocsStatus,
+    docs_token: Option<&'static str>,
+}
+
+const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
+    PublicSurfaceOwnerEntry {
+        name: "TreeState",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        home: "tree.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "VirtualizedListState",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        home: "virtualized_list.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "GpuiOverlayAdapterConfig",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "GpuiOverlayState",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "TextInputController",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "init_text_input",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "focus_ring_shadow",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "gpui_px_from_ui",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "gpui_point_from_ui",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "gpui_size_from_ui",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "TableBehaviorSnapshot",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        home: "table/behavior.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "TableToolbarColors",
+        owner: PublicSurfaceOwnerClass::OfficialComponentRecipe,
+        home: "table/toolbar.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "TreeRenderPlan",
+        owner: PublicSurfaceOwnerClass::DiagnosticSurface,
+        home: "tree/render_plan.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "VirtualizedListRenderPlan",
+        owner: PublicSurfaceOwnerClass::DiagnosticSurface,
+        home: "virtualized_list.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "CommandRenderPlan",
+        owner: PublicSurfaceOwnerClass::DiagnosticSurface,
+        home: "command/render_plan.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "ToolbarItem",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        home: "toolbar.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "SidebarItem",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        home: "sidebar.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "ListboxOption",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        home: "listbox.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::active_descendant",
+        owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        home: "removed",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::collection",
+        owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        home: "removed",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::controllable_state",
+        owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        home: "removed",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::overlay",
+        owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        home: "removed",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::field_state",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        home: "primitives/field_state.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::focus_ring",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        home: "primitives/focus_ring.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::roving_focus_group",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        home: "primitives/roving_focus_group.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::trigger_a11y",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "primitives/trigger_a11y.rs",
+    },
+];
 
 const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     ComponentApiInventoryEntry {
@@ -1834,9 +2024,8 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "on_row_activate",
             "on_row_expansion_request",
             "on_cell_edit_change",
-            "table_state",
             "state",
-            "render_plan",
+            "behavior_snapshot",
         ],
         "TableFacetedFilter" => &[
             "new",
@@ -4298,7 +4487,7 @@ fn scroll_area_builder_state_keeps_gpui_handle_out_of_resolved_state() {
 }
 
 #[test]
-fn table_render_plan_uses_core_state_and_virtualizer_contracts() {
+fn table_behavior_snapshot_uses_core_state_and_virtualizer_contracts() {
     let state = sample_table_state(100)
         .with_sorting([TableSort::new("score", TableSortDirection::Descending)])
         .with_selected_rows(["row-0091"])
@@ -4308,34 +4497,38 @@ fn table_render_plan_uses_core_state_and_virtualizer_contracts() {
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
         .overscan(4);
-    let plan = table.render_plan(ui_px(120.0), ui_px(96.0));
+    let snapshot = table.behavior_snapshot(ui_px(120.0), ui_px(96.0));
 
-    assert_eq!(plan.role(), Role::Table);
-    assert_eq!(plan.row_role(), Role::Row);
-    assert_eq!(plan.column_header_role(), Role::ColumnHeader);
-    assert_eq!(plan.cell_role(), Role::Cell);
-    assert_eq!(plan.columns().len(), 3);
-    assert_eq!(plan.aria_column_count(), 3);
-    assert_eq!(plan.aria_row_count(), 51);
+    assert_eq!(snapshot.role(), Role::Table);
+    assert_eq!(snapshot.row_role(), Role::Row);
+    assert_eq!(snapshot.column_header_role(), Role::ColumnHeader);
+    assert_eq!(snapshot.cell_role(), Role::Cell);
+    assert_eq!(snapshot.columns().len(), 3);
+    assert_eq!(snapshot.aria_column_count(), 3);
+    assert_eq!(snapshot.aria_row_count(), 51);
     assert_eq!(
-        *plan.virtualizer().visible_range(),
+        *snapshot.visible_rows().visible_range(),
         VirtualizerRange::new(5, 9)
     );
     assert_eq!(
-        *plan.virtualizer().overscan_range(),
+        *snapshot.visible_rows().overscan_range(),
         VirtualizerRange::new(3, 11)
     );
-    assert!(plan.rendered_row_count() <= plan.visible_row_count() + plan.metrics().overscan());
-    assert_eq!(plan.rows()[0].model_index(), 3);
-    assert_eq!(plan.rows()[0].id().as_str(), "row-0093");
     assert!(
-        plan.rows()
+        snapshot.row_counts().rendered_rows()
+            <= snapshot.row_counts().visible_rows() + snapshot.metrics().overscan()
+    );
+    assert_eq!(snapshot.rows()[0].model_index(), 3);
+    assert_eq!(snapshot.rows()[0].id().as_str(), "row-0093");
+    assert!(
+        snapshot
+            .rows()
             .iter()
             .any(|row| row.id().as_str() == "row-0091" && row.selected()),
         "expected selection to follow row id after filtering and sorting"
     );
 
-    let score_column = plan
+    let score_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "score")
@@ -4348,7 +4541,7 @@ fn table_render_plan_uses_core_state_and_virtualizer_contracts() {
 }
 
 #[test]
-fn table_render_plan_exposes_tree_row_metadata_for_adapter_rendering() {
+fn table_behavior_snapshot_exposes_tree_row_metadata_for_adapter_rendering() {
     let state = TableState::new([TableRow::new("root")
         .with_cell("name", "Workspace")
         .with_cell("status", "Ready")
@@ -4364,22 +4557,22 @@ fn table_render_plan_exposes_tree_row_metadata_for_adapter_rendering() {
     .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
     .with_expanded_rows(["root"])
     .with_pagination(TablePagination::disabled());
-    let plan = Table::new("tree-table", "Tree table", state)
+    let snapshot = Table::new("tree-table", "Tree table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
-    assert_eq!(plan.rows().len(), 2);
-    assert_eq!(plan.rows()[0].id().as_str(), "root");
-    assert!(plan.rows()[0].is_tree_branch());
-    assert_eq!(plan.rows()[0].tree_expanded(), Some(true));
-    assert_eq!(plan.rows()[0].depth(), 0);
-    assert_eq!(plan.rows()[1].id().as_str(), "child");
-    assert!(!plan.rows()[1].is_tree_branch());
-    assert_eq!(plan.rows()[1].tree_expanded(), None);
-    assert_eq!(plan.rows()[1].depth(), 1);
+    assert_eq!(snapshot.rows().len(), 2);
+    assert_eq!(snapshot.rows()[0].id().as_str(), "root");
+    assert!(snapshot.rows()[0].is_tree_branch());
+    assert_eq!(snapshot.rows()[0].tree_expanded(), Some(true));
+    assert_eq!(snapshot.rows()[0].depth(), 0);
+    assert_eq!(snapshot.rows()[1].id().as_str(), "child");
+    assert!(!snapshot.rows()[1].is_tree_branch());
+    assert_eq!(snapshot.rows()[1].tree_expanded(), None);
+    assert_eq!(snapshot.rows()[1].depth(), 1);
     assert_eq!(
-        plan.rows()[0]
+        snapshot.rows()[0]
             .cells_for_region(TableColumnRegion::Left)
             .map(|cell| cell.column_id().as_str())
             .collect::<Vec<_>>(),
@@ -4388,20 +4581,20 @@ fn table_render_plan_exposes_tree_row_metadata_for_adapter_rendering() {
 }
 
 #[test]
-fn table_render_plan_exposes_manual_expansion_and_child_load_metadata() {
+fn table_behavior_snapshot_exposes_manual_expansion_and_child_load_metadata() {
     let manual_state = TableState::new([TableRow::new("root")
         .with_cell("name", "Workspace")
         .with_child(TableRow::new("child").with_cell("name", "Loaded child"))])
     .with_columns([TableColumn::new("name", "Name").with_width(ui_px(160.0))])
     .with_pagination(TablePagination::disabled());
-    let manual_plan = Table::new("manual-tree", "Manual tree", manual_state)
+    let manual_snapshot = Table::new("manual-tree", "Manual tree", manual_state)
         .expansion_mode(TableExpansionMode::Manual)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
     assert_eq!(
-        manual_plan
+        manual_snapshot
             .rows()
             .iter()
             .map(|row| row.id().as_str())
@@ -4409,10 +4602,10 @@ fn table_render_plan_exposes_manual_expansion_and_child_load_metadata() {
         ["root", "child"],
         "manual expansion should render the caller-supplied visible tree snapshot"
     );
-    assert_eq!(manual_plan.rows()[0].tree_expanded(), Some(false));
-    assert_eq!(manual_plan.rows()[0].loaded_child_count(), 1);
+    assert_eq!(manual_snapshot.rows()[0].tree_expanded(), Some(false));
+    assert_eq!(manual_snapshot.rows()[0].loaded_child_count(), 1);
     assert_eq!(
-        manual_plan.rows()[0].children_load_state(),
+        manual_snapshot.rows()[0].children_load_state(),
         Some(&TableRowChildrenLoadState::Idle)
     );
 
@@ -4421,11 +4614,11 @@ fn table_render_plan_exposes_manual_expansion_and_child_load_metadata() {
         .with_children_loading("Loading children")])
     .with_columns([TableColumn::new("name", "Name").with_width(ui_px(160.0))])
     .with_pagination(TablePagination::disabled());
-    let loading_plan = Table::new("loading-tree", "Loading tree", loading_state)
+    let loading_snapshot = Table::new("loading-tree", "Loading tree", loading_state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
-    let loading_row = &loading_plan.rows()[0];
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    let loading_row = &loading_snapshot.rows()[0];
 
     assert!(loading_row.is_tree_branch());
     assert_eq!(loading_row.loaded_child_count(), 0);
@@ -4443,7 +4636,7 @@ fn table_render_plan_exposes_manual_expansion_and_child_load_metadata() {
 }
 
 #[test]
-fn table_render_plan_exposes_manual_row_model_metadata() {
+fn table_behavior_snapshot_exposes_manual_row_model_metadata() {
     let state = TableState::new([
         TableRow::new("row-020")
             .with_cell("name", "Delta")
@@ -4465,18 +4658,19 @@ fn table_render_plan_exposes_manual_row_model_metadata() {
     .with_manual_sorting()
     .with_pagination(TablePagination::manual(10, 2, 42));
 
-    let plan = Table::new("manual-row-model", "Manual row model", state)
+    let snapshot = Table::new("manual-row-model", "Manual row model", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
-    assert_eq!(plan.filtering_mode(), TableStageMode::Manual);
-    assert_eq!(plan.sorting_mode(), TableStageMode::Manual);
-    assert_eq!(plan.pagination_mode(), TableStageMode::Manual);
-    assert_eq!(plan.pagination_row_count(), Some(42));
-    assert_eq!(plan.pagination_page_count(), Some(21));
+    assert_eq!(snapshot.filtering_mode(), TableStageMode::Manual);
+    assert_eq!(snapshot.sorting_mode(), TableStageMode::Manual);
+    assert_eq!(snapshot.pagination_mode(), TableStageMode::Manual);
+    assert_eq!(snapshot.pagination_row_count(), Some(42));
+    assert_eq!(snapshot.pagination_page_count(), Some(21));
     assert_eq!(
-        plan.rows()
+        snapshot
+            .rows()
             .iter()
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
@@ -4486,7 +4680,7 @@ fn table_render_plan_exposes_manual_row_model_metadata() {
 }
 
 #[test]
-fn table_render_plan_exposes_faceting_metadata() {
+fn table_behavior_snapshot_exposes_faceting_metadata() {
     let state = TableState::new([
         TableRow::new("row-1")
             .with_cell("team", "UI")
@@ -4522,15 +4716,16 @@ fn table_render_plan_exposes_faceting_metadata() {
         ])],
     );
 
-    let plan = Table::new("faceted-table", "Faceted table", state)
+    let snapshot = Table::new("faceted-table", "Faceted table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
-    assert_eq!(plan.faceting_mode(), TableStageMode::Client);
-    assert_eq!(plan.column_facets().len(), 3);
+    assert_eq!(snapshot.faceting_mode(), TableStageMode::Client);
+    assert_eq!(snapshot.column_facets().len(), 3);
     assert_eq!(
-        plan.rows()
+        snapshot
+            .rows()
             .iter()
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
@@ -4538,7 +4733,7 @@ fn table_render_plan_exposes_faceting_metadata() {
         "pagination still limits the rendered row window"
     );
 
-    let status = plan
+    let status = snapshot
         .column_facet(&TableColumnId::new("status"))
         .expect("status facet should resolve");
     assert_eq!(status.mode(), TableStageMode::Manual);
@@ -4549,7 +4744,7 @@ fn table_render_plan_exposes_faceting_metadata() {
         "manual facet payloads should survive render-plan resolution"
     );
 
-    let team = plan
+    let team = snapshot
         .column_facet(&TableColumnId::new("team"))
         .expect("team facet should resolve");
     assert_eq!(team.mode(), TableStageMode::Client);
@@ -4560,7 +4755,7 @@ fn table_render_plan_exposes_faceting_metadata() {
         "client facets ignore their own column filter and honor the other filters"
     );
 
-    let score = plan
+    let score = snapshot
         .column_facet(&TableColumnId::new("score"))
         .expect("score facet should resolve");
     let range = score
@@ -4571,7 +4766,7 @@ fn table_render_plan_exposes_faceting_metadata() {
 }
 
 #[test]
-fn table_render_plan_exposes_global_facet_summary() {
+fn table_behavior_snapshot_exposes_global_facet_summary() {
     let state = TableState::new([
         TableRow::new("row-1")
             .with_cell("team", "UI")
@@ -4606,12 +4801,12 @@ fn table_render_plan_exposes_global_facet_summary() {
     .with_global_filter("done")
     .with_pagination(TablePagination::disabled());
 
-    let plan = Table::new("global-facet-table", "Global facet table", state)
+    let snapshot = Table::new("global-facet-table", "Global facet table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
-    let summary: &TableGlobalFacetSummary = plan.global_facet_summary();
+    let summary: &TableGlobalFacetSummary = snapshot.global_facet_summary();
     assert_eq!(summary.mode(), TableStageMode::Client);
     assert_eq!(summary.row_count(), 2);
     assert!(summary.column_facet(&TableColumnId::new("notes")).is_none());
@@ -5156,6 +5351,8 @@ fn table_toolbar_state_resolves_slot_counts_and_summary() {
     assert_eq!(state.tokens(), tokens);
     assert_eq!(state.foreground().token(), TEST_TEXT);
     assert_eq!(state.muted_foreground().token(), TEST_TEXT_MUTED);
+    assert_eq!(state.colors().foreground().token(), TEST_TEXT);
+    assert_eq!(state.colors().muted_foreground().token(), TEST_TEXT_MUTED);
 
     let empty = TableToolbar::new("empty-table-toolbar", "Filters").state();
     assert_eq!(empty.primary_control_count(), 0);
@@ -5418,7 +5615,7 @@ fn table_predicate_filter_change_updates_only_target_predicate_filters() {
 }
 
 #[test]
-fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
+fn table_behavior_snapshot_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
     let state = TableState::new([
         TableRow::new("row-a")
             .with_cell("name", "Alpha")
@@ -5443,32 +5640,32 @@ fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
     .with_grouping(["score"])
     .with_all_rows_expanded()
     .with_pagination(TablePagination::disabled());
-    let plan = Table::new("editable-plan-table", "Editable plan table", state)
+    let snapshot = Table::new("editable-plan-table", "Editable plan table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(120.0))
-        .render_plan(UiPx::ZERO, ui_px(120.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(120.0));
 
-    let name_column = plan
+    let name_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "name")
         .expect("name column should resolve");
-    let score_column = plan
+    let score_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "score")
         .expect("score column should resolve");
-    let notes_column = plan
+    let notes_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "notes")
         .expect("notes column should resolve");
-    let enabled_column = plan
+    let enabled_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "enabled")
         .expect("enabled column should resolve");
-    let status_column = plan
+    let status_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "status")
@@ -5489,10 +5686,10 @@ fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
     assert!(!score_column.text_editable());
     assert_eq!(score_column.editor(), None);
 
-    let group_row = plan
+    let group_row = snapshot
         .rows()
         .iter()
-        .find(|row| row.row().is_group())
+        .find(|row| row.is_group())
         .expect("group row should resolve");
     let group_name_cell = group_row
         .cells()
@@ -5522,7 +5719,7 @@ fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
         .expect("group status cell should resolve");
     assert_eq!(group_status_cell.editor(), None);
 
-    let editable_leaf = plan
+    let editable_leaf = snapshot
         .rows()
         .iter()
         .find(|row| row.id().as_str() == "row-a")
@@ -5559,7 +5756,7 @@ fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
     assert_eq!(editable_status.select_options().len(), 2);
     assert_eq!(editable_status.select_options()[1].value(), "blocked");
 
-    let missing_leaf = plan
+    let missing_leaf = snapshot
         .rows()
         .iter()
         .find(|row| row.id().as_str() == "row-b")
@@ -5728,14 +5925,11 @@ fn table_cell_edit_change_updates_boolean_source_row_and_preserves_table_state()
 }
 
 #[test]
-fn table_render_plan_exposes_pinned_column_regions() {
-    let flat_plan = Table::new("flat-table", "Flat table", sample_table_state(1))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
-    assert!(!flat_plan.uses_split_pinned_layout());
-    assert!(
-        flat_plan.pinned_layout().is_none(),
-        "unpinned tables should keep the flat render topology"
-    );
+fn table_behavior_snapshot_exposes_pinned_column_regions() {
+    let flat_snapshot = Table::new("flat-table", "Flat table", sample_table_state(1))
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    assert_eq!(flat_snapshot.column_regions().left_columns(), 0);
+    assert_eq!(flat_snapshot.column_regions().right_columns(), 0);
 
     let state = TableState::new([TableRow::new("row-a")
         .with_cell("name", "Alpha")
@@ -5755,59 +5949,23 @@ fn table_render_plan_exposes_pinned_column_regions() {
             .pinned_right(["status"]),
     )
     .with_pagination(TablePagination::disabled());
-    let plan = Table::new("pinned-table", "Pinned table", state)
+    let snapshot = Table::new("pinned-table", "Pinned table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
-    let layout = plan
-        .pinned_layout()
-        .expect("pinned columns should request split pinned layout metadata");
-    assert!(plan.uses_split_pinned_layout());
-    assert_eq!(layout.table_id(), "pinned-table");
-    assert_eq!(layout.left_width(), ui_px(256.0));
-    assert_eq!(layout.center_width(), ui_px(128.0));
-    assert_eq!(layout.right_width(), ui_px(128.0));
-    assert_eq!(layout.total_width(), ui_px(512.0));
-    assert_eq!(
-        layout.header_center_scroll_id(),
-        "table:pinned-table:header-center-scroll"
-    );
-    assert_eq!(
-        layout.header_center_scroll_selector(),
-        "scroll-area:table:pinned-table:header-center-scroll"
-    );
-    assert_eq!(
-        layout.header_region_selector(TableColumnRegion::Left),
-        "table:pinned-table:header-region:left"
-    );
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    let regions = snapshot.column_regions();
+    assert_eq!(regions.left_width(), ui_px(256.0));
+    assert_eq!(regions.center_width(), ui_px(128.0));
+    assert_eq!(regions.right_width(), ui_px(128.0));
+    assert_eq!(regions.total_width(), ui_px(512.0));
 
-    let region_columns = plan
-        .column_regions()
+    let region_columns = snapshot
+        .columns()
         .iter()
-        .map(|region| {
-            (
-                region.region(),
-                region
-                    .columns()
-                    .iter()
-                    .map(|column| column.id().as_str())
-                    .collect::<Vec<_>>(),
-            )
-        })
+        .map(|column| (column.id().as_str(), column.region()))
         .collect::<Vec<_>>();
     assert_eq!(
         region_columns,
-        [
-            (TableColumnRegion::Left, vec!["score", "name"]),
-            (TableColumnRegion::Center, vec!["team"]),
-            (TableColumnRegion::Right, vec!["status"]),
-        ]
-    );
-    assert_eq!(
-        plan.columns()
-            .iter()
-            .map(|column| (column.id().as_str(), column.region()))
-            .collect::<Vec<_>>(),
         [
             ("score", TableColumnRegion::Left),
             ("name", TableColumnRegion::Left),
@@ -5816,19 +5974,7 @@ fn table_render_plan_exposes_pinned_column_regions() {
         ]
     );
 
-    let row = &plan.rows()[0];
-    assert_eq!(
-        layout.row_center_scroll_id(row.render_key()),
-        "table:pinned-table:row-center-scroll:row-a"
-    );
-    assert_eq!(
-        layout.row_center_scroll_selector(row.render_key()),
-        "scroll-area:table:pinned-table:row-center-scroll:row-a"
-    );
-    assert_eq!(
-        layout.row_region_selector(row.render_key(), TableColumnRegion::Right),
-        "table:pinned-table:row-region:row-a:right"
-    );
+    let row = &snapshot.rows()[0];
     assert_eq!(
         row.cells_for_region(TableColumnRegion::Left)
             .map(|cell| cell.column_id().as_str())
@@ -5850,7 +5996,7 @@ fn table_render_plan_exposes_pinned_column_regions() {
 }
 
 #[test]
-fn table_render_plan_exposes_row_pinning_regions() {
+fn table_behavior_snapshot_exposes_row_pinning_regions() {
     let state = sample_table_state(12)
         .with_pagination(TablePagination::new(1, 4))
         .with_row_pinning(
@@ -5858,22 +6004,22 @@ fn table_render_plan_exposes_row_pinning_regions() {
                 .pinned_top(["row-0001"])
                 .pinned_bottom(["row-0005", "row-0010"]),
         );
-    let plan = Table::new("row-pinning-table", "Row pinning table", state)
+    let snapshot = Table::new("row-pinning-table", "Row pinning table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
         .overscan(0)
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
     assert_eq!(
-        plan.top_rows()
-            .iter()
+        snapshot
+            .rows_for_region(TableRowRegion::Top)
             .map(|row| (row.id().as_str(), row.region(), row.region_index()))
             .collect::<Vec<_>>(),
         [("row-0001", TableRowRegion::Top, 0)]
     );
     assert_eq!(
-        plan.center_rows()
-            .iter()
+        snapshot
+            .rows_for_region(TableRowRegion::Center)
             .map(|row| (row.id().as_str(), row.region(), row.region_index()))
             .collect::<Vec<_>>(),
         [
@@ -5884,8 +6030,8 @@ fn table_render_plan_exposes_row_pinning_regions() {
         "the center region should be the current page with pinned duplicates removed"
     );
     assert_eq!(
-        plan.bottom_rows()
-            .iter()
+        snapshot
+            .rows_for_region(TableRowRegion::Bottom)
             .map(|row| (row.id().as_str(), row.region(), row.region_index()))
             .collect::<Vec<_>>(),
         [
@@ -5894,33 +6040,23 @@ fn table_render_plan_exposes_row_pinning_regions() {
         ]
     );
     assert_eq!(
-        plan.rendered_rows()
-            .map(|row| row.id().as_str())
-            .collect::<Vec<_>>(),
-        [
-            "row-0001", "row-0004", "row-0006", "row-0007", "row-0005", "row-0010",
-        ]
-    );
-    assert_eq!(
-        plan.table()
-            .final_model()
+        snapshot
             .rows()
             .iter()
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
         [
             "row-0001", "row-0004", "row-0006", "row-0007", "row-0005", "row-0010",
-        ],
-        "final visual rows should match the top + center + bottom render order"
+        ]
     );
-    assert_eq!(plan.virtualizer().count(), 3);
-    assert_eq!(plan.rendered_row_count(), 6);
-    assert_eq!(plan.visible_row_count(), 6);
-    assert_eq!(plan.aria_row_count(), 7);
+    assert_eq!(snapshot.row_counts().pinned_center_rows(), 3);
+    assert_eq!(snapshot.row_counts().rendered_rows(), 6);
+    assert_eq!(snapshot.row_counts().visible_rows(), 6);
+    assert_eq!(snapshot.aria_row_count(), 7);
 }
 
 #[test]
-fn table_render_plan_respects_page_only_row_pinning_policy() {
+fn table_behavior_snapshot_respects_page_only_row_pinning_policy() {
     let state = sample_table_state(12)
         .with_pagination(TablePagination::new(1, 4))
         .with_row_pinning(
@@ -5929,7 +6065,7 @@ fn table_render_plan_respects_page_only_row_pinning_policy() {
                 .pinned_bottom(["row-0005", "row-0010"]),
         )
         .with_row_pinning_policy(TableRowPinningPolicy::PageOnly);
-    let plan = Table::new(
+    let snapshot = Table::new(
         "row-pinning-page-only-table",
         "Row pinning page-only table",
         state,
@@ -5937,31 +6073,31 @@ fn table_render_plan_respects_page_only_row_pinning_policy() {
     .row_height(ui_px(24.0))
     .viewport_extent(ui_px(96.0))
     .overscan(0)
-    .render_plan(UiPx::ZERO, ui_px(96.0));
+    .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
-    assert!(plan.top_rows().is_empty());
+    assert_eq!(snapshot.row_counts().pinned_top_rows(), 0);
     assert_eq!(
-        plan.center_rows()
-            .iter()
+        snapshot
+            .rows_for_region(TableRowRegion::Center)
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
         ["row-0004", "row-0006", "row-0007"],
         "outside-page pinned rows should be omitted under page-only policy"
     );
     assert_eq!(
-        plan.bottom_rows()
-            .iter()
+        snapshot
+            .rows_for_region(TableRowRegion::Bottom)
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
         ["row-0005"]
     );
-    assert_eq!(plan.virtualizer().count(), 3);
-    assert_eq!(plan.aria_row_count(), 5);
+    assert_eq!(snapshot.row_counts().pinned_center_rows(), 3);
+    assert_eq!(snapshot.aria_row_count(), 5);
 }
 
 #[test]
-fn table_render_plan_exposes_center_column_window_metadata() {
-    let plan = Table::new(
+fn table_behavior_snapshot_exposes_center_column_summary_without_window_internals() {
+    let snapshot = Table::new(
         "center-window-table",
         "Center window table",
         sample_center_window_table_state(),
@@ -5969,150 +6105,27 @@ fn table_render_plan_exposes_center_column_window_metadata() {
     .row_height(ui_px(24.0))
     .viewport_extent(ui_px(96.0))
     .overscan(4)
-    .render_plan(UiPx::ZERO, ui_px(96.0));
-    let window = plan
-        .center_column_window()
-        .expect("center columns should resolve window metadata");
+    .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
-    assert_eq!(window.center_width(), ui_px(540.0));
-    assert!(!window.virtualized());
-    assert_eq!(*window.visible_range(), VirtualizerRange::new(0, 6));
-    assert_eq!(*window.overscan_range(), VirtualizerRange::new(0, 6));
-    assert_eq!(window.leading_spacer_width(), UiPx::ZERO);
-    assert_eq!(window.trailing_spacer_width(), UiPx::ZERO);
-    assert_eq!(window.rendered_column_count(), 6);
-    assert_eq!(
-        window
-            .rendered_columns()
-            .iter()
-            .map(|column| column.id().as_str())
-            .collect::<Vec<_>>(),
-        [
-            "metric_00",
-            "metric_01",
-            "metric_02",
-            "metric_03",
-            "metric_04",
-            "metric_05",
-        ]
-    );
+    let regions = snapshot.column_regions();
+    assert_eq!(regions.left_columns(), 1);
+    assert_eq!(regions.center_columns(), 6);
+    assert_eq!(regions.right_columns(), 1);
+    assert_eq!(regions.left_width(), ui_px(140.0));
+    assert_eq!(regions.center_width(), ui_px(540.0));
+    assert_eq!(regions.right_width(), ui_px(132.0));
+    assert_eq!(regions.aria_columns(), 8);
     assert!(
-        window
-            .rendered_columns()
+        snapshot
+            .columns()
             .iter()
-            .all(|column| column.region() == TableColumnRegion::Center),
-        "pinned left/right columns must stay outside the center window"
+            .filter(|column| column.region() == TableColumnRegion::Center)
+            .all(|column| column.id().as_str().starts_with("metric_"))
     );
 }
 
 #[test]
-fn table_center_column_window_matches_exact_size_virtualizer() {
-    let plan = Table::new(
-        "wide-center-window-table",
-        "Wide center window table",
-        sample_center_window_table_state(),
-    )
-    .row_height(ui_px(24.0))
-    .viewport_extent(ui_px(96.0))
-    .overscan(4)
-    .render_plan(UiPx::ZERO, ui_px(96.0));
-    let center_columns = plan
-        .column_regions()
-        .iter()
-        .find(|region| region.region() == TableColumnRegion::Center)
-        .expect("center region should resolve")
-        .columns();
-    let window =
-        TableCenterColumnWindowPlan::resolve(center_columns, ui_px(170.0), ui_px(120.0), 2)
-            .expect("center column window should resolve");
-    let expected = VirtualizerState::new(center_columns.len(), center_columns[0].width())
-        .with_viewport_extent(ui_px(120.0))
-        .with_scroll_offset(ui_px(170.0))
-        .with_overscan(2)
-        .resolve_known_size_window(|index| {
-            let column = &center_columns[index];
-            (
-                VirtualizerItemKey::new(column.id().as_str().to_owned()),
-                column.width(),
-            )
-        });
-
-    assert!(window.virtualized());
-    assert!(window.rendered_column_count() < center_columns.len());
-    assert_eq!(window.center_width(), expected.total_size());
-    assert_eq!(window.visible_range(), expected.visible_range());
-    assert_eq!(window.overscan_range(), expected.overscan_range());
-    assert_eq!(window.rendered_column_count(), expected.items().len());
-    assert_eq!(
-        window.leading_spacer_width(),
-        expected
-            .items()
-            .first()
-            .map(|item| item.start())
-            .unwrap_or(UiPx::ZERO)
-    );
-    assert_eq!(
-        window.trailing_spacer_width(),
-        expected
-            .items()
-            .last()
-            .map(|item| expected.total_size() - item.end())
-            .unwrap_or(UiPx::ZERO)
-    );
-    assert_eq!(
-        window
-            .rendered_columns()
-            .iter()
-            .map(|column| column.id().as_str())
-            .collect::<Vec<_>>(),
-        expected
-            .items()
-            .iter()
-            .map(|item| item.key().as_str())
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        plan.column_region_width(TableColumnRegion::Left),
-        ui_px(140.0)
-    );
-    assert_eq!(
-        plan.column_region_width(TableColumnRegion::Right),
-        ui_px(132.0)
-    );
-}
-
-#[test]
-fn table_center_column_window_preserves_full_accessibility_indexes() {
-    let plan = Table::new(
-        "accessibility-center-window-table",
-        "Accessibility center window table",
-        sample_center_window_table_state(),
-    )
-    .row_height(ui_px(24.0))
-    .viewport_extent(ui_px(96.0))
-    .overscan(0)
-    .render_plan(UiPx::ZERO, ui_px(96.0));
-    let center_columns = plan
-        .column_regions()
-        .iter()
-        .find(|region| region.region() == TableColumnRegion::Center)
-        .expect("center region should resolve")
-        .columns();
-    let window = TableCenterColumnWindowPlan::resolve(center_columns, ui_px(420.0), ui_px(68.0), 0)
-        .expect("center column window should resolve");
-
-    assert_eq!(
-        window
-            .rendered_columns()
-            .iter()
-            .map(|column| (column.id().as_str(), column.aria_column_index()))
-            .collect::<Vec<_>>(),
-        [("metric_05", 7)]
-    );
-}
-
-#[test]
-fn table_virtualizer_snapshot_restores_measurements_without_overriding_live_scroll() {
+fn table_behavior_snapshot_keeps_virtualized_visible_range_stable_with_snapshot() {
     let snapshot = VirtualizerSnapshot::new(
         ui_px(0.0),
         [VirtualizerSnapshotItem::new(
@@ -6124,21 +6137,21 @@ fn table_virtualizer_snapshot_restores_measurements_without_overriding_live_scro
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
         .virtualizer_snapshot(snapshot);
-    let plan = table.render_plan(ui_px(120.0), ui_px(96.0));
+    let snapshot = table.behavior_snapshot(ui_px(120.0), ui_px(96.0));
 
-    assert_eq!(plan.virtualizer().scroll_offset(), ui_px(120.0));
-    let measured_row = plan
-        .virtualizer()
-        .measurements()
-        .iter()
-        .find(|measurement| measurement.key().as_str() == "row-0005")
-        .expect("snapshot measurement should be restored by stable row key");
-    assert_eq!(measured_row.size(), ui_px(48.0));
-    assert!(measured_row.measured());
+    assert_eq!(
+        *snapshot.visible_rows().visible_range(),
+        VirtualizerRange::new(5, 8)
+    );
+    assert_eq!(
+        *snapshot.visible_rows().overscan_range(),
+        VirtualizerRange::new(2, 11)
+    );
+    assert_eq!(snapshot.rows()[0].id().as_str(), "row-0002");
 }
 
 #[test]
-fn table_render_plan_disambiguates_duplicate_row_ids_for_rendering() {
+fn table_behavior_snapshot_preserves_duplicate_row_id_visibility() {
     let state = TableState::new([
         TableRow::new("duplicate").with_cell("name", "First"),
         TableRow::new("duplicate").with_cell("name", "Second"),
@@ -6149,27 +6162,21 @@ fn table_render_plan_disambiguates_duplicate_row_ids_for_rendering() {
     let table = Table::new("duplicate-table", "Duplicate rows", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(120.0));
-    let plan = table.render_plan(UiPx::ZERO, ui_px(120.0));
+    let snapshot = table.behavior_snapshot(UiPx::ZERO, ui_px(120.0));
 
-    assert_eq!(plan.table().duplicate_row_ids()[0].as_str(), "duplicate");
-    assert_eq!(plan.rows()[0].id().as_str(), "duplicate");
-    assert_eq!(plan.rows()[0].render_key(), "0:duplicate");
-    assert_eq!(plan.rows()[1].id().as_str(), "duplicate");
-    assert_eq!(plan.rows()[1].render_key(), "1:duplicate");
-    assert_eq!(plan.rows()[2].id().as_str(), "unique");
-    assert_eq!(plan.rows()[2].render_key(), "unique");
-
-    let keys = plan
-        .virtualizer()
-        .measurements()
-        .iter()
-        .map(|measurement| measurement.key().as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(keys, ["0:duplicate", "1:duplicate", "unique"]);
+    assert_eq!(
+        snapshot
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["duplicate", "duplicate", "unique"]
+    );
+    assert_eq!(snapshot.row_counts().rendered_rows(), 3);
 }
 
 #[test]
-fn table_render_plan_exposes_column_sizing_metadata_and_matching_cell_widths() {
+fn table_behavior_snapshot_exposes_column_sizing_metadata_and_matching_cell_widths() {
     let state = TableState::new([TableRow::new("row-a")
         .with_cell("name", "Alpha")
         .with_cell("team", "UI")
@@ -6194,41 +6201,25 @@ fn table_render_plan_exposes_column_sizing_metadata_and_matching_cell_widths() {
     )
     .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(95.0)))
     .with_pagination(TablePagination::disabled());
-    let plan = Table::new("sized-table", "Sized table", state)
+    let snapshot = Table::new("sized-table", "Sized table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
-    assert_eq!(plan.total_column_width(), ui_px(370.0));
-    assert_eq!(
-        plan.column_region_width(TableColumnRegion::Left),
-        ui_px(190.0)
-    );
-    assert_eq!(
-        plan.column_region_width(TableColumnRegion::Center),
-        ui_px(120.0)
-    );
-    assert_eq!(
-        plan.column_region_width(TableColumnRegion::Right),
-        ui_px(60.0)
-    );
-    assert_eq!(plan.column_regions()[0].total_width(), ui_px(190.0));
-    assert_eq!(plan.column_regions()[1].total_width(), ui_px(120.0));
-    assert_eq!(plan.column_regions()[2].total_width(), ui_px(60.0));
+    assert_eq!(snapshot.column_regions().total_width(), ui_px(370.0));
+    assert_eq!(snapshot.column_regions().left_width(), ui_px(190.0));
+    assert_eq!(snapshot.column_regions().center_width(), ui_px(120.0));
+    assert_eq!(snapshot.column_regions().right_width(), ui_px(60.0));
 
-    let score_column = plan
+    let score_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "score")
         .expect("score column should be present");
     assert_eq!(score_column.width(), ui_px(90.0));
-    assert_eq!(score_column.min_width(), ui_px(70.0));
-    assert_eq!(score_column.max_width(), ui_px(90.0));
-    assert_eq!(score_column.start(), ui_px(0.0));
-    assert_eq!(score_column.after(), ui_px(100.0));
     assert!(score_column.resizable());
 
-    let score_cell = plan.rows()[0]
+    let score_cell = snapshot.rows()[0]
         .cells_for_region(TableColumnRegion::Left)
         .find(|cell| cell.column_id().as_str() == "score")
         .expect("score cell should be present");
@@ -6236,7 +6227,7 @@ fn table_render_plan_exposes_column_sizing_metadata_and_matching_cell_widths() {
 }
 
 #[test]
-fn table_render_plan_preserves_column_width_policies() {
+fn table_behavior_snapshot_preserves_column_width_policies() {
     let state = TableState::new([TableRow::new("row-a")
         .with_cell("name", "Alpha")
         .with_cell("status", "Ready")])
@@ -6245,11 +6236,11 @@ fn table_render_plan_preserves_column_width_policies() {
         TableColumn::new("status", "Status").with_content_fit(),
     ])
     .with_pagination(TablePagination::disabled());
-    let plan = Table::new("policy-table", "Policy table", state)
+    let snapshot = Table::new("policy-table", "Policy table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
-    let status_column = plan
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    let status_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "status")
@@ -6262,7 +6253,7 @@ fn table_render_plan_preserves_column_width_policies() {
 }
 
 #[test]
-fn table_render_plan_exposes_nested_header_groups_and_region_widths() {
+fn table_behavior_snapshot_exposes_nested_header_summary_and_region_widths() {
     let state = TableState::new([TableRow::new("row-a")
         .with_cell("name", "Alpha")
         .with_cell("team", "UI")
@@ -6296,33 +6287,19 @@ fn table_render_plan_exposes_nested_header_groups_and_region_widths() {
             .pinned_right(["status"]),
     )
     .with_pagination(TablePagination::disabled());
-    let plan = Table::new("nested-headers", "Nested headers", state)
+    let snapshot = Table::new("nested-headers", "Nested headers", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(240.0))
-        .render_plan(UiPx::ZERO, ui_px(240.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(240.0));
 
-    assert_eq!(plan.header_row_count(), 3);
-    assert_eq!(plan.left_header_groups().header_row_count(), 2);
-    assert_eq!(plan.center_header_groups().header_row_count(), 3);
-    assert_eq!(plan.right_header_groups().header_row_count(), 3);
-    assert_eq!(plan.left_header_groups().total_width(), ui_px(100.0));
+    assert_eq!(snapshot.header_summary().header_rows(), 3);
+    assert_eq!(snapshot.header_summary().visible_group_headers(), 3);
+    assert_eq!(snapshot.column_regions().left_width(), ui_px(100.0));
     assert_eq!(
-        plan.center_header_groups().total_width(),
+        snapshot.column_regions().center_width(),
         ui_px(120.0 + 80.0)
     );
-    assert_eq!(plan.right_header_groups().total_width(), ui_px(90.0));
-    assert_eq!(
-        plan.center_header_groups().groups()[0].headers()[0].label(),
-        "Identity"
-    );
-    assert_eq!(
-        plan.center_header_groups().groups()[1].headers()[0].label(),
-        "Team"
-    );
-    assert_eq!(
-        plan.center_header_groups().groups()[2].headers()[0].kind(),
-        TableResolvedHeaderKind::Placeholder
-    );
+    assert_eq!(snapshot.column_regions().right_width(), ui_px(90.0));
 }
 
 #[test]
@@ -6725,7 +6702,7 @@ fn tree_runtime_drag_move_emits_controlled_payload(cx: &mut open_gpui::TestAppCo
 #[test]
 fn table_header_action_cycles_sorting_without_render_coupling() {
     let unsorted = Table::new("sort-cycle", "Sort cycle", sample_table_state(8))
-        .render_plan(UiPx::ZERO, ui_px(120.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(120.0));
     let name_action = unsorted
         .columns()
         .iter()
@@ -6746,7 +6723,7 @@ fn table_header_action_cycles_sorting_without_render_coupling() {
     );
 
     let ascending = Table::new("sort-cycle", "Sort cycle", ascending_state)
-        .render_plan(UiPx::ZERO, ui_px(120.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(120.0));
     let descending_action = ascending
         .columns()
         .iter()
@@ -6764,7 +6741,7 @@ fn table_header_action_cycles_sorting_without_render_coupling() {
 
     let descending_state = descending_action.apply_to(sample_table_state(8));
     let descending = Table::new("sort-cycle", "Sort cycle", descending_state)
-        .render_plan(UiPx::ZERO, ui_px(120.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(120.0));
     let clear_action = descending
         .columns()
         .iter()
@@ -6801,17 +6778,22 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     );
     let virtualizer: root::VirtualizerState =
         root::VirtualizerState::new(4, ui_px(24.0)).with_overscan(2);
-    let root_plan: root::TableRenderPlan = table.state();
-    let _root_region_plan: &root::TableColumnRegionRenderPlan = &root_plan.column_regions()[0];
+    let root_state_readout: &root::TableState = table.state();
+    let root_resolved_state = root_state_readout.resolve();
+    assert_eq!(root_resolved_state.final_model().rows().len(), 1);
+    let root_snapshot: root::TableBehaviorSnapshot =
+        table.behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    let _prelude_snapshot: prelude::TableBehaviorSnapshot = root_snapshot.clone();
+    let _root_region_snapshot: root::TableColumnRegionSnapshot = root_snapshot.column_regions();
     let _root_header_groups: &root::TableResolvedHeaderGroupRegions =
-        root_plan.table().header_groups();
+        root_resolved_state.header_groups();
     let _root_header_kind: root::TableResolvedHeaderKind =
-        root_plan.table().center_header_groups()[0].headers()[0].kind();
+        root_resolved_state.center_header_groups()[0].headers()[0].kind();
     let _root_header_cell: &root::TableResolvedHeaderCell =
-        &root_plan.table().center_header_groups()[0].headers()[0];
+        &root_resolved_state.center_header_groups()[0].headers()[0];
     let _root_header_group: &root::TableResolvedHeaderGroup =
-        &root_plan.table().center_header_groups()[0];
-    let _root_header_plan: &root::TableHeaderGroupRegionsRenderPlan = root_plan.header_groups();
+        &root_resolved_state.center_header_groups()[0];
+    let _root_header_summary: root::TableHeaderSummarySnapshot = root_snapshot.header_summary();
     let root_group_id = root::TableColumnGroupId::new("identity");
     assert_eq!(root_group_id.as_str(), "identity");
     let root_column_group = root::TableColumnGroup::new(
@@ -6848,15 +6830,14 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
             .pinned_left(["name"])
             .pinned_right(["status"]),
     );
-    let root_pinned_render_plan =
-        root::Table::new("root-pinned-table", "Root pinned table", root_pinned_state).state();
-    let root_pinned_layout: root::TablePinnedLayoutPlan = root_pinned_render_plan
-        .pinned_layout()
-        .expect("exported pinned layout plan should resolve")
-        .clone();
-    let _prelude_pinned_layout: prelude::TablePinnedLayoutPlan = root_pinned_layout.clone();
-    let _prelude_header_plan: &prelude::TableHeaderGroupRegionsRenderPlan = _root_header_plan;
-    assert_eq!(root_pinned_layout.table_id(), "root-pinned-table");
+    let root_pinned_snapshot =
+        root::Table::new("root-pinned-table", "Root pinned table", root_pinned_state)
+            .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    let root_pinned_regions: root::TableColumnRegionSnapshot =
+        root_pinned_snapshot.column_regions();
+    let _prelude_pinned_regions: prelude::TableColumnRegionSnapshot = root_pinned_regions;
+    let _prelude_header_summary: prelude::TableHeaderSummarySnapshot = _root_header_summary;
+    assert_eq!(root_pinned_snapshot.table_id(), "root-pinned-table");
     let root_row_pinning: root::TableRowPinning = root::TableRowPinning::new()
         .pinned_top(["row-a"])
         .pinned_bottom(["row-b"]);
@@ -6870,7 +6851,7 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         prelude::TableRowPinningPolicy::KeepPinnedRows;
     let _root_row_region: root::TableRowRegion = root::TableRowRegion::Top;
     let _prelude_row_region: prelude::TableRowRegion = prelude::TableRowRegion::Bottom;
-    let root_row_regions: root::TableRowRegions = root::Table::new(
+    let root_row_counts: root::TableRowCountSnapshot = root::Table::new(
         "root-row-pinning-table",
         "Root row pinning table",
         root::TableState::new([
@@ -6880,26 +6861,10 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .with_columns([root::TableColumn::new("name", "Name")])
         .with_row_pinning(root_row_pinning.clone()),
     )
-    .state()
-    .table()
-    .row_regions()
-    .clone();
-    let _prelude_row_regions: prelude::TableRowRegions = root_row_regions;
-    let root_center_window: root::TableCenterColumnWindowPlan =
-        root::TableCenterColumnWindowPlan::resolve(
-            root_pinned_render_plan
-                .column_regions()
-                .iter()
-                .find(|region| region.region() == root::TableColumnRegion::Center)
-                .expect("center region should resolve")
-                .columns(),
-            ui_px(0.0),
-            ui_px(128.0),
-            2,
-        )
-        .expect("exported center column window plan should resolve");
-    let _prelude_center_window: prelude::TableCenterColumnWindowPlan = root_center_window.clone();
-    assert_eq!(root_center_window.rendered_column_count(), 1);
+    .behavior_snapshot(UiPx::ZERO, ui_px(96.0))
+    .row_counts();
+    let _prelude_row_counts: prelude::TableRowCountSnapshot = root_row_counts;
+    assert_eq!(root_pinned_regions.center_columns(), 1);
     let root_grid_viewport: root::GridViewport2D = root::resolve_grid_viewport_2d(
         &root::VirtualizerState::new(2, ui_px(24.0))
             .with_viewport_extent(ui_px(24.0))
@@ -6919,13 +6884,13 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
                 .with_scroll_offset(ui_px(12.0)),
         );
     assert_eq!(root_grid_viewport.row_overscan_range().start(), 0);
-    let header_action: root::TableHeaderAction = root_plan.columns()[0]
+    let header_action: root::TableHeaderAction = root_snapshot.columns()[0]
         .sort_action()
         .expect("sortable exported table column should expose a header action")
         .clone();
-    let _root_cache_key: root::TableStateCacheKey = table.table_state().cache_key();
+    let _root_cache_key: root::TableStateCacheKey = table.state().cache_key();
     let _prelude_header_action: prelude::TableHeaderAction = header_action;
-    let _prelude_cache_key: prelude::TableStateCacheKey = table.table_state().cache_key();
+    let _prelude_cache_key: prelude::TableStateCacheKey = table.state().cache_key();
     let _root_aggregation: root::TableAggregation =
         root::TableAggregation::new("score", root::TableAggregateKind::Sum);
     let _prelude_aggregation: prelude::TableAggregation =
@@ -6988,7 +6953,8 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         root::TablePredicateFilterChange::new("name", root_predicate_operator, "Al");
     let root_table_toolbar: root::TableToolbar =
         root::TableToolbar::new("root-table-toolbar", "Filters").summary("2 visible controls");
-    let _root_table_toolbar_state: root::TableToolbarState = root_table_toolbar.state();
+    let root_table_toolbar_state: root::TableToolbarState = root_table_toolbar.state();
+    let _root_table_toolbar_colors: root::TableToolbarColors = root_table_toolbar_state.colors();
     let prelude_global_filter: prelude::TableGlobalFilter =
         prelude::TableGlobalFilter::new("prelude-global-filter", "Search").default_query("ready");
     let _prelude_global_filter_state: prelude::TableGlobalFilterState =
@@ -7012,7 +6978,9 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let prelude_table_toolbar: prelude::TableToolbar =
         prelude::TableToolbar::new("prelude-table-toolbar", "Filters")
             .summary("2 visible controls");
-    let _prelude_table_toolbar_state: prelude::TableToolbarState = prelude_table_toolbar.state();
+    let prelude_table_toolbar_state: prelude::TableToolbarState = prelude_table_toolbar.state();
+    let _prelude_table_toolbar_colors: prelude::TableToolbarColors =
+        prelude_table_toolbar_state.colors();
     let root_faceted_filter: root::TableFacetedFilter =
         root::TableFacetedFilter::new("root-status-filter", "Status", "status")
             .facets(root_facets.clone())
@@ -7101,7 +7069,7 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .clone();
     let _prelude_tree_row: prelude::TableTreeRow = root_tree_row;
     let _resolved_kind: Option<&root::TableGroupRow> =
-        table.table_state().resolve().final_model().rows()[0].group();
+        table.state().resolve().final_model().rows()[0].group();
     let _root_table_modifiers: root::TableInputModifiers = root::TableInputModifiers::default();
     let _prelude_table_modifiers: prelude::TableInputModifiers =
         prelude::TableInputModifiers::default();
@@ -7172,7 +7140,7 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     );
     let _prelude_resize_change: prelude::TableColumnSizingChange = root_resize_change;
     let _root_resolved_sizing: root::TableResolvedColumnSizing = table
-        .table_state()
+        .state()
         .resolve()
         .visible_column_sizing()
         .column(&root::TableColumnId::new("name"))
@@ -7180,11 +7148,8 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .clone();
     let _prelude_resolved_sizing: prelude::TableResolvedColumnSizing =
         _root_resolved_sizing.clone();
-    let _root_resolved_sizing_regions: root::TableResolvedColumnSizingRegions = table
-        .table_state()
-        .resolve()
-        .visible_column_sizing()
-        .clone();
+    let _root_resolved_sizing_regions: root::TableResolvedColumnSizingRegions =
+        table.state().resolve().visible_column_sizing().clone();
     let _prelude_resolved_sizing_regions: prelude::TableResolvedColumnSizingRegions =
         _root_resolved_sizing_regions.clone();
     let _root_default_width = root::TABLE_DEFAULT_COLUMN_WIDTH;
@@ -7194,14 +7159,11 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _prelude_min_width = prelude::TABLE_MIN_COLUMN_WIDTH;
     let _prelude_max_width = prelude::TABLE_MAX_COLUMN_WIDTH;
     let _prelude_region: prelude::TableColumnRegion = prelude::TableColumnRegion::Center;
-    let _prelude_regions: prelude::TableColumnRegions = table
-        .table_state()
-        .resolve()
-        .visible_column_regions()
-        .clone();
+    let _prelude_regions: prelude::TableColumnRegions =
+        table.state().resolve().visible_column_regions().clone();
 
-    assert_eq!(root_plan.role(), Role::Table);
-    assert!(!root_plan.column_facets().is_empty());
+    assert_eq!(root_snapshot.role(), Role::Table);
+    assert!(!root_snapshot.columns().is_empty());
     assert_eq!(
         root::TableRowActivationKind::DoubleClick.as_str(),
         "double-click"
@@ -8940,8 +8902,8 @@ fn table_runtime_center_column_window_still_emits_sort_for_rendered_center_heade
 }
 
 #[test]
-fn table_center_column_window_recomputes_geometry_for_center_column_resize() {
-    let base_plan = Table::new(
+fn table_behavior_snapshot_updates_center_column_summary_for_resize() {
+    let base_snapshot = Table::new(
         "center-window-resize-plan-table",
         "Center window resize plan table",
         sample_center_window_table_state()
@@ -8950,18 +8912,12 @@ fn table_center_column_window_recomputes_geometry_for_center_column_resize() {
     .row_height(ui_px(24.0))
     .viewport_extent(ui_px(96.0))
     .overscan(0)
-    .render_plan(UiPx::ZERO, ui_px(96.0));
-    let base_center_columns = base_plan
-        .column_regions()
-        .iter()
-        .find(|region| region.region() == TableColumnRegion::Center)
-        .expect("center region should resolve")
-        .columns();
-    let base_window =
-        TableCenterColumnWindowPlan::resolve(base_center_columns, ui_px(420.0), ui_px(68.0), 0)
-            .expect("center column window should resolve");
+    .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    let base_metric = base_snapshot
+        .column(&TableColumnId::new("metric_05"))
+        .expect("metric_05 should resolve before resize");
 
-    let resized_plan = Table::new(
+    let resized_snapshot = Table::new(
         "center-window-resize-plan-table",
         "Center window resize plan table",
         sample_center_window_table_state()
@@ -8970,39 +8926,22 @@ fn table_center_column_window_recomputes_geometry_for_center_column_resize() {
     .row_height(ui_px(24.0))
     .viewport_extent(ui_px(96.0))
     .overscan(0)
-    .render_plan(UiPx::ZERO, ui_px(96.0));
-    let resized_center_columns = resized_plan
-        .column_regions()
-        .iter()
-        .find(|region| region.region() == TableColumnRegion::Center)
-        .expect("center region should resolve after resize")
-        .columns();
-    let resized_window =
-        TableCenterColumnWindowPlan::resolve(resized_center_columns, ui_px(420.0), ui_px(68.0), 0)
-            .expect("center column window should resolve after resize");
+    .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    let resized_metric = resized_snapshot
+        .column(&TableColumnId::new("metric_05"))
+        .expect("metric_05 should resolve after resize");
 
-    assert!(resized_window.center_width() > base_window.center_width());
-    assert_eq!(resized_window.visible_range(), base_window.visible_range());
     assert_eq!(
-        resized_window.overscan_range(),
-        base_window.overscan_range()
-    );
-    assert_eq!(
-        resized_window
-            .rendered_columns()
-            .iter()
-            .map(|column| column.id().as_str())
-            .collect::<Vec<_>>(),
-        base_window
-            .rendered_columns()
-            .iter()
-            .map(|column| column.id().as_str())
-            .collect::<Vec<_>>()
+        base_snapshot.column_regions().center_columns(),
+        resized_snapshot.column_regions().center_columns()
     );
     assert!(
-        resized_window.rendered_columns().last().unwrap().width()
-            > base_window.rendered_columns().last().unwrap().width(),
-        "expected the resized virtualized center header to widen"
+        resized_snapshot.column_regions().center_width()
+            > base_snapshot.column_regions().center_width()
+    );
+    assert!(
+        resized_metric.width() > base_metric.width(),
+        "expected the resized center column to widen"
     );
 }
 
@@ -11667,35 +11606,220 @@ fn gpui_role_mapping_covers_neutral_image_and_separator_fallback() {
 }
 
 fn official_component_catalog_names_from_gallery_source() -> Vec<String> {
+    let names =
+        component_catalog_names_from_gallery_constructor("ComponentCatalogEntry::official(");
+    assert!(
+        !names.is_empty(),
+        "Components gallery source should contain official catalog entries"
+    );
+    names
+}
+
+fn component_catalog_names_from_gallery_constructor(constructor: &str) -> Vec<String> {
     const GALLERY_COMPONENTS_SOURCE: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../examples/ui-foundation-gallery/src/pages/components.rs"
+        "/../../examples/ui-foundation-gallery/src/pages/components/catalog.rs"
     );
-    const MARKER: &str = "ComponentCatalogEntry::official(";
 
     let source = std::fs::read_to_string(GALLERY_COMPONENTS_SOURCE)
         .unwrap_or_else(|error| panic!("failed to read {GALLERY_COMPONENTS_SOURCE}: {error}"));
     let mut remaining = source.as_str();
     let mut names = Vec::new();
 
-    while let Some(marker_index) = remaining.find(MARKER) {
-        remaining = &remaining[marker_index + MARKER.len()..];
+    while let Some(marker_index) = remaining.find(constructor) {
+        remaining = &remaining[marker_index + constructor.len()..];
         let name_start = remaining
             .find('"')
-            .unwrap_or_else(|| panic!("missing catalog name opener after {MARKER}"));
+            .unwrap_or_else(|| panic!("missing catalog name opener after {constructor}"));
         remaining = &remaining[name_start + 1..];
         let name_end = remaining
             .find('"')
-            .unwrap_or_else(|| panic!("missing catalog name closer after {MARKER}"));
+            .unwrap_or_else(|| panic!("missing catalog name closer after {constructor}"));
         names.push(remaining[..name_end].to_string());
         remaining = &remaining[name_end + 1..];
     }
 
-    assert!(
-        !names.is_empty(),
-        "Components gallery source should contain official catalog entries"
-    );
     names
+}
+
+fn surface_manifest() -> Vec<SurfaceManifestEntry> {
+    let root_exports = default_reexport_tokens("lib.rs");
+    let prelude_exports = default_reexport_tokens("prelude.rs");
+    let mut entries = Vec::new();
+
+    for entry in COMPONENT_API_INVENTORY {
+        entries.push(SurfaceManifestEntry {
+            name: entry.component.to_owned(),
+            owner: public_owner_for_component_inventory(entry.component),
+            home: component_source_inputs(entry.component)
+                .first()
+                .map(|source| component_source_home(*source))
+                .unwrap_or("unknown")
+                .to_owned(),
+            root_export: root_exports.contains(entry.component),
+            prelude_export: prelude_exports.contains(entry.component),
+            primitive_status: SurfacePrimitiveStatus::NotPrimitive,
+            adapter_only: false,
+            diagnostic_only: false,
+            gallery_status: component_gallery_status(entry.component)
+                .unwrap_or(SurfaceGalleryStatus::NotInGallery),
+            docs_status: SurfaceDocsStatus::ComponentCatalog,
+            docs_token: Some(entry.component),
+        });
+    }
+
+    for entry in PUBLIC_SURFACE_OWNER_MAP {
+        entries.push(SurfaceManifestEntry {
+            name: entry.name.to_owned(),
+            owner: entry.owner,
+            home: entry.home.to_owned(),
+            root_export: root_exports.contains(entry.name),
+            prelude_export: prelude_exports.contains(entry.name),
+            primitive_status: primitive_status_for_surface(entry),
+            adapter_only: entry.owner == PublicSurfaceOwnerClass::GpuiAdapterHelper,
+            diagnostic_only: entry.owner == PublicSurfaceOwnerClass::DiagnosticSurface,
+            gallery_status: component_gallery_status(entry.name)
+                .unwrap_or(SurfaceGalleryStatus::NotInGallery),
+            docs_status: docs_status_for_surface(entry),
+            docs_token: docs_token_for_surface(entry),
+        });
+    }
+
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
+    entries
+}
+
+fn public_owner_for_component_inventory(component: &str) -> PublicSurfaceOwnerClass {
+    match component {
+        "TableColumnVisibility"
+        | "TableFacetedFilter"
+        | "TableGlobalFilter"
+        | "TablePredicateFilter"
+        | "TableRangeFilter"
+        | "TableToolbar" => PublicSurfaceOwnerClass::OfficialComponentRecipe,
+        _ => PublicSurfaceOwnerClass::OfficialComponent,
+    }
+}
+
+fn component_gallery_status(name: &str) -> Option<SurfaceGalleryStatus> {
+    for constructor in [
+        (
+            "ComponentCatalogEntry::official(",
+            SurfaceGalleryStatus::OfficialComponent,
+        ),
+        (
+            "ComponentCatalogEntry::adapter_only(",
+            SurfaceGalleryStatus::AdapterOnly,
+        ),
+        (
+            "ComponentCatalogEntry::internal_anatomy(",
+            SurfaceGalleryStatus::InternalAnatomy,
+        ),
+        (
+            "ComponentCatalogEntry::state_contract(",
+            SurfaceGalleryStatus::StateContract,
+        ),
+        (
+            "ComponentCatalogEntry::deferred(",
+            SurfaceGalleryStatus::NotInGallery,
+        ),
+    ] {
+        if component_catalog_names_from_gallery_constructor(constructor.0)
+            .iter()
+            .any(|entry| entry == name)
+        {
+            return Some(constructor.1);
+        }
+    }
+
+    if overlay_catalog_names_from_gallery_source()
+        .iter()
+        .any(|entry| entry == name)
+    {
+        return Some(SurfaceGalleryStatus::OfficialOverlay);
+    }
+
+    None
+}
+
+fn component_source_home(source_entry: &'static str) -> &'static str {
+    match source_entry {
+        "command.rs" => "command/mod.rs",
+        source => source,
+    }
+}
+
+fn overlay_catalog_names_from_gallery_source() -> Vec<String> {
+    component_catalog_names_from_source_constructor(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/ui-foundation-gallery/src/pages/overlay.rs"
+        ),
+        "OverlayCatalogEntry::official(",
+    )
+}
+
+fn component_catalog_names_from_source_constructor(
+    source_path: &str,
+    constructor: &str,
+) -> Vec<String> {
+    let source = std::fs::read_to_string(source_path)
+        .unwrap_or_else(|error| panic!("failed to read {source_path}: {error}"));
+    let mut remaining = source.as_str();
+    let mut names = Vec::new();
+
+    while let Some(marker_index) = remaining.find(constructor) {
+        remaining = &remaining[marker_index + constructor.len()..];
+        let name_start = remaining
+            .find('"')
+            .unwrap_or_else(|| panic!("missing catalog name opener after {constructor}"));
+        remaining = &remaining[name_start + 1..];
+        let name_end = remaining
+            .find('"')
+            .unwrap_or_else(|| panic!("missing catalog name closer after {constructor}"));
+        names.push(remaining[..name_end].to_string());
+        remaining = &remaining[name_end + 1..];
+    }
+
+    names
+}
+
+fn primitive_status_for_surface(entry: &PublicSurfaceOwnerEntry) -> SurfacePrimitiveStatus {
+    if entry.name.starts_with("primitives::") && entry.home == "removed" {
+        SurfacePrimitiveStatus::RemovedPrimitiveModule
+    } else if entry.name.starts_with("primitives::") {
+        SurfacePrimitiveStatus::PublicPrimitiveModule
+    } else {
+        SurfacePrimitiveStatus::NotPrimitive
+    }
+}
+
+fn docs_status_for_surface(entry: &PublicSurfaceOwnerEntry) -> SurfaceDocsStatus {
+    match entry.owner {
+        PublicSurfaceOwnerClass::OfficialComponent
+        | PublicSurfaceOwnerClass::OfficialComponentRecipe
+        | PublicSurfaceOwnerClass::RendererNeutralStateContract
+        | PublicSurfaceOwnerClass::GpuiAdapterHelper
+        | PublicSurfaceOwnerClass::InternalImplementationDetail => {
+            SurfaceDocsStatus::ComponentContract
+        }
+        PublicSurfaceOwnerClass::DiagnosticSurface => {
+            SurfaceDocsStatus::ComponentContractOrVerification
+        }
+        PublicSurfaceOwnerClass::DeprecatedRemovalTarget => SurfaceDocsStatus::Verification,
+    }
+}
+
+fn docs_token_for_surface(entry: &PublicSurfaceOwnerEntry) -> Option<&'static str> {
+    if entry.home == "removed" {
+        Some(entry.name)
+    } else if entry.owner == PublicSurfaceOwnerClass::GpuiAdapterHelper {
+        Some("open_gpui_ui_components::gpui_adapter")
+    } else if entry.name.starts_with("primitives::") {
+        Some("ui_components::primitives")
+    } else {
+        Some(entry.name.rsplit("::").next().unwrap_or(entry.name))
+    }
 }
 
 fn component_api_entry(component: &str) -> &'static ComponentApiInventoryEntry {
@@ -11769,6 +11893,402 @@ fn component_api_inventory_covers_official_gallery_catalog() {
         assert!(
             inventory_names.contains(overlay),
             "overlay component `{overlay}` needs a public API inventory row"
+        );
+    }
+}
+
+#[test]
+fn surface_manifest_classifies_public_surface_once() {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut owners = BTreeMap::new();
+    for entry in surface_manifest() {
+        let previous = owners.insert(entry.name.clone(), entry.owner);
+        assert!(
+            previous.is_none(),
+            "`{}` appears in multiple public surface owner classes",
+            entry.name
+        );
+    }
+
+    let covered_classes = owners.values().copied().collect::<BTreeSet<_>>();
+    for expected_class in [
+        PublicSurfaceOwnerClass::OfficialComponent,
+        PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        PublicSurfaceOwnerClass::DiagnosticSurface,
+        PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        PublicSurfaceOwnerClass::InternalImplementationDetail,
+    ] {
+        assert!(
+            covered_classes.contains(&expected_class),
+            "public surface owner map should contain at least one {expected_class:?} entry"
+        );
+    }
+}
+
+#[test]
+fn surface_manifest_aligns_adjacent_gallery_statuses() {
+    let status_expectations = [
+        (
+            "ComponentCatalogEntry::state_contract(",
+            SurfaceGalleryStatus::StateContract,
+        ),
+        (
+            "ComponentCatalogEntry::adapter_only(",
+            SurfaceGalleryStatus::AdapterOnly,
+        ),
+        (
+            "ComponentCatalogEntry::internal_anatomy(",
+            SurfaceGalleryStatus::InternalAnatomy,
+        ),
+    ];
+    let manifest = surface_manifest();
+
+    for (constructor, expected_status) in status_expectations {
+        let names = component_catalog_names_from_gallery_constructor(constructor);
+        assert!(
+            !names.is_empty(),
+            "gallery constructor `{constructor}` should remain covered by the owner map"
+        );
+
+        for name in names {
+            let entries = manifest
+                .iter()
+                .filter(|entry| entry.name == name)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                entries.len(),
+                1,
+                "gallery catalog entry `{name}` should have exactly one adjacent public surface owner"
+            );
+            assert_eq!(
+                entries[0].gallery_status, expected_status,
+                "gallery catalog entry `{name}` changed manifest gallery status"
+            );
+        }
+    }
+}
+
+#[test]
+fn surface_manifest_homes_point_to_real_sources() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let lib_source = std::fs::read_to_string(source_dir.join("lib.rs"))
+        .unwrap_or_else(|error| panic!("failed to read lib.rs: {error}"));
+    let gpui_adapter_source = public_module_source(&lib_source, "gpui_adapter")
+        .expect("lib.rs should expose a gpui_adapter module");
+
+    for entry in surface_manifest() {
+        if entry.home == "removed" {
+            continue;
+        } else if entry.home == "gpui_adapter" {
+            assert!(
+                gpui_adapter_source.contains(entry.name.as_str()),
+                "`{}` should stay exported through the gpui_adapter owner group",
+                entry.name
+            );
+        } else {
+            let path = source_dir.join(entry.home.as_str());
+            assert!(
+                path.is_file() || path.is_dir(),
+                "`{}` owner home `{}` should point to a real source file or module directory",
+                entry.name,
+                entry.home
+            );
+        }
+    }
+}
+
+#[test]
+fn surface_manifest_tracks_exports_gallery_and_docs_contracts() {
+    use std::collections::BTreeSet;
+
+    let manifest = surface_manifest();
+    let names = manifest
+        .iter()
+        .map(|entry| entry.name.as_str())
+        .collect::<BTreeSet<_>>();
+    for required in [
+        "Button",
+        "Listbox",
+        "Select",
+        "Combobox",
+        "Command",
+        "Tooltip",
+        "Dialog",
+        "TableBehaviorSnapshot",
+        "TreeState",
+        "VirtualizedListState",
+        "GpuiOverlayAdapterConfig",
+        "TextInputController",
+        "primitives::trigger_a11y",
+    ] {
+        assert!(
+            names.contains(required),
+            "surface manifest should include `{required}`"
+        );
+    }
+
+    let component_contract = include_str!("../../../docs/ui/component-contract.md");
+    let verification = include_str!("../../../docs/verification.md");
+    for entry in &manifest {
+        match entry.owner {
+            PublicSurfaceOwnerClass::OfficialComponent => {
+                assert!(
+                    entry.root_export,
+                    "{} should be exported from crate root",
+                    entry.name
+                );
+                assert!(
+                    entry.prelude_export,
+                    "{} should be exported from prelude",
+                    entry.name
+                );
+                assert!(
+                    matches!(
+                        entry.gallery_status,
+                        SurfaceGalleryStatus::OfficialComponent
+                            | SurfaceGalleryStatus::OfficialOverlay
+                    ),
+                    "official manifest entry `{}` should be present in a gallery catalog",
+                    entry.name
+                );
+            }
+            PublicSurfaceOwnerClass::OfficialComponentRecipe => {
+                assert!(
+                    entry.root_export,
+                    "{} should be exported from crate root",
+                    entry.name
+                );
+                assert!(
+                    entry.prelude_export,
+                    "{} should be exported from prelude",
+                    entry.name
+                );
+                assert_eq!(
+                    entry.gallery_status,
+                    SurfaceGalleryStatus::NotInGallery,
+                    "component recipe `{}` should be documented by docs/signals rather than standalone catalog status",
+                    entry.name
+                );
+            }
+            PublicSurfaceOwnerClass::GpuiAdapterHelper => {
+                assert!(
+                    entry.adapter_only,
+                    "{} should be flagged adapter-only",
+                    entry.name
+                );
+                assert!(
+                    !entry.prelude_export,
+                    "adapter-only surface `{}` must not leak into prelude",
+                    entry.name
+                );
+            }
+            PublicSurfaceOwnerClass::DiagnosticSurface => {
+                assert!(
+                    entry.diagnostic_only,
+                    "{} should be flagged diagnostic-only",
+                    entry.name
+                );
+            }
+            PublicSurfaceOwnerClass::RendererNeutralStateContract
+            | PublicSurfaceOwnerClass::DeprecatedRemovalTarget
+            | PublicSurfaceOwnerClass::InternalImplementationDetail => {}
+        }
+
+        match entry.primitive_status {
+            SurfacePrimitiveStatus::PublicPrimitiveModule => {
+                assert!(
+                    entry.home.starts_with("primitives/"),
+                    "primitive manifest entry `{}` should point to primitives source",
+                    entry.name
+                );
+            }
+            SurfacePrimitiveStatus::RemovedPrimitiveModule => {
+                assert_eq!(
+                    entry.home, "removed",
+                    "removed primitive `{}` should not point at a compatibility file",
+                    entry.name
+                );
+            }
+            SurfacePrimitiveStatus::NotPrimitive => {}
+        }
+
+        let Some(token) = entry.docs_token else {
+            continue;
+        };
+        match entry.docs_status {
+            SurfaceDocsStatus::ComponentCatalog => {
+                assert!(
+                    names.contains(entry.name.as_str()),
+                    "component catalog surface `{}` should remain in manifest",
+                    entry.name
+                );
+            }
+            SurfaceDocsStatus::ComponentContract => {
+                assert!(
+                    component_contract.contains(token),
+                    "component contract docs should mention manifest token `{token}`"
+                );
+            }
+            SurfaceDocsStatus::ComponentContractOrVerification => {
+                assert!(
+                    component_contract.contains(token) || verification.contains(token),
+                    "component contract or verification docs should mention manifest token `{token}`"
+                );
+            }
+            SurfaceDocsStatus::Verification => {
+                assert!(
+                    verification.contains(token)
+                        || verification.contains("primitive_deletion_target_inventory"),
+                    "verification docs should mention removed manifest token `{token}`"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn primitive_owner_map_classifies_every_public_primitive_module_once() {
+    use std::collections::BTreeMap;
+
+    let modules = public_primitive_modules_from_mod();
+    let mut owners = BTreeMap::new();
+    for entry in PUBLIC_SURFACE_OWNER_MAP
+        .iter()
+        .filter(|entry| entry.name.starts_with("primitives::"))
+    {
+        let module = entry
+            .name
+            .strip_prefix("primitives::")
+            .expect("primitive owner entry should use primitives:: prefix");
+        let previous = owners.insert(module.to_owned(), entry.owner);
+        assert!(
+            previous.is_none(),
+            "primitive module `{module}` should have exactly one owner class"
+        );
+    }
+
+    owners.retain(|_, owner| *owner != PublicSurfaceOwnerClass::DeprecatedRemovalTarget);
+    assert_eq!(
+        owners.keys().cloned().collect::<Vec<_>>(),
+        modules,
+        "every remaining public primitives module should be explicitly classified after U2 removes shallow aliases"
+    );
+}
+
+#[test]
+fn primitive_deletion_target_inventory_blocks_removed_shallow_reexports() {
+    let deletion_targets = PUBLIC_SURFACE_OWNER_MAP
+        .iter()
+        .filter(|entry| entry.owner == PublicSurfaceOwnerClass::DeprecatedRemovalTarget)
+        .map(|entry| {
+            entry
+                .name
+                .strip_prefix("primitives::")
+                .unwrap_or_else(|| panic!("deletion target `{}` should be a primitive", entry.name))
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        deletion_targets,
+        vec![
+            "active_descendant".to_string(),
+            "collection".to_string(),
+            "controllable_state".to_string(),
+            "overlay".to_string(),
+        ],
+        "U2 should delete only the known shallow primitive pass-through modules"
+    );
+
+    let primitives_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/primitives");
+    let public_modules = public_primitive_modules_from_mod();
+    for module in deletion_targets {
+        let source_path = primitives_dir.join(format!("{module}.rs"));
+        assert!(
+            !source_path.exists(),
+            "removed shallow primitive module `{module}` should not keep a compatibility file"
+        );
+        assert!(
+            !public_modules.contains(&module),
+            "removed shallow primitive module `{module}` should not stay in primitives/mod.rs"
+        );
+    }
+}
+
+#[test]
+fn primitive_modules_do_not_reexport_ui_core_as_pass_through_aliases() {
+    let primitives_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/primitives");
+    let entries = std::fs::read_dir(&primitives_dir)
+        .unwrap_or_else(|error| panic!("failed to read {primitives_dir:?}: {error}"));
+    let mut offenders = Vec::new();
+
+    for entry in entries {
+        let path = entry
+            .unwrap_or_else(|error| panic!("failed to read primitive source entry: {error}"))
+            .path();
+        if path.file_name().is_some_and(|name| name == "mod.rs")
+            || path.extension().is_none_or(|extension| extension != "rs")
+        {
+            continue;
+        }
+
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {path:?}: {error}"));
+        if source.contains("pub use open_gpui_ui_core::") {
+            offenders.push(
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("<unknown>")
+                    .to_owned(),
+            );
+        }
+    }
+
+    assert_eq!(
+        offenders,
+        Vec::<String>::new(),
+        "ui_components::primitives must own adapter behavior, not pass through ui_core aliases"
+    );
+}
+
+#[test]
+fn component_contract_docs_match_current_public_surface_vocabulary() {
+    let contract = include_str!("../../../docs/ui/component-contract.md");
+
+    for required in [
+        "components::catalog::COMPONENT_CATALOG",
+        "components/catalog.rs",
+        "components/render.rs",
+        "`adapter-only`",
+        "`internal-anatomy`",
+        "`state-contract`",
+        "`TableBehaviorSnapshot`",
+        "not component facades",
+        "default application",
+        "state API",
+        "`ThemeRegistry` is the app-level owner",
+        "Virtualized adapters share a crate-private row-window projection",
+        "`open_gpui_ui_components::choice`",
+        "`open_gpui_ui_components::gpui_adapter`",
+    ] {
+        assert!(
+            contract.contains(required),
+            "component contract docs should mention `{required}`"
+        );
+    }
+
+    for removed in [
+        "`ui_components::primitives::active_descendant`",
+        "`ui_components::primitives::collection`",
+        "`ui_components::primitives::controllable_state`",
+        "`ui_components::primitives::overlay`",
+        "theme registry gap",
+    ] {
+        assert!(
+            !contract.contains(removed),
+            "component contract docs should not preserve removed or stale contract `{removed}`"
         );
     }
 }
@@ -12203,10 +12723,26 @@ fn adapter_only_helpers_do_not_leak_from_default_exports() {
 #[test]
 fn public_reexports_stay_explicit_without_wildcards() {
     let mut wildcard_exports = Vec::new();
-    for file_name in ["lib.rs", "prelude.rs"] {
-        let source =
-            std::fs::read_to_string(format!("{}/src/{file_name}", env!("CARGO_MANIFEST_DIR")))
-                .unwrap_or_else(|error| panic!("failed to read {file_name}: {error}"));
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let files = [
+        ("ui_components/src/lib.rs", manifest_dir.join("src/lib.rs")),
+        (
+            "ui_components/src/prelude.rs",
+            manifest_dir.join("src/prelude.rs"),
+        ),
+        (
+            "ui_core/src/lib.rs",
+            manifest_dir.join("../ui_core/src/lib.rs"),
+        ),
+        (
+            "ui_core/src/prelude.rs",
+            manifest_dir.join("../ui_core/src/prelude.rs"),
+        ),
+    ];
+
+    for (file_name, path) in files {
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {path:?}: {error}"));
 
         for (line_number, line) in source.lines().enumerate() {
             if line.contains("pub use ") && line.contains("::*") {
@@ -12220,6 +12756,24 @@ fn public_reexports_stay_explicit_without_wildcards() {
         Vec::<String>::new(),
         "public re-exports must stay explicit, including adapter-only groupings"
     );
+}
+
+fn public_primitive_modules_from_mod() -> Vec<String> {
+    let source_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/primitives/mod.rs");
+    let source = std::fs::read_to_string(&source_path)
+        .unwrap_or_else(|error| panic!("failed to read {source_path:?}: {error}"));
+    let mut modules = source
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("pub mod ")
+                .and_then(|module| module.strip_suffix(';'))
+                .map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    modules.sort();
+    modules
 }
 
 #[test]
@@ -12461,16 +13015,7 @@ fn public_surface_blockers(tokens: &[&str]) -> Vec<PublicSurfaceBlocker> {
 }
 
 fn source_without_gpui_adapter_module(source: &str) -> String {
-    let Some(module_start) = source.find("pub mod gpui_adapter") else {
-        return source.to_owned();
-    };
-    let Some(open_brace) = source[module_start..]
-        .find('{')
-        .map(|offset| module_start + offset)
-    else {
-        return source.to_owned();
-    };
-    let Some(close_brace) = matching_brace(source, open_brace) else {
+    let Some((module_start, close_brace)) = public_module_bounds(source, "gpui_adapter") else {
         return source.to_owned();
     };
 
@@ -12478,6 +13023,21 @@ fn source_without_gpui_adapter_module(source: &str) -> String {
     stripped.push_str(&source[..module_start]);
     stripped.push_str(&source[close_brace + 1..]);
     stripped
+}
+
+fn public_module_source<'a>(source: &'a str, module_name: &str) -> Option<&'a str> {
+    let (module_start, close_brace) = public_module_bounds(source, module_name)?;
+    Some(&source[module_start..=close_brace])
+}
+
+fn public_module_bounds(source: &str, module_name: &str) -> Option<(usize, usize)> {
+    let module_marker = format!("pub mod {module_name}");
+    let module_start = source.find(&module_marker)?;
+    let open_brace = source[module_start..]
+        .find('{')
+        .map(|offset| module_start + offset)?;
+    let close_brace = matching_brace(source, open_brace)?;
+    Some((module_start, close_brace))
 }
 
 fn public_api_surface(source: &str) -> String {
@@ -12891,6 +13451,145 @@ fn listbox_state_resolves_grouped_options_navigation_and_typeahead() {
         ),
         Some(0)
     );
+}
+
+#[test]
+fn choice_surfaces_share_stable_value_resolution_and_query_normalization() {
+    let listbox = ListboxState::resolve(
+        Size::Small,
+        false,
+        "Shared choices",
+        Some("disabled"),
+        Some("missing"),
+        Some("  AL "),
+        "No choices",
+        [ListboxGroupDescriptor::new("group", "Group")
+            .option(ListboxOptionDescriptor::option("grouped", "Grouped"))],
+        [
+            ListboxOptionDescriptor::option("alpha", "Alpha"),
+            ListboxOptionDescriptor::option("disabled", "Disabled").disabled(true),
+        ],
+        ThemeTokens::default(),
+    );
+
+    let select = Select::new("shared-select", "Shared choices")
+        .placeholder("Pick one")
+        .selected("disabled")
+        .option(ListboxOption::new("alpha", "Alpha"))
+        .option(ListboxOption::new("disabled", "Disabled").disabled(true))
+        .group(ListboxGroup::new("group", "Group").option(ListboxOption::new("grouped", "Grouped")))
+        .state();
+
+    let combobox = Combobox::new("shared-combobox", "Shared choices")
+        .default_query("  AL ")
+        .selected("disabled")
+        .option(ComboboxOption::new("alpha", "Alpha"))
+        .option(ComboboxOption::new("disabled", "Disabled").disabled(true))
+        .group(
+            ComboboxGroup::new("group", "Group").option(ComboboxOption::new("grouped", "Grouped")),
+        )
+        .state();
+
+    let command = Command::new("shared-command", "Shared choices")
+        .default_query("  AL ")
+        .selected("disabled")
+        .item(CommandItem::new("alpha", "Alpha"))
+        .item(CommandItem::new("disabled", "Disabled").disabled(true))
+        .group(CommandGroup::new("group", "Group").item(CommandItem::new("grouped", "Grouped")))
+        .state();
+
+    assert_eq!(listbox.typeahead_query(), Some("al"));
+    assert_eq!(listbox.selected_value(), None);
+    assert_eq!(listbox.active_value(), Some("alpha"));
+    assert_eq!(
+        listbox
+            .typeahead_target("  AL ")
+            .map(|option| option.value()),
+        Some("alpha")
+    );
+
+    assert_eq!(select.selected_value(), None);
+    assert_eq!(select.active_value(), Some("alpha"));
+    assert_eq!(select.trigger_label(), "Pick one");
+
+    assert_eq!(combobox.query(), "  AL ");
+    assert_eq!(combobox.filtered_option_count(), 1);
+    assert_eq!(combobox.selected_value(), None);
+    assert_eq!(combobox.active_value(), Some("alpha"));
+    assert_eq!(combobox.listbox().typeahead_query(), Some("al"));
+
+    assert_eq!(command.query(), "  AL ");
+    assert_eq!(command.filtered_item_count(), 1);
+    assert_eq!(command.selected_value(), None);
+    assert_eq!(command.active_value(), Some("alpha"));
+    assert_eq!(command.listbox().typeahead_query(), Some("al"));
+}
+
+#[test]
+fn listbox_select_and_combobox_project_equivalent_choice_semantics() {
+    let listbox = ListboxState::resolve(
+        Size::Small,
+        false,
+        "Shared choices",
+        Some("bravo"),
+        Some("charlie"),
+        None,
+        "No choices",
+        [],
+        [
+            ListboxOptionDescriptor::option("alpha", "Alpha"),
+            ListboxOptionDescriptor::option("bravo", "Bravo"),
+            ListboxOptionDescriptor::option("disabled", "Disabled").disabled(true),
+            ListboxOptionDescriptor::option("charlie", "Charlie"),
+        ],
+        ThemeTokens::default(),
+    );
+    let select = Select::new("shared-select-semantics", "Shared choices")
+        .placeholder("Pick one")
+        .selected("bravo")
+        .active("charlie")
+        .option(ListboxOption::new("alpha", "Alpha"))
+        .option(ListboxOption::new("bravo", "Bravo"))
+        .option(ListboxOption::new("disabled", "Disabled").disabled(true))
+        .option(ListboxOption::new("charlie", "Charlie"))
+        .state();
+    let combobox = Combobox::new("shared-combobox-semantics", "Shared choices")
+        .placeholder("Search choices")
+        .selected("bravo")
+        .active("charlie")
+        .option(ComboboxOption::new("alpha", "Alpha"))
+        .option(ComboboxOption::new("bravo", "Bravo"))
+        .option(ComboboxOption::new("disabled", "Disabled").disabled(true))
+        .option(ComboboxOption::new("charlie", "Charlie"))
+        .state();
+
+    for state in [
+        listbox,
+        select.listbox().clone(),
+        combobox.listbox().clone(),
+    ] {
+        assert_eq!(state.selected_value(), Some("bravo"));
+        assert_eq!(state.active_value(), Some("charlie"));
+        assert_eq!(
+            state.selected_option().map(|option| option.value()),
+            Some("bravo")
+        );
+        assert_eq!(
+            state.active_option().map(|option| option.value()),
+            Some("charlie")
+        );
+        assert_eq!(
+            state.typeahead_target(" al").map(|option| option.value()),
+            Some("alpha")
+        );
+        assert!(state.options()[1].selected());
+        assert!(state.options()[2].disabled());
+        assert!(!state.options()[2].focusable());
+        assert!(state.options()[3].active());
+    }
+
+    assert_eq!(select.trigger_label(), "Bravo");
+    assert_eq!(combobox.selected_value(), Some("bravo"));
 }
 
 #[test]
@@ -13424,6 +14123,17 @@ fn combobox_state_filters_query_without_clearing_selection() {
 }
 
 #[test]
+fn combobox_state_normalizes_query_with_text_input_policy() {
+    let state = Combobox::new("newline-combobox", "Framework")
+        .default_query("re\r\nmix")
+        .option(ComboboxOption::new("remix", "Remix"))
+        .state();
+
+    assert_eq!(state.query(), "re  mix");
+    assert_eq!(state.input().value(), "re  mix");
+}
+
+#[test]
 fn combobox_state_scrollable_content_tracks_filtered_option_count() {
     let scrollable = Combobox::new("scrolling-combobox", "Scrolling combobox")
         .placeholder("Search frameworks")
@@ -13933,19 +14643,22 @@ fn command_state_keeps_disabled_matches_visible_but_non_activatable() {
 #[test]
 fn command_state_models_controlled_and_default_query_ownership() {
     let controlled = Command::new("controlled-query-command", "Commands")
-        .query("open")
+        .query("open\r\n")
         .default_query("ignored")
         .item(CommandItem::new("open-file", "Open File"))
         .state();
     let seeded = Command::new("seeded-query-command", "Commands")
-        .default_query("file")
+        .default_query("new\n")
+        .item(CommandItem::new("new-file", "New File"))
         .item(CommandItem::new("open-file", "Open File"))
         .state();
 
-    assert_eq!(controlled.query(), "open");
+    assert_eq!(controlled.query(), "open  ");
+    assert_eq!(controlled.input().value(), "open  ");
     assert_eq!(controlled.query_mode(), CommandQueryMode::Controlled);
     assert_eq!(controlled.filtered_item_count(), 1);
-    assert_eq!(seeded.query(), "file");
+    assert_eq!(seeded.query(), "new ");
+    assert_eq!(seeded.input().value(), "new ");
     assert_eq!(seeded.query_mode(), CommandQueryMode::Uncontrolled);
 }
 
@@ -15353,6 +16066,200 @@ fn default_theme_snapshots_expose_distinct_modes_and_revisions() {
 }
 
 #[test]
+fn theme_registry_preloads_builtin_snapshots_without_global_theme_state() {
+    let registry = ThemeRegistry::with_builtins();
+
+    assert_eq!(
+        registry
+            .entries()
+            .iter()
+            .map(|entry| (
+                entry.id(),
+                entry.snapshot().mode(),
+                entry.snapshot().revision()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("light", ThemeMode::Light, ThemeSnapshot::light().revision()),
+            ("dark", ThemeMode::Dark, ThemeSnapshot::dark().revision()),
+            (
+                "high-contrast",
+                ThemeMode::HighContrast,
+                ThemeSnapshot::high_contrast().revision()
+            ),
+        ]
+    );
+    assert_eq!(
+        registry
+            .snapshot("dark")
+            .and_then(|snapshot| snapshot.color_rgb(semantic::SURFACE, ColorState::Default)),
+        ThemeSnapshot::dark().color_rgb(semantic::SURFACE, ColorState::Default)
+    );
+}
+
+#[test]
+fn theme_registry_registers_user_definition_with_fallback_diagnostics() {
+    let mut registry = ThemeRegistry::with_builtins();
+    let entry = registry
+        .register(
+            ThemeDefinition::new("forest", "Forest", ThemeMode::Dark, 9001)
+                .fallback_mode(ThemeMode::Light)
+                .color(ThemeColor::new(
+                    semantic::ACCENT,
+                    ColorState::Default,
+                    0x227755,
+                ))
+                .color(ThemeColor::new(
+                    semantic::ACCENT,
+                    ColorState::Hover,
+                    0x1b6044,
+                )),
+        )
+        .expect("valid user theme definition should register");
+    let snapshot = entry.snapshot();
+
+    assert_eq!(entry.id(), "forest");
+    assert_eq!(entry.label(), "Forest");
+    assert_eq!(snapshot.mode(), ThemeMode::Dark);
+    assert_eq!(snapshot.revision(), 9001);
+    assert_eq!(
+        entry.diagnostics().fallback_mode(),
+        ThemeMode::Light,
+        "the registry should record which built-in table filled omitted optional tokens"
+    );
+    assert!(
+        entry.diagnostics().fallback_color_count() > 0,
+        "omitted optional token/state entries should be filled from the fallback snapshot"
+    );
+    assert_eq!(
+        snapshot.color_rgb(semantic::ACCENT, ColorState::Default),
+        Some(0x227755)
+    );
+    assert_eq!(
+        snapshot.color_rgb(semantic::SURFACE, ColorState::Default),
+        ThemeSnapshot::light().color_rgb(semantic::SURFACE, ColorState::Default)
+    );
+    assert_eq!(
+        u32::from(ThemeResolver::resolve_with(
+            ColorIntent::new(semantic::ACCENT, 0x1f7a66),
+            snapshot
+        )),
+        0x227755ff
+    );
+}
+
+#[test]
+fn theme_registry_rejects_missing_required_identity_fields() {
+    let mut registry = ThemeRegistry::new();
+
+    assert_eq!(
+        registry.register(ThemeDefinition::draft()).unwrap_err(),
+        ThemeValidationError::MissingId
+    );
+    assert_eq!(
+        registry
+            .register(ThemeDefinition::draft().id("  "))
+            .unwrap_err(),
+        ThemeValidationError::MissingId
+    );
+    assert_eq!(
+        registry
+            .register(ThemeDefinition::draft().id("brand"))
+            .unwrap_err(),
+        ThemeValidationError::MissingLabel
+    );
+    assert_eq!(
+        registry
+            .register(ThemeDefinition::draft().id("brand").label("Brand"))
+            .unwrap_err(),
+        ThemeValidationError::MissingMode
+    );
+    assert_eq!(
+        registry
+            .register(
+                ThemeDefinition::draft()
+                    .id("brand")
+                    .label("Brand")
+                    .mode(ThemeMode::Light)
+            )
+            .unwrap_err(),
+        ThemeValidationError::MissingRevision
+    );
+}
+
+#[test]
+fn theme_registry_replaces_existing_definition_by_stable_id() {
+    let mut registry = ThemeRegistry::new();
+
+    registry
+        .register(
+            ThemeDefinition::new("brand", "Brand", ThemeMode::Light, 1).color(ThemeColor::new(
+                semantic::ACCENT,
+                ColorState::Default,
+                0x111111,
+            )),
+        )
+        .expect("initial theme should register");
+    registry
+        .register(
+            ThemeDefinition::new("brand", "Brand refreshed", ThemeMode::Light, 2).color(
+                ThemeColor::new(semantic::ACCENT, ColorState::Default, 0x222222),
+            ),
+        )
+        .expect("theme refresh should replace by id");
+
+    assert_eq!(registry.entries().len(), 1);
+    let snapshot = registry
+        .snapshot("brand")
+        .expect("brand snapshot should exist");
+    assert_eq!(snapshot.revision(), 2);
+    assert_eq!(
+        snapshot.color_rgb(semantic::ACCENT, ColorState::Default),
+        Some(0x222222)
+    );
+}
+
+#[test]
+fn theme_registry_types_are_exported_from_root_and_prelude() {
+    use open_gpui_ui_components::{self as root, prelude};
+
+    let mut root_registry: root::ThemeRegistry = root::ThemeRegistry::with_builtins();
+    let root_definition: root::ThemeDefinition =
+        root::ThemeDefinition::new("root-brand", "Root brand", root::ThemeMode::Light, 7);
+    let root_entry: root::ThemeRegistryEntry = root_registry
+        .register(root_definition)
+        .expect("root ThemeRegistry should register exported ThemeDefinition")
+        .clone();
+    let root_diagnostics: root::ThemeRegistrationDiagnostics = root_entry.diagnostics();
+    let root_error: root::ThemeValidationError = root::ThemeValidationError::MissingId;
+
+    let mut prelude_registry: prelude::ThemeRegistry = prelude::ThemeRegistry::with_builtins();
+    let prelude_definition: prelude::ThemeDefinition = prelude::ThemeDefinition::new(
+        "prelude-brand",
+        "Prelude brand",
+        prelude::ThemeMode::Dark,
+        8,
+    );
+    let prelude_entry: prelude::ThemeRegistryEntry = prelude_registry
+        .register(prelude_definition)
+        .expect("prelude ThemeRegistry should register exported ThemeDefinition")
+        .clone();
+    let prelude_diagnostics: prelude::ThemeRegistrationDiagnostics = prelude_entry.diagnostics();
+    let prelude_error: prelude::ThemeValidationError = prelude::ThemeValidationError::MissingLabel;
+
+    assert_eq!(root_entry.snapshot().revision(), 7);
+    assert_eq!(prelude_entry.snapshot().revision(), 8);
+    assert_eq!(root_diagnostics.fallback_mode(), root::ThemeMode::Light);
+    assert!(root_diagnostics.fallback_color_count() > 0);
+    assert_eq!(
+        prelude_diagnostics.fallback_mode(),
+        prelude::ThemeMode::Dark
+    );
+    assert_eq!(root_error, root::ThemeValidationError::MissingId);
+    assert_eq!(prelude_error, prelude::ThemeValidationError::MissingLabel);
+}
+
+#[test]
 fn default_theme_resolves_all_current_component_color_intents() {
     let theme = [
         ThemeSnapshot::light(),
@@ -15575,6 +16482,14 @@ fn default_theme_resolves_all_current_component_color_intents() {
             .item(CommandItem::new("open", "Open"))
             .state(),
         Command::new("closed-command", "Commands").state(),
+    ];
+    let table_toolbars = [
+        TableToolbar::new("table-toolbar", "Filters")
+            .summary("2 filtered")
+            .state(),
+        TableToolbar::new("small-table-toolbar", "Filters")
+            .small()
+            .state(),
     ];
 
     for state in buttons {
@@ -15898,6 +16813,13 @@ fn default_theme_resolves_all_current_component_color_intents() {
             colors.border(),
             colors.focus_ring(),
         ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in table_toolbars {
+        let colors = state.colors();
+        for intent in [colors.foreground(), colors.muted_foreground()] {
             assert_theme_has_exact_color(theme, intent);
         }
     }
@@ -16247,6 +17169,16 @@ fn filled_text_input_reports_value_state() {
     assert_eq!(state.value(), "hello@example.com");
     assert_eq!(state.display_text().as_ref(), "hello@example.com");
     assert!(!state.displaying_placeholder());
+}
+
+#[test]
+fn text_input_state_normalizes_static_values_with_single_line_policy() {
+    let state = TextInput::new("query", "Search")
+        .value("alpha\r\nbeta\ngamma")
+        .state();
+
+    assert_eq!(state.value(), "alpha  beta gamma");
+    assert_eq!(state.display_text().as_ref(), "alpha  beta gamma");
 }
 
 #[test]
