@@ -337,6 +337,26 @@ already deleted. The removed targets are the former pass-through
 and overlay policy aliases. Import those neutral contracts from `open_gpui_ui_core`; remaining
 `ui_components::primitives` modules must own GPUI adapter behavior or component-family anatomy.
 
+Breaking migration notes for the 0.3 UI deepening pass:
+
+- Replace public `Table::diagnostics(scroll_offset, viewport_extent)` calls with
+  `Table::behavior_snapshot(scroll_offset, viewport_extent)`. Application tests, gallery readouts,
+  and integration probes should consume `TableBehaviorSnapshot`, `TableRowBehaviorSnapshot`,
+  `TableColumnBehaviorSnapshot`, `TableColumnRegionSnapshot`, `TableHeaderSummarySnapshot`,
+  `TableTreeSummarySnapshot`, and `TableVisibleRowsSnapshot`.
+- Remove imports of table render-plan internals from application code, including
+  `TableRenderDiagnostics`, `TableColumnRenderPlan`, `TableCellRenderPlan`,
+  `TableCenterColumnWindowPlan`, `TableColumnRegionRenderPlan`, header render-plan types,
+  `TablePinnedLayoutPlan`, and `TableRowRenderPlan`. Those structures are crate-private adapter
+  implementation details; algorithm coverage belongs in `crates/ui_components/src/table` module
+  tests.
+- Replace removed primitive pass-through imports under `open_gpui_ui_components::primitives` with
+  their renderer-neutral owners in `open_gpui_ui_core` or with the official component/adapter API
+  that owns the GPUI runtime behavior.
+- Keep reference repositories as references only. This pass does not add dependencies on
+  `repo-ref/fret` or `repo-ref/gpui-component`, and it does not preserve compatibility shims around
+  APIs that were only exposing old implementation structure.
+
 The foundation component families above are official rendered components. Their resolved states
 must stay aligned with the same ownership vocabulary as the older components:
 
