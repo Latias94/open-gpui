@@ -5,7 +5,8 @@ use crate::{
     DockViewportFocusCommand, DockViewportFocusRequest, DockViewportPlatformFocusRestoreGate,
     DockViewportRuntimeHandle, geometry::DockDropGuideStyle,
     host_render_session::DockHostRenderSession, interaction::DockInteractionRuntime,
-    workspace::DockWorkspace,
+    transition_executor::DockTransitionExecutor, workspace::DockWorkspace,
+    zoom_state::DockZoomState,
 };
 use open_gpui::{
     AppContext as _, Context, Entity, FocusHandle, Pixels, Subscription, Window, WindowId, px,
@@ -62,6 +63,8 @@ pub struct DockHost {
     #[cfg(test)]
     debug: DockDebugInstrumentation,
     interaction: DockInteractionRuntime,
+    zoom: DockZoomState,
+    transitions: DockTransitionExecutor,
 }
 
 impl DockHost {
@@ -84,6 +87,8 @@ impl DockHost {
             #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
             interaction: DockInteractionRuntime::default(),
+            zoom: DockZoomState::default(),
+            transitions: DockTransitionExecutor::default(),
         }
     }
 
@@ -136,6 +141,18 @@ impl DockHost {
 
     pub(crate) fn interaction_mut(&mut self) -> &mut DockInteractionRuntime {
         &mut self.interaction
+    }
+
+    pub(crate) fn zoom_state(&self) -> &DockZoomState {
+        &self.zoom
+    }
+
+    pub(crate) fn zoom_state_mut(&mut self) -> &mut DockZoomState {
+        &mut self.zoom
+    }
+
+    pub(crate) fn transition_executor_mut(&mut self) -> &mut DockTransitionExecutor {
+        &mut self.transitions
     }
 
     pub(crate) fn viewport_runtime(&self) -> &DockViewportRuntimeHandle {

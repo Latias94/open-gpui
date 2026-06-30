@@ -1,14 +1,11 @@
 #![allow(dead_code)]
 
-#[cfg(test)]
-use crate::DockHost;
 use crate::{
-    DockItemId, DockNode, DockNodeId, DockSpaceId, SplitAxis, geometry::DockSplitLayout,
-    host_render_session::DockHostRenderSession,
+    DockHost, DockItemId, DockNode, DockNodeId, DockSpaceId, SplitAxis, geometry::DockSplitLayout,
+    host_render_session::DockHostRenderSession, transition_geometry::DockMotionPreference,
+    zoom_state::DockZoomScene,
 };
-#[cfg(test)]
-use open_gpui::Context;
-use open_gpui::{Bounds, Pixels, point, px, size};
+use open_gpui::{Bounds, Context, Pixels, point, px, size};
 use open_gpui_ui_core::{
     Orientation, Size, SplitterHandlePlacement, SplitterLayoutScene, SplitterMetrics,
     SplitterPanelDescriptor, SplitterState, UiRect, ui_point, ui_px, ui_rect, ui_size,
@@ -437,13 +434,34 @@ pub(crate) fn dock_presentation_tab_label_bounds(
     )
 }
 
-#[cfg(test)]
 impl DockHost {
+    pub(crate) fn presentation_scene(
+        &self,
+        bounds: Bounds<Pixels>,
+        cx: &Context<Self>,
+    ) -> DockPresentationScene {
+        let base = DockPresentationScene::from_render_session(&self.render_session(cx), bounds);
+        self.zoom_state()
+            .resolve(&base, DockMotionPreference::Animated)
+            .map(|zoom| zoom.scene)
+            .unwrap_or(base)
+    }
+
+    pub(crate) fn zoom_scene(
+        &self,
+        bounds: Bounds<Pixels>,
+        preference: DockMotionPreference,
+        cx: &Context<Self>,
+    ) -> Option<DockZoomScene> {
+        let base = DockPresentationScene::from_render_session(&self.render_session(cx), bounds);
+        self.zoom_state().resolve(&base, preference)
+    }
+
     pub(crate) fn presentation_scene_for_test(
         &self,
         bounds: Bounds<Pixels>,
         cx: &Context<Self>,
     ) -> DockPresentationScene {
-        DockPresentationScene::from_render_session(&self.render_session(cx), bounds)
+        self.presentation_scene(bounds, cx)
     }
 }

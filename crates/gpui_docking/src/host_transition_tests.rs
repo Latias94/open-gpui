@@ -1,5 +1,5 @@
 use crate::{
-    DropZone, SplitAxis,
+    DockTransitionExecutionState, DropZone, SplitAxis,
     host_test_support::{floating_bounds, open_host, space, split_graph},
     overlay_scene::{DockOverlayLayer, DockOverlayLayerKind, DockOverlayScene},
     presentation_scene::{
@@ -12,6 +12,7 @@ use crate::{
     },
 };
 use open_gpui::{Bounds, TestAppContext, point, px, size};
+use open_gpui_ui_core::MotionSpec;
 use slotmap::Key;
 
 fn host_bounds(width: f32, height: f32) -> Bounds<open_gpui::Pixels> {
@@ -131,6 +132,48 @@ fn transition_plan_marks_reduced_motion_immediate_without_changing_final_scene(
             .iter()
             .all(|transition| transition.immediate)
     );
+}
+
+#[open_gpui::test]
+fn transition_executor_reduces_or_schedules_without_changing_final_scene(cx: &mut TestAppContext) {
+    let (graph, _root, left_tabs, _right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+
+    let bounds = host_bounds(400.0, 240.0);
+    let previous = single_pane_scene(left_tabs, bounds);
+    let next = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
+    let animated = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Animated);
+    let animated_state = host.update(cx, |host, _| {
+        host.execute_transition_plan(
+            animated,
+            MotionSpec::layout(DockMotionPreference::Animated),
+            None,
+        )
+    });
+    assert_eq!(animated_state, DockTransitionExecutionState::Scheduled);
+    let stored = host
+        .update(cx, |host, _| host.clear_transition_execution_for_test())
+        .expect("animated transition should be stored");
+    assert_eq!(stored.plan.final_scene, next);
+
+    let reduced = DockTransitionPlan::between(&previous, &next, DockMotionPreference::Reduced);
+    let reduced_state = host.update(cx, |host, _| {
+        host.execute_transition_plan(
+            reduced,
+            MotionSpec::layout(DockMotionPreference::Reduced),
+            None,
+        )
+    });
+    assert_eq!(reduced_state, DockTransitionExecutionState::Immediate);
+    let stored = host
+        .update(cx, |host, _| host.clear_transition_execution_for_test())
+        .expect("reduced transition should be stored");
+    assert_eq!(stored.plan.final_scene, next);
 }
 
 #[test]

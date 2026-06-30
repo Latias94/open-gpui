@@ -9,8 +9,9 @@ use open_gpui::{Bounds, Pixels, point};
 use open_gpui_ui_core::MotionPreference;
 use std::collections::{HashMap, HashSet};
 
+/// Descriptor plan for docking presentation, divider, and overlay transitions.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockTransitionPlan {
+pub struct DockTransitionPlan {
     pub(crate) preference: DockMotionPreference,
     pub(crate) final_scene: DockPresentationScene,
     pub(crate) pane_transitions: Vec<DockPaneTransition>,

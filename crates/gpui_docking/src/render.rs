@@ -406,7 +406,18 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let root_child = self.render_node(root, session, viewport_host_scene_frame, window, cx);
+        let rendered_root = self
+            .zoom_state()
+            .target(session.space())
+            .filter(|target| session.node(*target).is_some())
+            .unwrap_or(root);
+        let root_child = self.render_node(
+            rendered_root,
+            session,
+            viewport_host_scene_frame,
+            window,
+            cx,
+        );
         let mut root_container = div()
             .relative()
             .flex()
