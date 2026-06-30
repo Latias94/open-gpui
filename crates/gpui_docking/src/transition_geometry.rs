@@ -6,6 +6,7 @@ use crate::{
     presentation_scene::{DockPresentationPane, DockPresentationScene},
 };
 use open_gpui::{Bounds, Pixels, point};
+use open_gpui_ui_core::MotionPreference;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -17,17 +18,7 @@ pub(crate) struct DockTransitionPlan {
     pub(crate) overlay_transitions: Vec<DockOverlayTransition>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DockMotionPreference {
-    Animated,
-    Reduced,
-}
-
-impl DockMotionPreference {
-    fn is_immediate(self) -> bool {
-        matches!(self, Self::Reduced)
-    }
-}
+pub(crate) type DockMotionPreference = MotionPreference;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockPaneTransition {

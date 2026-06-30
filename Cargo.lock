@@ -4276,6 +4276,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "open-gpui",
+ "open-gpui-ui-core",
  "serde",
  "serde_json",
  "slotmap",
