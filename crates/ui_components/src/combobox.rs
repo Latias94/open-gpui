@@ -25,7 +25,8 @@ use crate::listbox::{
 };
 use crate::overlay::{
     GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
-    gpui_overlay_state, outside_press_open_change,
+    emit_overlay_open_change, gpui_overlay_state, outside_press_open_change,
+    resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::text_input::adapter::TextInputController;
@@ -841,10 +842,10 @@ impl RenderOnce for Combobox {
             input
         });
         let runtime_state = runtime.read(cx).clone();
-        let controlled_open = self.open;
-        let resolved_open = controlled_open.unwrap_or(runtime_state.open);
+        let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
+        let resolved_open = open_state.open();
 
-        if controlled_open.is_some() && runtime_state.open != resolved_open {
+        if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
             });
@@ -951,13 +952,16 @@ impl RenderOnce for Combobox {
                             ComboboxKeyboardAction::Navigate(value) => {
                                 consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
-                                    runtime.open = true;
+                                    set_overlay_open(&mut runtime.open, true);
                                     runtime.active_value = Some(value);
                                 });
                                 if !key_state.open() {
-                                    if let Some(on_open_change) = on_open_change.as_ref() {
-                                        on_open_change(true, window, cx);
-                                    }
+                                    emit_overlay_open_change(
+                                        true,
+                                        on_open_change.as_deref(),
+                                        window,
+                                        cx,
+                                    );
                                 }
                             }
                             ComboboxKeyboardAction::Select(selection) => {
@@ -965,7 +969,7 @@ impl RenderOnce for Combobox {
                                 runtime.update(cx, |runtime, _| {
                                     runtime.selected_value = Some(selection.value().to_owned());
                                     runtime.active_value = Some(selection.value().to_owned());
-                                    runtime.open = false;
+                                    set_overlay_open(&mut runtime.open, false);
                                 });
                                 input_controller.update(cx, |controller, cx| {
                                     controller.set_value(selection.label().to_owned(), cx);
@@ -973,18 +977,24 @@ impl RenderOnce for Combobox {
                                 if let Some(on_select) = on_select.as_ref() {
                                     on_select(selection, window, cx);
                                 }
-                                if let Some(on_open_change) = on_open_change.as_ref() {
-                                    on_open_change(false, window, cx);
-                                }
+                                emit_overlay_open_change(
+                                    false,
+                                    on_open_change.as_deref(),
+                                    window,
+                                    cx,
+                                );
                             }
                             ComboboxKeyboardAction::Open => {
                                 consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
-                                    runtime.open = true;
+                                    set_overlay_open(&mut runtime.open, true);
                                 });
-                                if let Some(on_open_change) = on_open_change.as_ref() {
-                                    on_open_change(true, window, cx);
-                                }
+                                emit_overlay_open_change(
+                                    true,
+                                    on_open_change.as_deref(),
+                                    window,
+                                    cx,
+                                );
                             }
                             ComboboxKeyboardAction::Close => {
                                 consume_overlay_event(window, cx);
@@ -1035,11 +1045,14 @@ impl RenderOnce for Combobox {
                                         cx.stop_propagation();
                                         let next_open = !open;
                                         runtime.update(cx, |runtime, _| {
-                                            runtime.open = next_open;
+                                            set_overlay_open(&mut runtime.open, next_open);
                                         });
-                                        if let Some(on_open_change) = on_open_change.as_ref() {
-                                            on_open_change(next_open, window, cx);
-                                        }
+                                        emit_overlay_open_change(
+                                            next_open,
+                                            on_open_change.as_deref(),
+                                            window,
+                                            cx,
+                                        );
                                     },
                                 )
                             })
@@ -1159,7 +1172,7 @@ fn combobox_content_element(
                 runtime.update(cx, |runtime, _| {
                     runtime.selected_value = Some(payload.value().to_owned());
                     runtime.active_value = Some(payload.value().to_owned());
-                    runtime.open = false;
+                    set_overlay_open(&mut runtime.open, false);
                 });
                 input_controller.update(cx, |controller, cx| {
                     controller.set_value(payload.label().to_owned(), cx);
@@ -1167,9 +1180,7 @@ fn combobox_content_element(
                 if let Some(on_select) = on_select.as_ref() {
                     on_select(payload, window, cx);
                 }
-                if let Some(on_open_change) = on_open_change.as_ref() {
-                    on_open_change(false, window, cx);
-                }
+                emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
             }
         });
     let listbox = if let Some(selected_value) = selected_value {
@@ -1237,11 +1248,9 @@ fn close_combobox(
     cx: &mut App,
 ) {
     runtime.update(cx, |runtime, _| {
-        runtime.open = false;
+        set_overlay_open(&mut runtime.open, false);
     });
-    if let Some(on_open_change) = on_open_change.as_ref() {
-        on_open_change(false, window, cx);
-    }
+    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
 }
 
 /// A concrete GPUI combobox option.

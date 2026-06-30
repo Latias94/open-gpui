@@ -343,6 +343,86 @@ pub const fn focus_restore_requests_trigger(intent: &FocusRestoreIntent) -> bool
     )
 }
 
+/// Resolved adapter-owned open state for controlled and uncontrolled overlays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OverlayRuntimeState {
+    open: bool,
+    controlled: bool,
+    runtime_changed: bool,
+}
+
+impl OverlayRuntimeState {
+    /// Returns the resolved open value the adapter should render.
+    pub(crate) const fn open(self) -> bool {
+        self.open
+    }
+
+    /// Returns whether the open value was provided by the caller.
+    pub(crate) const fn controlled(self) -> bool {
+        self.controlled
+    }
+
+    /// Returns whether the stored runtime value should be synchronized to the resolved value.
+    pub(crate) const fn runtime_changed(self) -> bool {
+        self.runtime_changed
+    }
+}
+
+/// Resolves controlled/uncontrolled open state without emitting callbacks.
+pub(crate) const fn resolve_overlay_open_state(
+    controlled_open: Option<bool>,
+    runtime_open: bool,
+) -> OverlayRuntimeState {
+    match controlled_open {
+        Some(open) => OverlayRuntimeState {
+            open,
+            controlled: true,
+            runtime_changed: runtime_open != open,
+        },
+        None => OverlayRuntimeState {
+            open: runtime_open,
+            controlled: false,
+            runtime_changed: false,
+        },
+    }
+}
+
+/// Updates runtime open state without invoking component callbacks.
+pub(crate) fn set_overlay_open(runtime_open: &mut bool, open: bool) {
+    *runtime_open = open;
+}
+
+/// Emits the bool open-change callback after runtime state has been updated.
+pub(crate) fn emit_overlay_open_change(
+    open: bool,
+    on_open_change: Option<&dyn Fn(bool, &mut Window, &mut App)>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if let Some(on_open_change) = on_open_change {
+        on_open_change(open, window, cx);
+    }
+}
+
+/// Restores focus to a trigger handle when the focus-restore policy requests it.
+pub(crate) fn restore_overlay_focus(
+    focus_restore: &FocusRestoreIntent,
+    trigger_focus: Option<open_gpui::FocusHandle>,
+    defer_focus_restore: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if focus_restore_requests_trigger(focus_restore)
+        && let Some(trigger_focus) = trigger_focus
+    {
+        if defer_focus_restore {
+            window.defer(cx, move |window, cx| trigger_focus.focus(window, cx));
+        } else {
+            trigger_focus.focus(window, cx);
+        }
+    }
+}
+
 /// Returns the default GPUI deferred priority for an overlay kind.
 pub const fn default_deferred_priority(kind: OverlayLayerKind) -> usize {
     match kind {
@@ -407,4 +487,27 @@ pub fn point_anchor_placement(
         OverlayAnchorInput::from_point(ui_point_from_gpui(point)),
         content_size,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overlay_runtime_state_resolves_controlled_without_emitting() {
+        let uncontrolled = resolve_overlay_open_state(None, true);
+        assert!(uncontrolled.open());
+        assert!(!uncontrolled.controlled());
+        assert!(!uncontrolled.runtime_changed());
+
+        let controlled_same = resolve_overlay_open_state(Some(true), true);
+        assert!(controlled_same.open());
+        assert!(controlled_same.controlled());
+        assert!(!controlled_same.runtime_changed());
+
+        let controlled_changed = resolve_overlay_open_state(Some(false), true);
+        assert!(!controlled_changed.open());
+        assert!(controlled_changed.controlled());
+        assert!(controlled_changed.runtime_changed());
+    }
 }

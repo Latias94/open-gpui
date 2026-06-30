@@ -20,8 +20,9 @@ use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::geometry::ui_size_from_gpui_size;
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, OverlayResolvedState, consume_overlay_event, escape_open_change,
-    focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
+    GpuiOverlayAdapterConfig, OverlayResolvedState, consume_overlay_event,
+    emit_overlay_open_change, escape_open_change, gpui_overlay_state, outside_press_open_change,
+    resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
 };
 use crate::theme::ThemeResolver;
 
@@ -761,11 +762,10 @@ impl RenderOnce for Sheet {
             trigger_focus: cx.focus_handle(),
             close_focus: cx.focus_handle(),
         });
-        let runtime_open = runtime.read(cx).open;
-        let controlled_open = self.open;
-        let resolved_open = controlled_open.unwrap_or(runtime_open);
+        let open_state = resolve_overlay_open_state(self.open, runtime.read(cx).open);
+        let resolved_open = open_state.open();
 
-        if controlled_open.is_some() && runtime_open != resolved_open {
+        if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
             });
@@ -901,7 +901,7 @@ impl RenderOnce for Sheet {
                                 cx.stop_propagation();
                                 let next_open = !open;
                                 runtime.update(cx, |runtime, _| {
-                                    runtime.open = next_open;
+                                    set_overlay_open(&mut runtime.open, next_open);
                                 });
                                 if next_open
                                     && let Some(focus) = sheet_initial_focus_handle(
@@ -913,9 +913,12 @@ impl RenderOnce for Sheet {
                                 {
                                     window.defer(cx, move |window, cx| focus.focus(window, cx));
                                 }
-                                if let Some(on_open_change) = on_open_change.as_ref() {
-                                    on_open_change(next_open, window, cx);
-                                }
+                                emit_overlay_open_change(
+                                    next_open,
+                                    on_open_change.as_deref(),
+                                    window,
+                                    cx,
+                                );
                             })
                     })
                     .child(trigger_label),
@@ -1296,17 +1299,13 @@ fn close_sheet(
 ) {
     let trigger_focus = runtime.read(cx).trigger_focus.clone();
     runtime.update(cx, |runtime, _| {
-        runtime.open = false;
+        set_overlay_open(&mut runtime.open, false);
     });
     if let Some(on_close) = on_close.as_ref() {
         on_close(window, cx);
     }
-    if let Some(on_open_change) = on_open_change.as_ref() {
-        on_open_change(false, window, cx);
-    }
-    if focus_restore_requests_trigger(&focus_restore) {
-        trigger_focus.focus(window, cx);
-    }
+    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+    restore_overlay_focus(&focus_restore, Some(trigger_focus), false, window, cx);
 }
 
 fn sheet_initial_focus_handle(

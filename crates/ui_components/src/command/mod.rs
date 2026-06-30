@@ -21,7 +21,10 @@ use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::listbox::{ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState};
-use crate::overlay::{GpuiOverlayAdapterConfig, OverlayResolvedState, gpui_overlay_state};
+use crate::overlay::{
+    GpuiOverlayAdapterConfig, OverlayResolvedState, emit_overlay_open_change, gpui_overlay_state,
+    resolve_overlay_open_state, set_overlay_open,
+};
 use crate::scroll_area::{ScrollAreaAxis, ScrollAreaState};
 use crate::text_input::adapter::TextInputController;
 use crate::text_input::{TextInputDisplayMode, TextInputState};
@@ -2074,8 +2077,9 @@ impl RenderOnce for Command {
         });
         let runtime_state = runtime.read(cx).clone();
         let scroll_handle = runtime_state.scroll_handle.clone();
-        let resolved_open = self.open.unwrap_or(runtime_state.open);
-        if self.open.is_some() && runtime_state.open != resolved_open {
+        let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
+        let resolved_open = open_state.open();
+        if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
             });
@@ -2204,11 +2208,14 @@ impl RenderOnce for Command {
                                 move |_event: &ClickEvent, window, cx| {
                                     cx.stop_propagation();
                                     runtime.update(cx, |runtime, _| {
-                                        runtime.open = true;
+                                        set_overlay_open(&mut runtime.open, true);
                                     });
-                                    if let Some(on_open_change) = on_open_change.as_ref() {
-                                        on_open_change(true, window, cx);
-                                    }
+                                    emit_overlay_open_change(
+                                        true,
+                                        on_open_change.as_deref(),
+                                        window,
+                                        cx,
+                                    );
                                 },
                             )
                         })

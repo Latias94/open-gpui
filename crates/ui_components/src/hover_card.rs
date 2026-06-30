@@ -20,7 +20,8 @@ use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
     GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
-    escape_open_change, gpui_overlay_state, outside_press_open_change,
+    emit_overlay_open_change, escape_open_change, gpui_overlay_state, outside_press_open_change,
+    resolve_overlay_open_state,
 };
 use crate::theme::ThemeResolver;
 
@@ -765,9 +766,11 @@ impl RenderOnce for HoverCard {
         }
 
         let runtime_open = runtime.read(cx).open;
-        let resolved_open = controlled_open.unwrap_or(runtime_open || focus_holds_open);
+        let open_state =
+            resolve_overlay_open_state(controlled_open, runtime_open || focus_holds_open);
+        let resolved_open = open_state.open();
 
-        if controlled_open.is_some() && runtime_open != resolved_open {
+        if open_state.controlled() && runtime_open != resolved_open {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
             });
@@ -1164,8 +1167,8 @@ fn set_hover_card_open(
         runtime.delayed_task = None;
         runtime.epoch = runtime.epoch.wrapping_add(1);
     });
-    if changed && let Some(on_open_change) = on_open_change.as_ref() {
-        on_open_change(open, window, cx);
+    if changed {
+        emit_overlay_open_change(open, on_open_change.as_deref(), window, cx);
     }
 }
 

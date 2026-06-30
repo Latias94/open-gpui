@@ -11,7 +11,9 @@ use open_gpui_ui_core::{Role, Sizable, ThemeTokens, UiPx, ui_px};
 use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
-use crate::overlay::{escape_open_change, outside_press_open_change};
+use crate::overlay::{
+    emit_overlay_open_change, escape_open_change, outside_press_open_change, set_overlay_open,
+};
 use crate::scroll_area::ScrollArea;
 use crate::text_input::TextInput;
 use crate::text_input::adapter::TextInputController;
@@ -688,14 +690,14 @@ fn handle_command_selection(
                 runtime.selected_value = Some(selection.value().to_owned());
                 runtime.active_value = Some(selection.value().to_owned());
                 if dialog_enabled {
-                    runtime.open = false;
+                    set_overlay_open(&mut runtime.open, false);
                 }
             });
             if let Some(on_select) = on_select.as_ref() {
                 on_select(selection, window, cx);
             }
-            if dialog_enabled && let Some(on_open_change) = on_open_change.as_ref() {
-                on_open_change(false, window, cx);
+            if dialog_enabled {
+                emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
             }
         }
         CommandSelectionMode::Multiple => {
@@ -788,11 +790,9 @@ pub(super) fn close_command_dialog(
     cx: &mut App,
 ) {
     runtime.update(cx, |runtime, _| {
-        runtime.open = false;
+        set_overlay_open(&mut runtime.open, false);
     });
-    if let Some(on_open_change) = on_open_change.as_ref() {
-        on_open_change(false, window, cx);
-    }
+    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
 }
 
 fn command_selection_change_after_toggle(

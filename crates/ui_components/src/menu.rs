@@ -25,7 +25,8 @@ use crate::menu_runtime::{
 };
 use crate::overlay::{
     GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
-    focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
+    emit_overlay_open_change, gpui_overlay_state, outside_press_open_change,
+    resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
 };
 use crate::roving_focus::{typeahead_target, vertical_roving_navigation_target};
 use crate::scroll_area::ScrollArea;
@@ -1900,10 +1901,10 @@ impl RenderOnce for Menu {
             )
         });
         let runtime_state = runtime.read(cx).clone();
-        let controlled_open = self.open;
-        let resolved_open = controlled_open.unwrap_or(runtime_state.open);
+        let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
+        let resolved_open = open_state.open();
 
-        if controlled_open.is_some() && runtime_state.open != resolved_open {
+        if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
                 runtime.sync_controlled_open(resolved_open);
             });
@@ -2044,24 +2045,17 @@ impl RenderOnce for Menu {
                                 cx.stop_propagation();
                                 let next_open = !open;
                                 runtime.update(cx, |runtime, _| {
-                                    runtime.open = next_open;
+                                    set_overlay_open(&mut runtime.open, next_open);
                                     if !next_open {
-                                        runtime.did_initial_focus = false;
-                                        runtime.focused_value = None;
-                                        runtime.focused_path = None;
-                                        runtime.open_path.clear();
-                                        runtime.submenu_hovered_path = None;
-                                        runtime.submenu_hovering_surface = false;
-                                        runtime.submenu_hover_epoch =
-                                            runtime.submenu_hover_epoch.wrapping_add(1);
-                                        runtime.submenu_hover_task = None;
-                                        runtime.submenu_scroll_handles.clear();
-                                        runtime.submenu_trigger_bounds.clear();
+                                        runtime.reset_closed_state();
                                     }
                                 });
-                                if let Some(on_open_change) = on_open_change.as_ref() {
-                                    on_open_change(next_open, window, cx);
-                                }
+                                emit_overlay_open_change(
+                                    next_open,
+                                    on_open_change.as_deref(),
+                                    window,
+                                    cx,
+                                );
                             })
                     })
                     .child(trigger_label),
@@ -2550,15 +2544,11 @@ fn close_menu(
     cx: &mut App,
 ) {
     runtime.update(cx, |runtime, _| {
-        runtime.open = false;
+        set_overlay_open(&mut runtime.open, false);
         runtime.reset_closed_state();
     });
-    if let Some(on_open_change) = on_open_change.as_ref() {
-        on_open_change(false, window, cx);
-    }
-    if focus_restore_requests_trigger(&focus_restore) {
-        window.defer(cx, move |window, cx| trigger_focus.focus(window, cx));
-    }
+    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+    restore_overlay_focus(&focus_restore, Some(trigger_focus), true, window, cx);
 }
 
 fn menu_initial_focus_handle(

@@ -24,7 +24,8 @@ use crate::listbox::{
 };
 use crate::overlay::{
     GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
-    gpui_overlay_state, outside_press_open_change,
+    emit_overlay_open_change, gpui_overlay_state, outside_press_open_change,
+    resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::theme::ThemeResolver;
@@ -685,10 +686,10 @@ impl RenderOnce for Select {
             selected_value: self.selected_value.clone(),
         });
         let runtime_state = runtime.read(cx).clone();
-        let controlled_open = self.open;
-        let resolved_open = controlled_open.unwrap_or(runtime_state.open);
+        let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
+        let resolved_open = open_state.open();
 
-        if controlled_open.is_some() && runtime_state.open != resolved_open {
+        if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
             });
@@ -807,11 +808,14 @@ impl RenderOnce for Select {
                             if matches!(key, "enter" | "space" | "down" | "up") {
                                 consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
-                                    runtime.open = true;
+                                    set_overlay_open(&mut runtime.open, true);
                                 });
-                                if let Some(on_open_change) = on_open_change.as_ref() {
-                                    on_open_change(true, window, cx);
-                                }
+                                emit_overlay_open_change(
+                                    true,
+                                    on_open_change.as_deref(),
+                                    window,
+                                    cx,
+                                );
                             } else if key == "escape" {
                                 consume_overlay_event(window, cx);
                                 close_select(runtime.clone(), on_open_change.clone(), window, cx);
@@ -830,11 +834,14 @@ impl RenderOnce for Select {
                                 consume_overlay_event(window, cx);
                                 let next_open = !open;
                                 runtime.update(cx, |runtime, _| {
-                                    runtime.open = next_open;
+                                    set_overlay_open(&mut runtime.open, next_open);
                                 });
-                                if let Some(on_open_change) = on_open_change.as_ref() {
-                                    on_open_change(next_open, window, cx);
-                                }
+                                emit_overlay_open_change(
+                                    next_open,
+                                    on_open_change.as_deref(),
+                                    window,
+                                    cx,
+                                );
                             })
                     })
                     .child(
@@ -910,14 +917,12 @@ fn select_content_element(
             listbox_runtime.update(cx, |runtime, _| {
                 runtime.selected_value = Some(selection.value().to_owned());
                 runtime.active_value = Some(selection.value().to_owned());
-                runtime.open = false;
+                set_overlay_open(&mut runtime.open, false);
             });
             if let Some(on_select) = listbox_select.as_ref() {
                 on_select(selection, window, cx);
             }
-            if let Some(on_open_change) = listbox_open_change.as_ref() {
-                on_open_change(false, window, cx);
-            }
+            emit_overlay_open_change(false, listbox_open_change.as_deref(), window, cx);
         });
     let mut listbox = listbox;
     if let Some(selected_value) = selected_value {
@@ -983,11 +988,9 @@ fn close_select(
     cx: &mut App,
 ) {
     runtime.update(cx, |runtime, _| {
-        runtime.open = false;
+        set_overlay_open(&mut runtime.open, false);
     });
-    if let Some(on_open_change) = on_open_change.as_ref() {
-        on_open_change(false, window, cx);
-    }
+    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
 }
 
 impl ThemeResolver {
