@@ -11,10 +11,9 @@ use open_gpui::{
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
-use crate::choice::{self, ChoiceItemProjection};
+use crate::choice::{self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::roving_focus::vertical_roving_navigation_target;
 use crate::theme::ThemeResolver;
 
 type ListboxSelectHandler = Rc<dyn Fn(ListboxSelection, &mut Window, &mut App)>;
@@ -516,17 +515,25 @@ impl ListboxState {
                     .count(),
             })
             .collect::<Vec<_>>();
-        let flattened = flatten_listbox_options(&group_descriptors, standalone_options);
-        let choice_resolution =
-            choice::resolve_selection_indexes(disabled, &flattened, selected_value, active_value);
-        let selected_index = choice_resolution.selected_index();
-        let active_index = choice_resolution.active_index();
-        let selectable_count = flattened
+        let collection = ChoiceCollection::resolve(
+            disabled,
+            flatten_listbox_options(&group_descriptors, standalone_options),
+            selected_value,
+            active_value,
+            ChoiceInteractionPolicy::listbox(),
+        );
+        let selected_index = collection.selected_index();
+        let active_index = collection.active_index();
+        let selected_value = collection.selected_value().map(str::to_owned);
+        let active_value = collection.active_value().map(str::to_owned);
+        let selectable_count = collection
+            .items()
             .iter()
             .filter(|option| option.item().kind() == ListboxOptionKind::Option)
             .count();
         let mut position = 0usize;
-        let options = flattened
+        let options = collection
+            .into_items()
             .into_iter()
             .enumerate()
             .map(|(index, option)| {
@@ -556,10 +563,6 @@ impl ListboxState {
                 }
             })
             .collect::<Vec<_>>();
-        let selected_value = selected_index
-            .and_then(|index| options.get(index).map(|option| option.value().to_owned()));
-        let active_value = active_index
-            .and_then(|index| options.get(index).map(|option| option.value().to_owned()));
         let colors = ThemeResolver::listbox_colors(tokens);
 
         Self {
@@ -666,28 +669,15 @@ impl ListboxState {
 
     /// Resolves a navigation target for an APG-style listbox key.
     pub fn navigation_target(&self, key: &str) -> Option<&ListboxOptionState> {
-        let current = self.active_index?;
-        let disabled = self.disabled_map();
-        listbox_navigation_target(key, current, &disabled).and_then(|index| self.options.get(index))
+        self.choice_collection()
+            .navigation_target(key)
+            .and_then(|target| self.options.get(target.source_index()))
     }
 
     /// Resolves a typeahead target for a query.
     pub fn typeahead_target(&self, query: &str) -> Option<&ListboxOptionState> {
-        let projected = self
-            .options
-            .iter()
-            .map(|option| {
-                ChoiceItemProjection::new(
-                    option.index(),
-                    option.group_index(),
-                    option.value(),
-                    option.label(),
-                    !option.focusable(),
-                    (),
-                )
-            })
-            .collect::<Vec<_>>();
-        choice::typeahead_target(projected.as_slice(), self.active_index, query)
+        self.choice_collection()
+            .typeahead_target(query)
             .and_then(|target| self.options.get(target.source_index()))
     }
 
@@ -722,17 +712,44 @@ impl ListboxState {
         self.focus_ring
     }
 
-    fn disabled_map(&self) -> Vec<bool> {
-        self.options
-            .iter()
-            .map(|option| !option.focusable())
-            .collect()
+    /// Returns the selected option state.
+    pub fn selected_option(&self) -> Option<&ListboxOptionState> {
+        self.selected_index
+            .and_then(|index| self.options.get(index))
+    }
+
+    /// Returns the active option state.
+    pub fn active_option(&self) -> Option<&ListboxOptionState> {
+        self.active_index.and_then(|index| self.options.get(index))
+    }
+
+    fn choice_collection(&self) -> ChoiceCollection<()> {
+        ChoiceCollection::from_resolved(
+            self.disabled,
+            self.options
+                .iter()
+                .map(|option| {
+                    let text_value = option.label().to_owned();
+                    ChoiceItemProjection::new(
+                        option.index(),
+                        option.group_index(),
+                        option.value(),
+                        text_value.clone(),
+                        !option.focusable(),
+                        (),
+                    )
+                    .text_value(text_value)
+                })
+                .collect(),
+            choice::ChoiceSelectionResolution::new(self.selected_index, self.active_index),
+            ChoiceInteractionPolicy::listbox(),
+        )
     }
 }
 
 /// Resolves a listbox active descendant target from an APG-style key name.
 pub fn listbox_navigation_target(key: &str, current: usize, disabled: &[bool]) -> Option<usize> {
-    vertical_roving_navigation_target(key, current, disabled)
+    ChoiceInteractionPolicy::listbox().navigation_target_index(key, current, disabled)
 }
 
 /// A concrete GPUI listbox option.
@@ -1307,28 +1324,32 @@ fn flatten_listbox_options(
         .into_iter()
         .enumerate()
         .map(|(source_index, descriptor)| {
+            let text_value = descriptor.label.clone();
             ChoiceItemProjection::new(
                 source_index,
                 None,
                 descriptor.value.clone(),
-                descriptor.label.clone(),
+                text_value.clone(),
                 !descriptor.focusable(),
                 descriptor,
             )
+            .text_value(text_value)
         })
         .collect::<Vec<_>>();
 
     for (group_index, group) in groups.iter().enumerate() {
         flattened.extend(group.options.iter().cloned().enumerate().map(
             |(source_index, descriptor)| {
+                let text_value = descriptor.label.clone();
                 ChoiceItemProjection::new(
                     source_index,
                     Some(group_index),
                     descriptor.value.clone(),
-                    descriptor.label.clone(),
+                    text_value.clone(),
                     !descriptor.focusable(),
                     descriptor,
                 )
+                .text_value(text_value)
             },
         ));
     }

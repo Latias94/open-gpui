@@ -1,6 +1,6 @@
 //! Combobox component built from editable text input, overlay, and listbox state.
 
-use crate::choice;
+use crate::choice::{self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
 use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
@@ -374,14 +374,14 @@ impl ComboboxState {
                 .iter()
                 .map(|group| group.options_ref().len())
                 .sum::<usize>();
-        let selected_option = choice::resolve_enabled_value(
-            &raw_options,
-            raw_groups.iter().map(|group| group.options_ref()),
+        let raw_collection = ChoiceCollection::resolve(
+            false,
+            flatten_combobox_choice_options(&raw_groups, &raw_options),
             selected_value,
-            ComboboxOptionDescriptor::value,
-            ComboboxOptionDescriptor::disabled_state,
+            active_value,
+            ChoiceInteractionPolicy::listbox(),
         );
-        let selected_value = selected_option.map(|option| option.value().to_owned());
+        let selected_value = raw_collection.selected_value().map(str::to_owned);
         let listbox = ListboxState::resolve(
             size,
             disabled,
@@ -1253,6 +1253,47 @@ fn close_combobox(
         set_overlay_open(&mut runtime.open, false);
     });
     emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+}
+
+fn flatten_combobox_choice_options(
+    groups: &[ComboboxGroupDescriptor],
+    standalone_options: &[ComboboxOptionDescriptor],
+) -> Vec<ChoiceItemProjection<()>> {
+    let mut flattened = standalone_options
+        .iter()
+        .enumerate()
+        .map(|(source_index, descriptor)| {
+            let text_value = descriptor.label().to_owned();
+            ChoiceItemProjection::new(
+                source_index,
+                None,
+                descriptor.value(),
+                text_value.clone(),
+                descriptor.disabled_state(),
+                (),
+            )
+            .text_value(text_value)
+        })
+        .collect::<Vec<_>>();
+
+    for (group_index, group) in groups.iter().enumerate() {
+        flattened.extend(group.options_ref().iter().enumerate().map(
+            |(source_index, descriptor)| {
+                let text_value = descriptor.label().to_owned();
+                ChoiceItemProjection::new(
+                    source_index,
+                    Some(group_index),
+                    descriptor.value(),
+                    text_value.clone(),
+                    descriptor.disabled_state(),
+                    (),
+                )
+                .text_value(text_value)
+            },
+        ));
+    }
+
+    flattened
 }
 
 /// A concrete GPUI combobox option.

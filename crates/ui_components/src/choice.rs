@@ -1,5 +1,9 @@
 //! Shared helpers for stable-value choice surfaces.
 
+use open_gpui_ui_core::Orientation;
+
+use crate::roving_focus::{first_enabled, last_enabled, next_enabled};
+
 /// Flat stable-value item projected from a choice surface descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ChoiceItemProjection<T> {
@@ -7,6 +11,7 @@ pub(crate) struct ChoiceItemProjection<T> {
     group_index: Option<usize>,
     value: String,
     label: String,
+    text_value: Option<String>,
     disabled: bool,
     item: T,
 }
@@ -26,9 +31,16 @@ impl<T> ChoiceItemProjection<T> {
             group_index,
             value: value.into(),
             label: label.into(),
+            text_value: None,
             disabled,
             item,
         }
+    }
+
+    /// Sets the text candidate used by typeahead matching.
+    pub(crate) fn text_value(mut self, text_value: impl Into<String>) -> Self {
+        self.text_value = Some(text_value.into());
+        self
     }
 
     /// Returns the item index in its source collection.
@@ -51,6 +63,11 @@ impl<T> ChoiceItemProjection<T> {
         &self.label
     }
 
+    /// Returns the typeahead candidate text, falling back to the visible label.
+    pub(crate) fn typeahead_text(&self) -> &str {
+        self.text_value.as_deref().unwrap_or(self.label())
+    }
+
     /// Returns whether this item can be focused or selected.
     pub(crate) const fn enabled(&self) -> bool {
         !self.disabled
@@ -67,6 +84,141 @@ impl<T> ChoiceItemProjection<T> {
     }
 }
 
+/// Selection cardinality semantics for choice surfaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum ChoiceSelectionMode {
+    /// The collection has active movement but no selected value.
+    None,
+    /// The collection projects at most one selected stable value.
+    Single,
+    /// The collection may project multiple stable values.
+    Multiple,
+}
+
+/// Activation timing semantics for choice surfaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum ChoiceActivationMode {
+    /// Movement changes active item only; explicit activation commits selection.
+    Manual,
+    /// Movement may commit the active item immediately.
+    Automatic,
+}
+
+/// Disabled-item traversal semantics for choice surfaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum ChoiceDisabledItemStrategy {
+    /// Disabled items are skipped for movement, typeahead, and selection.
+    Skip,
+    /// Disabled items remain addressable by movement and typeahead.
+    Include,
+}
+
+/// Renderer-neutral interaction policy for stable-value choice collections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ChoiceInteractionPolicy {
+    orientation: Orientation,
+    wrap: bool,
+    typeahead: bool,
+    selection_mode: ChoiceSelectionMode,
+    activation_mode: ChoiceActivationMode,
+    disabled_item_strategy: ChoiceDisabledItemStrategy,
+}
+
+#[allow(dead_code)]
+impl ChoiceInteractionPolicy {
+    /// Returns the APG-style listbox policy used by Listbox, Select, and Combobox.
+    pub(crate) const fn listbox() -> Self {
+        Self {
+            orientation: Orientation::Vertical,
+            wrap: true,
+            typeahead: true,
+            selection_mode: ChoiceSelectionMode::Single,
+            activation_mode: ChoiceActivationMode::Manual,
+            disabled_item_strategy: ChoiceDisabledItemStrategy::Skip,
+        }
+    }
+
+    /// Returns this policy with wrapping movement overridden.
+    pub(crate) const fn with_wrap(mut self, wrap: bool) -> Self {
+        self.wrap = wrap;
+        self
+    }
+
+    /// Returns this policy with typeahead enabled or disabled.
+    pub(crate) const fn with_typeahead(mut self, typeahead: bool) -> Self {
+        self.typeahead = typeahead;
+        self
+    }
+
+    /// Returns this policy with selection cardinality overridden.
+    pub(crate) const fn with_selection_mode(mut self, selection_mode: ChoiceSelectionMode) -> Self {
+        self.selection_mode = selection_mode;
+        self
+    }
+
+    /// Returns this policy with activation timing overridden.
+    pub(crate) const fn with_activation_mode(
+        mut self,
+        activation_mode: ChoiceActivationMode,
+    ) -> Self {
+        self.activation_mode = activation_mode;
+        self
+    }
+
+    /// Returns this policy with disabled-item handling overridden.
+    pub(crate) const fn with_disabled_item_strategy(
+        mut self,
+        disabled_item_strategy: ChoiceDisabledItemStrategy,
+    ) -> Self {
+        self.disabled_item_strategy = disabled_item_strategy;
+        self
+    }
+
+    /// Returns whether typeahead matching is enabled.
+    pub(crate) const fn typeahead(self) -> bool {
+        self.typeahead
+    }
+
+    /// Returns selection cardinality semantics.
+    pub(crate) const fn selection_mode(self) -> ChoiceSelectionMode {
+        self.selection_mode
+    }
+
+    /// Resolves an APG-style movement key to a candidate index.
+    pub(crate) fn navigation_target_index(
+        self,
+        key: &str,
+        current: usize,
+        disabled: &[bool],
+    ) -> Option<usize> {
+        match (self.orientation, key) {
+            (_, "home") => first_enabled(disabled),
+            (_, "end") => last_enabled(disabled),
+            (Orientation::Horizontal, "left") => next_enabled(disabled, current, false, self.wrap),
+            (Orientation::Horizontal, "right") => next_enabled(disabled, current, true, self.wrap),
+            (Orientation::Vertical, "up") => next_enabled(disabled, current, false, self.wrap),
+            (Orientation::Vertical, "down") => next_enabled(disabled, current, true, self.wrap),
+            _ => None,
+        }
+    }
+
+    fn item_addressable<T>(self, item: &ChoiceItemProjection<T>) -> bool {
+        match self.disabled_item_strategy {
+            ChoiceDisabledItemStrategy::Skip => item.enabled(),
+            ChoiceDisabledItemStrategy::Include => true,
+        }
+    }
+}
+
+impl Default for ChoiceInteractionPolicy {
+    fn default() -> Self {
+        Self::listbox()
+    }
+}
+
 /// Selected and active indexes resolved from stable-value choice projections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ChoiceSelectionResolution {
@@ -75,6 +227,14 @@ pub(crate) struct ChoiceSelectionResolution {
 }
 
 impl ChoiceSelectionResolution {
+    /// Creates a selection resolution from already-resolved indexes.
+    pub(crate) const fn new(selected_index: Option<usize>, active_index: Option<usize>) -> Self {
+        Self {
+            selected_index,
+            active_index,
+        }
+    }
+
     /// Returns the resolved selected index.
     pub(crate) const fn selected_index(self) -> Option<usize> {
         self.selected_index
@@ -84,6 +244,128 @@ impl ChoiceSelectionResolution {
     pub(crate) const fn active_index(self) -> Option<usize> {
         self.active_index
     }
+}
+
+/// Renderer-neutral stable-value collection for choice-like components.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChoiceCollection<T> {
+    disabled: bool,
+    policy: ChoiceInteractionPolicy,
+    items: Vec<ChoiceItemProjection<T>>,
+    selection: ChoiceSelectionResolution,
+}
+
+impl<T> ChoiceCollection<T> {
+    /// Resolves a collection from raw projections and stable selected/active values.
+    pub(crate) fn resolve(
+        disabled: bool,
+        items: Vec<ChoiceItemProjection<T>>,
+        selected_value: Option<&str>,
+        active_value: Option<&str>,
+        policy: ChoiceInteractionPolicy,
+    ) -> Self {
+        let selection = resolve_selection_indexes_with_policy(
+            disabled,
+            &items,
+            selected_value,
+            active_value,
+            policy,
+        );
+        Self::from_resolved(disabled, items, selection, policy)
+    }
+
+    /// Builds a collection around already-resolved selected/active indexes.
+    pub(crate) fn from_resolved(
+        disabled: bool,
+        items: Vec<ChoiceItemProjection<T>>,
+        selection: ChoiceSelectionResolution,
+        policy: ChoiceInteractionPolicy,
+    ) -> Self {
+        Self {
+            disabled,
+            policy,
+            items,
+            selection,
+        }
+    }
+
+    /// Returns projected items.
+    pub(crate) fn items(&self) -> &[ChoiceItemProjection<T>] {
+        &self.items
+    }
+
+    /// Consumes the collection into projected items.
+    pub(crate) fn into_items(self) -> Vec<ChoiceItemProjection<T>> {
+        self.items
+    }
+
+    /// Returns the selected index.
+    pub(crate) const fn selected_index(&self) -> Option<usize> {
+        self.selection.selected_index()
+    }
+
+    /// Returns the active index.
+    pub(crate) const fn active_index(&self) -> Option<usize> {
+        self.selection.active_index()
+    }
+
+    /// Returns the selected item.
+    pub(crate) fn selected_item(&self) -> Option<&ChoiceItemProjection<T>> {
+        self.selected_index()
+            .and_then(|index| self.items.get(index))
+    }
+
+    /// Returns the active item.
+    pub(crate) fn active_item(&self) -> Option<&ChoiceItemProjection<T>> {
+        self.active_index().and_then(|index| self.items.get(index))
+    }
+
+    /// Returns the selected stable value.
+    pub(crate) fn selected_value(&self) -> Option<&str> {
+        self.selected_item().map(ChoiceItemProjection::value)
+    }
+
+    /// Returns the active stable value.
+    pub(crate) fn active_value(&self) -> Option<&str> {
+        self.active_item().map(ChoiceItemProjection::value)
+    }
+
+    /// Returns the disabled map expected by movement helpers.
+    pub(crate) fn disabled_map(&self) -> Vec<bool> {
+        disabled_map_for_policy(self.policy, &self.items)
+    }
+
+    /// Resolves an APG-style navigation target from the active item.
+    pub(crate) fn navigation_target(&self, key: &str) -> Option<&ChoiceItemProjection<T>> {
+        if self.disabled {
+            return None;
+        }
+
+        let current = self.active_index()?;
+        let disabled = self.disabled_map();
+        self.policy
+            .navigation_target_index(key, current, &disabled)
+            .and_then(|index| self.items.get(index))
+    }
+
+    /// Resolves a typeahead target by scanning from the active item.
+    pub(crate) fn typeahead_target(&self, query: &str) -> Option<&ChoiceItemProjection<T>> {
+        if self.disabled || !self.policy.typeahead() {
+            return None;
+        }
+
+        typeahead_target_with_policy(self.items(), self.active_index(), query, self.policy)
+    }
+}
+
+fn disabled_map_for_policy<T>(
+    policy: ChoiceInteractionPolicy,
+    items: &[ChoiceItemProjection<T>],
+) -> Vec<bool> {
+    items
+        .iter()
+        .map(|item| !policy.item_addressable(item))
+        .collect()
 }
 
 /// Normalizes query text for case-insensitive matching.
@@ -169,46 +451,49 @@ where
     })
 }
 
-/// Resolves selected and active indexes from projected choice items.
-pub(crate) fn resolve_selection_indexes<T>(
+fn resolve_selection_indexes_with_policy<T>(
     disabled: bool,
     items: &[ChoiceItemProjection<T>],
     selected_value: Option<&str>,
     active_value: Option<&str>,
+    policy: ChoiceInteractionPolicy,
 ) -> ChoiceSelectionResolution {
     if disabled || items.is_empty() {
-        return ChoiceSelectionResolution {
-            selected_index: None,
-            active_index: None,
-        };
+        return ChoiceSelectionResolution::new(None, None);
     }
 
-    let selected_index = selected_value.and_then(|value| {
-        items
-            .iter()
-            .position(|item| item.value() == value && item.enabled())
-    });
+    let selected_index = match policy.selection_mode() {
+        ChoiceSelectionMode::None => None,
+        ChoiceSelectionMode::Single | ChoiceSelectionMode::Multiple => {
+            selected_value.and_then(|value| {
+                items
+                    .iter()
+                    .position(|item| item.value() == value && policy.item_addressable(item))
+            })
+        }
+    };
     let active_index = active_value
         .and_then(|value| {
             items
                 .iter()
-                .position(|item| item.value() == value && item.enabled())
+                .position(|item| item.value() == value && policy.item_addressable(item))
         })
         .or(selected_index)
-        .or_else(|| items.iter().position(ChoiceItemProjection::enabled));
+        .or_else(|| items.iter().position(|item| policy.item_addressable(item)));
 
-    ChoiceSelectionResolution {
-        selected_index,
-        active_index,
-    }
+    ChoiceSelectionResolution::new(selected_index, active_index)
 }
 
-/// Resolves a typeahead target by scanning from the item after the current index.
-pub(crate) fn typeahead_target<'a, T>(
+fn typeahead_target_with_policy<'a, T>(
     items: &'a [ChoiceItemProjection<T>],
     current: Option<usize>,
     query: &str,
+    policy: ChoiceInteractionPolicy,
 ) -> Option<&'a ChoiceItemProjection<T>> {
+    if !policy.typeahead() {
+        return None;
+    }
+
     let query = normalize_query(query);
     if query.is_empty() || items.is_empty() {
         return None;
@@ -219,7 +504,10 @@ pub(crate) fn typeahead_target<'a, T>(
     (0..len)
         .map(|step| (start + step) % len)
         .filter_map(|index| items.get(index))
-        .find(|item| item.enabled() && normalized_text_starts_with(item.label(), query.as_str()))
+        .find(|item| {
+            policy.item_addressable(item)
+                && normalized_text_starts_with(item.typeahead_text(), query.as_str())
+        })
 }
 
 /// Resolves selected values for single-select and multi-select choice surfaces.
@@ -376,45 +664,175 @@ mod tests {
 
     #[test]
     fn selection_resolution_uses_stable_value_and_enabled_fallbacks() {
-        let items = [
+        let items = vec![
             ChoiceItemProjection::new(0, None, "alpha", "Alpha", true, ()),
             ChoiceItemProjection::new(1, None, "bravo", "Bravo", false, ()),
             ChoiceItemProjection::new(2, None, "charlie", "Charlie", false, ()),
         ];
 
-        let selected = resolve_selection_indexes(false, &items, Some("bravo"), None);
+        let selected = ChoiceCollection::resolve(
+            false,
+            items.clone(),
+            Some("bravo"),
+            None,
+            ChoiceInteractionPolicy::listbox(),
+        );
         assert_eq!(selected.selected_index(), Some(1));
         assert_eq!(selected.active_index(), Some(1));
 
-        let active = resolve_selection_indexes(false, &items, Some("missing"), Some("charlie"));
+        let active = ChoiceCollection::resolve(
+            false,
+            items.clone(),
+            Some("missing"),
+            Some("charlie"),
+            ChoiceInteractionPolicy::listbox(),
+        );
         assert_eq!(active.selected_index(), None);
         assert_eq!(active.active_index(), Some(2));
 
-        let fallback = resolve_selection_indexes(false, &items, Some("alpha"), Some("alpha"));
+        let fallback = ChoiceCollection::resolve(
+            false,
+            items.clone(),
+            Some("alpha"),
+            Some("alpha"),
+            ChoiceInteractionPolicy::listbox(),
+        );
         assert_eq!(fallback.selected_index(), None);
         assert_eq!(fallback.active_index(), Some(1));
 
-        let disabled_surface = resolve_selection_indexes(true, &items, Some("bravo"), None);
+        let disabled_surface = ChoiceCollection::resolve(
+            true,
+            items,
+            Some("bravo"),
+            None,
+            ChoiceInteractionPolicy::listbox(),
+        );
         assert_eq!(disabled_surface.selected_index(), None);
         assert_eq!(disabled_surface.active_index(), None);
     }
 
     #[test]
-    fn typeahead_scans_from_active_item_and_skips_disabled_items() {
-        let items = [
+    fn collection_projects_selection_and_movement_from_policy() {
+        let items = vec![
+            ChoiceItemProjection::new(0, None, "alpha", "Alpha", false, ()),
+            ChoiceItemProjection::new(1, None, "bravo", "Bravo", true, ()),
+            ChoiceItemProjection::new(2, None, "charlie", "Charlie", false, ()),
+        ];
+        let collection = ChoiceCollection::resolve(
+            false,
+            items,
+            Some("charlie"),
+            Some("missing"),
+            ChoiceInteractionPolicy::listbox(),
+        );
+
+        assert_eq!(collection.selected_value(), Some("charlie"));
+        assert_eq!(collection.active_value(), Some("charlie"));
+        assert_eq!(
+            collection
+                .navigation_target("down")
+                .map(ChoiceItemProjection::value),
+            Some("alpha")
+        );
+        assert_eq!(
+            collection
+                .typeahead_target(" al")
+                .map(ChoiceItemProjection::value),
+            Some("alpha")
+        );
+        assert_eq!(collection.disabled_map(), vec![false, true, false]);
+    }
+
+    #[test]
+    fn collection_can_disable_wrapping_movement() {
+        let items = vec![
+            ChoiceItemProjection::new(0, None, "alpha", "Alpha", false, ()),
+            ChoiceItemProjection::new(1, None, "bravo", "Bravo", true, ()),
+            ChoiceItemProjection::new(2, None, "charlie", "Charlie", false, ()),
+        ];
+        let collection = ChoiceCollection::resolve(
+            false,
+            items,
+            None,
+            Some("charlie"),
+            ChoiceInteractionPolicy::listbox().with_wrap(false),
+        );
+
+        assert!(collection.navigation_target("down").is_none());
+        assert_eq!(
+            collection
+                .navigation_target("up")
+                .map(ChoiceItemProjection::value),
+            Some("alpha")
+        );
+    }
+
+    #[test]
+    fn collection_policy_controls_typeahead_and_disabled_items() {
+        let items = vec![
             ChoiceItemProjection::new(0, None, "alpha", "Alpha", false, ()),
             ChoiceItemProjection::new(1, None, "bravo", "Bravo", true, ()),
             ChoiceItemProjection::new(2, None, "beta", "Beta", false, ()),
         ];
+        let disabled_typeahead = ChoiceCollection::resolve(
+            false,
+            items.clone(),
+            None,
+            Some("alpha"),
+            ChoiceInteractionPolicy::listbox().with_typeahead(false),
+        );
+        let include_disabled = ChoiceCollection::resolve(
+            false,
+            items,
+            None,
+            Some("alpha"),
+            ChoiceInteractionPolicy::listbox()
+                .with_disabled_item_strategy(ChoiceDisabledItemStrategy::Include),
+        );
+
+        assert!(disabled_typeahead.typeahead_target("br").is_none());
+        assert_eq!(
+            include_disabled
+                .typeahead_target("br")
+                .map(ChoiceItemProjection::value),
+            Some("bravo")
+        );
+    }
+
+    #[test]
+    fn typeahead_scans_from_active_item_and_skips_disabled_items() {
+        let collection = ChoiceCollection::resolve(
+            false,
+            vec![
+                ChoiceItemProjection::new(0, None, "alpha", "Alpha", false, ()),
+                ChoiceItemProjection::new(1, None, "bravo", "Bravo", true, ()),
+                ChoiceItemProjection::new(2, None, "beta", "Beta", false, ()),
+            ],
+            None,
+            Some("alpha"),
+            ChoiceInteractionPolicy::listbox(),
+        );
 
         assert_eq!(
-            typeahead_target(&items, Some(0), " b").map(ChoiceItemProjection::value),
+            collection
+                .typeahead_target(" b")
+                .map(ChoiceItemProjection::value),
             Some("beta")
         );
+
+        let wrapped = ChoiceCollection::resolve(
+            false,
+            collection.into_items(),
+            None,
+            Some("beta"),
+            ChoiceInteractionPolicy::listbox(),
+        );
         assert_eq!(
-            typeahead_target(&items, Some(2), "a").map(ChoiceItemProjection::value),
+            wrapped
+                .typeahead_target("a")
+                .map(ChoiceItemProjection::value),
             Some("alpha")
         );
-        assert!(typeahead_target(&items, None, "missing").is_none());
+        assert!(wrapped.typeahead_target("missing").is_none());
     }
 }

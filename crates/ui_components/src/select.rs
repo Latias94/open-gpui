@@ -1,6 +1,4 @@
 //! Select component built from a trigger, overlay, and listbox state.
-
-use crate::choice;
 use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
@@ -375,12 +373,9 @@ impl SelectState {
     /// Returns visible trigger label.
     pub fn trigger_label(&self) -> &str {
         self.listbox
-            .selected_value()
-            .and_then(|value| {
-                choice::find_value(self.listbox.options(), value, |option| option.value())
-                    .filter(|option| option.focusable())
-                    .map(|option| option.label())
-            })
+            .selected_option()
+            .filter(|option| option.focusable())
+            .map(|option| option.label())
             .unwrap_or(self.placeholder.as_str())
     }
 

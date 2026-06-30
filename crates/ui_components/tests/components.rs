@@ -13769,6 +13769,73 @@ fn choice_surfaces_share_stable_value_resolution_and_query_normalization() {
 }
 
 #[test]
+fn listbox_select_and_combobox_project_equivalent_choice_semantics() {
+    let listbox = ListboxState::resolve(
+        Size::Small,
+        false,
+        "Shared choices",
+        Some("bravo"),
+        Some("charlie"),
+        None,
+        "No choices",
+        [],
+        [
+            ListboxOptionDescriptor::option("alpha", "Alpha"),
+            ListboxOptionDescriptor::option("bravo", "Bravo"),
+            ListboxOptionDescriptor::option("disabled", "Disabled").disabled(true),
+            ListboxOptionDescriptor::option("charlie", "Charlie"),
+        ],
+        ThemeTokens::default(),
+    );
+    let select = Select::new("shared-select-semantics", "Shared choices")
+        .placeholder("Pick one")
+        .selected("bravo")
+        .active("charlie")
+        .option(ListboxOption::new("alpha", "Alpha"))
+        .option(ListboxOption::new("bravo", "Bravo"))
+        .option(ListboxOption::new("disabled", "Disabled").disabled(true))
+        .option(ListboxOption::new("charlie", "Charlie"))
+        .state();
+    let combobox = Combobox::new("shared-combobox-semantics", "Shared choices")
+        .placeholder("Search choices")
+        .selected("bravo")
+        .active("charlie")
+        .option(ComboboxOption::new("alpha", "Alpha"))
+        .option(ComboboxOption::new("bravo", "Bravo"))
+        .option(ComboboxOption::new("disabled", "Disabled").disabled(true))
+        .option(ComboboxOption::new("charlie", "Charlie"))
+        .state();
+
+    for state in [
+        listbox,
+        select.listbox().clone(),
+        combobox.listbox().clone(),
+    ] {
+        assert_eq!(state.selected_value(), Some("bravo"));
+        assert_eq!(state.active_value(), Some("charlie"));
+        assert_eq!(
+            state.selected_option().map(|option| option.value()),
+            Some("bravo")
+        );
+        assert_eq!(
+            state.active_option().map(|option| option.value()),
+            Some("charlie")
+        );
+        assert_eq!(
+            state.typeahead_target(" al").map(|option| option.value()),
+            Some("alpha")
+        );
+        assert!(state.options()[1].selected());
+        assert!(state.options()[2].disabled());
+        assert!(!state.options()[2].focusable());
+        assert!(state.options()[3].active());
+    }
+
+    assert_eq!(select.trigger_label(), "Bravo");
+    assert_eq!(combobox.selected_value(), Some("bravo"));
+}
+
+#[test]
 fn listbox_state_scrollable_content_tracks_flattened_option_count_threshold() {
     let scrollable = ListboxState::resolve(
         Size::Small,
