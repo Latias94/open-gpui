@@ -4331,6 +4331,8 @@ dependencies = [
  "open-gpui",
  "open-gpui-canvas",
  "open-gpui-platform",
+ "open-gpui-ui-components",
+ "open-gpui-ui-core",
  "serde_json",
 ]
 

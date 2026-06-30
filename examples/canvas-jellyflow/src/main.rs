@@ -1,16 +1,30 @@
 use jellyflow::{
     NodeGraphStore,
     core::{
-        CanvasPoint as JellyPoint, CanvasSize as JellySize, Edge, EdgeId as JellyEdgeId, EdgeKind,
-        Graph, GraphId, GraphOp, GraphTransaction, Node, NodeId as JellyNodeId, NodeKindKey, Port,
-        PortCapacity, PortDirection, PortId as JellyPortId, PortKey, PortKind,
+        CanvasPoint as JellyPoint, CanvasRect as JellyRect, CanvasSize as JellySize, Edge,
+        EdgeId as JellyEdgeId, EdgeKind, Graph, GraphId, GraphOp, GraphTransaction, Node,
+        NodeId as JellyNodeId, NodeKindKey, Port, PortCapacity, PortDirection,
+        PortId as JellyPortId, PortKey, PortKind,
     },
     layout::{LayoutPresetBuilder, builtin_layout_engine_registry},
     runtime::{
         io::{NodeGraphEditorConfig, NodeGraphViewState},
+        runtime::{
+            chrome::{
+                NodeChromeFactsRequest, NodeChromeLayoutPolicy, NodeChromeState,
+                ResolvedNodeChrome, resolve_node_chrome_facts,
+            },
+            connection::ConnectionHandleRef,
+            geometry::{HandleBounds, HandlePosition},
+            measurement::{
+                MeasuredSurfaceAnchor, MeasuredSurfaceSlot, NodeHandleMeasurementSource,
+                NodeMeasurement,
+            },
+        },
         schema::{
-            NodeKitRegistry, NodeRegistry, NodeSurfaceProjection, NodeSurfaceSlotKind,
-            NodeSurfaceSlotProjection,
+            NodeChromeKind, NodeKindViewDescriptor, NodeKitKey, NodeKitRegistry, NodeRegistry,
+            NodeSurfaceProjection, NodeSurfaceSlotKind, NodeSurfaceSlotProjection,
+            NodeSurfaceSlotVisibility,
         },
     },
 };
@@ -25,13 +39,16 @@ use open_gpui_canvas::{
     CanvasToolIntent, DocumentError, HandleRole, HitTarget, NodeId, canvas_editor_view,
 };
 use open_gpui_platform::application;
+use open_gpui_ui_components::prelude::Sizable;
+use open_gpui_ui_components::{Badge, BadgeVariant, Button, ButtonVariant, Progress};
+use open_gpui_ui_core::Size;
 use serde_json::Value;
 
 const INITIAL_SELECTION: u128 = 2;
 const CANVAS_WIDTH: f32 = 1140.0;
 const CANVAS_HEIGHT: f32 = 650.0;
-const NODE_SURFACE_CHROME_HEIGHT: f32 = 92.0;
-const NODE_SURFACE_SLOT_ROW_HEIGHT: f32 = 28.0;
+const NODE_SURFACE_CHROME_HEIGHT: f32 = 78.0;
+const NODE_SURFACE_SLOT_ROW_HEIGHT: f32 = 26.0;
 
 struct JellyflowCanvasView {
     editor: CanvasEditor,
@@ -62,9 +79,53 @@ struct NodeSurfaceSummary {
     title: String,
     summary: String,
     slots: Vec<NodeSurfaceSlotProjection>,
+    chrome: Vec<ResolvedNodeChrome>,
+    document_bounds: JellyRect,
     selected: bool,
     zoom: f32,
     projection: NodeSurfaceProjection,
+}
+
+#[derive(Clone)]
+struct NodeSurfaceComponentLayout {
+    slots: Vec<NodeSurfaceSlotLayout>,
+}
+
+#[derive(Clone)]
+struct NodeSurfaceSlotLayout {
+    slot: NodeSurfaceSlotProjection,
+    rect: JellyRect,
+    anchor_rect: JellyRect,
+}
+
+impl NodeSurfaceComponentLayout {
+    fn new(slots: Vec<NodeSurfaceSlotProjection>, node_size: JellySize, slot_limit: usize) -> Self {
+        let slots = ordered_visible_slot_projections(slots)
+            .into_iter()
+            .take(slot_limit)
+            .enumerate()
+            .map(|(index, slot)| NodeSurfaceSlotLayout {
+                rect: slot_row_rect(index, node_size),
+                anchor_rect: slot_anchor_rect(index, node_size),
+                slot,
+            })
+            .collect();
+        Self { slots }
+    }
+
+    fn slot_rect(&self, key: &str) -> Option<JellyRect> {
+        self.slots
+            .iter()
+            .find(|slot| slot.slot.key == key)
+            .map(|slot| slot.rect)
+    }
+
+    fn anchor_rect(&self, key: &str) -> Option<JellyRect> {
+        self.slots
+            .iter()
+            .find(|slot| slot.slot.key == key)
+            .map(|slot| slot.anchor_rect)
+    }
 }
 
 struct NodeSummary {
@@ -318,31 +379,15 @@ impl JellyflowCanvasView {
     }
 
     fn node_surface_summary(&self, node: &CanvasNode, zoom: f32) -> Option<NodeSurfaceSummary> {
-        let kind =
-            NodeKindKey::new(data_string(node, "jellyflow_kind").unwrap_or(node.kind.as_str()));
-        let descriptor = self.semantic_registry.view_descriptor(&kind)?;
-        let title = node_title(node);
-        let data = Value::Object(node.data.clone());
-        let layout_hints = self.node_kit_registry.layout_hints_for_kind(&kind)?;
-        let projection = NodeSurfaceProjection::from_layout_hints(layout_hints, zoom);
-        let slots = descriptor.surface_slots_projection(&data, Some(layout_hints), zoom);
-        let summary = data_string(node, "summary")
-            .or_else(|| data_string(node, "description"))
-            .unwrap_or("Jellyflow node projected into open-gpui-canvas")
-            .to_string();
-        Some(NodeSurfaceSummary {
-            node_kind: descriptor.kind.0.clone(),
-            renderer_key: descriptor.renderer_key.clone(),
-            title,
-            summary,
-            slots,
-            selected: self
-                .editor
+        node_surface_summary_for_node(
+            node,
+            zoom,
+            self.editor
                 .selection()
                 .contains_node(&NodeId::from(node.id.as_str())),
-            zoom,
-            projection,
-        })
+            &self.semantic_registry,
+            &self.node_kit_registry,
+        )
     }
 
     fn selected_node_summary(&self) -> Option<NodeSummary> {
@@ -433,6 +478,14 @@ fn render_node_surface(bounds: Bounds<Pixels>, surface: NodeSurfaceSummary) -> i
     let inner_width = (bounds.size.width - pad * 2.0).max(px(0.0));
     let inner_height = (bounds.size.height - pad * 2.0).max(px(0.0));
     let slot_limit = adapter_slot_limit_for_height(inner_height, surface.projection.slot_limit);
+    let component_layout = NodeSurfaceComponentLayout::new(
+        surface.slots.clone(),
+        JellySize {
+            width: surface.document_bounds.size.width,
+            height: surface.document_bounds.size.height,
+        },
+        slot_limit,
+    );
     let accent = if surface.selected {
         rgb(0x2563eb)
     } else {
@@ -445,13 +498,10 @@ fn render_node_surface(bounds: Bounds<Pixels>, surface: NodeSurfaceSummary) -> i
         .top(top)
         .w(inner_width)
         .h(inner_height)
-        .flex()
-        .flex_col()
-        .gap_1()
+        .relative()
         .flex_shrink_0()
         .min_w(px(0.0))
         .min_h(px(0.0))
-        .p_2()
         .rounded_sm()
         .border_1()
         .border_color(accent)
@@ -460,24 +510,37 @@ fn render_node_surface(bounds: Bounds<Pixels>, surface: NodeSurfaceSummary) -> i
         .shadow_sm()
         .child(
             div()
+                .absolute()
+                .left(px(8.0))
+                .top(px(8.0))
+                .right(px(8.0))
                 .flex()
                 .flex_shrink_0()
                 .items_center()
                 .justify_between()
                 .gap_2()
                 .min_w(px(0.0))
-                .child(div().text_xs().text_color(accent).child(surface.node_kind))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(accent)
+                        .child(surface.node_kind.clone()),
+                )
                 .child(
                     div()
                         .text_xs()
                         .text_color(rgb(0x94a3b8))
                         .truncate()
                         .min_w(px(0.0))
-                        .child(surface.renderer_key),
+                        .child(surface.renderer_key.clone()),
                 ),
         )
         .child(
             div()
+                .absolute()
+                .left(px(8.0))
+                .top(px(30.0))
+                .right(px(8.0))
                 .text_sm()
                 .line_height(px(20.0))
                 .text_color(rgb(0x111827))
@@ -485,58 +548,272 @@ fn render_node_surface(bounds: Bounds<Pixels>, surface: NodeSurfaceSummary) -> i
                 .line_clamp(2)
                 .flex_shrink_1()
                 .min_w(px(0.0))
-                .child(surface.title),
+                .child(surface.title.clone()),
         )
         .child(
             div()
+                .absolute()
+                .left(px(8.0))
+                .top(px(52.0))
+                .right(px(8.0))
                 .text_xs()
                 .text_color(rgb(0x64748b))
                 .truncate()
                 .flex_shrink_1()
                 .min_w(px(0.0))
-                .child(surface.summary),
+                .child(surface.summary.clone()),
         )
-        .children(render_surface_slots(surface.slots, slot_limit))
+        .children(render_surface_chrome(&surface, bounds))
+        .children(render_surface_slots(
+            component_layout,
+            surface.document_bounds,
+            inner_width,
+            inner_height,
+        ))
+}
+
+fn node_surface_summary_for_node(
+    node: &CanvasNode,
+    zoom: f32,
+    selected: bool,
+    semantic_registry: &NodeRegistry,
+    node_kit_registry: &NodeKitRegistry,
+) -> Option<NodeSurfaceSummary> {
+    let kind = NodeKindKey::new(data_string(node, "jellyflow_kind").unwrap_or(node.kind.as_str()));
+    let descriptor = semantic_registry.view_descriptor(&kind)?;
+    let title = node_title(node);
+    let data = Value::Object(node.data.clone());
+    let layout_hints = node_kit_registry.layout_hints_for_kind(&kind)?;
+    let projection = NodeSurfaceProjection::from_layout_hints(layout_hints, zoom);
+    let slots = descriptor.surface_slots_projection(&data, Some(layout_hints), zoom);
+    let document_bounds = jelly_rect_from_bounds(node.bounds());
+    let chrome = resolve_node_chrome_facts(
+        NodeChromeFactsRequest::new(
+            jelly_node_id_from_node(node)?,
+            document_bounds,
+            &descriptor.chrome,
+        )
+        .with_state(NodeChromeState {
+            selected,
+            hovered: false,
+            focused: false,
+        })
+        .with_policy(NodeChromeLayoutPolicy::default().with_zoom(zoom)),
+    )
+    .map(|facts| facts.chrome)
+    .unwrap_or_default();
+    let summary = data_string(node, "summary")
+        .or_else(|| data_string(node, "description"))
+        .unwrap_or("Jellyflow node projected into open-gpui-canvas")
+        .to_string();
+
+    Some(NodeSurfaceSummary {
+        node_kind: descriptor.kind.0.clone(),
+        renderer_key: descriptor.renderer_key.clone(),
+        title,
+        summary,
+        slots,
+        chrome,
+        document_bounds,
+        selected,
+        zoom,
+        projection,
+    })
+}
+
+fn render_surface_chrome(
+    surface: &NodeSurfaceSummary,
+    view_bounds: Bounds<Pixels>,
+) -> Vec<AnyElement> {
+    surface
+        .chrome
+        .iter()
+        .filter_map(|chrome| render_node_chrome(chrome, surface, view_bounds))
+        .collect()
+}
+
+fn render_node_chrome(
+    chrome: &ResolvedNodeChrome,
+    surface: &NodeSurfaceSummary,
+    view_bounds: Bounds<Pixels>,
+) -> Option<AnyElement> {
+    let bounds = chrome_view_bounds(chrome, surface, view_bounds)?;
+    let base = div()
+        .absolute()
+        .left(bounds.origin.x)
+        .top(bounds.origin.y)
+        .w(bounds.size.width)
+        .h(bounds.size.height)
+        .flex()
+        .items_center()
+        .justify_center()
+        .overflow_hidden();
+
+    let label = chrome.label.clone().unwrap_or_else(|| chrome.key.clone());
+    Some(match chrome.kind {
+        NodeChromeKind::StatusStrip => base
+            .px_2()
+            .rounded_sm()
+            .bg(rgb(0xecfdf5))
+            .border_1()
+            .border_color(rgb(0x86efac))
+            .child(
+                div()
+                    .text_xs()
+                    .truncate()
+                    .text_color(rgb(0x166534))
+                    .child(label),
+            )
+            .into_any_element(),
+        NodeChromeKind::RunActionStrip => base
+            .justify_start()
+            .gap_1()
+            .child(
+                Button::new(format!("jellyflow-chrome-run:{}", chrome.key), label)
+                    .variant(ButtonVariant::Default)
+                    .with_size(Size::XSmall),
+            )
+            .child(
+                Button::new(format!("jellyflow-chrome-trace:{}", chrome.key), "Trace")
+                    .variant(ButtonVariant::Secondary)
+                    .with_size(Size::XSmall),
+            )
+            .into_any_element(),
+        NodeChromeKind::Toolbar => base
+            .justify_end()
+            .gap_1()
+            .child(
+                Badge::new(format!("jellyflow-chrome-toolbar:{}", chrome.key), "tools")
+                    .variant(BadgeVariant::Outline)
+                    .with_size(Size::XSmall),
+            )
+            .into_any_element(),
+        NodeChromeKind::Resizer => base
+            .rounded_sm()
+            .bg(rgb(0x2563eb))
+            .border_1()
+            .border_color(rgb(0xffffff))
+            .into_any_element(),
+        NodeChromeKind::ValidationBanner => base
+            .px_2()
+            .rounded_sm()
+            .bg(rgb(0xfffbeb))
+            .border_1()
+            .border_color(rgb(0xf59e0b))
+            .child(
+                div()
+                    .text_xs()
+                    .truncate()
+                    .text_color(rgb(0x92400e))
+                    .child(label),
+            )
+            .into_any_element(),
+        NodeChromeKind::InspectorAnchor => base
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(0x94a3b8))
+            .bg(rgb(0xffffff))
+            .into_any_element(),
+    })
+}
+
+fn chrome_view_bounds(
+    chrome: &ResolvedNodeChrome,
+    surface: &NodeSurfaceSummary,
+    view_bounds: Bounds<Pixels>,
+) -> Option<Bounds<Pixels>> {
+    let document = surface.document_bounds;
+    if !document.is_positive_finite() {
+        return None;
+    }
+    let scale_x = view_bounds.size.width.as_f32() / document.size.width;
+    let scale_y = view_bounds.size.height.as_f32() / document.size.height;
+    let x = view_bounds.origin.x.as_f32() + (chrome.rect.origin.x - document.origin.x) * scale_x;
+    let y = view_bounds.origin.y.as_f32() + (chrome.rect.origin.y - document.origin.y) * scale_y;
+    let width = chrome.rect.size.width * scale_x;
+    let height = chrome.rect.size.height * scale_y;
+    (x.is_finite()
+        && y.is_finite()
+        && width.is_finite()
+        && height.is_finite()
+        && width > 0.0
+        && height > 0.0)
+        .then(|| Bounds::new(point(px(x), px(y)), size(px(width), px(height))))
 }
 
 fn render_surface_slots(
-    slots: Vec<NodeSurfaceSlotProjection>,
-    slot_limit: usize,
+    layout: NodeSurfaceComponentLayout,
+    document_bounds: JellyRect,
+    view_width: Pixels,
+    view_height: Pixels,
 ) -> Vec<AnyElement> {
-    slots
+    layout
+        .slots
         .into_iter()
-        .filter(|slot| slot.visible)
-        .take(slot_limit)
-        .map(render_node_slot)
+        .map(|slot| render_node_slot(slot, document_bounds, view_width, view_height))
         .map(|slot| slot.into_any_element())
         .collect()
 }
 
-fn render_node_slot(slot: NodeSurfaceSlotProjection) -> impl IntoElement {
+fn semantic_component_priority(kind: NodeSurfaceSlotKind) -> usize {
+    match kind {
+        NodeSurfaceSlotKind::FieldRow => 0,
+        NodeSurfaceSlotKind::PortRail => 1,
+        NodeSurfaceSlotKind::Badge => 2,
+        NodeSurfaceSlotKind::MetricBadge => 3,
+        NodeSurfaceSlotKind::StatusBanner => 4,
+        NodeSurfaceSlotKind::ConfigGroup => 5,
+        NodeSurfaceSlotKind::Preview => 6,
+        NodeSurfaceSlotKind::NestedRegion => 7,
+        NodeSurfaceSlotKind::ActionRow => 8,
+        NodeSurfaceSlotKind::Header => 9,
+        NodeSurfaceSlotKind::Body => 10,
+        NodeSurfaceSlotKind::Footer => 11,
+        NodeSurfaceSlotKind::Icon => 12,
+    }
+}
+
+fn render_node_slot(
+    slot_layout: NodeSurfaceSlotLayout,
+    document_bounds: JellyRect,
+    view_width: Pixels,
+    view_height: Pixels,
+) -> impl IntoElement {
+    let slot = slot_layout.slot;
+    let rect = slot_view_rect(slot_layout.rect, document_bounds, view_width, view_height);
     let fill = match slot.kind {
         NodeSurfaceSlotKind::Header => rgb(0xe0f2fe),
         NodeSurfaceSlotKind::Body => rgb(0xf1f5f9),
         NodeSurfaceSlotKind::Footer => rgb(0xe2e8f0),
         NodeSurfaceSlotKind::Badge => rgb(0xfef3c7),
+        NodeSurfaceSlotKind::MetricBadge => rgb(0xe0f2fe),
+        NodeSurfaceSlotKind::StatusBanner => rgb(0xdcfce7),
         NodeSurfaceSlotKind::Icon => rgb(0xe0e7ff),
         NodeSurfaceSlotKind::FieldRow => rgb(0xecfeff),
         NodeSurfaceSlotKind::ActionRow => rgb(0xfce7f3),
+        NodeSurfaceSlotKind::ConfigGroup => rgb(0xf1f5f9),
+        NodeSurfaceSlotKind::PortRail => rgb(0xe5e7eb),
         NodeSurfaceSlotKind::Preview => rgb(0xd1fae5),
         NodeSurfaceSlotKind::NestedRegion => rgb(0xf3e8ff),
     };
     let value = if slot.value.is_empty() {
         "-".to_string()
     } else {
-        slot.value
+        slot.value.clone()
     };
     let label = if slot.label.is_empty() {
         "slot".to_string()
     } else {
-        slot.label
+        slot.label.clone()
     };
     let status = if slot.visible { "visible" } else { "hidden" };
 
     div()
+        .absolute()
+        .left(rect.origin.x)
+        .top(rect.origin.y)
+        .w(rect.size.width)
+        .h(rect.size.height)
         .flex()
         .flex_shrink_1()
         .items_center()
@@ -548,24 +825,125 @@ fn render_node_slot(slot: NodeSurfaceSlotProjection) -> impl IntoElement {
         .rounded_sm()
         .bg(fill)
         .overflow_hidden()
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(0x334155))
-                .truncate()
-                .flex_shrink_1()
-                .min_w(px(0.0))
-                .child(format!("{} · {}", label, status)),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(0x475569))
-                .truncate()
-                .flex_shrink_1()
-                .min_w(px(0.0))
-                .child(value),
-        )
+        .child(render_slot_label(&slot, label, status))
+        .child(render_slot_value(&slot, value))
+}
+
+fn slot_view_rect(
+    rect: JellyRect,
+    document_bounds: JellyRect,
+    view_width: Pixels,
+    view_height: Pixels,
+) -> Bounds<Pixels> {
+    let width = document_bounds.size.width.max(1.0);
+    let height = document_bounds.size.height.max(1.0);
+    Bounds::new(
+        point(
+            px(rect.origin.x / width * view_width.as_f32()),
+            px(rect.origin.y / height * view_height.as_f32()),
+        ),
+        size(
+            px((rect.size.width / width * view_width.as_f32()).max(1.0)),
+            px((rect.size.height / height * view_height.as_f32()).max(1.0)),
+        ),
+    )
+}
+
+fn render_slot_label(
+    slot: &NodeSurfaceSlotProjection,
+    label: String,
+    status: &'static str,
+) -> AnyElement {
+    match slot.kind {
+        NodeSurfaceSlotKind::Badge | NodeSurfaceSlotKind::MetricBadge => {
+            Badge::new(format!("jellyflow-slot-badge:{}", slot.key), label)
+                .variant(BadgeVariant::Secondary)
+                .with_size(Size::XSmall)
+                .into_any_element()
+        }
+        NodeSurfaceSlotKind::StatusBanner => {
+            Badge::new(format!("jellyflow-status-label:{}", slot.key), label)
+                .variant(BadgeVariant::Default)
+                .with_size(Size::XSmall)
+                .into_any_element()
+        }
+        NodeSurfaceSlotKind::ActionRow => {
+            Badge::new(format!("jellyflow-action-label:{}", slot.key), label)
+                .variant(BadgeVariant::Outline)
+                .with_size(Size::XSmall)
+                .into_any_element()
+        }
+        _ => div()
+            .text_xs()
+            .text_color(rgb(0x334155))
+            .truncate()
+            .flex_shrink_1()
+            .min_w(px(0.0))
+            .child(format!("{label} · {status}"))
+            .into_any_element(),
+    }
+}
+
+fn render_slot_value(slot: &NodeSurfaceSlotProjection, value: String) -> AnyElement {
+    match slot.kind {
+        NodeSurfaceSlotKind::ActionRow => render_action_buttons(slot, &value).into_any_element(),
+        NodeSurfaceSlotKind::Preview => div()
+            .w(px(72.0))
+            .flex_shrink_0()
+            .child(
+                Progress::new(format!("jellyflow-preview-progress:{}", slot.key), value)
+                    .value(64.0)
+                    .with_size(Size::XSmall),
+            )
+            .into_any_element(),
+        NodeSurfaceSlotKind::Badge
+        | NodeSurfaceSlotKind::MetricBadge
+        | NodeSurfaceSlotKind::StatusBanner => {
+            Badge::new(format!("jellyflow-slot-value:{}", slot.key), value)
+                .variant(BadgeVariant::Default)
+                .with_size(Size::XSmall)
+                .into_any_element()
+        }
+        _ => div()
+            .text_xs()
+            .text_color(rgb(0x475569))
+            .truncate()
+            .flex_shrink_1()
+            .min_w(px(0.0))
+            .child(value)
+            .into_any_element(),
+    }
+}
+
+fn render_action_buttons(slot: &NodeSurfaceSlotProjection, value: &str) -> impl IntoElement {
+    let actions = value
+        .split(['·', ',', '[', ']'])
+        .filter(|action| !action.trim().is_empty() && *action != "-")
+        .take(2)
+        .enumerate()
+        .map(|(index, action)| {
+            Button::new(
+                format!("jellyflow-action:{}:{index}", slot.key),
+                action.trim().to_owned(),
+            )
+            .variant(if index == 0 {
+                ButtonVariant::Default
+            } else {
+                ButtonVariant::Secondary
+            })
+            .with_size(Size::XSmall)
+            .into_any_element()
+        })
+        .collect::<Vec<_>>();
+
+    div()
+        .flex()
+        .items_center()
+        .justify_end()
+        .gap_1()
+        .min_w(px(0.0))
+        .overflow_hidden()
+        .children(actions)
 }
 
 fn adapter_slot_limit_for_height(inner_height: Pixels, semantic_slot_limit: usize) -> usize {
@@ -646,19 +1024,19 @@ fn make_demo_graph() -> Result<Graph, Box<dyn std::error::Error>> {
         },
         GraphOp::AddPort {
             id: source_out,
-            port: make_port(source, "rows", PortDirection::Out),
+            port: make_port(source, "out", PortDirection::Out),
         },
         GraphOp::AddPort {
             id: transform_in,
-            port: make_port(transform, "rows", PortDirection::In),
+            port: make_port(transform, "prompt", PortDirection::In),
         },
         GraphOp::AddPort {
             id: transform_out,
-            port: make_port(transform, "orders", PortDirection::Out),
+            port: make_port(transform, "completion", PortDirection::Out),
         },
         GraphOp::AddPort {
             id: sink_in,
-            port: make_port(sink, "orders", PortDirection::In),
+            port: make_port(sink, "result", PortDirection::In),
         },
         GraphOp::SetNodePorts {
             id: source,
@@ -703,8 +1081,8 @@ fn make_node(kind: &str, label: &str, description: &str, x: f32, y: f32) -> Node
         extent: None,
         expand_parent: None,
         size: Some(JellySize {
-            width: 228.0,
-            height: 168.0,
+            width: if kind == "demo.llm" { 268.0 } else { 236.0 },
+            height: if kind == "demo.llm" { 228.0 } else { 188.0 },
         }),
         hidden: false,
         collapsed: false,
@@ -775,10 +1153,17 @@ fn project_store(
     let graph = store.graph();
     let kit_registry = NodeKitRegistry::builtin();
     let semantic_registry = kit_registry.node_registry();
+    let measured_store = projection_measurement_store(store, &semantic_registry);
     let mut builder = CanvasDocument::builder();
 
     for (id, node) in graph.nodes().iter() {
-        builder.add_node(project_node(id, node, graph, &semantic_registry))?;
+        builder.add_node(project_node(
+            id,
+            node,
+            measured_store.graph(),
+            &measured_store,
+            &semantic_registry,
+        ))?;
     }
 
     for (id, edge) in graph.edges().iter() {
@@ -801,7 +1186,7 @@ fn project_store(
             ),
         );
         canvas_edge.kind = "jellyflow.edge.data".to_string();
-        canvas_edge.route = open_gpui_canvas::CanvasEdgeRoute::orthogonal();
+        canvas_edge.route = project_edge_route(edge);
         canvas_edge.route.interaction_width = px(edge.interaction_width.unwrap_or(14.0));
         canvas_edge.data.insert(
             "jellyflow_edge_id".to_string(),
@@ -821,16 +1206,46 @@ fn project_store(
         last_commit: "node-kit gpui proof now uses builtin semantic overlays".to_string(),
         source: "jellyflow graph v1".to_string(),
         adapter: "open-gpui-canvas overlay example".to_string(),
-        kit: "workflow.automation / erd.table / mind-map.knowledge-canvas".to_string(),
+        kit: "workflow.automation / erd.table / shader.blueprint / mind-map.knowledge-canvas"
+            .to_string(),
     };
 
     Ok((document, projection))
+}
+
+fn project_kit_fixture(
+    kit_key: &str,
+    fixture_key: &str,
+) -> Result<(CanvasDocument, ProjectionSummary), Box<dyn std::error::Error>> {
+    let graph =
+        NodeKitRegistry::builtin().fixture_graph(&NodeKitKey::from(kit_key), fixture_key)?;
+    let store = NodeGraphStore::new(
+        graph,
+        NodeGraphViewState::default(),
+        NodeGraphEditorConfig::default(),
+    );
+    project_store(&store).map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
+}
+
+fn project_edge_route(edge: &Edge) -> open_gpui_canvas::CanvasEdgeRoute {
+    match edge.view.route_kind {
+        Some(jellyflow::core::EdgeRouteKind::Straight) => {
+            open_gpui_canvas::CanvasEdgeRoute::straight()
+        }
+        Some(jellyflow::core::EdgeRouteKind::Bezier) => open_gpui_canvas::CanvasEdgeRoute::new(
+            open_gpui_canvas::CanvasEdgeRouteKind::CUBIC_BEZIER,
+        ),
+        Some(jellyflow::core::EdgeRouteKind::Orthogonal)
+        | Some(jellyflow::core::EdgeRouteKind::SmoothStep)
+        | None => open_gpui_canvas::CanvasEdgeRoute::orthogonal(),
+    }
 }
 
 fn project_node(
     id: &JellyNodeId,
     node: &Node,
     graph: &Graph,
+    measurement_store: &NodeGraphStore,
     semantic_registry: &NodeRegistry,
 ) -> CanvasNode {
     let node_size = node.size.unwrap_or(JellySize {
@@ -885,26 +1300,288 @@ fn project_node(
         .collect::<Vec<_>>();
 
     for (index, port_id) in input_ports.iter().enumerate() {
+        let position = graph
+            .ports()
+            .get(port_id)
+            .and_then(|port| {
+                measured_handle_position(
+                    measurement_store,
+                    *id,
+                    *port_id,
+                    port.dir,
+                    node_size,
+                    index,
+                    input_ports.len(),
+                )
+            })
+            .unwrap_or_else(|| JellyPoint {
+                x: 0.0,
+                y: port_y(index, input_ports.len(), node_size.height),
+            });
         canvas_node.handles.push(project_handle(
             *port_id,
             HandleRole::Target,
-            0.0,
-            port_y(index, input_ports.len(), node_size.height),
+            position.x,
+            position.y,
             graph.ports().get(port_id).and_then(|port| port.connectable),
         ));
     }
 
     for (index, port_id) in output_ports.iter().enumerate() {
+        let position = graph
+            .ports()
+            .get(port_id)
+            .and_then(|port| {
+                measured_handle_position(
+                    measurement_store,
+                    *id,
+                    *port_id,
+                    port.dir,
+                    node_size,
+                    index,
+                    output_ports.len(),
+                )
+            })
+            .unwrap_or_else(|| JellyPoint {
+                x: node_size.width,
+                y: port_y(index, output_ports.len(), node_size.height),
+            });
         canvas_node.handles.push(project_handle(
             *port_id,
             HandleRole::Source,
-            node_size.width,
-            port_y(index, output_ports.len(), node_size.height),
+            position.x,
+            position.y,
             graph.ports().get(port_id).and_then(|port| port.connectable),
         ));
     }
 
     canvas_node
+}
+
+fn projection_measurement_store(
+    store: &NodeGraphStore,
+    semantic_registry: &NodeRegistry,
+) -> NodeGraphStore {
+    let mut measured_store = NodeGraphStore::new(
+        store.graph().clone(),
+        store.view_state().clone(),
+        NodeGraphEditorConfig::default(),
+    );
+
+    let measurements = measured_store
+        .graph()
+        .nodes()
+        .iter()
+        .filter_map(|(id, node)| {
+            let descriptor = semantic_registry.view_descriptor(&node.kind)?;
+            Some(project_node_measurement(
+                id,
+                node,
+                measured_store.graph(),
+                &descriptor,
+            ))
+        })
+        .collect::<Vec<_>>();
+
+    for measurement in measurements {
+        measured_store
+            .report_node_measurement(measurement)
+            .expect("projected GPUI measurement should match the graph");
+    }
+
+    measured_store
+}
+
+fn project_node_measurement(
+    id: &JellyNodeId,
+    node: &Node,
+    graph: &Graph,
+    descriptor: &NodeKindViewDescriptor,
+) -> NodeMeasurement {
+    let node_size = node.size.unwrap_or(JellySize {
+        width: 228.0,
+        height: 168.0,
+    });
+    let layout = projected_node_surface_component_layout(descriptor, node, node_size);
+    let slots = measured_surface_slots(&layout);
+    let anchors = measured_surface_anchors(descriptor, graph, id, &layout);
+
+    NodeMeasurement::new(*id)
+        .with_revision(1)
+        .with_size(Some(node_size))
+        .with_slots(slots)
+        .with_anchors(anchors)
+}
+
+fn projected_node_surface_component_layout(
+    descriptor: &NodeKindViewDescriptor,
+    node: &Node,
+    node_size: JellySize,
+) -> NodeSurfaceComponentLayout {
+    let slots = descriptor
+        .surface_slots_projection(&node.data, None, 1.0)
+        .into_iter()
+        .filter(|slot| {
+            descriptor
+                .surface_slot(&slot.key)
+                .is_some_and(|descriptor_slot| descriptor_slot.is_visible())
+        })
+        .collect();
+    NodeSurfaceComponentLayout::new(slots, node_size, usize::MAX)
+}
+
+fn measured_surface_slots(layout: &NodeSurfaceComponentLayout) -> Vec<MeasuredSurfaceSlot> {
+    layout
+        .slots
+        .iter()
+        .map(|slot| {
+            MeasuredSurfaceSlot::new(slot.slot.key.clone(), slot.rect)
+                .with_visibility(slot_projection_visibility(&slot.slot))
+        })
+        .collect()
+}
+
+fn measured_surface_anchors(
+    descriptor: &NodeKindViewDescriptor,
+    graph: &Graph,
+    node_id: &JellyNodeId,
+    layout: &NodeSurfaceComponentLayout,
+) -> Vec<MeasuredSurfaceAnchor> {
+    layout
+        .slots
+        .iter()
+        .flat_map(|slot| {
+            let Some(anchor) = descriptor
+                .surface_slot(&slot.slot.key)
+                .and_then(|descriptor_slot| descriptor_slot.anchor.as_ref())
+            else {
+                return Vec::new();
+            };
+            descriptor
+                .ports_by_anchor(anchor)
+                .into_iter()
+                .filter_map(|decl| {
+                    let port_id = graph
+                        .ports()
+                        .iter()
+                        .find(|(_, port)| port.node == *node_id && port.key == decl.key)
+                        .map(|(port_id, _)| *port_id)?;
+                    let position = handle_position_for_direction(decl.dir);
+                    Some(
+                        MeasuredSurfaceAnchor::new(anchor.clone(), slot.anchor_rect, position)
+                            .with_port(port_id)
+                            .with_port_key(decl.key.clone())
+                            .with_visibility(slot_projection_visibility(&slot.slot)),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn slot_projection_visibility(slot: &NodeSurfaceSlotProjection) -> NodeSurfaceSlotVisibility {
+    if slot.visible {
+        NodeSurfaceSlotVisibility::Visible
+    } else {
+        NodeSurfaceSlotVisibility::Hidden
+    }
+}
+
+fn measured_handle_position(
+    store: &NodeGraphStore,
+    node: JellyNodeId,
+    port: JellyPortId,
+    direction: PortDirection,
+    node_size: JellySize,
+    fallback_index: usize,
+    fallback_count: usize,
+) -> Option<JellyPoint> {
+    let resolution =
+        store.resolve_node_handle_measurement(ConnectionHandleRef::new(node, port, direction));
+    match resolution.source {
+        NodeHandleMeasurementSource::MeasuredHandle
+        | NodeHandleMeasurementSource::MeasuredAnchor { .. } => {
+            resolution.bounds.map(handle_position_from_bounds)
+        }
+        NodeHandleMeasurementSource::Fallback { .. } => Some(JellyPoint {
+            x: match direction {
+                PortDirection::In => 0.0,
+                PortDirection::Out => node_size.width,
+            },
+            y: port_y(fallback_index, fallback_count, node_size.height),
+        }),
+    }
+}
+
+fn handle_position_from_bounds(bounds: HandleBounds) -> JellyPoint {
+    match bounds.position {
+        HandlePosition::Left => JellyPoint {
+            x: bounds.rect.origin.x,
+            y: bounds.rect.origin.y + bounds.rect.size.height * 0.5,
+        },
+        HandlePosition::Right => JellyPoint {
+            x: bounds.rect.origin.x + bounds.rect.size.width,
+            y: bounds.rect.origin.y + bounds.rect.size.height * 0.5,
+        },
+        HandlePosition::Top => JellyPoint {
+            x: bounds.rect.origin.x + bounds.rect.size.width * 0.5,
+            y: bounds.rect.origin.y,
+        },
+        HandlePosition::Bottom => JellyPoint {
+            x: bounds.rect.origin.x + bounds.rect.size.width * 0.5,
+            y: bounds.rect.origin.y + bounds.rect.size.height,
+        },
+    }
+}
+
+fn ordered_visible_slot_projections(
+    mut slots: Vec<NodeSurfaceSlotProjection>,
+) -> Vec<NodeSurfaceSlotProjection> {
+    slots.retain(|slot| slot.visible);
+    slots.sort_by_key(|slot| (semantic_component_priority(slot.kind), slot.key.clone()));
+    slots
+}
+
+fn slot_row_rect(index: usize, node_size: JellySize) -> JellyRect {
+    JellyRect {
+        origin: JellyPoint {
+            x: 12.0,
+            y: slot_row_y(index, node_size.height),
+        },
+        size: JellySize {
+            width: (node_size.width - 24.0).max(1.0),
+            height: NODE_SURFACE_SLOT_ROW_HEIGHT.max(1.0),
+        },
+    }
+}
+
+fn slot_anchor_rect(index: usize, node_size: JellySize) -> JellyRect {
+    let row = slot_row_rect(index, node_size);
+    JellyRect {
+        origin: JellyPoint {
+            x: 0.0,
+            y: row.origin.y + 3.0,
+        },
+        size: JellySize {
+            width: node_size.width.max(1.0),
+            height: (row.size.height - 6.0).max(1.0),
+        },
+    }
+}
+
+fn slot_row_y(index: usize, node_height: f32) -> f32 {
+    let y = NODE_SURFACE_CHROME_HEIGHT + NODE_SURFACE_SLOT_ROW_HEIGHT * index as f32;
+    y.clamp(
+        8.0,
+        (node_height - NODE_SURFACE_SLOT_ROW_HEIGHT - 8.0).max(8.0),
+    )
+}
+
+fn handle_position_for_direction(direction: PortDirection) -> HandlePosition {
+    match direction {
+        PortDirection::In => HandlePosition::Left,
+        PortDirection::Out => HandlePosition::Right,
+    }
 }
 
 fn jellyflow_kind_registry() -> CanvasKindRegistry {
@@ -915,6 +1592,7 @@ fn jellyflow_kind_registry() -> CanvasKindRegistry {
         "decision-card",
         "output-card",
         "table-card",
+        "shader-card",
         "topic-card",
         "idea-card",
         "source-card",
@@ -961,6 +1639,32 @@ fn canvas_port_id(id: &JellyPortId) -> String {
 
 fn canvas_edge_id(id: &JellyEdgeId) -> String {
     id.0.to_string()
+}
+
+fn jelly_node_id_from_node(node: &CanvasNode) -> Option<JellyNodeId> {
+    data_string(node, "jellyflow_node_id")
+        .and_then(jelly_node_id_from_str)
+        .or_else(|| jelly_node_id_from_str(node.id.as_str()))
+}
+
+fn jelly_node_id_from_str(id: &str) -> Option<JellyNodeId> {
+    id.parse::<u128>()
+        .ok()
+        .map(JellyNodeId::from_u128)
+        .or_else(|| serde_json::from_value(Value::String(id.to_string())).ok())
+}
+
+fn jelly_rect_from_bounds(bounds: Bounds<Pixels>) -> JellyRect {
+    JellyRect {
+        origin: JellyPoint {
+            x: bounds.origin.x.as_f32(),
+            y: bounds.origin.y.as_f32(),
+        },
+        size: JellySize {
+            width: bounds.size.width.as_f32(),
+            height: bounds.size.height.as_f32(),
+        },
+    }
 }
 
 fn node_title(node: &CanvasNode) -> String {
@@ -1105,6 +1809,306 @@ mod tests {
         assert!(surface.iter().any(|slot| slot.label == "Prompt"));
         assert!(surface.iter().any(|slot| slot.label == "Policy"));
         assert!(surface.iter().any(|slot| slot.label == "Actions"));
+    }
+
+    #[test]
+    fn semantic_chrome_projects_into_gpui_node_surface_summary() {
+        let (editor, _) = demo_editor();
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let model = CanvasPaintModel::from(&editor);
+        let node = editor
+            .document()
+            .node(&NodeId::from(canvas_node_id(&JellyNodeId::from_u128(3))))
+            .expect("llm node exists");
+        let kind = data_string(node, "jellyflow_kind").expect("projected jellyflow kind");
+        assert_eq!(kind, "demo.llm");
+        assert!(
+            semantic_registry
+                .view_descriptor(&NodeKindKey::new(kind))
+                .is_some(),
+            "projected kind should resolve through Jellyflow node registry"
+        );
+        assert!(
+            node_kit_registry
+                .layout_hints_for_kind(&NodeKindKey::new(kind))
+                .is_some(),
+            "projected kind should resolve kit layout hints"
+        );
+        assert_eq!(
+            jelly_node_id_from_node(node),
+            Some(JellyNodeId::from_u128(3))
+        );
+        let surface = node_surface_summary_for_node(
+            node,
+            model.viewport().zoom,
+            true,
+            &semantic_registry,
+            &node_kit_registry,
+        )
+        .expect("llm surface summary");
+
+        let kinds = surface
+            .chrome
+            .iter()
+            .map(|chrome| chrome.kind)
+            .collect::<Vec<_>>();
+        assert!(kinds.contains(&NodeChromeKind::StatusStrip));
+        assert!(kinds.contains(&NodeChromeKind::RunActionStrip));
+        assert!(kinds.contains(&NodeChromeKind::Toolbar));
+        assert!(kinds.contains(&NodeChromeKind::Resizer));
+        assert!(
+            surface
+                .chrome
+                .iter()
+                .any(|chrome| chrome.key == "actions.run" && chrome.interactive)
+        );
+    }
+
+    #[test]
+    fn shader_fixture_projects_typed_ports_into_gpui_surface_summary() {
+        let (document, projection) = project_kit_fixture("shader.blueprint", "shader.material_mix")
+            .expect("shader fixture projects");
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+
+        assert_eq!(projection.graph_nodes, 2);
+        assert_eq!(projection.graph_edges, 1);
+        assert_eq!(projection.canvas_nodes, 2);
+        assert_eq!(projection.canvas_edges, 1);
+
+        let shader_node = document
+            .nodes()
+            .find(|node| node.kind == "shader-card")
+            .expect("shader-card canvas node exists");
+        let surface = node_surface_summary_for_node(
+            shader_node,
+            1.0,
+            false,
+            &semantic_registry,
+            &node_kit_registry,
+        )
+        .expect("shader surface summary");
+
+        assert_eq!(surface.renderer_key, "shader-card");
+        assert!(
+            surface
+                .slots
+                .iter()
+                .any(|slot| slot.kind == NodeSurfaceSlotKind::PortRail)
+        );
+        assert!(
+            surface
+                .slots
+                .iter()
+                .any(|slot| slot.kind == NodeSurfaceSlotKind::Preview)
+        );
+        assert!(
+            shader_node
+                .handles
+                .iter()
+                .any(|handle| handle.role == HandleRole::Source)
+        );
+    }
+
+    #[test]
+    fn projected_handles_follow_semantic_slot_anchors_after_node_resize() {
+        let store = make_demo_store();
+        let (document, _) = project_store(&store).unwrap();
+        let node = document
+            .node(&NodeId::from(canvas_node_id(&JellyNodeId::from_u128(3))))
+            .unwrap();
+
+        let prompt = node
+            .handles
+            .iter()
+            .find(|handle| handle.id.as_str() == canvas_port_id(&JellyPortId::from_u128(30)))
+            .unwrap();
+        let completion = node
+            .handles
+            .iter()
+            .find(|handle| handle.id.as_str() == canvas_port_id(&JellyPortId::from_u128(31)))
+            .unwrap();
+        let semantic_registry = NodeKitRegistry::builtin().node_registry();
+        let jelly_node = store
+            .graph()
+            .nodes()
+            .get(&JellyNodeId::from_u128(3))
+            .unwrap();
+        let descriptor = semantic_registry.view_descriptor(&jelly_node.kind).unwrap();
+        let layout = projected_node_surface_component_layout(
+            &descriptor,
+            jelly_node,
+            jelly_node.size.unwrap(),
+        );
+        let prompt_anchor = layout
+            .anchor_rect("field.prompt")
+            .expect("prompt component anchor");
+        let completion_anchor = layout
+            .anchor_rect("field.completion")
+            .expect("completion component anchor");
+
+        assert_eq!(node.size.width, px(268.0));
+        assert_eq!(node.size.height, px(228.0));
+        assert_eq!(prompt.position.x, px(0.0));
+        assert_eq!(completion.position.x, px(268.0));
+        assert_eq!(
+            prompt.position.y,
+            px(prompt_anchor.origin.y + prompt_anchor.size.height * 0.5)
+        );
+        assert_eq!(
+            completion.position.y,
+            px(completion_anchor.origin.y + completion_anchor.size.height * 0.5)
+        );
+        assert_eq!(
+            completion.position.y.as_f32() - prompt.position.y.as_f32(),
+            (completion_anchor.origin.y + completion_anchor.size.height * 0.5)
+                - (prompt_anchor.origin.y + prompt_anchor.size.height * 0.5)
+        );
+    }
+
+    #[test]
+    fn gpui_measurements_are_derived_from_component_layout_slots() {
+        let store = make_demo_store();
+        let semantic_registry = NodeKitRegistry::builtin().node_registry();
+        let transform = JellyNodeId::from_u128(3);
+        let node = store.graph().nodes().get(&transform).unwrap();
+        let descriptor = semantic_registry.view_descriptor(&node.kind).unwrap();
+        let node_size = node.size.unwrap();
+        let layout = projected_node_surface_component_layout(&descriptor, node, node_size);
+        let measurement = project_node_measurement(&transform, node, store.graph(), &descriptor);
+
+        let prompt_layout_rect = layout
+            .slot_rect("field.prompt")
+            .expect("prompt slot layout rect");
+        let completion_layout_anchor = layout
+            .anchor_rect("field.completion")
+            .expect("completion anchor layout rect");
+        let prompt_measurement = measurement
+            .slots
+            .iter()
+            .find(|slot| slot.key == "field.prompt")
+            .expect("prompt measured slot");
+        let completion_anchor = measurement
+            .anchors
+            .iter()
+            .find(|anchor| anchor.anchor == "field.completion")
+            .expect("completion measured anchor");
+
+        assert_eq!(prompt_measurement.rect, prompt_layout_rect);
+        assert_eq!(completion_anchor.rect, completion_layout_anchor);
+        assert_eq!(completion_anchor.port_key, Some(PortKey::new("completion")));
+    }
+
+    #[test]
+    fn projects_jellyflow_edge_route_hints_into_canvas_routes() {
+        let mut edge = Edge::new(
+            EdgeKind::Data,
+            JellyPortId::from_u128(1),
+            JellyPortId::from_u128(2),
+        );
+
+        assert_eq!(
+            project_edge_route(&edge).kind.as_str(),
+            open_gpui_canvas::CanvasEdgeRouteKind::ORTHOGONAL
+        );
+
+        edge.view = jellyflow::core::EdgeViewDescriptor::new()
+            .with_route_kind(jellyflow::core::EdgeRouteKind::Bezier);
+        assert_eq!(
+            project_edge_route(&edge).kind.as_str(),
+            open_gpui_canvas::CanvasEdgeRouteKind::CUBIC_BEZIER
+        );
+
+        edge.view = jellyflow::core::EdgeViewDescriptor::new()
+            .with_route_kind(jellyflow::core::EdgeRouteKind::Straight);
+        assert_eq!(
+            project_edge_route(&edge).kind.as_str(),
+            open_gpui_canvas::CanvasEdgeRouteKind::STRAIGHT
+        );
+    }
+
+    #[test]
+    fn projected_handles_use_runtime_measurement_facts() {
+        let store = make_demo_store();
+        let semantic_registry = NodeKitRegistry::builtin().node_registry();
+        let transform = JellyNodeId::from_u128(3);
+        let prompt = JellyPortId::from_u128(30);
+        let completion = JellyPortId::from_u128(31);
+        let mut measured_store = NodeGraphStore::new(
+            store.graph().clone(),
+            store.view_state().clone(),
+            NodeGraphEditorConfig::default(),
+        );
+        measured_store
+            .report_node_measurement(
+                NodeMeasurement::new(transform)
+                    .with_revision(7)
+                    .with_size(Some(JellySize {
+                        width: 268.0,
+                        height: 228.0,
+                    }))
+                    .with_anchors([
+                        MeasuredSurfaceAnchor::new(
+                            "prompt.measured",
+                            JellyRect {
+                                origin: JellyPoint { x: 0.0, y: 42.0 },
+                                size: JellySize {
+                                    width: 16.0,
+                                    height: 18.0,
+                                },
+                            },
+                            HandlePosition::Left,
+                        )
+                        .with_port(prompt)
+                        .with_port_key(PortKey::new("prompt")),
+                        MeasuredSurfaceAnchor::new(
+                            "completion.measured",
+                            JellyRect {
+                                origin: JellyPoint { x: 252.0, y: 138.0 },
+                                size: JellySize {
+                                    width: 16.0,
+                                    height: 24.0,
+                                },
+                            },
+                            HandlePosition::Right,
+                        )
+                        .with_port(completion)
+                        .with_port_key(PortKey::new("completion")),
+                    ]),
+            )
+            .unwrap();
+
+        let node = measured_store.graph().nodes().get(&transform).unwrap();
+        let canvas_node = project_node(
+            &transform,
+            node,
+            measured_store.graph(),
+            &measured_store,
+            &semantic_registry,
+        );
+        let prompt_handle = canvas_node
+            .handles
+            .iter()
+            .find(|handle| handle.id.as_str() == canvas_port_id(&prompt))
+            .unwrap();
+        let completion_handle = canvas_node
+            .handles
+            .iter()
+            .find(|handle| handle.id.as_str() == canvas_port_id(&completion))
+            .unwrap();
+
+        assert_eq!(prompt_handle.position, point(px(0.0), px(51.0)));
+        assert_eq!(completion_handle.position, point(px(268.0), px(150.0)));
+        let resolution = measured_store.resolve_node_handle_measurement(ConnectionHandleRef::new(
+            transform,
+            prompt,
+            PortDirection::In,
+        ));
+        assert!(matches!(
+            resolution.source,
+            NodeHandleMeasurementSource::MeasuredAnchor { .. }
+        ));
     }
 
     #[test]
