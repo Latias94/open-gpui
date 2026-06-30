@@ -51,11 +51,11 @@ use crate::{
     KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, MouseButton, OwnedMenu,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformFocusedWindow,
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformViewportCapabilities, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem,
-    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
-    WindowInvalidator,
+    PlatformViewportCapabilities, PlatformViewportFlagCapabilities, Point, Priority, PromptBuilder,
+    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
+    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
+    WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -1131,6 +1131,11 @@ impl App {
     /// Returns platform capabilities relevant to multi-viewport docking.
     pub fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         self.platform.viewport_capabilities()
+    }
+
+    /// Returns platform support for ImGui-style viewport window flags.
+    pub fn viewport_flag_capabilities(&self) -> PlatformViewportFlagCapabilities {
+        self.platform.viewport_flag_capabilities()
     }
 
     /// Returns the backend hovered-window signal for the current pointer snapshot.

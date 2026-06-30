@@ -2027,7 +2027,13 @@ fn empty_central_passthrough_syncs_window_pointer_input(cx: &mut TestAppContext)
             .last_platform_sync
             .as_ref()
             .map(|sync| sync.applied.as_slice()),
-        Some([DockViewportPlatformSyncAction::PointerInput { enabled: false }].as_slice())
+        Some(
+            [
+                DockViewportPlatformSyncAction::PointerInput { enabled: false },
+                DockViewportPlatformSyncAction::ViewportFlagNoInputs { enabled: true },
+            ]
+            .as_slice()
+        )
     );
 
     controller.update(cx, |controller, cx| {
@@ -2058,7 +2064,13 @@ fn empty_central_passthrough_syncs_window_pointer_input(cx: &mut TestAppContext)
             .last_platform_sync
             .as_ref()
             .map(|sync| sync.applied.as_slice()),
-        Some([DockViewportPlatformSyncAction::PointerInput { enabled: true }].as_slice())
+        Some(
+            [
+                DockViewportPlatformSyncAction::PointerInput { enabled: true },
+                DockViewportPlatformSyncAction::ViewportFlagNoInputs { enabled: false },
+            ]
+            .as_slice()
+        )
     );
 }
 

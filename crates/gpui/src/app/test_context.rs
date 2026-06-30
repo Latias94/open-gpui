@@ -502,6 +502,11 @@ impl TestAppContext {
         self.test_platform.set_hovered_window_available(available);
     }
 
+    /// Overrides whether the test platform can apply native no-input windows.
+    pub fn set_platform_no_input_windows(&self, supported: bool) {
+        self.test_platform.set_no_input_windows(supported);
+    }
+
     /// Simulate dispatching an action to the currently focused node in the window.
     pub fn dispatch_action<A>(&mut self, window: AnyWindowHandle, action: A)
     where

@@ -691,6 +691,8 @@ part of the default `verify` gate because it depends on local GPU, driver, and s
 Run the docking smoke surface explicitly after changing `open-gpui-docking`:
 
 ```sh
+cargo fmt --all -- --check
+cargo check --tests -p open-gpui-docking
 cargo nextest run -p open-gpui-docking
 cargo nextest run -p open-gpui-docking-native --no-fail-fast
 cargo check -p open-gpui-docking-native
@@ -771,13 +773,31 @@ Manual native docking dogfood should use the same example after the automated ch
 19. Hover rejected center and route targets. The target preview must use rejected tokens, suppress
     payload tab previews, and leave the graph unchanged on release.
 
-Current platform caveats for docking multi-viewport dogfood:
+Current docking multi-viewport capability states:
 
-- Windows mixed-DPI displays and Wayland global toplevel positions are not yet normalized into one
-  explicit GPUI coordinate type. Treat cross-display routing results on those backends as areas for
-  follow-up platform API work, not as proof of full ImGui PlatformIO parity.
-- No-input, no-focus-on-appearing, alpha, topmost, and no-taskbar viewport flags are not modeled in
-  GPUI's platform trait yet.
+- Coordinate facts are explicit runtime state. `DockViewportCoordinateStatusRecord` reports whether
+  each registered viewport is using shared global-screen bounds or receiver-local window bounds, and
+  the runtime panel exposes that generation next to the route selection source. Mixed-DPI and
+  display-ambiguous backends should fail closed or degrade to local-only routing until the platform
+  backend can publish stronger facts. Automated owners: `host_viewport_route_tests` and
+  `viewport_lifecycle_record_reports_window_local_coordinate_status`.
+- Viewport flags are capability-gated platform sync requests. No-input can be applied when a
+  backend advertises native pointer-input routing; no-focus-on-appearing, no-focus-on-click, alpha,
+  topmost, and no-taskbar use `PlatformViewportFlagCapabilities` and are recorded as unsupported
+  requests until a backend exposes real live mutation support. The native runtime panel reports
+  both capability snapshots and the latest applied/skipped/unsupported sync counts. Automated owners:
+  `host_viewport_platform_capability_tests`,
+  `viewport_runtime_syncs_supported_options_when_reusing_window`, and
+  `empty_central_passthrough_syncs_window_pointer_input`.
+- Test ownership is split by concern. Route, lifecycle, placement, close, preview, and platform
+  capability assertions live in focused `host_viewport_*_tests` modules; the old monolithic runtime
+  test files have been deleted. Rendered native dogfood tests remain end-to-end integration coverage.
+- `DockViewportRuntimeHandle` remains the application-facing facade. Platform sync and pointer-input
+  requests now live behind `viewport_platform_sync`, window effects live behind
+  `viewport_runtime_effects`, route/scene/close handle methods are split into
+  `viewport_runtime_handle::{route_ops,scene_ops,close_ops}`, and coordinate facts live with the
+  viewport registry/status model. New tests should target those owning modules instead of adding
+  crate-private pass-throughs to the handle.
 - Transparent platform payload-window rendering and screenshot or pixel-regression infrastructure
   remain deferred. Current verification locks preview capability and semantic selectors rather than
   pixel-perfect Dear ImGui styling.

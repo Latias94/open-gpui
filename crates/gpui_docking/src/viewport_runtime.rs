@@ -146,7 +146,7 @@ struct DockViewportDropRouteSnapshot {
 
 struct DockViewportDropRouteSnapshotSelection {
     request: DockViewportDropRouteRequest,
-    route: DockViewportDropRoute,
+    route_resolution: DockViewportDropRouteResolution,
 }
 
 impl DockViewportDropRouteSnapshot {
@@ -165,7 +165,7 @@ impl DockViewportDropRouteSnapshot {
     fn into_route_selection(self) -> DockViewportDropRouteSnapshotSelection {
         DockViewportDropRouteSnapshotSelection {
             request: self.request,
-            route: self.route_resolution.into_route(),
+            route_resolution: self.route_resolution,
         }
     }
 }
@@ -1746,10 +1746,12 @@ impl DockViewportRuntime {
         update.mark_changed(resampled_changed);
         update.extend_windows(resampled_effects.refresh().iter().cloned());
         let selection = resampled_snapshot.into_route_selection();
+        let unavailable_reason = selection.route_resolution.unavailable_reason();
+        let route = selection.route_resolution.into_route();
         let resolution =
-            self.resolve_payload_drop_delivery_resolution(&selection.request, selection.route, cx);
+            self.resolve_payload_drop_delivery_resolution(&selection.request, route, cx);
         self.status
-            .record_route(&selection.request, resolution.route());
+            .record_route(&selection.request, resolution.route(), unavailable_reason);
         resolved_drop_route_outcome(resolution, update)
     }
 

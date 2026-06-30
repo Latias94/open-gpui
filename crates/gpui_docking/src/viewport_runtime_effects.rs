@@ -1,5 +1,5 @@
 use crate::interaction::DockRuntimeDragSession;
-use open_gpui::AnyWindowHandle;
+use open_gpui::{AnyWindowHandle, App};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct DockViewportWindowEffects {
@@ -153,5 +153,75 @@ pub(crate) fn extend_unique_windows(
             continue;
         }
         windows.push(window);
+    }
+}
+
+pub(crate) fn unique_windows(windows: Vec<AnyWindowHandle>) -> Vec<AnyWindowHandle> {
+    let mut unique = Vec::new();
+    extend_unique_windows(&mut unique, windows);
+    unique
+}
+
+pub(crate) fn refresh_windows<C: open_gpui::AppContext>(windows: Vec<AnyWindowHandle>, cx: &mut C) {
+    for window in unique_windows(windows) {
+        let _ = window.update(cx, |_, window, _| window.refresh());
+    }
+}
+
+pub(crate) fn refresh_runtime_update<C: open_gpui::AppContext>(
+    update: DockViewportRuntimeUpdate,
+    cx: &mut C,
+) -> bool {
+    let changed = update.changed();
+    refresh_windows(update.into_windows(), cx);
+    changed
+}
+
+pub(crate) fn close_window_quietly(window: AnyWindowHandle, cx: &mut App) {
+    let _ = window.update(cx, |_, window, _| window.remove_window());
+}
+
+fn close_windows_quietly(windows: Vec<AnyWindowHandle>, cx: &mut App) {
+    for window in windows {
+        close_window_quietly(window, cx);
+    }
+}
+
+fn close_windows_after_current_effect(windows: Vec<AnyWindowHandle>, cx: &mut App) {
+    if windows.is_empty() {
+        return;
+    }
+    cx.defer(move |cx| close_windows_quietly(windows, cx));
+}
+
+pub(crate) fn apply_viewport_window_effects(effects: DockViewportWindowEffects, cx: &mut App) {
+    close_windows_after_current_effect(effects.close_now().to_vec(), cx);
+    refresh_windows(effects.refresh().to_vec(), cx);
+    close_windows_after_current_effect(effects.close_after_current_effect().to_vec(), cx);
+}
+
+pub(crate) fn refresh_viewport_window_effects<C: open_gpui::AppContext>(
+    effects: DockViewportWindowEffects,
+    cx: &mut C,
+) {
+    debug_assert!(effects.close_now().is_empty());
+    debug_assert!(effects.close_after_current_effect().is_empty());
+    refresh_windows(effects.refresh().to_vec(), cx);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unique_windows;
+    use crate::viewport_test_support::handle;
+
+    #[test]
+    fn unique_windows_preserves_first_occurrence_order() {
+        let first = handle(1);
+        let second = handle(2);
+
+        assert_eq!(
+            unique_windows(vec![first, second, first, second, first]),
+            vec![first, second]
+        );
     }
 }

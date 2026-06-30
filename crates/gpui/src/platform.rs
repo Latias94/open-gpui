@@ -99,6 +99,21 @@ pub struct PlatformViewportCapabilities {
     pub hovered_window_ignores_no_input: bool,
 }
 
+/// Platform support for ImGui-style viewport window flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PlatformViewportFlagCapabilities {
+    /// Native no-focus-on-appearing viewport windows are supported.
+    pub no_focus_on_appearing_windows: bool,
+    /// Native no-focus-on-click viewport windows are supported.
+    pub no_focus_on_click_windows: bool,
+    /// Native alpha/transparent viewport windows are supported.
+    pub alpha_windows: bool,
+    /// Native always-on-top viewport windows are supported.
+    pub topmost_windows: bool,
+    /// Native taskbar-hidden viewport windows are supported.
+    pub no_taskbar_windows: bool,
+}
+
 /// Backend hovered-window signal for multi-viewport routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PlatformHoveredWindow {
@@ -223,6 +238,9 @@ pub trait Platform: 'static {
     }
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities::default()
+    }
+    fn viewport_flag_capabilities(&self) -> PlatformViewportFlagCapabilities {
+        PlatformViewportFlagCapabilities::default()
     }
     fn mouse_button_is_pressed(&self, _button: MouseButton) -> Option<bool> {
         None

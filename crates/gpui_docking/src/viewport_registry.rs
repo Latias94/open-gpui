@@ -119,6 +119,32 @@ pub(crate) enum DockViewportWindowBoundsFrame {
     WindowLocal(Bounds<Pixels>),
 }
 
+/// Coordinate space backing the latest viewport route facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockViewportCoordinateSpace {
+    /// Current bounds are in a shared desktop coordinate space.
+    GlobalScreen,
+    /// Current bounds are only meaningful in the receiver window's local coordinate space.
+    WindowLocal,
+}
+
+/// Latest coordinate facts published for a registered viewport.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DockViewportCoordinateSnapshot {
+    /// Display currently containing the window.
+    pub(crate) display_id: Option<DisplayId>,
+    /// Platform window state suitable for placement persistence.
+    pub(crate) window_bounds: WindowBounds,
+    /// Current window rectangle in the backend-reported coordinate space.
+    pub(crate) current_bounds: Bounds<Pixels>,
+    /// Coordinate space backing `current_bounds`.
+    pub(crate) coordinate_space: DockViewportCoordinateSpace,
+    /// Current dock host bounds in window-local coordinates.
+    pub(crate) host_bounds: Bounds<Pixels>,
+    /// Route-facts generation that owns these coordinate facts.
+    pub(crate) facts_generation: u64,
+}
+
 impl DockViewportWindowBoundsFrame {
     pub(crate) fn global_screen_bounds(self) -> Option<Bounds<Pixels>> {
         match self {
@@ -127,10 +153,21 @@ impl DockViewportWindowBoundsFrame {
         }
     }
 
-    pub(crate) fn size(self) -> open_gpui::Size<Pixels> {
+    pub(crate) fn bounds(self) -> Bounds<Pixels> {
         match self {
-            Self::GlobalScreen(bounds) | Self::WindowLocal(bounds) => bounds.size,
+            Self::GlobalScreen(bounds) | Self::WindowLocal(bounds) => bounds,
         }
+    }
+
+    pub(crate) fn coordinate_space(self) -> DockViewportCoordinateSpace {
+        match self {
+            Self::GlobalScreen(_) => DockViewportCoordinateSpace::GlobalScreen,
+            Self::WindowLocal(_) => DockViewportCoordinateSpace::WindowLocal,
+        }
+    }
+
+    pub(crate) fn size(self) -> open_gpui::Size<Pixels> {
+        self.bounds().size
     }
 }
 
@@ -337,6 +374,20 @@ impl DockViewportSnapshot {
 
     pub(crate) fn global_screen_bounds(&self) -> Option<Bounds<Pixels>> {
         self.current_bounds?.global_screen_bounds()
+    }
+
+    pub(crate) fn coordinate_snapshot(&self) -> Option<DockViewportCoordinateSnapshot> {
+        let window_bounds = self.window_bounds?;
+        let current_bounds = self.current_bounds?;
+        let host_bounds = self.host_bounds?;
+        Some(DockViewportCoordinateSnapshot {
+            display_id: self.display_id,
+            window_bounds,
+            current_bounds: current_bounds.bounds(),
+            coordinate_space: current_bounds.coordinate_space(),
+            host_bounds,
+            facts_generation: self.facts_generation(),
+        })
     }
 
     pub(crate) fn facts_generation_if_current(&self, window_id: WindowId) -> Option<u64> {

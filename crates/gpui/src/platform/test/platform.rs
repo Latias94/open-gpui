@@ -27,6 +27,7 @@ pub(crate) struct TestPlatform {
     pub(crate) hovered_window_available: RefCell<bool>,
     pub(crate) hovered_window: RefCell<Option<TestWindow>>,
     window_stack: RefCell<Option<Vec<TestWindow>>>,
+    no_input_windows: RefCell<bool>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
     pressed_mouse_buttons: Mutex<Option<Vec<MouseButton>>>,
@@ -136,6 +137,7 @@ impl TestPlatform {
             hovered_window_available: RefCell::new(true),
             hovered_window: Default::default(),
             window_stack: Default::default(),
+            no_input_windows: RefCell::new(true),
             expect_restart: Default::default(),
             current_clipboard_item: Mutex::new(None),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -147,6 +149,10 @@ impl TestPlatform {
             text_system,
             headless_renderer_factory,
         })
+    }
+
+    pub(crate) fn set_no_input_windows(&self, supported: bool) {
+        *self.no_input_windows.borrow_mut() = supported;
     }
 
     pub(crate) fn simulate_new_path_selection(
@@ -446,6 +452,7 @@ impl Platform for TestPlatform {
             window_stack: self.window_stack.borrow().is_some(),
             display_work_area: true,
             dpi_scale: true,
+            no_input_windows: *self.no_input_windows.borrow(),
             hovered_window_ignores_no_input: true,
             ..Default::default()
         }

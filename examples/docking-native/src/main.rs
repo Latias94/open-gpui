@@ -5,8 +5,10 @@ use open_gpui::{
 };
 use open_gpui_docking::{
     DockController, DockItemId, DockLayout, DockLayoutCentralRegion, DockLayoutSpace, DockPanel,
-    DockPanelDescriptor, DockSpaceId, DockViewportClosePolicy, DockViewportPlacement,
-    DockViewportPlacementLayout, DockViewportPlatformCapabilityRecord,
+    DockPanelDescriptor, DockSpaceId, DockViewportClosePolicy, DockViewportCoordinateSpaceRecord,
+    DockViewportLifecycleRecord, DockViewportPlacement, DockViewportPlacementLayout,
+    DockViewportPlatformCapabilityRecord, DockViewportPlatformFlagCapabilityRecord,
+    DockViewportPlatformSyncRecord, DockViewportReleaseUnavailableRecord,
     DockViewportRestoreReadinessRecord, DockViewportRuntimeHandle,
     DockViewportTearOffPlacementRecord, DockViewportWindowBounds, EditorDockLayoutSpec,
 };
@@ -135,6 +137,8 @@ impl Render for RuntimeStatusPanel {
                 .runtime
                 .runtime_status()
                 .with_platform_capabilities(cx.viewport_capabilities());
+            let flag_capabilities =
+                DockViewportPlatformFlagCapabilityRecord::from(cx.viewport_flag_capabilities());
             let spaces = self
                 .runtime
                 .registered_viewport_spaces()
@@ -168,12 +172,33 @@ impl Render for RuntimeStatusPanel {
                     )
                 ),
                 format!(
+                    "last route unavailable: {}",
+                    route_unavailable_summary(
+                        status
+                            .last_route
+                            .as_ref()
+                            .and_then(|record| record.unavailable_reason.as_ref())
+                    )
+                ),
+                format!(
                     "route facts: {}",
                     route_capability_summary(status.platform_capabilities.as_ref())
                 ),
                 format!(
                     "placement facts: {}",
                     placement_capability_summary(status.platform_capabilities.as_ref())
+                ),
+                format!(
+                    "coordinate facts: {}",
+                    coordinate_status_summary(&status.viewport_lifecycle)
+                ),
+                format!(
+                    "viewport flags: {}",
+                    viewport_flag_capability_summary(Some(&flag_capabilities))
+                ),
+                format!(
+                    "last platform sync: {}",
+                    platform_sync_summary(status.last_platform_sync.as_ref())
                 ),
                 format!(
                     "placement restore: {}",
@@ -524,6 +549,73 @@ fn placement_capability_summary(
             )
         })
         .unwrap_or_else(|| "unavailable".to_string())
+}
+
+fn viewport_flag_capability_summary(
+    capabilities: Option<&DockViewportPlatformFlagCapabilityRecord>,
+) -> String {
+    capabilities
+        .map(|capabilities| {
+            format!(
+                "no-focus-appearing={}, no-focus-click={}, alpha={}, topmost={}, no-taskbar={}",
+                capability_flag(capabilities.no_focus_on_appearing_windows),
+                capability_flag(capabilities.no_focus_on_click_windows),
+                capability_flag(capabilities.alpha_windows),
+                capability_flag(capabilities.topmost_windows),
+                capability_flag(capabilities.no_taskbar_windows),
+            )
+        })
+        .unwrap_or_else(|| "unavailable".to_string())
+}
+
+fn route_unavailable_summary(
+    reason: Option<&DockViewportReleaseUnavailableRecord>,
+) -> &'static str {
+    match reason {
+        Some(DockViewportReleaseUnavailableRecord::BlockedByViewportWindow) => "blocked-window",
+        Some(DockViewportReleaseUnavailableRecord::NoViewportRouteSelection) => {
+            "no-route-selection"
+        }
+        Some(DockViewportReleaseUnavailableRecord::TrustedHoveredNone) => "trusted-hovered-none",
+        Some(_) => "unknown",
+        None => "none",
+    }
+}
+
+fn coordinate_status_summary(lifecycle: &[DockViewportLifecycleRecord]) -> String {
+    if lifecycle.is_empty() {
+        return "none".to_string();
+    }
+    lifecycle
+        .iter()
+        .map(|record| {
+            let coordinate = record
+                .coordinate_status
+                .map(|status| {
+                    let space = match status.coordinate_space {
+                        DockViewportCoordinateSpaceRecord::GlobalScreen => "global",
+                        DockViewportCoordinateSpaceRecord::WindowLocal => "local",
+                        _ => "unknown",
+                    };
+                    format!("{space}@gen{}", status.facts_generation)
+                })
+                .unwrap_or_else(|| "missing".to_string());
+            format!("{}={coordinate}", record.space.as_str())
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn platform_sync_summary(sync: Option<&DockViewportPlatformSyncRecord>) -> String {
+    sync.map(|sync| {
+        format!(
+            "applied={}, skipped={}, unsupported={}",
+            sync.applied.len(),
+            sync.skipped_requests.len(),
+            sync.unsupported_requests.len()
+        )
+    })
+    .unwrap_or_else(|| "none".to_string())
 }
 
 fn tear_off_placement_summary(source: Option<&DockViewportTearOffPlacementRecord>) -> &'static str {
@@ -1059,7 +1151,8 @@ mod tests {
     use open_gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext};
     use open_gpui_docking::{
         DockActionApplyError, DockActionOutcome, DockClassId, DockGraph, DockHost, DockNode,
-        DockNodeId, DockPolicyError, DropZone, SplitAxis,
+        DockNodeId, DockPolicyError, DockViewportCoordinateStatusRecord, DockViewportInputStatus,
+        DockViewportPlatformRequestStatus, DockViewportRouteStatus, DropZone, SplitAxis,
     };
 
     fn item(id: &str) -> DockItemId {
@@ -2059,6 +2152,13 @@ mod tests {
             no_input_windows: false,
             hovered_window_ignores_no_input: true,
         };
+        let flag_capabilities = DockViewportPlatformFlagCapabilityRecord {
+            no_focus_on_appearing_windows: true,
+            no_focus_on_click_windows: false,
+            alpha_windows: false,
+            topmost_windows: true,
+            no_taskbar_windows: false,
+        };
 
         assert_eq!(
             route_capability_summary(Some(&capabilities)),
@@ -2068,8 +2168,71 @@ mod tests {
             placement_capability_summary(Some(&capabilities)),
             "work-area=yes, dpi=no, live-move=yes, no-input=no"
         );
+        assert_eq!(
+            viewport_flag_capability_summary(Some(&flag_capabilities)),
+            "no-focus-appearing=yes, no-focus-click=no, alpha=no, topmost=yes, no-taskbar=no"
+        );
         assert_eq!(route_capability_summary(None), "unavailable");
         assert_eq!(placement_capability_summary(None), "unavailable");
+        assert_eq!(viewport_flag_capability_summary(None), "unavailable");
+        assert_eq!(route_unavailable_summary(None), "none");
+        assert_eq!(
+            route_unavailable_summary(Some(
+                &DockViewportReleaseUnavailableRecord::BlockedByViewportWindow
+            )),
+            "blocked-window"
+        );
+        assert_eq!(coordinate_status_summary(&[]), "none");
+        assert_eq!(
+            coordinate_status_summary(&[
+                DockViewportLifecycleRecord {
+                    space: DockSpaceId::from(SPACE),
+                    window_id: open_gpui::WindowId::from(1),
+                    route_status: DockViewportRouteStatus::RouteReady,
+                    input_status: DockViewportInputStatus::ReceivesInput,
+                    platform_request_status: DockViewportPlatformRequestStatus::default(),
+                    coordinate_status: Some(DockViewportCoordinateStatusRecord {
+                        display_id: None,
+                        coordinate_space: DockViewportCoordinateSpaceRecord::GlobalScreen,
+                        facts_generation: 7,
+                    }),
+                    facts_generation: 7,
+                },
+                DockViewportLifecycleRecord {
+                    space: DockSpaceId::from(SECONDARY_SPACE),
+                    window_id: open_gpui::WindowId::from(2),
+                    route_status: DockViewportRouteStatus::RegisteredNotReady,
+                    input_status: DockViewportInputStatus::ReceivesInput,
+                    platform_request_status: DockViewportPlatformRequestStatus::default(),
+                    coordinate_status: Some(DockViewportCoordinateStatusRecord {
+                        display_id: None,
+                        coordinate_space: DockViewportCoordinateSpaceRecord::WindowLocal,
+                        facts_generation: 8,
+                    }),
+                    facts_generation: 8,
+                },
+                DockViewportLifecycleRecord {
+                    space: DockSpaceId::from(CENTRAL_SPACE),
+                    window_id: open_gpui::WindowId::from(3),
+                    route_status: DockViewportRouteStatus::RegisteredNotReady,
+                    input_status: DockViewportInputStatus::ReceivesInput,
+                    platform_request_status: DockViewportPlatformRequestStatus::default(),
+                    coordinate_status: None,
+                    facts_generation: 0,
+                },
+            ]),
+            "docking-demo=global@gen7, docking-preview=local@gen8, docking-empty-central=missing"
+        );
+        assert_eq!(platform_sync_summary(None), "none");
+        assert_eq!(
+            platform_sync_summary(Some(&DockViewportPlatformSyncRecord {
+                window_id: open_gpui::WindowId::from(4),
+                applied: Vec::new(),
+                skipped_requests: Vec::new(),
+                unsupported_requests: Vec::new(),
+            })),
+            "applied=0, skipped=0, unsupported=0"
+        );
         assert_eq!(
             placement_restore_summary(Some(&DockViewportRestoreReadinessRecord {
                 matched: 2,

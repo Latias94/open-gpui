@@ -4,14 +4,16 @@ use crate::{
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
     DockViewportFocusRequest, DockViewportRestoreReadiness, DockViewportRouteSelectionSource,
     DockViewportShouldCloseOutcome, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    viewport_drop_route::DockViewportDropRouteUnavailableReason,
     viewport_registry::{
-        DockViewportInputMask, DockViewportPlatformRequests, DockViewportRouteUnavailableReason,
-        DockViewportSnapshot, DockViewportStaleReason,
+        DockViewportCoordinateSnapshot, DockViewportCoordinateSpace, DockViewportInputMask,
+        DockViewportPlatformRequests, DockViewportRouteUnavailableReason, DockViewportSnapshot,
+        DockViewportStaleReason,
     },
 };
 use open_gpui::{
-    DisplayId, Pixels, PlatformViewportCapabilities, Point, Size, WindowBackgroundAppearance,
-    WindowDecorations, WindowId,
+    DisplayId, Pixels, PlatformViewportCapabilities, PlatformViewportFlagCapabilities, Point, Size,
+    WindowBackgroundAppearance, WindowDecorations, WindowId,
 };
 
 /// Read-only diagnostic snapshot for the viewport runtime.
@@ -58,6 +60,21 @@ pub struct DockViewportPlatformCapabilityRecord {
     pub hovered_window_ignores_no_input: bool,
 }
 
+/// Platform viewport flag capability snapshot relevant to multi-viewport docking.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DockViewportPlatformFlagCapabilityRecord {
+    /// Native no-focus-on-appearing viewport windows are supported.
+    pub no_focus_on_appearing_windows: bool,
+    /// Native no-focus-on-click viewport windows are supported.
+    pub no_focus_on_click_windows: bool,
+    /// Native alpha/transparent viewport windows are supported.
+    pub alpha_windows: bool,
+    /// Native always-on-top viewport windows are supported.
+    pub topmost_windows: bool,
+    /// Native taskbar-hidden viewport windows are supported.
+    pub no_taskbar_windows: bool,
+}
+
 /// Current route-facts and platform-request record for one registered viewport.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DockViewportLifecycleRecord {
@@ -71,8 +88,31 @@ pub struct DockViewportLifecycleRecord {
     pub input_status: DockViewportInputStatus,
     /// Platform request flags pending for this viewport window.
     pub platform_request_status: DockViewportPlatformRequestStatus,
+    /// Latest coordinate facts recorded for this viewport, when route facts have been published.
+    pub coordinate_status: Option<DockViewportCoordinateStatusRecord>,
     /// Generation of the latest platform/host route facts.
     pub facts_generation: u64,
+}
+
+/// Coordinate facts currently recorded for a registered viewport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DockViewportCoordinateStatusRecord {
+    /// Display currently containing the window, when the backend reports one.
+    pub display_id: Option<DisplayId>,
+    /// Coordinate space backing the latest viewport bounds.
+    pub coordinate_space: DockViewportCoordinateSpaceRecord,
+    /// Route-facts generation that owns these coordinate facts.
+    pub facts_generation: u64,
+}
+
+/// Coordinate space backing the latest viewport bounds.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportCoordinateSpaceRecord {
+    /// Bounds are in a shared desktop coordinate space and may support rectangle hit testing.
+    GlobalScreen,
+    /// Bounds are only meaningful in the receiving window's local coordinate space.
+    WindowLocal,
 }
 
 /// Route-facts status for a registered viewport.
@@ -150,6 +190,8 @@ pub struct DockViewportRouteRecord {
     pub drag_session_id: Option<u64>,
     /// Platform or routed-preview signal that selected this route target, when applicable.
     pub selection_source: Option<DockViewportRouteSelectionRecord>,
+    /// Reason a fail-closed release became unavailable, when routing selected no target.
+    pub unavailable_reason: Option<DockViewportReleaseUnavailableRecord>,
     /// Runtime route selected for the release point.
     pub target: DockViewportRouteTarget,
 }
@@ -167,6 +209,18 @@ pub enum DockViewportRouteSelectionRecord {
     FocusStampWindowStackFallback,
     /// Active drag state reused the last hovered viewport as the mouse reference viewport.
     DragLastHoveredViewportFallback,
+}
+
+/// Release-time reason that a route intentionally failed closed.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportReleaseUnavailableRecord {
+    /// The pointer was inside a viewport window that could not provide a current host target.
+    BlockedByViewportWindow,
+    /// A viewport or host target existed, but no trusted current route selection chose it.
+    NoViewportRouteSelection,
+    /// The backend reliably reported that no application window was under the pointer.
+    TrustedHoveredNone,
 }
 
 /// Runtime route selected for a rendered drop release.
@@ -254,6 +308,7 @@ pub struct DockViewportPlatformSyncRecord {
 }
 
 /// Platform-window request successfully applied while reusing an existing viewport.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum DockViewportPlatformSyncAction {
     /// Focused and raised the platform window.
@@ -293,6 +348,11 @@ pub enum DockViewportPlatformSyncAction {
         /// Whether pointer input is enabled.
         enabled: bool,
     },
+    /// Applied an ImGui-style no-input viewport flag through native pointer-input routing.
+    ViewportFlagNoInputs {
+        /// Whether the no-input flag is enabled.
+        enabled: bool,
+    },
     /// Updated the macOS traffic-light position.
     TrafficLightPosition {
         /// Requested traffic-light position.
@@ -319,8 +379,11 @@ pub struct DockViewportPlatformSyncSkipped {
 }
 
 /// Platform-window request shape used by sync diagnostics.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum DockViewportPlatformSyncRequest {
+    /// The reused viewport window disappeared before live platform sync could inspect it.
+    WindowUnavailable,
     /// Requested platform visibility differs from the already-open window.
     Show {
         /// Requested visibility.
@@ -346,6 +409,36 @@ pub enum DockViewportPlatformSyncRequest {
     /// Requested native pointer-input routing differs from the already-open window.
     PointerInput {
         /// Requested pointer input state.
+        requested: bool,
+    },
+    /// Requested ImGui-style no-input viewport flag differs from the already-open window.
+    ViewportFlagNoInputs {
+        /// Whether no-input should be enabled.
+        requested: bool,
+    },
+    /// Requested ImGui-style no-focus-on-appearing viewport flag.
+    ViewportFlagNoFocusOnAppearing {
+        /// Whether no-focus-on-appearing should be enabled.
+        requested: bool,
+    },
+    /// Requested ImGui-style no-focus-on-click viewport flag.
+    ViewportFlagNoFocusOnClick {
+        /// Whether no-focus-on-click should be enabled.
+        requested: bool,
+    },
+    /// Requested ImGui-style alpha/transparent viewport flag.
+    ViewportFlagAlpha {
+        /// Requested viewport alpha.
+        requested: f32,
+    },
+    /// Requested ImGui-style always-on-top viewport flag.
+    ViewportFlagTopMost {
+        /// Whether topmost should be enabled.
+        requested: bool,
+    },
+    /// Requested ImGui-style no-taskbar viewport flag.
+    ViewportFlagNoTaskbar {
+        /// Whether taskbar hiding should be enabled.
         requested: bool,
     },
     /// Requested display differs from the already-open window.
@@ -409,10 +502,13 @@ pub enum DockViewportPlatformWindowState {
 }
 
 /// Why a platform-window sync request could not be applied.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DockViewportPlatformSyncUnsupportedReason {
     /// GPUI's public `Window` interface does not expose a live mutation for this request.
     UnsupportedByWindowApi,
+    /// The reused viewport window was no longer live when platform sync attempted to update it.
+    WindowUnavailable,
 }
 
 /// Why a platform-window sync request was intentionally skipped.
@@ -502,6 +598,7 @@ impl DockViewportRuntimeStatus {
         &mut self,
         request: &DockViewportDropRouteRequest,
         route: &DockViewportDropRoute,
+        unavailable_reason: Option<DockViewportDropRouteUnavailableReason>,
     ) {
         self.last_route = Some(DockViewportRouteRecord {
             source_space: request.source_space().clone(),
@@ -509,6 +606,7 @@ impl DockViewportRuntimeStatus {
             payload: DockViewportPayloadRecord::from_payload(request.payload()),
             drag_session_id: request.drag_session().map(|session| session.id()),
             selection_source: DockViewportRouteSelectionRecord::from_route(route),
+            unavailable_reason: unavailable_reason.map(DockViewportReleaseUnavailableRecord::from),
             target: DockViewportRouteTarget::from_route(request, route),
         });
     }
@@ -544,6 +642,31 @@ impl DockViewportRuntimeStatus {
 
     pub(crate) fn record_platform_sync(&mut self, record: DockViewportPlatformSyncRecord) {
         self.last_platform_sync = Some(record);
+    }
+
+    pub(crate) fn last_platform_sync_is_unsupported_pointer_input(
+        &self,
+        window_id: WindowId,
+        accepts_pointer_input: bool,
+    ) -> bool {
+        let Some(sync) = self.last_platform_sync.as_ref() else {
+            return false;
+        };
+        sync.window_id == window_id
+            && sync.applied.is_empty()
+            && sync.skipped_requests.is_empty()
+            && sync.unsupported_requests.iter().any(|unsupported| {
+                unsupported.request
+                    == DockViewportPlatformSyncRequest::PointerInput {
+                        requested: accepts_pointer_input,
+                    }
+            })
+            && sync.unsupported_requests.iter().any(|unsupported| {
+                unsupported.request
+                    == DockViewportPlatformSyncRequest::ViewportFlagNoInputs {
+                        requested: !accepts_pointer_input,
+                    }
+            })
     }
 
     pub(crate) fn clear_window_references(&mut self, space: &DockSpaceId, window_id: WindowId) {
@@ -594,6 +717,32 @@ impl From<PlatformViewportCapabilities> for DockViewportPlatformCapabilityRecord
     }
 }
 
+impl From<PlatformViewportFlagCapabilities> for DockViewportPlatformFlagCapabilityRecord {
+    fn from(capabilities: PlatformViewportFlagCapabilities) -> Self {
+        Self {
+            no_focus_on_appearing_windows: capabilities.no_focus_on_appearing_windows,
+            no_focus_on_click_windows: capabilities.no_focus_on_click_windows,
+            alpha_windows: capabilities.alpha_windows,
+            topmost_windows: capabilities.topmost_windows,
+            no_taskbar_windows: capabilities.no_taskbar_windows,
+        }
+    }
+}
+
+impl From<DockViewportDropRouteUnavailableReason> for DockViewportReleaseUnavailableRecord {
+    fn from(reason: DockViewportDropRouteUnavailableReason) -> Self {
+        match reason {
+            DockViewportDropRouteUnavailableReason::BlockedByViewportWindow => {
+                Self::BlockedByViewportWindow
+            }
+            DockViewportDropRouteUnavailableReason::NoViewportRouteSelection => {
+                Self::NoViewportRouteSelection
+            }
+            DockViewportDropRouteUnavailableReason::TrustedHoveredNone => Self::TrustedHoveredNone,
+        }
+    }
+}
+
 impl DockViewportLifecycleRecord {
     pub(crate) fn from_snapshot(space: DockSpaceId, snapshot: &DockViewportSnapshot) -> Self {
         Self {
@@ -604,7 +753,29 @@ impl DockViewportLifecycleRecord {
             platform_request_status: DockViewportPlatformRequestStatus::from(
                 snapshot.platform_requests(),
             ),
+            coordinate_status: snapshot
+                .coordinate_snapshot()
+                .map(DockViewportCoordinateStatusRecord::from),
             facts_generation: snapshot.facts_generation(),
+        }
+    }
+}
+
+impl From<DockViewportCoordinateSnapshot> for DockViewportCoordinateStatusRecord {
+    fn from(snapshot: DockViewportCoordinateSnapshot) -> Self {
+        Self {
+            display_id: snapshot.display_id,
+            coordinate_space: DockViewportCoordinateSpaceRecord::from(snapshot.coordinate_space),
+            facts_generation: snapshot.facts_generation,
+        }
+    }
+}
+
+impl From<DockViewportCoordinateSpace> for DockViewportCoordinateSpaceRecord {
+    fn from(coordinate_space: DockViewportCoordinateSpace) -> Self {
+        match coordinate_space {
+            DockViewportCoordinateSpace::GlobalScreen => Self::GlobalScreen,
+            DockViewportCoordinateSpace::WindowLocal => Self::WindowLocal,
         }
     }
 }
@@ -902,7 +1073,9 @@ mod tests {
         viewport_registry::DockViewportInputMask,
         viewport_test_support::{bounds, handle, space},
     };
-    use open_gpui::{PlatformViewportCapabilities, WindowBounds, point, px};
+    use open_gpui::{
+        PlatformViewportCapabilities, PlatformViewportFlagCapabilities, WindowBounds, point, px,
+    };
     use slotmap::Key;
 
     #[test]
@@ -930,6 +1103,28 @@ mod tests {
                 no_input_windows: true,
                 hovered_window_ignores_no_input: true,
             })
+        );
+    }
+
+    #[test]
+    fn runtime_status_attaches_platform_flag_capability_snapshot() {
+        let capabilities = PlatformViewportFlagCapabilities {
+            no_focus_on_appearing_windows: true,
+            no_focus_on_click_windows: false,
+            alpha_windows: true,
+            topmost_windows: false,
+            no_taskbar_windows: true,
+        };
+
+        assert_eq!(
+            DockViewportPlatformFlagCapabilityRecord::from(capabilities),
+            DockViewportPlatformFlagCapabilityRecord {
+                no_focus_on_appearing_windows: true,
+                no_focus_on_click_windows: false,
+                alpha_windows: true,
+                topmost_windows: false,
+                no_taskbar_windows: true,
+            }
         );
     }
 
@@ -1040,6 +1235,7 @@ mod tests {
             registered.platform_request_status,
             DockViewportPlatformRequestStatus::default()
         );
+        assert_eq!(registered.coordinate_status, None);
         assert_eq!(registered.facts_generation, 0);
 
         assert!(snapshot.update_route_facts(
@@ -1054,6 +1250,14 @@ mod tests {
         assert_eq!(
             ready.platform_request_status,
             DockViewportPlatformRequestStatus::default()
+        );
+        assert_eq!(
+            ready.coordinate_status,
+            Some(DockViewportCoordinateStatusRecord {
+                display_id: None,
+                coordinate_space: DockViewportCoordinateSpaceRecord::GlobalScreen,
+                facts_generation: 1,
+            })
         );
         assert_eq!(ready.facts_generation, 1);
 
@@ -1090,6 +1294,14 @@ mod tests {
             DockViewportInputStatus::NoInputPassThrough
         );
         assert_eq!(
+            no_input.coordinate_status,
+            Some(DockViewportCoordinateStatusRecord {
+                display_id: None,
+                coordinate_space: DockViewportCoordinateSpaceRecord::GlobalScreen,
+                facts_generation: 1,
+            })
+        );
+        assert_eq!(
             no_input.facts_generation, 1,
             "input-mask-only changes do not advance route facts generation"
         );
@@ -1114,6 +1326,15 @@ mod tests {
             "close requests do not replace the current route-facts lifecycle"
         );
         assert_eq!(
+            closing.coordinate_status,
+            Some(DockViewportCoordinateStatusRecord {
+                display_id: None,
+                coordinate_space: DockViewportCoordinateSpaceRecord::GlobalScreen,
+                facts_generation: 2,
+            }),
+            "coordinate facts remain visible while route_status carries freshness"
+        );
+        assert_eq!(
             closing.platform_request_status,
             DockViewportPlatformRequestStatus {
                 close_requested: true,
@@ -1121,6 +1342,33 @@ mod tests {
             }
         );
         assert_eq!(closing.facts_generation, 2);
+    }
+
+    #[test]
+    fn viewport_lifecycle_record_reports_window_local_coordinate_status() {
+        let space = space("local");
+        let window = handle(8);
+        let mut snapshot = DockViewportSnapshot::new(window);
+
+        assert!(snapshot.update_route_facts(
+            DockViewportWindowFacts::local_only_window_bounds_for_test(WindowBounds::Windowed(
+                bounds(0.0, 0.0, 320.0, 240.0)
+            )),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        ));
+
+        let record = DockViewportLifecycleRecord::from_snapshot(space, &snapshot);
+
+        assert_eq!(record.route_status, DockViewportRouteStatus::RouteReady);
+        assert_eq!(
+            record.coordinate_status,
+            Some(DockViewportCoordinateStatusRecord {
+                display_id: None,
+                coordinate_space: DockViewportCoordinateSpaceRecord::WindowLocal,
+                facts_generation: 1,
+            }),
+            "Wayland-style local-only backends must be visible to diagnostics instead of looking like global rectangle routing"
+        );
     }
 
     #[test]
@@ -1146,6 +1394,7 @@ mod tests {
                 facts_generation: 1,
                 source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
             },
+            None,
         );
 
         let route = status
@@ -1193,6 +1442,7 @@ mod tests {
                 ),
                 source: crate::DockViewportRouteSelectionSource::FrontToBackWindowStackFallback,
             },
+            None,
         );
 
         let route = status
@@ -1234,6 +1484,7 @@ mod tests {
                 ),
                 source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
             },
+            None,
         );
 
         let route = status
@@ -1245,6 +1496,66 @@ mod tests {
             route.selection_source,
             Some(DockViewportRouteSelectionRecord::TrustedHoveredWindow)
         );
+    }
+
+    #[test]
+    fn route_record_exposes_unavailable_release_reason() {
+        let source = DockSpaceId::from("source");
+        let source_tabs = DockNodeId::null();
+        let host_position = point(px(14.0), px(36.0));
+        let mut status = DockViewportRuntimeStatus::default();
+
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source,
+            source_tabs,
+            DockViewportDropPayload::Tabs,
+            host_position,
+            None,
+            crate::DockViewportPlatformSignals::default(),
+        );
+
+        status.record_route(
+            &request,
+            &DockViewportDropRoute::Unavailable,
+            Some(DockViewportDropRouteUnavailableReason::TrustedHoveredNone),
+        );
+
+        let route = status
+            .last_route
+            .as_ref()
+            .expect("route record should be captured");
+        assert_eq!(route.target, DockViewportRouteTarget::Unavailable);
+        assert_eq!(
+            route.unavailable_reason,
+            Some(DockViewportReleaseUnavailableRecord::TrustedHoveredNone)
+        );
+    }
+
+    #[test]
+    fn platform_sync_status_matches_repeated_unsupported_pointer_input() {
+        let mut status = DockViewportRuntimeStatus::default();
+        let window_id = WindowId::from(12);
+        status.record_platform_sync(DockViewportPlatformSyncRecord {
+            window_id,
+            applied: Vec::new(),
+            skipped_requests: Vec::new(),
+            unsupported_requests: vec![
+                DockViewportPlatformSyncUnsupported {
+                    request: DockViewportPlatformSyncRequest::PointerInput { requested: false },
+                    reason: DockViewportPlatformSyncUnsupportedReason::UnsupportedByWindowApi,
+                },
+                DockViewportPlatformSyncUnsupported {
+                    request: DockViewportPlatformSyncRequest::ViewportFlagNoInputs {
+                        requested: true,
+                    },
+                    reason: DockViewportPlatformSyncUnsupportedReason::UnsupportedByWindowApi,
+                },
+            ],
+        });
+
+        assert!(status.last_platform_sync_is_unsupported_pointer_input(window_id, false));
+        assert!(!status.last_platform_sync_is_unsupported_pointer_input(window_id, true));
+        assert!(!status.last_platform_sync_is_unsupported_pointer_input(WindowId::from(13), false));
     }
 
     #[test]
@@ -1274,6 +1585,7 @@ mod tests {
                 facts_generation: 1,
                 source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
             },
+            None,
         );
 
         assert_eq!(
@@ -1379,6 +1691,7 @@ mod tests {
                 ),
                 source: crate::DockViewportRouteSelectionSource::TrustedHoveredWindow,
             },
+            None,
         );
         status.record_drop_result(&Ok(DockViewportDropRouteOutcome::Action(
             crate::DockViewportDropActionOutcome::new(

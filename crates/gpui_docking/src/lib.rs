@@ -184,13 +184,23 @@ mod host_test_support;
 #[cfg(test)]
 mod host_tests;
 #[cfg(test)]
+mod host_viewport_close_tests;
+#[cfg(test)]
+mod host_viewport_lifecycle_tests;
+#[cfg(test)]
 mod host_viewport_matrix_tests;
 #[cfg(test)]
 mod host_viewport_model_tests;
 #[cfg(test)]
-mod host_viewport_runtime_handle_tests;
+mod host_viewport_placement_tests;
 #[cfg(test)]
-mod host_viewport_runtime_tests;
+mod host_viewport_platform_capability_tests;
+#[cfg(test)]
+mod host_viewport_preview_tests;
+#[cfg(test)]
+mod host_viewport_route_tests;
+#[cfg(test)]
+mod host_viewport_runtime_test_support;
 #[cfg(test)]
 mod host_viewport_tests;
 #[cfg(test)]
@@ -248,6 +258,11 @@ pub use viewport_placement::*;
 pub use viewport_placement_adapter::*;
 pub use viewport_placement_validation::*;
 pub(crate) use viewport_platform_signals::*;
+#[cfg(test)]
+pub(crate) use viewport_platform_sync::{
+    DockViewportPlatformFlagRequests, sync_reused_viewport_window,
+    unavailable_reused_viewport_window_sync, unsupported_viewport_platform_flag_requests,
+};
 pub(crate) use viewport_registration::*;
 pub(crate) use viewport_registry::{DockViewportSnapshot, DockViewportWindowFacts};
 pub(crate) use viewport_routed_preview::*;
