@@ -13,11 +13,9 @@ use open_gpui::{
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
+use crate::choice::{ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::roving_focus::{
-    active_index_from_str_keys, roving_navigation_target, selection_index_from_str_keys,
-};
 use crate::theme::ThemeResolver;
 
 /// Pure descriptor for one radio item.
@@ -311,17 +309,15 @@ impl RadioGroupState {
         tokens: ThemeTokens,
     ) -> Self {
         let descriptors: Vec<RadioItemDescriptor> = items.into_iter().collect();
-        let values: Vec<String> = descriptors.iter().map(|item| item.value.clone()).collect();
-        let item_disabled: Vec<bool> = descriptors.iter().map(|item| item.disabled).collect();
-        let selected_index = resolve_selected_index(&values, &item_disabled, selected_value);
-        let selected_seed = selected_index
-            .and_then(|index| values.get(index))
-            .map(String::as_str);
-        let focused_index = if disabled {
-            None
-        } else {
-            resolve_radio_index(&values, &item_disabled, focused_value, selected_seed)
-        };
+        let collection = ChoiceCollection::resolve(
+            disabled,
+            radio_choice_items(disabled, &descriptors),
+            selected_value,
+            focused_value,
+            ChoiceInteractionPolicy::single_required(orientation),
+        );
+        let selected_index = collection.selected_index();
+        let focused_index = collection.active_index();
         let metrics = RadioGroupMetrics::from_size(size);
         let colors = ThemeResolver::radio_group_colors(tokens);
         let focus_ring = FocusRing::from_color(colors.focus_ring());
@@ -769,12 +765,10 @@ impl RenderOnce for RadioGroup {
                                 }
 
                                 let key = event.keystroke.key.as_str();
-                                let Some(target_index) = roving_navigation_target(
-                                    orientation,
-                                    key,
-                                    item_index,
-                                    &disabled_items,
-                                ) else {
+                                let Some(target_index) =
+                                    ChoiceInteractionPolicy::single_required(orientation)
+                                        .navigation_target_index(key, item_index, &disabled_items)
+                                else {
                                     if !matches!(key, "space" | "enter") {
                                         return;
                                     }
@@ -902,21 +896,26 @@ impl RadioRuntime {
     }
 }
 
-fn resolve_selected_index(
-    values: &[String],
-    disabled: &[bool],
-    selected: Option<&str>,
-) -> Option<usize> {
-    active_index_from_str_keys(values, selected, disabled)
-}
-
-fn resolve_radio_index(
-    values: &[String],
-    disabled: &[bool],
-    primary: Option<&str>,
-    secondary: Option<&str>,
-) -> Option<usize> {
-    selection_index_from_str_keys(values, disabled, primary, secondary)
+fn radio_choice_items(
+    disabled: bool,
+    items: &[RadioItemDescriptor],
+) -> Vec<ChoiceItemProjection<()>> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let label = item.label().to_owned();
+            ChoiceItemProjection::new(
+                index,
+                None,
+                item.value(),
+                label.clone(),
+                disabled || item.disabled_state(),
+                (),
+            )
+            .text_value(label)
+        })
+        .collect()
 }
 
 fn radio_item_id(value: &str) -> ElementId {
@@ -954,19 +953,21 @@ mod tests {
     }
 
     #[test]
-    fn radio_navigation_uses_roving_focus_helpers() {
+    fn radio_navigation_uses_choice_policy() {
         let disabled = [false, true, false];
+        let horizontal = ChoiceInteractionPolicy::single_required(Orientation::Horizontal);
+        let vertical = ChoiceInteractionPolicy::single_required(Orientation::Vertical);
 
         assert_eq!(
-            roving_navigation_target(Orientation::Horizontal, "right", 0, &disabled),
+            horizontal.navigation_target_index("right", 0, &disabled),
             Some(2)
         );
         assert_eq!(
-            roving_navigation_target(Orientation::Horizontal, "right", 2, &disabled),
+            horizontal.navigation_target_index("right", 2, &disabled),
             Some(0)
         );
         assert_eq!(
-            roving_navigation_target(Orientation::Vertical, "up", 2, &disabled),
+            vertical.navigation_target_index("up", 2, &disabled),
             Some(0)
         );
     }

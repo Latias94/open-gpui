@@ -3,7 +3,9 @@
 mod render_plan;
 mod runtime;
 
-use crate::choice;
+use crate::choice::{
+    self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection, ChoiceSelectionMode,
+};
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use std::rc::Rc;
 
@@ -325,6 +327,58 @@ impl CommandGroupDescriptor {
     pub fn items_ref(&self) -> &[CommandItemDescriptor] {
         &self.items
     }
+}
+
+fn command_choice_selection_mode(mode: CommandSelectionMode) -> ChoiceSelectionMode {
+    match mode {
+        CommandSelectionMode::Single => ChoiceSelectionMode::Single,
+        CommandSelectionMode::Multiple => ChoiceSelectionMode::Multiple,
+    }
+}
+
+fn command_choice_items(
+    groups: &[CommandGroupDescriptor],
+    standalone_items: &[CommandItemDescriptor],
+) -> Vec<ChoiceItemProjection<()>> {
+    let mut items = standalone_items
+        .iter()
+        .enumerate()
+        .map(|(source_index, item)| {
+            let label = item.label().to_owned();
+            ChoiceItemProjection::new(
+                source_index,
+                None,
+                item.value(),
+                label.clone(),
+                item.disabled_state(),
+                (),
+            )
+            .text_value(label)
+        })
+        .collect::<Vec<_>>();
+
+    for (group_index, group) in groups.iter().enumerate() {
+        items.extend(
+            group
+                .items_ref()
+                .iter()
+                .enumerate()
+                .map(|(source_index, item)| {
+                    let label = item.label().to_owned();
+                    ChoiceItemProjection::new(
+                        source_index,
+                        Some(group_index),
+                        item.value(),
+                        label.clone(),
+                        item.disabled_state(),
+                        (),
+                    )
+                    .text_value(label)
+                }),
+        );
+    }
+
+    items
 }
 
 /// Caller-owned indexed command snapshot.
@@ -1102,22 +1156,21 @@ impl CommandState {
                 .iter()
                 .map(|group| group.items_ref().len())
                 .sum::<usize>();
-        let selected_item = choice::resolve_enabled_value(
-            &raw_items,
-            raw_groups.iter().map(|group| group.items_ref()),
+        let raw_choice_items = command_choice_items(&raw_groups, &raw_items);
+        let selection_mode_policy = command_choice_selection_mode(selection_mode);
+        let raw_collection = ChoiceCollection::resolve(
+            false,
+            raw_choice_items.clone(),
             selected_value,
-            CommandItemDescriptor::value,
-            CommandItemDescriptor::disabled_state,
+            active_value,
+            ChoiceInteractionPolicy::listbox().with_selection_mode(selection_mode_policy),
         );
-        let selected_value = selected_item.map(|item| item.value().to_owned());
-        let selected_values = choice::resolve_selected_values(
-            selection_mode.is_multiple(),
-            &raw_items,
-            raw_groups.iter().map(|group| group.items_ref()),
+        let selected_value = raw_collection.selected_value().map(str::to_owned);
+        let selected_values = choice::resolve_projected_selected_values(
+            selection_mode_policy,
+            &raw_choice_items,
             selected_value.as_deref(),
             selected_values,
-            CommandItemDescriptor::value,
-            CommandItemDescriptor::disabled_state,
         );
         let listbox_selected_value = (!selection_mode.is_multiple())
             .then_some(selected_value.as_deref())

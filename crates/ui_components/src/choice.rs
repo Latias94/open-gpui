@@ -86,7 +86,6 @@ impl<T> ChoiceItemProjection<T> {
 
 /// Selection cardinality semantics for choice surfaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum ChoiceSelectionMode {
     /// The collection has active movement but no selected value.
     None,
@@ -98,7 +97,6 @@ pub(crate) enum ChoiceSelectionMode {
 
 /// Activation timing semantics for choice surfaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum ChoiceActivationMode {
     /// Movement changes active item only; explicit activation commits selection.
     Manual,
@@ -108,11 +106,11 @@ pub(crate) enum ChoiceActivationMode {
 
 /// Disabled-item traversal semantics for choice surfaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum ChoiceDisabledItemStrategy {
     /// Disabled items are skipped for movement, typeahead, and selection.
     Skip,
     /// Disabled items remain addressable by movement and typeahead.
+    #[allow(dead_code)]
     Include,
 }
 
@@ -123,22 +121,44 @@ pub(crate) struct ChoiceInteractionPolicy {
     wrap: bool,
     typeahead: bool,
     selection_mode: ChoiceSelectionMode,
+    selection_required: bool,
     activation_mode: ChoiceActivationMode,
     disabled_item_strategy: ChoiceDisabledItemStrategy,
 }
 
-#[allow(dead_code)]
 impl ChoiceInteractionPolicy {
     /// Returns the APG-style listbox policy used by Listbox, Select, and Combobox.
     pub(crate) const fn listbox() -> Self {
+        Self::single_optional(Orientation::Vertical).with_typeahead(true)
+    }
+
+    /// Returns a policy for value-selecting composites with one required selection.
+    pub(crate) const fn single_required(orientation: Orientation) -> Self {
+        Self::single_optional(orientation).with_selection_required(true)
+    }
+
+    /// Returns a policy for value-selecting composites with optional selection.
+    pub(crate) const fn single_optional(orientation: Orientation) -> Self {
         Self {
-            orientation: Orientation::Vertical,
-            wrap: true,
-            typeahead: true,
+            orientation,
+            wrap: false,
+            typeahead: false,
             selection_mode: ChoiceSelectionMode::Single,
+            selection_required: false,
             activation_mode: ChoiceActivationMode::Manual,
             disabled_item_strategy: ChoiceDisabledItemStrategy::Skip,
         }
+        .with_wrap(true)
+    }
+
+    /// Returns a policy for multi-select composites.
+    pub(crate) const fn multiple(orientation: Orientation) -> Self {
+        Self::single_optional(orientation).with_selection_mode(ChoiceSelectionMode::Multiple)
+    }
+
+    /// Returns a policy for roving-focus composites without selected values.
+    pub(crate) const fn roving(orientation: Orientation) -> Self {
+        Self::single_optional(orientation).with_selection_mode(ChoiceSelectionMode::None)
     }
 
     /// Returns this policy with wrapping movement overridden.
@@ -159,6 +179,12 @@ impl ChoiceInteractionPolicy {
         self
     }
 
+    /// Returns this policy with required-selection behavior overridden.
+    pub(crate) const fn with_selection_required(mut self, selection_required: bool) -> Self {
+        self.selection_required = selection_required;
+        self
+    }
+
     /// Returns this policy with activation timing overridden.
     pub(crate) const fn with_activation_mode(
         mut self,
@@ -169,6 +195,7 @@ impl ChoiceInteractionPolicy {
     }
 
     /// Returns this policy with disabled-item handling overridden.
+    #[allow(dead_code)]
     pub(crate) const fn with_disabled_item_strategy(
         mut self,
         disabled_item_strategy: ChoiceDisabledItemStrategy,
@@ -185,6 +212,16 @@ impl ChoiceInteractionPolicy {
     /// Returns selection cardinality semantics.
     pub(crate) const fn selection_mode(self) -> ChoiceSelectionMode {
         self.selection_mode
+    }
+
+    /// Returns whether selection should fall back to the first enabled item.
+    pub(crate) const fn selection_required(self) -> bool {
+        self.selection_required
+    }
+
+    /// Returns activation timing semantics.
+    pub(crate) const fn activation_mode(self) -> ChoiceActivationMode {
+        self.activation_mode
     }
 
     /// Resolves an APG-style movement key to a candidate index.
@@ -268,6 +305,27 @@ impl<T> ChoiceCollection<T> {
             disabled,
             &items,
             selected_value,
+            None,
+            active_value,
+            policy,
+        );
+        Self::from_resolved(disabled, items, selection, policy)
+    }
+
+    /// Resolves a collection with a secondary selected-value candidate.
+    pub(crate) fn resolve_with_selected_fallback(
+        disabled: bool,
+        items: Vec<ChoiceItemProjection<T>>,
+        selected_value: Option<&str>,
+        selected_fallback_value: Option<&str>,
+        active_value: Option<&str>,
+        policy: ChoiceInteractionPolicy,
+    ) -> Self {
+        let selection = resolve_selection_indexes_with_policy(
+            disabled,
+            &items,
+            selected_value,
+            selected_fallback_value,
             active_value,
             policy,
         );
@@ -423,21 +481,6 @@ where
     })
 }
 
-/// Resolves a stable value only if the item still exists and remains enabled.
-pub(crate) fn resolve_enabled_value<'a, T, I>(
-    items: &'a [T],
-    groups: I,
-    selected_value: Option<&str>,
-    value_of: impl Fn(&T) -> &str,
-    disabled: impl Fn(&T) -> bool,
-) -> Option<&'a T>
-where
-    I: IntoIterator<Item = &'a [T]>,
-{
-    find_value_in_flat_groups(items, groups, selected_value?, value_of)
-        .filter(|item| !disabled(item))
-}
-
 /// Deduplicates stable values while preserving first-seen order.
 pub(crate) fn dedupe_stable_values<I>(values: I) -> Vec<String>
 where
@@ -455,6 +498,7 @@ fn resolve_selection_indexes_with_policy<T>(
     disabled: bool,
     items: &[ChoiceItemProjection<T>],
     selected_value: Option<&str>,
+    selected_fallback_value: Option<&str>,
     active_value: Option<&str>,
     policy: ChoiceInteractionPolicy,
 ) -> ChoiceSelectionResolution {
@@ -462,24 +506,24 @@ fn resolve_selection_indexes_with_policy<T>(
         return ChoiceSelectionResolution::new(None, None);
     }
 
+    let find_valid = |value: &str| {
+        items
+            .iter()
+            .position(|item| item.value() == value && policy.item_addressable(item))
+    };
+
+    let first_enabled = || items.iter().position(|item| policy.item_addressable(item));
     let selected_index = match policy.selection_mode() {
         ChoiceSelectionMode::None => None,
-        ChoiceSelectionMode::Single | ChoiceSelectionMode::Multiple => {
-            selected_value.and_then(|value| {
-                items
-                    .iter()
-                    .position(|item| item.value() == value && policy.item_addressable(item))
-            })
-        }
+        ChoiceSelectionMode::Single | ChoiceSelectionMode::Multiple => selected_value
+            .and_then(find_valid)
+            .or_else(|| selected_fallback_value.and_then(find_valid))
+            .or_else(|| policy.selection_required().then(first_enabled).flatten()),
     };
     let active_index = active_value
-        .and_then(|value| {
-            items
-                .iter()
-                .position(|item| item.value() == value && policy.item_addressable(item))
-        })
+        .and_then(find_valid)
         .or(selected_index)
-        .or_else(|| items.iter().position(|item| policy.item_addressable(item)));
+        .or_else(first_enabled);
 
     ChoiceSelectionResolution::new(selected_index, active_index)
 }
@@ -510,35 +554,66 @@ fn typeahead_target_with_policy<'a, T>(
         })
 }
 
-/// Resolves selected values for single-select and multi-select choice surfaces.
-pub(crate) fn resolve_selected_values<'a, T, I, S>(
-    is_multiple: bool,
-    items: &'a [T],
-    groups: I,
+/// Resolves selected stable values from already-projected choice items.
+pub(crate) fn resolve_projected_selected_values<T, S>(
+    selection_mode: ChoiceSelectionMode,
+    items: &[ChoiceItemProjection<T>],
     selected_value: Option<&str>,
     selected_values: impl IntoIterator<Item = S>,
-    value_of: impl Fn(&T) -> &str,
-    disabled: impl Fn(&T) -> bool,
 ) -> Vec<String>
 where
-    I: IntoIterator<Item = &'a [T]>,
     S: Into<String>,
 {
-    let groups = groups.into_iter().collect::<Vec<_>>();
-    if is_multiple {
-        dedupe_stable_values(selected_values.into_iter().map(Into::into).filter(|value| {
-            find_value_in_flat_groups(items, groups.iter().copied(), value, &value_of)
-                .is_some_and(|item| !disabled(item))
-        }))
-    } else {
-        selected_value
-            .filter(|value| {
-                find_value_in_flat_groups(items, groups.iter().copied(), value, &value_of)
-                    .is_some_and(|item| !disabled(item))
-            })
+    match selection_mode {
+        ChoiceSelectionMode::None => Vec::new(),
+        ChoiceSelectionMode::Single => selected_value
             .map(str::to_owned)
             .into_iter()
-            .collect()
+            .chain(selected_values.into_iter().map(Into::into))
+            .find(|value| {
+                items
+                    .iter()
+                    .any(|item| item.value() == value && item.enabled())
+            })
+            .into_iter()
+            .collect(),
+        ChoiceSelectionMode::Multiple => {
+            dedupe_stable_values(selected_values.into_iter().map(Into::into).filter(|value| {
+                items
+                    .iter()
+                    .any(|item| item.value() == value && item.enabled())
+            }))
+        }
+    }
+}
+
+/// Resolves the next selected stable values for an activated choice item.
+pub(crate) fn next_selected_values(
+    selection_mode: ChoiceSelectionMode,
+    selection_required: bool,
+    current: &[String],
+    value: &str,
+) -> Vec<String> {
+    let selected = current.iter().any(|selected| selected == value);
+
+    match selection_mode {
+        ChoiceSelectionMode::None => Vec::new(),
+        ChoiceSelectionMode::Single if selected && selection_required => current.to_vec(),
+        ChoiceSelectionMode::Single if selected => Vec::new(),
+        ChoiceSelectionMode::Single => vec![value.to_owned()],
+        ChoiceSelectionMode::Multiple if selected && selection_required && current.len() <= 1 => {
+            current.to_vec()
+        }
+        ChoiceSelectionMode::Multiple if selected => current
+            .iter()
+            .filter(|selected| selected.as_str() != value)
+            .cloned()
+            .collect(),
+        ChoiceSelectionMode::Multiple => {
+            let mut next = current.to_vec();
+            next.push(value.to_owned());
+            next
+        }
     }
 }
 
@@ -608,55 +683,57 @@ mod tests {
     }
 
     #[test]
-    fn resolve_selected_values_dedupes_and_filters_disabled_multi_select() {
-        let standalone = [Choice::new("alpha", false), Choice::new("beta", true)];
-        let grouped = [Choice::new("gamma", false), Choice::new("delta", false)];
-        let groups = [Group { items: &grouped }];
+    fn projected_selected_values_dedupes_and_filters_disabled_multi_select() {
+        let items = [
+            ChoiceItemProjection::new(0, None, "alpha", "Alpha", false, ()),
+            ChoiceItemProjection::new(1, None, "beta", "Beta", true, ()),
+            ChoiceItemProjection::new(0, Some(0), "gamma", "Gamma", false, ()),
+            ChoiceItemProjection::new(1, Some(0), "delta", "Delta", false, ()),
+        ];
 
-        let values = resolve_selected_values(
-            true,
-            &standalone,
-            groups.iter().map(|group| group.items),
+        let values = resolve_projected_selected_values(
+            ChoiceSelectionMode::Multiple,
+            &items,
             Some("alpha"),
             vec!["alpha", "gamma", "alpha", "beta", "delta"],
-            Choice::value,
-            Choice::disabled,
         );
 
         assert_eq!(values, vec!["alpha", "gamma", "delta"]);
     }
 
     #[test]
-    fn resolve_selected_values_keeps_single_value() {
-        let standalone = [Choice::new("alpha", false)];
-        let groups: [Group<'_>; 0] = [];
+    fn projected_selected_values_keeps_first_valid_single_value() {
+        let items = [
+            ChoiceItemProjection::new(0, None, "alpha", "Alpha", true, ()),
+            ChoiceItemProjection::new(1, None, "bravo", "Bravo", false, ()),
+        ];
 
-        let values = resolve_selected_values(
-            false,
-            &standalone,
-            groups.iter().map(|group| group.items),
+        let values = resolve_projected_selected_values(
+            ChoiceSelectionMode::Single,
+            &items,
             Some("alpha"),
-            Vec::<String>::new(),
-            Choice::value,
-            Choice::disabled,
+            vec!["bravo", "alpha"],
         );
 
-        assert_eq!(values, vec!["alpha"]);
+        assert_eq!(values, vec!["bravo"]);
     }
 
     #[test]
-    fn resolve_selected_values_filters_disabled_single_value() {
-        let standalone = [Choice::new("alpha", true)];
-        let groups: [Group<'_>; 0] = [];
+    fn projected_selected_values_filters_disabled_single_value() {
+        let items = [ChoiceItemProjection::new(
+            0,
+            None,
+            "alpha",
+            "Alpha",
+            true,
+            (),
+        )];
 
-        let values = resolve_selected_values(
-            false,
-            &standalone,
-            groups.iter().map(|group| group.items),
+        let values = resolve_projected_selected_values(
+            ChoiceSelectionMode::Single,
+            &items,
             Some("alpha"),
             Vec::<String>::new(),
-            Choice::value,
-            Choice::disabled,
         );
 
         assert!(values.is_empty());
