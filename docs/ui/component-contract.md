@@ -503,6 +503,13 @@ mutation. The first `Table` adapter consumes virtualizer snapshots as measuremen
 scroll offset from the adapter runtime wins during render, and one-shot scroll-position restoration
 remains a future adapter-runtime policy.
 
+Virtualized adapters share a crate-private row-window projection around `VirtualizerResolvedState`.
+That seam maps the virtualizer's rendered measurements into component row payloads, stable render
+keys, visible-row counts, overscan budget, and scroll geometry without owning a concrete
+`ScrollHandle`. `VirtualizedList`, `Tree`, and the `Table` center-row body use this shared
+projection for their visible/overscan windows, while duplicate-key disambiguation, tree hierarchy,
+activation payloads, and pinned Table row bands remain component-specific contracts.
+
 The GPUI `Table` adapter resolves table state and virtualizer ranges before rendering. The adapter
 owns the element tree, concrete scroll viewport, wheel containment, sticky header overlay,
 body drawing, sortable header activation callbacks, row focus handles, source-tree disclosure
@@ -780,6 +787,10 @@ spacer geometry preserves the full scrollable width. It also ships GPUI resize h
 controlled commit callbacks and on-end/on-change resize mode support.
 For row-pinned samples, top and bottom row bands render outside the center vertical scroll area,
 and the center virtualizer counts only center rows.
+`VirtualizedList`, `Tree`, and the Table center row body share the internal row-window projection
+for stable keys, measurements, visible counts, overscan counts, and scroll offsets. The projection
+intentionally stops at the row-window boundary: Table row regions, Tree selection/focus metadata,
+and VirtualizedList activation/selection payloads stay owned by their components.
 Table faceting is a metadata sidecar over configured columns: client facets derive unique
 value/count entries and numeric ranges from the source snapshot while excluding the target column's
 own local filter, and manual facet payloads can replace client-derived summaries for server-owned

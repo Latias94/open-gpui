@@ -40,6 +40,7 @@ pub mod primitives;
 pub mod progress;
 pub mod radio;
 pub mod roving_focus;
+mod row_window;
 pub mod scroll_area;
 pub mod select;
 pub mod separator;

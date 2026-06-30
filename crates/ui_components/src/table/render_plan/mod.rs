@@ -8,6 +8,7 @@ use open_gpui_ui_core::{
     VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerResolvedState,
 };
 
+use crate::row_window::RowWindow;
 use crate::table::layout::resolve_column_region_render_plans;
 
 use super::virtualization::row_render_key;
@@ -56,6 +57,8 @@ pub struct TableRenderDiagnostics {
     top_rows: Vec<TableRowRenderPlan>,
     rows: Vec<TableRowRenderPlan>,
     bottom_rows: Vec<TableRowRenderPlan>,
+    center_visible_row_count: usize,
+    center_overscan_count: usize,
     role: Role,
     header_row_role: Role,
     column_header_role: Role,
@@ -127,11 +130,10 @@ impl TableRenderDiagnostics {
             0,
             UiPx::ZERO,
         );
-        let rows = virtualized_center_row_render_plans(
+        let center_window = virtualized_center_row_window(
             table.center_rows(),
-            virtualizer.items(),
             &columns,
-            &duplicate_row_ids,
+            &virtualizer,
             top_row_count,
         );
         let top_height = top_rows
@@ -176,8 +178,10 @@ impl TableRenderDiagnostics {
             selection_summary,
             aggregation_fn_count: state.aggregation_fn_count(),
             top_rows,
-            rows,
+            rows: center_window.rows,
             bottom_rows,
+            center_visible_row_count: center_window.visible_row_count,
+            center_overscan_count: center_window.overscan_count,
             role: Role::Table,
             header_row_role: Role::Row,
             column_header_role: Role::ColumnHeader,
@@ -419,34 +423,53 @@ impl TableRenderDiagnostics {
 
     /// Returns the visible body row count before overscan.
     pub fn visible_row_count(&self) -> usize {
-        self.top_rows.len() + self.virtualizer.visible_items().len() + self.bottom_rows.len()
+        self.top_rows.len() + self.center_visible_row_count + self.bottom_rows.len()
+    }
+
+    /// Returns the center-row overscan budget used by the vertical virtualizer.
+    pub const fn center_overscan_count(&self) -> usize {
+        self.center_overscan_count
     }
 }
 
-fn virtualized_center_row_render_plans(
+#[derive(Debug, Clone, PartialEq)]
+struct TableCenterRowWindow {
+    rows: Vec<TableRowRenderPlan>,
+    visible_row_count: usize,
+    overscan_count: usize,
+}
+
+fn virtualized_center_row_window(
     rows: &[TableResolvedRow],
-    measurements: &[VirtualizerItemMeasurement],
     columns: &[TableColumnRenderPlan],
-    duplicate_row_ids: &BTreeSet<TableRowId>,
+    virtualizer: &VirtualizerResolvedState,
     model_index_start: usize,
-) -> Vec<TableRowRenderPlan> {
-    measurements
-        .iter()
-        .filter_map(|measurement| {
-            rows.get(measurement.index()).cloned().map(|row| {
-                let render_key = row_render_key(&row, duplicate_row_ids);
-                let model_index = model_index_start + measurement.index();
-                TableRowRenderPlan::new(
-                    row,
-                    TableRowRegion::Center,
-                    render_key,
-                    model_index,
-                    measurement.clone(),
-                    columns,
-                )
-            })
+) -> TableCenterRowWindow {
+    let row_window = RowWindow::project(virtualizer, |index| rows.get(index).cloned());
+    let visible_row_count = row_window.visible_row_count();
+    let overscan_count = row_window.overscan_count();
+    let rows = row_window
+        .into_rows()
+        .into_iter()
+        .map(|projected| {
+            let (index, render_key, measurement, row) = projected.into_parts();
+            let model_index = model_index_start + index;
+            TableRowRenderPlan::new(
+                row,
+                TableRowRegion::Center,
+                render_key,
+                model_index,
+                measurement,
+                columns,
+            )
         })
-        .collect()
+        .collect();
+
+    TableCenterRowWindow {
+        rows,
+        visible_row_count,
+        overscan_count,
+    }
 }
 
 fn row_render_plans(
