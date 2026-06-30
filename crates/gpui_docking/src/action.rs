@@ -2,6 +2,25 @@ use crate::{DockGraphMutationError, DockItemId, DockNodeId, DockPolicyError, Doc
 use open_gpui::{Bounds, Pixels};
 use thiserror::Error;
 
+/// Fraction update for one split node.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DockSplitResize {
+    /// The split node to update.
+    pub split: DockNodeId,
+    /// The normalized fractions to store.
+    pub fractions: Vec<f32>,
+}
+
+impl DockSplitResize {
+    /// Creates a split resize update from a split id and fractions.
+    pub fn new(split: DockNodeId, fractions: impl AsRef<[f32]>) -> Self {
+        Self {
+            split,
+            fractions: fractions.as_ref().to_vec(),
+        }
+    }
+}
+
 /// Programmatic docking command object applied by [`DockWorkspace`](crate::DockWorkspace).
 ///
 /// Rendered drag/drop interactions resolve a full-layout target first and commit through the
@@ -89,6 +108,11 @@ pub enum DockAction {
         split: DockNodeId,
         /// The next normalized split fractions.
         fractions: Vec<f32>,
+    },
+    /// Resizes multiple split nodes in one graph transaction.
+    ResizeSplits {
+        /// Split fraction updates to validate and apply together.
+        updates: Vec<DockSplitResize>,
     },
 }
 

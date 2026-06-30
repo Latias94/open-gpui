@@ -1,8 +1,10 @@
 use crate::{
-    DockHost, DockItemId, DockNodeId, DockSpaceId,
+    DockHost, DockItemId, DockNodeId, DockSpaceId, SplitAxis,
+    divider_hit_map::{DockDividerHandleHitTarget, DockDividerHitTarget},
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
-    interaction::{DockPayloadDropRelease, DockRuntimeDragSession},
+    interaction::{DockPayloadDropRelease, DockRuntimeDragSession, SplitterDragAxis},
+    presentation_scene::DockPresentationScene,
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
 
@@ -210,28 +212,56 @@ impl DockHost {
         self.finish_floating_drag_interaction().finish(cx)
     }
 
-    pub(crate) fn begin_splitter_drag_from_render(
+    pub(crate) fn begin_divider_drag_from_scene(
         &mut self,
-        split: DockNodeId,
-        handle_index: usize,
-        start_position: Pixels,
-        split_extent: Pixels,
-        initial_fractions: Vec<f32>,
+        scene: &DockPresentationScene,
+        target: &DockDividerHitTarget,
+        position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) -> bool {
+        match target {
+            DockDividerHitTarget::Single(handle) => self
+                .begin_splitter_drag_axis_from_scene(scene, handle, position)
+                .finish(cx),
+            DockDividerHitTarget::Corner(corner) => {
+                let Some(horizontal) =
+                    splitter_drag_axis_from_scene(scene, &corner.horizontal, position)
+                else {
+                    return false;
+                };
+                let Some(vertical) =
+                    splitter_drag_axis_from_scene(scene, &corner.vertical, position)
+                else {
+                    return false;
+                };
+                self.begin_corner_splitter_drag_interaction(horizontal, vertical)
+                    .finish(cx)
+            }
+        }
+    }
+
+    fn begin_splitter_drag_axis_from_scene(
+        &mut self,
+        scene: &DockPresentationScene,
+        handle: &DockDividerHandleHitTarget,
+        position: Point<Pixels>,
+    ) -> crate::host_interaction_outcome::DockHostInteractionOutcome {
+        let Some(axis) = splitter_drag_axis_from_scene(scene, handle, position) else {
+            return crate::host_interaction_outcome::DockHostInteractionOutcome::Idle;
+        };
         self.begin_splitter_drag_interaction(
-            split,
-            handle_index,
-            start_position,
-            split_extent,
-            initial_fractions,
+            axis.axis,
+            axis.split,
+            axis.handle_index,
+            axis.start_position,
+            axis.split_extent,
+            axis.initial_fractions,
         )
-        .finish(cx)
     }
 
     pub(crate) fn update_splitter_drag_from_render(
         &mut self,
-        position: Pixels,
+        position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) -> bool {
         self.update_splitter_drag_interaction(position, cx)
@@ -257,4 +287,28 @@ impl DockHost {
                 window.window_handle().window_id(),
             )
     }
+}
+
+fn splitter_drag_axis_from_scene(
+    scene: &DockPresentationScene,
+    handle: &DockDividerHandleHitTarget,
+    position: Point<Pixels>,
+) -> Option<SplitterDragAxis> {
+    let splitter = scene.splitters.iter().find(|splitter| {
+        splitter.split == handle.key.split
+            && splitter.index == handle.key.index
+            && splitter.axis == handle.key.axis
+    })?;
+    let start_position = match splitter.axis {
+        SplitAxis::Horizontal => position.x,
+        SplitAxis::Vertical => position.y,
+    };
+    Some(SplitterDragAxis::new(
+        splitter.axis,
+        splitter.split,
+        splitter.index,
+        start_position,
+        splitter.extent,
+        splitter.shares.clone(),
+    ))
 }

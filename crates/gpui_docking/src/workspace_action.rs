@@ -1,6 +1,6 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockGraphMutationError, DockItemId,
-    DockNode, DockNodeId, DockOp, DockSpaceId, DockWorkspace,
+    DockNode, DockNodeId, DockOp, DockSpaceId, DockSplitResize, DockWorkspace,
 };
 use open_gpui::{Bounds, Pixels};
 
@@ -125,6 +125,14 @@ impl DockWorkspace {
         self.commit_resize_split(split, fractions.as_ref())
     }
 
+    /// Resizes multiple split nodes in one graph transaction.
+    pub fn resize_splits(
+        &mut self,
+        updates: impl AsRef<[DockSplitResize]>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.commit_resize_splits(updates.as_ref())
+    }
+
     /// Applies a docking action command object.
     pub fn apply_action(
         &mut self,
@@ -169,6 +177,7 @@ impl DockWorkspace {
             DockAction::ResizeSplit { split, fractions } => {
                 self.commit_resize_split(*split, fractions)
             }
+            DockAction::ResizeSplits { updates } => self.commit_resize_splits(updates),
         }
     }
 

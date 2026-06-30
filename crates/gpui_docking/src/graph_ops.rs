@@ -1,6 +1,4 @@
-use crate::DockOp;
-#[cfg(test)]
-use crate::{DockNodeId, SplitFractionsUpdate};
+use crate::{DockOp, DockSplitResize};
 
 use super::DockGraph;
 
@@ -55,7 +53,6 @@ impl DockGraph {
             DockOp::SetSplitFractions { split, fractions } => {
                 self.update_split_fractions(*split, fractions.clone())
             }
-            #[cfg(test)]
             DockOp::SetSplitFractionsMany { updates } => {
                 let mut changed = false;
                 for update in updates {
@@ -72,9 +69,8 @@ impl DockGraph {
     }
 }
 
-#[cfg(test)]
-impl From<SplitFractionsUpdate> for (DockNodeId, Vec<f32>) {
-    fn from(update: SplitFractionsUpdate) -> Self {
+impl From<DockSplitResize> for (crate::DockNodeId, Vec<f32>) {
+    fn from(update: DockSplitResize) -> Self {
         (update.split, update.fractions)
     }
 }

@@ -2,7 +2,8 @@ use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockGraph,
     DockGraphValidationError, DockItemId, DockLayout, DockLayoutValidationError, DockNodeId,
     DockPanel, DockPanelAttachError, DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry,
-    DockPolicy, DockSpaceId, DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
+    DockPolicy, DockSpaceId, DockSplitResize, DockWorkspace, EditorDockLayoutSpec,
+    host::DockHostOptions,
 };
 use open_gpui::{AnyView, Bounds, Pixels};
 
@@ -183,6 +184,14 @@ impl DockController {
         fractions: impl AsRef<[f32]>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.workspace.resize_split(split, fractions)
+    }
+
+    /// Resizes multiple split nodes in one graph transaction.
+    pub fn resize_splits(
+        &mut self,
+        updates: impl AsRef<[DockSplitResize]>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.workspace.resize_splits(updates)
     }
 
     /// Applies a docking action command object through the controller's workspace.

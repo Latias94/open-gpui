@@ -5,8 +5,10 @@ use crate::{
     presentation_scene::{DockPresentationScene, DockPresentationSplitter},
 };
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
-
-const CORNER_HIT_SIZE: f32 = 12.0;
+use open_gpui_ui_core::{
+    Orientation, SplitterHandleLayout, SplitterHitMap, SplitterHitTarget, UiRect, ui_point, ui_px,
+    ui_rect, ui_size,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockDividerHitMap {
@@ -40,6 +42,12 @@ pub(crate) struct DockDividerCornerHitTarget {
     pub(crate) bounds: Bounds<Pixels>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct DockCoreHandleTarget {
+    core: SplitterHandleLayout,
+    dock: DockDividerHandleHitTarget,
+}
+
 impl DockDividerHitMap {
     pub(crate) fn from_scene(scene: &DockPresentationScene) -> Self {
         let handles = scene
@@ -47,29 +55,31 @@ impl DockDividerHitMap {
             .iter()
             .map(handle_target)
             .collect::<Vec<_>>();
-        let mut targets = Vec::new();
-
-        for (index, first) in handles.iter().copied().enumerate() {
-            for second in handles.iter().copied().skip(index + 1) {
-                if first.key.axis == second.key.axis {
-                    continue;
+        let core_handles = handles
+            .iter()
+            .copied()
+            .map(core_handle_target_for_dock_target)
+            .collect::<Vec<_>>();
+        let core_hit_map =
+            SplitterHitMap::from_handles(core_handles.iter().map(|handle| handle.core.clone()));
+        let targets = core_hit_map
+            .targets()
+            .iter()
+            .filter_map(|target| match target {
+                SplitterHitTarget::Handle(handle) => {
+                    handle_target_for_core(handle, &core_handles).map(DockDividerHitTarget::Single)
                 }
-                let (horizontal, vertical) = match (first.key.axis, second.key.axis) {
-                    (SplitAxis::Horizontal, SplitAxis::Vertical) => (first, second),
-                    (SplitAxis::Vertical, SplitAxis::Horizontal) => (second, first),
-                    _ => continue,
-                };
-                if let Some(bounds) = corner_bounds(horizontal.bounds, vertical.bounds) {
-                    targets.push(DockDividerHitTarget::Corner(DockDividerCornerHitTarget {
+                SplitterHitTarget::Junction(junction) => {
+                    let horizontal = handle_target_for_core(junction.horizontal(), &core_handles)?;
+                    let vertical = handle_target_for_core(junction.vertical(), &core_handles)?;
+                    Some(DockDividerHitTarget::Corner(DockDividerCornerHitTarget {
                         horizontal,
                         vertical,
-                        bounds,
-                    }));
+                        bounds: bounds_from_ui_rect(junction.bounds()),
+                    }))
                 }
-            }
-        }
-
-        targets.extend(handles.into_iter().map(DockDividerHitTarget::Single));
+            })
+            .collect();
         Self { targets }
     }
 
@@ -85,6 +95,13 @@ impl DockDividerHitMap {
     }
 }
 
+fn core_handle_target_for_dock_target(handle: DockDividerHandleHitTarget) -> DockCoreHandleTarget {
+    DockCoreHandleTarget {
+        core: splitter_handle_layout_for_target(handle),
+        dock: handle,
+    }
+}
+
 fn handle_target(splitter: &DockPresentationSplitter) -> DockDividerHandleHitTarget {
     DockDividerHandleHitTarget {
         key: DockDividerHandleKey {
@@ -97,18 +114,56 @@ fn handle_target(splitter: &DockPresentationSplitter) -> DockDividerHandleHitTar
     }
 }
 
-fn corner_bounds(horizontal: Bounds<Pixels>, vertical: Bounds<Pixels>) -> Option<Bounds<Pixels>> {
-    let center = point(horizontal.center().x, vertical.center().y);
-    if !near_bounds(horizontal, center) || !near_bounds(vertical, center) {
-        return None;
-    }
-    let hit_size = px(CORNER_HIT_SIZE);
-    Some(Bounds::new(
-        point(center.x - hit_size / 2.0, center.y - hit_size / 2.0),
-        size(hit_size, hit_size),
-    ))
+fn splitter_handle_layout_for_target(handle: DockDividerHandleHitTarget) -> SplitterHandleLayout {
+    SplitterHandleLayout::new(
+        format!("dock-split-{}", handle.key.split.as_u64()),
+        orientation_for_axis(handle.key.axis),
+        handle.key.index,
+        "before",
+        "after",
+        false,
+        ui_rect_from_bounds(handle.bounds),
+        ui_rect_from_bounds(handle.bounds),
+    )
 }
 
-fn near_bounds(bounds: Bounds<Pixels>, position: Point<Pixels>) -> bool {
-    bounds.dilate(px(CORNER_HIT_SIZE / 2.0)).contains(&position)
+fn handle_target_for_core(
+    handle: &SplitterHandleLayout,
+    targets: &[DockCoreHandleTarget],
+) -> Option<DockDividerHandleHitTarget> {
+    targets
+        .iter()
+        .find(|target| {
+            target.core.group_id() == handle.group_id()
+                && target.core.index() == handle.index()
+                && target.core.orientation() == handle.orientation()
+        })
+        .map(|target| target.dock)
+}
+
+fn orientation_for_axis(axis: SplitAxis) -> Orientation {
+    match axis {
+        SplitAxis::Horizontal => Orientation::Horizontal,
+        SplitAxis::Vertical => Orientation::Vertical,
+    }
+}
+
+fn ui_rect_from_bounds(bounds: Bounds<Pixels>) -> UiRect {
+    ui_rect(
+        ui_point(
+            ui_px(f32::from(bounds.origin.x)),
+            ui_px(f32::from(bounds.origin.y)),
+        ),
+        ui_size(
+            ui_px(f32::from(bounds.size.width)),
+            ui_px(f32::from(bounds.size.height)),
+        ),
+    )
+}
+
+fn bounds_from_ui_rect(rect: UiRect) -> Bounds<Pixels> {
+    Bounds::new(
+        point(px(rect.origin.x.as_f32()), px(rect.origin.y.as_f32())),
+        size(px(rect.size.width.as_f32()), px(rect.size.height.as_f32())),
+    )
 }

@@ -69,6 +69,7 @@ pub(crate) struct DockPresentationSplitter {
     pub(crate) before: DockNodeId,
     pub(crate) after: DockNodeId,
     pub(crate) extent: Pixels,
+    pub(crate) shares: Vec<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -234,6 +235,7 @@ impl DockPresentationScene {
                     before: *before,
                     after: *after,
                     extent,
+                    shares: layout.shares().to_vec(),
                 });
                 self.overlay_anchors.push(DockPresentationOverlayAnchor {
                     kind: DockPresentationOverlayAnchorKind::Splitter,

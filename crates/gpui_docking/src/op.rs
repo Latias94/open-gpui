@@ -1,4 +1,4 @@
-use crate::{DockEdgeDockPlan, DockItemId, DockNodeId, DockSpaceId, DropZone};
+use crate::{DockEdgeDockPlan, DockItemId, DockNodeId, DockSpaceId, DockSplitResize, DropZone};
 use thiserror::Error;
 
 /// Graph-level target consumed by dock tree drop mutations.
@@ -188,10 +188,9 @@ pub(crate) enum DockOp {
     },
 
     /// Replaces fractions for multiple split nodes.
-    #[cfg(test)]
     SetSplitFractionsMany {
         /// The split fraction updates.
-        updates: Vec<SplitFractionsUpdate>,
+        updates: Vec<DockSplitResize>,
     },
 
     /// Updates a two-child split using the first child's fraction.
@@ -202,16 +201,6 @@ pub(crate) enum DockOp {
         /// The first child's fraction.
         first_fraction: f32,
     },
-}
-
-/// Fraction update for one split node.
-#[cfg(test)]
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct SplitFractionsUpdate {
-    /// The split node to update.
-    pub(crate) split: DockNodeId,
-    /// The normalized fractions to store.
-    pub(crate) fractions: Vec<f32>,
 }
 
 /// Error returned when a checked graph mutation cannot be applied.

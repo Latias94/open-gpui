@@ -1,6 +1,7 @@
 use crate::{
     DockHost, DockNode, DockNodeId, DropZone,
     debug::DockDebugRegion,
+    divider_hit_map::DockDividerHitMap,
     drag::DockDragPayload,
     drop_preview::{
         DockDropPreview, DockDropRoutePreview, DockPreviewDropBox, DockPreviewTabInsertionIndex,
@@ -13,13 +14,14 @@ use crate::{
         DockRenderedOutsideReleaseRequest,
     },
     overlay_scene::{DockOverlayLayer, DockOverlayScene},
+    presentation_scene::DockPresentationScene,
     render_split::DockRenderSplitInput,
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{
     AnyElement, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
-    MouseUpEvent, ParentElement, Pixels, Render, Rgba, SharedString, Styled, Window, black, canvas,
-    div, point, px, rgb, rgba,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render, Rgba,
+    SharedString, Styled, Window, black, canvas, div, point, px, rgb, rgba,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -193,6 +195,8 @@ impl Render for DockHost {
                 cx,
             ));
         }
+
+        host = host.child(self.render_divider_event_layer(&session, cx));
 
         if let Some(preview) = self.render_host_drop_preview(&session, window, cx) {
             host = host.child(preview);
@@ -446,6 +450,67 @@ impl DockHost {
         );
         root_container = root_container.child(root_child);
         root_container.into_any_element()
+    }
+
+    fn render_divider_event_layer(
+        &self,
+        session: &DockHostRenderSession,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let entity = cx.entity();
+        let session = session.clone();
+
+        canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _| {
+                let scene = DockPresentationScene::from_render_session(&session, bounds);
+                let hit_map = DockDividerHitMap::from_scene(&scene);
+
+                window.on_mouse_event({
+                    let entity = entity.clone();
+                    let scene = scene.clone();
+                    let hit_map = hit_map.clone();
+                    move |event: &MouseDownEvent, _, _, app| {
+                        if event.button != MouseButton::Left {
+                            return;
+                        }
+                        let Some(target) = hit_map.hit(event.position).cloned() else {
+                            return;
+                        };
+                        entity.update(app, |host, cx| {
+                            host.begin_divider_drag_from_scene(&scene, &target, event.position, cx);
+                        });
+                        app.stop_propagation();
+                    }
+                });
+
+                window.on_mouse_event({
+                    let entity = entity.clone();
+                    move |event: &MouseMoveEvent, _, _, app| {
+                        if event.pressed_button != Some(MouseButton::Left) {
+                            return;
+                        }
+                        entity.update(app, |host, cx| {
+                            host.update_splitter_drag_from_render(event.position, cx);
+                        });
+                    }
+                });
+
+                window.on_mouse_event(move |event: &MouseUpEvent, _, _, app| {
+                    if event.button != MouseButton::Left {
+                        return;
+                    }
+                    entity.update(app, |host, cx| {
+                        host.finish_splitter_drag_from_render(cx);
+                    });
+                });
+            },
+        )
+        .absolute()
+        .top(px(0.0))
+        .left(px(0.0))
+        .size_full()
+        .into_any_element()
     }
 
     fn render_empty_space(

@@ -688,26 +688,7 @@ impl SplitterLayoutScene {
     }
 
     fn resolve_junctions(&mut self) {
-        for horizontal in self
-            .handles
-            .iter()
-            .filter(|handle| matches!(handle.orientation, Orientation::Horizontal))
-        {
-            for vertical in self
-                .handles
-                .iter()
-                .filter(|handle| matches!(handle.orientation, Orientation::Vertical))
-            {
-                if let Some(bounds) = orthogonal_handle_junction(horizontal.bounds, vertical.bounds)
-                {
-                    self.junctions.push(SplitterJunctionHitRegion {
-                        bounds,
-                        horizontal: horizontal.clone(),
-                        vertical: vertical.clone(),
-                    });
-                }
-            }
-        }
+        self.junctions = junctions_for_handles(&self.handles);
     }
 }
 
@@ -762,6 +743,29 @@ pub struct SplitterHandleLayout {
 }
 
 impl SplitterHandleLayout {
+    /// Creates a handle layout from adapter-resolved bounds.
+    pub fn new(
+        group_id: impl Into<String>,
+        orientation: Orientation,
+        index: usize,
+        before_id: impl Into<String>,
+        after_id: impl Into<String>,
+        disabled: bool,
+        bounds: UiRect,
+        visual_bounds: UiRect,
+    ) -> Self {
+        Self {
+            group_id: group_id.into(),
+            orientation,
+            index,
+            before_id: before_id.into(),
+            after_id: after_id.into(),
+            disabled,
+            bounds,
+            visual_bounds,
+        }
+    }
+
     /// Returns the split group id that owns this handle.
     pub fn group_id(&self) -> &str {
         &self.group_id
@@ -862,6 +866,17 @@ impl SplitterHitMap {
         Self { targets }
     }
 
+    /// Builds a hit map from resolved handle layouts.
+    pub fn from_handles(handles: impl IntoIterator<Item = SplitterHandleLayout>) -> Self {
+        let handles = handles.into_iter().collect::<Vec<_>>();
+        let mut targets = junctions_for_handles(&handles)
+            .into_iter()
+            .map(SplitterHitTarget::Junction)
+            .collect::<Vec<_>>();
+        targets.extend(handles.into_iter().map(SplitterHitTarget::Handle));
+        Self { targets }
+    }
+
     /// Returns all hit targets in priority order.
     pub fn targets(&self) -> &[SplitterHitTarget] {
         &self.targets
@@ -874,6 +889,28 @@ impl SplitterHitMap {
             SplitterHitTarget::Junction(junction) => contains_point(junction.bounds(), point),
         })
     }
+}
+
+fn junctions_for_handles(handles: &[SplitterHandleLayout]) -> Vec<SplitterJunctionHitRegion> {
+    let mut junctions = Vec::new();
+    for horizontal in handles
+        .iter()
+        .filter(|handle| matches!(handle.orientation, Orientation::Horizontal))
+    {
+        for vertical in handles
+            .iter()
+            .filter(|handle| matches!(handle.orientation, Orientation::Vertical))
+        {
+            if let Some(bounds) = orthogonal_handle_junction(horizontal.bounds, vertical.bounds) {
+                junctions.push(SplitterJunctionHitRegion {
+                    bounds,
+                    horizontal: horizontal.clone(),
+                    vertical: vertical.clone(),
+                });
+            }
+        }
+    }
+    junctions
 }
 
 /// A nested split tree node.
@@ -1157,8 +1194,12 @@ mod tests {
     use super::*;
 
     fn rect(width: f32, height: f32) -> UiRect {
+        at_rect(0.0, 0.0, width, height)
+    }
+
+    fn at_rect(x: f32, y: f32, width: f32, height: f32) -> UiRect {
         ui_rect(
-            ui_point(ui_px(0.0), ui_px(0.0)),
+            ui_point(ui_px(x), ui_px(y)),
             ui_size(ui_px(width), ui_px(height)),
         )
     }
@@ -1276,6 +1317,37 @@ mod tests {
         assert_eq!(scene.junctions().len(), 1);
         assert!(matches!(
             hit_map.hit(scene.junctions()[0].bounds().top_left()),
+            Some(SplitterHitTarget::Junction(_))
+        ));
+    }
+
+    #[test]
+    fn split_hit_map_from_handles_prefers_junctions() {
+        let horizontal = SplitterHandleLayout::new(
+            "root",
+            Orientation::Horizontal,
+            0,
+            "left",
+            "right",
+            false,
+            at_rect(97.0, 0.0, 6.0, 200.0),
+            at_rect(97.0, 0.0, 6.0, 200.0),
+        );
+        let vertical = SplitterHandleLayout::new(
+            "right",
+            Orientation::Vertical,
+            0,
+            "top",
+            "bottom",
+            false,
+            at_rect(100.0, 97.0, 180.0, 6.0),
+            at_rect(100.0, 97.0, 180.0, 6.0),
+        );
+
+        let hit_map = SplitterHitMap::from_handles([horizontal, vertical]);
+
+        assert!(matches!(
+            hit_map.hit(ui_point(ui_px(100.0), ui_px(100.0))),
             Some(SplitterHitTarget::Junction(_))
         ));
     }

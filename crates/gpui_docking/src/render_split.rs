@@ -3,9 +3,8 @@ use crate::{
     host_render_session::DockHostRenderSession, render::DockViewportHostSceneFrameSlot,
 };
 use open_gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Styled, Window, canvas, div, px, relative,
-    rgb,
+    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Styled, Window, div, px,
+    relative, rgb,
 };
 
 pub(crate) struct DockRenderSplitInput {
@@ -141,102 +140,6 @@ impl DockHost {
             }
         }
 
-        split = split.child(self.render_splitter_event_layer(
-            node,
-            axis,
-            layout,
-            session.splitter_handle_size(),
-            cx,
-        ));
-
         split.into_any_element()
-    }
-
-    fn render_splitter_event_layer(
-        &self,
-        node: DockNodeId,
-        axis: SplitAxis,
-        layout: DockSplitLayout,
-        handle_size: Pixels,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let entity = cx.entity();
-
-        div()
-            .absolute()
-            .top(px(0.0))
-            .left(px(0.0))
-            .size_full()
-            .child(
-                canvas(
-                    |_, _, _| (),
-                    move |split_bounds, _, window, _| {
-                        window.on_mouse_event({
-                            let entity = entity.clone();
-                            let layout = layout.clone();
-                            move |event: &MouseDownEvent, _, _, app| {
-                                if event.button != MouseButton::Left {
-                                    return;
-                                }
-
-                                let geometry = layout.geometry(axis, split_bounds, handle_size);
-                                let Some(handle_index) = geometry
-                                    .handle_hit_bounds
-                                    .iter()
-                                    .position(|bounds| bounds.contains(&event.position))
-                                else {
-                                    return;
-                                };
-
-                                let start_position = match axis {
-                                    SplitAxis::Horizontal => event.position.x,
-                                    SplitAxis::Vertical => event.position.y,
-                                };
-
-                                entity.update(app, |host, cx| {
-                                    host.begin_splitter_drag_from_render(
-                                        node,
-                                        handle_index,
-                                        start_position,
-                                        geometry.extent,
-                                        geometry.shares.clone(),
-                                        cx,
-                                    );
-                                });
-                                app.stop_propagation();
-                            }
-                        });
-
-                        window.on_mouse_event({
-                            let entity = entity.clone();
-                            move |event: &MouseMoveEvent, _, _, app| {
-                                if event.pressed_button != Some(MouseButton::Left) {
-                                    return;
-                                }
-
-                                let position = match axis {
-                                    SplitAxis::Horizontal => event.position.x,
-                                    SplitAxis::Vertical => event.position.y,
-                                };
-                                entity.update(app, |host, cx| {
-                                    host.update_splitter_drag_from_render(position, cx);
-                                });
-                            }
-                        });
-
-                        window.on_mouse_event(move |event: &MouseUpEvent, _, _, app| {
-                            if event.button != MouseButton::Left {
-                                return;
-                            }
-
-                            entity.update(app, |host, cx| {
-                                host.finish_splitter_drag_from_render(cx);
-                            });
-                        });
-                    },
-                )
-                .size_full(),
-            )
-            .into_any_element()
     }
 }

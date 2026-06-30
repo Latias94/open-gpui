@@ -1,6 +1,6 @@
 use crate::{
-    DockItemId, DockNodeId, DockPolicy, DockSpaceId, DockViewportFocusCommand,
-    DockViewportFocusCommandSource,
+    DockItemId, DockNodeId, DockPolicy, DockSpaceId, DockSplitResize, DockViewportFocusCommand,
+    DockViewportFocusCommandSource, SplitAxis,
     drag::{DockDragPayload, DockDragPayloadIdentity, DockDragTearOffGeometry},
     drop_preview::DockDropPreview,
     drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
@@ -26,11 +26,41 @@ pub(crate) struct DockInteractionRuntime {
 
 #[derive(Debug, Clone)]
 pub(crate) struct SplitterDrag {
+    axes: Vec<SplitterDragAxis>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SplitterDragAxis {
+    pub(crate) axis: SplitAxis,
     pub(crate) split: DockNodeId,
     pub(crate) handle_index: usize,
     pub(crate) start_position: Pixels,
     pub(crate) split_extent: Pixels,
     pub(crate) initial_fractions: Vec<f32>,
+}
+
+impl SplitterDragAxis {
+    pub(crate) fn new(
+        axis: SplitAxis,
+        split: DockNodeId,
+        handle_index: usize,
+        start_position: Pixels,
+        split_extent: Pixels,
+        initial_fractions: Vec<f32>,
+    ) -> Self {
+        Self {
+            axis,
+            split,
+            handle_index,
+            start_position,
+            split_extent,
+            initial_fractions,
+        }
+    }
+
+    fn is_horizontal(&self) -> bool {
+        matches!(self.axis, SplitAxis::Horizontal)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -50,8 +80,7 @@ pub(crate) struct DockPayloadDragAnchor {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockSplitterResizeRequest {
-    pub(crate) split: DockNodeId,
-    pub(crate) fractions: Vec<f32>,
+    pub(crate) updates: Vec<DockSplitResize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -458,6 +487,7 @@ impl DockInteractionRuntime {
 
     pub(crate) fn start_splitter_drag(
         &mut self,
+        axis: SplitAxis,
         split: DockNodeId,
         handle_index: usize,
         start_position: Pixels,
@@ -465,34 +495,56 @@ impl DockInteractionRuntime {
         initial_fractions: Vec<f32>,
     ) {
         self.splitter_drag = Some(SplitterDrag {
-            split,
-            handle_index,
-            start_position,
-            split_extent,
-            initial_fractions,
+            axes: vec![SplitterDragAxis::new(
+                axis,
+                split,
+                handle_index,
+                start_position,
+                split_extent,
+                initial_fractions,
+            )],
+        });
+    }
+
+    pub(crate) fn start_corner_splitter_drag(
+        &mut self,
+        horizontal: SplitterDragAxis,
+        vertical: SplitterDragAxis,
+    ) {
+        self.splitter_drag = Some(SplitterDrag {
+            axes: vec![horizontal, vertical],
         });
     }
 
     pub(crate) fn resize_split_request(
         &self,
-        position: Pixels,
+        position: Point<Pixels>,
         split_min_size: Pixels,
     ) -> Option<DockSplitterResizeRequest> {
         let drag = self.splitter_drag.as_ref()?;
-        let delta = position - drag.start_position;
-        let fractions = geometry::resize_adjacent_split_fractions(
-            &drag.initial_fractions,
-            drag.initial_fractions.len(),
-            drag.handle_index,
-            drag.split_extent,
-            delta,
-            split_min_size,
-        )?;
+        let updates = drag
+            .axes
+            .iter()
+            .map(|axis| {
+                let current_position = if axis.is_horizontal() {
+                    position.x
+                } else {
+                    position.y
+                };
+                let delta = current_position - axis.start_position;
+                geometry::resize_adjacent_split_fractions(
+                    &axis.initial_fractions,
+                    axis.initial_fractions.len(),
+                    axis.handle_index,
+                    axis.split_extent,
+                    delta,
+                    split_min_size,
+                )
+                .map(|fractions| DockSplitResize::new(axis.split, fractions))
+            })
+            .collect::<Option<Vec<_>>>()?;
 
-        Some(DockSplitterResizeRequest {
-            split: drag.split,
-            fractions,
-        })
+        (!updates.is_empty()).then_some(DockSplitterResizeRequest { updates })
     }
 
     pub(crate) fn finish_splitter_drag(&mut self) -> bool {
@@ -900,6 +952,17 @@ mod tests {
         )
     }
 
+    fn assert_resize_update(update: &DockSplitResize, split: DockNodeId, expected: &[f32]) {
+        assert_eq!(update.split, split);
+        assert_eq!(update.fractions.len(), expected.len());
+        for (actual, expected) in update.fractions.iter().zip(expected.iter()) {
+            assert!(
+                (*actual - *expected).abs() < 0.0001,
+                "expected fraction {actual} to be close to {expected}"
+            );
+        }
+    }
+
     #[test]
     fn payload_drag_anchor_matches_any_payload_from_same_source_tabs() {
         let mut runtime = DockInteractionRuntime::default();
@@ -1294,22 +1357,63 @@ mod tests {
     fn splitter_update_without_active_drag_has_no_action() {
         let runtime = DockInteractionRuntime::default();
 
-        assert_eq!(runtime.resize_split_request(px(120.0), px(96.0)), None);
+        assert_eq!(
+            runtime.resize_split_request(point(px(120.0), px(0.0)), px(96.0)),
+            None
+        );
     }
 
     #[test]
     fn splitter_drag_produces_resize_request() {
         let split = DockNodeId::null();
         let mut runtime = DockInteractionRuntime::default();
-        runtime.start_splitter_drag(split, 0, px(100.0), px(400.0), vec![0.5, 0.5]);
+        runtime.start_splitter_drag(
+            SplitAxis::Horizontal,
+            split,
+            0,
+            px(100.0),
+            px(400.0),
+            vec![0.5, 0.5],
+        );
 
         assert_eq!(
-            runtime.resize_split_request(px(180.0), px(96.0)),
+            runtime.resize_split_request(point(px(180.0), px(0.0)), px(96.0)),
             Some(DockSplitterResizeRequest {
-                split,
-                fractions: vec![0.7, 0.3],
+                updates: vec![DockSplitResize::new(split, [0.7, 0.3])],
             })
         );
+    }
+
+    #[test]
+    fn corner_splitter_drag_produces_two_axis_resize_request() {
+        let horizontal = DockNodeId::null();
+        let vertical = DockNodeId::null();
+        let mut runtime = DockInteractionRuntime::default();
+        runtime.start_corner_splitter_drag(
+            SplitterDragAxis::new(
+                SplitAxis::Horizontal,
+                horizontal,
+                0,
+                px(100.0),
+                px(400.0),
+                vec![0.5, 0.5],
+            ),
+            SplitterDragAxis::new(
+                SplitAxis::Vertical,
+                vertical,
+                0,
+                px(60.0),
+                px(200.0),
+                vec![0.5, 0.5],
+            ),
+        );
+
+        let request = runtime
+            .resize_split_request(point(px(180.0), px(80.0)), px(20.0))
+            .expect("corner drag should resize both axes");
+        assert_eq!(request.updates.len(), 2);
+        assert_resize_update(&request.updates[0], horizontal, &[0.7, 0.3]);
+        assert_resize_update(&request.updates[1], vertical, &[0.6, 0.4]);
     }
 
     #[test]
@@ -1318,7 +1422,14 @@ mod tests {
         let mut runtime = DockInteractionRuntime::default();
 
         assert!(!runtime.finish_splitter_drag());
-        runtime.start_splitter_drag(split, 0, px(100.0), px(400.0), vec![0.5, 0.5]);
+        runtime.start_splitter_drag(
+            SplitAxis::Horizontal,
+            split,
+            0,
+            px(100.0),
+            px(400.0),
+            vec![0.5, 0.5],
+        );
         assert!(runtime.finish_splitter_drag());
         assert!(!runtime.finish_splitter_drag());
     }

@@ -20,7 +20,7 @@ pub(crate) enum DockFloatingChromeTarget {
 ///
 /// Render code reads this session instead of repeatedly reaching through `DockHost` into the
 /// workspace or controller. UI event callbacks still commit through the live owner when they fire.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct DockHostRenderSession {
     space: DockSpaceId,
     selector_prefix: String,
