@@ -19,18 +19,19 @@ use jellyflow::{
             measurement::NodeHandleMeasurementSource,
         },
         schema::{
-            NodeChromeKind, NodeControlKind, NodeKitRegistry, NodeRegistry, NodeSurfaceProjection,
+            NodeChromeKind, NodeKitRegistry, NodeRegistry, NodeSurfaceProjection,
             NodeSurfaceSlotDescriptor, NodeSurfaceSlotKind, NodeSurfaceSlotProjection,
         },
     },
 };
 use jellyflow_open_gpui::{
+    OpenGpuiControlPlan, OpenGpuiControlPrimitive,
     OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
     OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout,
     OpenGpuiRepeatableSurfaceLayout as NodeRepeatableSurfaceLayout,
     OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection,
-    project_node_measurement, repeatable_surface_projection,
+    project_node_measurement, project_slot_controls, repeatable_surface_projection,
 };
 use open_gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Pixels, Window,
@@ -44,7 +45,10 @@ use open_gpui_canvas::{
 };
 use open_gpui_platform::application;
 use open_gpui_ui_components::prelude::Sizable;
-use open_gpui_ui_components::{Badge, BadgeVariant, Button, ButtonVariant, Progress};
+use open_gpui_ui_components::{
+    Badge, BadgeVariant, Button, ButtonVariant, ListboxOption, NumberInput, Progress, Select,
+    Slider, Switch, TextInput, Textarea,
+};
 use open_gpui_ui_core::Size;
 use serde_json::Value;
 
@@ -108,6 +112,7 @@ struct NodeSurfaceSummary {
     inspectors: usize,
     blackboards: usize,
     repeatables: Vec<NodeRepeatableSurfaceProjection>,
+    node_data: Value,
 }
 
 struct NodeSummary {
@@ -615,6 +620,7 @@ fn render_node_surface(bounds: Bounds<Pixels>, surface: NodeSurfaceSummary) -> i
         .children(render_surface_slots(
             component_layout,
             surface.document_bounds,
+            surface.node_data.clone(),
             inner_width,
             inner_height,
         ))
@@ -673,6 +679,7 @@ fn node_surface_summary_for_node(
         inspectors: descriptor.inspectors.len(),
         blackboards: descriptor.blackboards.len(),
         repeatables,
+        node_data: data,
     })
 }
 
@@ -813,13 +820,14 @@ fn chrome_view_bounds(
 fn render_surface_slots(
     layout: NodeSurfaceComponentLayout,
     document_bounds: JellyRect,
+    node_data: Value,
     view_width: Pixels,
     view_height: Pixels,
 ) -> Vec<AnyElement> {
     let mut elements = layout
         .slots
         .into_iter()
-        .map(|slot| render_node_slot(slot, document_bounds, view_width, view_height))
+        .map(|slot| render_node_slot(slot, document_bounds, &node_data, view_width, view_height))
         .map(|slot| slot.into_any_element())
         .collect::<Vec<_>>();
     elements.extend(layout.repeatables.into_iter().map(|repeatable| {
@@ -832,6 +840,7 @@ fn render_surface_slots(
 fn render_node_slot(
     slot_layout: NodeSurfaceSlotLayout,
     document_bounds: JellyRect,
+    node_data: &Value,
     view_width: Pixels,
     view_height: Pixels,
 ) -> impl IntoElement {
@@ -885,6 +894,7 @@ fn render_node_slot(
         .child(render_slot_value(
             &slot,
             slot_layout.descriptor.as_ref(),
+            node_data,
             value,
         ))
 }
@@ -947,12 +957,13 @@ fn render_slot_label(
 fn render_slot_value(
     slot: &NodeSurfaceSlotProjection,
     descriptor: Option<&NodeSurfaceSlotDescriptor>,
+    node_data: &Value,
     value: String,
 ) -> AnyElement {
     if let Some(descriptor) = descriptor
         && !descriptor.controls.is_empty()
     {
-        return render_slot_controls(slot, descriptor, &value).into_any_element();
+        return render_slot_controls(descriptor, node_data, &value).into_any_element();
     }
 
     match slot.kind {
@@ -986,62 +997,16 @@ fn render_slot_value(
 }
 
 fn render_slot_controls(
-    slot: &NodeSurfaceSlotProjection,
     descriptor: &NodeSurfaceSlotDescriptor,
+    node_data: &Value,
     value: &str,
 ) -> impl IntoElement {
-    let controls = descriptor
-        .controls
+    let plans = project_slot_controls(node_data, descriptor);
+    let controls = plans
         .iter()
         .take(2)
         .enumerate()
-        .map(|(index, control)| match control.kind {
-            NodeControlKind::Toggle => Badge::new(
-                format!("jellyflow-control-toggle:{}:{index}", control.key),
-                control
-                    .display_label()
-                    .unwrap_or(control.key.as_str())
-                    .to_string(),
-            )
-            .variant(BadgeVariant::Outline)
-            .with_size(Size::XSmall)
-            .into_any_element(),
-            NodeControlKind::Slider | NodeControlKind::NumberInput => div()
-                .w(px(72.0))
-                .flex_shrink_0()
-                .child(
-                    Progress::new(
-                        format!("jellyflow-control-progress:{}:{index}", control.key),
-                        value.to_string(),
-                    )
-                    .value(42.0)
-                    .with_size(Size::XSmall),
-                )
-                .into_any_element(),
-            NodeControlKind::Select
-            | NodeControlKind::Asset
-            | NodeControlKind::VariablePicker
-            | NodeControlKind::PortBinding => Button::new(
-                format!("jellyflow-control-select:{}:{index}", control.key),
-                control
-                    .display_label()
-                    .unwrap_or(control.key.as_str())
-                    .to_string(),
-            )
-            .variant(ButtonVariant::Secondary)
-            .with_size(Size::XSmall)
-            .into_any_element(),
-            _ => Badge::new(
-                format!("jellyflow-control-text:{}:{index}", control.key),
-                control
-                    .display_label()
-                    .unwrap_or(control.key.as_str())
-                    .to_string(),
-            )
-            .variant(BadgeVariant::Default)
-            .with_size(Size::XSmall)
-            .into_any_element(),
-        })
+        .map(|(index, control)| render_control_plan(control, index))
         .collect::<Vec<_>>();
 
     div()
@@ -1057,9 +1022,144 @@ fn render_slot_controls(
                 .text_color(rgb(0x475569))
                 .truncate()
                 .min_w(px(0.0))
-                .child(format!("{} · {}", slot.value, descriptor.controls.len())),
+                .child(format!("{value} · {}", plans.len())),
         )
         .children(controls)
+}
+
+fn render_control_plan(control: &OpenGpuiControlPlan, index: usize) -> AnyElement {
+    let id = format!("jellyflow-control:{}:{index}", control.key);
+    let disabled = control.disabled_reason.is_some();
+    let read_only = control.read_only || !control.is_editable();
+    let label = control.label.clone();
+    let value = control_value_label(control);
+
+    match control.primitive {
+        OpenGpuiControlPrimitive::TextInput => TextInput::new(id, label)
+            .value(value)
+            .placeholder(control.placeholder.clone().unwrap_or_default())
+            .disabled(disabled)
+            .read_only(read_only)
+            .with_size(Size::XSmall)
+            .into_any_element(),
+        OpenGpuiControlPrimitive::TextArea => Textarea::new(id, label)
+            .value(value)
+            .placeholder(control.placeholder.clone().unwrap_or_default())
+            .rows(2)
+            .disabled(disabled)
+            .read_only(read_only)
+            .with_size(Size::XSmall)
+            .into_any_element(),
+        OpenGpuiControlPrimitive::NumberInput => NumberInput::new(id, label)
+            .value(control_number_value(control))
+            .disabled(disabled)
+            .read_only(read_only)
+            .with_size(Size::XSmall)
+            .into_any_element(),
+        OpenGpuiControlPrimitive::Select | OpenGpuiControlPrimitive::MultiSelect => {
+            let selected = control_value_label(control);
+            let select = Select::new(id, label)
+                .options(control_options(control))
+                .placeholder(
+                    control
+                        .placeholder
+                        .clone()
+                        .unwrap_or_else(|| "Select".to_string()),
+                )
+                .selected(selected)
+                .disabled(disabled || control.options.is_empty())
+                .with_size(Size::XSmall);
+            select.into_any_element()
+        }
+        OpenGpuiControlPrimitive::Switch => Switch::new(id)
+            .label(label)
+            .checked(control_bool_value(control))
+            .disabled(disabled)
+            .with_size(Size::XSmall)
+            .into_any_element(),
+        OpenGpuiControlPrimitive::Slider => Slider::new(id, label)
+            .value(control_number_value(control))
+            .disabled(disabled)
+            .with_size(Size::XSmall)
+            .into_any_element(),
+        OpenGpuiControlPrimitive::CodeEditor | OpenGpuiControlPrimitive::ColorSwatch => {
+            Badge::new(id, format!("{}: {}", control.label, value))
+                .variant(BadgeVariant::Default)
+                .with_size(Size::XSmall)
+                .into_any_element()
+        }
+        OpenGpuiControlPrimitive::AssetPickerStub
+        | OpenGpuiControlPrimitive::VariablePickerStub
+        | OpenGpuiControlPrimitive::PortBindingDisplay => {
+            Button::new(id, format!("{}*", control.label))
+                .variant(ButtonVariant::Secondary)
+                .with_size(Size::XSmall)
+                .into_any_element()
+        }
+    }
+}
+
+fn control_options(control: &OpenGpuiControlPlan) -> Vec<ListboxOption> {
+    control
+        .options
+        .iter()
+        .map(|option| {
+            ListboxOption::new(json_value_label(&option.value), option.label.clone())
+                .disabled(option.disabled)
+        })
+        .collect()
+}
+
+fn control_value_label(control: &OpenGpuiControlPlan) -> String {
+    control
+        .value
+        .as_ref()
+        .map(json_value_label)
+        .unwrap_or_default()
+}
+
+fn control_number_value(control: &OpenGpuiControlPlan) -> f32 {
+    control
+        .value
+        .as_ref()
+        .and_then(|value| match value {
+            Value::Number(number) => number.as_f64(),
+            Value::String(text) => text.parse::<f64>().ok(),
+            _ => None,
+        })
+        .unwrap_or_default() as f32
+}
+
+fn control_bool_value(control: &OpenGpuiControlPlan) -> bool {
+    control
+        .value
+        .as_ref()
+        .and_then(|value| match value {
+            Value::Bool(value) => Some(*value),
+            Value::String(text) => match text.as_str() {
+                "true" | "yes" | "on" | "1" => Some(true),
+                "false" | "no" | "off" | "0" => Some(false),
+                _ => None,
+            },
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+fn json_value_label(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => value.clone(),
+        Value::Array(values) => values
+            .iter()
+            .map(json_value_label)
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join(", "),
+        Value::Object(_) => value.to_string(),
+    }
 }
 
 fn render_action_buttons(slot: &NodeSurfaceSlotProjection, value: &str) -> impl IntoElement {
@@ -1802,7 +1902,10 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jellyflow::runtime::runtime::measurement::{MeasuredSurfaceAnchor, NodeMeasurement};
+    use jellyflow::runtime::{
+        runtime::measurement::{MeasuredSurfaceAnchor, NodeMeasurement},
+        schema::NodeControlKind,
+    };
     use jellyflow_open_gpui::projected_node_surface_component_layout;
 
     #[test]
