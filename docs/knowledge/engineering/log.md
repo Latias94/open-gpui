@@ -6,6 +6,59 @@ status: active
 
 # Log
 
+- 2026-06-30: Started the P2/P3 fearless component refactor goal on
+  `refactor/component-p2-p3-cleanup` from `main` / `origin/main`. Read-only subagent lanes are
+  `contracts`, `large_modules`, `runtime_patterns`, and `exports_tests`; the first main-thread
+  target is the `ui_components` component contract source-scanning blind spot for split component
+  directories.
+- 2026-06-30: Added a root/prelude re-export alignment contract in
+  `crates/ui_components/tests/components.rs`. The test parses explicit `pub use` token sets from
+  `src/lib.rs` and `src/prelude.rs`, keeps adapter-only root exports out of the default surface, and
+  records the intentional prelude-only convenience tokens as an allowlist.
+- 2026-06-30: Hardened component contract source scanning for split component directories.
+  `component_source_inputs` can now name either `.rs` files or directories, directory inputs expand
+  recursively to source paths, and public method scanning requires the target impl to exist across
+  the expanded set instead of every mapped file. Verified with focused component contract nextest
+  runs and `cargo check -p open-gpui-ui-components --tests`.
+- 2026-06-30: Added the crate-private `consume_overlay_event` helper in
+  `crates/ui_components/src/overlay.rs` and replaced repeated overlay-handled event-consumption
+  pairs across Dialog, Popover, HoverCard, Select, Combobox, Menu, ContextMenu, and Sheet close/barrier
+  paths without changing each component's open/close runtime decisions. Verified with focused
+  overlay/component nextest coverage and `cargo check -p open-gpui-ui-components --tests`.
+- 2026-06-30: Kept `consume_overlay_event` scoped to overlay open/close and barrier handling:
+  Select and Combobox trigger open/close paths use the helper, while Menu and ContextMenu submenu
+  navigation/focus/activation still consume keyboard events locally. Verified with focused
+  select/combobox/menu/context-menu nextest coverage and
+  `cargo check -p open-gpui-ui-components --tests`.
+- 2026-06-30: Split the broad component API inventory contract test into focused checks for
+  row uniqueness/classification, public method surface drift, ownership vocabulary, and stateful
+  regression sentinels. Verified the four focused inventory tests and
+  `cargo check -p open-gpui-ui-components --tests`.
+- 2026-06-30: Split the Tree render-plan API into
+  `crates/ui_components/src/tree/render_plan.rs`, preserving `tree` module exports and updating the
+  component contract source mapping. Verified with `cargo check -p open-gpui-ui-components --tests`
+  and focused tree/export/contract nextest coverage.
+- 2026-06-30: Split Tree movement payloads and `apply_tree_move` into
+  `crates/ui_components/src/tree/movement.rs`, preserving `tree` module exports and updating the
+  component contract source mapping. Verified with `cargo check -p open-gpui-ui-components --tests`
+  and focused tree movement/export/contract nextest coverage.
+- 2026-06-30: Introduced a crate-internal `MenuKeyboardIntent` for Menu/ContextMenu keyboard
+  interpretation, keeping each adapter's runtime close/focus/selection side effects local instead
+  of adding a shallow shared application helper. Verified focused menu/context-menu keyboard tests
+  and `cargo check -p open-gpui-ui-components --tests`.
+- 2026-06-30: Extracted crate-private `text_editing` UTF-16/range helpers from TextInput and
+  Textarea controllers, keeping controller/runtime responsibilities unchanged while centralizing
+  platform text offset conversion. Verified focused text editing, TextInput, and Textarea tests plus
+  `cargo check -p open-gpui-ui-components --tests`.
+- 2026-06-29: Continued `docs/plans/2026-06-29-002-refactor-table-depth-second-stage-plan.md`
+  on `refactor/table-depth-second-stage`. The Table adapter is now split into concern-owned
+  modules for header rendering, resize/reorder affordances, body rows, cells, editors, runtime,
+  resolution, render plans, filtering recipes, column visibility, toolbar, layout, metrics, and
+  virtualization. Added source-owner and gallery conformance assertions so the old
+  `ui_components/src/table.rs` adapter path cannot reappear silently. Verified the U6/U7 focused
+  surface with `cargo fmt -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-components --tests`, `cargo nextest run -p open-gpui-ui-components table`, and the
+  public inventory focused nextest commands before the final full verification pass.
 - 2026-06-28: Completed the choice-surface refactor implementation for
   `docs/plans/2026-06-28-001-refactor-ui-choice-surface-plan.md` in the working tree.
   `ui_components::choice` now centralizes stable-value projection, query normalization, and
@@ -35,8 +88,7 @@ status: active
   root, pads the body by the same band height, and keeps vertical wheel input inside the table
   body while the header stays fixed. Updated the runtime and gallery proofs so the pinned body
   scroll test and the `release-rollup` smoke both assert stable header bounds across vertical
-  scroll. Verified with `cargo fmt --all -- crates/ui_components/src/table.rs
-  crates/ui_components/tests/components.rs examples/ui-foundation-gallery/tests/foundation_gallery.rs`,
+  scroll. Verified with focused table adapter formatting and gallery smoke coverage,
   `cargo nextest run -p open-gpui-ui-components table`,
   `cargo nextest run -p open-gpui-ui-foundation-gallery table`, and `git diff --check`.
 - 2026-06-27: Added adapter-owned submenu hover timers and close timing on

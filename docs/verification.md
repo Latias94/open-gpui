@@ -173,12 +173,25 @@ proof: it enters the Table family view, targets the `select-release` sample, ope
 `table_runtime_select_cell_edit_emits_change_without_row_interaction`, and the other table cell
 edit gates prove the fixed-option `Select` editor stays a leaf-cell recipe rather than a new row
 interaction path.
+The Table modules are now verified by ownership layer. `open-gpui-ui-core` owns renderer-neutral
+row-model, column, header, filtering, faceting, aggregation, sizing, selection, and virtualizer
+contracts. `open-gpui-ui-components` owns the `Table` facade, render-plan resolution, keyed runtime,
+header/body/cell/editor/resize element assembly, callback payloads, and public export inventory.
+`open-gpui-ui-foundation-gallery` owns the end-to-end samples and scroll containment proofs. For a
+Table-only change, prefer the focused commands below before the full `xtask` gate; keep the public
+surface and gallery-conformance commands when moving code between modules so source-owner drift is
+detected early.
 
 ```powershell
+cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
+cargo check -p open-gpui-ui-core --tests
+cargo check -p open-gpui-ui-components --tests
 cargo nextest run -p open-gpui-ui-core table
 cargo nextest run -p open-gpui-ui-components table
 cargo nextest run -p open-gpui-ui-foundation-gallery table
-cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_faceted_filter_updates_table_rows components_gallery_smoke_range_filter_updates_table_rows components_gallery_smoke_predicate_filter_updates_table_rows table
+cargo nextest run -p open-gpui-ui-components public_reexports_stay_explicit_without_wildcards crate_root_and_prelude_exports_remain_explicit table_public_exports_include_core_table_and_virtualizer_contracts component_api_inventory_uses_stable_ownership_vocabulary table_component_source_mapping_tracks_split_render_owners
+cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_focused_table_scroll_stays_inside_sample components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample
+cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_faceted_filter_updates_table_rows components_gallery_smoke_range_filter_updates_table_rows components_gallery_smoke_predicate_filter_updates_table_rows components_gallery_smoke_column_visibility_updates_release_matrix components_gallery_smoke_resizable_table_resize_updates_sample components_gallery_smoke_grouped_table_column_reorder_updates_sample
 cargo nextest run -p open-gpui-ui-core numeric_range_filters_match_finite_number_cells_inclusively numeric_range_filters_normalize_open_and_reversed_bounds categorical_filters_match_exact_tokens_and_multiple_values
 cargo nextest run -p open-gpui-ui-components table_range_filter_state_resolves_bounds_and_popover_contract table_range_filter_change_updates_filters_and_resets_pagination table_render_plan_exposes_faceting_metadata table_public_exports_include_core_table_and_virtualizer_contracts component_api_inventory_uses_stable_ownership_vocabulary
 cargo nextest run -p open-gpui-ui-components table_predicate_filter

@@ -1363,64 +1363,74 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
     }
 }
 
-fn component_source_file(component: &str) -> &'static str {
+fn component_source_inputs(component: &str) -> &'static [&'static str] {
     match component {
-        "Accordion" => "accordion.rs",
-        "Button" => "button.rs",
-        "Badge" => "badge.rs",
-        "Breadcrumb" => "breadcrumb.rs",
-        "Collapsible" => "collapsible.rs",
-        "Link" => "link.rs",
-        "Tag" => "tag.rs",
-        "ToastStack" => "toast.rs",
-        "IconButton" => "icon_button.rs",
-        "Switch" => "switch.rs",
-        "Checkbox" => "checkbox.rs",
-        "RadioGroup" => "radio.rs",
-        "Toggle" => "toggle.rs",
-        "ToggleGroup" => "toggle_group.rs",
-        "Toolbar" => "toolbar.rs",
-        "Sidebar" => "sidebar.rs",
-        "Tree" => "tree.rs",
-        "Listbox" => "listbox.rs",
-        "Select" => "select.rs",
-        "Combobox" => "combobox.rs",
-        "Command" => "command.rs",
-        "Label" => "label.rs",
-        "TextInput" => "text_input.rs",
-        "Textarea" => "textarea.rs",
-        "Field" => "field.rs",
-        "Tabs" => "tabs.rs",
-        "ScrollArea" => "scroll_area.rs",
-        "Splitter" => "splitter.rs",
-        "Table" => "table.rs",
-        "TableColumnVisibility" => "table.rs",
-        "TableFacetedFilter" => "table.rs",
-        "TableGlobalFilter" => "table.rs",
-        "TablePredicateFilter" => "table.rs",
-        "TableRangeFilter" => "table.rs",
-        "TableToolbar" => "table.rs",
-        "VirtualizedList" => "virtualized_list.rs",
-        "StatusCue" => "feedback.rs",
-        "EmptyState" => "feedback.rs",
-        "Separator" => "separator.rs",
-        "Kbd" => "kbd.rs",
-        "Progress" => "progress.rs",
-        "Skeleton" => "skeleton.rs",
-        "Avatar" => "avatar.rs",
-        "AvatarGroup" => "avatar.rs",
-        "Tooltip" => "tooltip.rs",
-        "HoverCard" => "hover_card.rs",
-        "Popover" => "popover.rs",
-        "Dialog" => "dialog.rs",
-        "AlertDialog" => "alert_dialog.rs",
-        "Sheet" => "sheet.rs",
-        "Menu" => "menu.rs",
-        "ContextMenu" => "context_menu.rs",
-        "Slider" => "slider.rs",
-        "NumberInput" => "number_input.rs",
+        "Accordion" => &["accordion.rs"],
+        "Button" => &["button.rs"],
+        "Badge" => &["badge.rs"],
+        "Breadcrumb" => &["breadcrumb.rs"],
+        "Collapsible" => &["collapsible.rs"],
+        "Link" => &["link.rs"],
+        "Tag" => &["tag.rs"],
+        "ToastStack" => &["toast.rs"],
+        "IconButton" => &["icon_button.rs"],
+        "Switch" => &["switch.rs"],
+        "Checkbox" => &["checkbox.rs"],
+        "RadioGroup" => &["radio.rs"],
+        "Toggle" => &["toggle.rs"],
+        "ToggleGroup" => &["toggle_group.rs"],
+        "Toolbar" => &["toolbar.rs"],
+        "Sidebar" => &["sidebar.rs"],
+        "Tree" => &["tree.rs", "tree/movement.rs", "tree/render_plan.rs"],
+        "Listbox" => &["listbox.rs"],
+        "Select" => &["select.rs"],
+        "Combobox" => &["combobox.rs"],
+        "Command" => &["command.rs"],
+        "Label" => &["label.rs"],
+        "TextInput" => &["text_input.rs"],
+        "Textarea" => &["textarea.rs"],
+        "Field" => &["field.rs"],
+        "Tabs" => &["tabs.rs"],
+        "ScrollArea" => &["scroll_area.rs"],
+        "Splitter" => &["splitter.rs"],
+        "Table" => &["table/mod.rs", "table/resolve.rs"],
+        "TableColumnVisibility" => &["table/column_visibility"],
+        "TableFacetedFilter" => &["table/faceted_filter"],
+        "TableGlobalFilter" => &["table/global_filter"],
+        "TablePredicateFilter" => &["table/predicate_filter"],
+        "TableRangeFilter" => &["table/range_filter"],
+        "TableToolbar" => &["table/toolbar.rs"],
+        "VirtualizedList" => &["virtualized_list.rs"],
+        "StatusCue" => &["feedback.rs"],
+        "EmptyState" => &["feedback.rs"],
+        "Separator" => &["separator.rs"],
+        "Kbd" => &["kbd.rs"],
+        "Progress" => &["progress.rs"],
+        "Skeleton" => &["skeleton.rs"],
+        "Avatar" => &["avatar.rs"],
+        "AvatarGroup" => &["avatar.rs"],
+        "Tooltip" => &["tooltip.rs"],
+        "HoverCard" => &["hover_card.rs"],
+        "Popover" => &["popover.rs"],
+        "Dialog" => &["dialog.rs"],
+        "AlertDialog" => &["alert_dialog.rs"],
+        "Sheet" => &["sheet.rs"],
+        "Menu" => &["menu.rs"],
+        "ContextMenu" => &["context_menu.rs"],
+        "Slider" => &["slider.rs"],
+        "NumberInput" => &["number_input.rs"],
         _ => panic!("missing source file mapping for `{component}`"),
     }
+}
+
+fn table_render_owner_files() -> &'static [&'static str] {
+    &[
+        "table/body/mod.rs",
+        "table/cell.rs",
+        "table/editors.rs",
+        "table/header.rs",
+        "table/resize.rs",
+    ]
 }
 
 fn component_public_methods(component: &str) -> &'static [&'static str] {
@@ -2104,100 +2114,129 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
 fn component_public_methods_from_source(component: &str) -> Vec<String> {
     const MARKER_PREFIX: &str = "impl ";
 
-    let source_file = component_source_file(component);
-    let (source_path, source) = read_component_source_file(source_file);
     let marker = format!("{MARKER_PREFIX}{component} {{");
-    let impl_start = source
-        .find(&marker)
-        .unwrap_or_else(|| panic!("missing `{marker}` in {source_path}"));
-    let body_start = source[impl_start..]
-        .find('{')
-        .map(|offset| impl_start + offset)
-        .expect("impl body should open with `{`");
+    let source_paths = component_source_paths(component);
+    let mut methods = Vec::new();
+    let mut found_impl = false;
 
-    let mut depth = 0usize;
-    let mut body_end = None;
-    for (index, ch) in source[body_start..].char_indices() {
-        match ch {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    body_end = Some(body_start + index);
-                    break;
+    for source_path in &source_paths {
+        let source = read_source_file(source_path);
+        let mut search_start = 0usize;
+
+        while let Some(relative_impl_start) = source[search_start..].find(&marker) {
+            found_impl = true;
+            let impl_start = search_start + relative_impl_start;
+            let body_start = source[impl_start..]
+                .find('{')
+                .map(|offset| impl_start + offset)
+                .expect("impl body should open with `{`");
+
+            let mut depth = 0usize;
+            let mut body_end = None;
+            for (index, ch) in source[body_start..].char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            body_end = Some(body_start + index);
+                            break;
+                        }
+                    }
+                    _ => {}
                 }
             }
-            _ => {}
+            let body_end = body_end.expect("impl body should close");
+            let body = &source[body_start + 1..body_end];
+
+            for line in body.lines() {
+                let trimmed = line.trim_start();
+                if let Some(signature) = trimmed.strip_prefix("pub const fn ") {
+                    let before_paren = signature
+                        .split_once('(')
+                        .map(|(name, _)| name)
+                        .unwrap_or(signature);
+                    let name = before_paren
+                        .split_once('<')
+                        .map(|(name, _)| name)
+                        .unwrap_or(before_paren)
+                        .trim();
+                    methods.push(name.to_string());
+                } else if let Some(signature) = trimmed.strip_prefix("pub fn ") {
+                    let before_paren = signature
+                        .split_once('(')
+                        .map(|(name, _)| name)
+                        .unwrap_or(signature);
+                    let name = before_paren
+                        .split_once('<')
+                        .map(|(name, _)| name)
+                        .unwrap_or(before_paren)
+                        .trim();
+                    methods.push(name.to_string());
+                }
+            }
+
+            search_start = body_end + 1;
         }
     }
-    let body_end = body_end.expect("impl body should close");
-    let body = &source[body_start + 1..body_end];
-    let mut methods = Vec::new();
 
-    for line in body.lines() {
-        let trimmed = line.trim_start();
-        if let Some(signature) = trimmed.strip_prefix("pub const fn ") {
-            let before_paren = signature
-                .split_once('(')
-                .map(|(name, _)| name)
-                .unwrap_or(signature);
-            let name = before_paren
-                .split_once('<')
-                .map(|(name, _)| name)
-                .unwrap_or(before_paren)
-                .trim();
-            methods.push(name.to_string());
-        } else if let Some(signature) = trimmed.strip_prefix("pub fn ") {
-            let before_paren = signature
-                .split_once('(')
-                .map(|(name, _)| name)
-                .unwrap_or(signature);
-            let name = before_paren
-                .split_once('<')
-                .map(|(name, _)| name)
-                .unwrap_or(before_paren)
-                .trim();
-            methods.push(name.to_string());
-        }
+    if !found_impl {
+        panic!(
+            "missing `{marker}` in component source mapping for `{component}`: {source_paths:?}"
+        );
     }
 
     methods
 }
 
-fn read_component_source_file(source_file: &str) -> (String, String) {
+fn component_source_paths(component: &str) -> Vec<std::path::PathBuf> {
     let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let flat_path = source_dir.join(source_file);
-    if flat_path.is_file() {
-        let source = std::fs::read_to_string(&flat_path)
-            .unwrap_or_else(|error| panic!("failed to read {flat_path:?}: {error}"));
-        return (flat_path.display().to_string(), source);
-    }
+    let mut paths = Vec::new();
 
-    let Some(module_name) = source_file.strip_suffix(".rs") else {
-        panic!("source file mapping must end in .rs: {source_file}");
-    };
-    let mod_path = source_dir.join(module_name).join("mod.rs");
-    let source = std::fs::read_to_string(&mod_path)
-        .unwrap_or_else(|error| panic!("failed to read {mod_path:?}: {error}"));
-    (mod_path.display().to_string(), source)
-}
-
-fn ui_component_source_files() -> Vec<std::path::PathBuf> {
-    fn collect_rs_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
-        let entries = std::fs::read_dir(dir)
-            .unwrap_or_else(|error| panic!("failed to read source dir {dir:?}: {error}"));
-        for entry in entries {
-            let path = entry
-                .unwrap_or_else(|error| panic!("failed to read source dir entry: {error}"))
-                .path();
-            if path.is_dir() {
-                collect_rs_files(&path, files);
-            } else if path.extension().is_some_and(|extension| extension == "rs") {
-                files.push(path);
+    for source_entry in component_source_inputs(component) {
+        let mapped_path = source_dir.join(source_entry);
+        if mapped_path.is_file() {
+            paths.push(mapped_path);
+        } else if mapped_path.is_dir() {
+            collect_rs_files(&mapped_path, &mut paths);
+        } else if let Some(module_name) = source_entry.strip_suffix(".rs") {
+            let mod_path = source_dir.join(module_name).join("mod.rs");
+            if mod_path.is_file() {
+                paths.push(mod_path);
+            } else {
+                panic!("component source input `{source_entry}` does not exist");
             }
+        } else {
+            panic!("component source input `{source_entry}` must be a .rs file or directory");
         }
     }
 
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn read_source_file(source_path: &std::path::Path) -> String {
+    std::fs::read_to_string(source_path)
+        .unwrap_or_else(|error| panic!("failed to read {source_path:?}: {error}"))
+}
+
+fn collect_rs_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    let entries = std::fs::read_dir(dir)
+        .unwrap_or_else(|error| panic!("failed to read source dir {dir:?}: {error}"));
+    for entry in entries {
+        let path = entry
+            .unwrap_or_else(|error| panic!("failed to read source dir entry: {error}"))
+            .path();
+        if path.is_dir() {
+            collect_rs_files(&path, files);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            files.push(path);
+        }
+    }
+}
+
+fn ui_component_source_files() -> Vec<std::path::PathBuf> {
     let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     collect_rs_files(&source_dir, &mut files);
@@ -11735,6 +11774,88 @@ fn component_api_inventory_covers_official_gallery_catalog() {
 }
 
 #[test]
+fn table_component_source_mapping_tracks_split_render_owners() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    assert!(
+        !source_dir.join("table.rs").exists(),
+        "Table should resolve through table/mod.rs instead of the old single-file adapter"
+    );
+    assert_eq!(
+        component_source_inputs("Table"),
+        ["table/mod.rs", "table/resolve.rs"]
+    );
+
+    for owner in table_render_owner_files() {
+        assert!(
+            source_dir.join(owner).is_file(),
+            "split Table render owner `{owner}` should exist"
+        );
+    }
+}
+
+#[test]
+fn component_source_mapping_expands_split_component_directories() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let source_files = component_source_paths("TableRangeFilter")
+        .into_iter()
+        .map(|path| {
+            path.strip_prefix(&source_dir)
+                .unwrap_or_else(|error| panic!("failed to strip source dir from {path:?}: {error}"))
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        source_files.contains(&"table/range_filter/component.rs".to_string()),
+        "split component directory mapping should include its public component file"
+    );
+    assert!(
+        source_files.contains(&"table/range_filter/state.rs".to_string()),
+        "split component directory mapping should include adjacent public contract files"
+    );
+}
+
+#[test]
+fn component_api_inventory_rows_are_unique_and_classified() {
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in COMPONENT_API_INVENTORY {
+        assert!(
+            seen.insert(entry.component),
+            "component API inventory contains duplicate row for `{}`",
+            entry.component
+        );
+        assert!(
+            entry.has_classification(),
+            "{} must document at least one API ownership bucket or no-interaction note",
+            entry.component
+        );
+        assert!(
+            entry.renderer_neutral_state,
+            "{} resolved state must remain renderer-neutral",
+            entry.component
+        );
+    }
+}
+
+#[test]
+fn component_api_inventory_tracks_public_method_surface() {
+    for entry in COMPONENT_API_INVENTORY {
+        let source_methods = component_public_methods_from_source(entry.component);
+        let expected_methods = component_public_methods(entry.component)
+            .iter()
+            .map(|method| method.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            source_methods, expected_methods,
+            "{} public method surface drifted; update COMPONENT_API_INVENTORY and the method baseline together",
+            entry.component
+        );
+    }
+}
+
+#[test]
 fn component_api_inventory_uses_stable_ownership_vocabulary() {
     const CURRENT_CALLBACK_NAMES: &[&str] = &[
         "on_activate",
@@ -11762,34 +11883,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
     ];
     const CURRENT_LEGACY_SEED_INPUTS: &[(&str, &str)] = &[];
 
-    let mut seen = std::collections::BTreeSet::new();
     for entry in COMPONENT_API_INVENTORY {
-        assert!(
-            seen.insert(entry.component),
-            "component API inventory contains duplicate row for `{}`",
-            entry.component
-        );
-        assert!(
-            entry.has_classification(),
-            "{} must document at least one API ownership bucket or no-interaction note",
-            entry.component
-        );
-        assert!(
-            entry.renderer_neutral_state,
-            "{} resolved state must remain renderer-neutral",
-            entry.component
-        );
-        let source_methods = component_public_methods_from_source(entry.component);
-        let expected_methods = component_public_methods(entry.component)
-            .iter()
-            .map(|method| method.to_string())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            source_methods, expected_methods,
-            "{} public method surface drifted; update COMPONENT_API_INVENTORY and the method baseline together",
-            entry.component
-        );
-
         for seed in entry.default_seeds {
             assert!(
                 seed.builder.starts_with("default_"),
@@ -11829,7 +11923,10 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
             );
         }
     }
+}
 
+#[test]
+fn component_api_inventory_keeps_regression_sentinels_for_stateful_components() {
     assert_inventory_contains_controlled_input("TextInput", "value");
     assert_inventory_contains_callback("TextInput", "on_change", "String");
     assert_inventory_contains_controlled_input("Textarea", "value");
@@ -12123,6 +12220,114 @@ fn public_reexports_stay_explicit_without_wildcards() {
         Vec::<String>::new(),
         "public re-exports must stay explicit, including adapter-only groupings"
     );
+}
+
+#[test]
+fn crate_root_and_prelude_reexports_stay_intentionally_aligned() {
+    let root_exports = default_reexport_tokens("lib.rs");
+    let prelude_exports = default_reexport_tokens("prelude.rs");
+    let root_only = root_exports
+        .difference(&prelude_exports)
+        .cloned()
+        .collect::<Vec<_>>();
+    let prelude_only = prelude_exports
+        .difference(&root_exports)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        root_only,
+        Vec::<String>::new(),
+        "crate root exports tokens not exposed through prelude; update prelude.rs or document the intentional root-only token here"
+    );
+    assert_eq!(
+        prelude_only,
+        vec![
+            "ActiveDescendant".to_string(),
+            "CollectionPosition".to_string(),
+            "ControllableState".to_string(),
+            "Sizable".to_string(),
+            "Size".to_string(),
+            "ThemeTokens".to_string(),
+            "UiA11yElementExt".to_string(),
+        ],
+        "prelude-only exports must stay intentional; update the allowlist when the convenience prelude grows"
+    );
+}
+
+fn default_reexport_tokens(file_name: &str) -> std::collections::BTreeSet<String> {
+    let source = std::fs::read_to_string(format!("{}/src/{file_name}", env!("CARGO_MANIFEST_DIR")))
+        .unwrap_or_else(|error| panic!("failed to read {file_name}: {error}"));
+    let source = if file_name == "lib.rs" {
+        source_without_gpui_adapter_module(&source)
+    } else {
+        source
+    };
+    let mut exports = std::collections::BTreeSet::new();
+    let mut statement = String::new();
+    let mut collecting = false;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if collecting {
+            statement.push(' ');
+            statement.push_str(trimmed);
+        } else if trimmed.starts_with("pub use ") {
+            statement.clear();
+            statement.push_str(trimmed);
+            collecting = true;
+        }
+
+        if collecting && trimmed.ends_with(';') {
+            collect_public_reexport_tokens(&statement, &mut exports);
+            statement.clear();
+            collecting = false;
+        }
+    }
+
+    exports
+}
+
+fn collect_public_reexport_tokens(
+    statement: &str,
+    exports: &mut std::collections::BTreeSet<String>,
+) {
+    let statement = statement.trim().trim_end_matches(';');
+    let Some(rest) = statement.strip_prefix("pub use ") else {
+        return;
+    };
+    if rest.contains("::*") {
+        return;
+    }
+
+    if let Some((_, group)) = rest.split_once("::{") {
+        let group = group.trim_end_matches('}');
+        for item in group.split(',') {
+            collect_public_reexport_token(item, exports);
+        }
+    } else {
+        collect_public_reexport_token(rest, exports);
+    }
+}
+
+fn collect_public_reexport_token(item: &str, exports: &mut std::collections::BTreeSet<String>) {
+    let token = item.trim();
+    if token.is_empty() {
+        return;
+    }
+
+    let exported_name = token
+        .split_once(" as ")
+        .map(|(_, alias)| alias.trim())
+        .unwrap_or(token)
+        .rsplit("::")
+        .next()
+        .unwrap_or(token)
+        .trim();
+
+    if !exported_name.is_empty() {
+        exports.insert(exported_name.to_owned());
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

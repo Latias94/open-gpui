@@ -31,7 +31,7 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-core table
   - cargo nextest run -p open-gpui-ui-components table
   - cargo nextest run -p open-gpui-ui-foundation-gallery table
-  - cargo fmt --all -- crates/ui_components/src/table.rs crates/ui_components/tests/components.rs examples/ui-foundation-gallery/tests/foundation_gallery.rs
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - cargo nextest run -p open-gpui-ui-components table
   - cargo nextest run -p open-gpui-ui-foundation-gallery table
   - git diff --check
@@ -48,7 +48,7 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-components table
   - cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_grouped_table_scroll_stays_inside_sample
   - cargo nextest run -p open-gpui-ui-foundation-gallery table
-  - cargo fmt --all -- crates/ui_components/src/table.rs crates/ui_components/tests/components.rs examples/ui-foundation-gallery/src/pages/components.rs examples/ui-foundation-gallery/src/pages/components/render.rs examples/ui-foundation-gallery/tests/foundation_gallery.rs
+  - cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
   - git diff --check
   - python $HOME\.codex\skills\engineering-wiki-memory\scripts\wiki_memory.py validate --root docs\knowledge\engineering
   - cargo check -p open-gpui-ui-core --tests

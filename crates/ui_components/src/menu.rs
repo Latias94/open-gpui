@@ -24,7 +24,7 @@ use crate::menu_runtime::{
     MenuRuntime, handle_menu_submenu_surface_hover, update_menu_hover_target,
 };
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
     focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
 };
 use crate::roving_focus::{typeahead_target, vertical_roving_navigation_target};
@@ -677,6 +677,24 @@ impl MenuSubmenuNavigation {
     }
 }
 
+/// Renderer-neutral keyboard intent for menu surfaces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MenuKeyboardIntent {
+    /// Escape should close the active submenu branch.
+    DismissSubmenu(MenuSubmenuNavigation),
+    /// Escape should dismiss the root menu surface.
+    DismissRoot,
+    /// Left or Right should move between submenu branches.
+    NavigateSubmenu(MenuSubmenuNavigation),
+    /// Roving focus should move to a visible menu item.
+    FocusItem {
+        focused_path: Vec<String>,
+        focused_value: String,
+    },
+    /// Enter or Space should activate the focused menu item.
+    Activate(MenuSelection),
+}
+
 /// Renderer-neutral surface plan for a submenu that may be rendered as a floating layer.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MenuSubmenuSurface {
@@ -1287,6 +1305,31 @@ impl MenuState {
             "left" => self.close_submenu_target(),
             _ => None,
         }
+    }
+
+    /// Resolves the renderer-neutral keyboard intent for a menu surface key.
+    pub(crate) fn keyboard_intent_for_key(&self, key: &str) -> Option<MenuKeyboardIntent> {
+        if key == "escape" {
+            return Some(
+                self.close_submenu_target()
+                    .map(MenuKeyboardIntent::DismissSubmenu)
+                    .unwrap_or(MenuKeyboardIntent::DismissRoot),
+            );
+        }
+
+        if let Some(target) = self.submenu_navigation_target(key) {
+            return Some(MenuKeyboardIntent::NavigateSubmenu(target));
+        }
+
+        if let Some(target) = self.navigation_target(key) {
+            return Some(MenuKeyboardIntent::FocusItem {
+                focused_path: target.path().to_vec(),
+                focused_value: target.value().to_owned(),
+            });
+        }
+
+        self.activation_for_key(key)
+            .map(MenuKeyboardIntent::Activate)
     }
 
     /// Resolves the next branch/focus target when closing an active submenu branch.
@@ -1977,8 +2020,7 @@ impl RenderOnce for Menu {
                         let focus_restore = focus_restore_for_escape.clone();
                         this.on_key_down(move |event: &KeyDownEvent, window, cx| {
                             if event.keystroke.key.as_str() == "escape" {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 close_menu(
                                     runtime.clone(),
                                     trigger_focus.clone(),
@@ -2114,71 +2156,71 @@ fn menu_content_element(
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
-            let key = event.keystroke.key.as_str();
-            if key == "escape" {
-                cx.stop_propagation();
-                window.prevent_default();
-                if let Some(target) = key_state.close_submenu_target() {
+            let Some(intent) = key_state.keyboard_intent_for_key(event.keystroke.key.as_str())
+            else {
+                return;
+            };
+
+            match intent {
+                MenuKeyboardIntent::DismissSubmenu(target) => {
+                    consume_overlay_event(window, cx);
                     key_runtime.update(cx, |runtime, _| {
                         runtime.apply_submenu_target(&target);
                     });
-                    return;
                 }
-                close_menu(
-                    key_runtime.clone(),
-                    trigger_focus_for_keydown.clone(),
-                    focus_restore_for_keydown.clone(),
-                    key_open_change.clone(),
-                    window,
-                    cx,
-                );
-                return;
-            }
-
-            if let Some(target) = key_state.submenu_navigation_target(key) {
-                cx.stop_propagation();
-                window.prevent_default();
-                key_runtime.update(cx, |runtime, _| {
-                    runtime.apply_submenu_target(&target);
-                });
-                return;
-            }
-
-            if let Some(target) = key_state.navigation_target(key) {
-                cx.stop_propagation();
-                window.prevent_default();
-                let target_value = target.value().to_owned();
-                let target_path = target.path().to_vec();
-                key_runtime.update(cx, |runtime, _| {
-                    runtime.focused_value = Some(target_value);
-                    runtime.focused_path = Some(target_path);
-                });
-                return;
-            }
-
-            if let Some(selection) = key_state.activation_for_key(key) {
-                cx.stop_propagation();
-                window.prevent_default();
-                if let Some(item_handler) = key_items
-                    .iter()
-                    .zip(key_state.visible_items())
-                    .find(|(_, item_state)| item_state.path() == selection.path())
-                    .and_then(|(item, _)| item.select_handler())
-                    .as_ref()
-                {
-                    item_handler(selection.clone(), window, cx);
+                MenuKeyboardIntent::DismissRoot => {
+                    consume_overlay_event(window, cx);
+                    close_menu(
+                        key_runtime.clone(),
+                        trigger_focus_for_keydown.clone(),
+                        focus_restore_for_keydown.clone(),
+                        key_open_change.clone(),
+                        window,
+                        cx,
+                    );
                 }
-                if let Some(on_select) = key_select.as_ref() {
-                    on_select(selection, window, cx);
+                MenuKeyboardIntent::NavigateSubmenu(target) => {
+                    cx.stop_propagation();
+                    window.prevent_default();
+                    key_runtime.update(cx, |runtime, _| {
+                        runtime.apply_submenu_target(&target);
+                    });
                 }
-                close_menu(
-                    key_runtime.clone(),
-                    trigger_focus_for_keydown.clone(),
-                    focus_restore_for_keydown.clone(),
-                    key_open_change.clone(),
-                    window,
-                    cx,
-                );
+                MenuKeyboardIntent::FocusItem {
+                    focused_path,
+                    focused_value,
+                } => {
+                    cx.stop_propagation();
+                    window.prevent_default();
+                    key_runtime.update(cx, |runtime, _| {
+                        runtime.focused_value = Some(focused_value);
+                        runtime.focused_path = Some(focused_path);
+                    });
+                }
+                MenuKeyboardIntent::Activate(selection) => {
+                    cx.stop_propagation();
+                    window.prevent_default();
+                    if let Some(item_handler) = key_items
+                        .iter()
+                        .zip(key_state.visible_items())
+                        .find(|(_, item_state)| item_state.path() == selection.path())
+                        .and_then(|(item, _)| item.select_handler())
+                        .as_ref()
+                    {
+                        item_handler(selection.clone(), window, cx);
+                    }
+                    if let Some(on_select) = key_select.as_ref() {
+                        on_select(selection, window, cx);
+                    }
+                    close_menu(
+                        key_runtime.clone(),
+                        trigger_focus_for_keydown.clone(),
+                        focus_restore_for_keydown.clone(),
+                        key_open_change.clone(),
+                        window,
+                        cx,
+                    );
+                }
             }
         })
         .when(outside_change.is_some(), |this| {

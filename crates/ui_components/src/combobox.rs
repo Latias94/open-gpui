@@ -24,8 +24,8 @@ use crate::listbox::{
     ListboxState,
 };
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, gpui_overlay_state,
-    outside_press_open_change,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
+    gpui_overlay_state, outside_press_open_change,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::text_input::adapter::TextInputController;
@@ -949,8 +949,7 @@ impl RenderOnce for Combobox {
                             event.keystroke.key.as_str(),
                         ) {
                             ComboboxKeyboardAction::Navigate(value) => {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = true;
                                     runtime.active_value = Some(value);
@@ -962,8 +961,7 @@ impl RenderOnce for Combobox {
                                 }
                             }
                             ComboboxKeyboardAction::Select(selection) => {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
                                     runtime.selected_value = Some(selection.value().to_owned());
                                     runtime.active_value = Some(selection.value().to_owned());
@@ -980,8 +978,7 @@ impl RenderOnce for Combobox {
                                 }
                             }
                             ComboboxKeyboardAction::Open => {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = true;
                                 });
@@ -990,8 +987,7 @@ impl RenderOnce for Combobox {
                                 }
                             }
                             ComboboxKeyboardAction::Close => {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 close_combobox(runtime.clone(), on_open_change.clone(), window, cx);
                             }
                             ComboboxKeyboardAction::Ignore => {}
@@ -1210,8 +1206,7 @@ fn combobox_content_element(
         .aria_label(label)
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             if event.keystroke.key.as_str() == "escape" {
-                cx.stop_propagation();
-                window.prevent_default();
+                consume_overlay_event(window, cx);
                 close_combobox(
                     escape_runtime.clone(),
                     escape_open_change.clone(),

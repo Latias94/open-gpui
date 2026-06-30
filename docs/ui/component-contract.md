@@ -499,6 +499,16 @@ adapter keeps row activation independent from selection and expansion; callers d
 click, double-click, Enter, Space, Left, or Right payload changes app-owned `TableState`. The
 render plan exposes `TableColumnRegionRenderPlan` entries and every rendered header/body row has
 stable `left`, `center`, and `right` region debug selectors.
+Table module ownership is deliberately split by responsibility rather than by product feature:
+`open-gpui-ui-core::table` keeps renderer-neutral identity, rows, columns, headers, filtering,
+faceting, aggregation, sizing, selection, and row-model resolution behind `table/mod.rs` re-exports.
+The GPUI adapter keeps `crates/ui_components/src/table/mod.rs` as the public `Table` facade and
+builder, while `resolve.rs`, `runtime.rs`, `render_plan.rs`, `layout.rs`, `virtualization.rs`,
+`content_fit.rs`, `header.rs`, `body.rs`, `cell.rs`, `editors.rs`, `resize.rs`, `interaction.rs`,
+filter recipes, `column_visibility.rs`, `toolbar.rs`, and `metrics.rs` own the concrete maintenance
+surfaces. This ownership note is about review locality only; it does not add a second public Table
+contract or promise behavior beyond the exported `TableState`, `TableRenderPlan`, `Table`, filter
+recipes, callback payloads, and stable gallery/debug-selector proofs.
 Region render plans expose summed widths, and header/body cells read the same resolved column
 widths. For pinned tables, `TableCenterColumnWindowPlan` virtualizes the shared horizontal center
 lane from adapter-owned horizontal scroll input: it exposes visible and overscan ranges, rendered

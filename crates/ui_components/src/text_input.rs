@@ -17,6 +17,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::text_editing;
 use crate::theme::ThemeResolver;
 
 type TextInputChangeHandler = Rc<dyn Fn(String, &mut Window, &mut App)>;
@@ -398,8 +399,8 @@ pub(crate) mod adapter {
 
         /// Selects a byte range clamped to character boundaries.
         pub fn select_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
-            let start = clamp_to_char_boundary(self.value(), range.start);
-            let end = clamp_to_char_boundary(self.value(), range.end);
+            let start = text_editing::clamp_to_char_boundary(self.value(), range.start);
+            let end = text_editing::clamp_to_char_boundary(self.value(), range.end);
             self.selected_range = start.min(end)..start.max(end);
             self.selection_reversed = end < start;
             cx.notify();
@@ -470,7 +471,8 @@ pub(crate) mod adapter {
                 let value = sanitize_single_line(value);
                 if self.content.as_ref() != value {
                     self.content = value.into();
-                    let cursor = clamp_to_char_boundary(self.value(), self.cursor_offset());
+                    let cursor =
+                        text_editing::clamp_to_char_boundary(self.value(), self.cursor_offset());
                     self.selected_range = cursor..cursor;
                     self.selection_reversed = false;
                     self.marked_range = None;
@@ -486,45 +488,16 @@ pub(crate) mod adapter {
             }
         }
 
-        fn offset_from_utf16(&self, offset: usize) -> usize {
-            let mut utf8_offset = 0;
-            let mut utf16_count = 0;
-
-            for ch in self.content.chars() {
-                if utf16_count >= offset {
-                    break;
-                }
-                utf16_count += ch.len_utf16();
-                utf8_offset += ch.len_utf8();
-            }
-
-            utf8_offset.min(self.content.len())
-        }
-
         fn offset_to_utf16(&self, offset: usize) -> usize {
-            let offset = clamp_to_char_boundary(self.value(), offset);
-            let mut utf16_offset = 0;
-            let mut utf8_count = 0;
-
-            for ch in self.content.chars() {
-                if utf8_count >= offset {
-                    break;
-                }
-                utf8_count += ch.len_utf8();
-                utf16_offset += ch.len_utf16();
-            }
-
-            utf16_offset
+            text_editing::offset_to_utf16(self.value(), offset)
         }
 
         fn range_from_utf16(&self, range_utf16: &Range<usize>) -> Range<usize> {
-            let start = self.offset_from_utf16(range_utf16.start);
-            let end = self.offset_from_utf16(range_utf16.end);
-            start.min(end)..start.max(end)
+            text_editing::range_from_utf16(self.value(), range_utf16)
         }
 
         fn range_to_utf16(&self, range: &Range<usize>) -> Range<usize> {
-            self.offset_to_utf16(range.start)..self.offset_to_utf16(range.end)
+            text_editing::range_to_utf16(self.value(), range)
         }
 
         fn previous_boundary(&self, offset: usize) -> usize {
@@ -563,14 +536,14 @@ pub(crate) mod adapter {
         }
 
         fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
-            let offset = clamp_to_char_boundary(self.value(), offset);
+            let offset = text_editing::clamp_to_char_boundary(self.value(), offset);
             self.selected_range = offset..offset;
             self.selection_reversed = false;
             cx.notify();
         }
 
         fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
-            let offset = clamp_to_char_boundary(self.value(), offset);
+            let offset = text_editing::clamp_to_char_boundary(self.value(), offset);
             if self.selection_reversed {
                 self.selected_range.start = offset;
             } else {
@@ -625,8 +598,8 @@ pub(crate) mod adapter {
             self.selected_range = selected_utf16
                 .as_ref()
                 .map(|selected| {
-                    range.start + offset_from_utf16_in_text(&new_text, selected.start)
-                        ..range.start + offset_from_utf16_in_text(&new_text, selected.end)
+                    range.start + text_editing::offset_from_utf16(&new_text, selected.start)
+                        ..range.start + text_editing::offset_from_utf16(&new_text, selected.end)
                 })
                 .unwrap_or(new_end..new_end);
             self.selection_reversed = false;
@@ -1680,7 +1653,7 @@ impl<'a> TextDisplayProjection<'a> {
         match self.display_mode {
             TextInputDisplayMode::Plain => {
                 debug_assert_eq!(self.stored_text, self.display_text.as_ref());
-                clamp_to_char_boundary(self.display_text.as_ref(), offset)
+                text_editing::clamp_to_char_boundary(self.display_text.as_ref(), offset)
             }
             TextInputDisplayMode::Password => {
                 let offset = clamp_to_grapheme_boundary(self.stored_text, offset);
@@ -1694,13 +1667,14 @@ impl<'a> TextDisplayProjection<'a> {
         match self.display_mode {
             TextInputDisplayMode::Plain => {
                 debug_assert_eq!(self.stored_text, self.display_text.as_ref());
-                clamp_to_char_boundary(self.stored_text, offset)
+                text_editing::clamp_to_char_boundary(self.stored_text, offset)
             }
             TextInputDisplayMode::Password => {
                 if offset >= self.display_text.len() {
                     return self.stored_text.len();
                 }
-                let offset = clamp_to_char_boundary(self.display_text.as_ref(), offset);
+                let offset =
+                    text_editing::clamp_to_char_boundary(self.display_text.as_ref(), offset);
                 let grapheme_count = self.display_text[..offset].chars().count();
                 stored_offset_after_graphemes(self.stored_text, grapheme_count)
             }
@@ -1717,7 +1691,7 @@ fn clamp_to_grapheme_boundary(text: &str, offset: usize) -> usize {
         return text.len();
     }
 
-    let offset = clamp_to_char_boundary(text, offset);
+    let offset = text_editing::clamp_to_char_boundary(text, offset);
     let mut boundary = 0;
     for (start, grapheme) in text.grapheme_indices(true) {
         let end = start + grapheme.len();
@@ -1743,35 +1717,6 @@ fn stored_offset_after_graphemes(text: &str, grapheme_count: usize) -> usize {
         }
     }
     text.len()
-}
-
-fn clamp_to_char_boundary(text: &str, offset: usize) -> usize {
-    if offset >= text.len() {
-        return text.len();
-    }
-    if text.is_char_boundary(offset) {
-        return offset;
-    }
-    let mut clamped = offset;
-    while clamped > 0 && !text.is_char_boundary(clamped) {
-        clamped -= 1;
-    }
-    clamped
-}
-
-fn offset_from_utf16_in_text(text: &str, offset: usize) -> usize {
-    let mut utf8_offset = 0;
-    let mut utf16_count = 0;
-
-    for ch in text.chars() {
-        if utf16_count >= offset {
-            break;
-        }
-        utf16_count += ch.len_utf16();
-        utf8_offset += ch.len_utf8();
-    }
-
-    utf8_offset.min(text.len())
 }
 
 #[cfg(test)]

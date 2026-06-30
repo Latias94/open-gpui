@@ -23,8 +23,8 @@ use crate::listbox::{
     ListboxState,
 };
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, gpui_overlay_state,
-    outside_press_open_change,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
+    gpui_overlay_state, outside_press_open_change,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::theme::ThemeResolver;
@@ -805,8 +805,7 @@ impl RenderOnce for Select {
                         move |event: &KeyDownEvent, window, cx| {
                             let key = event.keystroke.key.as_str();
                             if matches!(key, "enter" | "space" | "down" | "up") {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = true;
                                 });
@@ -814,8 +813,7 @@ impl RenderOnce for Select {
                                     on_open_change(true, window, cx);
                                 }
                             } else if key == "escape" {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 close_select(runtime.clone(), on_open_change.clone(), window, cx);
                             }
                         }
@@ -829,8 +827,7 @@ impl RenderOnce for Select {
                                 style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
                             })
                             .capture_any_mouse_up(move |_, window, cx| {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 let next_open = !open;
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = next_open;
@@ -955,8 +952,7 @@ fn select_content_element(
         .occlude()
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             if event.keystroke.key.as_str() == "escape" {
-                cx.stop_propagation();
-                window.prevent_default();
+                consume_overlay_event(window, cx);
                 close_select(
                     escape_runtime.clone(),
                     escape_open_change.clone(),

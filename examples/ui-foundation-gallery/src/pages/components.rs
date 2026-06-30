@@ -1078,7 +1078,11 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "components_gallery_smoke_multiline_table_cell_updates_sample_rows",
             "components_gallery_smoke_column_visibility_updates_release_matrix",
             "components_gallery_smoke_table_scroll_stays_inside_sample",
+            "components_gallery_smoke_focused_table_scroll_stays_inside_sample",
             "components_gallery_smoke_grouped_table_scroll_stays_inside_sample",
+            "components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample",
+            "components_gallery_smoke_grouped_table_column_reorder_updates_sample",
+            "components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample",
             "components_page_table_samples_expose_virtualized_row_model_contract",
             "components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample",
             "components_gallery_smoke_resizable_table_resize_updates_sample",
@@ -5752,7 +5756,7 @@ fn dependency_tree_rows() -> Vec<TableRow> {
             .with_children([
                 dependency_tree_row(
                     "dependency-ui-table",
-                    "table.rs",
+                    "table/mod.rs",
                     "module",
                     "Components",
                     "high",
@@ -5783,7 +5787,7 @@ fn dependency_tree_rows() -> Vec<TableRow> {
             )
             .with_child(dependency_tree_row(
                 "dependency-core-table",
-                "table.rs",
+                "table/mod.rs",
                 "module",
                 "Foundation",
                 "medium",
