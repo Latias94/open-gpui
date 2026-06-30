@@ -104,18 +104,14 @@ impl ComboboxOptionDescriptor {
         self.disabled
     }
 
-    fn matches_query(&self, query: &str) -> bool {
-        let query = choice::normalize_query(query);
-        if query.is_empty() {
-            return true;
-        }
-
-        self.value.to_lowercase().contains(query.as_str())
-            || self.label.to_lowercase().contains(query.as_str())
-            || self
-                .keywords
-                .iter()
-                .any(|keyword| keyword.to_lowercase().contains(query.as_str()))
+    fn matches_normalized_query(&self, normalized_query: &str) -> bool {
+        let base_sources = [self.value.as_str(), self.label.as_str()];
+        choice::query_matches_sources(
+            normalized_query,
+            base_sources
+                .into_iter()
+                .chain(self.keywords.iter().map(String::as_str)),
+        )
     }
 
     fn to_listbox_descriptor(&self) -> ListboxOptionDescriptor {
@@ -345,6 +341,7 @@ impl ComboboxState {
             ComboboxOpenMode::Uncontrolled
         };
         let open = open.unwrap_or(default_open) && !disabled;
+        let normalized_query = choice::normalize_query(query.as_str());
         let raw_groups = groups.into_iter().collect::<Vec<_>>();
         let raw_options = options.into_iter().collect::<Vec<_>>();
         let total_option_count = raw_options.len()
@@ -354,7 +351,7 @@ impl ComboboxState {
                 .sum::<usize>();
         let filtered_options = raw_options
             .iter()
-            .filter(|option| option.matches_query(query.as_str()))
+            .filter(|option| option.matches_normalized_query(normalized_query.as_str()))
             .map(ComboboxOptionDescriptor::to_listbox_descriptor)
             .collect::<Vec<_>>();
         let filtered_groups = raw_groups
@@ -363,7 +360,7 @@ impl ComboboxState {
                 let options = group
                     .options_ref()
                     .iter()
-                    .filter(|option| option.matches_query(query.as_str()))
+                    .filter(|option| option.matches_normalized_query(normalized_query.as_str()))
                     .map(ComboboxOptionDescriptor::to_listbox_descriptor)
                     .collect::<Vec<_>>();
                 (!options.is_empty()).then(|| {
@@ -391,7 +388,7 @@ impl ComboboxState {
             label.clone(),
             selected_value.as_deref(),
             active_value,
-            (!query.is_empty()).then_some(query.as_str()),
+            (!normalized_query.is_empty()).then_some(normalized_query.as_str()),
             empty_label.clone(),
             filtered_groups,
             filtered_options,
@@ -1142,10 +1139,15 @@ fn combobox_content_element(
     let selected_value = state.selected_value().map(str::to_owned);
     let active_value = state.active_value().map(str::to_owned);
     let query = state.query().to_owned();
+    let normalized_query = choice::normalize_query(query.as_str());
     let label = state.label().to_owned();
     let listbox = options
         .into_iter()
-        .filter(|option| option.descriptor.matches_query(query.as_str()))
+        .filter(|option| {
+            option
+                .descriptor
+                .matches_normalized_query(normalized_query.as_str())
+        })
         .fold(
             Listbox::new(listbox_id, label.clone()),
             |listbox, option| listbox.option(option.listbox_option()),
@@ -1153,7 +1155,7 @@ fn combobox_content_element(
         .groups(
             groups
                 .into_iter()
-                .filter_map(|group| group.filtered_listbox_group(query.as_str())),
+                .filter_map(|group| group.filtered_listbox_group(normalized_query.as_str())),
         )
         .tokens(tokens)
         .with_size(state.size())
@@ -1329,11 +1331,11 @@ impl ComboboxGroup {
             })
     }
 
-    fn filtered_listbox_group(self, query: &str) -> Option<ListboxGroup> {
+    fn filtered_listbox_group(self, normalized_query: &str) -> Option<ListboxGroup> {
         let mut group = ListboxGroup::new(self.descriptor.value, self.descriptor.label);
         let mut has_options = false;
         for option in self.options {
-            if option.descriptor.matches_query(query) {
+            if option.descriptor.matches_normalized_query(normalized_query) {
                 has_options = true;
                 group = group.option(option.listbox_option());
             }

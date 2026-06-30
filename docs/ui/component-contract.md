@@ -167,10 +167,13 @@ intents, and the listbox content role. The GPUI `Select` adapter owns trigger/co
 keyed runtime open/selected/active state, callbacks, outside-press and Escape wiring, deferred
 anchored rendering, and concrete focus handles.
 
-`choice.rs` keeps the stable-value projection helpers for the choice family in one place. It
-normalizes query text, resolves selected values by stable item identity, deduplicates multi-select
-chips, and keeps `Command`, `Combobox`, and `Select` aligned on the same value-seam behavior
-without giving `Select` or `Combobox` command-specific ranking semantics.
+`choice.rs` owns the shared stable-value seam for the choice family. It projects flat item
+identity, normalizes query text, filters disabled or missing selected values, deduplicates
+multi-select chips, resolves active descendants by active value, selected value, then first enabled
+item, and provides the typeahead hook used by listbox-backed surfaces. `Listbox`, `Select`,
+`Combobox`, and `Command` should agree on those base rules. Command ranking and match scoring are
+an extension layered over the shared choice model; they must not become the base semantics for
+`Select` or `Combobox`.
 
 `ComboboxState` composes an editable text input, non-modal dismissible popup, scroll viewport
 metadata, and nested `ListboxState`. It records controlled versus uncontrolled open mode,
@@ -726,8 +729,9 @@ impls; the remaining non-headless surfaces are GPUI-owned adapter APIs such as
 conversion helpers, and GPUI overlay scheduling helpers. These public adapter APIs are now grouped
 under `open_gpui_ui_components::gpui_adapter`. Shared roving-focus helpers now live in
 `open_gpui_ui_components::roving_focus`, with `Tabs` preserving compatibility re-exports.
-The choice family now also has a shared internal seam in `open_gpui_ui_components::choice` for
-stable-value resolution and normalized query handling across `Command`, `Combobox`, and `Select`.
+The choice family now also has a shared internal seam in `open_gpui_ui_components::choice` for flat
+stable-value projection, enabled-item selected/active fallback, typeahead matching, multi-select
+dedupe, and normalized query handling across `Listbox`, `Command`, `Combobox`, and `Select`.
 `open_gpui_ui_core` now owns `UiPx`, `UiPoint`, `UiSize`, `UiRect`, and `UiEdges`, and
 `ContextMenuState` stores a neutral point anchor plus renderer-neutral `OverlayPlacementInput`.
 GPUI placement is resolved only inside the adapter/render boundary. Overlay stack Escape,

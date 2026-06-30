@@ -11,9 +11,10 @@ use open_gpui::{
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
+use crate::choice::{self, ChoiceItemProjection};
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::roving_focus::{first_enabled, typeahead_target, vertical_roving_navigation_target};
+use crate::roving_focus::vertical_roving_navigation_target;
 use crate::theme::ThemeResolver;
 
 type ListboxSelectHandler = Rc<dyn Fn(ListboxSelection, &mut Window, &mut App)>;
@@ -458,12 +459,6 @@ impl ListboxSelection {
     }
 }
 
-#[derive(Debug, Clone)]
-struct FlattenedOption {
-    group_index: Option<usize>,
-    descriptor: ListboxOptionDescriptor,
-}
-
 /// Resolved listbox state used by tests, demos, and rendering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListboxState {
@@ -502,6 +497,9 @@ impl ListboxState {
     ) -> Self {
         let label = label.into();
         let empty_label = empty_label.into();
+        let typeahead_query = typeahead_query
+            .map(choice::normalize_query)
+            .filter(|query| !query.is_empty());
         let group_descriptors: Vec<ListboxGroupDescriptor> = groups.into_iter().collect();
         let standalone_options: Vec<ListboxOptionDescriptor> = options.into_iter().collect();
         let groups = group_descriptors
@@ -519,41 +517,22 @@ impl ListboxState {
             })
             .collect::<Vec<_>>();
         let flattened = flatten_listbox_options(&group_descriptors, standalone_options);
-        let disabled_map = flattened
-            .iter()
-            .map(|option| !option.descriptor.focusable())
-            .collect::<Vec<_>>();
-        let selected_index = if disabled {
-            None
-        } else {
-            selected_value.and_then(|value| {
-                flattened.iter().position(|option| {
-                    option.descriptor.value() == value && option.descriptor.focusable()
-                })
-            })
-        };
-        let active_index = if disabled || flattened.is_empty() {
-            None
-        } else {
-            active_value
-                .and_then(|value| {
-                    flattened.iter().position(|option| {
-                        option.descriptor.value() == value && option.descriptor.focusable()
-                    })
-                })
-                .or(selected_index)
-                .or_else(|| first_enabled(&disabled_map))
-        };
+        let choice_resolution =
+            choice::resolve_selection_indexes(disabled, &flattened, selected_value, active_value);
+        let selected_index = choice_resolution.selected_index();
+        let active_index = choice_resolution.active_index();
         let selectable_count = flattened
             .iter()
-            .filter(|option| option.descriptor.kind() == ListboxOptionKind::Option)
+            .filter(|option| option.item().kind() == ListboxOptionKind::Option)
             .count();
         let mut position = 0usize;
         let options = flattened
             .into_iter()
             .enumerate()
             .map(|(index, option)| {
-                let kind = option.descriptor.kind();
+                let group_index = option.group_index();
+                let descriptor = option.into_item();
+                let kind = descriptor.kind();
                 let position_in_set = if kind == ListboxOptionKind::Option {
                     position += 1;
                     Some(position)
@@ -565,11 +544,11 @@ impl ListboxState {
 
                 ListboxOptionState {
                     index,
-                    group_index: option.group_index,
-                    value: option.descriptor.value,
-                    label: option.descriptor.label,
+                    group_index,
+                    value: descriptor.value,
+                    label: descriptor.label,
                     kind,
-                    disabled: option.descriptor.disabled,
+                    disabled: descriptor.disabled,
                     selected,
                     active,
                     position_in_set,
@@ -589,7 +568,7 @@ impl ListboxState {
             label,
             selected_value,
             active_value,
-            typeahead_query: typeahead_query.map(str::to_owned),
+            typeahead_query,
             empty_label,
             groups,
             options,
@@ -694,13 +673,22 @@ impl ListboxState {
 
     /// Resolves a typeahead target for a query.
     pub fn typeahead_target(&self, query: &str) -> Option<&ListboxOptionState> {
-        typeahead_target(
-            self.options.as_slice(),
-            self.active_index,
-            query,
-            ListboxOptionState::focusable,
-            ListboxOptionState::label,
-        )
+        let projected = self
+            .options
+            .iter()
+            .map(|option| {
+                ChoiceItemProjection::new(
+                    option.index(),
+                    option.group_index(),
+                    option.value(),
+                    option.label(),
+                    !option.focusable(),
+                    (),
+                )
+            })
+            .collect::<Vec<_>>();
+        choice::typeahead_target(projected.as_slice(), self.active_index, query)
+            .and_then(|target| self.options.get(target.source_index()))
     }
 
     /// Resolves an activation payload for an APG-style activation key.
@@ -1314,26 +1302,35 @@ fn option_background(state: ListboxOptionState, colors: ListboxColors) -> ColorI
 fn flatten_listbox_options(
     groups: &[ListboxGroupDescriptor],
     standalone_options: Vec<ListboxOptionDescriptor>,
-) -> Vec<FlattenedOption> {
+) -> Vec<ChoiceItemProjection<ListboxOptionDescriptor>> {
     let mut flattened = standalone_options
         .into_iter()
-        .map(|descriptor| FlattenedOption {
-            group_index: None,
-            descriptor,
+        .enumerate()
+        .map(|(source_index, descriptor)| {
+            ChoiceItemProjection::new(
+                source_index,
+                None,
+                descriptor.value.clone(),
+                descriptor.label.clone(),
+                !descriptor.focusable(),
+                descriptor,
+            )
         })
         .collect::<Vec<_>>();
 
     for (group_index, group) in groups.iter().enumerate() {
-        flattened.extend(
-            group
-                .options
-                .iter()
-                .cloned()
-                .map(|descriptor| FlattenedOption {
-                    group_index: Some(group_index),
+        flattened.extend(group.options.iter().cloned().enumerate().map(
+            |(source_index, descriptor)| {
+                ChoiceItemProjection::new(
+                    source_index,
+                    Some(group_index),
+                    descriptor.value.clone(),
+                    descriptor.label.clone(),
+                    !descriptor.focusable(),
                     descriptor,
-                }),
-        );
+                )
+            },
+        ));
     }
 
     flattened

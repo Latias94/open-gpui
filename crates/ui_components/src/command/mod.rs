@@ -1251,7 +1251,7 @@ impl CommandState {
             label.clone(),
             listbox_selected_value,
             active_value,
-            (!query_is_empty).then_some(query.as_str()),
+            (!query_is_empty).then_some(normalized_query.as_str()),
             empty_label.clone(),
             filtered_group_descriptors,
             filtered_item_descriptors,

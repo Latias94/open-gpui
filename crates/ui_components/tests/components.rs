@@ -13297,6 +13297,78 @@ fn listbox_state_resolves_grouped_options_navigation_and_typeahead() {
 }
 
 #[test]
+fn choice_surfaces_share_stable_value_resolution_and_query_normalization() {
+    let listbox = ListboxState::resolve(
+        Size::Small,
+        false,
+        "Shared choices",
+        Some("disabled"),
+        Some("missing"),
+        Some("  AL "),
+        "No choices",
+        [ListboxGroupDescriptor::new("group", "Group")
+            .option(ListboxOptionDescriptor::option("grouped", "Grouped"))],
+        [
+            ListboxOptionDescriptor::option("alpha", "Alpha"),
+            ListboxOptionDescriptor::option("disabled", "Disabled").disabled(true),
+        ],
+        ThemeTokens::default(),
+    );
+
+    let select = Select::new("shared-select", "Shared choices")
+        .placeholder("Pick one")
+        .selected("disabled")
+        .option(ListboxOption::new("alpha", "Alpha"))
+        .option(ListboxOption::new("disabled", "Disabled").disabled(true))
+        .group(ListboxGroup::new("group", "Group").option(ListboxOption::new("grouped", "Grouped")))
+        .state();
+
+    let combobox = Combobox::new("shared-combobox", "Shared choices")
+        .default_query("  AL ")
+        .selected("disabled")
+        .option(ComboboxOption::new("alpha", "Alpha"))
+        .option(ComboboxOption::new("disabled", "Disabled").disabled(true))
+        .group(
+            ComboboxGroup::new("group", "Group").option(ComboboxOption::new("grouped", "Grouped")),
+        )
+        .state();
+
+    let command = Command::new("shared-command", "Shared choices")
+        .default_query("  AL ")
+        .selected("disabled")
+        .item(CommandItem::new("alpha", "Alpha"))
+        .item(CommandItem::new("disabled", "Disabled").disabled(true))
+        .group(CommandGroup::new("group", "Group").item(CommandItem::new("grouped", "Grouped")))
+        .state();
+
+    assert_eq!(listbox.typeahead_query(), Some("al"));
+    assert_eq!(listbox.selected_value(), None);
+    assert_eq!(listbox.active_value(), Some("alpha"));
+    assert_eq!(
+        listbox
+            .typeahead_target("  AL ")
+            .map(|option| option.value()),
+        Some("alpha")
+    );
+
+    assert_eq!(select.selected_value(), None);
+    assert_eq!(select.active_value(), Some("alpha"));
+    assert_eq!(select.trigger_label(), "Pick one");
+
+    assert_eq!(combobox.query(), "  AL ");
+    assert_eq!(combobox.filtered_option_count(), 1);
+    assert_eq!(combobox.selected_value(), None);
+    assert_eq!(combobox.active_value(), Some("alpha"));
+    assert_eq!(combobox.listbox().typeahead_query(), Some("al"));
+
+    assert_eq!(command.query(), "  AL ");
+    assert_eq!(command.filtered_item_count(), 1);
+    assert_eq!(command.selected_value(), None);
+    assert_eq!(command.active_value(), Some("alpha"));
+    assert_eq!(command.listbox().typeahead_query(), Some("al"));
+}
+
+#[test]
 fn listbox_state_scrollable_content_tracks_flattened_option_count_threshold() {
     let scrollable = ListboxState::resolve(
         Size::Small,
