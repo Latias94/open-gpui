@@ -112,6 +112,151 @@ impl ComponentApiInventoryEntry {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum PublicSurfaceOwnerClass {
+    OfficialComponent,
+    RendererNeutralStateContract,
+    GpuiAdapterHelper,
+    DiagnosticSurface,
+    DeprecatedRemovalTarget,
+    InternalImplementationDetail,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PublicSurfaceOwnerEntry {
+    name: &'static str,
+    owner: PublicSurfaceOwnerClass,
+    home: &'static str,
+}
+
+const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
+    PublicSurfaceOwnerEntry {
+        name: "TreeState",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        home: "tree.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "VirtualizedListState",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        home: "virtualized_list.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "GpuiOverlayAdapterConfig",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "GpuiOverlayState",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "TextInputController",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "init_text_input",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "focus_ring_shadow",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "gpui_px_from_ui",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "gpui_point_from_ui",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "gpui_size_from_ui",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "TableRenderPlan",
+        owner: PublicSurfaceOwnerClass::DiagnosticSurface,
+        home: "table/render_plan/mod.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "TreeRenderPlan",
+        owner: PublicSurfaceOwnerClass::DiagnosticSurface,
+        home: "tree/render_plan.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "VirtualizedListRenderPlan",
+        owner: PublicSurfaceOwnerClass::DiagnosticSurface,
+        home: "virtualized_list.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "CommandRenderPlan",
+        owner: PublicSurfaceOwnerClass::DiagnosticSurface,
+        home: "command/render_plan.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "ToolbarItem",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        home: "toolbar.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "SidebarItem",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        home: "sidebar.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "ListboxOption",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        home: "listbox.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::active_descendant",
+        owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        home: "primitives/active_descendant.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::collection",
+        owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        home: "primitives/collection.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::controllable_state",
+        owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        home: "primitives/controllable_state.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::overlay",
+        owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        home: "primitives/overlay.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::field_state",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        home: "primitives/field_state.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::focus_ring",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        home: "primitives/focus_ring.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::roving_focus_group",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        home: "primitives/roving_focus_group.rs",
+    },
+    PublicSurfaceOwnerEntry {
+        name: "primitives::trigger_a11y",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "primitives/trigger_a11y.rs",
+    },
+];
+
 const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     ComponentApiInventoryEntry {
         component: "Accordion",
@@ -11667,34 +11812,39 @@ fn gpui_role_mapping_covers_neutral_image_and_separator_fallback() {
 }
 
 fn official_component_catalog_names_from_gallery_source() -> Vec<String> {
+    let names =
+        component_catalog_names_from_gallery_constructor("ComponentCatalogEntry::official(");
+    assert!(
+        !names.is_empty(),
+        "Components gallery source should contain official catalog entries"
+    );
+    names
+}
+
+fn component_catalog_names_from_gallery_constructor(constructor: &str) -> Vec<String> {
     const GALLERY_COMPONENTS_SOURCE: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../examples/ui-foundation-gallery/src/pages/components.rs"
     );
-    const MARKER: &str = "ComponentCatalogEntry::official(";
 
     let source = std::fs::read_to_string(GALLERY_COMPONENTS_SOURCE)
         .unwrap_or_else(|error| panic!("failed to read {GALLERY_COMPONENTS_SOURCE}: {error}"));
     let mut remaining = source.as_str();
     let mut names = Vec::new();
 
-    while let Some(marker_index) = remaining.find(MARKER) {
-        remaining = &remaining[marker_index + MARKER.len()..];
+    while let Some(marker_index) = remaining.find(constructor) {
+        remaining = &remaining[marker_index + constructor.len()..];
         let name_start = remaining
             .find('"')
-            .unwrap_or_else(|| panic!("missing catalog name opener after {MARKER}"));
+            .unwrap_or_else(|| panic!("missing catalog name opener after {constructor}"));
         remaining = &remaining[name_start + 1..];
         let name_end = remaining
             .find('"')
-            .unwrap_or_else(|| panic!("missing catalog name closer after {MARKER}"));
+            .unwrap_or_else(|| panic!("missing catalog name closer after {constructor}"));
         names.push(remaining[..name_end].to_string());
         remaining = &remaining[name_end + 1..];
     }
 
-    assert!(
-        !names.is_empty(),
-        "Components gallery source should contain official catalog entries"
-    );
     names
 }
 
@@ -11769,6 +11919,177 @@ fn component_api_inventory_covers_official_gallery_catalog() {
         assert!(
             inventory_names.contains(overlay),
             "overlay component `{overlay}` needs a public API inventory row"
+        );
+    }
+}
+
+#[test]
+fn public_surface_owner_map_classifies_official_gallery_catalog_once() {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut owners = BTreeMap::new();
+    for name in official_component_catalog_names_from_gallery_source() {
+        let previous = owners.insert(name.clone(), PublicSurfaceOwnerClass::OfficialComponent);
+        assert!(
+            previous.is_none(),
+            "official component `{name}` should have exactly one public surface owner"
+        );
+    }
+    for entry in PUBLIC_SURFACE_OWNER_MAP {
+        let previous = owners.insert(entry.name.to_owned(), entry.owner);
+        assert!(
+            previous.is_none(),
+            "`{}` appears in multiple public surface owner classes",
+            entry.name
+        );
+    }
+
+    let covered_classes = owners.values().copied().collect::<BTreeSet<_>>();
+    for expected_class in [
+        PublicSurfaceOwnerClass::OfficialComponent,
+        PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        PublicSurfaceOwnerClass::DiagnosticSurface,
+        PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        PublicSurfaceOwnerClass::InternalImplementationDetail,
+    ] {
+        assert!(
+            covered_classes.contains(&expected_class),
+            "public surface owner map should contain at least one {expected_class:?} entry"
+        );
+    }
+}
+
+#[test]
+fn public_surface_owner_map_aligns_adjacent_gallery_statuses() {
+    let status_expectations = [
+        (
+            "ComponentCatalogEntry::state_contract(",
+            PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        ),
+        (
+            "ComponentCatalogEntry::adapter_only(",
+            PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        ),
+        (
+            "ComponentCatalogEntry::internal_anatomy(",
+            PublicSurfaceOwnerClass::InternalImplementationDetail,
+        ),
+    ];
+
+    for (constructor, expected_owner) in status_expectations {
+        let names = component_catalog_names_from_gallery_constructor(constructor);
+        assert!(
+            !names.is_empty(),
+            "gallery constructor `{constructor}` should remain covered by the owner map"
+        );
+
+        for name in names {
+            let entries = PUBLIC_SURFACE_OWNER_MAP
+                .iter()
+                .filter(|entry| entry.name == name)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                entries.len(),
+                1,
+                "gallery catalog entry `{name}` should have exactly one adjacent public surface owner"
+            );
+            assert_eq!(
+                entries[0].owner, expected_owner,
+                "gallery catalog entry `{name}` changed owner class"
+            );
+        }
+    }
+}
+
+#[test]
+fn public_surface_owner_map_homes_point_to_real_sources() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let lib_source = std::fs::read_to_string(source_dir.join("lib.rs"))
+        .unwrap_or_else(|error| panic!("failed to read lib.rs: {error}"));
+    let gpui_adapter_source = public_module_source(&lib_source, "gpui_adapter")
+        .expect("lib.rs should expose a gpui_adapter module");
+
+    for entry in PUBLIC_SURFACE_OWNER_MAP {
+        if entry.home == "gpui_adapter" {
+            assert!(
+                gpui_adapter_source.contains(entry.name),
+                "`{}` should stay exported through the gpui_adapter owner group",
+                entry.name
+            );
+        } else {
+            let path = source_dir.join(entry.home);
+            assert!(
+                path.is_file(),
+                "`{}` owner home `{}` should point to a real source file",
+                entry.name,
+                entry.home
+            );
+        }
+    }
+}
+
+#[test]
+fn primitive_owner_map_classifies_every_public_primitive_module_once() {
+    use std::collections::BTreeMap;
+
+    let modules = public_primitive_modules_from_mod();
+    let mut owners = BTreeMap::new();
+    for entry in PUBLIC_SURFACE_OWNER_MAP
+        .iter()
+        .filter(|entry| entry.name.starts_with("primitives::"))
+    {
+        let module = entry
+            .name
+            .strip_prefix("primitives::")
+            .expect("primitive owner entry should use primitives:: prefix");
+        let previous = owners.insert(module.to_owned(), entry.owner);
+        assert!(
+            previous.is_none(),
+            "primitive module `{module}` should have exactly one owner class"
+        );
+    }
+
+    assert_eq!(
+        owners.keys().cloned().collect::<Vec<_>>(),
+        modules,
+        "every public primitives module should be explicitly classified before U2 removes shallow aliases"
+    );
+}
+
+#[test]
+fn primitive_deletion_target_inventory_tracks_shallow_reexports() {
+    let deletion_targets = PUBLIC_SURFACE_OWNER_MAP
+        .iter()
+        .filter(|entry| entry.owner == PublicSurfaceOwnerClass::DeprecatedRemovalTarget)
+        .map(|entry| {
+            entry
+                .name
+                .strip_prefix("primitives::")
+                .unwrap_or_else(|| panic!("deletion target `{}` should be a primitive", entry.name))
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        deletion_targets,
+        vec![
+            "active_descendant".to_string(),
+            "collection".to_string(),
+            "controllable_state".to_string(),
+            "overlay".to_string(),
+        ],
+        "U2 should delete only the known shallow primitive pass-through modules"
+    );
+
+    let primitives_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/primitives");
+    for module in deletion_targets {
+        let source_path = primitives_dir.join(format!("{module}.rs"));
+        let source = std::fs::read_to_string(&source_path)
+            .unwrap_or_else(|error| panic!("failed to read {source_path:?}: {error}"));
+        assert!(
+            source.contains("pub use open_gpui_ui_core::"),
+            "primitive deletion target `{module}` should still be a direct ui_core pass-through before U2"
         );
     }
 }
@@ -12203,10 +12524,26 @@ fn adapter_only_helpers_do_not_leak_from_default_exports() {
 #[test]
 fn public_reexports_stay_explicit_without_wildcards() {
     let mut wildcard_exports = Vec::new();
-    for file_name in ["lib.rs", "prelude.rs"] {
-        let source =
-            std::fs::read_to_string(format!("{}/src/{file_name}", env!("CARGO_MANIFEST_DIR")))
-                .unwrap_or_else(|error| panic!("failed to read {file_name}: {error}"));
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let files = [
+        ("ui_components/src/lib.rs", manifest_dir.join("src/lib.rs")),
+        (
+            "ui_components/src/prelude.rs",
+            manifest_dir.join("src/prelude.rs"),
+        ),
+        (
+            "ui_core/src/lib.rs",
+            manifest_dir.join("../ui_core/src/lib.rs"),
+        ),
+        (
+            "ui_core/src/prelude.rs",
+            manifest_dir.join("../ui_core/src/prelude.rs"),
+        ),
+    ];
+
+    for (file_name, path) in files {
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {path:?}: {error}"));
 
         for (line_number, line) in source.lines().enumerate() {
             if line.contains("pub use ") && line.contains("::*") {
@@ -12220,6 +12557,24 @@ fn public_reexports_stay_explicit_without_wildcards() {
         Vec::<String>::new(),
         "public re-exports must stay explicit, including adapter-only groupings"
     );
+}
+
+fn public_primitive_modules_from_mod() -> Vec<String> {
+    let source_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/primitives/mod.rs");
+    let source = std::fs::read_to_string(&source_path)
+        .unwrap_or_else(|error| panic!("failed to read {source_path:?}: {error}"));
+    let mut modules = source
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("pub mod ")
+                .and_then(|module| module.strip_suffix(';'))
+                .map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    modules.sort();
+    modules
 }
 
 #[test]
@@ -12461,16 +12816,7 @@ fn public_surface_blockers(tokens: &[&str]) -> Vec<PublicSurfaceBlocker> {
 }
 
 fn source_without_gpui_adapter_module(source: &str) -> String {
-    let Some(module_start) = source.find("pub mod gpui_adapter") else {
-        return source.to_owned();
-    };
-    let Some(open_brace) = source[module_start..]
-        .find('{')
-        .map(|offset| module_start + offset)
-    else {
-        return source.to_owned();
-    };
-    let Some(close_brace) = matching_brace(source, open_brace) else {
+    let Some((module_start, close_brace)) = public_module_bounds(source, "gpui_adapter") else {
         return source.to_owned();
     };
 
@@ -12478,6 +12824,21 @@ fn source_without_gpui_adapter_module(source: &str) -> String {
     stripped.push_str(&source[..module_start]);
     stripped.push_str(&source[close_brace + 1..]);
     stripped
+}
+
+fn public_module_source<'a>(source: &'a str, module_name: &str) -> Option<&'a str> {
+    let (module_start, close_brace) = public_module_bounds(source, module_name)?;
+    Some(&source[module_start..=close_brace])
+}
+
+fn public_module_bounds(source: &str, module_name: &str) -> Option<(usize, usize)> {
+    let module_marker = format!("pub mod {module_name}");
+    let module_start = source.find(&module_marker)?;
+    let open_brace = source[module_start..]
+        .find('{')
+        .map(|offset| module_start + offset)?;
+    let close_brace = matching_brace(source, open_brace)?;
+    Some((module_start, close_brace))
 }
 
 fn public_api_surface(source: &str) -> String {

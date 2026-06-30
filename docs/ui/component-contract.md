@@ -316,6 +316,17 @@ They may sit beside an official adapter, as `TreeState` does for `Tree`. They mu
 official rendered-component gate by accident. Entries marked `deferred` are planned components
 that must not be treated as shipped API until they satisfy the checklist.
 
+Public surface ownership uses a stricter source-facing vocabulary than the visible gallery status.
+`official component` names are rendered GPUI components with inventory rows and sample selectors.
+`renderer-neutral state contract` names are public state/resolution models that can be consumed
+without GPUI runtime types. `gpui adapter helper` names are public only through
+`open_gpui_ui_components::gpui_adapter` or narrowly scoped adapter modules. `diagnostic surface`
+names such as render plans are public to explain resolved geometry and row/window projection, but
+they are not component facades. `internal implementation detail` names are public anatomy owned by
+one official family. `deprecated removal target` names are shallow compatibility surfaces scheduled
+for deletion; the current targets are the pass-through `ui_components::primitives` modules for
+active-descendant, collection metadata, controllable state, and overlay policy aliases.
+
 The foundation component families above are official rendered components. Their resolved states
 must stay aligned with the same ownership vocabulary as the older components:
 
