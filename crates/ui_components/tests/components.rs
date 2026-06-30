@@ -115,6 +115,7 @@ impl ComponentApiInventoryEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum PublicSurfaceOwnerClass {
     OfficialComponent,
+    OfficialComponentRecipe,
     RendererNeutralStateContract,
     GpuiAdapterHelper,
     DiagnosticSurface,
@@ -127,6 +128,46 @@ struct PublicSurfaceOwnerEntry {
     name: &'static str,
     owner: PublicSurfaceOwnerClass,
     home: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SurfacePrimitiveStatus {
+    NotPrimitive,
+    PublicPrimitiveModule,
+    RemovedPrimitiveModule,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SurfaceGalleryStatus {
+    OfficialComponent,
+    OfficialOverlay,
+    AdapterOnly,
+    InternalAnatomy,
+    StateContract,
+    NotInGallery,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SurfaceDocsStatus {
+    ComponentCatalog,
+    ComponentContract,
+    ComponentContractOrVerification,
+    Verification,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SurfaceManifestEntry {
+    name: String,
+    owner: PublicSurfaceOwnerClass,
+    home: String,
+    root_export: bool,
+    prelude_export: bool,
+    primitive_status: SurfacePrimitiveStatus,
+    adapter_only: bool,
+    diagnostic_only: bool,
+    gallery_status: SurfaceGalleryStatus,
+    docs_status: SurfaceDocsStatus,
+    docs_token: Option<&'static str>,
 }
 
 const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
@@ -11844,6 +11885,186 @@ fn component_catalog_names_from_gallery_constructor(constructor: &str) -> Vec<St
     names
 }
 
+fn surface_manifest() -> Vec<SurfaceManifestEntry> {
+    let root_exports = default_reexport_tokens("lib.rs");
+    let prelude_exports = default_reexport_tokens("prelude.rs");
+    let mut entries = Vec::new();
+
+    for entry in COMPONENT_API_INVENTORY {
+        entries.push(SurfaceManifestEntry {
+            name: entry.component.to_owned(),
+            owner: public_owner_for_component_inventory(entry.component),
+            home: component_source_inputs(entry.component)
+                .first()
+                .map(|source| component_source_home(*source))
+                .unwrap_or("unknown")
+                .to_owned(),
+            root_export: root_exports.contains(entry.component),
+            prelude_export: prelude_exports.contains(entry.component),
+            primitive_status: SurfacePrimitiveStatus::NotPrimitive,
+            adapter_only: false,
+            diagnostic_only: false,
+            gallery_status: component_gallery_status(entry.component)
+                .unwrap_or(SurfaceGalleryStatus::NotInGallery),
+            docs_status: SurfaceDocsStatus::ComponentCatalog,
+            docs_token: Some(entry.component),
+        });
+    }
+
+    for entry in PUBLIC_SURFACE_OWNER_MAP {
+        entries.push(SurfaceManifestEntry {
+            name: entry.name.to_owned(),
+            owner: entry.owner,
+            home: entry.home.to_owned(),
+            root_export: root_exports.contains(entry.name),
+            prelude_export: prelude_exports.contains(entry.name),
+            primitive_status: primitive_status_for_surface(entry),
+            adapter_only: entry.owner == PublicSurfaceOwnerClass::GpuiAdapterHelper,
+            diagnostic_only: entry.owner == PublicSurfaceOwnerClass::DiagnosticSurface,
+            gallery_status: component_gallery_status(entry.name)
+                .unwrap_or(SurfaceGalleryStatus::NotInGallery),
+            docs_status: docs_status_for_surface(entry),
+            docs_token: docs_token_for_surface(entry),
+        });
+    }
+
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
+    entries
+}
+
+fn public_owner_for_component_inventory(component: &str) -> PublicSurfaceOwnerClass {
+    match component {
+        "TableColumnVisibility"
+        | "TableFacetedFilter"
+        | "TableGlobalFilter"
+        | "TablePredicateFilter"
+        | "TableRangeFilter"
+        | "TableToolbar" => PublicSurfaceOwnerClass::OfficialComponentRecipe,
+        _ => PublicSurfaceOwnerClass::OfficialComponent,
+    }
+}
+
+fn component_gallery_status(name: &str) -> Option<SurfaceGalleryStatus> {
+    for constructor in [
+        (
+            "ComponentCatalogEntry::official(",
+            SurfaceGalleryStatus::OfficialComponent,
+        ),
+        (
+            "ComponentCatalogEntry::adapter_only(",
+            SurfaceGalleryStatus::AdapterOnly,
+        ),
+        (
+            "ComponentCatalogEntry::internal_anatomy(",
+            SurfaceGalleryStatus::InternalAnatomy,
+        ),
+        (
+            "ComponentCatalogEntry::state_contract(",
+            SurfaceGalleryStatus::StateContract,
+        ),
+        (
+            "ComponentCatalogEntry::deferred(",
+            SurfaceGalleryStatus::NotInGallery,
+        ),
+    ] {
+        if component_catalog_names_from_gallery_constructor(constructor.0)
+            .iter()
+            .any(|entry| entry == name)
+        {
+            return Some(constructor.1);
+        }
+    }
+
+    if overlay_catalog_names_from_gallery_source()
+        .iter()
+        .any(|entry| entry == name)
+    {
+        return Some(SurfaceGalleryStatus::OfficialOverlay);
+    }
+
+    None
+}
+
+fn component_source_home(source_entry: &'static str) -> &'static str {
+    match source_entry {
+        "command.rs" => "command/mod.rs",
+        source => source,
+    }
+}
+
+fn overlay_catalog_names_from_gallery_source() -> Vec<String> {
+    component_catalog_names_from_source_constructor(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/ui-foundation-gallery/src/pages/overlay.rs"
+        ),
+        "OverlayCatalogEntry::official(",
+    )
+}
+
+fn component_catalog_names_from_source_constructor(
+    source_path: &str,
+    constructor: &str,
+) -> Vec<String> {
+    let source = std::fs::read_to_string(source_path)
+        .unwrap_or_else(|error| panic!("failed to read {source_path}: {error}"));
+    let mut remaining = source.as_str();
+    let mut names = Vec::new();
+
+    while let Some(marker_index) = remaining.find(constructor) {
+        remaining = &remaining[marker_index + constructor.len()..];
+        let name_start = remaining
+            .find('"')
+            .unwrap_or_else(|| panic!("missing catalog name opener after {constructor}"));
+        remaining = &remaining[name_start + 1..];
+        let name_end = remaining
+            .find('"')
+            .unwrap_or_else(|| panic!("missing catalog name closer after {constructor}"));
+        names.push(remaining[..name_end].to_string());
+        remaining = &remaining[name_end + 1..];
+    }
+
+    names
+}
+
+fn primitive_status_for_surface(entry: &PublicSurfaceOwnerEntry) -> SurfacePrimitiveStatus {
+    if entry.name.starts_with("primitives::") && entry.home == "removed" {
+        SurfacePrimitiveStatus::RemovedPrimitiveModule
+    } else if entry.name.starts_with("primitives::") {
+        SurfacePrimitiveStatus::PublicPrimitiveModule
+    } else {
+        SurfacePrimitiveStatus::NotPrimitive
+    }
+}
+
+fn docs_status_for_surface(entry: &PublicSurfaceOwnerEntry) -> SurfaceDocsStatus {
+    match entry.owner {
+        PublicSurfaceOwnerClass::OfficialComponent
+        | PublicSurfaceOwnerClass::OfficialComponentRecipe
+        | PublicSurfaceOwnerClass::RendererNeutralStateContract
+        | PublicSurfaceOwnerClass::GpuiAdapterHelper
+        | PublicSurfaceOwnerClass::InternalImplementationDetail => {
+            SurfaceDocsStatus::ComponentContract
+        }
+        PublicSurfaceOwnerClass::DiagnosticSurface => {
+            SurfaceDocsStatus::ComponentContractOrVerification
+        }
+        PublicSurfaceOwnerClass::DeprecatedRemovalTarget => SurfaceDocsStatus::Verification,
+    }
+}
+
+fn docs_token_for_surface(entry: &PublicSurfaceOwnerEntry) -> Option<&'static str> {
+    if entry.home == "removed" {
+        Some(entry.name)
+    } else if entry.owner == PublicSurfaceOwnerClass::GpuiAdapterHelper {
+        Some("open_gpui_ui_components::gpui_adapter")
+    } else if entry.name.starts_with("primitives::") {
+        Some("ui_components::primitives")
+    } else {
+        Some(entry.name.rsplit("::").next().unwrap_or(entry.name))
+    }
+}
+
 fn component_api_entry(component: &str) -> &'static ComponentApiInventoryEntry {
     COMPONENT_API_INVENTORY
         .iter()
@@ -11920,19 +12141,12 @@ fn component_api_inventory_covers_official_gallery_catalog() {
 }
 
 #[test]
-fn public_surface_owner_map_classifies_official_gallery_catalog_once() {
+fn surface_manifest_classifies_public_surface_once() {
     use std::collections::{BTreeMap, BTreeSet};
 
     let mut owners = BTreeMap::new();
-    for name in official_component_catalog_names_from_gallery_source() {
-        let previous = owners.insert(name.clone(), PublicSurfaceOwnerClass::OfficialComponent);
-        assert!(
-            previous.is_none(),
-            "official component `{name}` should have exactly one public surface owner"
-        );
-    }
-    for entry in PUBLIC_SURFACE_OWNER_MAP {
-        let previous = owners.insert(entry.name.to_owned(), entry.owner);
+    for entry in surface_manifest() {
+        let previous = owners.insert(entry.name.clone(), entry.owner);
         assert!(
             previous.is_none(),
             "`{}` appears in multiple public surface owner classes",
@@ -11957,23 +12171,24 @@ fn public_surface_owner_map_classifies_official_gallery_catalog_once() {
 }
 
 #[test]
-fn public_surface_owner_map_aligns_adjacent_gallery_statuses() {
+fn surface_manifest_aligns_adjacent_gallery_statuses() {
     let status_expectations = [
         (
             "ComponentCatalogEntry::state_contract(",
-            PublicSurfaceOwnerClass::RendererNeutralStateContract,
+            SurfaceGalleryStatus::StateContract,
         ),
         (
             "ComponentCatalogEntry::adapter_only(",
-            PublicSurfaceOwnerClass::GpuiAdapterHelper,
+            SurfaceGalleryStatus::AdapterOnly,
         ),
         (
             "ComponentCatalogEntry::internal_anatomy(",
-            PublicSurfaceOwnerClass::InternalImplementationDetail,
+            SurfaceGalleryStatus::InternalAnatomy,
         ),
     ];
+    let manifest = surface_manifest();
 
-    for (constructor, expected_owner) in status_expectations {
+    for (constructor, expected_status) in status_expectations {
         let names = component_catalog_names_from_gallery_constructor(constructor);
         assert!(
             !names.is_empty(),
@@ -11981,7 +12196,7 @@ fn public_surface_owner_map_aligns_adjacent_gallery_statuses() {
         );
 
         for name in names {
-            let entries = PUBLIC_SURFACE_OWNER_MAP
+            let entries = manifest
                 .iter()
                 .filter(|entry| entry.name == name)
                 .collect::<Vec<_>>();
@@ -11991,38 +12206,187 @@ fn public_surface_owner_map_aligns_adjacent_gallery_statuses() {
                 "gallery catalog entry `{name}` should have exactly one adjacent public surface owner"
             );
             assert_eq!(
-                entries[0].owner, expected_owner,
-                "gallery catalog entry `{name}` changed owner class"
+                entries[0].gallery_status, expected_status,
+                "gallery catalog entry `{name}` changed manifest gallery status"
             );
         }
     }
 }
 
 #[test]
-fn public_surface_owner_map_homes_point_to_real_sources() {
+fn surface_manifest_homes_point_to_real_sources() {
     let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let lib_source = std::fs::read_to_string(source_dir.join("lib.rs"))
         .unwrap_or_else(|error| panic!("failed to read lib.rs: {error}"));
     let gpui_adapter_source = public_module_source(&lib_source, "gpui_adapter")
         .expect("lib.rs should expose a gpui_adapter module");
 
-    for entry in PUBLIC_SURFACE_OWNER_MAP {
+    for entry in surface_manifest() {
         if entry.home == "removed" {
             continue;
         } else if entry.home == "gpui_adapter" {
             assert!(
-                gpui_adapter_source.contains(entry.name),
+                gpui_adapter_source.contains(entry.name.as_str()),
                 "`{}` should stay exported through the gpui_adapter owner group",
                 entry.name
             );
         } else {
-            let path = source_dir.join(entry.home);
+            let path = source_dir.join(entry.home.as_str());
             assert!(
-                path.is_file(),
-                "`{}` owner home `{}` should point to a real source file",
+                path.is_file() || path.is_dir(),
+                "`{}` owner home `{}` should point to a real source file or module directory",
                 entry.name,
                 entry.home
             );
+        }
+    }
+}
+
+#[test]
+fn surface_manifest_tracks_exports_gallery_and_docs_contracts() {
+    use std::collections::BTreeSet;
+
+    let manifest = surface_manifest();
+    let names = manifest
+        .iter()
+        .map(|entry| entry.name.as_str())
+        .collect::<BTreeSet<_>>();
+    for required in [
+        "Button",
+        "Listbox",
+        "Select",
+        "Combobox",
+        "Command",
+        "Tooltip",
+        "Dialog",
+        "TableRenderDiagnostics",
+        "TreeState",
+        "VirtualizedListState",
+        "GpuiOverlayAdapterConfig",
+        "TextInputController",
+        "primitives::trigger_a11y",
+    ] {
+        assert!(
+            names.contains(required),
+            "surface manifest should include `{required}`"
+        );
+    }
+
+    let component_contract = include_str!("../../../docs/ui/component-contract.md");
+    let verification = include_str!("../../../docs/verification.md");
+    for entry in &manifest {
+        match entry.owner {
+            PublicSurfaceOwnerClass::OfficialComponent => {
+                assert!(
+                    entry.root_export,
+                    "{} should be exported from crate root",
+                    entry.name
+                );
+                assert!(
+                    entry.prelude_export,
+                    "{} should be exported from prelude",
+                    entry.name
+                );
+                assert!(
+                    matches!(
+                        entry.gallery_status,
+                        SurfaceGalleryStatus::OfficialComponent
+                            | SurfaceGalleryStatus::OfficialOverlay
+                    ),
+                    "official manifest entry `{}` should be present in a gallery catalog",
+                    entry.name
+                );
+            }
+            PublicSurfaceOwnerClass::OfficialComponentRecipe => {
+                assert!(
+                    entry.root_export,
+                    "{} should be exported from crate root",
+                    entry.name
+                );
+                assert!(
+                    entry.prelude_export,
+                    "{} should be exported from prelude",
+                    entry.name
+                );
+                assert_eq!(
+                    entry.gallery_status,
+                    SurfaceGalleryStatus::NotInGallery,
+                    "component recipe `{}` should be documented by docs/signals rather than standalone catalog status",
+                    entry.name
+                );
+            }
+            PublicSurfaceOwnerClass::GpuiAdapterHelper => {
+                assert!(
+                    entry.adapter_only,
+                    "{} should be flagged adapter-only",
+                    entry.name
+                );
+                assert!(
+                    !entry.prelude_export,
+                    "adapter-only surface `{}` must not leak into prelude",
+                    entry.name
+                );
+            }
+            PublicSurfaceOwnerClass::DiagnosticSurface => {
+                assert!(
+                    entry.diagnostic_only,
+                    "{} should be flagged diagnostic-only",
+                    entry.name
+                );
+            }
+            PublicSurfaceOwnerClass::RendererNeutralStateContract
+            | PublicSurfaceOwnerClass::DeprecatedRemovalTarget
+            | PublicSurfaceOwnerClass::InternalImplementationDetail => {}
+        }
+
+        match entry.primitive_status {
+            SurfacePrimitiveStatus::PublicPrimitiveModule => {
+                assert!(
+                    entry.home.starts_with("primitives/"),
+                    "primitive manifest entry `{}` should point to primitives source",
+                    entry.name
+                );
+            }
+            SurfacePrimitiveStatus::RemovedPrimitiveModule => {
+                assert_eq!(
+                    entry.home, "removed",
+                    "removed primitive `{}` should not point at a compatibility file",
+                    entry.name
+                );
+            }
+            SurfacePrimitiveStatus::NotPrimitive => {}
+        }
+
+        let Some(token) = entry.docs_token else {
+            continue;
+        };
+        match entry.docs_status {
+            SurfaceDocsStatus::ComponentCatalog => {
+                assert!(
+                    names.contains(entry.name.as_str()),
+                    "component catalog surface `{}` should remain in manifest",
+                    entry.name
+                );
+            }
+            SurfaceDocsStatus::ComponentContract => {
+                assert!(
+                    component_contract.contains(token),
+                    "component contract docs should mention manifest token `{token}`"
+                );
+            }
+            SurfaceDocsStatus::ComponentContractOrVerification => {
+                assert!(
+                    component_contract.contains(token) || verification.contains(token),
+                    "component contract or verification docs should mention manifest token `{token}`"
+                );
+            }
+            SurfaceDocsStatus::Verification => {
+                assert!(
+                    verification.contains(token)
+                        || verification.contains("primitive_deletion_target_inventory"),
+                    "verification docs should mention removed manifest token `{token}`"
+                );
+            }
         }
     }
 }

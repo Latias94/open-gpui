@@ -313,9 +313,9 @@ metadata for this contract. The Components page re-exports that catalog through
 keep their stable consumer path, but rendering code must consume catalog metadata instead of
 owning it. Entries marked `official` satisfy the checklist above. Entries marked `adapter-only`
 are public GPUI helper surfaces such as `TextInputController`, not standalone components. Entries
-marked `internal-anatomy` are public parts of a component family, such as toolbar or listbox item
-descriptors, and should not be promoted to standalone components without a new resolved-state
-contract. Entries marked `state-contract` are public renderer-neutral contracts with gallery
+marked `internal-anatomy` are public parts of a component family, such as `ToolbarItem`,
+`SidebarItem`, and `ListboxOption`, and should not be promoted to standalone components without a
+new resolved-state contract. Entries marked `state-contract` are public renderer-neutral contracts with gallery
 readouts and signal coverage, but they are not themselves rendered GPUI components. They may sit
 beside an official adapter, as `TreeState` does for `Tree`. They must use
 `state_contract_selector`, not the official `sample_selector`, and they must not satisfy the

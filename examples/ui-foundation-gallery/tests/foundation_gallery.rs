@@ -2580,8 +2580,9 @@ fn verification_docs_list_current_ui_architecture_focused_gates() {
     for required in [
         "primitive_deletion_target_inventory_blocks_removed_shallow_reexports",
         "primitive_modules_do_not_reexport_ui_core_as_pass_through_aliases",
-        "public_surface_owner_map_classifies_official_gallery_catalog_once",
-        "public_surface_owner_map_aligns_adjacent_gallery_statuses",
+        "surface_manifest_classifies_public_surface_once",
+        "surface_manifest_aligns_adjacent_gallery_statuses",
+        "surface_manifest_tracks_exports_gallery_and_docs_contracts",
         "overlay_open_change_helpers_match_core_policies",
         "dialog_runtime_respects_escape_policy_and_restores_trigger_focus",
         "choice_surfaces_share_stable_value_resolution_and_query_normalization",
@@ -2835,6 +2836,81 @@ fn state_contract_catalog_entries_have_signals_and_readout_selectors() {
             "expected state-contract signal `{signal}`"
         );
     }
+}
+
+#[test]
+fn gallery_catalog_manifest_tracks_components_and_overlay_catalogs() {
+    use std::collections::BTreeSet;
+
+    let component_names = pages::components::COMPONENT_CATALOG
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    let component_official = pages::components::COMPONENT_CATALOG
+        .iter()
+        .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
+        .count();
+    let component_adjacent = pages::components::COMPONENT_CATALOG
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry.status,
+                pages::components::ComponentCatalogStatus::AdapterOnly
+                    | pages::components::ComponentCatalogStatus::InternalAnatomy
+                    | pages::components::ComponentCatalogStatus::StateContract
+            )
+        })
+        .count();
+
+    assert!(
+        component_official >= 40,
+        "Components catalog should keep broad official component coverage"
+    );
+    assert!(
+        component_adjacent >= 6,
+        "Components catalog should keep adjacent adapter/anatomy/state-contract rows"
+    );
+    for required in [
+        "Button",
+        "Table",
+        "VirtualizedList",
+        "TextInputController",
+        "ToolbarItem",
+        "ListboxOption",
+        "TreeState",
+        "VirtualizedListState",
+    ] {
+        assert!(
+            component_names.contains(required),
+            "Components catalog manifest should include `{required}`"
+        );
+    }
+
+    let overlay_names = pages::overlay::OVERLAY_CATALOG
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        overlay_names,
+        BTreeSet::from([
+            "AlertDialog",
+            "ContextMenu",
+            "Dialog",
+            "HoverCard",
+            "Menu",
+            "Popover",
+            "Sheet",
+            "Tooltip",
+        ])
+    );
+    assert!(pages::overlay::OVERLAY_CATALOG.iter().all(|entry| {
+        let component_signal = format!("open_gpui_ui_components::{}", entry.name);
+        let state_signal = format!("open_gpui_ui_components::{}", entry.state);
+        pages::overlay::SIGNALS.contains(&component_signal.as_str())
+            && pages::overlay::SIGNALS.contains(&state_signal.as_str())
+            && !entry.sample_selector.trim().is_empty()
+            && !entry.catalog_selector().trim().is_empty()
+    }));
 }
 
 #[test]

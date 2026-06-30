@@ -441,13 +441,18 @@ open-change without introducing a global overlay runtime.
 For GPUI runtime focus assertions, `VisualTestContext::debug_selector_is_focused` and
 `VisualTestContext::focused_debug_selector` are the preferred test hooks. They use test-only
 debug-selector-to-focus-handle data and keep focus checks independent from component internals.
+The public surface manifest keeps adapter-only, diagnostic-only, primitive, gallery, and docs
+ownership explicit while the UI component architecture is being deepened. Diagnostic surfaces such
+as `TableRenderDiagnostics`, `TreeRenderPlan`, `VirtualizedListRenderPlan`, and
+`CommandRenderPlan` must stay intentionally classified until later units replace them with narrower
+behavior snapshots or story probes.
 For the UI architecture deepening refactor, keep the focused gates below close to the code that
 changes them. They cover the public export map, removed primitive aliases, overlay runtime policy,
 choice/search behavior, Table diagnostics boundary, shared row-window projection, theme registry,
 and gallery catalog metadata split:
 
 ```powershell
-cargo nextest run -p open-gpui-ui-components public_reexports_stay_explicit_without_wildcards crate_root_and_prelude_exports_remain_explicit crate_root_and_prelude_reexports_stay_intentionally_aligned primitive_deletion_target_inventory_blocks_removed_shallow_reexports primitive_modules_do_not_reexport_ui_core_as_pass_through_aliases public_surface_owner_map_classifies_official_gallery_catalog_once public_surface_owner_map_aligns_adjacent_gallery_statuses adapter_only_public_surfaces_match_allowlist gpui_adapter_exports_group_runtime_specific_surfaces
+cargo nextest run -p open-gpui-ui-components public_reexports_stay_explicit_without_wildcards crate_root_and_prelude_exports_remain_explicit crate_root_and_prelude_reexports_stay_intentionally_aligned primitive_deletion_target_inventory_blocks_removed_shallow_reexports primitive_modules_do_not_reexport_ui_core_as_pass_through_aliases surface_manifest_classifies_public_surface_once surface_manifest_aligns_adjacent_gallery_statuses surface_manifest_tracks_exports_gallery_and_docs_contracts adapter_only_public_surfaces_match_allowlist gpui_adapter_exports_group_runtime_specific_surfaces
 cargo nextest run -p open-gpui-ui-core overlay
 cargo nextest run -p open-gpui-ui-components overlay_adapter_config_defaults_follow_overlay_kind_policy overlay_adapter_config_can_override_focus_and_dismiss_policy overlay_open_change_helpers_match_core_policies dialog_runtime_respects_escape_policy_and_restores_trigger_focus
 cargo nextest run -p open-gpui-ui-components choice_surfaces_share_stable_value_resolution_and_query_normalization listbox select combobox command
