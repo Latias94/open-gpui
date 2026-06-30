@@ -3,36 +3,50 @@ use open_gpui::{
     Render, ScrollDelta, ScrollWheelEvent, Styled, Window, div, point, px,
 };
 use open_gpui_ui_components::{
-    AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Avatar, Badge,
-    BadgeVariant, Button, ButtonVariant, Checkbox, ColorIntent, ColorState, Combobox,
-    ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command, CommandGroup,
-    CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItem,
-    CommandItemDescriptor, CommandLoadingState, CommandMatchSource, CommandOpenMode,
-    CommandQueryMode, CommandSelection, CommandSelectionChange, CommandSelectionMode, ContextMenu,
-    DEFAULT_FOCUS_RING_WIDTH, Dialog, DialogOpenMode, EmptyState, FeedbackIntent, Field, FocusRing,
-    HoverCard, HoverCardContentKind, HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode,
-    IconButton, Kbd, Label, Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption,
-    ListboxOptionDescriptor, ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem,
-    MenuItemKind, MenuOpenMode, MenuSelection, Popover, PopoverOpenMode, Progress,
-    ProgressVisualMode, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor,
-    RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select,
-    SelectOpenMode, SelectSelection, Separator, Sheet, SheetCloseAffordance, SheetModalMode,
-    SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor,
-    SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
-    Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
-    TableCellValue, TableCenterColumnWindowPlan, TableColumn, TableColumnFacets, TableColumnId,
-    TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
-    TableColumnSizingChange, TableExpansionMode, TableFacetValueCount, TableFilter,
-    TableHeaderAction, TablePagination, TableRow, TableRowChildrenLoadState, TableSort,
-    TableSortDirection, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem,
-    TabsItemDescriptor, TabsSelection, TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver,
-    ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
-    ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind,
-    TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeItemDescriptor, VirtualizedList,
-    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListRenderPlan,
-    VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
-    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
-    VirtualizerState, active_index_from_str_keys, first_enabled,
+    AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Avatar,
+    AvatarGroup, AvatarGroupCount, Badge, BadgeVariant, Button, ButtonVariant, Checkbox,
+    ColorIntent, ColorState, Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption,
+    ComboboxSelection, Command, CommandGroup, CommandGroupDescriptor, CommandIndexSnapshot,
+    CommandIndexSnapshotMode, CommandItem, CommandItemDescriptor, CommandLoadingState,
+    CommandMatchSource, CommandOpenMode, CommandQueryMode, CommandSelection,
+    CommandSelectionChange, CommandSelectionMode, ContextMenu, DEFAULT_FOCUS_RING_WIDTH, Dialog,
+    DialogOpenMode, EmptyState, FeedbackIntent, Field, FocusRing, HoverCard, HoverCardContentKind,
+    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton, Kbd, Label, Listbox,
+    ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
+    ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode,
+    MenuSelection, MenuSubmenuSurface, Popover, PopoverOpenMode, Progress, ProgressVisualMode,
+    RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor, RadioSelection, ScrollArea,
+    ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select, SelectOpenMode, SelectSelection,
+    Separator, Sheet, SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar,
+    SidebarCollapseMode, SidebarItem, SidebarItemDescriptor, SidebarSection,
+    SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton, Splitter,
+    SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
+    TableCellEditApplyOutcome, TableCellEditChange, TableCellEditor, TableCellValue,
+    TableCenterColumnWindowPlan, TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId,
+    TableColumnOrderChange, TableColumnOrderPlacement, TableColumnPinning, TableColumnRegion,
+    TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableColumnVisibility,
+    TableColumnVisibilityAction, TableColumnVisibilityChange, TableColumnVisibilityOverrides,
+    TableColumnVisibilityState, TableExpansionMode, TableFacetValueCount, TableFacetedFilter,
+    TableFacetedFilterChange, TableFacetedFilterState, TableFilter, TableGlobalFacetSummary,
+    TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction,
+    TableNumericFilterOperator, TablePagination, TablePredicateFilter, TablePredicateFilterChange,
+    TablePredicateFilterOperator, TablePredicateFilterOperatorOptionState,
+    TablePredicateFilterState, TableRangeFilter, TableRangeFilterChange, TableRangeFilterState,
+    TableResolvedHeaderKind, TableRow, TableRowChildrenLoadState, TableRowId, TableRowMeasureMode,
+    TableRowPinning, TableRowPinningPolicy, TableRowRegion, TableSelectOption,
+    TableSelectionActivationMode, TableSelectionMode, TableSelectionScope, TableSort,
+    TableSortDirection, TableStageMode, TableState, TableTextFilterOperator, TableToolbar,
+    TableToolbarState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
+    TabsState, TextInput, TextInputDisplayMode, Textarea, ThemeColor, ThemeMode, ThemeResolver,
+    ThemeSnapshot, Toggle, ToggleGroup, ToggleGroupItem, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeChildrenLoadState,
+    TreeDropPosition, TreeItemDescriptor, TreeMove, TreeMoveTarget, TreeRenderPlan,
+    TreeRowRenderPlan, VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
+    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, apply_tree_move,
+    first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -100,6 +114,22 @@ impl ComponentApiInventoryEntry {
 
 const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     ComponentApiInventoryEntry {
+        component: "Accordion",
+        controlled_inputs: &["open_values"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open_values",
+            runtime_value: "open_values",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &["mode", "collapsible"],
+        callbacks: &[CallbackApi {
+            name: "on_open_change",
+            payload: "AccordionOpenChange",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
         component: "Button",
         controlled_inputs: &[],
         default_seeds: &[],
@@ -123,6 +153,80 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         no_interaction_note: Some("display-only primitive"),
     },
     ComponentApiInventoryEntry {
+        component: "Collapsible",
+        controlled_inputs: &["open"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_open",
+            runtime_value: "open",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &["content"],
+        callbacks: &[CallbackApi {
+            name: "on_open_change",
+            payload: "bool",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Link",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["href", "external"],
+        callbacks: &[CallbackApi {
+            name: "on_activate",
+            payload: "LinkActivation",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Breadcrumb",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["item", "disabled"],
+        callbacks: &[CallbackApi {
+            name: "on_activate",
+            payload: "BreadcrumbActivation",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Tag",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["variant", "removable"],
+        callbacks: &[CallbackApi {
+            name: "on_remove",
+            payload: "TagRemove",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "ToastStack",
+        controlled_inputs: &["toasts"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["max_visible", "toast"],
+        callbacks: &[
+            CallbackApi {
+                name: "on_action",
+                payload: "ToastAction",
+            },
+            CallbackApi {
+                name: "on_dismiss",
+                payload: "ToastDismiss",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
         component: "IconButton",
         controlled_inputs: &[],
         default_seeds: &[],
@@ -131,6 +235,32 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         callbacks: &[CallbackApi {
             name: "on_click",
             payload: "ClickEvent",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "Slider",
+        controlled_inputs: &["value"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["min", "max", "step"],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "SliderChange",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "NumberInput",
+        controlled_inputs: &["value"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["min", "max", "step", "read_only", "invalid", "required"],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "NumberInputChange",
         }],
         renderer_neutral_state: true,
         no_interaction_note: None,
@@ -191,6 +321,28 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         no_interaction_note: None,
     },
     ComponentApiInventoryEntry {
+        component: "ToggleGroup",
+        controlled_inputs: &["selected_values"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_selected_values",
+                runtime_value: "selected_values",
+            },
+            DefaultSeedApi {
+                builder: "default_focused",
+                runtime_value: "focused",
+            },
+        ],
+        legacy_seed_inputs: &[],
+        policy_hints: &["orientation", "mode", "selection_required", "item"],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "ToggleGroupSelectionChange",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
         component: "Toolbar",
         controlled_inputs: &[],
         default_seeds: &[DefaultSeedApi {
@@ -236,7 +388,12 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             },
         ],
         legacy_seed_inputs: &[],
-        policy_hints: &[],
+        policy_hints: &[
+            "virtualized",
+            "viewport_item_count",
+            "overscan_count",
+            "draggable",
+        ],
         callbacks: &[
             CallbackApi {
                 name: "on_select",
@@ -245,6 +402,10 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             CallbackApi {
                 name: "on_toggle",
                 payload: "TreeToggle",
+            },
+            CallbackApi {
+                name: "on_move",
+                payload: "TreeMove",
             },
         ],
         renderer_neutral_state: true,
@@ -395,6 +556,19 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         no_interaction_note: None,
     },
     ComponentApiInventoryEntry {
+        component: "Textarea",
+        controlled_inputs: &["value"],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["rows"],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "String",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
         component: "Field",
         controlled_inputs: &[],
         default_seeds: &[],
@@ -442,7 +616,7 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
     },
     ComponentApiInventoryEntry {
         component: "Table",
-        controlled_inputs: &["state", "column_sizing"],
+        controlled_inputs: &["state", "column_sizing", "column_order"],
         default_seeds: &[DefaultSeedApi {
             builder: "default_focused_row",
             runtime_value: "focused_row",
@@ -457,9 +631,11 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
             "facet_metadata",
             "pagination_mode",
             "pagination_totals",
+            "row_pinning_policy",
             "enable_column_resizing",
             "column_resize_mode",
             "column_resize_direction",
+            "column_order",
         ],
         callbacks: &[
             CallbackApi {
@@ -471,12 +647,204 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
                 payload: "TableColumnSizingChange",
             },
             CallbackApi {
+                name: "on_column_order_change",
+                payload: "TableColumnOrderChange",
+            },
+            CallbackApi {
                 name: "on_row_activate",
                 payload: "TableRowActivation",
             },
             CallbackApi {
+                name: "on_row_selection_change",
+                payload: "TableRowSelectionChange",
+            },
+            CallbackApi {
                 name: "on_row_expansion_request",
                 payload: "TableRowExpansionToggle",
+            },
+            CallbackApi {
+                name: "on_cell_edit_change",
+                payload: "TableCellEditChange",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "TableFacetedFilter",
+        controlled_inputs: &["open", "query", "selected_values"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_open",
+                runtime_value: "open",
+            },
+            DefaultSeedApi {
+                builder: "default_query",
+                runtime_value: "query",
+            },
+        ],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "facets",
+            "placeholder",
+            "empty_label",
+            "clear_label",
+            "viewport_item_count",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+        ],
+        callbacks: &[
+            CallbackApi {
+                name: "on_open_change",
+                payload: "bool",
+            },
+            CallbackApi {
+                name: "on_query_change",
+                payload: "String",
+            },
+            CallbackApi {
+                name: "on_change",
+                payload: "TableFacetedFilterChange",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "TableColumnVisibility",
+        controlled_inputs: &["open", "visibility"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_open",
+                runtime_value: "open",
+            },
+            DefaultSeedApi {
+                builder: "default_visibility",
+                runtime_value: "visibility",
+            },
+        ],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "columns",
+            "empty_label",
+            "show_all_label",
+            "reset_label",
+            "disabled",
+            "viewport_item_count",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+        ],
+        callbacks: &[
+            CallbackApi {
+                name: "on_open_change",
+                payload: "bool",
+            },
+            CallbackApi {
+                name: "on_change",
+                payload: "TableColumnVisibilityChange",
+            },
+        ],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "TableGlobalFilter",
+        controlled_inputs: &["query"],
+        default_seeds: &[DefaultSeedApi {
+            builder: "default_query",
+            runtime_value: "query",
+        }],
+        legacy_seed_inputs: &[],
+        policy_hints: &["placeholder", "clear_label", "disabled"],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "TableGlobalFilterChange",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "TablePredicateFilter",
+        controlled_inputs: &["operator", "value"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_operator",
+                runtime_value: "operator",
+            },
+            DefaultSeedApi {
+                builder: "default_value",
+                runtime_value: "value",
+            },
+        ],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "operator_option",
+            "operators",
+            "placeholder",
+            "clear_label",
+            "disabled",
+            "tokens",
+        ],
+        callbacks: &[CallbackApi {
+            name: "on_change",
+            payload: "TablePredicateFilterChange",
+        }],
+        renderer_neutral_state: true,
+        no_interaction_note: None,
+    },
+    ComponentApiInventoryEntry {
+        component: "TableToolbar",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["control", "secondary_control", "summary", "tokens"],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: Some("slot container"),
+    },
+    ComponentApiInventoryEntry {
+        component: "TableRangeFilter",
+        controlled_inputs: &["open"],
+        default_seeds: &[
+            DefaultSeedApi {
+                builder: "default_open",
+                runtime_value: "open",
+            },
+            DefaultSeedApi {
+                builder: "default_min_text",
+                runtime_value: "min_text",
+            },
+            DefaultSeedApi {
+                builder: "default_max_text",
+                runtime_value: "max_text",
+            },
+        ],
+        legacy_seed_inputs: &[],
+        policy_hints: &[
+            "facets",
+            "range",
+            "clear_label",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+        ],
+        callbacks: &[
+            CallbackApi {
+                name: "on_open_change",
+                payload: "bool",
+            },
+            CallbackApi {
+                name: "on_change",
+                payload: "TableRangeFilterChange",
             },
         ],
         renderer_neutral_state: true,
@@ -573,6 +941,16 @@ const COMPONENT_API_INVENTORY: &[ComponentApiInventoryEntry] = &[
         callbacks: &[],
         renderer_neutral_state: true,
         no_interaction_note: Some("identity readout"),
+    },
+    ComponentApiInventoryEntry {
+        component: "AvatarGroup",
+        controlled_inputs: &[],
+        default_seeds: &[],
+        legacy_seed_inputs: &[],
+        policy_hints: &["avatar", "max_visible"],
+        callbacks: &[],
+        renderer_neutral_state: true,
+        no_interaction_note: Some("identity readout collection"),
     },
     ComponentApiInventoryEntry {
         component: "Tooltip",
@@ -793,12 +1171,26 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
         "Badge" => &["variant"],
         "IconButton" => &["variant", "disabled"],
         "Switch" => &["label", "disabled"],
-        "Checkbox" => &["label", "indeterminate", "disabled", "required", "invalid"],
+        "Checkbox" => &[
+            "label",
+            "aria_label",
+            "indeterminate",
+            "disabled",
+            "required",
+            "invalid",
+        ],
         "RadioGroup" => &["label", "disabled", "required", "item"],
         "Toggle" => &["variant", "disabled"],
         "Toolbar" => &["disabled", "item", "items"],
         "Sidebar" => &["disabled", "section", "sections"],
-        "Tree" => &["item", "items"],
+        "Tree" => &[
+            "item",
+            "items",
+            "virtualized",
+            "viewport_item_count",
+            "overscan_count",
+            "draggable",
+        ],
         "Listbox" => &[
             "option",
             "options",
@@ -814,6 +1206,7 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "group",
             "groups",
             "disabled",
+            "full_width",
         ],
         "Combobox" => &[
             "placeholder",
@@ -842,6 +1235,15 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
         "Label" => &["required", "disabled"],
         "TextInput" => &[
             "placeholder",
+            "display_mode",
+            "disabled",
+            "read_only",
+            "invalid",
+            "required",
+        ],
+        "Textarea" => &[
+            "placeholder",
+            "rows",
             "disabled",
             "read_only",
             "invalid",
@@ -860,6 +1262,7 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
         "Splitter" => &["disabled", "panel"],
         "Table" => &[
             "label",
+            "row_measure_mode",
             "overscan",
             "row_height",
             "header_height",
@@ -869,6 +1272,70 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
             "enable_column_resizing",
             "column_resize_mode",
             "column_resize_direction",
+            "content_fit_columns",
+        ],
+        "TableFacetedFilter" => &[
+            "facets",
+            "selected_values",
+            "open",
+            "default_open",
+            "query",
+            "default_query",
+            "placeholder",
+            "empty_label",
+            "clear_label",
+            "disabled",
+            "viewport_item_count",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
+            "on_query_change",
+            "on_change",
+        ],
+        "TableColumnVisibility" => &[
+            "columns",
+            "visibility",
+            "default_visibility",
+            "open",
+            "default_open",
+            "empty_label",
+            "show_all_label",
+            "reset_label",
+            "disabled",
+            "viewport_item_count",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
+            "on_change",
+        ],
+        "TablePredicateFilter" => &[
+            "operator",
+            "default_operator",
+            "value",
+            "default_value",
+            "operator_option",
+            "operators",
+            "placeholder",
+            "clear_label",
+            "disabled",
+            "tokens",
+            "on_change",
+        ],
+        "TableToolbar" => &[
+            "control",
+            "controls",
+            "secondary_control",
+            "secondary_controls",
+            "summary",
+            "tokens",
         ],
         "VirtualizedList" => &["disabled", "viewport_item_count", "row_height", "overscan"],
         "StatusCue" => &["intent"],
@@ -877,6 +1344,7 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
         "Progress" => &["value", "indeterminate"],
         "Skeleton" => &["subtle"],
         "Avatar" => &["source", "fallback", "accessible_label"],
+        "AvatarGroup" => &["avatars", "avatar", "max_visible"],
         "Tooltip" => &["disabled"],
         "HoverCard" => &["disabled"],
         "Popover" => &["disabled"],
@@ -895,55 +1363,139 @@ fn component_render_inputs(component: &str) -> &'static [&'static str] {
     }
 }
 
-fn component_source_file(component: &str) -> &'static str {
+fn component_source_inputs(component: &str) -> &'static [&'static str] {
     match component {
-        "Button" => "button.rs",
-        "Badge" => "badge.rs",
-        "IconButton" => "icon_button.rs",
-        "Switch" => "switch.rs",
-        "Checkbox" => "checkbox.rs",
-        "RadioGroup" => "radio.rs",
-        "Toggle" => "toggle.rs",
-        "Toolbar" => "toolbar.rs",
-        "Sidebar" => "sidebar.rs",
-        "Tree" => "tree.rs",
-        "Listbox" => "listbox.rs",
-        "Select" => "select.rs",
-        "Combobox" => "combobox.rs",
-        "Command" => "command.rs",
-        "Label" => "label.rs",
-        "TextInput" => "text_input.rs",
-        "Field" => "field.rs",
-        "Tabs" => "tabs.rs",
-        "ScrollArea" => "scroll_area.rs",
-        "Splitter" => "splitter.rs",
-        "Table" => "table.rs",
-        "VirtualizedList" => "virtualized_list.rs",
-        "StatusCue" => "feedback.rs",
-        "EmptyState" => "feedback.rs",
-        "Separator" => "separator.rs",
-        "Kbd" => "kbd.rs",
-        "Progress" => "progress.rs",
-        "Skeleton" => "skeleton.rs",
-        "Avatar" => "avatar.rs",
-        "Tooltip" => "tooltip.rs",
-        "HoverCard" => "hover_card.rs",
-        "Popover" => "popover.rs",
-        "Dialog" => "dialog.rs",
-        "AlertDialog" => "alert_dialog.rs",
-        "Sheet" => "sheet.rs",
-        "Menu" => "menu.rs",
-        "ContextMenu" => "context_menu.rs",
+        "Accordion" => &["accordion.rs"],
+        "Button" => &["button.rs"],
+        "Badge" => &["badge.rs"],
+        "Breadcrumb" => &["breadcrumb.rs"],
+        "Collapsible" => &["collapsible.rs"],
+        "Link" => &["link.rs"],
+        "Tag" => &["tag.rs"],
+        "ToastStack" => &["toast.rs"],
+        "IconButton" => &["icon_button.rs"],
+        "Switch" => &["switch.rs"],
+        "Checkbox" => &["checkbox.rs"],
+        "RadioGroup" => &["radio.rs"],
+        "Toggle" => &["toggle.rs"],
+        "ToggleGroup" => &["toggle_group.rs"],
+        "Toolbar" => &["toolbar.rs"],
+        "Sidebar" => &["sidebar.rs"],
+        "Tree" => &["tree.rs", "tree/movement.rs", "tree/render_plan.rs"],
+        "Listbox" => &["listbox.rs"],
+        "Select" => &["select.rs"],
+        "Combobox" => &["combobox.rs"],
+        "Command" => &["command.rs"],
+        "Label" => &["label.rs"],
+        "TextInput" => &["text_input.rs"],
+        "Textarea" => &["textarea.rs"],
+        "Field" => &["field.rs"],
+        "Tabs" => &["tabs.rs"],
+        "ScrollArea" => &["scroll_area.rs"],
+        "Splitter" => &["splitter.rs"],
+        "Table" => &["table/mod.rs", "table/resolve.rs"],
+        "TableColumnVisibility" => &["table/column_visibility"],
+        "TableFacetedFilter" => &["table/faceted_filter"],
+        "TableGlobalFilter" => &["table/global_filter"],
+        "TablePredicateFilter" => &["table/predicate_filter"],
+        "TableRangeFilter" => &["table/range_filter"],
+        "TableToolbar" => &["table/toolbar.rs"],
+        "VirtualizedList" => &["virtualized_list.rs"],
+        "StatusCue" => &["feedback.rs"],
+        "EmptyState" => &["feedback.rs"],
+        "Separator" => &["separator.rs"],
+        "Kbd" => &["kbd.rs"],
+        "Progress" => &["progress.rs"],
+        "Skeleton" => &["skeleton.rs"],
+        "Avatar" => &["avatar.rs"],
+        "AvatarGroup" => &["avatar.rs"],
+        "Tooltip" => &["tooltip.rs"],
+        "HoverCard" => &["hover_card.rs"],
+        "Popover" => &["popover.rs"],
+        "Dialog" => &["dialog.rs"],
+        "AlertDialog" => &["alert_dialog.rs"],
+        "Sheet" => &["sheet.rs"],
+        "Menu" => &["menu.rs"],
+        "ContextMenu" => &["context_menu.rs"],
+        "Slider" => &["slider.rs"],
+        "NumberInput" => &["number_input.rs"],
         _ => panic!("missing source file mapping for `{component}`"),
     }
 }
 
+fn table_render_owner_files() -> &'static [&'static str] {
+    &[
+        "table/body/mod.rs",
+        "table/cell.rs",
+        "table/editors.rs",
+        "table/header.rs",
+        "table/resize.rs",
+    ]
+}
+
 fn component_public_methods(component: &str) -> &'static [&'static str] {
     match component {
+        "Accordion" => &[
+            "new",
+            "mode",
+            "collapsible",
+            "open_values",
+            "default_open_values",
+            "item",
+            "tokens",
+            "on_open_change",
+            "state",
+        ],
         "Button" => &[
             "new", "variant", "disabled", "selected", "tokens", "on_click", "state",
         ],
         "Badge" => &["new", "variant", "tokens", "state"],
+        "Collapsible" => &[
+            "new",
+            "open",
+            "default_open",
+            "disabled",
+            "content",
+            "tokens",
+            "on_open_change",
+            "state",
+        ],
+        "Link" => &[
+            "new",
+            "disabled",
+            "external",
+            "tokens",
+            "on_activate",
+            "state",
+        ],
+        "Breadcrumb" => &[
+            "new",
+            "disabled",
+            "item",
+            "items",
+            "tokens",
+            "on_activate",
+            "state",
+        ],
+        "Tag" => &[
+            "new",
+            "variant",
+            "removable",
+            "disabled",
+            "tokens",
+            "on_remove",
+            "state",
+        ],
+        "ToastStack" => &[
+            "new",
+            "toast",
+            "toasts",
+            "max_visible",
+            "tokens",
+            "on_action",
+            "on_dismiss",
+            "state",
+        ],
         "IconButton" => &[
             "new",
             "variant",
@@ -951,6 +1503,31 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "tokens",
             "on_click",
             "accessible_label",
+            "state",
+        ],
+        "Slider" => &[
+            "new",
+            "value",
+            "min",
+            "max",
+            "step",
+            "disabled",
+            "tokens",
+            "on_change",
+            "state",
+        ],
+        "NumberInput" => &[
+            "new",
+            "value",
+            "min",
+            "max",
+            "step",
+            "disabled",
+            "read_only",
+            "invalid",
+            "required",
+            "tokens",
+            "on_change",
             "state",
         ],
         "Switch" => &[
@@ -965,6 +1542,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
         "Checkbox" => &[
             "new",
             "label",
+            "aria_label",
             "checked",
             "indeterminate",
             "checked_state",
@@ -993,6 +1571,21 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "pressed",
             "disabled",
             "tokens",
+            "on_change",
+            "state",
+        ],
+        "ToggleGroup" => &[
+            "new",
+            "orientation",
+            "mode",
+            "selected_values",
+            "default_selected_values",
+            "default_focused",
+            "selection_required",
+            "disabled",
+            "tokens",
+            "item",
+            "items",
             "on_change",
             "state",
         ],
@@ -1029,10 +1622,16 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "item",
             "default_selected",
             "default_focused",
+            "virtualized",
+            "viewport_item_count",
+            "overscan_count",
+            "draggable",
             "on_select",
             "on_toggle",
+            "on_move",
             "items",
             "state",
+            "render_plan",
         ],
         "Listbox" => &[
             "new",
@@ -1058,6 +1657,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "group",
             "groups",
             "disabled",
+            "full_width",
             "open",
             "default_open",
             "selected",
@@ -1148,6 +1748,20 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "value",
             "on_change",
             "placeholder",
+            "display_mode",
+            "disabled",
+            "read_only",
+            "invalid",
+            "required",
+            "tokens",
+            "state",
+        ],
+        "Textarea" => &[
+            "new",
+            "value",
+            "on_change",
+            "placeholder",
+            "rows",
             "disabled",
             "read_only",
             "invalid",
@@ -1201,6 +1815,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
         "Table" => &[
             "new",
             "label",
+            "row_measure_mode",
             "overscan",
             "row_height",
             "header_height",
@@ -1210,15 +1825,120 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "virtualizer_snapshot",
             "default_focused_row",
             "on_sort_requested",
+            "on_column_order_change",
             "enable_column_resizing",
             "column_resize_mode",
             "column_resize_direction",
             "on_column_sizing_change",
+            "on_row_selection_change",
             "on_row_activate",
             "on_row_expansion_request",
+            "on_cell_edit_change",
             "table_state",
             "state",
             "render_plan",
+        ],
+        "TableFacetedFilter" => &[
+            "new",
+            "facets",
+            "selected_values",
+            "open",
+            "default_open",
+            "query",
+            "default_query",
+            "placeholder",
+            "empty_label",
+            "clear_label",
+            "disabled",
+            "viewport_item_count",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
+            "on_query_change",
+            "on_change",
+            "state",
+        ],
+        "TableColumnVisibility" => &[
+            "new",
+            "columns",
+            "visibility",
+            "default_visibility",
+            "open",
+            "default_open",
+            "empty_label",
+            "show_all_label",
+            "reset_label",
+            "disabled",
+            "viewport_item_count",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
+            "on_change",
+            "state",
+        ],
+        "TableGlobalFilter" => &[
+            "new",
+            "query",
+            "default_query",
+            "placeholder",
+            "clear_label",
+            "disabled",
+            "tokens",
+            "on_change",
+            "state",
+        ],
+        "TablePredicateFilter" => &[
+            "new",
+            "operator",
+            "default_operator",
+            "value",
+            "default_value",
+            "operator_option",
+            "operators",
+            "placeholder",
+            "clear_label",
+            "disabled",
+            "tokens",
+            "on_change",
+            "state",
+        ],
+        "TableToolbar" => &[
+            "new",
+            "control",
+            "controls",
+            "secondary_control",
+            "secondary_controls",
+            "summary",
+            "tokens",
+            "state",
+        ],
+        "TableRangeFilter" => &[
+            "new",
+            "facets",
+            "range",
+            "default_min_text",
+            "default_max_text",
+            "open",
+            "default_open",
+            "clear_label",
+            "disabled",
+            "placement_side",
+            "placement_alignment",
+            "outside_press_policy",
+            "initial_focus_intent",
+            "focus_restore_intent",
+            "tokens",
+            "on_open_change",
+            "on_change",
+            "state",
         ],
         "VirtualizedList" => &[
             "new",
@@ -1254,6 +1974,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "tokens",
             "state",
         ],
+        "AvatarGroup" => &["new", "avatar", "avatars", "max_visible", "tokens", "state"],
         "Tooltip" => &[
             "new",
             "element",
@@ -1393,67 +2114,134 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
 fn component_public_methods_from_source(component: &str) -> Vec<String> {
     const MARKER_PREFIX: &str = "impl ";
 
-    let source_file = component_source_file(component);
-    let source_path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/");
-    let source_path = format!("{source_path}{source_file}");
-    let source = std::fs::read_to_string(&source_path)
-        .unwrap_or_else(|error| panic!("failed to read {source_path}: {error}"));
     let marker = format!("{MARKER_PREFIX}{component} {{");
-    let impl_start = source
-        .find(&marker)
-        .unwrap_or_else(|| panic!("missing `{marker}` in {source_file}"));
-    let body_start = source[impl_start..]
-        .find('{')
-        .map(|offset| impl_start + offset)
-        .expect("impl body should open with `{`");
+    let source_paths = component_source_paths(component);
+    let mut methods = Vec::new();
+    let mut found_impl = false;
 
-    let mut depth = 0usize;
-    let mut body_end = None;
-    for (index, ch) in source[body_start..].char_indices() {
-        match ch {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    body_end = Some(body_start + index);
-                    break;
+    for source_path in &source_paths {
+        let source = read_source_file(source_path);
+        let mut search_start = 0usize;
+
+        while let Some(relative_impl_start) = source[search_start..].find(&marker) {
+            found_impl = true;
+            let impl_start = search_start + relative_impl_start;
+            let body_start = source[impl_start..]
+                .find('{')
+                .map(|offset| impl_start + offset)
+                .expect("impl body should open with `{`");
+
+            let mut depth = 0usize;
+            let mut body_end = None;
+            for (index, ch) in source[body_start..].char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            body_end = Some(body_start + index);
+                            break;
+                        }
+                    }
+                    _ => {}
                 }
             }
-            _ => {}
+            let body_end = body_end.expect("impl body should close");
+            let body = &source[body_start + 1..body_end];
+
+            for line in body.lines() {
+                let trimmed = line.trim_start();
+                if let Some(signature) = trimmed.strip_prefix("pub const fn ") {
+                    let before_paren = signature
+                        .split_once('(')
+                        .map(|(name, _)| name)
+                        .unwrap_or(signature);
+                    let name = before_paren
+                        .split_once('<')
+                        .map(|(name, _)| name)
+                        .unwrap_or(before_paren)
+                        .trim();
+                    methods.push(name.to_string());
+                } else if let Some(signature) = trimmed.strip_prefix("pub fn ") {
+                    let before_paren = signature
+                        .split_once('(')
+                        .map(|(name, _)| name)
+                        .unwrap_or(signature);
+                    let name = before_paren
+                        .split_once('<')
+                        .map(|(name, _)| name)
+                        .unwrap_or(before_paren)
+                        .trim();
+                    methods.push(name.to_string());
+                }
+            }
+
+            search_start = body_end + 1;
         }
     }
-    let body_end = body_end.expect("impl body should close");
-    let body = &source[body_start + 1..body_end];
-    let mut methods = Vec::new();
 
-    for line in body.lines() {
-        let trimmed = line.trim_start();
-        if let Some(signature) = trimmed.strip_prefix("pub const fn ") {
-            let before_paren = signature
-                .split_once('(')
-                .map(|(name, _)| name)
-                .unwrap_or(signature);
-            let name = before_paren
-                .split_once('<')
-                .map(|(name, _)| name)
-                .unwrap_or(before_paren)
-                .trim();
-            methods.push(name.to_string());
-        } else if let Some(signature) = trimmed.strip_prefix("pub fn ") {
-            let before_paren = signature
-                .split_once('(')
-                .map(|(name, _)| name)
-                .unwrap_or(signature);
-            let name = before_paren
-                .split_once('<')
-                .map(|(name, _)| name)
-                .unwrap_or(before_paren)
-                .trim();
-            methods.push(name.to_string());
-        }
+    if !found_impl {
+        panic!(
+            "missing `{marker}` in component source mapping for `{component}`: {source_paths:?}"
+        );
     }
 
     methods
+}
+
+fn component_source_paths(component: &str) -> Vec<std::path::PathBuf> {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut paths = Vec::new();
+
+    for source_entry in component_source_inputs(component) {
+        let mapped_path = source_dir.join(source_entry);
+        if mapped_path.is_file() {
+            paths.push(mapped_path);
+        } else if mapped_path.is_dir() {
+            collect_rs_files(&mapped_path, &mut paths);
+        } else if let Some(module_name) = source_entry.strip_suffix(".rs") {
+            let mod_path = source_dir.join(module_name).join("mod.rs");
+            if mod_path.is_file() {
+                paths.push(mod_path);
+            } else {
+                panic!("component source input `{source_entry}` does not exist");
+            }
+        } else {
+            panic!("component source input `{source_entry}` must be a .rs file or directory");
+        }
+    }
+
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn read_source_file(source_path: &std::path::Path) -> String {
+    std::fs::read_to_string(source_path)
+        .unwrap_or_else(|error| panic!("failed to read {source_path:?}: {error}"))
+}
+
+fn collect_rs_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    let entries = std::fs::read_dir(dir)
+        .unwrap_or_else(|error| panic!("failed to read source dir {dir:?}: {error}"));
+    for entry in entries {
+        let path = entry
+            .unwrap_or_else(|error| panic!("failed to read source dir entry: {error}"))
+            .path();
+        if path.is_dir() {
+            collect_rs_files(&path, files);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            files.push(path);
+        }
+    }
+}
+
+fn ui_component_source_files() -> Vec<std::path::PathBuf> {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    collect_rs_files(&source_dir, &mut files);
+    files.sort();
+    files
 }
 
 fn custom_tokens() -> ThemeTokens {
@@ -2470,6 +3258,155 @@ fn menu_state_resolves_visible_submenu_navigation_and_local_scroll_contract() {
 }
 
 #[test]
+fn menu_state_resolves_submenu_surface_and_safe_hover_contract() {
+    let state = Menu::new("nested-menu", "Nested")
+        .open(true)
+        .default_focused_value("sort")
+        .items([
+            MenuItem::action("open", "Open"),
+            MenuItem::submenu(
+                "sort",
+                "Sort by",
+                [
+                    MenuItem::action("name", "Name"),
+                    MenuItem::action("modified", "Modified"),
+                ],
+            ),
+            MenuItem::action("close", "Close"),
+        ])
+        .state();
+    let trigger_path = state
+        .submenu_navigation_target("right")
+        .expect("submenu navigation should resolve")
+        .open_path()
+        .to_vec();
+    let trigger_bounds = rect(
+        ui_point(ui_px(40.0), ui_px(48.0)),
+        ui_size(ui_px(160.0), ui_px(32.0)),
+    );
+    let content_size = ui_size(ui_px(200.0), ui_px(96.0));
+    let safe_bounds = rect(
+        ui_point(ui_px(0.0), ui_px(0.0)),
+        ui_size(ui_px(640.0), ui_px(360.0)),
+    );
+
+    let surface = state
+        .submenu_surface_for_trigger(
+            &trigger_path,
+            trigger_bounds,
+            content_size,
+            Some(safe_bounds),
+        )
+        .expect("open menu submenu trigger should resolve a floating surface plan");
+    let _: open_gpui_ui_components::MenuSubmenuSurface = surface;
+    let _: open_gpui_ui_components::MenuSafeHoverCorridor = surface.hover_corridor();
+    assert_eq!(surface.trigger_bounds(), trigger_bounds);
+    assert_eq!(
+        surface.placement_input().preferred_anchor_bounds(),
+        Some(trigger_bounds)
+    );
+    assert_eq!(
+        surface.placement_input().side(),
+        OverlayPlacementSide::Right
+    );
+    assert_eq!(
+        surface.placement_input().alignment(),
+        OverlayPlacementAlignment::Start
+    );
+    assert_eq!(surface.placement_input().safe_bounds(), Some(safe_bounds));
+    assert_eq!(
+        surface.content_bounds(),
+        rect(
+            ui_point(ui_px(200.0), ui_px(48.0)),
+            ui_size(ui_px(200.0), ui_px(96.0)),
+        )
+    );
+    assert!(
+        surface
+            .hover_corridor()
+            .contains_point(ui_point(ui_px(210.0), ui_px(60.0)))
+    );
+    assert!(
+        !surface
+            .hover_corridor()
+            .contains_point(ui_point(ui_px(20.0), ui_px(20.0)))
+    );
+    assert!(
+        state
+            .submenu_surface_for_trigger(
+                &[String::from("2:close")],
+                trigger_bounds,
+                content_size,
+                None
+            )
+            .is_none()
+    );
+
+    let closed_nested_submenu = Menu::new("closed-nested-menu", "Closed nested")
+        .open(true)
+        .default_focused_value("sort")
+        .items([MenuItem::submenu(
+            "sort",
+            "Sort by",
+            [MenuItem::submenu(
+                "then",
+                "Then by",
+                [MenuItem::action("owner", "Owner")],
+            )],
+        )])
+        .state();
+    assert!(
+        closed_nested_submenu
+            .submenu_surface_for_trigger(
+                &[String::from("0:sort"), String::from("0:then")],
+                trigger_bounds,
+                content_size,
+                None
+            )
+            .is_none(),
+        "hidden nested submenu triggers should not resolve floating surfaces"
+    );
+}
+
+#[test]
+fn menu_submenu_surface_resolves_left_placement_without_renderer_state() {
+    let trigger_bounds = rect(
+        ui_point(ui_px(240.0), ui_px(80.0)),
+        ui_size(ui_px(120.0), ui_px(32.0)),
+    );
+    let content_size = ui_size(ui_px(180.0), ui_px(120.0));
+
+    let surface = MenuSubmenuSurface::resolve(
+        trigger_bounds,
+        content_size,
+        OverlayPlacementSide::Left,
+        OverlayPlacementAlignment::End,
+        ui_px(4.0),
+        None,
+    );
+
+    assert_eq!(surface.placement_input().side(), OverlayPlacementSide::Left);
+    assert_eq!(
+        surface.placement_input().alignment(),
+        OverlayPlacementAlignment::End
+    );
+    assert_eq!(surface.placement_input().offset(), ui_px(4.0));
+    assert_eq!(
+        surface.content_bounds(),
+        rect(
+            ui_point(ui_px(56.0), ui_px(-8.0)),
+            ui_size(ui_px(180.0), ui_px(120.0)),
+        )
+    );
+    assert!(
+        surface
+            .hover_corridor()
+            .contains_point(ui_point(ui_px(238.0), ui_px(84.0))),
+        "corridor should include the horizontal gap between trigger and left submenu"
+    );
+}
+
+#[test]
 fn menu_state_discards_invalid_runtime_submenu_paths_after_items_change() {
     let state = Menu::new("changed-menu", "Changed")
         .open(true)
@@ -2670,6 +3607,221 @@ fn menu_runtime_keyboard_submenu_opens_and_selects_child(cx: &mut open_gpui::Tes
     assert_eq!(after_enter.len(), 1);
     assert_eq!(after_enter[0].path_key(), "1:sort/0:name");
     assert_eq!(after_enter[0].value(), "name");
+}
+
+#[open_gpui::test]
+fn menu_runtime_hover_opens_submenu_and_preserves_child_focus(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                Menu::new("hover-submenu", "Hover submenu")
+                    .item(MenuItem::action("open", "Open"))
+                    .item(MenuItem::submenu(
+                        "sort",
+                        "Sort by",
+                        [
+                            MenuItem::action("name", "Name"),
+                            MenuItem::action("modified", "Modified"),
+                        ],
+                    ))
+                    .item(MenuItem::action("rename", "Rename")),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let trigger = cx
+        .debug_bounds("menu:hover-submenu:trigger")
+        .expect("hover submenu trigger should render");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:hover-submenu:item:1:sort/0:name")
+            .is_none(),
+        "submenu child should not render before hovering the submenu trigger"
+    );
+
+    let sort = cx
+        .debug_bounds("menu:hover-submenu:item:1:sort")
+        .expect("submenu trigger item should render");
+    cx.simulate_mouse_move(sort.center(), None, Default::default());
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:hover-submenu:item:1:sort/0:name")
+            .is_some(),
+        "hovering a submenu trigger should open its branch after the hover delay"
+    );
+
+    let child = cx
+        .debug_bounds("menu:hover-submenu:item:1:sort/0:name")
+        .expect("submenu child should render after hover");
+    assert!(
+        child.origin.x > sort.bottom_right().x,
+        "submenu child should open in a floating panel to the right"
+    );
+    assert!(
+        child.origin.y < sort.bottom_right().y,
+        "submenu child should not be stacked below the trigger row"
+    );
+    cx.simulate_mouse_move(child.center(), None, Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:hover-submenu:item:1:sort/0:name")
+            .is_some(),
+        "hovering inside the open submenu branch should preserve that branch"
+    );
+
+    let rename = cx
+        .debug_bounds("menu:hover-submenu:item:2:rename")
+        .expect("next root item should render");
+    cx.simulate_mouse_move(rename.center(), None, Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:hover-submenu:item:1:sort/0:name")
+            .is_some(),
+        "hovering another root item should not close the submenu before the close delay"
+    );
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:hover-submenu:item:1:sort/0:name")
+            .is_none(),
+        "hovering another root item should close the previous submenu branch after the close delay"
+    );
+}
+
+#[open_gpui::test]
+fn menu_runtime_hover_switches_between_submenu_branches(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                Menu::new("hover-switch-submenu", "Hover switch submenu")
+                    .item(MenuItem::action("open", "Open"))
+                    .item(MenuItem::submenu(
+                        "sort",
+                        "Sort by",
+                        [
+                            MenuItem::action("name", "Name"),
+                            MenuItem::action("modified", "Modified"),
+                        ],
+                    ))
+                    .item(MenuItem::submenu(
+                        "group",
+                        "Group by",
+                        [
+                            MenuItem::action("kind", "Kind"),
+                            MenuItem::action("owner", "Owner"),
+                        ],
+                    ))
+                    .item(MenuItem::action("rename", "Rename")),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let trigger = cx
+        .debug_bounds("menu:hover-switch-submenu:trigger")
+        .expect("hover switch submenu trigger should render");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let sort = cx
+        .debug_bounds("menu:hover-switch-submenu:item:1:sort")
+        .expect("sort submenu trigger should render");
+    cx.simulate_mouse_move(sort.center(), None, Default::default());
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:1:sort/0:name")
+            .is_some(),
+        "hovering the first submenu trigger should open its branch after the hover delay"
+    );
+    assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:2:group/0:kind")
+            .is_none(),
+        "sibling submenu branch should stay hidden before it is hovered"
+    );
+
+    let group = cx
+        .debug_bounds("menu:hover-switch-submenu:item:2:group")
+        .expect("group submenu trigger should render");
+    cx.simulate_mouse_move(group.center(), None, Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:1:sort/0:name")
+            .is_some(),
+        "switching submenu triggers should keep the previous branch visible until the new hover delay elapses"
+    );
+    assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:2:group/0:kind")
+            .is_none(),
+        "sibling submenu branch should still be hidden before the hover delay elapses"
+    );
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:2:group/0:kind")
+            .is_some(),
+        "hovering a sibling submenu trigger should open the sibling branch after the hover delay"
+    );
+    assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:1:sort/0:name")
+            .is_none(),
+        "switching submenu triggers should close the previous branch"
+    );
+
+    let rename = cx
+        .debug_bounds("menu:hover-switch-submenu:item:3:rename")
+        .expect("next root item should render");
+    cx.simulate_mouse_move(rename.center(), None, Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:2:group/0:kind")
+            .is_some(),
+        "hovering a plain root item should keep the open submenu visible until the close delay elapses"
+    );
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("menu:hover-switch-submenu:item:2:group/0:kind")
+            .is_none(),
+        "hovering a plain root item should close the open submenu branch after the close delay"
+    );
 }
 
 #[test]
@@ -2911,6 +4063,65 @@ fn context_menu_runtime_keyboard_navigation_preserves_focused_value_after_rerend
     assert_eq!(after_enter[0].label(), "Select all");
     assert_eq!(after_item_enter.len(), 1);
     assert_eq!(after_item_enter[0].path_key(), "2:select-all");
+}
+
+#[open_gpui::test]
+fn context_menu_runtime_long_menu_scroll_stays_inside_surface(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                ContextMenu::new("runtime-long-context-menu", "Runtime long context menu")
+                    .default_open(true)
+                    .anchor_point(point(px(280.0), px(160.0)))
+                    .default_focused_value("item-00")
+                    .items((0..12).map(|index| {
+                        MenuItem::action(format!("item-{index:02}"), format!("Item {index:02}"))
+                    })),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let surface_before = cx
+        .debug_bounds("context-menu:runtime-long-context-menu:surface")
+        .expect("runtime long context menu surface should render");
+    let viewport = cx
+        .debug_bounds("scroll-area:context-menu:runtime-long-context-menu:surface-scroll")
+        .expect("runtime long context menu scroll viewport should render");
+    let item_before = cx
+        .debug_bounds("context-menu:runtime-long-context-menu:item:0:item-00")
+        .expect("runtime long context menu first item should render");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let surface_after = cx
+        .debug_bounds("context-menu:runtime-long-context-menu:surface")
+        .expect("runtime long context menu surface should still render");
+    let item_after = cx
+        .debug_bounds("context-menu:runtime-long-context-menu:item:0:item-00")
+        .expect("runtime long context menu first item should still render");
+
+    assert_eq!(
+        surface_after, surface_before,
+        "expected wheel input on the long ContextMenu to keep the surface fixed; before={surface_before:?} after={surface_after:?}"
+    );
+    assert!(
+        item_after.top() < item_before.top(),
+        "expected wheel input on the long ContextMenu to move the inner scroll viewport; before={item_before:?} after={item_after:?}"
+    );
 }
 
 #[test]
@@ -3360,6 +4571,1163 @@ fn table_render_plan_exposes_faceting_metadata() {
 }
 
 #[test]
+fn table_render_plan_exposes_global_facet_summary() {
+    let state = TableState::new([
+        TableRow::new("row-1")
+            .with_cell("team", "UI")
+            .with_cell("status", "Ready")
+            .with_cell("score", 10_usize)
+            .with_cell("enabled", true)
+            .with_cell("tag", "alpha")
+            .with_cell("notes", "ready"),
+        TableRow::new("row-2")
+            .with_cell("team", "UI")
+            .with_cell("status", "Blocked")
+            .with_cell("score", 20_usize)
+            .with_cell("enabled", false)
+            .with_cell("notes", "done"),
+        TableRow::new("row-3")
+            .with_cell("team", "API")
+            .with_cell("status", "Ready")
+            .with_cell("score", 30_usize)
+            .with_cell("enabled", true)
+            .with_cell("tag", "beta")
+            .with_cell("notes", "done"),
+    ])
+    .with_columns([
+        TableColumn::new("team", "Team"),
+        TableColumn::new("status", "Status"),
+        TableColumn::new("score", "Score"),
+        TableColumn::new("enabled", "Enabled"),
+        TableColumn::new("tag", "Tag"),
+        TableColumn::new("notes", "Notes").with_global_filterable(false),
+    ])
+    .with_filters([TableFilter::contains("team", "UI")])
+    .with_global_filter("done")
+    .with_pagination(TablePagination::disabled());
+
+    let plan = Table::new("global-facet-table", "Global facet table", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    let summary: &TableGlobalFacetSummary = plan.global_facet_summary();
+    assert_eq!(summary.mode(), TableStageMode::Client);
+    assert_eq!(summary.row_count(), 2);
+    assert!(summary.column_facet(&TableColumnId::new("notes")).is_none());
+    assert_eq!(
+        summary
+            .column_facets()
+            .iter()
+            .map(|facet| facet.column().as_str())
+            .collect::<Vec<_>>(),
+        ["team", "status", "score", "enabled", "tag"]
+    );
+    assert_eq!(
+        text_facet_counts(
+            summary
+                .column_facet(&TableColumnId::new("status"))
+                .expect("status global facet should resolve")
+        ),
+        [("Blocked".to_string(), 1), ("Ready".to_string(), 1)]
+    );
+}
+
+#[test]
+fn table_faceted_filter_state_resolves_query_selection_and_popover_contract() {
+    let facets = TableColumnFacets::manual("status", 4).with_unique_values([
+        TableFacetValueCount::new("Ready", 2),
+        TableFacetValueCount::new("Blocked", 1),
+        TableFacetValueCount::new("Review", 1),
+    ]);
+
+    let state: TableFacetedFilterState =
+        TableFacetedFilter::new("status-filter", "Status", "status")
+            .facets(facets)
+            .selected_values(["Ready", "Blocked"])
+            .query("rea")
+            .open(true)
+            .placeholder("Find status")
+            .empty_label("No statuses")
+            .clear_label("Reset")
+            .small()
+            .placement_side(OverlayPlacementSide::Top)
+            .placement_alignment(OverlayPlacementAlignment::End)
+            .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
+            .state();
+
+    assert_eq!(state.id(), "status-filter");
+    assert_eq!(state.label(), "Status");
+    assert_eq!(state.column_id().as_str(), "status");
+    assert_eq!(state.query(), "rea");
+    assert_eq!(state.trigger_label(), "Status: Ready, Blocked");
+    assert_eq!(
+        state.selected_values(),
+        &["Blocked".to_string(), "Ready".to_string()]
+    );
+    assert_eq!(
+        state.selected_labels(),
+        &["Ready".to_string(), "Blocked".to_string()]
+    );
+    assert_eq!(state.total_option_count(), 3);
+    assert!(state.clear_enabled());
+    assert_eq!(state.empty_label(), "No statuses");
+    assert_eq!(state.clear_label(), "Reset");
+    assert_eq!(state.popover().open_mode(), PopoverOpenMode::Controlled);
+    assert!(state.popover().open());
+    assert_eq!(state.popover().placement_side(), OverlayPlacementSide::Top);
+    assert_eq!(
+        state.popover().placement_alignment(),
+        OverlayPlacementAlignment::End
+    );
+    assert_eq!(
+        state.popover().outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert_eq!(state.search_input().value(), "rea");
+    assert_eq!(state.search_input().placeholder(), Some("Find status"));
+    assert_eq!(state.search_input().size(), Size::Small);
+    assert!(state.search_input().controller_driven());
+
+    let options = state
+        .options()
+        .iter()
+        .map(|option| {
+            (
+                option.value().to_owned(),
+                option.label().to_owned(),
+                option.count(),
+                option.selected(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        options,
+        vec![("Ready".to_string(), "Ready".to_string(), 2, true)]
+    );
+}
+
+#[test]
+fn table_faceted_filter_state_reports_empty_query_result() {
+    let state = TableFacetedFilter::new("status-filter", "Status", "status")
+        .facets(TableColumnFacets::manual("status", 2).with_unique_values([
+            TableFacetValueCount::new("Ready", 1),
+            TableFacetValueCount::new("Blocked", 1),
+        ]))
+        .query("missing")
+        .empty_label("No matching statuses")
+        .state();
+
+    assert!(state.empty());
+    assert!(!state.clear_enabled());
+    assert_eq!(state.total_option_count(), 2);
+    assert_eq!(state.empty_label(), "No matching statuses");
+    assert!(state.options().is_empty());
+}
+
+#[test]
+fn table_faceted_filter_change_updates_filters_and_resets_pagination() {
+    let state = TableState::new([
+        TableRow::new("row-a")
+            .with_cell("team", "UI")
+            .with_cell("status", "Ready"),
+        TableRow::new("row-b")
+            .with_cell("team", "Platform")
+            .with_cell("status", "Blocked"),
+    ])
+    .with_columns([
+        TableColumn::new("team", "Team"),
+        TableColumn::new("status", "Status"),
+    ])
+    .with_filters([
+        TableFilter::contains("team", "UI"),
+        TableFilter::one_of("status", ["Ready"]),
+    ])
+    .with_pagination(TablePagination::new(3, 25));
+
+    let change =
+        TableFacetedFilterChange::new("status", ["Blocked", "Ready"], Some("Blocked"), true);
+    assert_eq!(change.column_id().as_str(), "status");
+    assert_eq!(change.toggled_value(), Some("Blocked"));
+    assert!(change.selected());
+    assert!(!change.cleared());
+
+    let next = change.apply_to(state);
+    assert_eq!(next.pagination().page_index(), 0);
+    assert_eq!(next.pagination().page_size(), 25);
+    assert_eq!(next.filters().len(), 2);
+    let team_filter = next
+        .filters()
+        .iter()
+        .find(|filter| filter.column().as_str() == "team")
+        .expect("unrelated team filter should be preserved");
+    assert_eq!(team_filter.query(), "UI");
+    let status_filter = next
+        .filters()
+        .iter()
+        .find(|filter| filter.column().as_str() == "status")
+        .expect("status filter should be replaced by the faceted selection");
+    assert_eq!(
+        status_filter
+            .selected_values()
+            .expect("status filter should be categorical")
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec!["Blocked".to_string(), "Ready".to_string()]
+    );
+
+    let cleared = TableFacetedFilterChange::clear("status");
+    assert!(cleared.cleared());
+    let cleared_state = cleared.apply_to(next);
+    assert_eq!(cleared_state.pagination().page_index(), 0);
+    assert_eq!(cleared_state.filters().len(), 1);
+    assert_eq!(cleared_state.filters()[0].column().as_str(), "team");
+}
+
+#[test]
+fn table_range_filter_state_resolves_bounds_and_popover_contract() {
+    let facets = TableColumnFacets::manual("score", 64).with_numeric_range(1.0, 64.0);
+
+    let state: TableRangeFilterState = TableRangeFilter::new("score-range", "Score", "score")
+        .facets(facets)
+        .range(Some(40.0), Some(10.0))
+        .open(true)
+        .clear_label("Reset score")
+        .small()
+        .placement_side(OverlayPlacementSide::Top)
+        .placement_alignment(OverlayPlacementAlignment::End)
+        .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
+        .state();
+
+    assert_eq!(state.id(), "score-range");
+    assert_eq!(state.label(), "Score");
+    assert_eq!(state.column_id().as_str(), "score");
+    assert_eq!(state.min_text(), "10");
+    assert_eq!(state.max_text(), "40");
+    assert_eq!(state.min_value(), Some(10.0));
+    assert_eq!(state.max_value(), Some(40.0));
+    assert_eq!(state.trigger_label(), "Score: 10-40");
+    assert!(state.active());
+    assert!(state.clear_enabled());
+    assert_eq!(state.clear_label(), "Reset score");
+    let facet_range = state
+        .facet_range()
+        .expect("manual score facets should expose a numeric range");
+    assert_eq!(facet_range.min(), 1.0);
+    assert_eq!(facet_range.max(), 64.0);
+    assert_eq!(state.min_placeholder(), "Min (1)");
+    assert_eq!(state.max_placeholder(), "Max (64)");
+    assert_eq!(state.popover().open_mode(), PopoverOpenMode::Controlled);
+    assert!(state.popover().open());
+    assert_eq!(state.popover().placement_side(), OverlayPlacementSide::Top);
+    assert_eq!(
+        state.popover().placement_alignment(),
+        OverlayPlacementAlignment::End
+    );
+    assert_eq!(
+        state.popover().outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert_eq!(state.min_input().value(), "10");
+    assert_eq!(state.max_input().value(), "40");
+    assert_eq!(state.min_input().placeholder(), Some("Min (1)"));
+    assert_eq!(state.max_input().placeholder(), Some("Max (64)"));
+    assert!(state.min_input().controller_driven());
+    assert!(state.max_input().controller_driven());
+}
+
+#[test]
+fn table_range_filter_change_updates_filters_and_resets_pagination() {
+    let state = TableState::new([
+        TableRow::new("row-a")
+            .with_cell("team", "UI")
+            .with_cell("score", 10_usize),
+        TableRow::new("row-b")
+            .with_cell("team", "Platform")
+            .with_cell("score", 40_usize),
+    ])
+    .with_columns([
+        TableColumn::new("team", "Team"),
+        TableColumn::new("score", "Score"),
+    ])
+    .with_filters([
+        TableFilter::contains("team", "UI"),
+        TableFilter::contains("score", "1"),
+        TableFilter::number_range("score", Some(5.0), Some(20.0))
+            .expect("initial score range should be valid"),
+    ])
+    .with_pagination(TablePagination::new(3, 25));
+
+    let change = TableRangeFilterChange::new("score", "30", "10");
+    assert_eq!(change.column_id().as_str(), "score");
+    assert_eq!(change.min_text(), "30");
+    assert_eq!(change.max_text(), "10");
+    assert_eq!(change.min_value(), Some(10.0));
+    assert_eq!(change.max_value(), Some(30.0));
+    assert!(change.active());
+    assert!(!change.cleared());
+
+    let next = change.apply_to(state);
+    assert_eq!(next.pagination().page_index(), 0);
+    assert_eq!(next.pagination().page_size(), 25);
+    assert_eq!(next.filters().len(), 3);
+    let team_filter = next
+        .filters()
+        .iter()
+        .find(|filter| filter.column().as_str() == "team")
+        .expect("unrelated team filter should be preserved");
+    assert_eq!(team_filter.query(), "UI");
+    let score_text_filter = next
+        .filters()
+        .iter()
+        .find(|filter| filter.column().as_str() == "score" && filter.query() == "1")
+        .expect("same-column non-range filter should be preserved");
+    assert_eq!(score_text_filter.number_range_bounds(), None);
+    let score_filter = next
+        .filters()
+        .iter()
+        .find(|filter| {
+            filter.column().as_str() == "score" && filter.number_range_bounds().is_some()
+        })
+        .expect("score filter should be replaced by the range selection");
+    assert_eq!(
+        score_filter.number_range_bounds(),
+        Some((Some(10.0), Some(30.0)))
+    );
+
+    let cleared = TableRangeFilterChange::clear("score");
+    assert!(cleared.cleared());
+    let cleared_state = cleared.apply_to(next);
+    assert_eq!(cleared_state.pagination().page_index(), 0);
+    assert_eq!(cleared_state.filters().len(), 2);
+    assert!(
+        cleared_state
+            .filters()
+            .iter()
+            .all(|filter| filter.number_range_bounds().is_none())
+    );
+    assert!(
+        cleared_state
+            .filters()
+            .iter()
+            .any(|filter| filter.column().as_str() == "team")
+    );
+    assert!(
+        cleared_state
+            .filters()
+            .iter()
+            .any(|filter| filter.column().as_str() == "score" && filter.query() == "1")
+    );
+}
+
+#[test]
+fn table_column_visibility_state_resolves_items_counts_and_popover_contract() {
+    let visibility = TableColumnVisibilityOverrides::new()
+        .hide("name")
+        .show("team")
+        .hide("score");
+
+    let state: TableColumnVisibilityState =
+        TableColumnVisibility::new("column-visibility", "Columns")
+            .columns([
+                TableColumn::new("name", "Name").with_hideable(false),
+                TableColumn::new("team", "Team").with_visible(false),
+                TableColumn::new("score", "Score"),
+            ])
+            .visibility(visibility)
+            .open(true)
+            .empty_label("No columns configured")
+            .show_all_label("Show every column")
+            .reset_label("Reset columns")
+            .small()
+            .placement_side(OverlayPlacementSide::Top)
+            .placement_alignment(OverlayPlacementAlignment::End)
+            .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
+            .state();
+
+    assert_eq!(state.id(), "column-visibility");
+    assert_eq!(state.label(), "Columns");
+    assert_eq!(state.trigger_label(), "Columns: 1 hidden");
+    assert_eq!(state.item_count(), 3);
+    assert_eq!(state.visible_count(), 2);
+    assert_eq!(state.hidden_count(), 1);
+    assert_eq!(state.hideable_count(), 2);
+    assert!(!state.all_visible());
+    assert!(state.some_visible());
+    assert!(state.show_all_enabled());
+    assert!(state.reset_enabled());
+    assert_eq!(state.empty_label(), "No columns configured");
+    assert_eq!(state.show_all_label(), "Show every column");
+    assert_eq!(state.reset_label(), "Reset columns");
+    assert_eq!(state.popover().open_mode(), PopoverOpenMode::Controlled);
+    assert!(state.popover().open());
+    assert_eq!(state.popover().placement_side(), OverlayPlacementSide::Top);
+    assert_eq!(
+        state.popover().placement_alignment(),
+        OverlayPlacementAlignment::End
+    );
+    assert_eq!(
+        state.popover().outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+
+    let items = state
+        .items()
+        .iter()
+        .map(|item| {
+            (
+                item.column_id().as_str().to_owned(),
+                item.label().to_owned(),
+                item.checked(),
+                item.hideable(),
+                item.disabled(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        items,
+        vec![
+            ("name".to_string(), "Name".to_string(), true, false, true),
+            ("team".to_string(), "Team".to_string(), true, true, false),
+            ("score".to_string(), "Score".to_string(), false, true, false),
+        ]
+    );
+}
+
+#[test]
+fn table_column_visibility_change_updates_visibility_and_preserves_table_state() {
+    let state = TableState::new([
+        TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("team", "UI")
+            .with_cell("score", 10_usize),
+        TableRow::new("row-b")
+            .with_cell("name", "Beta")
+            .with_cell("team", "Platform")
+            .with_cell("score", 40_usize),
+    ])
+    .with_columns([
+        TableColumn::new("name", "Name").with_hideable(false),
+        TableColumn::new("team", "Team").with_visible(false),
+        TableColumn::new("score", "Score"),
+    ])
+    .with_column_visibility(
+        TableColumnVisibilityOverrides::new()
+            .hide("name")
+            .show("team")
+            .hide("score"),
+    )
+    .with_filters([
+        TableFilter::contains("team", "UI"),
+        TableFilter::number_range("score", Some(5.0), Some(50.0))
+            .expect("finite score range should be valid"),
+    ])
+    .with_sorting([TableSort::descending("score")])
+    .with_selected_rows(["row-a"])
+    .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
+    .with_row_pinning(TableRowPinning::new().pinned_top(["row-a"]))
+    .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(180.0)))
+    .with_pagination(TablePagination::new(2, 25));
+
+    let change = TableColumnVisibilityChange::new("team", false);
+    assert_eq!(change.action(), TableColumnVisibilityAction::ToggleColumn);
+    assert_eq!(change.action().as_str(), "toggle_column");
+    assert_eq!(change.column_id().map(TableColumnId::as_str), Some("team"));
+    assert_eq!(change.column_ids(), &[TableColumnId::new("team")]);
+    assert_eq!(change.next_visible(), Some(false));
+
+    let next = change.apply_to(state.clone());
+    assert_eq!(
+        next.column_visibility()
+            .override_for(&TableColumnId::new("team")),
+        Some(false)
+    );
+    assert_eq!(
+        next.column_visibility()
+            .override_for(&TableColumnId::new("score")),
+        Some(false)
+    );
+    assert_eq!(
+        next.column_visibility()
+            .override_for(&TableColumnId::new("name")),
+        Some(false)
+    );
+    assert_eq!(next.filters(), state.filters());
+    assert_eq!(next.sorting(), state.sorting());
+    assert_eq!(next.pagination(), state.pagination());
+    assert_eq!(next.selected_rows(), state.selected_rows());
+    assert_eq!(next.column_pinning(), state.column_pinning());
+    assert_eq!(next.row_pinning(), state.row_pinning());
+    assert_eq!(next.column_sizing(), state.column_sizing());
+
+    let show_all = TableColumnVisibilityChange::show_all(["team", "score"]);
+    assert_eq!(show_all.action(), TableColumnVisibilityAction::ShowAll);
+    assert_eq!(show_all.action().as_str(), "show_all");
+    assert_eq!(show_all.next_visible(), Some(true));
+    assert_eq!(show_all.column_ids().len(), 2);
+    let shown = show_all.apply_to(state.clone());
+    assert_eq!(
+        shown
+            .column_visibility()
+            .override_for(&TableColumnId::new("team")),
+        Some(true)
+    );
+    assert_eq!(
+        shown
+            .column_visibility()
+            .override_for(&TableColumnId::new("score")),
+        Some(true)
+    );
+    assert_eq!(
+        shown
+            .column_visibility()
+            .override_for(&TableColumnId::new("name")),
+        Some(false)
+    );
+
+    let reset = TableColumnVisibilityChange::reset();
+    assert_eq!(reset.action(), TableColumnVisibilityAction::Reset);
+    assert_eq!(reset.action().as_str(), "reset");
+    assert!(reset.column_ids().is_empty());
+    assert_eq!(reset.column_id(), None);
+    assert_eq!(reset.next_visible(), None);
+    let reset_state = reset.apply_to(state);
+    assert!(reset_state.column_visibility().is_empty());
+}
+
+#[test]
+fn table_global_filter_state_resolves_input_contract() {
+    let state: TableGlobalFilterState = TableGlobalFilter::new("global-filter", "Search rows")
+        .default_query("stale")
+        .query("  done  ")
+        .placeholder("Search every row")
+        .clear_label("Reset search")
+        .small()
+        .state();
+
+    assert_eq!(state.id(), "global-filter");
+    assert_eq!(state.label(), "Search rows");
+    assert_eq!(state.query(), "  done  ");
+    assert!(state.active());
+    assert!(state.clear_enabled());
+    assert_eq!(state.placeholder(), "Search every row");
+    assert_eq!(state.clear_label(), "Reset search");
+    assert_eq!(state.size(), Size::Small);
+    assert!(!state.disabled());
+    assert_eq!(state.input().value(), "  done  ");
+    assert_eq!(state.input().placeholder(), Some("Search every row"));
+    assert_eq!(state.input().size(), Size::Small);
+    assert!(state.input().controller_driven());
+
+    let empty = TableGlobalFilter::new("empty-global-filter", "Search")
+        .default_query("   ")
+        .disabled(true)
+        .state();
+    assert!(!empty.active());
+    assert!(empty.clear_enabled());
+    assert!(empty.disabled());
+    assert!(empty.input().disabled());
+}
+
+#[test]
+fn table_toolbar_state_resolves_slot_counts_and_summary() {
+    let tokens = custom_tokens();
+    let state: TableToolbarState = TableToolbar::new("table-toolbar", "Filters")
+        .small()
+        .tokens(tokens)
+        .control(div())
+        .controls(vec![div(), div()])
+        .secondary_control(div())
+        .secondary_controls(vec![div(), div()])
+        .summary("3 filtered / 8 total")
+        .state();
+
+    assert_eq!(state.id(), "table-toolbar");
+    assert_eq!(state.label(), "Filters");
+    assert_eq!(state.size(), Size::Small);
+    assert_eq!(state.primary_control_count(), 3);
+    assert_eq!(state.secondary_control_count(), 3);
+    assert_eq!(state.control_count(), 6);
+    assert!(state.has_controls());
+    assert_eq!(state.summary(), Some("3 filtered / 8 total"));
+    assert!(state.has_summary());
+    assert_eq!(state.role(), Role::Toolbar);
+    assert_eq!(state.tokens(), tokens);
+    assert_eq!(state.foreground().token(), TEST_TEXT);
+    assert_eq!(state.muted_foreground().token(), TEST_TEXT_MUTED);
+
+    let empty = TableToolbar::new("empty-table-toolbar", "Filters").state();
+    assert_eq!(empty.primary_control_count(), 0);
+    assert_eq!(empty.secondary_control_count(), 0);
+    assert_eq!(empty.control_count(), 0);
+    assert!(!empty.has_controls());
+    assert_eq!(empty.summary(), None);
+    assert!(!empty.has_summary());
+}
+
+#[test]
+fn table_global_filter_change_updates_state_and_resets_pagination() {
+    let state = sample_table_state(4)
+        .with_filters([TableFilter::contains("team", "UI")])
+        .with_sorting([TableSort::ascending("name")])
+        .with_selection_mode(TableSelectionMode::Multiple)
+        .with_selected_rows(["row-0001"])
+        .with_global_filter("old")
+        .with_pagination(TablePagination::new(3, 25));
+
+    let change = TableGlobalFilterChange::new("  done  ");
+    assert_eq!(change.query(), "  done  ");
+    assert!(change.active());
+    assert!(!change.cleared());
+
+    let next = change.apply_to(state.clone());
+    assert_eq!(next.global_filter(), Some("done"));
+    assert_eq!(next.pagination().page_index(), 0);
+    assert_eq!(next.pagination().page_size(), 25);
+    assert_eq!(next.filters(), state.filters());
+    assert_eq!(next.sorting(), state.sorting());
+    assert_eq!(next.selected_rows(), state.selected_rows());
+
+    let cleared = TableGlobalFilterChange::clear();
+    assert_eq!(cleared.query(), "");
+    assert!(cleared.cleared());
+    assert!(!cleared.active());
+    let cleared_state = cleared.apply_to(next);
+    assert_eq!(cleared_state.global_filter(), None);
+    assert_eq!(cleared_state.pagination().page_index(), 0);
+    assert_eq!(cleared_state.filters(), state.filters());
+    assert_eq!(cleared_state.sorting(), state.sorting());
+    assert_eq!(cleared_state.selected_rows(), state.selected_rows());
+}
+
+#[test]
+fn table_predicate_filter_state_resolves_operator_and_input_contract() {
+    let starts_with = TablePredicateFilterOperator::text(TableTextFilterOperator::StartsWith);
+    let state: TablePredicateFilterState =
+        TablePredicateFilter::new("name-predicate", "Name", "name")
+            .default_operator(TablePredicateFilterOperator::text(
+                TableTextFilterOperator::Contains,
+            ))
+            .operator(starts_with)
+            .default_value("stale")
+            .value("  Al  ")
+            .operators([
+                TablePredicateFilterOperator::text(TableTextFilterOperator::StartsWith),
+                TablePredicateFilterOperator::text(TableTextFilterOperator::EndsWith),
+                TablePredicateFilterOperator::number(TableNumericFilterOperator::GreaterThan),
+            ])
+            .placeholder("Filter name")
+            .clear_label("Reset name")
+            .small()
+            .state();
+
+    assert_eq!(state.id(), "name-predicate");
+    assert_eq!(state.label(), "Name");
+    assert_eq!(state.column_id().as_str(), "name");
+    assert_eq!(state.operator(), starts_with);
+    assert_eq!(
+        state.operator().text_operator(),
+        Some(TableTextFilterOperator::StartsWith)
+    );
+    assert_eq!(state.value(), "  Al  ");
+    assert!(state.active());
+    assert!(state.clear_enabled());
+    assert_eq!(state.placeholder(), "Filter name");
+    assert_eq!(state.clear_label(), "Reset name");
+    assert_eq!(state.size(), Size::Small);
+    assert!(!state.disabled());
+    assert_eq!(state.input().value(), "  Al  ");
+    assert_eq!(state.input().placeholder(), Some("Filter name"));
+    assert!(state.input().controller_driven());
+    assert_eq!(state.select().selected_value(), Some("text:starts_with"));
+    assert_eq!(state.select().trigger_label(), "Starts with");
+    let first_option: &TablePredicateFilterOperatorOptionState = state
+        .operator_options()
+        .first()
+        .expect("predicate filter should expose operator options");
+    assert_eq!(first_option.operator(), starts_with);
+
+    let options = state
+        .operator_options()
+        .iter()
+        .map(|option| {
+            (
+                option.value().to_owned(),
+                option.label().to_owned(),
+                option.selected(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        options,
+        vec![
+            (
+                "text:starts_with".to_string(),
+                "Starts with".to_string(),
+                true,
+            ),
+            ("text:ends_with".to_string(), "Ends with".to_string(), false),
+            (
+                "number:greater_than".to_string(),
+                "Greater than".to_string(),
+                false,
+            ),
+        ]
+    );
+
+    let invalid_number = TablePredicateFilter::new("score-predicate", "Score", "score")
+        .operator(TablePredicateFilterOperator::number(
+            TableNumericFilterOperator::GreaterThan,
+        ))
+        .value("not a number")
+        .state();
+    assert!(!invalid_number.active());
+    assert!(invalid_number.clear_enabled());
+    assert_eq!(
+        TablePredicateFilterOperator::from_str("number:less_than")
+            .expect("stable numeric operator should parse")
+            .numeric_operator(),
+        Some(TableNumericFilterOperator::LessThan)
+    );
+}
+
+#[test]
+fn table_predicate_filter_change_updates_only_target_predicate_filters() {
+    let score_range = TableFilter::number_range("score", Some(0.0), Some(100.0))
+        .expect("finite score range should be valid");
+    let score_comparison = TableFilter::number_greater_than("score", 5.0)
+        .expect("finite score comparison should be valid");
+    let state = TableState::new([
+        TableRow::new("row-a")
+            .with_cell("team", "UI")
+            .with_cell("status", "Ready")
+            .with_cell("score", 10_usize),
+        TableRow::new("row-b")
+            .with_cell("team", "Platform")
+            .with_cell("status", "Blocked")
+            .with_cell("score", 50_usize),
+    ])
+    .with_columns([
+        TableColumn::new("team", "Team"),
+        TableColumn::new("status", "Status"),
+        TableColumn::new("score", "Score"),
+    ])
+    .with_filters([
+        TableFilter::contains("team", "UI"),
+        TableFilter::contains("score", "1"),
+        score_comparison,
+        score_range.clone(),
+        TableFilter::one_of("score", ["10", "50"]),
+        TableFilter::one_of("status", ["Ready"]),
+    ])
+    .with_sorting([TableSort::descending("score")])
+    .with_selection_mode(TableSelectionMode::Multiple)
+    .with_selected_rows(["row-a"])
+    .with_column_pinning(TableColumnPinning::new().pinned_left(["team"]))
+    .with_row_pinning(TableRowPinning::new().pinned_top(["row-a"]))
+    .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(180.0)))
+    .with_column_visibility(TableColumnVisibilityOverrides::new().hide("status"))
+    .with_global_filter("ready")
+    .with_pagination(TablePagination::new(3, 25));
+
+    let change = TablePredicateFilterChange::new(
+        "score",
+        TablePredicateFilterOperator::number(TableNumericFilterOperator::LessThanOrEqual),
+        " 42 ",
+    );
+    assert_eq!(change.column_id().as_str(), "score");
+    assert_eq!(
+        change.operator(),
+        Some(TablePredicateFilterOperator::number(
+            TableNumericFilterOperator::LessThanOrEqual
+        ))
+    );
+    assert_eq!(change.value(), " 42 ");
+    assert!(change.active());
+    assert!(!change.cleared());
+
+    let next = change.apply_to(state.clone());
+    assert_eq!(next.pagination().page_index(), 0);
+    assert_eq!(next.pagination().page_size(), 25);
+    assert_eq!(next.sorting(), state.sorting());
+    assert_eq!(next.selected_rows(), state.selected_rows());
+    assert_eq!(next.column_pinning(), state.column_pinning());
+    assert_eq!(next.row_pinning(), state.row_pinning());
+    assert_eq!(next.column_sizing(), state.column_sizing());
+    assert_eq!(next.column_visibility(), state.column_visibility());
+    assert_eq!(next.global_filter(), state.global_filter());
+    assert_eq!(next.filters().len(), 5);
+    assert!(
+        next.filters()
+            .iter()
+            .any(|filter| filter.column().as_str() == "team" && filter.query() == "UI")
+    );
+    assert!(
+        next.filters()
+            .iter()
+            .any(|filter| filter.number_range_bounds() == score_range.number_range_bounds())
+    );
+    assert!(next.filters().iter().any(|filter| {
+        filter.column().as_str() == "score"
+            && filter
+                .selected_values()
+                .is_some_and(|values| values.contains("10") && values.contains("50"))
+    }));
+    let score_predicate = next
+        .filters()
+        .iter()
+        .find(|filter| filter.number_comparison_value().is_some())
+        .expect("score numeric comparison should be replaced");
+    assert_eq!(score_predicate.column().as_str(), "score");
+    assert_eq!(
+        score_predicate.number_comparison_value(),
+        Some((TableNumericFilterOperator::LessThanOrEqual, 42.0))
+    );
+    assert!(
+        next.filters().iter().all(|filter| {
+            filter.column().as_str() != "score" || filter.text_predicate().is_none()
+        }),
+        "same-column legacy/text predicate should be removed"
+    );
+
+    let cleared = TablePredicateFilterChange::clear("score");
+    assert!(cleared.cleared());
+    assert!(!cleared.active());
+    let cleared_state = cleared.apply_to(next);
+    assert_eq!(cleared_state.pagination().page_index(), 0);
+    assert_eq!(cleared_state.filters().len(), 4);
+    assert!(
+        cleared_state
+            .filters()
+            .iter()
+            .all(|filter| filter.number_comparison_value().is_none())
+    );
+    assert!(
+        cleared_state
+            .filters()
+            .iter()
+            .any(|filter| filter.number_range_bounds() == score_range.number_range_bounds())
+    );
+    assert!(cleared_state.filters().iter().any(|filter| {
+        filter.column().as_str() == "score"
+            && filter
+                .selected_values()
+                .is_some_and(|values| values.contains("10") && values.contains("50"))
+    }));
+}
+
+#[test]
+fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
+    let state = TableState::new([
+        TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("notes", "Line 1\nLine 2")
+            .with_cell("enabled", true)
+            .with_cell("status", "ready")
+            .with_cell("score", 10_usize),
+        TableRow::new("row-b").with_cell("score", 20_usize),
+    ])
+    .with_columns([
+        TableColumn::new("name", "Name").with_text_editable(true),
+        TableColumn::new("notes", "Notes").with_multiline_text_editor(3),
+        TableColumn::new("enabled", "Enabled").with_checkbox_editor(),
+        TableColumn::new("status", "Status")
+            .with_select_editor([
+                TableSelectOption::new("ready", "Ready"),
+                TableSelectOption::new("blocked", "Blocked"),
+            ])
+            .with_width(ui_px(120.0)),
+        TableColumn::new("score", "Score"),
+    ])
+    .with_grouping(["score"])
+    .with_all_rows_expanded()
+    .with_pagination(TablePagination::disabled());
+    let plan = Table::new("editable-plan-table", "Editable plan table", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(120.0))
+        .render_plan(UiPx::ZERO, ui_px(120.0));
+
+    let name_column = plan
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "name")
+        .expect("name column should resolve");
+    let score_column = plan
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "score")
+        .expect("score column should resolve");
+    let notes_column = plan
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "notes")
+        .expect("notes column should resolve");
+    let enabled_column = plan
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "enabled")
+        .expect("enabled column should resolve");
+    let status_column = plan
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "status")
+        .expect("status column should resolve");
+    assert!(name_column.text_editable());
+    assert_eq!(name_column.editor(), Some(TableCellEditor::Text));
+    assert!(notes_column.text_editable());
+    assert_eq!(
+        notes_column.editor(),
+        Some(TableCellEditor::MultilineText { rows: 3 })
+    );
+    assert!(enabled_column.text_editable());
+    assert_eq!(enabled_column.editor(), Some(TableCellEditor::Checkbox));
+    assert_eq!(status_column.editor(), Some(TableCellEditor::Select));
+    assert_eq!(status_column.select_options().len(), 2);
+    assert_eq!(status_column.select_options()[0].value(), "ready");
+    assert_eq!(status_column.select_options()[0].label(), "Ready");
+    assert!(!score_column.text_editable());
+    assert_eq!(score_column.editor(), None);
+
+    let group_row = plan
+        .rows()
+        .iter()
+        .find(|row| row.row().is_group())
+        .expect("group row should resolve");
+    let group_name_cell = group_row
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "name")
+        .expect("group name cell should resolve");
+    assert!(
+        !group_name_cell.text_editable(),
+        "synthetic grouped rows must stay display-only"
+    );
+    let group_notes_cell = group_row
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "notes")
+        .expect("group notes cell should resolve");
+    assert_eq!(group_notes_cell.editor(), None);
+    let group_enabled_cell = group_row
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "enabled")
+        .expect("group enabled cell should resolve");
+    assert_eq!(group_enabled_cell.editor(), None);
+    let group_status_cell = group_row
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "status")
+        .expect("group status cell should resolve");
+    assert_eq!(group_status_cell.editor(), None);
+
+    let editable_leaf = plan
+        .rows()
+        .iter()
+        .find(|row| row.id().as_str() == "row-a")
+        .expect("row-a should resolve");
+    let editable_name = editable_leaf
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "name")
+        .expect("row-a name cell should resolve");
+    assert!(editable_name.text_editable());
+    let editable_notes = editable_leaf
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "notes")
+        .expect("row-a notes cell should resolve");
+    assert_eq!(
+        editable_notes.editor(),
+        Some(TableCellEditor::MultilineText { rows: 3 })
+    );
+    let editable_enabled = editable_leaf
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "enabled")
+        .expect("row-a enabled cell should resolve");
+    assert_eq!(editable_enabled.editor(), Some(TableCellEditor::Checkbox));
+    assert_eq!(editable_enabled.value(), Some(&TableCellValue::Bool(true)));
+    let editable_status = editable_leaf
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "status")
+        .expect("row-a status cell should resolve");
+    assert_eq!(editable_status.editor(), Some(TableCellEditor::Select));
+    assert_eq!(editable_status.text(), "Ready");
+    assert_eq!(editable_status.select_options().len(), 2);
+    assert_eq!(editable_status.select_options()[1].value(), "blocked");
+
+    let missing_leaf = plan
+        .rows()
+        .iter()
+        .find(|row| row.id().as_str() == "row-b")
+        .expect("row-b should resolve");
+    let missing_name = missing_leaf
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "name")
+        .expect("row-b missing name cell should resolve");
+    assert!(!missing_name.text_editable());
+    let missing_enabled = missing_leaf
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "enabled")
+        .expect("row-b missing enabled cell should resolve");
+    assert_eq!(missing_enabled.editor(), None);
+    let missing_status = missing_leaf
+        .cells()
+        .iter()
+        .find(|cell| cell.column_id().as_str() == "status")
+        .expect("row-b missing status cell should resolve");
+    assert_eq!(missing_status.editor(), None);
+}
+
+#[test]
+fn table_cell_edit_change_updates_source_row_and_preserves_table_state() {
+    let state = TableState::new([
+        TableRow::new("root")
+            .with_cell("name", "Root")
+            .with_cell("team", "Platform")
+            .with_child(
+                TableRow::new("child")
+                    .with_cell("name", "Child")
+                    .with_cell("team", "UI"),
+            ),
+        TableRow::new("other")
+            .with_cell("name", "Other")
+            .with_cell("team", "Ops"),
+    ])
+    .with_columns([
+        TableColumn::new("name", "Name").with_text_editable(true),
+        TableColumn::new("team", "Team"),
+    ])
+    .with_column_order(["team", "name"])
+    .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
+    .with_filters([TableFilter::contains("team", "UI")])
+    .with_sorting([TableSort::ascending("name")])
+    .with_expanded_rows(["root"])
+    .with_selected_rows(["child"])
+    .with_pagination(TablePagination::new(2, 25));
+
+    let change = TableCellEditChange::for_row("child", "name", "Child", "Child Prime");
+
+    let (next, outcome) = change.apply_to(state.clone());
+    assert_eq!(outcome, TableCellEditApplyOutcome::Updated);
+    assert_eq!(next.column_order()[0].as_str(), "team");
+    assert_eq!(next.column_pinning().left()[0].as_str(), "name");
+    assert_eq!(next.filters()[0].query(), "UI");
+    assert_eq!(next.sorting()[0].column().as_str(), "name");
+    assert_eq!(next.expansion(), state.expansion());
+    assert!(next.selected_rows().contains(&TableRowId::new("child")));
+    assert_eq!(next.pagination().page_index(), 2);
+
+    let updated = next
+        .rows()
+        .iter()
+        .find(|row| row.id().as_str() == "root")
+        .and_then(|row| row.children().first())
+        .expect("nested child should remain nested");
+    assert_eq!(
+        updated
+            .cell(&TableColumnId::new("name"))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("Child Prime")
+    );
+
+    let missing_column = TableCellEditChange::for_row("child", "missing", "old", "new");
+    let (missing_column_state, missing_outcome) = missing_column.apply_to(next.clone());
+    assert_eq!(missing_outcome, TableCellEditApplyOutcome::CellNotFound);
+    assert_eq!(missing_column_state, next);
+    assert_eq!(
+        missing_column_state.cache_key().rows_identity(),
+        next.cache_key().rows_identity(),
+        "missing cell edits should be inspectable no-ops"
+    );
+
+    let missing_row = TableCellEditChange::for_row("missing-row", "name", "old", "new");
+    let (missing_row_state, missing_row_outcome) = missing_row.apply_to(next.clone());
+    assert_eq!(missing_row_outcome, TableCellEditApplyOutcome::RowNotFound);
+    assert_eq!(missing_row_state, next);
+    assert_eq!(
+        missing_row_state.cache_key().rows_identity(),
+        next.cache_key().rows_identity(),
+        "missing row edits should be inspectable no-ops"
+    );
+}
+
+#[test]
+fn table_cell_edit_change_updates_boolean_source_row_and_preserves_table_state() {
+    let state = TableState::new([
+        TableRow::new("root")
+            .with_cell("name", "Root")
+            .with_cell("team", "Platform")
+            .with_cell("enabled", true)
+            .with_child(
+                TableRow::new("child")
+                    .with_cell("name", "Child")
+                    .with_cell("team", "UI")
+                    .with_cell("enabled", true),
+            ),
+        TableRow::new("other")
+            .with_cell("name", "Other")
+            .with_cell("team", "Ops")
+            .with_cell("enabled", false),
+    ])
+    .with_columns([
+        TableColumn::new("name", "Name").with_text_editable(true),
+        TableColumn::new("team", "Team"),
+        TableColumn::new("enabled", "Enabled").with_checkbox_editor(),
+    ])
+    .with_column_order(["team", "enabled", "name"])
+    .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
+    .with_filters([TableFilter::contains("team", "UI")])
+    .with_sorting([TableSort::ascending("name")])
+    .with_expanded_rows(["root"])
+    .with_selected_rows(["child"])
+    .with_pagination(TablePagination::new(2, 25));
+
+    let change = TableCellEditChange::for_row("child", "enabled", true, false);
+
+    let (next, outcome) = change.apply_to(state.clone());
+    assert_eq!(outcome, TableCellEditApplyOutcome::Updated);
+    assert_eq!(change.previous_value(), &TableCellValue::Bool(true));
+    assert_eq!(change.next_value(), &TableCellValue::Bool(false));
+    assert_eq!(change.previous_text(), "true");
+    assert_eq!(change.next_text(), "false");
+    assert_eq!(next.column_order()[0].as_str(), "team");
+    assert_eq!(next.column_pinning().left()[0].as_str(), "name");
+    assert_eq!(next.filters()[0].query(), "UI");
+    assert_eq!(next.sorting()[0].column().as_str(), "name");
+    assert_eq!(next.expansion(), state.expansion());
+    assert!(next.selected_rows().contains(&TableRowId::new("child")));
+    assert_eq!(next.pagination().page_index(), 2);
+
+    let updated = next
+        .rows()
+        .iter()
+        .find(|row| row.id().as_str() == "root")
+        .and_then(|row| row.children().first())
+        .expect("nested child should remain nested");
+    assert_eq!(
+        updated.cell(&TableColumnId::new("enabled")),
+        Some(&TableCellValue::Bool(false))
+    );
+
+    let missing_column = TableCellEditChange::for_row("child", "missing", true, false);
+    let (missing_column_state, missing_outcome) = missing_column.apply_to(next.clone());
+    assert_eq!(missing_outcome, TableCellEditApplyOutcome::CellNotFound);
+    assert_eq!(missing_column_state, next);
+
+    let missing_row = TableCellEditChange::for_row("missing-row", "enabled", true, false);
+    let (missing_row_state, missing_row_outcome) = missing_row.apply_to(next.clone());
+    assert_eq!(missing_row_outcome, TableCellEditApplyOutcome::RowNotFound);
+    assert_eq!(missing_row_state, next);
+}
+
+#[test]
 fn table_render_plan_exposes_pinned_column_regions() {
     let flat_plan = Table::new("flat-table", "Flat table", sample_table_state(1))
         .render_plan(UiPx::ZERO, ui_px(96.0));
@@ -3479,6 +5847,116 @@ fn table_render_plan_exposes_pinned_column_regions() {
             .collect::<Vec<_>>(),
         ["status"]
     );
+}
+
+#[test]
+fn table_render_plan_exposes_row_pinning_regions() {
+    let state = sample_table_state(12)
+        .with_pagination(TablePagination::new(1, 4))
+        .with_row_pinning(
+            TableRowPinning::new()
+                .pinned_top(["row-0001"])
+                .pinned_bottom(["row-0005", "row-0010"]),
+        );
+    let plan = Table::new("row-pinning-table", "Row pinning table", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .overscan(0)
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    assert_eq!(
+        plan.top_rows()
+            .iter()
+            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .collect::<Vec<_>>(),
+        [("row-0001", TableRowRegion::Top, 0)]
+    );
+    assert_eq!(
+        plan.center_rows()
+            .iter()
+            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .collect::<Vec<_>>(),
+        [
+            ("row-0004", TableRowRegion::Center, 0),
+            ("row-0006", TableRowRegion::Center, 1),
+            ("row-0007", TableRowRegion::Center, 2),
+        ],
+        "the center region should be the current page with pinned duplicates removed"
+    );
+    assert_eq!(
+        plan.bottom_rows()
+            .iter()
+            .map(|row| (row.id().as_str(), row.region(), row.region_index()))
+            .collect::<Vec<_>>(),
+        [
+            ("row-0005", TableRowRegion::Bottom, 0),
+            ("row-0010", TableRowRegion::Bottom, 1),
+        ]
+    );
+    assert_eq!(
+        plan.rendered_rows()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "row-0001", "row-0004", "row-0006", "row-0007", "row-0005", "row-0010",
+        ]
+    );
+    assert_eq!(
+        plan.table()
+            .final_model()
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "row-0001", "row-0004", "row-0006", "row-0007", "row-0005", "row-0010",
+        ],
+        "final visual rows should match the top + center + bottom render order"
+    );
+    assert_eq!(plan.virtualizer().count(), 3);
+    assert_eq!(plan.rendered_row_count(), 6);
+    assert_eq!(plan.visible_row_count(), 6);
+    assert_eq!(plan.aria_row_count(), 7);
+}
+
+#[test]
+fn table_render_plan_respects_page_only_row_pinning_policy() {
+    let state = sample_table_state(12)
+        .with_pagination(TablePagination::new(1, 4))
+        .with_row_pinning(
+            TableRowPinning::new()
+                .pinned_top(["row-0001"])
+                .pinned_bottom(["row-0005", "row-0010"]),
+        )
+        .with_row_pinning_policy(TableRowPinningPolicy::PageOnly);
+    let plan = Table::new(
+        "row-pinning-page-only-table",
+        "Row pinning page-only table",
+        state,
+    )
+    .row_height(ui_px(24.0))
+    .viewport_extent(ui_px(96.0))
+    .overscan(0)
+    .render_plan(UiPx::ZERO, ui_px(96.0));
+
+    assert!(plan.top_rows().is_empty());
+    assert_eq!(
+        plan.center_rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["row-0004", "row-0006", "row-0007"],
+        "outside-page pinned rows should be omitted under page-only policy"
+    );
+    assert_eq!(
+        plan.bottom_rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["row-0005"]
+    );
+    assert_eq!(plan.virtualizer().count(), 3);
+    assert_eq!(plan.aria_row_count(), 5);
 }
 
 #[test]
@@ -3758,6 +6236,96 @@ fn table_render_plan_exposes_column_sizing_metadata_and_matching_cell_widths() {
 }
 
 #[test]
+fn table_render_plan_preserves_column_width_policies() {
+    let state = TableState::new([TableRow::new("row-a")
+        .with_cell("name", "Alpha")
+        .with_cell("status", "Ready")])
+    .with_columns([
+        TableColumn::new("name", "Name"),
+        TableColumn::new("status", "Status").with_content_fit(),
+    ])
+    .with_pagination(TablePagination::disabled());
+    let plan = Table::new("policy-table", "Policy table", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(96.0))
+        .render_plan(UiPx::ZERO, ui_px(96.0));
+    let status_column = plan
+        .columns()
+        .iter()
+        .find(|column| column.id().as_str() == "status")
+        .expect("status column should be present");
+
+    assert_eq!(
+        status_column.width_policy(),
+        open_gpui_ui_components::TableColumnWidthPolicy::ContentFit
+    );
+}
+
+#[test]
+fn table_render_plan_exposes_nested_header_groups_and_region_widths() {
+    let state = TableState::new([TableRow::new("row-a")
+        .with_cell("name", "Alpha")
+        .with_cell("team", "UI")
+        .with_cell("score", 42_usize)
+        .with_cell("status", "Ready")])
+    .with_column_tree([
+        TableColumnGroup::new(
+            "identity",
+            "Identity",
+            [
+                TableColumn::new("name", "Name").with_width(ui_px(100.0)),
+                TableColumn::new("team", "Team").with_width(ui_px(120.0)),
+            ],
+        ),
+        TableColumnGroup::new(
+            "metrics",
+            "Metrics",
+            [TableColumnGroup::new(
+                "scores",
+                "Scores",
+                [
+                    TableColumn::new("score", "Score").with_width(ui_px(80.0)),
+                    TableColumn::new("status", "Status").with_width(ui_px(90.0)),
+                ],
+            )],
+        ),
+    ])
+    .with_column_pinning(
+        TableColumnPinning::new()
+            .pinned_left(["name"])
+            .pinned_right(["status"]),
+    )
+    .with_pagination(TablePagination::disabled());
+    let plan = Table::new("nested-headers", "Nested headers", state)
+        .row_height(ui_px(24.0))
+        .viewport_extent(ui_px(240.0))
+        .render_plan(UiPx::ZERO, ui_px(240.0));
+
+    assert_eq!(plan.header_row_count(), 3);
+    assert_eq!(plan.left_header_groups().header_row_count(), 2);
+    assert_eq!(plan.center_header_groups().header_row_count(), 3);
+    assert_eq!(plan.right_header_groups().header_row_count(), 3);
+    assert_eq!(plan.left_header_groups().total_width(), ui_px(100.0));
+    assert_eq!(
+        plan.center_header_groups().total_width(),
+        ui_px(120.0 + 80.0)
+    );
+    assert_eq!(plan.right_header_groups().total_width(), ui_px(90.0));
+    assert_eq!(
+        plan.center_header_groups().groups()[0].headers()[0].label(),
+        "Identity"
+    );
+    assert_eq!(
+        plan.center_header_groups().groups()[1].headers()[0].label(),
+        "Team"
+    );
+    assert_eq!(
+        plan.center_header_groups().groups()[2].headers()[0].kind(),
+        TableResolvedHeaderKind::Placeholder
+    );
+}
+
+#[test]
 fn virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts() {
     let items = (0..10_000)
         .map(|index| {
@@ -3980,6 +6548,180 @@ fn tree_runtime_expands_reveals_and_selects_items(cx: &mut open_gpui::TestAppCon
     assert_eq!(selections.borrow().as_slice(), ["intro".to_owned()]);
 }
 
+#[open_gpui::test]
+fn tree_runtime_typeahead_focuses_visible_matching_row(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+            let tree = Tree::new(
+                "runtime-typeahead-tree",
+                "Runtime typeahead tree",
+                vec![
+                    TreeItemDescriptor::new("paper", "Paper")
+                        .child(TreeItemDescriptor::new("figures", "Figures")),
+                    TreeItemDescriptor::new("disabled", "Disabled").disabled(true),
+                    TreeItemDescriptor::new("notes", "Notes"),
+                ],
+            )
+            .with_size(Size::Small)
+            .default_focused("paper")
+            .on_select(move |selection, _, _| {
+                selections.borrow_mut().push(selection.value().to_owned());
+            });
+
+            div()
+                .size_full()
+                .child(div().w(px(280.0)).h(px(180.0)).child(tree))
+        }
+    }
+
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let root = cx
+        .debug_bounds("tree:runtime-typeahead-tree:root")
+        .expect("tree root should render");
+    cx.simulate_click(
+        point(root.left() + px(2.0), root.top() + px(2.0)),
+        Default::default(),
+    );
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    cx.simulate_keystrokes("n o");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_selector_is_focused("tree:runtime-typeahead-tree:item:notes"),
+        "expected typeahead to focus the visible Notes row; focused={:?}",
+        cx.focused_debug_selector()
+    );
+    assert!(
+        selections.borrow().is_empty(),
+        "typeahead should move focus without selecting a row"
+    );
+}
+
+#[open_gpui::test]
+fn tree_runtime_drag_move_emits_controlled_payload(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        moves: Rc<RefCell<Vec<TreeMove>>>,
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let moves = self.moves.clone();
+            let selections = self.selections.clone();
+            let tree = Tree::new(
+                "runtime-drag-tree",
+                "Runtime drag tree",
+                vec![
+                    TreeItemDescriptor::new("root", "Root")
+                        .expanded(true)
+                        .child(TreeItemDescriptor::new("child", "Child"))
+                        .child(TreeItemDescriptor::new("peer", "Peer")),
+                    TreeItemDescriptor::new("sibling", "Sibling"),
+                ],
+            )
+            .with_size(Size::Small)
+            .default_focused("root")
+            .draggable(true)
+            .on_select(move |selection, _, _| {
+                selections.borrow_mut().push(selection.value().to_owned());
+            })
+            .on_move(move |tree_move, _, _| {
+                moves.borrow_mut().push(tree_move);
+            });
+
+            div()
+                .size_full()
+                .child(div().w(px(320.0)).h(px(220.0)).child(tree))
+        }
+    }
+
+    let moves = Rc::new(RefCell::new(Vec::new()));
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        moves: moves.clone(),
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let child = cx
+        .debug_bounds("tree:runtime-drag-tree:item:child")
+        .expect("expanded child row should render");
+    cx.simulate_click(child.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(
+        selections.borrow().as_slice(),
+        ["child".to_owned()],
+        "enabling tree drag affordances should not break regular row clicks"
+    );
+    assert!(
+        moves.borrow().is_empty(),
+        "regular clicks should not emit controlled tree moves"
+    );
+    selections.borrow_mut().clear();
+
+    let source = cx
+        .debug_bounds("tree:runtime-drag-tree:item:child")
+        .expect("child row should remain rendered")
+        .center();
+    let target = cx
+        .debug_bounds("tree:runtime-drag-tree:drop:before:sibling")
+        .expect("before-sibling drop zone should render")
+        .center();
+
+    cx.simulate_mouse_down(source, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(source.x + px(18.0), source.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(target, MouseButton::Left, Default::default());
+    cx.simulate_mouse_up(target, MouseButton::Left, Default::default());
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let moves = moves.borrow();
+    assert_eq!(
+        moves.len(),
+        1,
+        "expected one controlled move after dropping child before sibling"
+    );
+    let tree_move = &moves[0];
+    assert_eq!(tree_move.value(), "child");
+    assert_eq!(tree_move.label(), "Child");
+    assert_eq!(tree_move.source_parent_value(), Some("root"));
+    assert_eq!(tree_move.position(), TreeDropPosition::Before);
+    assert_eq!(tree_move.target().target_value(), "sibling");
+    assert_eq!(tree_move.target_parent_value(), None);
+    assert_eq!(tree_move.sibling_anchor_value(), Some("sibling"));
+    assert!(
+        selections.borrow().is_empty(),
+        "drag drops should not also emit row selections"
+    );
+}
+
 #[test]
 fn table_header_action_cycles_sorting_without_render_coupling() {
     let unsorted = Table::new("sort-cycle", "Sort cycle", sample_table_state(8))
@@ -4061,6 +6803,37 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         root::VirtualizerState::new(4, ui_px(24.0)).with_overscan(2);
     let root_plan: root::TableRenderPlan = table.state();
     let _root_region_plan: &root::TableColumnRegionRenderPlan = &root_plan.column_regions()[0];
+    let _root_header_groups: &root::TableResolvedHeaderGroupRegions =
+        root_plan.table().header_groups();
+    let _root_header_kind: root::TableResolvedHeaderKind =
+        root_plan.table().center_header_groups()[0].headers()[0].kind();
+    let _root_header_cell: &root::TableResolvedHeaderCell =
+        &root_plan.table().center_header_groups()[0].headers()[0];
+    let _root_header_group: &root::TableResolvedHeaderGroup =
+        &root_plan.table().center_header_groups()[0];
+    let _root_header_plan: &root::TableHeaderGroupRegionsRenderPlan = root_plan.header_groups();
+    let root_group_id = root::TableColumnGroupId::new("identity");
+    assert_eq!(root_group_id.as_str(), "identity");
+    let root_column_group = root::TableColumnGroup::new(
+        root_group_id.clone(),
+        "Identity",
+        [root::TableColumn::new("name", "Name")],
+    )
+    .with_child(root::TableColumn::new("team", "Team"));
+    let root_column_tree_state =
+        root::TableState::new([root::TableRow::new("row-a").with_cell("name", "Alpha")])
+            .with_column_tree([root_column_group.clone()]);
+    let _root_column_node: &root::TableColumnNode = &root_column_tree_state.column_tree()[0];
+    let _root_column_group: root::TableColumnGroup = root_column_group;
+    let prelude_group = prelude::TableColumnGroup::new(
+        prelude::TableColumnGroupId::new("status-group"),
+        "Status",
+        [prelude::TableColumn::new("status", "Status")],
+    );
+    let prelude_state =
+        prelude::TableState::new([prelude::TableRow::new("row-c").with_cell("status", "Ready")])
+            .with_column_tree([prelude::TableColumnNode::from(prelude_group)]);
+    assert_eq!(prelude_state.columns()[0].id().as_str(), "status");
     let root_pinned_state = root::TableState::new([root::TableRow::new("row-a")
         .with_cell("name", "Alpha")
         .with_cell("team", "UI")
@@ -4082,7 +6855,36 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .expect("exported pinned layout plan should resolve")
         .clone();
     let _prelude_pinned_layout: prelude::TablePinnedLayoutPlan = root_pinned_layout.clone();
+    let _prelude_header_plan: &prelude::TableHeaderGroupRegionsRenderPlan = _root_header_plan;
     assert_eq!(root_pinned_layout.table_id(), "root-pinned-table");
+    let root_row_pinning: root::TableRowPinning = root::TableRowPinning::new()
+        .pinned_top(["row-a"])
+        .pinned_bottom(["row-b"]);
+    let _prelude_row_pinning: prelude::TableRowPinning = root_row_pinning.clone();
+    let _root_row_measure_mode: root::TableRowMeasureMode = root::TableRowMeasureMode::Measured;
+    let _prelude_row_measure_mode: prelude::TableRowMeasureMode =
+        prelude::TableRowMeasureMode::Fixed;
+    let _root_row_pinning_policy: root::TableRowPinningPolicy =
+        root::TableRowPinningPolicy::PageOnly;
+    let _prelude_row_pinning_policy: prelude::TableRowPinningPolicy =
+        prelude::TableRowPinningPolicy::KeepPinnedRows;
+    let _root_row_region: root::TableRowRegion = root::TableRowRegion::Top;
+    let _prelude_row_region: prelude::TableRowRegion = prelude::TableRowRegion::Bottom;
+    let root_row_regions: root::TableRowRegions = root::Table::new(
+        "root-row-pinning-table",
+        "Root row pinning table",
+        root::TableState::new([
+            root::TableRow::new("row-a").with_cell("name", "Alpha"),
+            root::TableRow::new("row-b").with_cell("name", "Beta"),
+        ])
+        .with_columns([root::TableColumn::new("name", "Name")])
+        .with_row_pinning(root_row_pinning.clone()),
+    )
+    .state()
+    .table()
+    .row_regions()
+    .clone();
+    let _prelude_row_regions: prelude::TableRowRegions = root_row_regions;
     let root_center_window: root::TableCenterColumnWindowPlan =
         root::TableCenterColumnWindowPlan::resolve(
             root_pinned_render_plan
@@ -4098,6 +6900,25 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .expect("exported center column window plan should resolve");
     let _prelude_center_window: prelude::TableCenterColumnWindowPlan = root_center_window.clone();
     assert_eq!(root_center_window.rendered_column_count(), 1);
+    let root_grid_viewport: root::GridViewport2D = root::resolve_grid_viewport_2d(
+        &root::VirtualizerState::new(2, ui_px(24.0))
+            .with_viewport_extent(ui_px(24.0))
+            .with_scroll_offset(ui_px(12.0)),
+        &root::VirtualizerState::new(2, ui_px(24.0))
+            .with_viewport_extent(ui_px(24.0))
+            .with_scroll_offset(ui_px(12.0)),
+    );
+    let _prelude_grid_viewport: prelude::GridViewport2D = root_grid_viewport.clone();
+    let _prelude_grid_viewport_via_prelude: prelude::GridViewport2D =
+        prelude::resolve_grid_viewport_2d(
+            &prelude::VirtualizerState::new(2, ui_px(24.0))
+                .with_viewport_extent(ui_px(24.0))
+                .with_scroll_offset(ui_px(12.0)),
+            &prelude::VirtualizerState::new(2, ui_px(24.0))
+                .with_viewport_extent(ui_px(24.0))
+                .with_scroll_offset(ui_px(12.0)),
+        );
+    assert_eq!(root_grid_viewport.row_overscan_range().start(), 0);
     let header_action: root::TableHeaderAction = root_plan.columns()[0]
         .sort_action()
         .expect("sortable exported table column should expose a header action")
@@ -4116,11 +6937,152 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _prelude_expansion_mode: prelude::TableExpansionMode = prelude::TableExpansionMode::Client;
     let _root_stage_mode: root::TableStageMode = root::TableStageMode::Manual;
     let _prelude_stage_mode: prelude::TableStageMode = prelude::TableStageMode::Client;
+    let root_filter = root::TableFilter::one_of("status", ["Ready", "Blocked"]);
+    let _prelude_filter: prelude::TableFilter = prelude::TableFilter::contains("team", "UI");
+    let _root_filter_kind: root::TableFilterKind = root_filter.kind().clone();
+    let _prelude_filter_kind: prelude::TableFilterKind =
+        prelude::TableFilterKind::Contains { query: "UI".into() };
+    let _root_text_filter_operator: root::TableTextFilterOperator =
+        root::TableTextFilterOperator::StartsWith;
+    let _prelude_text_filter_operator: prelude::TableTextFilterOperator =
+        prelude::TableTextFilterOperator::NotContains;
+    let _root_numeric_bound: root::TableNumericFilterBound =
+        root::TableNumericFilterBound::new(10.0)
+            .expect("finite numeric bounds should be constructible");
+    let _prelude_numeric_bound: prelude::TableNumericFilterBound =
+        prelude::TableNumericFilterBound::new(20.0)
+            .expect("finite numeric bounds should be constructible");
+    let _root_numeric_filter_operator: root::TableNumericFilterOperator =
+        root::TableNumericFilterOperator::GreaterThanOrEqual;
+    let _prelude_numeric_filter_operator: prelude::TableNumericFilterOperator =
+        prelude::TableNumericFilterOperator::LessThan;
+    let root_range_filter = root::TableFilter::number_range("score", Some(10.0), Some(20.0))
+        .expect("exported numeric range filter should construct");
+    assert_eq!(
+        root_range_filter.number_range_bounds(),
+        Some((Some(10.0), Some(20.0)))
+    );
     let root_facet_value = root::TableFacetValueCount::new("Ready", 2);
     let root_facets: root::TableColumnFacets =
         root::TableColumnFacets::manual("status", 2).with_unique_values([root_facet_value]);
     let _prelude_facets: prelude::TableColumnFacets = root_facets.clone();
+    let root_global_facets: root::TableGlobalFacetSummary =
+        root::TableGlobalFacetSummary::default();
+    let _prelude_global_facets: prelude::TableGlobalFacetSummary = root_global_facets.clone();
+    let root_global_filter: root::TableGlobalFilter =
+        root::TableGlobalFilter::new("root-global-filter", "Search").query("ready");
+    let _root_global_filter_state: root::TableGlobalFilterState = root_global_filter.state();
+    let _root_global_filter_change: root::TableGlobalFilterChange =
+        root::TableGlobalFilterChange::new("ready");
+    let root_predicate_operator: root::TablePredicateFilterOperator =
+        root::TablePredicateFilterOperator::text(root::TableTextFilterOperator::StartsWith);
+    let root_predicate_filter: root::TablePredicateFilter =
+        root::TablePredicateFilter::new("root-name-predicate", "Name", "name")
+            .operator(root_predicate_operator)
+            .value("Al");
+    let root_predicate_filter_state: root::TablePredicateFilterState =
+        root_predicate_filter.state();
+    let _root_predicate_option: Option<&root::TablePredicateFilterOperatorOptionState> =
+        root_predicate_filter_state.operator_options().first();
+    let _root_predicate_change: root::TablePredicateFilterChange =
+        root::TablePredicateFilterChange::new("name", root_predicate_operator, "Al");
+    let root_table_toolbar: root::TableToolbar =
+        root::TableToolbar::new("root-table-toolbar", "Filters").summary("2 visible controls");
+    let _root_table_toolbar_state: root::TableToolbarState = root_table_toolbar.state();
+    let prelude_global_filter: prelude::TableGlobalFilter =
+        prelude::TableGlobalFilter::new("prelude-global-filter", "Search").default_query("ready");
+    let _prelude_global_filter_state: prelude::TableGlobalFilterState =
+        prelude_global_filter.state();
+    let _prelude_global_filter_change: prelude::TableGlobalFilterChange =
+        prelude::TableGlobalFilterChange::clear();
+    let prelude_predicate_operator: prelude::TablePredicateFilterOperator =
+        prelude::TablePredicateFilterOperator::number(
+            prelude::TableNumericFilterOperator::GreaterThan,
+        );
+    let prelude_predicate_filter: prelude::TablePredicateFilter =
+        prelude::TablePredicateFilter::new("prelude-score-predicate", "Score", "score")
+            .operator(prelude_predicate_operator)
+            .default_value("10");
+    let prelude_predicate_filter_state: prelude::TablePredicateFilterState =
+        prelude_predicate_filter.state();
+    let _prelude_predicate_option: Option<&prelude::TablePredicateFilterOperatorOptionState> =
+        prelude_predicate_filter_state.operator_options().first();
+    let _prelude_predicate_change: prelude::TablePredicateFilterChange =
+        prelude::TablePredicateFilterChange::clear("score");
+    let prelude_table_toolbar: prelude::TableToolbar =
+        prelude::TableToolbar::new("prelude-table-toolbar", "Filters")
+            .summary("2 visible controls");
+    let _prelude_table_toolbar_state: prelude::TableToolbarState = prelude_table_toolbar.state();
+    let root_faceted_filter: root::TableFacetedFilter =
+        root::TableFacetedFilter::new("root-status-filter", "Status", "status")
+            .facets(root_facets.clone())
+            .selected_values(["Ready"]);
+    let root_faceted_filter_state: root::TableFacetedFilterState = root_faceted_filter.state();
+    let _root_faceted_option: Option<&root::TableFacetedFilterOptionState> =
+        root_faceted_filter_state.options().first();
+    let _root_faceted_change: root::TableFacetedFilterChange =
+        root::TableFacetedFilterChange::new("status", ["Ready"], Some("Ready"), true);
+    let prelude_faceted_filter: prelude::TableFacetedFilter =
+        prelude::TableFacetedFilter::new("prelude-status-filter", "Status", "status")
+            .facets(root_facets.clone())
+            .selected_values(["Ready"]);
+    let prelude_faceted_filter_state: prelude::TableFacetedFilterState =
+        prelude_faceted_filter.state();
+    let _prelude_faceted_option: Option<&prelude::TableFacetedFilterOptionState> =
+        prelude_faceted_filter_state.options().first();
+    let _prelude_faceted_change: prelude::TableFacetedFilterChange =
+        prelude::TableFacetedFilterChange::clear("status");
+    let root_column_visibility: root::TableColumnVisibility =
+        root::TableColumnVisibility::new("root-columns", "Columns")
+            .columns([
+                root::TableColumn::new("name", "Name").with_hideable(false),
+                root::TableColumn::new("status", "Status"),
+            ])
+            .visibility(root::TableColumnVisibilityOverrides::new().hide("status"));
+    let root_column_visibility_state: root::TableColumnVisibilityState =
+        root_column_visibility.state();
+    let _root_column_visibility_item: Option<&root::TableColumnVisibilityItemState> =
+        root_column_visibility_state.items().first();
+    let root_column_visibility_change: root::TableColumnVisibilityChange =
+        root::TableColumnVisibilityChange::new("status", false);
+    let _root_column_visibility_action: root::TableColumnVisibilityAction =
+        root_column_visibility_change.action();
+    let root_column_order_change: root::TableColumnOrderChange =
+        root::TableColumnOrderChange::move_before("score", "team", root::TableColumnRegion::Center);
+    let _root_column_order_placement: root::TableColumnOrderPlacement =
+        root_column_order_change.placement();
+    let prelude_column_visibility: prelude::TableColumnVisibility =
+        prelude::TableColumnVisibility::new("prelude-columns", "Columns")
+            .columns([prelude::TableColumn::new("status", "Status")])
+            .default_visibility(prelude::TableColumnVisibilityOverrides::new().hide("status"));
+    let prelude_column_visibility_state: prelude::TableColumnVisibilityState =
+        prelude_column_visibility.state();
+    let _prelude_column_visibility_item: Option<&prelude::TableColumnVisibilityItemState> =
+        prelude_column_visibility_state.items().first();
+    let prelude_column_visibility_change: prelude::TableColumnVisibilityChange =
+        prelude::TableColumnVisibilityChange::reset();
+    let _prelude_column_visibility_action: prelude::TableColumnVisibilityAction =
+        prelude_column_visibility_change.action();
+    let _prelude_column_order_change: prelude::TableColumnOrderChange = root_column_order_change;
+    let _prelude_column_order_placement: prelude::TableColumnOrderPlacement =
+        prelude::TableColumnOrderPlacement::After;
     let _root_facet_range: Option<root::TableFacetRange> = root::TableFacetRange::new(1.0, 2.0);
+    let root_range_facets =
+        root::TableColumnFacets::manual("score", 2).with_numeric_range(1.0, 20.0);
+    let root_range_filter: root::TableRangeFilter =
+        root::TableRangeFilter::new("root-score-range", "Score", "score")
+            .facets(root_range_facets.clone())
+            .range(Some(1.0), Some(20.0));
+    let _root_range_filter_state: root::TableRangeFilterState = root_range_filter.state();
+    let _root_range_change: root::TableRangeFilterChange =
+        root::TableRangeFilterChange::new("score", "1", "20");
+    let prelude_range_filter: prelude::TableRangeFilter =
+        prelude::TableRangeFilter::new("prelude-score-range", "Score", "score")
+            .facets(root_range_facets)
+            .range(Some(1.0), Some(20.0));
+    let _prelude_range_filter_state: prelude::TableRangeFilterState = prelude_range_filter.state();
+    let _prelude_range_change: prelude::TableRangeFilterChange =
+        prelude::TableRangeFilterChange::clear("score");
     let _prelude_facet_value: prelude::TableFacetValueCount =
         prelude::TableFacetValueCount::new("Blocked", 1);
     let _root_child_load_state: root::TableRowChildrenLoadState =
@@ -4155,6 +7117,26 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         prelude::TableRowActivationKind::Keyboard;
     let _root_pinning: root::TableColumnPinning =
         root::TableColumnPinning::new().pinned_left(["name"]);
+    let _root_width_policy: root::TableColumnWidthPolicy = root::TableColumnWidthPolicy::ContentFit;
+    let _prelude_width_policy: prelude::TableColumnWidthPolicy =
+        prelude::TableColumnWidthPolicy::Fixed;
+    let content_fit_column = root::TableColumn::new("status", "Status").with_content_fit();
+    assert!(content_fit_column.is_content_fit());
+    assert_eq!(
+        content_fit_column.width_policy(),
+        root::TableColumnWidthPolicy::ContentFit
+    );
+    let root_visibility = root::TableColumnVisibilityOverrides::new()
+        .hide("score")
+        .show("status")
+        .without("missing");
+    let _root_visibility: root::TableColumnVisibilityOverrides = root_visibility.clone();
+    let _prelude_visibility: prelude::TableColumnVisibilityOverrides =
+        prelude::TableColumnVisibilityOverrides::new().show("status");
+    assert_eq!(
+        root_visibility.override_for(&root::TableColumnId::new("score")),
+        Some(false)
+    );
     let root_sizing = root::TableColumnSizing::new().with_width("name", ui_px(180.0));
     let _root_sizing: root::TableColumnSizing = root_sizing.clone();
     let _prelude_sizing: prelude::TableColumnSizing =
@@ -4237,19 +7219,31 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     let prelude_empty_state: prelude::EmptyState = prelude::EmptyState::new("empty", "No results");
     let root_tree_descriptor: root::TreeItemDescriptor =
         root::TreeItemDescriptor::new("root", "Root")
+            .with_children_unloaded()
             .child(root::TreeItemDescriptor::new("child", "Child"));
     let prelude_tree_descriptor: prelude::TreeItemDescriptor =
-        prelude::TreeItemDescriptor::new("root", "Root");
+        prelude::TreeItemDescriptor::new("root", "Root").with_children_load_failed("Offline");
+    let root_tree_load_state: root::TreeChildrenLoadState =
+        root::TreeChildrenLoadState::loading("Loading children");
+    let prelude_tree_load_state: prelude::TreeChildrenLoadState =
+        prelude::TreeChildrenLoadState::unloaded();
+    let direct_tree_load_state: TreeChildrenLoadState = TreeChildrenLoadState::loaded();
     let root_tree: root::Tree =
         root::Tree::new("root-tree", "Root tree", [root_tree_descriptor.clone()])
             .default_selected("root")
-            .default_focused("root");
+            .default_focused("root")
+            .virtualized(true)
+            .viewport_item_count(2)
+            .overscan_count(1);
     let prelude_tree: prelude::Tree = prelude::Tree::new(
         "prelude-tree",
         "Prelude tree",
         [prelude::TreeItemDescriptor::new("root", "Root")],
     )
-    .default_focused("root");
+    .default_focused("root")
+    .virtualized(true)
+    .viewport_item_count(2)
+    .overscan_count(1);
     let root_tree_state: root::TreeState = root::TreeState::resolve(
         Size::Medium,
         "Tree",
@@ -4259,6 +7253,53 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     );
     let prelude_tree_state: prelude::TreeState =
         prelude::TreeState::resolve(Size::Medium, "Tree", None, None, [prelude_tree_descriptor]);
+    let root_tree_plan: root::TreeRenderPlan = root::TreeRenderPlan::resolve(
+        "root-tree-plan",
+        "Root tree plan",
+        root_tree_state.clone(),
+        ui_px(0.0),
+        ui_px(32.0),
+        2,
+        1,
+    );
+    let prelude_tree_plan: prelude::TreeRenderPlan = prelude::TreeRenderPlan::resolve(
+        "prelude-tree-plan",
+        "Prelude tree plan",
+        prelude_tree_state.clone(),
+        ui_px(0.0),
+        ui_px(32.0),
+        2,
+        1,
+    );
+    let direct_tree_plan: TreeRenderPlan = TreeRenderPlan::resolve(
+        "direct-tree-plan",
+        "Direct tree plan",
+        root_tree_state.clone(),
+        ui_px(0.0),
+        ui_px(32.0),
+        2,
+        1,
+    );
+    let move_items = [
+        root::TreeItemDescriptor::new("root", "Root")
+            .expanded(true)
+            .child(root::TreeItemDescriptor::new("child", "Child")),
+        root::TreeItemDescriptor::new("sibling", "Sibling"),
+    ];
+    let move_state: root::TreeState =
+        root::TreeState::resolve(Size::Medium, "Move tree", None, None, move_items.clone());
+    let root_tree_move: root::TreeMove = move_state
+        .move_for_drop("child", "sibling", root::TreeDropPosition::Before)
+        .expect("public Tree move payload should resolve");
+    let _root_tree_move_target: &root::TreeMoveTarget = root_tree_move.target();
+    let prelude_tree_position: prelude::TreeDropPosition = prelude::TreeDropPosition::Inside;
+    let _direct_tree_move: TreeMove = root_tree_move.clone();
+    let _direct_tree_move_target: &TreeMoveTarget = root_tree_move.target();
+    let moved_tree = root::apply_tree_move(move_items, &root_tree_move)
+        .expect("public apply_tree_move helper should apply valid payload");
+    let _direct_moved_tree = apply_tree_move(moved_tree.clone(), &root_tree_move);
+    let prelude_move_state: prelude::TreeState =
+        prelude::TreeState::resolve(Size::Medium, "Move tree", None, None, moved_tree);
     let root_virtualized_state: root::VirtualizedListState =
         root::VirtualizedListState::resolve(Size::Small, false, 12, Some(4), Some(4), Some(3));
     let prelude_virtualized_state: prelude::VirtualizedListState =
@@ -4320,7 +7361,12 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     let root_virtualized_component_plan = root_virtualized_list.state();
     let prelude_virtualized_component_plan = prelude_virtualized_list.state();
     let root_tree_component_state = root_tree.state();
+    let root_tree_component_plan = root_tree.render_plan(ui_px(0.0), ui_px(32.0));
     let prelude_tree_component_state = prelude_tree.state();
+    let prelude_tree_component_plan = prelude_tree.render_plan(ui_px(0.0), ui_px(32.0));
+    let _root_tree_row: &root::TreeRowRenderPlan = root_tree_plan.rows().first().unwrap();
+    let _prelude_tree_row: &prelude::TreeRowRenderPlan = prelude_tree_plan.rows().first().unwrap();
+    let _direct_tree_row: &TreeRowRenderPlan = direct_tree_plan.rows().first().unwrap();
     let _root_tree_toggle: Option<root::TreeToggle> =
         root::TreeToggle::from_item(&root_tree_state.items()[0]);
     let _prelude_tree_toggle: Option<prelude::TreeToggle> =
@@ -4351,15 +7397,35 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     assert_eq!(root_tree_component_state.role(), Role::Tree);
     assert_eq!(prelude_tree_component_state.item_role(), Role::TreeItem);
     assert_eq!(root_tree_component_state.focused_value(), Some("root"));
+    assert_eq!(root_tree_component_plan.role(), Role::Tree);
+    assert_eq!(prelude_tree_component_plan.row_role(), Role::TreeItem);
     assert_eq!(root_tree_state.items().len(), 1);
     assert_eq!(prelude_tree_state.items().len(), 1);
     assert_eq!(root_tree_state.role(), Role::Tree);
     assert_eq!(root_tree_state.items()[0].role(), Role::TreeItem);
+    assert!(root_tree_state.items()[0].has_children());
+    assert_eq!(
+        root_tree_state.items()[0].children_load_state().as_str(),
+        "unloaded"
+    );
+    assert!(prelude_tree_state.items()[0].children_load_failed());
+    assert!(root_tree_load_state.is_loading());
+    assert!(prelude_tree_load_state.is_unloaded());
+    assert!(direct_tree_load_state.is_loaded());
     assert_eq!(root::tree_navigation_target("home", 0, &[false]), Some(0));
     assert_eq!(
         prelude::tree_navigation_target("home", 0, &[false]),
         Some(0)
     );
+    assert_eq!(root_tree_plan.rows()[0].render_key(), "0:root");
+    assert_eq!(prelude_tree_plan.virtualizer().count(), 1);
+    assert_eq!(direct_tree_plan.rendered_row_count(), 1);
+    assert_eq!(root_tree_move.position(), TreeDropPosition::Before);
+    assert_eq!(root_tree_move.target_parent_value(), None);
+    assert_eq!(root_tree_move.sibling_anchor_value(), Some("sibling"));
+    assert_eq!(prelude_tree_position.as_str(), "inside");
+    assert_eq!(prelude_move_state.items()[0].value(), "root");
+    assert_eq!(prelude_move_state.items()[1].value(), "child");
     assert_eq!(
         root_virtualized_state.navigation_target("pagedown"),
         Some(7)
@@ -4549,6 +7615,736 @@ fn table_runtime_row_click_and_tree_toggle_emit_controlled_payloads(
 }
 
 #[open_gpui::test]
+fn table_runtime_row_click_selection_is_controlled_and_preserves_activation(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    type ActivationLog = Vec<String>;
+    type SelectionLog = Vec<(
+        String,
+        bool,
+        TableSelectionMode,
+        TableSelectionScope,
+        Vec<String>,
+    )>;
+
+    struct TestView {
+        activations: Rc<RefCell<ActivationLog>>,
+        selections: Rc<RefCell<SelectionLog>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let activations = self.activations.clone();
+            let selections = self.selections.clone();
+            let state = TableState::new([
+                TableRow::new("row-a")
+                    .with_cell("name", "Alpha")
+                    .with_cell("status", "Ready"),
+                TableRow::new("row-b")
+                    .with_cell("name", "Beta")
+                    .with_cell("status", "Blocked"),
+            ])
+            .with_columns([
+                TableColumn::new("name", "Name").with_width(ui_px(180.0)),
+                TableColumn::new("status", "Status").with_width(ui_px(120.0)),
+            ])
+            .with_pagination(TablePagination::disabled())
+            .with_selection_mode(TableSelectionMode::Multiple)
+            .with_selection_activation_mode(TableSelectionActivationMode::RowClick)
+            .with_selected_rows(["row-a"]);
+            let table = Table::new("selection-runtime-table", "Selection runtime", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .on_row_selection_change(move |change, _, _| {
+                    selections.borrow_mut().push((
+                        change.row_id().as_str().to_owned(),
+                        change.selected(),
+                        change.selection_mode(),
+                        change.scope(),
+                        change
+                            .current_selection()
+                            .iter()
+                            .map(|row_id| row_id.as_str().to_owned())
+                            .collect(),
+                    ));
+                })
+                .on_row_activate(move |activation, _, _| {
+                    activations
+                        .borrow_mut()
+                        .push(activation.row_id().as_str().to_owned());
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        activations: activations.clone(),
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let row = cx
+        .debug_bounds("table:selection-runtime-table:row:row-a")
+        .expect("selected row should render");
+    cx.simulate_click(row.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(activations.borrow().as_slice(), ["row-a"]);
+    assert_eq!(
+        selections.borrow().as_slice(),
+        &[(
+            "row-a".to_owned(),
+            false,
+            TableSelectionMode::Multiple,
+            TableSelectionScope::Row,
+            Vec::<String>::new(),
+        )],
+        "row-click selection should emit the next selected-row ids without swallowing activation"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_text_cell_edit_emits_change_without_row_interaction(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    type EditLog = Vec<(String, String, Option<usize>, String, String)>;
+
+    struct TestView {
+        state: Rc<RefCell<TableState>>,
+        edits: Rc<RefCell<EditLog>>,
+        activations: Rc<RefCell<Vec<String>>>,
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let table_state = self.state.borrow().clone();
+            let state_for_edit = self.state.clone();
+            let edits = self.edits.clone();
+            let activations = self.activations.clone();
+            let selections = self.selections.clone();
+            let table = Table::new("edit-runtime-table", "Edit runtime", table_state)
+                .row_height(ui_px(32.0))
+                .viewport_extent(ui_px(96.0))
+                .on_cell_edit_change(move |change, _, _| {
+                    edits.borrow_mut().push((
+                        change.row_id().as_str().to_owned(),
+                        change.column_id().as_str().to_owned(),
+                        change.source_index(),
+                        change.previous_text().to_owned(),
+                        change.next_text().to_owned(),
+                    ));
+                    let (next, outcome) = change.apply_to(state_for_edit.borrow().clone());
+                    assert_eq!(outcome, TableCellEditApplyOutcome::Updated);
+                    *state_for_edit.borrow_mut() = next;
+                })
+                .on_row_activate(move |activation, _, _| {
+                    activations
+                        .borrow_mut()
+                        .push(activation.row_id().as_str().to_owned());
+                })
+                .on_row_selection_change(move |selection, _, _| {
+                    selections
+                        .borrow_mut()
+                        .push(selection.row_id().as_str().to_owned());
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    cx.update(init_text_input);
+    let edits = Rc::new(RefCell::new(Vec::new()));
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let state = Rc::new(RefCell::new(
+        TableState::new([TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("status", "Ready")])
+        .with_columns([
+            TableColumn::new("name", "Name")
+                .with_text_editable(true)
+                .with_width(ui_px(180.0)),
+            TableColumn::new("status", "Status").with_width(ui_px(120.0)),
+        ])
+        .with_pagination(TablePagination::disabled())
+        .with_selection_activation_mode(TableSelectionActivationMode::RowClick),
+    ));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        state: state.clone(),
+        edits: edits.clone(),
+        activations: activations.clone(),
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("table:edit-runtime-table:cell:row-a:status")
+            .is_some(),
+        "read-only cell should still render as a plain table cell"
+    );
+    assert!(
+        cx.debug_bounds("text-input:table:edit-runtime-table:cell:row-a:name:editor:root")
+            .is_some(),
+        "editable name cell should render a nested text input with a stable selector"
+    );
+    assert!(
+        cx.debug_bounds("text-input:table:edit-runtime-table:cell:row-a:status:editor:root")
+            .is_none(),
+        "read-only status cell must not mount a text input"
+    );
+
+    let input = cx
+        .debug_bounds("text-input:table:edit-runtime-table:cell:row-a:name:editor:root")
+        .expect("editable name input should expose a stable debug selector");
+    cx.simulate_click(input.center(), Default::default());
+    cx.simulate_input(" Prime");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let edits = edits.borrow();
+    assert!(
+        edits.len() >= 2,
+        "simulated text entry should emit controlled changes as the input value evolves"
+    );
+    assert!(
+        edits.iter().all(|(row_id, column_id, source_index, _, _)| {
+            row_id == "row-a" && column_id == "name" && *source_index == Some(0)
+        }),
+        "every edit payload should stay targeted by stable row and column ids"
+    );
+    assert_eq!(
+        edits.first().cloned(),
+        Some((
+            "row-a".to_owned(),
+            "name".to_owned(),
+            Some(0),
+            "Alpha".to_owned(),
+            "Alpha ".to_owned(),
+        ))
+    );
+    assert_eq!(
+        edits.last().cloned(),
+        Some((
+            "row-a".to_owned(),
+            "name".to_owned(),
+            Some(0),
+            "Alpha Prim".to_owned(),
+            "Alpha Prime".to_owned(),
+        ))
+    );
+    assert_eq!(
+        state
+            .borrow()
+            .rows()
+            .first()
+            .and_then(|row| row.cell(&TableColumnId::new("name")))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("Alpha Prime")
+    );
+    assert!(
+        activations.borrow().is_empty(),
+        "typing inside editable cell must not activate the row"
+    );
+    assert!(
+        selections.borrow().is_empty(),
+        "typing inside editable cell must not toggle row selection"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_multiline_cell_edit_emits_newline_change_without_row_interaction(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    type EditLog = Vec<(String, String, Option<usize>, String, String)>;
+
+    struct TestView {
+        state: Rc<RefCell<TableState>>,
+        edits: Rc<RefCell<EditLog>>,
+        activations: Rc<RefCell<Vec<String>>>,
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let table_state = self.state.borrow().clone();
+            let state_for_edit = self.state.clone();
+            let edits = self.edits.clone();
+            let activations = self.activations.clone();
+            let selections = self.selections.clone();
+            let table = Table::new(
+                "multiline-edit-table",
+                "Multiline edit runtime",
+                table_state,
+            )
+            .row_height(ui_px(82.0))
+            .viewport_extent(ui_px(120.0))
+            .on_cell_edit_change(move |change, _, _| {
+                edits.borrow_mut().push((
+                    change.row_id().as_str().to_owned(),
+                    change.column_id().as_str().to_owned(),
+                    change.source_index(),
+                    change.previous_text().to_owned(),
+                    change.next_text().to_owned(),
+                ));
+                let (next, outcome) = change.apply_to(state_for_edit.borrow().clone());
+                assert_eq!(outcome, TableCellEditApplyOutcome::Updated);
+                *state_for_edit.borrow_mut() = next;
+            })
+            .on_row_activate(move |activation, _, _| {
+                activations
+                    .borrow_mut()
+                    .push(activation.row_id().as_str().to_owned());
+            })
+            .on_row_selection_change(move |selection, _, _| {
+                selections
+                    .borrow_mut()
+                    .push(selection.row_id().as_str().to_owned());
+            });
+
+            div().w(px(520.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    cx.update(init_text_input);
+    let edits = Rc::new(RefCell::new(Vec::new()));
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let state = Rc::new(RefCell::new(
+        TableState::new([TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("notes", "Line 1")])
+        .with_columns([
+            TableColumn::new("name", "Name").with_width(ui_px(120.0)),
+            TableColumn::new("notes", "Notes")
+                .with_multiline_text_editor(3)
+                .with_width(ui_px(280.0)),
+        ])
+        .with_pagination(TablePagination::disabled())
+        .with_selection_activation_mode(TableSelectionActivationMode::RowClick),
+    ));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        state: state.clone(),
+        edits: edits.clone(),
+        activations: activations.clone(),
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("textarea:table:multiline-edit-table:cell:row-a:notes:editor:root")
+            .is_some(),
+        "multiline editable notes cell should render a nested textarea"
+    );
+    assert!(
+        cx.debug_bounds("text-input:table:multiline-edit-table:cell:row-a:notes:editor:root")
+            .is_none(),
+        "multiline editable notes cell must not render the single-line text input"
+    );
+
+    let textarea = cx
+        .debug_bounds("textarea:table:multiline-edit-table:cell:row-a:notes:editor:root")
+        .expect("multiline notes textarea should expose a stable debug selector");
+    cx.simulate_click(textarea.center(), Default::default());
+    cx.simulate_input("\nLine 2");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let edits = edits.borrow();
+    assert!(
+        edits.len() >= 2,
+        "simulated multiline entry should emit controlled changes as the textarea value evolves"
+    );
+    assert!(
+        edits.iter().all(|(row_id, column_id, source_index, _, _)| {
+            row_id == "row-a" && column_id == "notes" && *source_index == Some(0)
+        }),
+        "every multiline edit payload should stay targeted by stable row and column ids"
+    );
+    assert_eq!(
+        edits.last().cloned(),
+        Some((
+            "row-a".to_owned(),
+            "notes".to_owned(),
+            Some(0),
+            "Line 1\nLine ".to_owned(),
+            "Line 1\nLine 2".to_owned(),
+        ))
+    );
+    assert_eq!(
+        state
+            .borrow()
+            .rows()
+            .first()
+            .and_then(|row| row.cell(&TableColumnId::new("notes")))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("Line 1\nLine 2")
+    );
+    assert!(
+        activations.borrow().is_empty(),
+        "typing inside multiline editable cell must not activate the row"
+    );
+    assert!(
+        selections.borrow().is_empty(),
+        "typing inside multiline editable cell must not toggle row selection"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_boolean_cell_edit_emits_toggle_change_without_row_interaction(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    type EditLog = Vec<(String, String, Option<usize>, String, String)>;
+
+    struct TestView {
+        state: Rc<RefCell<TableState>>,
+        edits: Rc<RefCell<EditLog>>,
+        activations: Rc<RefCell<Vec<String>>>,
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let state = self.state.borrow().clone();
+            let state_for_edit = self.state.clone();
+            let edits = self.edits.clone();
+            let activations = self.activations.clone();
+            let selections = self.selections.clone();
+            let table = Table::new("bool-edit-runtime-table", "Bool edit runtime", state)
+                .row_height(ui_px(32.0))
+                .viewport_extent(ui_px(96.0))
+                .on_cell_edit_change(move |change, _, _| {
+                    edits.borrow_mut().push((
+                        change.row_id().as_str().to_owned(),
+                        change.column_id().as_str().to_owned(),
+                        change.source_index(),
+                        change.previous_text().to_owned(),
+                        change.next_text().to_owned(),
+                    ));
+                    let (next, outcome) = change.apply_to(state_for_edit.borrow().clone());
+                    assert_eq!(outcome, TableCellEditApplyOutcome::Updated);
+                    *state_for_edit.borrow_mut() = next;
+                })
+                .on_row_activate(move |activation, _, _| {
+                    activations
+                        .borrow_mut()
+                        .push(activation.row_id().as_str().to_owned());
+                })
+                .on_row_selection_change(move |selection, _, _| {
+                    selections
+                        .borrow_mut()
+                        .push(selection.row_id().as_str().to_owned());
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let edits = Rc::new(RefCell::new(Vec::new()));
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let state = Rc::new(RefCell::new(
+        TableState::new([TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("enabled", true)
+            .with_cell("status", "Ready")])
+        .with_columns([
+            TableColumn::new("name", "Name").with_width(ui_px(180.0)),
+            TableColumn::new("enabled", "Enabled")
+                .with_checkbox_editor()
+                .with_width(ui_px(96.0)),
+            TableColumn::new("status", "Status").with_width(ui_px(120.0)),
+        ])
+        .with_pagination(TablePagination::disabled())
+        .with_selection_activation_mode(TableSelectionActivationMode::RowClick),
+    ));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        state: state.clone(),
+        edits: edits.clone(),
+        activations: activations.clone(),
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("checkbox:table:bool-edit-runtime-table:cell:row-a:enabled:editor:root")
+            .is_some(),
+        "editable enabled cell should render a nested checkbox with a stable selector"
+    );
+    assert!(
+        cx.debug_bounds("text-input:table:bool-edit-runtime-table:cell:row-a:enabled:editor:root")
+            .is_none(),
+        "boolean checkbox cell must not mount a text input"
+    );
+    assert!(
+        cx.debug_bounds("textarea:table:bool-edit-runtime-table:cell:row-a:enabled:editor:root")
+            .is_none(),
+        "boolean checkbox cell must not mount a textarea"
+    );
+
+    let checkbox = cx
+        .debug_bounds("checkbox:table:bool-edit-runtime-table:cell:row-a:enabled:editor:root")
+        .expect("editable enabled checkbox should expose a stable debug selector");
+    cx.simulate_click(checkbox.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let edits = edits.borrow();
+    assert_eq!(
+        edits.len(),
+        1,
+        "checkbox toggle should emit one controlled change"
+    );
+    assert_eq!(
+        edits.first().cloned(),
+        Some((
+            "row-a".to_owned(),
+            "enabled".to_owned(),
+            Some(0),
+            "true".to_owned(),
+            "false".to_owned(),
+        ))
+    );
+    assert_eq!(
+        state
+            .borrow()
+            .rows()
+            .first()
+            .and_then(|row| row.cell(&TableColumnId::new("enabled"))),
+        Some(&TableCellValue::Bool(false))
+    );
+    assert!(
+        activations.borrow().is_empty(),
+        "toggling a checkbox cell must not activate the row"
+    );
+    assert!(
+        selections.borrow().is_empty(),
+        "toggling a checkbox cell must not toggle row selection"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_select_cell_edit_emits_change_without_row_interaction(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    type EditLog = Vec<(String, String, Option<usize>, String, String)>;
+
+    struct TestView {
+        state: Rc<RefCell<TableState>>,
+        edits: Rc<RefCell<EditLog>>,
+        activations: Rc<RefCell<Vec<String>>>,
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let state = self.state.borrow().clone();
+            let state_for_edit = self.state.clone();
+            let edits = self.edits.clone();
+            let activations = self.activations.clone();
+            let selections = self.selections.clone();
+            let table = Table::new("select-edit-runtime-table", "Select edit runtime", state)
+                .row_height(ui_px(32.0))
+                .viewport_extent(ui_px(96.0))
+                .on_cell_edit_change(move |change, _, _| {
+                    edits.borrow_mut().push((
+                        change.row_id().as_str().to_owned(),
+                        change.column_id().as_str().to_owned(),
+                        change.source_index(),
+                        change.previous_text().to_owned(),
+                        change.next_text().to_owned(),
+                    ));
+                    let (next, outcome) = change.apply_to(state_for_edit.borrow().clone());
+                    assert_eq!(outcome, TableCellEditApplyOutcome::Updated);
+                    *state_for_edit.borrow_mut() = next;
+                })
+                .on_row_activate(move |activation, _, _| {
+                    activations
+                        .borrow_mut()
+                        .push(activation.row_id().as_str().to_owned());
+                })
+                .on_row_selection_change(move |selection, _, _| {
+                    selections
+                        .borrow_mut()
+                        .push(selection.row_id().as_str().to_owned());
+                });
+
+            div().w(px(460.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    cx.update(init_text_input);
+    let edits = Rc::new(RefCell::new(Vec::new()));
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let state = Rc::new(RefCell::new(
+        TableState::new([TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("status", "ready")])
+        .with_columns([
+            TableColumn::new("name", "Name").with_width(ui_px(180.0)),
+            TableColumn::new("status", "Status")
+                .with_select_editor([
+                    TableSelectOption::new("ready", "Ready"),
+                    TableSelectOption::new("blocked", "Blocked"),
+                ])
+                .with_width(ui_px(120.0)),
+        ])
+        .with_pagination(TablePagination::disabled())
+        .with_selection_activation_mode(TableSelectionActivationMode::RowClick),
+    ));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        state: state.clone(),
+        edits: edits.clone(),
+        activations: activations.clone(),
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let trigger_selector =
+        "select:table:select-edit-runtime-table:cell:row-a:status:editor:trigger";
+    let content_selector = "select:Edit status for row row-a:select-content-scroll:content";
+    let trigger = cx
+        .debug_bounds(trigger_selector)
+        .expect("table select trigger should be rendered");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        activations.borrow().is_empty(),
+        "clicking the select trigger should not activate the row"
+    );
+    assert!(
+        selections.borrow().is_empty(),
+        "clicking the select trigger should not toggle row selection"
+    );
+
+    if cx.debug_bounds(content_selector).is_none() {
+        cx.simulate_keystrokes("space");
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+    }
+
+    assert!(
+        cx.debug_bounds(content_selector).is_some(),
+        "select content should open from the table trigger"
+    );
+
+    let blocked = cx
+        .debug_bounds("listbox:table:select-edit-runtime-table:cell:row-a:status:editor-listbox:option:blocked")
+        .expect("blocked option should be rendered in the table select popup");
+    cx.simulate_click(blocked.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let edits = edits.borrow();
+    assert_eq!(
+        edits.len(),
+        1,
+        "select choice should emit one controlled change"
+    );
+    assert_eq!(
+        edits.first().cloned(),
+        Some((
+            "row-a".to_owned(),
+            "status".to_owned(),
+            Some(0),
+            "ready".to_owned(),
+            "blocked".to_owned(),
+        ))
+    );
+    assert_eq!(
+        state
+            .borrow()
+            .rows()
+            .first()
+            .and_then(|row| row.cell(&TableColumnId::new("status")))
+            .map(TableCellValue::filter_text)
+            .as_deref(),
+        Some("blocked")
+    );
+    assert!(
+        activations.borrow().is_empty(),
+        "changing a select cell must not activate the row"
+    );
+    assert!(
+        selections.borrow().is_empty(),
+        "changing a select cell must not toggle row selection"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_explicit_control_selection_ignores_row_click(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+            let state = sample_table_state(4)
+                .with_selection_activation_mode(TableSelectionActivationMode::ExplicitControl)
+                .with_selected_rows(["row-0001"]);
+            let table = Table::new("explicit-selection-table", "Explicit selection", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .on_row_selection_change(move |change, _, _| {
+                    selections
+                        .borrow_mut()
+                        .push(change.row_id().as_str().to_owned());
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let row = cx
+        .debug_bounds("table:explicit-selection-table:row:row-0001")
+        .expect("selected row should render");
+    cx.simulate_click(row.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        selections.borrow().is_empty(),
+        "explicit-control selection should wait for checkbox/radio chrome instead of row clicks"
+    );
+}
+
+#[open_gpui::test]
 fn table_runtime_unloaded_branch_toggle_emits_child_load_metadata(
     cx: &mut open_gpui::TestAppContext,
 ) {
@@ -4695,6 +8491,115 @@ fn table_runtime_resize_emits_controlled_sizing_change(cx: &mut open_gpui::TestA
             .width(changes[0].column_id())
             .expect("controlled sizing should include resized column"),
         changes[0].width()
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_header_drag_emits_controlled_column_order_change(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        changes: Rc<RefCell<Vec<TableColumnOrderChange>>>,
+        state: Rc<RefCell<TableState>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let changes = self.changes.clone();
+            let state = self.state.borrow().clone();
+            let state_for_order = self.state.clone();
+            let table = Table::new("order-runtime-table", "Order runtime", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .on_column_order_change(move |change, _, _| {
+                    changes.borrow_mut().push(change.clone());
+                    let next = change.apply_to(state_for_order.borrow().clone());
+                    *state_for_order.borrow_mut() = next;
+                });
+
+            div().w(px(420.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let state = Rc::new(RefCell::new(
+        TableState::new([TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("team", "UI")
+            .with_cell("score", 42_usize)])
+        .with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+            TableColumn::new("score", "Score"),
+        ])
+        .with_column_order(["name", "team", "score"])
+        .with_pagination(TablePagination::disabled()),
+    ));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        changes: changes.clone(),
+        state: state.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let start = cx
+        .debug_bounds("table:order-runtime-table:header:score")
+        .expect("score header should render")
+        .center();
+    let end = cx
+        .debug_bounds("table:order-runtime-table:header-order-drop:before:team")
+        .expect("team before-drop zone should render")
+        .center();
+
+    cx.simulate_mouse_down(start, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(
+            start.x + (end.x - start.x) * 0.2,
+            start.y + (end.y - start.y) * 0.2,
+        ),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(
+        point(
+            start.x + (end.x - start.x) * 0.6,
+            start.y + (end.y - start.y) * 0.6,
+        ),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_up(end, MouseButton::Left, Default::default());
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let changes = changes.borrow();
+    assert_eq!(changes.len(), 1);
+    let change = &changes[0];
+    assert_eq!(change.column_id().as_str(), "score");
+    assert_eq!(change.target_column_id().as_str(), "team");
+    assert_eq!(change.placement(), TableColumnOrderPlacement::Before);
+    assert_eq!(change.source_region(), TableColumnRegion::Center);
+    assert_eq!(change.target_region(), TableColumnRegion::Center);
+    assert_eq!(
+        state
+            .borrow()
+            .column_order()
+            .iter()
+            .map(|column_id| column_id.as_str())
+            .collect::<Vec<_>>(),
+        ["name", "score", "team"]
+    );
+    assert!(
+        cx.debug_bounds("table:order-runtime-table:header:score")
+            .expect("score header should still render")
+            .left()
+            < cx.debug_bounds("table:order-runtime-table:header:team")
+                .expect("team header should still render")
+                .left(),
+        "score should render before team after the reorder"
     );
 }
 
@@ -5244,6 +9149,9 @@ fn table_runtime_pinned_body_scrolls_without_moving_parent(cx: &mut open_gpui::T
     let first_row_before = cx
         .debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0000")
         .expect("first pinned body row should render before vertical scrolling");
+    let header_before = cx
+        .debug_bounds("table:pinned-body-scroll-runtime-table:header-row")
+        .expect("pinned table header should render before vertical scrolling");
     assert!(
         cx.debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0010")
             .is_none(),
@@ -5271,10 +9179,18 @@ fn table_runtime_pinned_body_scrolls_without_moving_parent(cx: &mut open_gpui::T
     let parent_bottom_after = cx
         .debug_bounds("table-parent-bottom")
         .expect("parent bottom should still be rendered after table scrolling");
+    let header_after = cx
+        .debug_bounds("table:pinned-body-scroll-runtime-table:header-row")
+        .expect("pinned table header should still be rendered after vertical scrolling");
     assert_eq!(
         parent_bottom_after.top(),
         parent_bottom_before.top(),
         "expected wheel input inside pinned Table to stay inside the table body; before={parent_bottom_before:?} after={parent_bottom_after:?}"
+    );
+    assert_eq!(
+        header_after.top(),
+        header_before.top(),
+        "expected the table header to stay fixed while the body scrolls; before={header_before:?} after={header_after:?}"
     );
     assert!(
         cx.debug_bounds("table:pinned-body-scroll-runtime-table:row:row-0000")
@@ -5289,6 +9205,242 @@ fn table_runtime_pinned_body_scrolls_without_moving_parent(cx: &mut open_gpui::T
     assert!(
         viewport.size.width > px(0.0) && first_row_before.top() <= parent_bottom_after.bottom(),
         "pinned body viewport should remain measurable during the test"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_row_pinning_keeps_bands_fixed_while_center_scrolls(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let state = sample_center_window_table_state_with_rows(80).with_row_pinning(
+                TableRowPinning::new()
+                    .pinned_top(["row-0000"])
+                    .pinned_bottom(["row-0079"]),
+            );
+            let table = Table::new(
+                "row-pinning-runtime-table",
+                "Row pinning runtime table",
+                state,
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(120.0))
+            .overscan(2);
+
+            div().size_full().child(
+                div().w(px(480.0)).h(px(240.0)).child(
+                    ScrollArea::new(
+                        "row-pinning-table-parent-scroll",
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .debug_selector(|| "row-pinning-parent-top".into())
+                                    .h(px(72.0))
+                                    .w_full()
+                                    .child("Parent top"),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "row-pinning-table-wrapper".into())
+                                    .h(px(164.0))
+                                    .min_h(px(0.0))
+                                    .overflow_hidden()
+                                    .child(table),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(|| "row-pinning-parent-bottom".into())
+                                    .h(px(240.0))
+                                    .w_full()
+                                    .child("Parent bottom"),
+                            ),
+                    )
+                    .vertical(),
+                ),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("table:row-pinning-runtime-table:body:top")
+            .is_some(),
+        "top row-pinning band should expose a stable debug selector"
+    );
+    assert!(
+        cx.debug_bounds("table:row-pinning-runtime-table:body:center")
+            .is_some(),
+        "center row-pinning band should expose a stable debug selector"
+    );
+    assert!(
+        cx.debug_bounds("table:row-pinning-runtime-table:body:bottom")
+            .is_some(),
+        "bottom row-pinning band should expose a stable debug selector"
+    );
+    let top_row_before = cx
+        .debug_bounds("table:row-pinning-runtime-table:row:row-0000")
+        .expect("top pinned row should render before scrolling");
+    let bottom_row_before = cx
+        .debug_bounds("table:row-pinning-runtime-table:row:row-0079")
+        .expect("bottom pinned row should render before scrolling");
+    let parent_bottom_before = cx
+        .debug_bounds("row-pinning-parent-bottom")
+        .expect("parent bottom should render before table scrolling");
+    let top_name_before = cx
+        .debug_bounds("table:row-pinning-runtime-table:cell:row-0000:name")
+        .expect("top pinned row left-pinned cell should render before horizontal scrolling");
+    let top_center_viewport = cx
+        .debug_bounds("scroll-area:table:row-pinning-runtime-table:row-center-scroll:row-0000")
+        .expect("top pinned row should expose a horizontal center lane");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: top_center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-440.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let top_name_after_horizontal = cx
+        .debug_bounds("table:row-pinning-runtime-table:cell:row-0000:name")
+        .expect("top pinned row left-pinned cell should stay mounted after horizontal scrolling");
+    assert_eq!(
+        top_name_after_horizontal.left(),
+        top_name_before.left(),
+        "left-pinned cells inside pinned rows should not move with the center lane"
+    );
+    assert!(
+        cx.debug_bounds("table:row-pinning-runtime-table:cell:row-0000:metric_05")
+            .is_some(),
+        "horizontally scrolled pinned rows should reveal far-right center cells"
+    );
+    let _center_viewport = cx
+        .debug_bounds("scroll-area:table:row-pinning-runtime-table:body-scroll")
+        .expect("center body should expose the vertical scroll viewport");
+    let center_row_cell = cx
+        .debug_bounds("table:row-pinning-runtime-table:cell:row-0001:name")
+        .expect("first center row left-pinned cell should render before center scrolling");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: center_row_cell.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let top_row_after = cx
+        .debug_bounds("table:row-pinning-runtime-table:row:row-0000")
+        .expect("top pinned row should remain mounted after center scrolling");
+    let bottom_row_after = cx
+        .debug_bounds("table:row-pinning-runtime-table:row:row-0079")
+        .expect("bottom pinned row should remain mounted after center scrolling");
+    let parent_bottom_after = cx
+        .debug_bounds("row-pinning-parent-bottom")
+        .expect("parent bottom should remain mounted after center scrolling");
+    assert_eq!(
+        top_row_after.top(),
+        top_row_before.top(),
+        "top pinned rows should stay fixed while center rows scroll"
+    );
+    assert_eq!(
+        bottom_row_after.top(),
+        bottom_row_before.top(),
+        "bottom pinned rows should stay fixed while center rows scroll"
+    );
+    assert_eq!(
+        parent_bottom_after.top(),
+        parent_bottom_before.top(),
+        "vertical wheel input inside row-pinned Table should not move the outer page"
+    );
+    assert!(
+        cx.debug_bounds("table:row-pinning-runtime-table:row:row-0011")
+            .is_some(),
+        "center rows should advance independently between pinned bands"
+    );
+    assert!(
+        cx.debug_bounds("table:row-pinning-runtime-table:cell:row-0011:metric_05")
+            .is_some(),
+        "new center rows should consume the current horizontal center window"
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_row_pinning_keyboard_navigation_scrolls_to_unrendered_center_row(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let state = sample_center_window_table_state_with_rows(80)
+                .with_row_pinning(TableRowPinning::new().pinned_top(["row-0000"]));
+            let table = Table::new(
+                "row-pinning-keyboard-table",
+                "Row pinning keyboard table",
+                state,
+            )
+            .row_height(ui_px(24.0))
+            .viewport_extent(ui_px(120.0))
+            .overscan(2);
+
+            div().size_full().child(
+                div()
+                    .w(px(480.0))
+                    .h(px(164.0))
+                    .min_h(px(0.0))
+                    .overflow_hidden()
+                    .child(table),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let top_row_before = cx
+        .debug_bounds("table:row-pinning-keyboard-table:row:row-0000")
+        .expect("top pinned row should render before keyboard navigation");
+    assert!(
+        cx.debug_bounds("table:row-pinning-keyboard-table:row:row-0079")
+            .is_none(),
+        "far center row should start outside the rendered virtual window"
+    );
+
+    cx.simulate_click(top_row_before.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.simulate_keystrokes("end");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let top_row_after = cx
+        .debug_bounds("table:row-pinning-keyboard-table:row:row-0000")
+        .expect("top pinned row should remain mounted after keyboard navigation");
+    assert_eq!(
+        top_row_after.top(),
+        top_row_before.top(),
+        "keyboard navigation into the center region should not move the top pinned band"
+    );
+    assert!(
+        cx.debug_bounds("table:row-pinning-keyboard-table:row:row-0079")
+            .is_some(),
+        "End should scroll an unrendered center row into the center virtual window"
     );
 }
 
@@ -5365,6 +9517,135 @@ fn table_runtime_pinned_headers_still_sort_after_center_scroll(cx: &mut open_gpu
     assert_eq!(actions[0].column_id().as_str(), "team");
     assert_eq!(actions[1].column_id().as_str(), "score");
     assert_eq!(actions[2].column_id().as_str(), "status");
+}
+
+#[open_gpui::test]
+fn table_runtime_pinned_header_drag_emits_controlled_column_order_change(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        changes: Rc<RefCell<Vec<TableColumnOrderChange>>>,
+        state: Rc<RefCell<TableState>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let changes = self.changes.clone();
+            let state = self.state.borrow().clone();
+            let state_for_order = self.state.clone();
+            let table = Table::new("pinned-order-runtime-table", "Pinned order table", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0))
+                .on_column_order_change(move |change, _, _| {
+                    changes.borrow_mut().push(change.clone());
+                    let next = change.apply_to(state_for_order.borrow().clone());
+                    *state_for_order.borrow_mut() = next;
+                });
+
+            div()
+                .size_full()
+                .child(div().w(px(560.0)).h(px(180.0)).child(table))
+        }
+    }
+
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let state = Rc::new(RefCell::new(
+        TableState::new([TableRow::new("row-a")
+            .with_cell("name", "Alpha")
+            .with_cell("team", "UI")
+            .with_cell("score", 42_usize)
+            .with_cell("status", "Ready")])
+        .with_columns([
+            TableColumn::new("name", "Name"),
+            TableColumn::new("team", "Team"),
+            TableColumn::new("score", "Score"),
+            TableColumn::new("status", "Status"),
+        ])
+        .with_column_order(["name", "team", "score", "status"])
+        .with_column_pinning(
+            TableColumnPinning::new()
+                .pinned_left(["name"])
+                .pinned_right(["status"]),
+        )
+        .with_pagination(TablePagination::disabled()),
+    ));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        changes: changes.clone(),
+        state: state.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let center_viewport = cx
+        .debug_bounds("scroll-area:table:pinned-order-runtime-table:header-center-scroll")
+        .expect("center header should expose a horizontal scroll viewport");
+    cx.simulate_event(ScrollWheelEvent {
+        position: center_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-180.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let score_before = cx
+        .debug_bounds("table:pinned-order-runtime-table:header:score")
+        .expect("center score header should remain visible after scrolling");
+    let _team_before = cx
+        .debug_bounds("table:pinned-order-runtime-table:header:team")
+        .expect("center team header should remain visible after scrolling");
+    let drop_before = cx
+        .debug_bounds("table:pinned-order-runtime-table:header-order-drop:before:team")
+        .expect("team before-drop zone should render in split pinned layout");
+
+    cx.simulate_mouse_down(score_before.center(), MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(score_before.center().x + px(18.0), score_before.center().y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(
+        point(
+            score_before.center().x + px(42.0),
+            score_before.center().y + px(2.0),
+        ),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(drop_before.center(), MouseButton::Left, Default::default());
+    cx.simulate_mouse_up(drop_before.center(), MouseButton::Left, Default::default());
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let changes = changes.borrow();
+    assert_eq!(changes.len(), 1);
+    let change = &changes[0];
+    assert_eq!(change.column_id().as_str(), "score");
+    assert_eq!(change.target_column_id().as_str(), "team");
+    assert_eq!(change.placement(), TableColumnOrderPlacement::Before);
+    assert_eq!(change.source_region(), TableColumnRegion::Center);
+    assert_eq!(change.target_region(), TableColumnRegion::Center);
+    assert_eq!(
+        state
+            .borrow()
+            .column_order()
+            .iter()
+            .map(|column_id| column_id.as_str())
+            .collect::<Vec<_>>(),
+        ["name", "score", "team", "status"]
+    );
+    assert!(
+        cx.debug_bounds("table:pinned-order-runtime-table:header:score")
+            .expect("score header should still render")
+            .left()
+            < cx.debug_bounds("table:pinned-order-runtime-table:header:team")
+                .expect("team header should still render")
+                .left(),
+        "score should render before team after the reorder"
+    );
 }
 
 #[open_gpui::test]
@@ -5975,6 +10256,135 @@ fn table_runtime_cache_invalidates_when_table_state_changes(cx: &mut open_gpui::
 }
 
 #[open_gpui::test]
+fn table_runtime_content_fit_widths_follow_visible_content(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        long_value: bool,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let status_value = if self.long_value {
+                "Ready for release rollout"
+            } else {
+                "Ready"
+            };
+            let state = TableState::new([TableRow::new("row-a")
+                .with_cell("name", "Alpha")
+                .with_cell("status", status_value)])
+            .with_columns([
+                TableColumn::new("name", "Name").with_width(ui_px(140.0)),
+                TableColumn::new("status", "Status").with_content_fit(),
+            ])
+            .with_pagination(TablePagination::disabled());
+            let table = Table::new("content-fit-runtime-table", "Content fit runtime", state)
+                .row_height(ui_px(24.0))
+                .viewport_extent(ui_px(96.0));
+
+            div().w(px(360.0)).h(px(140.0)).child(table)
+        }
+    }
+
+    let (view, cx) = cx.add_window_view(|_, _| TestView { long_value: false });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let status_header_before = cx
+        .debug_bounds("table:content-fit-runtime-table:header:status")
+        .expect("status header should render before content growth");
+    let status_cell_before = cx
+        .debug_bounds("table:content-fit-runtime-table:cell:row-a:status")
+        .expect("status cell should render before content growth");
+    assert_eq!(status_header_before.left(), status_cell_before.left());
+    assert_eq!(status_header_before.right(), status_cell_before.right());
+
+    view.update(cx, |view, cx| {
+        view.long_value = true;
+        cx.notify();
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let status_header_after = cx
+        .debug_bounds("table:content-fit-runtime-table:header:status")
+        .expect("status header should still render after content growth");
+    let status_cell_after = cx
+        .debug_bounds("table:content-fit-runtime-table:cell:row-a:status")
+        .expect("status cell should still render after content growth");
+    assert_eq!(status_header_after.left(), status_cell_after.left());
+    assert_eq!(status_header_after.right(), status_cell_after.right());
+    assert!(
+        (status_header_after.right() - status_header_after.left())
+            > (status_header_before.right() - status_header_before.left()),
+        "expected the content-fit column to widen when a longer visible value appears"
+    );
+    assert_eq!(
+        cx.debug_bounds("table:content-fit-runtime-table:cell:row-a:name")
+            .expect("fixed-width name cell should stay rendered")
+            .right()
+            - cx.debug_bounds("table:content-fit-runtime-table:cell:row-a:name")
+                .expect("fixed-width name cell should stay rendered")
+                .left(),
+        px(140.0)
+    );
+}
+
+#[open_gpui::test]
+fn table_runtime_measured_row_height_reflows_after_paint(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        state: TableState,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let table = Table::new(
+                "measured-row-runtime-table",
+                "Measured row runtime",
+                self.state.clone(),
+            )
+            .row_height(ui_px(24.0))
+            .row_measure_mode(TableRowMeasureMode::Measured)
+            .viewport_extent(ui_px(120.0));
+
+            div().w(px(260.0)).h(px(180.0)).child(table)
+        }
+    }
+
+    let state = TableState::new([
+        TableRow::new("row-a").with_cell(
+            "description",
+            "Measured rows should wrap onto multiple lines when the adapter can grow them from rendered content",
+        ),
+        TableRow::new("row-b").with_cell("description", "Short"),
+    ])
+    .with_columns([TableColumn::new("description", "Description").with_width(ui_px(72.0))])
+    .with_pagination(TablePagination::disabled());
+
+    let (_, cx) = cx.add_window_view(move |_, _| TestView { state });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let row_a_after = cx
+        .debug_bounds("table:measured-row-runtime-table:row:row-a")
+        .expect("measured row A should remain rendered after repaint");
+    let row_b_after = cx
+        .debug_bounds("table:measured-row-runtime-table:row:row-b")
+        .expect("measured row B should remain rendered after repaint");
+    assert!(
+        row_a_after.bottom() - row_a_after.top() > px(24.0),
+        "expected the measured first row to grow taller than the fallback row height"
+    );
+    assert!(
+        row_b_after.top() >= row_a_after.bottom() - px(1.0),
+        "expected the second row to sit below the expanded first row after the measurement cache is applied; row_a_after.bottom={:?}, row_b_after.top={:?}",
+        row_a_after.bottom(),
+        row_b_after.top()
+    );
+}
+
+#[open_gpui::test]
 fn scroll_area_nested_scroll_keeps_parent_static(cx: &mut open_gpui::TestAppContext) {
     struct TestView;
 
@@ -6120,9 +10530,17 @@ fn tabs_vertical_tablist_scrolls_when_constrained(cx: &mut open_gpui::TestAppCon
     let tablist = cx
         .debug_bounds("tabs:overflow-tabs:tablist")
         .expect("tablist should be rendered");
+    let tablist_viewport = cx
+        .debug_bounds("scroll-area:tabs:overflow-tabs:tablist-scroll")
+        .expect("vertical tablist should use the shared ScrollArea viewport");
+
+    assert!(
+        tablist.contains(&tablist_viewport.center()),
+        "expected ScrollArea viewport to stay inside the tablist shell; tablist={tablist:?} viewport={tablist_viewport:?}"
+    );
 
     cx.simulate_event(ScrollWheelEvent {
-        position: tablist.center(),
+        position: tablist_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-64.0))),
         ..Default::default()
     });
@@ -6369,6 +10787,62 @@ fn toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items(
     assert_eq!(after_home.len(), 4);
     assert_eq!(after_home[3].value(), "undo");
     assert_eq!(after_home[3].kind(), ToolbarItemKind::Action);
+}
+
+#[open_gpui::test]
+fn toggle_group_controlled_values_override_runtime_selection(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        changes: Rc<RefCell<Vec<Vec<String>>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let changes = self.changes.clone();
+
+            div().size_full().child(
+                ToggleGroup::new("controlled-toggle-group", "Alignment")
+                    .default_selected_values(["right"])
+                    .selected_values(Vec::<String>::new())
+                    .item(ToggleGroupItem::new("left", "Left"))
+                    .item(ToggleGroupItem::new("right", "Right"))
+                    .on_change(move |change, _, _| {
+                        changes.borrow_mut().push(change.selected_values().to_vec());
+                    }),
+            )
+        }
+    }
+
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        changes: changes.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let left = cx
+        .debug_bounds("toggle-group:controlled-toggle-group:item:left")
+        .expect("left toggle item should expose a stable debug selector");
+    cx.simulate_click(left.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(changes.borrow().as_slice(), &[vec!["left".to_string()]]);
+
+    let left = cx
+        .debug_bounds("toggle-group:controlled-toggle-group:item:left")
+        .expect("left toggle item should remain rendered after controlled redraw");
+    cx.simulate_click(left.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        changes.borrow().as_slice(),
+        &[vec!["left".to_string()], vec!["left".to_string()]],
+        "controlled empty selection should reset adapter runtime before each activation"
+    );
 }
 
 #[open_gpui::test]
@@ -6901,6 +11375,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         OverlayLayerPolicy::new(OverlayLayerKind::Tooltip, OverlayPresence::open()),
     );
     let root_button = root::Button::new("save", "Save");
+    let root_accordion = root::Accordion::new("accordion")
+        .mode(root::AccordionMode::Multiple)
+        .item(root::AccordionItem::new("one", "One", "One content"));
     let root_alert_dialog = root::AlertDialog::new(
         "delete",
         "Delete",
@@ -6914,6 +11391,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_toolbar = root::Toolbar::new("toolbar", "Editor");
     let root_listbox = root::Listbox::new("listbox", "Choices");
     let root_select = root::Select::new("select", "Choice");
+    let root_select_option = root::TableSelectOption::new("ready", "Ready");
     let root_combobox = root::Combobox::new("combobox", "Search");
     let root_command = root::Command::new("command", "Commands");
     let root_command_items = vec![root::CommandItem::new("open", "Open")];
@@ -6938,9 +11416,29 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_menu_submenu_navigation: root::MenuSubmenuNavigation = root_menu_state
         .submenu_navigation_target("right")
         .expect("root MenuSubmenuNavigation should be exported");
+    let root_menu_submenu_surface: root::MenuSubmenuSurface = root::MenuSubmenuSurface::resolve(
+        rect(
+            ui_point(ui_px(0.0), ui_px(0.0)),
+            ui_size(ui_px(120.0), ui_px(32.0)),
+        ),
+        ui_size(ui_px(180.0), ui_px(96.0)),
+        OverlayPlacementSide::Right,
+        OverlayPlacementAlignment::Start,
+        UiPx::ZERO,
+        None,
+    );
+    let root_menu_safe_hover_corridor: root::MenuSafeHoverCorridor =
+        root_menu_submenu_surface.hover_corridor();
     let root_scroll = root::ScrollArea::new("scroll", div());
     let root_splitter = root::Splitter::new("split");
     let root_tabs = root::Tabs::new("tabs");
+    let root_global_filter = root::TableGlobalFilter::new("global-filter", "Search");
+    let root_predicate_filter = root::TablePredicateFilter::new("predicate-filter", "Name", "name");
+    let root_table_toolbar =
+        root::TableToolbar::new("table-toolbar", "Filters").summary("2 rows visible");
+    let root_faceted_filter = root::TableFacetedFilter::new("status-filter", "Status", "status");
+    let root_column_visibility = root::TableColumnVisibility::new("column-visibility", "Columns")
+        .columns([root::TableColumn::new("status", "Status")]);
     let root_avatar = root::Avatar::new("avatar", "Ada Lovelace");
     let root_separator = root::Separator::new("separator");
     let root_kbd = root::Kbd::new("kbd", "Ctrl+K");
@@ -6948,7 +11446,24 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_skeleton = root::Skeleton::new("skeleton");
     let root_status_cue = root::StatusCue::new("status", "Ready");
     let root_empty_state = root::EmptyState::new("empty", "No results");
+    let root_collapsible = root::Collapsible::new("collapsible", "Details").default_open(true);
+    let root_slider = root::Slider::new("slider", "Volume").value(40.0);
+    let root_number_input = root::NumberInput::new("number", "Quantity").value(3.0);
+    let root_link = root::Link::new("link", "Docs", "/docs").external(true);
+    let root_breadcrumb = root::Breadcrumb::new("breadcrumb", "Path")
+        .item(root::BreadcrumbItemDescriptor::new("home", "Home").href("/"))
+        .item(root::BreadcrumbItemDescriptor::new("docs", "Docs").current(true));
+    let root_tag = root::Tag::new("tag", "ready", "Ready").removable(true);
+    let root_toast_stack = root::ToastStack::new("toasts", "Notifications")
+        .toast(root::Toast::new("saved", "Saved").intent(root::ToastIntent::Success));
+    let root_toggle_group = root::ToggleGroup::new("toggle-group", "Alignment")
+        .item(root::ToggleGroupItem::new("left", "Left"))
+        .item(root::ToggleGroupItem::new("right", "Right"))
+        .selected_values(["left"]);
     let prelude_button = prelude::Button::new("save", "Save");
+    let prelude_accordion = prelude::Accordion::new("accordion")
+        .mode(prelude::AccordionMode::Single)
+        .item(prelude::AccordionItem::new("one", "One", "One content"));
     let prelude_alert_dialog = prelude::AlertDialog::new(
         "delete",
         "Delete",
@@ -6962,6 +11477,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_toolbar = prelude::Toolbar::new("toolbar", "Editor");
     let prelude_listbox = prelude::Listbox::new("listbox", "Choices");
     let prelude_select = prelude::Select::new("select", "Choice");
+    let prelude_select_option = prelude::TableSelectOption::new("blocked", "Blocked");
     let prelude_combobox = prelude::Combobox::new("combobox", "Search");
     let prelude_command = prelude::Command::new("command", "Commands");
     let prelude_command_items = vec![prelude::CommandItem::new("open", "Open")];
@@ -6987,9 +11503,33 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_menu_submenu_navigation: prelude::MenuSubmenuNavigation = prelude_menu_state
         .submenu_navigation_target("right")
         .expect("prelude MenuSubmenuNavigation should be exported");
+    let prelude_menu_submenu_surface: prelude::MenuSubmenuSurface =
+        prelude::MenuSubmenuSurface::resolve(
+            rect(
+                ui_point(ui_px(0.0), ui_px(0.0)),
+                ui_size(ui_px(120.0), ui_px(32.0)),
+            ),
+            ui_size(ui_px(180.0), ui_px(96.0)),
+            OverlayPlacementSide::Right,
+            OverlayPlacementAlignment::Start,
+            UiPx::ZERO,
+            None,
+        );
+    let prelude_menu_safe_hover_corridor: prelude::MenuSafeHoverCorridor =
+        prelude_menu_submenu_surface.hover_corridor();
     let prelude_scroll = prelude::ScrollArea::new("scroll", div());
     let prelude_splitter = prelude::Splitter::new("split");
     let prelude_tabs = prelude::Tabs::new("tabs");
+    let prelude_global_filter = prelude::TableGlobalFilter::new("global-filter", "Search");
+    let prelude_predicate_filter =
+        prelude::TablePredicateFilter::new("predicate-filter", "Name", "name");
+    let prelude_table_toolbar =
+        prelude::TableToolbar::new("table-toolbar", "Filters").summary("2 rows visible");
+    let prelude_faceted_filter =
+        prelude::TableFacetedFilter::new("status-filter", "Status", "status");
+    let prelude_column_visibility =
+        prelude::TableColumnVisibility::new("column-visibility", "Columns")
+            .columns([prelude::TableColumn::new("status", "Status")]);
     let prelude_avatar = prelude::Avatar::new("avatar", "Ada Lovelace");
     let prelude_separator = prelude::Separator::new("separator");
     let prelude_kbd = prelude::Kbd::new("kbd", "Ctrl+K");
@@ -6997,9 +11537,32 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_skeleton = prelude::Skeleton::new("skeleton");
     let prelude_status_cue = prelude::StatusCue::new("status", "Ready");
     let prelude_empty_state = prelude::EmptyState::new("empty", "No results");
+    let prelude_collapsible =
+        prelude::Collapsible::new("collapsible", "Details").default_open(false);
+    let prelude_slider = prelude::Slider::new("slider", "Volume").value(20.0);
+    let prelude_number_input = prelude::NumberInput::new("number", "Quantity").value(5.0);
+    let prelude_link = prelude::Link::new("link", "Docs", "/docs");
+    let prelude_breadcrumb = prelude::Breadcrumb::new("breadcrumb", "Path")
+        .items([prelude::BreadcrumbItemDescriptor::new("home", "Home")]);
+    let prelude_tag =
+        prelude::Tag::new("tag", "ready", "Ready").variant(prelude::TagVariant::Outline);
+    let prelude_toast_stack =
+        prelude::ToastStack::new("toasts", "Notifications").toasts([prelude::Toast::new(
+            "saved", "Saved",
+        )
+        .action("Undo")
+        .pinned()]);
+    let prelude_toggle_group = prelude::ToggleGroup::new("toggle-group", "Alignment")
+        .mode(prelude::ToggleGroupSelectionMode::Multiple)
+        .items([
+            prelude::ToggleGroupItem::new("bold", "Bold"),
+            prelude::ToggleGroupItem::new("italic", "Italic"),
+        ])
+        .default_selected_values(["bold"]);
 
     let _ = (
         root_button.state(),
+        root_accordion.state(),
         root_alert_dialog.state(),
         root_sheet.state(),
         root_hover_card.state(),
@@ -7007,13 +11570,20 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_toolbar.state(),
         root_listbox.state(),
         root_select.state(),
+        root_select_option.value(),
         root_combobox.state(),
         root_command.state(),
         root_command_plan.role(),
         root_menu_submenu_navigation.focused_value(),
+        root_menu_safe_hover_corridor.bounds(),
         root_scroll.state(),
         root_splitter.state(),
         root_tabs.state(),
+        root_global_filter.state(),
+        root_predicate_filter.state(),
+        root_table_toolbar.state(),
+        root_faceted_filter.state(),
+        root_column_visibility.state(),
         root_avatar.state(),
         root_separator.state(),
         root_kbd.state(),
@@ -7021,7 +11591,16 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_skeleton.state(),
         root_status_cue.state(),
         root_empty_state.state(),
+        root_collapsible.state(),
+        root_slider.state(),
+        root_number_input.state(),
+        root_link.state(),
+        root_breadcrumb.state(),
+        root_tag.state(),
+        root_toast_stack.state(),
+        root_toggle_group.state(),
         prelude_button.state(),
+        prelude_accordion.state(),
         prelude_alert_dialog.state(),
         prelude_sheet.state(),
         prelude_hover_card.state(),
@@ -7029,13 +11608,20 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_toolbar.state(),
         prelude_listbox.state(),
         prelude_select.state(),
+        prelude_select_option.value(),
         prelude_combobox.state(),
         prelude_command.state(),
         prelude_command_plan.row_role(),
         prelude_menu_submenu_navigation.focused_value(),
+        prelude_menu_safe_hover_corridor.bounds(),
         prelude_scroll.state(),
         prelude_splitter.state(),
         prelude_tabs.state(),
+        prelude_global_filter.state(),
+        prelude_predicate_filter.state(),
+        prelude_table_toolbar.state(),
+        prelude_faceted_filter.state(),
+        prelude_column_visibility.state(),
         prelude_avatar.state(),
         prelude_separator.state(),
         prelude_kbd.state(),
@@ -7043,6 +11629,21 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_skeleton.state(),
         prelude_status_cue.state(),
         prelude_empty_state.state(),
+        prelude_collapsible.state(),
+        prelude_slider.state(),
+        prelude_number_input.state(),
+        prelude_link.state(),
+        prelude_breadcrumb.state(),
+        prelude_tag.state(),
+        prelude_toast_stack.state(),
+        prelude_toggle_group.state(),
+        root::toggle_group_navigation_target(Orientation::Horizontal, "right", 0, &[false, false]),
+        prelude::toggle_group_navigation_target(
+            Orientation::Horizontal,
+            "right",
+            0,
+            &[false, false],
+        ),
         root_overlay.policy().kind(),
         prelude_overlay.policy().kind(),
     );
@@ -7051,7 +11652,9 @@ fn crate_root_and_prelude_exports_remain_explicit() {
 #[test]
 fn gpui_role_mapping_covers_neutral_image_and_separator_fallback() {
     assert_eq!(gpui_role_from_ui(Role::Image), open_gpui::Role::Image);
+    assert_eq!(gpui_role_from_ui(Role::Link), open_gpui::Role::Link);
     assert_eq!(gpui_role_from_ui(Role::Separator), open_gpui::Role::Group);
+    assert_eq!(gpui_role_from_ui(Role::Slider), open_gpui::Role::Slider);
     assert_eq!(gpui_role_from_ui(Role::Tree), open_gpui::Role::Tree);
     assert_eq!(gpui_role_from_ui(Role::TreeItem), open_gpui::Role::TreeItem);
     assert_eq!(gpui_role_from_ui(Role::Table), open_gpui::Role::Table);
@@ -7171,27 +11774,51 @@ fn component_api_inventory_covers_official_gallery_catalog() {
 }
 
 #[test]
-fn component_api_inventory_uses_stable_ownership_vocabulary() {
-    const CURRENT_CALLBACK_NAMES: &[&str] = &[
-        "on_activate",
-        "on_action",
-        "on_cancel",
-        "on_change",
-        "on_click",
-        "on_close",
-        "on_column_sizing_change",
-        "on_open_change",
-        "on_query_change",
-        "on_row_activate",
-        "on_row_expansion_request",
-        "on_select",
-        "on_selected_values_change",
-        "on_selection_change",
-        "on_sort_requested",
-        "on_toggle",
-    ];
-    const CURRENT_LEGACY_SEED_INPUTS: &[(&str, &str)] = &[];
+fn table_component_source_mapping_tracks_split_render_owners() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
 
+    assert!(
+        !source_dir.join("table.rs").exists(),
+        "Table should resolve through table/mod.rs instead of the old single-file adapter"
+    );
+    assert_eq!(
+        component_source_inputs("Table"),
+        ["table/mod.rs", "table/resolve.rs"]
+    );
+
+    for owner in table_render_owner_files() {
+        assert!(
+            source_dir.join(owner).is_file(),
+            "split Table render owner `{owner}` should exist"
+        );
+    }
+}
+
+#[test]
+fn component_source_mapping_expands_split_component_directories() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let source_files = component_source_paths("TableRangeFilter")
+        .into_iter()
+        .map(|path| {
+            path.strip_prefix(&source_dir)
+                .unwrap_or_else(|error| panic!("failed to strip source dir from {path:?}: {error}"))
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        source_files.contains(&"table/range_filter/component.rs".to_string()),
+        "split component directory mapping should include its public component file"
+    );
+    assert!(
+        source_files.contains(&"table/range_filter/state.rs".to_string()),
+        "split component directory mapping should include adjacent public contract files"
+    );
+}
+
+#[test]
+fn component_api_inventory_rows_are_unique_and_classified() {
     let mut seen = std::collections::BTreeSet::new();
     for entry in COMPONENT_API_INVENTORY {
         assert!(
@@ -7209,6 +11836,12 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
             "{} resolved state must remain renderer-neutral",
             entry.component
         );
+    }
+}
+
+#[test]
+fn component_api_inventory_tracks_public_method_surface() {
+    for entry in COMPONENT_API_INVENTORY {
         let source_methods = component_public_methods_from_source(entry.component);
         let expected_methods = component_public_methods(entry.component)
             .iter()
@@ -7219,7 +11852,38 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
             "{} public method surface drifted; update COMPONENT_API_INVENTORY and the method baseline together",
             entry.component
         );
+    }
+}
 
+#[test]
+fn component_api_inventory_uses_stable_ownership_vocabulary() {
+    const CURRENT_CALLBACK_NAMES: &[&str] = &[
+        "on_activate",
+        "on_action",
+        "on_cancel",
+        "on_change",
+        "on_click",
+        "on_close",
+        "on_cell_edit_change",
+        "on_column_order_change",
+        "on_column_sizing_change",
+        "on_dismiss",
+        "on_move",
+        "on_open_change",
+        "on_query_change",
+        "on_remove",
+        "on_row_activate",
+        "on_row_selection_change",
+        "on_row_expansion_request",
+        "on_select",
+        "on_selected_values_change",
+        "on_selection_change",
+        "on_sort_requested",
+        "on_toggle",
+    ];
+    const CURRENT_LEGACY_SEED_INPUTS: &[(&str, &str)] = &[];
+
+    for entry in COMPONENT_API_INVENTORY {
         for seed in entry.default_seeds {
             assert!(
                 seed.builder.starts_with("default_"),
@@ -7259,9 +11923,14 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
             );
         }
     }
+}
 
+#[test]
+fn component_api_inventory_keeps_regression_sentinels_for_stateful_components() {
     assert_inventory_contains_controlled_input("TextInput", "value");
     assert_inventory_contains_callback("TextInput", "on_change", "String");
+    assert_inventory_contains_controlled_input("Textarea", "value");
+    assert_inventory_contains_callback("Textarea", "on_change", "String");
     assert_inventory_contains_controlled_input("Switch", "checked");
     assert_inventory_contains_callback("Switch", "on_change", "bool");
     assert_inventory_contains_default_seed("Popover", "default_open", "open");
@@ -7287,6 +11956,7 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
     assert_inventory_contains_default_seed("Tree", "default_selected", "selected");
     assert_inventory_contains_default_seed("Tree", "default_focused", "focused");
     assert_inventory_contains_callback("Tree", "on_toggle", "TreeToggle");
+    assert_inventory_contains_callback("Tree", "on_move", "TreeMove");
     assert_inventory_contains_default_seed(
         "VirtualizedList",
         "default_active_index",
@@ -7305,12 +11975,43 @@ fn component_api_inventory_uses_stable_ownership_vocabulary() {
     assert_inventory_contains_default_seed("Menu", "default_focused_value", "focused_value");
     assert_inventory_contains_default_seed("ContextMenu", "default_focused_value", "focused_value");
     assert_inventory_contains_default_seed("Table", "default_focused_row", "focused_row");
+    assert_inventory_contains_controlled_input("TableGlobalFilter", "query");
+    assert_inventory_contains_default_seed("TableGlobalFilter", "default_query", "query");
+    assert_inventory_contains_callback("TableGlobalFilter", "on_change", "TableGlobalFilterChange");
+    assert_inventory_contains_controlled_input("TablePredicateFilter", "operator");
+    assert_inventory_contains_controlled_input("TablePredicateFilter", "value");
+    assert_inventory_contains_default_seed("TablePredicateFilter", "default_operator", "operator");
+    assert_inventory_contains_default_seed("TablePredicateFilter", "default_value", "value");
+    assert_inventory_contains_callback(
+        "TablePredicateFilter",
+        "on_change",
+        "TablePredicateFilterChange",
+    );
+    assert_inventory_contains_controlled_input("TableColumnVisibility", "visibility");
+    assert_inventory_contains_controlled_input("TableColumnVisibility", "open");
+    assert_inventory_contains_default_seed(
+        "TableColumnVisibility",
+        "default_visibility",
+        "visibility",
+    );
+    assert_inventory_contains_default_seed("TableColumnVisibility", "default_open", "open");
+    assert_inventory_contains_callback(
+        "TableColumnVisibility",
+        "on_change",
+        "TableColumnVisibilityChange",
+    );
     assert_inventory_contains_callback("Table", "on_row_activate", "TableRowActivation");
+    assert_inventory_contains_callback(
+        "Table",
+        "on_row_selection_change",
+        "TableRowSelectionChange",
+    );
     assert_inventory_contains_callback(
         "Table",
         "on_row_expansion_request",
         "TableRowExpansionToggle",
     );
+    assert_inventory_contains_callback("Table", "on_column_order_change", "TableColumnOrderChange");
 }
 
 #[test]
@@ -7327,19 +12028,8 @@ fn public_resolved_state_contracts_avoid_gpui_runtime_types() {
         "ScrollHandle",
         "Rc<dyn",
     ];
-    let mut source_files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
-        .expect("ui_components src directory should be readable")
-        .map(|entry| {
-            entry
-                .expect("source directory entry should be readable")
-                .path()
-        })
-        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-        .collect::<Vec<_>>();
-    source_files.sort();
-
     let mut checked = 0;
-    for source_file in source_files {
+    for source_file in ui_component_source_files() {
         let source = std::fs::read_to_string(&source_file)
             .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
         let file_name = source_file
@@ -7396,6 +12086,7 @@ fn adapter_only_public_surfaces_match_allowlist() {
         ("text_input.rs", "Entity<TextInputController>"),
         ("text_input.rs", "EntityInputHandler"),
         ("text_input.rs", "TextInputController"),
+        ("textarea.rs", "EntityInputHandler"),
     ];
     let mut expected = expected
         .into_iter()
@@ -7428,6 +12119,12 @@ fn gpui_adapter_exports_group_runtime_specific_surfaces() {
     let _module_state: root::text_input::TextInputState = module_text_input.state();
     let _module_colors: Option<root::text_input::TextInputColors> = None;
     let _module_metrics: Option<root::text_input::TextInputMetrics> = None;
+    let _module_display_mode: root::text_input::TextInputDisplayMode =
+        root::text_input::TextInputDisplayMode::Plain;
+    let module_textarea = root::textarea::Textarea::new("module-textarea", "Module textarea");
+    let _module_textarea_state: root::textarea::TextareaState = module_textarea.state();
+    let _module_textarea_colors: Option<root::textarea::TextareaColors> = None;
+    let _module_textarea_metrics: Option<root::textarea::TextareaMetrics> = None;
 
     let root_overlay = root::gpui_adapter::GpuiOverlayAdapterConfig::new(
         OverlayLayerKind::Tooltip,
@@ -7443,6 +12140,8 @@ fn gpui_adapter_exports_group_runtime_specific_surfaces() {
     let _root_size: fn(UiSize) -> open_gpui::Size<open_gpui::Pixels> =
         root::gpui_adapter::gpui_size_from_ui;
     let _prelude_button: prelude::Button = prelude::Button::new("save", "Save");
+    let _prelude_textarea: prelude::Textarea = prelude::Textarea::new("notes", "Notes");
+    let _prelude_display_mode: prelude::TextInputDisplayMode = prelude::TextInputDisplayMode::Plain;
 
     assert_eq!(
         root_overlay.deferred_priority(),
@@ -7523,6 +12222,114 @@ fn public_reexports_stay_explicit_without_wildcards() {
     );
 }
 
+#[test]
+fn crate_root_and_prelude_reexports_stay_intentionally_aligned() {
+    let root_exports = default_reexport_tokens("lib.rs");
+    let prelude_exports = default_reexport_tokens("prelude.rs");
+    let root_only = root_exports
+        .difference(&prelude_exports)
+        .cloned()
+        .collect::<Vec<_>>();
+    let prelude_only = prelude_exports
+        .difference(&root_exports)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        root_only,
+        Vec::<String>::new(),
+        "crate root exports tokens not exposed through prelude; update prelude.rs or document the intentional root-only token here"
+    );
+    assert_eq!(
+        prelude_only,
+        vec![
+            "ActiveDescendant".to_string(),
+            "CollectionPosition".to_string(),
+            "ControllableState".to_string(),
+            "Sizable".to_string(),
+            "Size".to_string(),
+            "ThemeTokens".to_string(),
+            "UiA11yElementExt".to_string(),
+        ],
+        "prelude-only exports must stay intentional; update the allowlist when the convenience prelude grows"
+    );
+}
+
+fn default_reexport_tokens(file_name: &str) -> std::collections::BTreeSet<String> {
+    let source = std::fs::read_to_string(format!("{}/src/{file_name}", env!("CARGO_MANIFEST_DIR")))
+        .unwrap_or_else(|error| panic!("failed to read {file_name}: {error}"));
+    let source = if file_name == "lib.rs" {
+        source_without_gpui_adapter_module(&source)
+    } else {
+        source
+    };
+    let mut exports = std::collections::BTreeSet::new();
+    let mut statement = String::new();
+    let mut collecting = false;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if collecting {
+            statement.push(' ');
+            statement.push_str(trimmed);
+        } else if trimmed.starts_with("pub use ") {
+            statement.clear();
+            statement.push_str(trimmed);
+            collecting = true;
+        }
+
+        if collecting && trimmed.ends_with(';') {
+            collect_public_reexport_tokens(&statement, &mut exports);
+            statement.clear();
+            collecting = false;
+        }
+    }
+
+    exports
+}
+
+fn collect_public_reexport_tokens(
+    statement: &str,
+    exports: &mut std::collections::BTreeSet<String>,
+) {
+    let statement = statement.trim().trim_end_matches(';');
+    let Some(rest) = statement.strip_prefix("pub use ") else {
+        return;
+    };
+    if rest.contains("::*") {
+        return;
+    }
+
+    if let Some((_, group)) = rest.split_once("::{") {
+        let group = group.trim_end_matches('}');
+        for item in group.split(',') {
+            collect_public_reexport_token(item, exports);
+        }
+    } else {
+        collect_public_reexport_token(rest, exports);
+    }
+}
+
+fn collect_public_reexport_token(item: &str, exports: &mut std::collections::BTreeSet<String>) {
+    let token = item.trim();
+    if token.is_empty() {
+        return;
+    }
+
+    let exported_name = token
+        .split_once(" as ")
+        .map(|(_, alias)| alias.trim())
+        .unwrap_or(token)
+        .rsplit("::")
+        .next()
+        .unwrap_or(token)
+        .trim();
+
+    if !exported_name.is_empty() {
+        exports.insert(exported_name.to_owned());
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct PublicContractBlocker {
     file: String,
@@ -7599,19 +12406,8 @@ fn public_contract_structs<'a>(
 }
 
 fn public_contract_extraction_blockers(tokens: &[&str]) -> Vec<PublicContractBlocker> {
-    let mut source_files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
-        .expect("ui_components src directory should be readable")
-        .map(|entry| {
-            entry
-                .expect("source directory entry should be readable")
-                .path()
-        })
-        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-        .collect::<Vec<_>>();
-    source_files.sort();
-
     let mut blockers = Vec::new();
-    for source_file in source_files {
+    for source_file in ui_component_source_files() {
         let source = std::fs::read_to_string(&source_file)
             .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
         let file_name = source_file
@@ -7636,19 +12432,8 @@ fn public_contract_extraction_blockers(tokens: &[&str]) -> Vec<PublicContractBlo
 }
 
 fn public_surface_blockers(tokens: &[&str]) -> Vec<PublicSurfaceBlocker> {
-    let mut source_files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
-        .expect("ui_components src directory should be readable")
-        .map(|entry| {
-            entry
-                .expect("source directory entry should be readable")
-                .path()
-        })
-        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-        .collect::<Vec<_>>();
-    source_files.sort();
-
     let mut blockers = Vec::new();
-    for source_file in source_files {
+    for source_file in ui_component_source_files() {
         let source = std::fs::read_to_string(&source_file)
             .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
         let file_name = source_file
@@ -7893,6 +12678,66 @@ fn sidebar_offcanvas_collapse_removes_items_from_roving_focus() {
     assert!(!state.scrollable());
     assert!(!state.items()[0].focusable());
     assert!(state.activation_for_key("space").is_none());
+}
+
+#[open_gpui::test]
+fn sidebar_long_navigation_scrolls_inside_shared_scroll_area(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let section = (0..14).fold(SidebarSection::new("main", "Main"), |section, index| {
+                section.item(
+                    SidebarItem::new(format!("item-{index}"), format!("Item {index}"))
+                        .icon(index.to_string()),
+                )
+            });
+
+            div().size_full().child(
+                div()
+                    .h(px(120.0))
+                    .child(Sidebar::new("long-sidebar", "Long navigation").section(section)),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let item_before = cx
+        .debug_bounds("sidebar:long-sidebar:item:item-2")
+        .expect("sidebar item should be rendered before scrolling");
+    let sidebar = cx
+        .debug_bounds("sidebar:long-sidebar")
+        .expect("sidebar shell should be rendered");
+    let sidebar_viewport = cx
+        .debug_bounds("scroll-area:long-sidebar-scroll")
+        .expect("long Sidebar should use the shared ScrollArea viewport");
+
+    assert!(
+        sidebar.contains(&sidebar_viewport.center()),
+        "expected Sidebar ScrollArea viewport to stay inside the sidebar shell; sidebar={sidebar:?} viewport={sidebar_viewport:?}"
+    );
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: sidebar_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-72.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let item_after = cx
+        .debug_bounds("sidebar:long-sidebar:item:item-2")
+        .expect("sidebar item should remain rendered after scrolling");
+
+    assert!(
+        item_after.top() < item_before.top(),
+        "expected long Sidebar navigation to scroll inside its ScrollArea; before={item_before:?} after={item_after:?}"
+    );
 }
 
 #[test]
@@ -10206,6 +15051,32 @@ fn avatar_size_metrics_and_token_intents_are_stable() {
     assert_eq!(large.colors().border().token(), tokens.border);
 }
 
+#[test]
+fn avatar_group_state_tracks_visible_and_hidden_counts() {
+    let group = AvatarGroup::new("team")
+        .avatar(Avatar::new("ada", "Ada Lovelace"))
+        .avatar(Avatar::new("grace", "Grace Hopper"))
+        .avatar(Avatar::new("katherine", "Katherine Johnson"))
+        .avatar(Avatar::new("margaret", "Margaret Hamilton"))
+        .max_visible(3)
+        .tokens(custom_tokens());
+    let state = group.state();
+
+    assert_eq!(state.size(), Size::Medium);
+    assert_eq!(state.total_count(), 4);
+    assert_eq!(state.visible_count(), 3);
+    assert_eq!(state.hidden_count(), 1);
+
+    let count = AvatarGroupCount::new("team-count", state.hidden_count())
+        .with_size(state.size())
+        .tokens(custom_tokens());
+    let count_state = count.state();
+
+    assert_eq!(count_state.count(), 1);
+    assert_eq!(count_state.size(), Size::Medium);
+    assert_eq!(count_state.role(), Role::Label);
+}
+
 #[open_gpui::test]
 fn avatar_renders_stable_debug_selector(cx: &mut open_gpui::TestAppContext) {
     struct TestView;
@@ -11360,7 +16231,7 @@ fn default_text_input_state_uses_text_input_role_and_placeholder_display() {
     assert_eq!(state.metrics().height(), Size::Medium.input_h());
     assert_eq!(state.metrics().padding_x(), Size::Medium.input_px());
     assert!(!state.has_value());
-    assert_eq!(state.display_text(), "Email address");
+    assert_eq!(state.display_text().as_ref(), "Email address");
     assert!(state.displaying_placeholder());
     assert!(state.editable());
 }
@@ -11374,7 +16245,22 @@ fn filled_text_input_reports_value_state() {
 
     assert!(state.has_value());
     assert_eq!(state.value(), "hello@example.com");
-    assert_eq!(state.display_text(), "hello@example.com");
+    assert_eq!(state.display_text().as_ref(), "hello@example.com");
+    assert!(!state.displaying_placeholder());
+}
+
+#[test]
+fn password_text_input_masks_display_without_hiding_value() {
+    let state = TextInput::new("password", "Password")
+        .placeholder("Password")
+        .value("a🙂中")
+        .display_mode(TextInputDisplayMode::Password)
+        .state();
+
+    assert_eq!(state.value(), "a🙂中");
+    assert_eq!(state.display_mode(), TextInputDisplayMode::Password);
+    assert_eq!(state.display_text().as_ref(), "•••");
+    assert!(state.display_mode().masks_value());
     assert!(!state.displaying_placeholder());
 }
 
@@ -11662,6 +16548,109 @@ fn controller_driven_text_input_state_marks_disabled_editing(cx: &mut open_gpui:
     assert!(state.controller_driven());
     assert!(state.disabled());
     assert!(!state.editable());
+}
+
+#[test]
+fn default_textarea_state_uses_text_input_role_and_rows() {
+    let state = Textarea::new("notes", "Notes")
+        .placeholder("Release notes")
+        .rows(4)
+        .state();
+
+    assert_eq!(state.role(), Role::TextInput);
+    assert_eq!(state.rows(), 4);
+    assert_eq!(state.metrics().rows(), 4);
+    assert!(state.placeholder_visible());
+    assert_eq!(state.display_text(), "Release notes");
+    assert!(state.editable());
+    assert!(!state.controller_driven());
+}
+
+#[test]
+fn filled_textarea_preserves_newlines_in_state() {
+    let state = Textarea::new("notes", "Notes")
+        .value("Line 1\r\nLine 2")
+        .placeholder("Release notes")
+        .state();
+
+    assert!(state.has_value());
+    assert_eq!(state.value(), "Line 1\nLine 2");
+    assert_eq!(state.display_text(), "Line 1\nLine 2");
+    assert!(!state.displaying_placeholder());
+}
+
+#[test]
+fn disabled_read_only_and_invalid_textareas_expose_control_state() {
+    let tokens = custom_tokens();
+    let disabled = Textarea::new("disabled-notes", "Disabled notes")
+        .disabled(true)
+        .tokens(tokens)
+        .state();
+    let read_only = Textarea::new("readonly-notes", "Read-only notes")
+        .read_only(true)
+        .state();
+    let invalid = Textarea::new("invalid-notes", "Invalid notes")
+        .invalid(true)
+        .tokens(tokens)
+        .state();
+
+    assert!(disabled.disabled());
+    assert!(!disabled.editable());
+    assert!(read_only.read_only());
+    assert!(!read_only.editable());
+    assert!(invalid.invalid());
+    assert_eq!(invalid.colors().border().token(), tokens.destructive);
+}
+
+#[open_gpui::test]
+fn controlled_textarea_on_change_preserves_newline_input(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        value: Rc<RefCell<String>>,
+        changes: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let value = self.value.borrow().clone();
+            let next_value = self.value.clone();
+            let changes = self.changes.clone();
+
+            div().size_full().child(
+                Textarea::new("controlled-textarea", "Controlled textarea")
+                    .value(value)
+                    .placeholder("Type notes")
+                    .on_change(move |value, _, _| {
+                        *next_value.borrow_mut() = value.clone();
+                        changes.borrow_mut().push(value);
+                    }),
+            )
+        }
+    }
+
+    let value = Rc::new(RefCell::new(String::new()));
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        value: value.clone(),
+        changes: changes.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let input = cx
+        .debug_bounds("textarea:controlled-textarea:root")
+        .expect("controlled textarea should expose a stable debug selector");
+    cx.simulate_click(input.center(), Default::default());
+    cx.simulate_input("Line 1\nLine 2");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(value.borrow().as_str(), "Line 1\nLine 2");
+    assert_eq!(
+        changes.borrow().last().map(String::as_str),
+        Some("Line 1\nLine 2")
+    );
 }
 
 #[test]

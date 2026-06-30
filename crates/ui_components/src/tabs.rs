@@ -19,6 +19,7 @@ pub use crate::roving_focus::{
     active_index_from_str_keys, first_enabled, last_enabled, next_enabled,
 };
 use crate::roving_focus::{roving_navigation_target, selection_index_from_str_keys};
+use crate::scroll_area::ScrollArea;
 use crate::theme::ThemeResolver;
 
 const DEFAULT_SURFACE: u32 = 0xffffff;
@@ -706,6 +707,239 @@ impl RenderOnce for Tabs {
                     .collect::<Vec<_>>()
             };
             let tab_stop_index = state.tab_stop_index();
+            let tab_triggers = state
+                .items()
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    let descriptor = item_descriptors[index].clone();
+                    let disabled = disabled.clone();
+                    let click_runtime = runtime.clone();
+                    let click_on_selection_change = on_selection_change.clone();
+                    let click_selected_value = selected_value.clone();
+                    let key_runtime = runtime.clone();
+                    let key_on_selection_change = on_selection_change.clone();
+                    let key_selected_value = selected_value.clone();
+                    let key_item_descriptors = item_descriptors.clone();
+                    let item_index = index;
+                    let is_selected = item.selected();
+                    let is_tab_stop = Some(index) == tab_stop_index;
+                    let focus_handle = focus_handles[index].clone();
+
+                    div()
+                        .id(tabs_trigger_id(item.value()))
+                        .debug_selector({
+                            let tabs_id = tabs_id.clone();
+                            let value = descriptor.value().to_owned();
+                            move || format!("tabs:{tabs_id}:trigger:{value}")
+                        })
+                        .focusable()
+                        .tab_stop(is_tab_stop)
+                        .when_some(focus_handle, |this, focus_handle| {
+                            this.track_focus(&focus_handle)
+                        })
+                        .ui_role(Role::Tab)
+                        .aria_label(descriptor.label())
+                        .aria_selected(is_selected)
+                        .aria_controls(std::iter::once(panel_node_id))
+                        .aria_position_in_set(item_index + 1)
+                        .aria_size_of_set(state.items().len())
+                        .flex_none()
+                        .min_h(gpui_px_from_ui(metrics.tab_min_height()))
+                        .px(gpui_px_from_ui(metrics.tab_padding_x()))
+                        .py(gpui_px_from_ui(metrics.tab_padding_y()))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(gpui_px_from_ui(metrics.radius()))
+                        .border_1()
+                        .border_color(ThemeResolver::resolve(if is_selected {
+                            colors.tab_border_selected()
+                        } else {
+                            colors.tab_border()
+                        }))
+                        .bg(ThemeResolver::resolve(if is_selected {
+                            colors.tab_background_selected()
+                        } else {
+                            colors.tab_background()
+                        }))
+                        .text_size(gpui_px_from_ui(metrics.text_size()))
+                        .line_height(gpui_px_from_ui(metrics.text_size()))
+                        .text_color(ThemeResolver::resolve(if is_selected {
+                            colors.tab_text()
+                        } else {
+                            colors.tab_text_muted()
+                        }))
+                        .font_weight(if is_selected {
+                            open_gpui::FontWeight::BOLD
+                        } else {
+                            open_gpui::FontWeight::NORMAL
+                        })
+                        .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                        .when(!item.disabled(), |this| {
+                            this.cursor_pointer().hover(move |style| {
+                                style.bg(ThemeResolver::resolve(colors.tab_hover_background()))
+                            })
+                        })
+                        .when(item.disabled(), |this| {
+                            this.opacity(0.56).cursor_not_allowed()
+                        })
+                        .on_click({
+                            let descriptor = descriptor.clone();
+                            move |_event: &ClickEvent, window, cx| {
+                                if descriptor.disabled_state() {
+                                    return;
+                                }
+
+                                cx.stop_propagation();
+                                let changed =
+                                    click_selected_value.as_deref() != Some(descriptor.value());
+                                let focus_handle = click_runtime.update(cx, |runtime, cx| {
+                                    runtime.set_active(descriptor.value(), cx)
+                                });
+
+                                if changed && let Some(handler) = click_on_selection_change.clone()
+                                {
+                                    handler(
+                                        TabsSelection::from_descriptor(item_index, &descriptor),
+                                        window,
+                                        cx,
+                                    );
+                                }
+
+                                if let Some(focus_handle) = focus_handle {
+                                    focus_handle.focus(window, cx);
+                                }
+                            }
+                        })
+                        .on_key_down({
+                            let descriptor = descriptor.clone();
+                            let disabled = disabled.clone();
+                            move |event: &KeyDownEvent, window, cx| {
+                                if descriptor.disabled_state() {
+                                    return;
+                                }
+                                if event.keystroke.modifiers.modified() {
+                                    return;
+                                }
+
+                                let key = event.keystroke.key.as_str();
+                                let Some(target_index) = roving_navigation_target(
+                                    orientation,
+                                    key,
+                                    item_index,
+                                    &disabled,
+                                ) else {
+                                    if !matches!(key, "space" | "enter") {
+                                        return;
+                                    }
+
+                                    let changed =
+                                        key_selected_value.as_deref() != Some(descriptor.value());
+                                    let focus_handle = key_runtime.update(cx, |runtime, cx| {
+                                        runtime.set_active(descriptor.value(), cx)
+                                    });
+
+                                    if changed
+                                        && let Some(handler) = key_on_selection_change.clone()
+                                    {
+                                        handler(
+                                            TabsSelection::from_descriptor(item_index, &descriptor),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+
+                                    if let Some(focus_handle) = focus_handle {
+                                        focus_handle.focus(window, cx);
+                                    }
+                                    cx.stop_propagation();
+                                    return;
+                                };
+
+                                let target = &key_item_descriptors[target_index];
+                                let target_value = target.value().to_owned();
+                                let target_selection =
+                                    TabsSelection::from_descriptor(target_index, target);
+                                let activate = activation_mode == TabsActivationMode::Automatic;
+                                let changed = if activate {
+                                    key_selected_value.as_deref() != Some(target.value())
+                                } else {
+                                    false
+                                };
+                                let focus_handle = key_runtime.update(cx, |runtime, cx| {
+                                    if activate {
+                                        runtime.set_active(&target_value, cx)
+                                    } else {
+                                        runtime.set_focused_only(&target_value, cx)
+                                    }
+                                });
+
+                                if changed && let Some(handler) = key_on_selection_change.clone() {
+                                    handler(target_selection, window, cx);
+                                }
+
+                                if let Some(focus_handle) = focus_handle {
+                                    focus_handle.focus(window, cx);
+                                }
+
+                                cx.stop_propagation();
+                            }
+                        })
+                        .child(descriptor.label().to_string())
+                        .into_any_element()
+                })
+                .collect::<Vec<AnyElement>>();
+            let tablist = if is_vertical {
+                div()
+                    .id("tablist")
+                    .debug_selector({
+                        let tabs_id = tabs_id.clone();
+                        move || format!("tabs:{tabs_id}:tablist")
+                    })
+                    .ui_role(Role::TabList)
+                    .ui_aria_orientation(orientation)
+                    .flex()
+                    .flex_col()
+                    .flex_none()
+                    .h_full()
+                    .min_h(open_gpui::px(0.0))
+                    .border_r_1()
+                    .border_color(ThemeResolver::resolve(colors.shell_border()))
+                    .child(
+                        ScrollArea::new(
+                            format!("tabs:{tabs_id}:tablist-scroll"),
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(gpui_px_from_ui(metrics.tab_gap()))
+                                .p_1()
+                                .children(tab_triggers),
+                        )
+                        .vertical()
+                        .with_size(size),
+                    )
+                    .into_any_element()
+            } else {
+                div()
+                    .id("tablist")
+                    .debug_selector({
+                        let tabs_id = tabs_id.clone();
+                        move || format!("tabs:{tabs_id}:tablist")
+                    })
+                    .ui_role(Role::TabList)
+                    .ui_aria_orientation(orientation)
+                    .flex()
+                    .flex_none()
+                    .gap(gpui_px_from_ui(metrics.tab_gap()))
+                    .p_1()
+                    .border_color(ThemeResolver::resolve(colors.shell_border()))
+                    .flex_row()
+                    .flex_wrap()
+                    .border_b_1()
+                    .children(tab_triggers)
+                    .into_any_element()
+            };
 
             div()
                 .id(id.clone())
@@ -718,221 +952,7 @@ impl RenderOnce for Tabs {
                 .overflow_hidden()
                 .when(is_vertical, |this| this.flex_row().h_full())
                 .when(!is_vertical, |this| this.flex_col())
-                .child(
-                    div()
-                        .id("tablist")
-                        .debug_selector({
-                            let tabs_id = tabs_id.clone();
-                            move || format!("tabs:{tabs_id}:tablist")
-                        })
-                        .ui_role(Role::TabList)
-                        .ui_aria_orientation(orientation)
-                        .flex()
-                        .flex_none()
-                        .gap(gpui_px_from_ui(metrics.tab_gap()))
-                        .p_1()
-                        .border_color(ThemeResolver::resolve(colors.shell_border()))
-                        .when(is_vertical, |this| {
-                            this.flex_col().border_r_1().h_full().overflow_y_scroll()
-                        })
-                        .when(!is_vertical, |this| {
-                            this.flex_row().flex_wrap().border_b_1()
-                        })
-                        .children(state.items().iter().enumerate().map(|(index, item)| {
-                            let descriptor = item_descriptors[index].clone();
-                            let disabled = disabled.clone();
-                            let click_runtime = runtime.clone();
-                            let click_on_selection_change = on_selection_change.clone();
-                            let click_selected_value = selected_value.clone();
-                            let key_runtime = runtime.clone();
-                            let key_on_selection_change = on_selection_change.clone();
-                            let key_selected_value = selected_value.clone();
-                            let key_item_descriptors = item_descriptors.clone();
-                            let item_index = index;
-                            let is_selected = item.selected();
-                            let is_tab_stop = Some(index) == tab_stop_index;
-                            let focus_handle = focus_handles[index].clone();
-
-                            div()
-                                .id(tabs_trigger_id(item.value()))
-                                .debug_selector({
-                                    let tabs_id = tabs_id.clone();
-                                    let value = descriptor.value().to_owned();
-                                    move || format!("tabs:{tabs_id}:trigger:{value}")
-                                })
-                                .focusable()
-                                .tab_stop(is_tab_stop)
-                                .when_some(focus_handle, |this, focus_handle| {
-                                    this.track_focus(&focus_handle)
-                                })
-                                .ui_role(Role::Tab)
-                                .aria_label(descriptor.label())
-                                .aria_selected(is_selected)
-                                .aria_controls(std::iter::once(panel_node_id))
-                                .aria_position_in_set(item_index + 1)
-                                .aria_size_of_set(state.items().len())
-                                .flex_none()
-                                .min_h(gpui_px_from_ui(metrics.tab_min_height()))
-                                .px(gpui_px_from_ui(metrics.tab_padding_x()))
-                                .py(gpui_px_from_ui(metrics.tab_padding_y()))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(gpui_px_from_ui(metrics.radius()))
-                                .border_1()
-                                .border_color(ThemeResolver::resolve(if is_selected {
-                                    colors.tab_border_selected()
-                                } else {
-                                    colors.tab_border()
-                                }))
-                                .bg(ThemeResolver::resolve(if is_selected {
-                                    colors.tab_background_selected()
-                                } else {
-                                    colors.tab_background()
-                                }))
-                                .text_size(gpui_px_from_ui(metrics.text_size()))
-                                .line_height(gpui_px_from_ui(metrics.text_size()))
-                                .text_color(ThemeResolver::resolve(if is_selected {
-                                    colors.tab_text()
-                                } else {
-                                    colors.tab_text_muted()
-                                }))
-                                .font_weight(if is_selected {
-                                    open_gpui::FontWeight::BOLD
-                                } else {
-                                    open_gpui::FontWeight::NORMAL
-                                })
-                                .focus_visible(move |style| {
-                                    style.shadow(focus_ring_shadow(focus_ring))
-                                })
-                                .when(!item.disabled(), |this| {
-                                    this.cursor_pointer().hover(move |style| {
-                                        style.bg(ThemeResolver::resolve(
-                                            colors.tab_hover_background(),
-                                        ))
-                                    })
-                                })
-                                .when(item.disabled(), |this| {
-                                    this.opacity(0.56).cursor_not_allowed()
-                                })
-                                .on_click({
-                                    let descriptor = descriptor.clone();
-                                    move |_event: &ClickEvent, window, cx| {
-                                        if descriptor.disabled_state() {
-                                            return;
-                                        }
-
-                                        cx.stop_propagation();
-                                        let changed = click_selected_value.as_deref()
-                                            != Some(descriptor.value());
-                                        let focus_handle =
-                                            click_runtime.update(cx, |runtime, cx| {
-                                                runtime.set_active(descriptor.value(), cx)
-                                            });
-
-                                        if changed
-                                            && let Some(handler) = click_on_selection_change.clone()
-                                        {
-                                            handler(
-                                                TabsSelection::from_descriptor(
-                                                    item_index,
-                                                    &descriptor,
-                                                ),
-                                                window,
-                                                cx,
-                                            );
-                                        }
-
-                                        if let Some(focus_handle) = focus_handle {
-                                            focus_handle.focus(window, cx);
-                                        }
-                                    }
-                                })
-                                .on_key_down({
-                                    let descriptor = descriptor.clone();
-                                    let disabled = disabled.clone();
-                                    move |event: &KeyDownEvent, window, cx| {
-                                        if descriptor.disabled_state() {
-                                            return;
-                                        }
-                                        if event.keystroke.modifiers.modified() {
-                                            return;
-                                        }
-
-                                        let key = event.keystroke.key.as_str();
-                                        let Some(target_index) = roving_navigation_target(
-                                            orientation,
-                                            key,
-                                            item_index,
-                                            &disabled,
-                                        ) else {
-                                            if !matches!(key, "space" | "enter") {
-                                                return;
-                                            }
-
-                                            let changed = key_selected_value.as_deref()
-                                                != Some(descriptor.value());
-                                            let focus_handle =
-                                                key_runtime.update(cx, |runtime, cx| {
-                                                    runtime.set_active(descriptor.value(), cx)
-                                                });
-
-                                            if changed
-                                                && let Some(handler) =
-                                                    key_on_selection_change.clone()
-                                            {
-                                                handler(
-                                                    TabsSelection::from_descriptor(
-                                                        item_index,
-                                                        &descriptor,
-                                                    ),
-                                                    window,
-                                                    cx,
-                                                );
-                                            }
-
-                                            if let Some(focus_handle) = focus_handle {
-                                                focus_handle.focus(window, cx);
-                                            }
-                                            cx.stop_propagation();
-                                            return;
-                                        };
-
-                                        let target = &key_item_descriptors[target_index];
-                                        let target_value = target.value().to_owned();
-                                        let target_selection =
-                                            TabsSelection::from_descriptor(target_index, target);
-                                        let activate =
-                                            activation_mode == TabsActivationMode::Automatic;
-                                        let changed = if activate {
-                                            key_selected_value.as_deref() != Some(target.value())
-                                        } else {
-                                            false
-                                        };
-                                        let focus_handle = key_runtime.update(cx, |runtime, cx| {
-                                            if activate {
-                                                runtime.set_active(&target_value, cx)
-                                            } else {
-                                                runtime.set_focused_only(&target_value, cx)
-                                            }
-                                        });
-
-                                        if changed
-                                            && let Some(handler) = key_on_selection_change.clone()
-                                        {
-                                            handler(target_selection, window, cx);
-                                        }
-
-                                        if let Some(focus_handle) = focus_handle {
-                                            focus_handle.focus(window, cx);
-                                        }
-
-                                        cx.stop_propagation();
-                                    }
-                                })
-                                .child(descriptor.label().to_string())
-                        })),
-                )
+                .child(tablist)
                 .child(
                     div()
                         .id(panel_id)

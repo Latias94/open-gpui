@@ -1,6 +1,6 @@
 //! GPUI adapter helpers for shared overlay behavior.
 
-use open_gpui::{Anchor, Edges, Pixels, Point, point, px};
+use open_gpui::{Anchor, App, Edges, Pixels, Point, Window, point, px};
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
     OverlayAnchorInput, OverlayLayerKind, OverlayLayerPolicy, OverlayLayerState,
@@ -329,7 +329,14 @@ pub const fn outside_press_open_change(policy: &OverlayLayerPolicy) -> Option<Ov
     }
 }
 
-pub(crate) const fn focus_restore_requests_trigger(intent: &FocusRestoreIntent) -> bool {
+/// Consumes a GPUI event that was handled by overlay open, close, or barrier behavior.
+pub(crate) fn consume_overlay_event(window: &mut Window, cx: &mut App) {
+    cx.stop_propagation();
+    window.prevent_default();
+}
+
+/// Returns whether the overlay should restore focus back to the trigger.
+pub const fn focus_restore_requests_trigger(intent: &FocusRestoreIntent) -> bool {
     matches!(
         intent,
         FocusRestoreIntent::Trigger | FocusRestoreIntent::TriggerOrFallback(_)

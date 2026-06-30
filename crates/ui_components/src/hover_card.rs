@@ -19,8 +19,8 @@ use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, escape_open_change,
-    gpui_overlay_state, outside_press_open_change,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
+    escape_open_change, gpui_overlay_state, outside_press_open_change,
 };
 use crate::theme::ThemeResolver;
 
@@ -869,8 +869,7 @@ impl RenderOnce for HoverCard {
                             if event.keystroke.key.as_str() == "escape"
                                 && escape_open_change(&escape_policy).is_some()
                             {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 close_hover_card(
                                     runtime.clone(),
                                     on_open_change.clone(),
@@ -1008,8 +1007,7 @@ fn hover_card_content_element(
                 if event.keystroke.key.as_str() == "escape"
                     && escape_open_change(&escape_policy).is_some()
                 {
-                    cx.stop_propagation();
-                    window.prevent_default();
+                    consume_overlay_event(window, cx);
                     close_hover_card(runtime.clone(), on_open_change.clone(), window, cx);
                 }
             }

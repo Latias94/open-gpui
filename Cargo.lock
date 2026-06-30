@@ -3145,9 +3145,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jellyflow"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0817d9c442c07364a2e9ded77977b8e509f7e228251332d00c968ab4907c796f"
+version = "0.3.0"
 dependencies = [
  "jellyflow-core",
  "jellyflow-layout",
@@ -3156,9 +3154,7 @@ dependencies = [
 
 [[package]]
 name = "jellyflow-core"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6c5870dc9e6c713e45724516e05fe649109498c9d43357bf29a724943471f13"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3168,9 +3164,7 @@ dependencies = [
 
 [[package]]
 name = "jellyflow-layout"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26ca946a120083e5784f3a2bd903a0fc125e354cc77dc3cf1df33ca188e2a1fa"
+version = "0.3.0"
 dependencies = [
  "dugong",
  "jellyflow-core",
@@ -3180,9 +3174,7 @@ dependencies = [
 
 [[package]]
 name = "jellyflow-runtime"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6eb61dd09758478c9473e051b9ca3ef4e55a06448f9bd312599e4dbbb8807ef3"
+version = "0.3.0"
 dependencies = [
  "jellyflow-core",
  "jellyflow-layout",
@@ -4339,6 +4331,8 @@ dependencies = [
  "open-gpui",
  "open-gpui-canvas",
  "open-gpui-platform",
+ "open-gpui-ui-components",
+ "open-gpui-ui-core",
  "serde_json",
 ]
 

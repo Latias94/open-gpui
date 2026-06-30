@@ -2,39 +2,50 @@
 
 use open_gpui::{App, AppContext, BorrowAppContext, Global, ParentElement, Styled, div, rgb};
 use open_gpui_ui_components::{
-    Avatar, AvatarState, Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant,
-    Checkbox, CheckboxState, ComboboxGroupDescriptor, ComboboxOptionDescriptor, ComboboxState,
-    CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor,
-    CommandLoadingState, CommandQueryMode, CommandSelectionMode, CommandState, EmptyState,
-    EmptyStateState, FeedbackIntent, Field, FieldState, IconButton, IconButtonState, Kbd, KbdState,
-    Label, LabelState, ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState, Progress,
-    ProgressState, RadioGroupState, RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState,
-    ScrollResetPolicy, SelectState, Separator, SeparatorState, SidebarCollapseMode,
-    SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
-    Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState,
-    Switch, SwitchState, Table, TableAggregation, TableColumn, TableColumnFacets, TableColumnId,
-    TableColumnPinning, TableColumnRegion, TableColumnSizing, TableColumnSizingChange,
-    TableExpansionMode, TableExpansionState, TableFacetValueCount, TableFilter, TablePagination,
-    TableRenderPlan, TableRow, TableRowActivation, TableRowChildrenLoadState,
-    TableRowExpansionToggle, TableSort, TableStageMode, TableState, Tabs, TabsActivationMode,
-    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState,
-    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
-    Tree, TreeItemDescriptor, TreeState, VirtualizedList, VirtualizedListItemDescriptor,
-    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState,
+    Accordion, AccordionItem, AccordionMode, AccordionState, Avatar, AvatarState, Badge,
+    BadgeState, BadgeVariant, Breadcrumb, BreadcrumbItemDescriptor, BreadcrumbState, Button,
+    ButtonState, ButtonVariant, Checkbox, CheckboxState, Collapsible, CollapsibleState,
+    ComboboxGroupDescriptor, ComboboxOptionDescriptor, ComboboxState, CommandGroupDescriptor,
+    CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItemDescriptor, CommandLoadingState,
+    CommandQueryMode, CommandSelectionMode, CommandState, EmptyState, EmptyStateState,
+    FeedbackIntent, Field, FieldState, IconButton, IconButtonState, Kbd, KbdState, Label,
+    LabelState, Link, LinkState, ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState,
+    NumberInput, NumberInputState, Progress, ProgressState, RadioGroupState, RadioItemDescriptor,
+    ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, SelectState, Separator, SeparatorState,
+    SidebarCollapseMode, SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide,
+    SidebarState, SidebarVariant, Skeleton, SkeletonState, Slider, SliderState,
+    SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState, Switch, SwitchState, Table,
+    TableAggregation, TableCellEditApplyOutcome, TableCellEditChange, TableCellValue, TableColumn,
+    TableColumnFacets, TableColumnGroup, TableColumnId, TableColumnOrderChange, TableColumnPinning,
+    TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableColumnVisibilityChange,
+    TableColumnVisibilityOverrides, TableExpansionMode, TableExpansionState, TableFacetValueCount,
+    TableFacetedFilterChange, TableFilter, TableGlobalFilterChange, TablePagination,
+    TablePredicateFilterChange, TableRangeFilterChange, TableRenderPlan, TableRow,
+    TableRowActivation, TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning,
+    TableRowPinningPolicy, TableSelectOption, TableSort, TableStageMode, TableState, Tabs,
+    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, Tag, TagState, TagVariant,
+    TextInput, TextInputDisplayMode, TextInputState, Textarea, TextareaState, Toast, ToastStack,
+    ToastStackState, Toggle, ToggleGroup, ToggleGroupItem, ToggleGroupSelectionMode,
+    ToggleGroupState, ToggleState, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
+    ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeMove, TreeRenderPlan, TreeState,
+    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
+    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
+    apply_tree_move,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
     OverlayPlacementAlignment, OverlayPlacementSide, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 #[path = "components/render.rs"]
 mod render;
 
 pub(crate) use render::{
-    ComponentPageAnchors, render_components_directory, render_components_page,
+    component_page_section_count, component_page_section_index, render_components_directory,
+    render_components_page,
 };
 
 /// Page title.
@@ -56,6 +67,24 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Badge",
     "open_gpui_ui_components::BadgeState",
     "open_gpui_ui_components::BadgeVariant",
+    "open_gpui_ui_components::Accordion",
+    "open_gpui_ui_components::AccordionState",
+    "open_gpui_ui_components::Collapsible",
+    "open_gpui_ui_components::CollapsibleState",
+    "open_gpui_ui_components::Slider",
+    "open_gpui_ui_components::SliderState",
+    "open_gpui_ui_components::NumberInput",
+    "open_gpui_ui_components::NumberInputState",
+    "open_gpui_ui_components::ToggleGroup",
+    "open_gpui_ui_components::ToggleGroupState",
+    "open_gpui_ui_components::Link",
+    "open_gpui_ui_components::LinkState",
+    "open_gpui_ui_components::Breadcrumb",
+    "open_gpui_ui_components::BreadcrumbState",
+    "open_gpui_ui_components::Tag",
+    "open_gpui_ui_components::TagState",
+    "open_gpui_ui_components::ToastStack",
+    "open_gpui_ui_components::ToastStackState",
     "open_gpui_ui_components::Separator",
     "open_gpui_ui_components::SeparatorState",
     "open_gpui_ui_components::Kbd",
@@ -66,6 +95,9 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Skeleton",
     "open_gpui_ui_components::SkeletonState",
     "open_gpui_ui_components::Avatar",
+    "open_gpui_ui_components::AvatarGroup",
+    "open_gpui_ui_components::AvatarGroupCount",
+    "open_gpui_ui_components::AvatarGroupState",
     "open_gpui_ui_components::AvatarState",
     "open_gpui_ui_components::StatusCue",
     "open_gpui_ui_components::StatusCueState",
@@ -109,8 +141,11 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Label",
     "open_gpui_ui_components::LabelState",
     "open_gpui_ui_components::TextInput",
+    "open_gpui_ui_components::TextInputDisplayMode",
     "open_gpui_ui_components::TextInputState",
     "open_gpui_ui_components::gpui_adapter::TextInputController",
+    "open_gpui_ui_components::Textarea",
+    "open_gpui_ui_components::TextareaState",
     "open_gpui_ui_components::Field",
     "open_gpui_ui_components::FieldState",
     "open_gpui_ui_components::Tabs",
@@ -136,8 +171,35 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::TableColumnRegion",
     "open_gpui_ui_components::TableColumnSizing",
     "open_gpui_ui_components::TableColumnSizingChange",
+    "open_gpui_ui_components::TableColumnVisibility",
+    "open_gpui_ui_components::TableColumnVisibilityAction",
+    "open_gpui_ui_components::TableColumnVisibilityChange",
+    "open_gpui_ui_components::TableColumnVisibilityItemState",
+    "open_gpui_ui_components::TableColumnVisibilityOverrides",
+    "open_gpui_ui_components::TableColumnVisibilityState",
+    "open_gpui_ui_components::TableFacetedFilter",
+    "open_gpui_ui_components::TableFacetedFilterChange",
+    "open_gpui_ui_components::TableFacetedFilterOptionState",
+    "open_gpui_ui_components::TableFacetedFilterState",
+    "open_gpui_ui_components::TableGlobalFilter",
+    "open_gpui_ui_components::TableGlobalFilterChange",
+    "open_gpui_ui_components::TableGlobalFilterState",
+    "open_gpui_ui_components::TablePredicateFilter",
+    "open_gpui_ui_components::TablePredicateFilterChange",
+    "open_gpui_ui_components::TablePredicateFilterOperator",
+    "open_gpui_ui_components::TablePredicateFilterOperatorOptionState",
+    "open_gpui_ui_components::TablePredicateFilterState",
+    "open_gpui_ui_components::TableToolbar",
+    "open_gpui_ui_components::TableToolbarState",
+    "open_gpui_ui_components::TableRangeFilter",
+    "open_gpui_ui_components::TableRangeFilterChange",
+    "open_gpui_ui_components::TableRangeFilterState",
     "open_gpui_ui_components::TableColumnResizeMode",
     "open_gpui_ui_components::TableExpansionState",
+    "open_gpui_ui_components::TableRowPinning",
+    "open_gpui_ui_components::TableRowPinningPolicy",
+    "open_gpui_ui_components::TableRowRegion",
+    "open_gpui_ui_components::TableRowRegions",
     "open_gpui_ui_components::VirtualizedList",
     "open_gpui_ui_components::VirtualizedListItemDescriptor",
     "open_gpui_ui_components::VirtualizedListRenderPlan",
@@ -208,6 +270,10 @@ pub const COMPONENT_PAGE_JUMPS: &[ComponentPageJump] = &[
     ComponentPageJump {
         id: "feedback",
         label: "Feedback",
+    },
+    ComponentPageJump {
+        id: "foundation-components",
+        label: "Foundation components",
     },
     ComponentPageJump {
         id: "state-contracts",
@@ -288,6 +354,10 @@ pub const COMPONENT_PAGE_JUMPS: &[ComponentPageJump] = &[
     ComponentPageJump {
         id: "text-input",
         label: "TextInput",
+    },
+    ComponentPageJump {
+        id: "textarea",
+        label: "Textarea",
     },
     ComponentPageJump {
         id: "field",
@@ -554,6 +624,8 @@ impl ComponentCatalogEntry {
     pub fn sample_section_id(self) -> &'static str {
         match self.name {
             "StatusCue" | "EmptyState" => "feedback",
+            "Accordion" | "Collapsible" | "Slider" | "NumberInput" | "ToggleGroup" | "Link"
+            | "Breadcrumb" | "Tag" | "ToastStack" => "foundation-components",
             "TreeState" | "VirtualizedListState" => "state-contracts",
             "RadioGroup" => "radio-group",
             "IconButton" => "icon-button",
@@ -577,7 +649,9 @@ impl ComponentCatalogEntry {
             "Tabs" => "tabs",
             "Splitter" => "splitter",
             "Table" => "table",
-            "Separator" | "Kbd" | "Progress" | "Skeleton" | "Avatar" => "primitives",
+            "Separator" | "Kbd" | "Progress" | "Skeleton" | "Avatar" | "AvatarGroup" => {
+                "primitives"
+            }
             _ => "catalog",
         }
     }
@@ -598,6 +672,69 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "BadgeState",
         "exports / gallery / state tests",
         "gallery:component-badge-sample:default",
+    ),
+    ComponentCatalogEntry::official(
+        "Accordion",
+        "disclosure",
+        "AccordionState",
+        "exports / gallery / state tests",
+        "gallery:component-accordion-sample:shipping",
+    ),
+    ComponentCatalogEntry::official(
+        "Collapsible",
+        "disclosure",
+        "CollapsibleState",
+        "exports / gallery / state tests",
+        "gallery:component-collapsible-sample:release-notes",
+    ),
+    ComponentCatalogEntry::official(
+        "Slider",
+        "form",
+        "SliderState",
+        "exports / gallery / keyboard tests",
+        "gallery:component-slider-sample:volume",
+    ),
+    ComponentCatalogEntry::official(
+        "NumberInput",
+        "form",
+        "NumberInputState",
+        "exports / gallery / stepper tests",
+        "gallery:component-number-input-sample:workers",
+    ),
+    ComponentCatalogEntry::official(
+        "ToggleGroup",
+        "action",
+        "ToggleGroupState",
+        "exports / gallery / stable value tests",
+        "gallery:component-toggle-group-sample:alignment",
+    ),
+    ComponentCatalogEntry::official(
+        "Link",
+        "navigation",
+        "LinkState",
+        "exports / gallery / activation tests",
+        "gallery:component-link-sample:docs",
+    ),
+    ComponentCatalogEntry::official(
+        "Breadcrumb",
+        "navigation",
+        "BreadcrumbState",
+        "exports / gallery / activation tests",
+        "gallery:component-breadcrumb-sample:project",
+    ),
+    ComponentCatalogEntry::official(
+        "Tag",
+        "display",
+        "TagState",
+        "exports / gallery / remove tests",
+        "gallery:component-tag-sample:ready",
+    ),
+    ComponentCatalogEntry::official(
+        "ToastStack",
+        "feedback",
+        "ToastStackState",
+        "exports / gallery / stack tests",
+        "gallery:component-toast-stack-sample:notifications",
     ),
     ComponentCatalogEntry::official(
         "IconButton",
@@ -659,28 +796,28 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "Listbox",
         "choice",
         "ListboxState",
-        "exports / gallery / runtime smoke",
+        "exports / gallery / shared navigation smoke",
         "gallery:component-listbox-sample:assignee-listbox",
     ),
     ComponentCatalogEntry::official(
         "Select",
         "choice",
         "SelectState",
-        "exports / gallery / runtime smoke",
+        "exports / gallery / stable value smoke",
         "gallery:component-select-sample:priority-select",
     ),
     ComponentCatalogEntry::official(
         "Combobox",
         "choice-search",
         "ComboboxState",
-        "exports / gallery / runtime smoke",
+        "exports / gallery / stable value smoke",
         "gallery:component-combobox-sample:framework-combobox",
     ),
     ComponentCatalogEntry::official(
         "Command",
         "choice-search",
         "CommandState",
-        "exports / gallery / runtime smoke",
+        "exports / gallery / stable value and runtime smoke",
         "gallery:component-command-sample:ranked-search",
     ),
     ComponentCatalogEntry::official(
@@ -696,6 +833,13 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "TextInputState",
         "exports / gallery / controller tests",
         "gallery:component-text-input-sample:default",
+    ),
+    ComponentCatalogEntry::official(
+        "Textarea",
+        "form",
+        "TextareaState",
+        "exports / gallery / controlled multiline tests",
+        "gallery:component-textarea-sample:default",
     ),
     ComponentCatalogEntry::official(
         "Field",
@@ -796,6 +940,13 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
         "exports / gallery / state tests",
         "gallery:component-avatar-sample:ada",
     ),
+    ComponentCatalogEntry::official(
+        "AvatarGroup",
+        "identity",
+        "AvatarGroupState",
+        "exports / gallery / state tests",
+        "gallery:component-avatar-group-sample:team",
+    ),
     ComponentCatalogEntry::state_contract(
         "TreeState",
         "hierarchy",
@@ -895,15 +1046,45 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
     ComponentConformanceGate {
         id: "table-virtualization",
         title: "Table row models and scroll ownership",
-        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate and pinned-column metadata, resize handles, and nested scroll ownership.",
+        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate metadata, pinned columns, pinned rows, resize handles, content-fit width growth, single-line and multiline editors, column visibility controls, and nested scroll ownership.",
         evidence: &[
             "TableState::resolve",
             "Table::render_plan",
             "TableHeaderAction",
             "release-rollup",
+            "grouped-custom-aggregation",
             "release-resize",
+            "content-fit-release",
+            "toggle-release",
+            "select-release",
+            "multiline-release",
+            "row-pinning",
+            "filter-board",
+            "TableColumnWidthPolicy",
+            "TableGlobalFilter",
+            "TablePredicateFilter",
+            "TableFacetedFilter",
+            "TableRangeFilter",
+            "TableColumnVisibility",
+            "TableColumnVisibilityChange",
+            "TableToolbar",
+            "components_gallery_smoke_global_filter_updates_table_rows",
+            "components_gallery_smoke_predicate_filter_updates_table_rows",
+            "components_gallery_smoke_faceted_filter_updates_table_rows",
+            "components_gallery_smoke_range_filter_updates_table_rows",
+            "components_gallery_smoke_content_fit_table_cell_edit_widens_name_column",
+            "components_gallery_smoke_checkbox_table_cell_updates_sample_rows",
+            "components_gallery_smoke_select_table_cell_updates_sample_rows",
+            "components_gallery_smoke_multiline_table_cell_updates_sample_rows",
+            "components_gallery_smoke_column_visibility_updates_release_matrix",
             "components_gallery_smoke_table_scroll_stays_inside_sample",
+            "components_gallery_smoke_focused_table_scroll_stays_inside_sample",
             "components_gallery_smoke_grouped_table_scroll_stays_inside_sample",
+            "components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample",
+            "components_gallery_smoke_grouped_table_column_reorder_updates_sample",
+            "components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample",
+            "components_page_table_samples_expose_virtualized_row_model_contract",
+            "components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample",
             "components_gallery_smoke_resizable_table_resize_updates_sample",
         ],
     },
@@ -913,10 +1094,17 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
         summary: "Tree composes renderer-neutral hierarchy state with GPUI focus, expansion, selection, and local scroll ownership.",
         evidence: &[
             "Tree::state",
+            "Tree::render_plan",
+            "TreeRenderPlan",
             "TreeState::keyboard_action_for_key",
+            "TreeState::typeahead_target",
+            "tree_render_plan_virtualizes_visible_rows_with_stable_metadata",
             "tree_runtime_expands_reveals_and_selects_items",
+            "tree_runtime_typeahead_focuses_visible_matching_row",
             "components_gallery_smoke_tree_expands_and_selects",
+            "components_gallery_smoke_tree_lazy_branches_emit_load_metadata",
             "components_gallery_smoke_tree_card_wheel_does_not_leak_to_page",
+            "components_gallery_smoke_virtualized_tree_scrolls_inside_sample",
         ],
     },
     ComponentConformanceGate {
@@ -941,6 +1129,18 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "TreeState::keyboard_action_for_key",
             "VirtualizedListState::navigation_target",
             "components_page_state_contract_samples_expose_tree_and_virtualized_list_contracts",
+        ],
+    },
+    ComponentConformanceGate {
+        id: "choice-surfaces",
+        title: "Choice identity and navigation",
+        summary: "Choice surfaces keep stable value identity, shared listbox navigation, and focused gallery readouts aligned.",
+        evidence: &[
+            "choice.rs",
+            "roving_focus.rs",
+            "components_page_search_samples_expose_combobox_and_command_contracts",
+            "component_gallery_shell_reads_choice_active_metadata_from_resolved_state",
+            "components_gallery_smoke_focused_command_samples_cover_depth_behaviors",
         ],
     },
     ComponentConformanceGate {
@@ -975,6 +1175,99 @@ pub struct BadgeSample {
     pub label: &'static str,
     /// Resolved state.
     pub state: BadgeState,
+}
+
+/// One accordion sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccordionSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample title.
+    pub title: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Resolved state.
+    pub state: AccordionState,
+    /// Concrete items rendered by the sample.
+    pub items: Vec<AccordionItem>,
+}
+
+/// One collapsible sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CollapsibleSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Resolved state.
+    pub state: CollapsibleState,
+    /// Visible content copy.
+    pub content: &'static str,
+}
+
+/// One slider sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SliderSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Resolved state.
+    pub state: SliderState,
+}
+
+/// One number input sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NumberInputSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Resolved state.
+    pub state: NumberInputState,
+}
+
+/// One toggle group sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToggleGroupSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Resolved state.
+    pub state: ToggleGroupState,
+}
+
+/// One link sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinkSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Resolved state.
+    pub state: LinkState,
+}
+
+/// One breadcrumb sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BreadcrumbSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Resolved state.
+    pub state: BreadcrumbState,
+}
+
+/// One tag sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TagSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Resolved state.
+    pub state: TagState,
+}
+
+/// One toast stack sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToastStackSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Resolved state.
+    pub state: ToastStackState,
 }
 
 /// One icon button sample in the gallery.
@@ -1039,6 +1332,19 @@ pub struct AvatarSample {
     pub state: AvatarState,
 }
 
+/// One avatar group sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AvatarGroupSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Visible child avatars.
+    pub avatars: Vec<AvatarSample>,
+    /// Overflow counter label.
+    pub count_label: &'static str,
+}
+
 /// One status cue sample in the gallery.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusCueSample {
@@ -1098,6 +1404,23 @@ pub struct TreeSample {
     pub state: TreeState,
     /// Visual size applied to the concrete tree.
     pub size: Size,
+    /// Whether the concrete tree uses fixed-row virtualized rendering.
+    pub virtualized: bool,
+    /// Whether the concrete Tree enables pointer drag move affordances.
+    pub draggable: bool,
+    /// Fallback virtualized viewport item count before layout measurement.
+    pub viewport_item_count: usize,
+    /// Virtualized overscan item budget.
+    pub overscan_count: usize,
+}
+
+/// One Tree drag move captured from the rendered gallery sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeSampleMoveEvent {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Controlled Tree move payload.
+    pub tree_move: TreeMove,
 }
 
 /// One selection captured from the rendered gallery `Tree` sample.
@@ -1118,6 +1441,12 @@ pub struct TreeSampleToggleEvent {
     pub value: String,
     /// Desired expanded state after the toggle.
     pub expanded: bool,
+    /// Currently loaded child descriptor count at toggle time.
+    pub loaded_child_count: usize,
+    /// Stable child loading state label at toggle time.
+    pub children_load_state: String,
+    /// Loading or failure message at toggle time, when present.
+    pub children_load_message: Option<String>,
 }
 
 /// Runtime interaction log used by gallery Tree smoke tests.
@@ -1125,6 +1454,8 @@ pub struct TreeSampleToggleEvent {
 pub struct TreeSampleRuntimeLog {
     selections: Vec<TreeSampleSelection>,
     toggles: Vec<TreeSampleToggleEvent>,
+    moves: Vec<TreeSampleMoveEvent>,
+    tree_item_overrides: BTreeMap<String, Vec<TreeItemDescriptor>>,
 }
 
 impl Global for TreeSampleRuntimeLog {}
@@ -1140,10 +1471,22 @@ impl TreeSampleRuntimeLog {
         &self.toggles
     }
 
+    /// Returns captured move payloads in event order.
+    pub fn moves(&self) -> &[TreeSampleMoveEvent] {
+        &self.moves
+    }
+
+    /// Returns the current controlled item descriptors for a sample, if any.
+    pub fn tree_item_override(&self, sample_id: &str) -> Option<&[TreeItemDescriptor]> {
+        self.tree_item_overrides.get(sample_id).map(Vec::as_slice)
+    }
+
     /// Clears captured interactions.
     pub fn clear(&mut self) {
         self.selections.clear();
         self.toggles.clear();
+        self.moves.clear();
+        self.tree_item_overrides.clear();
     }
 }
 
@@ -1162,6 +1505,9 @@ pub fn record_tree_toggle(
     sample_id: impl Into<String>,
     value: impl Into<String>,
     expanded: bool,
+    loaded_child_count: usize,
+    children_load_state: impl Into<String>,
+    children_load_message: Option<String>,
     cx: &mut App,
 ) {
     cx.update_default_global::<TreeSampleRuntimeLog, _>(|log, _| {
@@ -1169,8 +1515,53 @@ pub fn record_tree_toggle(
             sample_id: sample_id.into(),
             value: value.into(),
             expanded,
+            loaded_child_count,
+            children_load_state: children_load_state.into(),
+            children_load_message,
         });
     });
+}
+
+/// Returns the current controlled item descriptors for a gallery `Tree` sample.
+pub fn current_tree_sample_items(
+    sample_id: impl Into<String>,
+    fallback: &[TreeItemDescriptor],
+    cx: &impl AppContext,
+) -> Vec<TreeItemDescriptor> {
+    let sample_id = sample_id.into();
+    cx.read_global::<TreeSampleRuntimeLog, _>(|log, _| {
+        log.tree_item_override(&sample_id)
+            .map(|items| items.to_vec())
+            .unwrap_or_else(|| fallback.to_vec())
+    })
+}
+
+/// Records and applies a controlled gallery `Tree` move request.
+pub fn record_tree_move(
+    sample_id: impl Into<String>,
+    fallback: &[TreeItemDescriptor],
+    tree_move: &TreeMove,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = fallback.to_vec();
+    let next = cx.read_global::<TreeSampleRuntimeLog, _>(|log, _| {
+        let current = log
+            .tree_item_override(&sample_id)
+            .map(|items| items.to_vec())
+            .unwrap_or_else(|| fallback.clone());
+        apply_tree_move(current, tree_move)
+    });
+
+    if let Some(next) = next {
+        cx.update_default_global::<TreeSampleRuntimeLog, _>(|log, _| {
+            log.moves.push(TreeSampleMoveEvent {
+                sample_id: sample_id.clone(),
+                tree_move: tree_move.clone(),
+            });
+            log.tree_item_overrides.insert(sample_id, next);
+        });
+    }
 }
 
 /// One committed column sizing change captured from the rendered gallery `Table` sample.
@@ -1226,6 +1617,25 @@ pub struct TableSampleExpansionToggle {
     pub children_load_message: Option<String>,
 }
 
+/// One table-cell edit captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSampleCellEditChange {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Edited row id.
+    pub row_id: String,
+    /// Edited column id.
+    pub column_id: String,
+    /// Source-row index carried by the edit payload, when available.
+    pub source_index: Option<usize>,
+    /// Resolved text before the edit.
+    pub previous_text: String,
+    /// Next controlled text value.
+    pub next_text: String,
+    /// Result from applying the change to app-owned sample state.
+    pub outcome: String,
+}
+
 /// Runtime interaction log used by gallery Table smoke tests.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct TableSampleRuntimeLog {
@@ -1234,7 +1644,128 @@ pub struct TableSampleRuntimeLog {
     row_activations: Vec<TableSampleRowActivation>,
     expansion_toggles: Vec<TableSampleExpansionToggle>,
     expansion_overrides: BTreeMap<String, TableExpansionState>,
+    global_filter_changes: Vec<TableSampleGlobalFilterChange>,
+    predicate_filter_changes: Vec<TableSamplePredicateFilterChange>,
+    filter_overrides: BTreeMap<String, TableState>,
+    visibility_changes: Vec<TableSampleColumnVisibilityChange>,
+    visibility_overrides: BTreeMap<String, TableColumnVisibilityOverrides>,
+    column_order_changes: Vec<TableSampleColumnOrderChange>,
+    column_order_overrides: BTreeMap<String, Vec<TableColumnId>>,
+    faceted_filter_changes: Vec<TableSampleFacetedFilterChange>,
+    range_filter_changes: Vec<TableSampleRangeFilterChange>,
+    cell_edit_changes: Vec<TableSampleCellEditChange>,
+    cell_edit_overrides: BTreeMap<String, TableState>,
     server_tree_loaded: BTreeMap<String, bool>,
+}
+
+/// One global-filter change captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSampleGlobalFilterChange {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Filter query text.
+    pub query: String,
+    /// Whether this payload clears the global filter.
+    pub cleared: bool,
+    /// Filtered row count after the change.
+    pub filtered_rows: usize,
+    /// Final row count after pagination after the change.
+    pub final_rows: usize,
+}
+
+/// One predicate-filter change captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSamplePredicateFilterChange {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Filtered column id.
+    pub column_id: String,
+    /// Stable operator value, when this is not a clear action.
+    pub operator: Option<String>,
+    /// Raw predicate value text.
+    pub value: String,
+    /// Whether this payload clears the predicate.
+    pub cleared: bool,
+    /// Filtered row count after the change.
+    pub filtered_rows: usize,
+    /// Final row count after pagination after the change.
+    pub final_rows: usize,
+}
+
+/// One column-visibility change captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSampleColumnVisibilityChange {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Stable visibility action label.
+    pub action: String,
+    /// Affected column ids.
+    pub column_ids: Vec<String>,
+    /// Next visibility for the affected columns, if the action sets one.
+    pub next_visible: Option<bool>,
+    /// Visible column count after the change.
+    pub visible_columns: usize,
+    /// Hidden column count after the change.
+    pub hidden_columns: usize,
+}
+
+/// One column-order change captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSampleColumnOrderChange {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Moved column id.
+    pub column_id: String,
+    /// Target column id.
+    pub target_column_id: String,
+    /// Stable insertion placement label.
+    pub placement: String,
+    /// Shared column region for the move.
+    pub region: String,
+    /// Full column order after the change.
+    pub column_order: Vec<String>,
+}
+
+/// One faceted-filter change captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSampleFacetedFilterChange {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Filtered column id.
+    pub column_id: String,
+    /// Exact categorical tokens selected after the change.
+    pub selected_values: Vec<String>,
+    /// Token that was toggled, if any.
+    pub toggled_value: Option<String>,
+    /// Whether the toggled token is selected after the change.
+    pub selected: bool,
+    /// Filtered row count after the change.
+    pub filtered_rows: usize,
+    /// Final row count after pagination after the change.
+    pub final_rows: usize,
+}
+
+/// One range-filter change captured from the rendered gallery `Table` sample.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableSampleRangeFilterChange {
+    /// Stable gallery sample id.
+    pub sample_id: String,
+    /// Filtered column id.
+    pub column_id: String,
+    /// Lower endpoint text.
+    pub min_text: String,
+    /// Upper endpoint text.
+    pub max_text: String,
+    /// Parsed lower endpoint after normalization.
+    pub min_value: Option<f64>,
+    /// Parsed upper endpoint after normalization.
+    pub max_value: Option<f64>,
+    /// Whether this payload clears the range.
+    pub cleared: bool,
+    /// Filtered row count after the change.
+    pub filtered_rows: usize,
+    /// Final row count after pagination after the change.
+    pub final_rows: usize,
 }
 
 impl Global for TableSampleRuntimeLog {}
@@ -1265,6 +1796,78 @@ impl TableSampleRuntimeLog {
         self.expansion_overrides.get(sample_id)
     }
 
+    /// Returns captured global-filter changes in event order.
+    pub fn global_filter_changes(&self) -> &[TableSampleGlobalFilterChange] {
+        &self.global_filter_changes
+    }
+
+    /// Returns the current controlled global-filter state for a sample, if any.
+    pub fn global_filter_override(&self, sample_id: &str) -> Option<&TableState> {
+        self.filter_overrides.get(sample_id)
+    }
+
+    /// Returns captured predicate-filter changes in event order.
+    pub fn predicate_filter_changes(&self) -> &[TableSamplePredicateFilterChange] {
+        &self.predicate_filter_changes
+    }
+
+    /// Returns the current controlled predicate-filter state for a sample, if any.
+    pub fn predicate_filter_override(&self, sample_id: &str) -> Option<&TableState> {
+        self.filter_overrides.get(sample_id)
+    }
+
+    /// Returns captured column-visibility changes in event order.
+    pub fn visibility_changes(&self) -> &[TableSampleColumnVisibilityChange] {
+        &self.visibility_changes
+    }
+
+    /// Returns the current controlled column-visibility state for a sample, if any.
+    pub fn visibility_override(&self, sample_id: &str) -> Option<&TableColumnVisibilityOverrides> {
+        self.visibility_overrides.get(sample_id)
+    }
+
+    /// Returns captured column-order changes in event order.
+    pub fn column_order_changes(&self) -> &[TableSampleColumnOrderChange] {
+        &self.column_order_changes
+    }
+
+    /// Returns the current controlled column-order state for a sample, if any.
+    pub fn column_order_override(&self, sample_id: &str) -> Option<&[TableColumnId]> {
+        self.column_order_overrides
+            .get(sample_id)
+            .map(Vec::as_slice)
+    }
+
+    /// Returns captured faceted filter changes in event order.
+    pub fn faceted_filter_changes(&self) -> &[TableSampleFacetedFilterChange] {
+        &self.faceted_filter_changes
+    }
+
+    /// Returns the current controlled faceted filter state for a sample, if any.
+    pub fn faceted_filter_override(&self, sample_id: &str) -> Option<&TableState> {
+        self.filter_overrides.get(sample_id)
+    }
+
+    /// Returns captured range filter changes in event order.
+    pub fn range_filter_changes(&self) -> &[TableSampleRangeFilterChange] {
+        &self.range_filter_changes
+    }
+
+    /// Returns the current controlled range filter state for a sample, if any.
+    pub fn range_filter_override(&self, sample_id: &str) -> Option<&TableState> {
+        self.filter_overrides.get(sample_id)
+    }
+
+    /// Returns captured text-cell edits in event order.
+    pub fn cell_edit_changes(&self) -> &[TableSampleCellEditChange] {
+        &self.cell_edit_changes
+    }
+
+    /// Returns the current controlled cell-edit state for a sample, if any.
+    pub fn cell_edit_override(&self, sample_id: &str) -> Option<&TableState> {
+        self.cell_edit_overrides.get(sample_id)
+    }
+
     /// Clears captured interactions.
     pub fn clear(&mut self) {
         self.sizing_changes.clear();
@@ -1272,6 +1875,17 @@ impl TableSampleRuntimeLog {
         self.row_activations.clear();
         self.expansion_toggles.clear();
         self.expansion_overrides.clear();
+        self.global_filter_changes.clear();
+        self.predicate_filter_changes.clear();
+        self.filter_overrides.clear();
+        self.visibility_changes.clear();
+        self.visibility_overrides.clear();
+        self.column_order_changes.clear();
+        self.column_order_overrides.clear();
+        self.faceted_filter_changes.clear();
+        self.range_filter_changes.clear();
+        self.cell_edit_changes.clear();
+        self.cell_edit_overrides.clear();
         self.server_tree_loaded.clear();
     }
 }
@@ -1306,6 +1920,123 @@ pub fn current_table_sample_expansion(
     })
 }
 
+/// Returns the current controlled faceted-filter state for a gallery `Table` sample.
+pub fn current_table_sample_faceted_filter_state(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    cx: &impl AppContext,
+) -> TableState {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.filter_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    })
+}
+
+/// Returns the current controlled range-filter state for a gallery `Table` sample.
+pub fn current_table_sample_range_filter_state(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    cx: &impl AppContext,
+) -> TableState {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.filter_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    })
+}
+
+/// Returns the current controlled global-filter state for a gallery `Table` sample.
+pub fn current_table_sample_global_filter_state(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    cx: &impl AppContext,
+) -> TableState {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.filter_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    })
+}
+
+/// Returns the current controlled predicate-filter state for a gallery `Table` sample.
+pub fn current_table_sample_predicate_filter_state(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    cx: &impl AppContext,
+) -> TableState {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.filter_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    })
+}
+
+/// Returns the current controlled column-visibility overrides for a gallery `Table` sample.
+pub fn current_table_sample_column_visibility_overrides(
+    sample_id: impl Into<String>,
+    fallback: &TableColumnVisibilityOverrides,
+    cx: &impl AppContext,
+) -> TableColumnVisibilityOverrides {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.visibility_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    })
+}
+
+fn table_state_effective_column_order(state: &TableState) -> Vec<TableColumnId> {
+    if state.column_order().is_empty() {
+        state
+            .columns()
+            .iter()
+            .map(|column| column.id().clone())
+            .collect()
+    } else {
+        state.column_order().to_vec()
+    }
+}
+
+/// Returns the current controlled column-order state for a gallery `Table` sample.
+pub fn current_table_sample_column_order(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    cx: &impl AppContext,
+) -> Vec<TableColumnId> {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.column_order_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| table_state_effective_column_order(fallback))
+    })
+}
+
+/// Returns the current controlled text-cell edit state for a gallery `Table` sample.
+pub fn current_table_sample_cell_edit_state(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    cx: &impl AppContext,
+) -> TableState {
+    let sample_id = sample_id.into();
+    cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone())
+    })
+}
+
 /// Applies a resolved expansion state to a sample table state.
 pub fn table_state_with_expansion(state: TableState, expansion: TableExpansionState) -> TableState {
     match expansion {
@@ -1321,6 +2052,11 @@ pub fn table_sample_state_with_runtime(
     expansion: TableExpansionState,
     cx: &impl AppContext,
 ) -> TableState {
+    let state = current_table_sample_global_filter_state(sample.id, &sample.state, cx);
+    let state = current_table_sample_predicate_filter_state(sample.id, &state, cx);
+    let state = current_table_sample_faceted_filter_state(sample.id, &state, cx);
+    let state = current_table_sample_range_filter_state(sample.id, &state, cx);
+    let state = current_table_sample_cell_edit_state(sample.id, &state, cx);
     let loaded_server_tree = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
         log.server_tree_loaded
             .get(sample.id)
@@ -1330,8 +2066,13 @@ pub fn table_sample_state_with_runtime(
     let state = if sample.id == "server-tree" && loaded_server_tree {
         server_tree_table_state(true)
     } else {
-        sample.state.clone()
+        state
     };
+    let column_order = current_table_sample_column_order(sample.id, &state, cx);
+    let state = state.with_column_order(column_order);
+    let visibility =
+        current_table_sample_column_visibility_overrides(sample.id, state.column_visibility(), cx);
+    let state = state.with_column_visibility(visibility);
 
     table_state_with_expansion(state.with_column_sizing(sizing), expansion)
 }
@@ -1351,6 +2092,40 @@ pub fn record_table_sizing_change(
         });
         log.committed_sizing
             .insert(sample_id, change.sizing().clone());
+    });
+}
+
+/// Records and applies a controlled gallery `Table` column-order change.
+pub fn record_table_column_order_change(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    change: &TableColumnOrderChange,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = table_state_effective_column_order(fallback);
+    let next = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        let current = log
+            .column_order_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone());
+        change.apply_to_order(current)
+    });
+
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.column_order_changes.push(TableSampleColumnOrderChange {
+            sample_id: sample_id.clone(),
+            column_id: change.column_id().as_str().to_owned(),
+            target_column_id: change.target_column_id().as_str().to_owned(),
+            placement: change.placement().as_str().to_owned(),
+            region: change.target_region().as_str().to_owned(),
+            column_order: next
+                .iter()
+                .map(|column_id| column_id.as_str().to_owned())
+                .collect(),
+        });
+        log.column_order_overrides.insert(sample_id, next);
     });
 }
 
@@ -1435,7 +2210,243 @@ pub fn record_table_expansion_request(
     });
 }
 
+/// Records and applies a controlled gallery `Table` faceted-filter change.
+pub fn record_table_faceted_filter_change(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    change: &TableFacetedFilterChange,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = fallback.clone();
+    let next = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        let current = log
+            .filter_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone());
+        change.apply_to(current)
+    });
+    let resolved = next.resolve();
+    let filtered_rows = resolved.filtered_model().rows().len();
+    let final_rows = resolved.final_model().rows().len();
+
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.faceted_filter_changes
+            .push(TableSampleFacetedFilterChange {
+                sample_id: sample_id.clone(),
+                column_id: change.column_id().as_str().to_owned(),
+                selected_values: change.selected_values().to_vec(),
+                toggled_value: change.toggled_value().map(str::to_owned),
+                selected: change.selected(),
+                filtered_rows,
+                final_rows,
+            });
+        log.filter_overrides.insert(sample_id, next);
+    });
+}
+
+/// Records and applies a controlled gallery `Table` range-filter change.
+pub fn record_table_range_filter_change(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    change: &TableRangeFilterChange,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = fallback.clone();
+    let next = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        let current = log
+            .filter_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone());
+        change.apply_to(current)
+    });
+    let resolved = next.resolve();
+    let filtered_rows = resolved.filtered_model().rows().len();
+    let final_rows = resolved.final_model().rows().len();
+
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.range_filter_changes.push(TableSampleRangeFilterChange {
+            sample_id: sample_id.clone(),
+            column_id: change.column_id().as_str().to_owned(),
+            min_text: change.min_text().to_owned(),
+            max_text: change.max_text().to_owned(),
+            min_value: change.min_value(),
+            max_value: change.max_value(),
+            cleared: change.cleared(),
+            filtered_rows,
+            final_rows,
+        });
+        log.filter_overrides.insert(sample_id, next);
+    });
+}
+
+/// Records and applies a controlled gallery `Table` global-filter change.
+pub fn record_table_global_filter_change(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    change: &TableGlobalFilterChange,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = fallback.clone();
+    let next = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        let current = log
+            .filter_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone());
+        change.apply_to(current)
+    });
+    let resolved = next.resolve();
+    let filtered_rows = resolved.filtered_model().rows().len();
+    let final_rows = resolved.final_model().rows().len();
+
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.global_filter_changes
+            .push(TableSampleGlobalFilterChange {
+                sample_id: sample_id.clone(),
+                query: change.query().to_owned(),
+                cleared: change.cleared(),
+                filtered_rows,
+                final_rows,
+            });
+        log.filter_overrides.insert(sample_id, next);
+    });
+}
+
+/// Records and applies a controlled gallery `Table` predicate-filter change.
+pub fn record_table_predicate_filter_change(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    change: &TablePredicateFilterChange,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = fallback.clone();
+    let next = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        let current = log
+            .filter_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone());
+        change.apply_to(current)
+    });
+    let resolved = next.resolve();
+    let filtered_rows = resolved.filtered_model().rows().len();
+    let final_rows = resolved.final_model().rows().len();
+
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.predicate_filter_changes
+            .push(TableSamplePredicateFilterChange {
+                sample_id: sample_id.clone(),
+                column_id: change.column_id().as_str().to_owned(),
+                operator: change
+                    .operator()
+                    .map(|operator| operator.as_str().to_owned()),
+                value: change.value().to_owned(),
+                cleared: change.cleared(),
+                filtered_rows,
+                final_rows,
+            });
+        log.filter_overrides.insert(sample_id, next);
+    });
+}
+
+/// Records and applies a controlled gallery `Table` column-visibility change.
+pub fn record_table_column_visibility_change(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    change: &TableColumnVisibilityChange,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = fallback.clone();
+    let next = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        let current_visibility = log
+            .visibility_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.column_visibility().clone());
+        let current = fallback.clone().with_column_visibility(current_visibility);
+        change.apply_to(current)
+    });
+    let visible_columns = next.visible_columns().len();
+    let hidden_columns = next.columns().len().saturating_sub(visible_columns);
+    let next_visibility = next.column_visibility().clone();
+
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.visibility_changes
+            .push(TableSampleColumnVisibilityChange {
+                sample_id: sample_id.clone(),
+                action: change.action().as_str().to_owned(),
+                column_ids: change
+                    .column_ids()
+                    .iter()
+                    .map(|column_id| column_id.as_str().to_owned())
+                    .collect(),
+                next_visible: change.next_visible(),
+                visible_columns,
+                hidden_columns,
+            });
+        log.visibility_overrides.insert(sample_id, next_visibility);
+    });
+}
+
+/// Records and applies a controlled gallery `Table` cell edit.
+pub fn record_table_cell_edit_change(
+    sample_id: impl Into<String>,
+    fallback: &TableState,
+    change: &TableCellEditChange,
+    cx: &mut App,
+) {
+    let sample_id = sample_id.into();
+    let fallback = fallback.clone();
+    let (next, outcome) = cx.read_global::<TableSampleRuntimeLog, _>(|log, _| {
+        let current = log
+            .cell_edit_overrides
+            .get(&sample_id)
+            .cloned()
+            .unwrap_or_else(|| fallback.clone());
+        change.apply_to(current)
+    });
+
+    cx.update_default_global::<TableSampleRuntimeLog, _>(|log, _| {
+        log.cell_edit_changes.push(TableSampleCellEditChange {
+            sample_id: sample_id.clone(),
+            row_id: change.row_id().as_str().to_owned(),
+            column_id: change.column_id().as_str().to_owned(),
+            source_index: change.source_index(),
+            previous_text: change.previous_text().to_owned(),
+            next_text: change.next_text().to_owned(),
+            outcome: outcome.as_str().to_owned(),
+        });
+        if outcome == TableCellEditApplyOutcome::Updated {
+            log.cell_edit_overrides.insert(sample_id, next);
+        }
+    });
+}
+
 impl TreeSample {
+    /// Returns the current controlled item descriptors for this sample.
+    pub fn current_items(&self, cx: &impl AppContext) -> Vec<TreeItemDescriptor> {
+        current_tree_sample_items(self.id, &self.items, cx)
+    }
+
+    /// Returns the current controlled tree state for this sample.
+    pub fn current_state(&self, cx: &impl AppContext) -> TreeState {
+        let items = self.current_items(cx);
+        TreeState::resolve(
+            self.state.size(),
+            self.state.label(),
+            self.state.selected_value(),
+            self.state.focused_value(),
+            items,
+        )
+    }
+
     /// Builds the concrete GPUI tree for this sample.
     pub fn build_tree(&self) -> Tree {
         let mut tree = Tree::new(
@@ -1443,7 +2454,11 @@ impl TreeSample {
             self.title,
             self.items.clone(),
         )
-        .with_size(self.size);
+        .with_size(self.size)
+        .virtualized(self.virtualized)
+        .draggable(self.draggable)
+        .viewport_item_count(self.viewport_item_count)
+        .overscan_count(self.overscan_count);
 
         if let Some(selected) = self.state.selected_value() {
             tree = tree.default_selected(selected);
@@ -1453,6 +2468,37 @@ impl TreeSample {
         }
 
         tree
+    }
+
+    /// Builds the concrete GPUI tree for this sample using current gallery overrides.
+    pub fn build_tree_with_runtime(&self, cx: &impl AppContext) -> Tree {
+        let mut tree = Tree::new(
+            format!("component-tree:{}", self.id),
+            self.title,
+            self.current_items(cx),
+        )
+        .with_size(self.size)
+        .virtualized(self.virtualized)
+        .draggable(self.draggable)
+        .viewport_item_count(self.viewport_item_count)
+        .overscan_count(self.overscan_count);
+
+        if let Some(selected) = self.state.selected_value() {
+            tree = tree.default_selected(selected);
+        }
+        if let Some(focused) = self.state.focused_value() {
+            tree = tree.default_focused(focused);
+        }
+
+        tree
+    }
+
+    /// Resolves the sample's virtualized render plan at the viewport origin.
+    pub fn render_plan(&self) -> TreeRenderPlan {
+        self.build_tree().render_plan(
+            UiPx::ZERO,
+            self.state.metrics().row_height() * self.viewport_item_count as f32,
+        )
     }
 }
 
@@ -1671,6 +2717,17 @@ pub struct TextInputSample {
     pub state: TextInputState,
 }
 
+/// One textarea sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextareaSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample label.
+    pub label: &'static str,
+    /// Resolved state.
+    pub state: TextareaState,
+}
+
 /// One field sample in the gallery.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldSample {
@@ -1680,6 +2737,17 @@ pub struct FieldSample {
     pub state: FieldState,
     /// Resolved control state.
     pub input_state: TextInputState,
+}
+
+/// One field sample that composes a textarea control.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldTextareaSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Resolved field state.
+    pub state: FieldState,
+    /// Resolved textarea control state.
+    pub textarea_state: TextareaState,
 }
 
 /// One tab item sample in the gallery.
@@ -1783,6 +2851,14 @@ pub struct TableSampleStateSummary {
     pub filtered_rows: usize,
     /// Final row count after pagination.
     pub final_rows: usize,
+    /// Top-pinned row count in the final visual model.
+    pub pinned_top_rows: usize,
+    /// Center row count used by the row virtualizer.
+    pub pinned_center_rows: usize,
+    /// Bottom-pinned row count in the final visual model.
+    pub pinned_bottom_rows: usize,
+    /// Whether row pinning is limited to the current page.
+    pub row_pinning_page_only: bool,
     /// Rendered body row count after overscan.
     pub rendered_rows: usize,
     /// Visible body row count before overscan.
@@ -1801,6 +2877,12 @@ pub struct TableSampleStateSummary {
     pub aria_rows: usize,
     /// Selected row count in the final model.
     pub selected_rows: usize,
+    /// Visible header row count across all rendered regions.
+    pub header_rows: usize,
+    /// Unique visible group header count across all rendered regions.
+    pub header_groups: usize,
+    /// Visible leaf column count across all rendered regions.
+    pub visible_leaf_columns: usize,
     /// Row count before expansion flattens the grouped tree.
     pub grouped_rows: usize,
     /// Row count after expansion applies.
@@ -1853,6 +2935,8 @@ pub struct TableSampleStateSummary {
     pub grouping_columns: usize,
     /// Configured aggregate column count.
     pub aggregation_count: usize,
+    /// Named custom aggregate callback count.
+    pub custom_aggregation_count: usize,
     /// Explicit expanded group row ids, or all group rows when expansion is global.
     pub expanded_group_inputs: usize,
     /// Explicit expanded tree row ids, or all tree branch rows when expansion is global.
@@ -1882,6 +2966,7 @@ impl TableSampleStateSummary {
         let visible = plan.virtualizer().visible_range();
         let overscan = plan.virtualizer().overscan_range();
         let final_rows = plan.table().final_model().rows();
+        let row_regions = plan.table().row_regions();
         let group_rows = final_rows.iter().filter(|row| row.is_group()).count();
         let tree_rows = final_rows.iter().filter(|row| row.tree().is_some()).count();
         let tree_branch_rows = final_rows.iter().filter(|row| row.is_tree_branch()).count();
@@ -1911,6 +2996,13 @@ impl TableSampleStateSummary {
             .count();
         let tree_depth = final_rows.iter().map(|row| row.depth()).max().unwrap_or(0);
         let regions = plan.table().visible_column_regions();
+        let header_groups = plan.table().header_groups();
+        let visible_group_ids = header_groups
+            .all()
+            .flat_map(|group| group.headers().iter())
+            .filter(|cell| cell.is_group())
+            .map(|cell| cell.source_id().to_owned())
+            .collect::<BTreeSet<_>>();
         let status_column = TableColumnId::new("status");
         let score_column = TableColumnId::new("score");
         let status_facet = plan.column_facet(&status_column);
@@ -1961,6 +3053,11 @@ impl TableSampleStateSummary {
             core_rows: plan.table().core_model().rows().len(),
             filtered_rows: plan.table().filtered_model().rows().len(),
             final_rows: plan.table().final_model().rows().len(),
+            pinned_top_rows: row_regions.top().len(),
+            pinned_center_rows: row_regions.center().len(),
+            pinned_bottom_rows: row_regions.bottom().len(),
+            row_pinning_page_only: plan.table().row_pinning_policy()
+                == TableRowPinningPolicy::PageOnly,
             rendered_rows: plan.rendered_row_count(),
             visible_rows: plan.visible_row_count(),
             visible_start: visible.start(),
@@ -1970,6 +3067,9 @@ impl TableSampleStateSummary {
             aria_columns: plan.aria_column_count(),
             aria_rows: plan.aria_row_count(),
             selected_rows: plan.table().final_model().selected_count(),
+            header_rows: plan.header_row_count(),
+            header_groups: visible_group_ids.len(),
+            visible_leaf_columns: plan.columns().len(),
             grouped_rows: plan.table().grouped_model().rows().len(),
             expanded_rows: plan.table().expanded_model().rows().len(),
             group_rows,
@@ -2010,6 +3110,7 @@ impl TableSampleStateSummary {
             score_facet_max,
             grouping_columns: state.grouping().len(),
             aggregation_count: state.aggregations().len(),
+            custom_aggregation_count: plan.aggregation_fn_count(),
             expanded_group_inputs,
             expanded_tree_inputs,
             all_rows_expanded,
@@ -2067,6 +3168,14 @@ impl TableSample {
     /// Returns the precomputed state summary used by the gallery page.
     pub const fn state_summary(&self) -> TableSampleStateSummary {
         self.state_summary
+    }
+
+    /// Resolves the summary for a caller-supplied table state using this sample's layout settings.
+    pub fn state_summary_for_state(&self, state: &TableState) -> TableSampleStateSummary {
+        let plan = self
+            .build_table_with_state(state.clone())
+            .render_plan(UiPx::ZERO, self.viewport_extent);
+        TableSampleStateSummary::from_plan(&plan, state)
     }
 }
 
@@ -2346,6 +3455,15 @@ macro_rules! impl_component_sample_selectors {
 
 impl_component_sample_selectors!(ButtonSample, "component-button-sample");
 impl_component_sample_selectors!(BadgeSample, "component-badge-sample");
+impl_component_sample_selectors!(AccordionSample, "component-accordion-sample");
+impl_component_sample_selectors!(CollapsibleSample, "component-collapsible-sample");
+impl_component_sample_selectors!(SliderSample, "component-slider-sample");
+impl_component_sample_selectors!(NumberInputSample, "component-number-input-sample");
+impl_component_sample_selectors!(ToggleGroupSample, "component-toggle-group-sample");
+impl_component_sample_selectors!(LinkSample, "component-link-sample");
+impl_component_sample_selectors!(BreadcrumbSample, "component-breadcrumb-sample");
+impl_component_sample_selectors!(TagSample, "component-tag-sample");
+impl_component_sample_selectors!(ToastStackSample, "component-toast-stack-sample");
 impl_component_sample_selectors!(IconButtonSample, "component-icon-button-sample");
 impl_component_sample_selectors!(SwitchSample, "component-switch-sample");
 impl_component_sample_selectors!(CheckboxSample, "component-checkbox-sample");
@@ -2360,7 +3478,9 @@ impl_component_sample_selectors!(ComboboxSample, "component-combobox-sample");
 impl_component_sample_selectors!(CommandSample, "component-command-sample");
 impl_component_sample_selectors!(LabelSample, "component-label-sample");
 impl_component_sample_selectors!(TextInputSample, "component-text-input-sample");
+impl_component_sample_selectors!(TextareaSample, "component-textarea-sample");
 impl_component_sample_selectors!(FieldSample, "component-field-sample");
+impl_component_sample_selectors!(FieldTextareaSample, "component-field-textarea-sample");
 impl_component_sample_selectors!(TabsSample, "component-tabs-sample");
 impl_component_sample_selectors!(TableSample, "component-table-sample");
 impl_component_sample_selectors!(VirtualizedListSample, "component-virtualized-list-sample");
@@ -2371,6 +3491,7 @@ impl_component_sample_selectors!(KbdSample, "component-kbd-sample");
 impl_component_sample_selectors!(ProgressSample, "component-progress-sample");
 impl_component_sample_selectors!(SkeletonSample, "component-skeleton-sample");
 impl_component_sample_selectors!(AvatarSample, "component-avatar-sample");
+impl_component_sample_selectors!(AvatarGroupSample, "component-avatar-group-sample");
 impl_component_sample_selectors!(StatusCueSample, "component-status-cue-sample");
 impl_component_sample_selectors!(EmptyStateSample, "component-empty-state-sample");
 
@@ -2463,6 +3584,284 @@ pub fn badge_samples(tokens: ThemeTokens) -> [BadgeSample; 4] {
             .tokens(tokens)
             .state(),
     })
+}
+
+/// Grouped samples for newly completed foundation components.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FoundationComponentSamples {
+    /// Accordion samples.
+    pub accordions: [AccordionSample; 1],
+    /// Collapsible samples.
+    pub collapsibles: [CollapsibleSample; 1],
+    /// Slider samples.
+    pub sliders: [SliderSample; 2],
+    /// Number input samples.
+    pub number_inputs: [NumberInputSample; 2],
+    /// Toggle group samples.
+    pub toggle_groups: [ToggleGroupSample; 2],
+    /// Link samples.
+    pub links: [LinkSample; 2],
+    /// Breadcrumb samples.
+    pub breadcrumbs: [BreadcrumbSample; 1],
+    /// Tag samples.
+    pub tags: [TagSample; 3],
+    /// Toast stack samples.
+    pub toast_stacks: [ToastStackSample; 1],
+}
+
+/// Returns samples for the foundation component completion slice.
+pub fn foundation_component_samples(tokens: ThemeTokens) -> FoundationComponentSamples {
+    FoundationComponentSamples {
+        accordions: accordion_samples(tokens),
+        collapsibles: collapsible_samples(tokens),
+        sliders: slider_samples(tokens),
+        number_inputs: number_input_samples(tokens),
+        toggle_groups: toggle_group_samples(tokens),
+        links: link_samples(tokens),
+        breadcrumbs: breadcrumb_samples(tokens),
+        tags: tag_samples(tokens),
+        toast_stacks: toast_stack_samples(tokens),
+    }
+}
+
+/// Returns accordion samples backed by real component state.
+pub fn accordion_samples(tokens: ThemeTokens) -> [AccordionSample; 1] {
+    let items = vec![
+        AccordionItem::new("scope", "Scope", "Component contracts, samples, and tests."),
+        AccordionItem::new(
+            "risk",
+            "Risk",
+            "Breaking changes are acceptable before launch.",
+        ),
+        AccordionItem::new(
+            "done",
+            "Done",
+            "Exported state and gallery coverage are required.",
+        )
+        .disabled(true),
+    ];
+    let accordion = Accordion::new("shipping")
+        .mode(AccordionMode::Multiple)
+        .collapsible(true)
+        .default_open_values(["scope", "risk"])
+        .tokens(tokens);
+    let state = items
+        .iter()
+        .cloned()
+        .fold(accordion, |accordion, item| accordion.item(item))
+        .state();
+
+    [AccordionSample {
+        id: "shipping",
+        title: "Shipping checklist",
+        summary: "Multiple open panels with one disabled item.",
+        state,
+        items,
+    }]
+}
+
+/// Returns collapsible samples backed by real component state.
+pub fn collapsible_samples(tokens: ThemeTokens) -> [CollapsibleSample; 1] {
+    [CollapsibleSample {
+        id: "release-notes",
+        summary: "Controlled disclosure content that keeps trigger and panel roles separate.",
+        content: "Release notes stay mounted only when the disclosure is open.",
+        state: Collapsible::new("release-notes", "Release notes")
+            .default_open(true)
+            .tokens(tokens)
+            .state(),
+    }]
+}
+
+/// Returns slider samples backed by real component state.
+pub fn slider_samples(tokens: ThemeTokens) -> [SliderSample; 2] {
+    [
+        (
+            "volume",
+            "Volume",
+            72.0,
+            0.0,
+            100.0,
+            1.0,
+            false,
+            Size::Medium,
+        ),
+        (
+            "threshold",
+            "Threshold",
+            42.0,
+            0.0,
+            50.0,
+            5.0,
+            true,
+            Size::Small,
+        ),
+    ]
+    .map(
+        |(id, label, value, min, max, step, disabled, size)| SliderSample {
+            id,
+            state: Slider::new(id, label)
+                .value(value)
+                .min(min)
+                .max(max)
+                .step(step)
+                .disabled(disabled)
+                .with_size(size)
+                .tokens(tokens)
+                .state(),
+        },
+    )
+}
+
+/// Returns number input samples backed by real component state.
+pub fn number_input_samples(tokens: ThemeTokens) -> [NumberInputSample; 2] {
+    [
+        ("workers", "Workers", 6.0, 1.0, 12.0, 1.0, false, false),
+        ("budget", "Budget", 85.0, 0.0, 100.0, 5.0, false, true),
+    ]
+    .map(
+        |(id, label, value, min, max, step, read_only, invalid)| NumberInputSample {
+            id,
+            state: NumberInput::new(id, label)
+                .value(value)
+                .min(min)
+                .max(max)
+                .step(step)
+                .read_only(read_only)
+                .invalid(invalid)
+                .tokens(tokens)
+                .state(),
+        },
+    )
+}
+
+/// Returns toggle group samples backed by real component state.
+pub fn toggle_group_samples(tokens: ThemeTokens) -> [ToggleGroupSample; 2] {
+    let alignment = ToggleGroup::new("alignment", "Alignment")
+        .item(ToggleGroupItem::new("left", "Left"))
+        .item(ToggleGroupItem::new("center", "Center"))
+        .item(ToggleGroupItem::new("right", "Right").disabled(true))
+        .selected_values(["left"])
+        .default_focused("center")
+        .selection_required(true)
+        .tokens(tokens)
+        .state();
+    let formatting = ToggleGroup::new("formatting", "Formatting")
+        .mode(ToggleGroupSelectionMode::Multiple)
+        .item(ToggleGroupItem::new("bold", "Bold"))
+        .item(ToggleGroupItem::new("italic", "Italic"))
+        .item(ToggleGroupItem::new("code", "Code"))
+        .selected_values(["bold", "code"])
+        .tokens(tokens)
+        .state();
+
+    [
+        ToggleGroupSample {
+            id: "alignment",
+            summary: "Required single selection with disabled item skip.",
+            state: alignment,
+        },
+        ToggleGroupSample {
+            id: "formatting",
+            summary: "Multiple stable values selected at once.",
+            state: formatting,
+        },
+    ]
+}
+
+/// Returns link samples backed by real component state.
+pub fn link_samples(tokens: ThemeTokens) -> [LinkSample; 2] {
+    [
+        LinkSample {
+            id: "docs",
+            state: Link::new("docs", "Component docs", "/docs/components")
+                .external(true)
+                .tokens(tokens)
+                .state(),
+        },
+        LinkSample {
+            id: "disabled",
+            state: Link::new("disabled", "Disabled target", "/disabled")
+                .disabled(true)
+                .tokens(tokens)
+                .state(),
+        },
+    ]
+}
+
+/// Returns breadcrumb samples backed by real component state.
+pub fn breadcrumb_samples(tokens: ThemeTokens) -> [BreadcrumbSample; 1] {
+    [BreadcrumbSample {
+        id: "project",
+        state: Breadcrumb::new("project", "Project path")
+            .item(BreadcrumbItemDescriptor::new("home", "Home").href("/"))
+            .item(BreadcrumbItemDescriptor::new("ui", "UI").href("/ui"))
+            .item(BreadcrumbItemDescriptor::new("components", "Components").current(true))
+            .tokens(tokens)
+            .state(),
+    }]
+}
+
+/// Returns tag samples backed by real component state.
+pub fn tag_samples(tokens: ThemeTokens) -> [TagSample; 3] {
+    [
+        ("ready", "ready", "Ready", TagVariant::Default, true, false),
+        (
+            "blocked",
+            "blocked",
+            "Blocked",
+            TagVariant::Destructive,
+            false,
+            false,
+        ),
+        (
+            "archived",
+            "archived",
+            "Archived",
+            TagVariant::Outline,
+            true,
+            true,
+        ),
+    ]
+    .map(
+        |(id, value, label, variant, removable, disabled)| TagSample {
+            id,
+            state: Tag::new(id, value, label)
+                .variant(variant)
+                .removable(removable)
+                .disabled(disabled)
+                .tokens(tokens)
+                .state(),
+        },
+    )
+}
+
+/// Returns toast stack samples backed by real component state.
+pub fn toast_stack_samples(tokens: ThemeTokens) -> [ToastStackSample; 1] {
+    [ToastStackSample {
+        id: "notifications",
+        state: ToastStack::new("notifications", "Notifications")
+            .max_visible(2)
+            .toast(
+                Toast::new("saved", "Saved")
+                    .description("Settings are synced.")
+                    .intent(FeedbackIntent::Success)
+                    .action("Undo"),
+            )
+            .toast(
+                Toast::new("queued", "Queued")
+                    .description("Release job will start shortly.")
+                    .intent(FeedbackIntent::Info)
+                    .timeout(Duration::from_secs(8)),
+            )
+            .toast(
+                Toast::new("expired", "Expired")
+                    .elapsed(Duration::from_secs(8))
+                    .timeout(Duration::from_secs(2)),
+            )
+            .tokens(tokens)
+            .state(),
+    }]
 }
 
 /// Returns icon button samples backed by real component state.
@@ -2657,6 +4056,49 @@ pub fn avatar_samples(tokens: ThemeTokens) -> [AvatarSample; 4] {
     })
 }
 
+/// Returns avatar group samples backed by real component state.
+pub fn avatar_group_samples(tokens: ThemeTokens) -> [AvatarGroupSample; 1] {
+    [AvatarGroupSample {
+        id: "team",
+        summary: "Compact overlapping roster with overflow count",
+        avatars: vec![
+            AvatarSample {
+                id: "team-ada",
+                state: Avatar::new("team-ada", "Ada Lovelace")
+                    .accessible_label("Ada Lovelace")
+                    .with_size(Size::Medium)
+                    .tokens(tokens)
+                    .state(),
+            },
+            AvatarSample {
+                id: "team-grace",
+                state: Avatar::new("team-grace", "Grace Hopper")
+                    .accessible_label("Grace Hopper")
+                    .with_size(Size::Medium)
+                    .tokens(tokens)
+                    .state(),
+            },
+            AvatarSample {
+                id: "team-katherine",
+                state: Avatar::new("team-katherine", "Katherine Johnson")
+                    .accessible_label("Katherine Johnson")
+                    .with_size(Size::Medium)
+                    .tokens(tokens)
+                    .state(),
+            },
+            AvatarSample {
+                id: "team-margaret",
+                state: Avatar::new("team-margaret", "Margaret Hamilton")
+                    .accessible_label("Margaret Hamilton")
+                    .with_size(Size::Medium)
+                    .tokens(tokens)
+                    .state(),
+            },
+        ],
+        count_label: "+1",
+    }]
+}
+
 /// Returns status cue samples backed by real component state.
 pub fn status_cue_samples(tokens: ThemeTokens) -> [StatusCueSample; 3] {
     [
@@ -2731,14 +4173,14 @@ pub fn empty_state_samples(tokens: ThemeTokens) -> [EmptyStateSample; 2] {
     )
 }
 
-static TREE_SAMPLES: LazyLock<[TreeSample; 1]> = LazyLock::new(build_tree_samples);
+static TREE_SAMPLES: LazyLock<[TreeSample; 4]> = LazyLock::new(build_tree_samples);
 
 /// Returns tree samples backed by the concrete renderer and hierarchy contract.
 pub fn tree_samples(_tokens: ThemeTokens) -> &'static [TreeSample] {
     TREE_SAMPLES.as_slice()
 }
 
-fn build_tree_samples() -> [TreeSample; 1] {
+fn build_tree_samples() -> [TreeSample; 4] {
     let size = Size::Small;
     let items = document_outline_tree_sample_items();
     let state = TreeState::resolve(
@@ -2748,16 +4190,87 @@ fn build_tree_samples() -> [TreeSample; 1] {
         Some("paper"),
         items.clone(),
     );
-
-    [TreeSample {
-        id: "document-outline",
-        title: "Document outline",
-        summary: "Expandable hierarchy with roving focus, selection, and an owned scroll viewport.",
-        badge: "tree",
-        items,
-        state,
+    let editable_items = editable_outline_tree_sample_items();
+    let editable_state = TreeState::resolve(
         size,
-    }]
+        "Editable outline",
+        Some("root"),
+        Some("root"),
+        editable_items.clone(),
+    );
+
+    let remote_items = remote_workspace_tree_sample_items();
+    let remote_state = TreeState::resolve(
+        size,
+        "Remote workspace",
+        Some("remote-src"),
+        Some("remote-src"),
+        remote_items.clone(),
+    );
+
+    let release_items = virtualized_release_tree_sample_items();
+    let release_state = TreeState::resolve(
+        size,
+        "Release outline",
+        Some("release-node-0000"),
+        Some("release-node-0000"),
+        release_items.clone(),
+    );
+
+    [
+        TreeSample {
+            id: "document-outline",
+            title: "Document outline",
+            summary: "Expandable hierarchy with roving focus, selection, and an owned scroll viewport.",
+            badge: "tree",
+            items,
+            state,
+            size,
+            virtualized: false,
+            draggable: false,
+            viewport_item_count: 12,
+            overscan_count: 4,
+        },
+        TreeSample {
+            id: "remote-workspace",
+            title: "Remote workspace",
+            summary: "Loadable branches expose unloaded, loading, loaded, and failed child state.",
+            badge: "lazy tree",
+            items: remote_items,
+            state: remote_state,
+            size,
+            virtualized: false,
+            draggable: false,
+            viewport_item_count: 12,
+            overscan_count: 4,
+        },
+        TreeSample {
+            id: "release-outline",
+            title: "Release outline",
+            summary: "Large visible hierarchy rendered through the Tree fixed-row virtual window.",
+            badge: "virtual tree",
+            items: release_items,
+            state: release_state,
+            size,
+            virtualized: true,
+            draggable: false,
+            viewport_item_count: 8,
+            overscan_count: 4,
+        },
+        TreeSample {
+            id: "editable-outline",
+            title: "Editable outline",
+            summary: "Controlled drag moves update the visible outline in place.",
+            badge: "drag tree",
+            items: editable_items,
+            state: editable_state,
+            size,
+            virtualized: false,
+            draggable: true,
+            viewport_item_count: 12,
+            overscan_count: 4,
+        },
+    ]
 }
 
 /// Returns tree state-contract samples for renderer-neutral review.
@@ -2799,6 +4312,38 @@ fn document_outline_tree_sample_items() -> Vec<TreeItemDescriptor> {
     ]
 }
 
+fn remote_workspace_tree_sample_items() -> Vec<TreeItemDescriptor> {
+    vec![
+        TreeItemDescriptor::new("remote-root", "Remote project")
+            .expanded(true)
+            .child(TreeItemDescriptor::new("remote-src", "src").with_children_unloaded())
+            .child(
+                TreeItemDescriptor::new("remote-crates", "crates")
+                    .with_children_loading("Loading child packages"),
+            )
+            .child(
+                TreeItemDescriptor::new("remote-build", "build artifacts")
+                    .with_children_load_failed("Network unavailable"),
+            )
+            .child(
+                TreeItemDescriptor::new("remote-docs", "docs")
+                    .expanded(true)
+                    .child(TreeItemDescriptor::new("remote-readme", "README.md")),
+            ),
+    ]
+}
+
+fn virtualized_release_tree_sample_items() -> Vec<TreeItemDescriptor> {
+    (0..240)
+        .map(|index| {
+            TreeItemDescriptor::new(
+                format!("release-node-{index:04}"),
+                format!("Release node {index:04}"),
+            )
+        })
+        .collect()
+}
+
 fn document_outline_tree_items() -> Vec<TreeItemDescriptor> {
     vec![
         TreeItemDescriptor::new("paper", "Paper")
@@ -2811,6 +4356,16 @@ fn document_outline_tree_items() -> Vec<TreeItemDescriptor> {
             ),
         TreeItemDescriptor::new("disabled", "Disabled").disabled(true),
         TreeItemDescriptor::new("notes", "Notes"),
+    ]
+}
+
+fn editable_outline_tree_sample_items() -> Vec<TreeItemDescriptor> {
+    vec![
+        TreeItemDescriptor::new("root", "Root")
+            .expanded(true)
+            .child(TreeItemDescriptor::new("child", "Child"))
+            .child(TreeItemDescriptor::new("peer", "Peer")),
+        TreeItemDescriptor::new("sibling", "Sibling"),
     ]
 }
 
@@ -2984,7 +4539,7 @@ pub fn label_samples(tokens: ThemeTokens) -> [LabelSample; 4] {
 }
 
 /// Returns text input samples backed by real component state.
-pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
+pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 6] {
     [
         (
             "default",
@@ -2997,6 +4552,7 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             false,
             Size::Medium,
             true,
+            TextInputDisplayMode::Plain,
         ),
         (
             "filled",
@@ -3009,6 +4565,7 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             false,
             Size::Medium,
             false,
+            TextInputDisplayMode::Plain,
         ),
         (
             "invalid",
@@ -3021,6 +4578,7 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             true,
             Size::Medium,
             false,
+            TextInputDisplayMode::Plain,
         ),
         (
             "read-only",
@@ -3033,6 +4591,7 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             false,
             Size::Medium,
             false,
+            TextInputDisplayMode::Plain,
         ),
         (
             "disabled",
@@ -3045,6 +4604,20 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             false,
             Size::Medium,
             false,
+            TextInputDisplayMode::Plain,
+        ),
+        (
+            "password",
+            "Password",
+            "a🙂中",
+            "Password",
+            false,
+            false,
+            false,
+            false,
+            Size::Medium,
+            false,
+            TextInputDisplayMode::Password,
         ),
     ]
     .map(
@@ -3059,8 +4632,9 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             invalid,
             size,
             controller_driven,
+            display_mode,
         )| {
-            let state = TextInputState::resolve(
+            let state = TextInputState::resolve_with_display_mode(
                 value,
                 Some(placeholder),
                 size,
@@ -3069,10 +4643,99 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
                 invalid,
                 required,
                 controller_driven,
+                display_mode,
                 tokens,
             );
 
             TextInputSample { id, label, state }
+        },
+    )
+}
+
+/// Returns textarea samples backed by real component state.
+pub fn textarea_samples(tokens: ThemeTokens) -> [TextareaSample; 4] {
+    [
+        (
+            "default",
+            "Default",
+            "",
+            "Write release notes...",
+            3,
+            false,
+            false,
+            false,
+            false,
+            Size::Medium,
+            false,
+        ),
+        (
+            "filled",
+            "Filled",
+            "Line 1\nLine 2",
+            "Write release notes...",
+            4,
+            false,
+            false,
+            false,
+            false,
+            Size::Medium,
+            false,
+        ),
+        (
+            "overflow",
+            "Overflow",
+            "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8",
+            "Write release notes...",
+            3,
+            false,
+            false,
+            false,
+            false,
+            Size::Medium,
+            false,
+        ),
+        (
+            "invalid",
+            "Invalid",
+            "Needs a rollback note.",
+            "Write release notes...",
+            3,
+            false,
+            false,
+            true,
+            true,
+            Size::Medium,
+            false,
+        ),
+    ]
+    .map(
+        |(
+            id,
+            label,
+            value,
+            placeholder,
+            rows,
+            disabled,
+            read_only,
+            required,
+            invalid,
+            size,
+            controller_driven,
+        )| {
+            let state = TextareaState::resolve(
+                value,
+                Some(placeholder),
+                size,
+                rows,
+                disabled,
+                read_only,
+                invalid,
+                required,
+                controller_driven,
+                tokens,
+            );
+
+            TextareaSample { id, label, state }
         },
     )
 }
@@ -3139,6 +4802,51 @@ pub fn field_samples(tokens: ThemeTokens) -> [FieldSample; 3] {
                 id,
                 state: field.state(),
                 input_state: input.state(),
+            }
+        },
+    )
+}
+
+/// Returns field samples that compose a textarea control.
+pub fn field_textarea_samples(tokens: ThemeTokens) -> [FieldTextareaSample; 1] {
+    [(
+        "release-notes",
+        "Release notes",
+        "Summarize user-visible changes.",
+        Some("Add a concise release note."),
+        "",
+        "Write release notes...",
+        4,
+        true,
+        false,
+        true,
+    )]
+    .map(
+        |(id, label, help, error, value, placeholder, rows, required, disabled, invalid)| {
+            let textarea = Textarea::new(format!("{id}-textarea"), label)
+                .value(value)
+                .placeholder(placeholder)
+                .rows(rows)
+                .required(required)
+                .disabled(disabled)
+                .invalid(invalid)
+                .tokens(tokens);
+            let field = Field::new(id, format!("{id}-textarea"), label)
+                .help(help)
+                .required(required)
+                .disabled(disabled)
+                .invalid(invalid)
+                .tokens(tokens);
+            let field = if let Some(error) = error {
+                field.error(error)
+            } else {
+                field
+            };
+
+            FieldTextareaSample {
+                id,
+                state: field.state(),
+                textarea_state: textarea.state(),
             }
         },
     )
@@ -3353,8 +5061,16 @@ fn build_table_samples() -> Vec<TableSample> {
     let filter_board_rows = (0..180).map(filter_board_row).collect::<Vec<_>>();
     let server_paged_rows = server_paged_rows();
     let release_resize_rows = (0..160).map(release_resize_row).collect::<Vec<_>>();
+    let editable_release_rows = (0..32).map(editable_release_row).collect::<Vec<_>>();
+    let toggle_release_rows = (0..28).map(toggle_release_row).collect::<Vec<_>>();
+    let select_release_rows = (0..28).map(select_release_row).collect::<Vec<_>>();
+    let multiline_release_rows = (0..24).map(multiline_release_row).collect::<Vec<_>>();
     let grouped_release_rows = (0..320).map(grouped_release_row).collect::<Vec<_>>();
+    let grouped_custom_aggregation_rows = (0..8)
+        .map(grouped_custom_aggregation_row)
+        .collect::<Vec<_>>();
     let release_matrix_rows = (0..480).map(release_matrix_row).collect::<Vec<_>>();
+    let row_pinning_rows = (0..96).map(row_pinning_row).collect::<Vec<_>>();
     let dependency_tree_rows = dependency_tree_rows();
 
     let release_queue = TableSample {
@@ -3444,6 +5160,114 @@ fn build_table_samples() -> Vec<TableSample> {
         overscan: 4,
         state_summary: TableSampleStateSummary::default(),
     };
+    let content_fit_release = TableSample {
+        id: "content-fit-release",
+        title: "Content-fit release table",
+        summary: "A fit-content identity column widens from visible edits while a fixed score column stays anchored.",
+        badge: "content fit",
+        state: TableState::new(editable_release_rows.clone())
+            .with_columns(content_fit_release_table_columns())
+            .with_column_order(["name", "team", "status", "score"])
+            .with_selected_rows(["editable-release-row-002"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(34.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
+    let editable_release = TableSample {
+        id: "editable-release",
+        title: "Editable release cells",
+        summary: "Text-cell editors emit controlled row/column payloads while app-owned rows feed updated values back into Table.",
+        badge: "cell edit",
+        state: TableState::new(editable_release_rows)
+            .with_columns(editable_table_columns())
+            .with_column_order(["name", "team", "status", "score"])
+            .with_column_sizing(
+                TableColumnSizing::new()
+                    .with_width("name", ui_px(204.0))
+                    .with_width("team", ui_px(132.0))
+                    .with_width("status", ui_px(128.0))
+                    .with_width("score", ui_px(84.0)),
+            )
+            .with_selected_rows(["editable-release-row-002"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(34.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
+    let toggle_release = TableSample {
+        id: "toggle-release",
+        title: "Toggle release cells",
+        summary: "Checkbox cell editors emit controlled bool payloads while app-owned rows feed updated values back into Table.",
+        badge: "checkbox cells",
+        state: TableState::new(toggle_release_rows)
+            .with_columns(toggle_release_table_columns())
+            .with_column_order(["name", "enabled", "status", "score"])
+            .with_column_sizing(
+                TableColumnSizing::new()
+                    .with_width("name", ui_px(196.0))
+                    .with_width("enabled", ui_px(104.0))
+                    .with_width("status", ui_px(128.0))
+                    .with_width("score", ui_px(84.0)),
+            )
+            .with_selected_rows(["toggle-release-row-002"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(34.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
+    let select_release = TableSample {
+        id: "select-release",
+        title: "Select release cells",
+        summary: "Fixed-option select editors emit controlled choice payloads while app-owned rows feed updated values back into Table.",
+        badge: "select cells",
+        state: TableState::new(select_release_rows)
+            .with_columns(select_release_table_columns())
+            .with_column_order(["name", "status", "team", "score"])
+            .with_column_sizing(
+                TableColumnSizing::new()
+                    .with_width("name", ui_px(196.0))
+                    .with_width("status", ui_px(132.0))
+                    .with_width("team", ui_px(128.0))
+                    .with_width("score", ui_px(84.0)),
+            )
+            .with_selected_rows(["select-release-row-002"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(34.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
+    let multiline_release = TableSample {
+        id: "multiline-release",
+        title: "Multiline release notes",
+        summary: "Fixed-height textarea cell editors preserve newline edits while app-owned rows feed updated values back into Table.",
+        badge: "textarea cells",
+        state: TableState::new(multiline_release_rows)
+            .with_columns(multiline_edit_table_columns())
+            .with_column_order(["name", "notes", "status", "score"])
+            .with_column_sizing(
+                TableColumnSizing::new()
+                    .with_width("name", ui_px(164.0))
+                    .with_width("notes", ui_px(264.0))
+                    .with_width("status", ui_px(112.0))
+                    .with_width("score", ui_px(84.0)),
+            )
+            .with_selected_rows(["multiline-release-row-002"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(220.0),
+        row_height: ui_px(82.0),
+        overscan: 3,
+        state_summary: TableSampleStateSummary::default(),
+    };
     let grouped_release = TableSample {
         id: "release-rollup",
         title: "Release rollup",
@@ -3472,13 +5296,48 @@ fn build_table_samples() -> Vec<TableSample> {
         overscan: 4,
         state_summary: TableSampleStateSummary::default(),
     };
+    let grouped_custom_aggregation = TableSample {
+        id: "grouped-custom-aggregation",
+        title: "Custom aggregation",
+        summary: "Grouped rows combine a built-in count with a named custom score aggregate.",
+        badge: "custom aggregate",
+        state: TableState::new(grouped_custom_aggregation_rows)
+            .with_columns(sticky_pinned_table_columns())
+            .with_column_order(["name", "team", "score", "status"])
+            .with_column_pinning(
+                TableColumnPinning::new()
+                    .pinned_left(["name"])
+                    .pinned_right(["status"]),
+            )
+            .with_grouping(["team"])
+            .with_expanded_rows(["group:team=UI", "group:team=Platform"])
+            .with_aggregations([
+                TableAggregation::count("name"),
+                TableAggregation::named("score", "score_plus_one"),
+            ])
+            .with_aggregation_fn("score_plus_one", |column, rows| {
+                let score = rows.iter().fold(0.0, |sum, row| match row.cell(column) {
+                    Some(TableCellValue::Number(value)) => sum + *value,
+                    _ => sum,
+                });
+                TableCellValue::Number(score + 1.0)
+            })
+            .with_sorting([TableSort::descending("score")])
+            .with_selected_rows(["grouped-custom-aggregation-row-000"])
+            .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
     let release_matrix = TableSample {
         id: "release-matrix",
         title: "Release matrix",
-        summary: "Pinned identity and status lanes frame a wide virtualized center metric window.",
+        summary: "Nested release groups keep pinned identity and status lanes fixed around a wide virtualized center window.",
         badge: "column window",
         state: TableState::new(release_matrix_rows)
-            .with_columns(release_matrix_table_columns())
+            .with_column_tree(release_matrix_column_tree())
             .with_column_order(release_matrix_column_order())
             .with_column_pinning(
                 TableColumnPinning::new()
@@ -3488,6 +5347,32 @@ fn build_table_samples() -> Vec<TableSample> {
             .with_sorting([TableSort::descending("metric_13")])
             .with_selected_rows(["release-matrix-row-005"])
             .with_pagination(TablePagination::disabled()),
+        size: Size::Small,
+        viewport_extent: ui_px(196.0),
+        row_height: ui_px(30.0),
+        overscan: 4,
+        state_summary: TableSampleStateSummary::default(),
+    };
+    let row_pinning = TableSample {
+        id: "row-pinning",
+        title: "Pinned row review",
+        summary: "Top and bottom review rows stay visible while the paged center body scrolls.",
+        badge: "row pins",
+        state: TableState::new(row_pinning_rows)
+            .with_columns(release_matrix_table_columns())
+            .with_column_order(release_matrix_column_order())
+            .with_column_pinning(
+                TableColumnPinning::new()
+                    .pinned_left(["name"])
+                    .pinned_right(["status"]),
+            )
+            .with_row_pinning(
+                TableRowPinning::new()
+                    .pinned_top(["row-pinning-row-003"])
+                    .pinned_bottom(["row-pinning-row-030", "row-pinning-row-070"]),
+            )
+            .with_selected_rows(["row-pinning-row-030"])
+            .with_pagination(TablePagination::new(2, 12)),
         size: Size::Small,
         viewport_extent: ui_px(196.0),
         row_height: ui_px(30.0),
@@ -3544,8 +5429,15 @@ fn build_table_samples() -> Vec<TableSample> {
         filter_board.with_state_summary(),
         server_paged.with_state_summary(),
         release_resize.with_state_summary(),
+        content_fit_release.with_state_summary(),
+        editable_release.with_state_summary(),
+        toggle_release.with_state_summary(),
+        select_release.with_state_summary(),
+        multiline_release.with_state_summary(),
         grouped_release.with_state_summary(),
+        grouped_custom_aggregation.with_state_summary(),
         release_matrix.with_state_summary(),
+        row_pinning.with_state_summary(),
         dependency_tree.with_state_summary(),
         server_tree.with_state_summary(),
     ]
@@ -3561,6 +5453,98 @@ impl TableSample {
             ..self
         }
     }
+}
+
+fn editable_table_columns() -> [TableColumn; 4] {
+    [
+        TableColumn::new("name", "Name")
+            .with_text_editable(true)
+            .with_width(ui_px(204.0))
+            .with_min_width(ui_px(160.0))
+            .with_max_width(ui_px(320.0)),
+        TableColumn::new("team", "Team")
+            .with_text_editable(true)
+            .with_width(ui_px(132.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(220.0)),
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(128.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(180.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(84.0))
+            .with_min_width(ui_px(72.0))
+            .with_max_width(ui_px(120.0)),
+    ]
+}
+
+fn toggle_release_table_columns() -> [TableColumn; 4] {
+    [
+        TableColumn::new("name", "Name")
+            .with_width(ui_px(196.0))
+            .with_min_width(ui_px(160.0))
+            .with_max_width(ui_px(260.0)),
+        TableColumn::new("enabled", "Enabled")
+            .with_checkbox_editor()
+            .with_width(ui_px(104.0))
+            .with_min_width(ui_px(96.0))
+            .with_max_width(ui_px(128.0)),
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(128.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(180.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(84.0))
+            .with_min_width(ui_px(72.0))
+            .with_max_width(ui_px(120.0)),
+    ]
+}
+
+fn select_release_table_columns() -> [TableColumn; 4] {
+    [
+        TableColumn::new("name", "Name")
+            .with_width(ui_px(196.0))
+            .with_min_width(ui_px(160.0))
+            .with_max_width(ui_px(260.0)),
+        TableColumn::new("status", "Status")
+            .with_select_editor([
+                TableSelectOption::new("ready", "Ready"),
+                TableSelectOption::new("blocked", "Blocked"),
+            ])
+            .with_width(ui_px(132.0))
+            .with_min_width(ui_px(108.0))
+            .with_max_width(ui_px(184.0)),
+        TableColumn::new("team", "Team")
+            .with_width(ui_px(128.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(220.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(84.0))
+            .with_min_width(ui_px(72.0))
+            .with_max_width(ui_px(120.0)),
+    ]
+}
+
+fn multiline_edit_table_columns() -> [TableColumn; 4] {
+    [
+        TableColumn::new("name", "Name")
+            .with_width(ui_px(164.0))
+            .with_min_width(ui_px(132.0))
+            .with_max_width(ui_px(240.0)),
+        TableColumn::new("notes", "Notes")
+            .with_multiline_text_editor(3)
+            .with_width(ui_px(264.0))
+            .with_min_width(ui_px(220.0))
+            .with_max_width(ui_px(360.0)),
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(112.0))
+            .with_min_width(ui_px(96.0))
+            .with_max_width(ui_px(180.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(84.0))
+            .with_min_width(ui_px(72.0))
+            .with_max_width(ui_px(120.0)),
+    ]
 }
 
 fn table_columns() -> [TableColumn; 4] {
@@ -3615,10 +5599,71 @@ fn resizable_table_columns() -> [TableColumn; 4] {
     ]
 }
 
+fn content_fit_release_table_columns() -> [TableColumn; 4] {
+    [
+        TableColumn::new("name", "Name")
+            .with_text_editable(true)
+            .with_content_fit()
+            .with_min_width(ui_px(160.0))
+            .with_max_width(ui_px(320.0)),
+        TableColumn::new("team", "Team")
+            .with_width(ui_px(132.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(220.0)),
+        TableColumn::new("status", "Status")
+            .with_width(ui_px(128.0))
+            .with_min_width(ui_px(104.0))
+            .with_max_width(ui_px(220.0)),
+        TableColumn::new("score", "Score")
+            .with_width(ui_px(84.0))
+            .with_min_width(ui_px(72.0))
+            .with_max_width(ui_px(120.0))
+            .with_resizable(false),
+    ]
+}
+
+fn release_matrix_column_tree() -> Vec<TableColumnGroup> {
+    vec![TableColumnGroup::new(
+        "release",
+        "Release",
+        [
+            TableColumnGroup::new(
+                "identity",
+                "Identity",
+                [TableColumn::new("name", "Release")
+                    .with_hideable(false)
+                    .with_width(ui_px(172.0))
+                    .with_min_width(ui_px(140.0))
+                    .with_max_width(ui_px(260.0))],
+            ),
+            TableColumnGroup::new(
+                "metrics",
+                "Metrics",
+                (0..RELEASE_MATRIX_METRIC_COUNT).map(|index| {
+                    TableColumn::new(format!("metric_{index:02}"), format!("Metric {index:02}"))
+                        .with_width(ui_px(92.0 + (index % 4) as f32 * 12.0))
+                        .with_min_width(ui_px(72.0))
+                        .with_max_width(ui_px(180.0))
+                }),
+            ),
+            TableColumnGroup::new(
+                "delivery",
+                "Delivery",
+                [TableColumn::new("status", "Status")
+                    .with_hideable(false)
+                    .with_width(ui_px(148.0))
+                    .with_min_width(ui_px(112.0))
+                    .with_max_width(ui_px(220.0))],
+            ),
+        ],
+    )]
+}
+
 fn release_matrix_table_columns() -> Vec<TableColumn> {
     let mut columns = Vec::with_capacity(RELEASE_MATRIX_METRIC_COUNT + 2);
     columns.push(
         TableColumn::new("name", "Release")
+            .with_hideable(false)
             .with_width(ui_px(172.0))
             .with_min_width(ui_px(140.0))
             .with_max_width(ui_px(260.0)),
@@ -3632,6 +5677,7 @@ fn release_matrix_table_columns() -> Vec<TableColumn> {
     }));
     columns.push(
         TableColumn::new("status", "Status")
+            .with_hideable(false)
             .with_width(ui_px(148.0))
             .with_min_width(ui_px(112.0))
             .with_max_width(ui_px(220.0)),
@@ -3710,7 +5756,7 @@ fn dependency_tree_rows() -> Vec<TableRow> {
             .with_children([
                 dependency_tree_row(
                     "dependency-ui-table",
-                    "table.rs",
+                    "table/mod.rs",
                     "module",
                     "Components",
                     "high",
@@ -3741,7 +5787,7 @@ fn dependency_tree_rows() -> Vec<TableRow> {
             )
             .with_child(dependency_tree_row(
                 "dependency-core-table",
-                "table.rs",
+                "table/mod.rs",
                 "module",
                 "Foundation",
                 "medium",
@@ -3898,6 +5944,55 @@ fn release_resize_row(index: usize) -> TableRow {
         .with_cell("score", score)
 }
 
+fn editable_release_row(index: usize) -> TableRow {
+    let teams = ["UI", "Runtime", "Platform", "QA"];
+    let statuses = ["Draft", "Review", "Ready", "Held"];
+    let score = 320_usize.saturating_sub(index % 320);
+
+    TableRow::new(format!("editable-release-row-{index:03}"))
+        .with_cell("name", format!("Editable release {index:03}"))
+        .with_cell("team", teams[index % teams.len()])
+        .with_cell("status", statuses[(index / 4) % statuses.len()])
+        .with_cell("score", score)
+}
+
+fn toggle_release_row(index: usize) -> TableRow {
+    let statuses = ["Draft", "Review", "Ready", "Held"];
+    let score = 280_usize.saturating_sub(index % 280);
+
+    TableRow::new(format!("toggle-release-row-{index:03}"))
+        .with_cell("name", format!("Toggle release {index:03}"))
+        .with_cell("enabled", index.is_multiple_of(2))
+        .with_cell("status", statuses[(index / 4) % statuses.len()])
+        .with_cell("score", score)
+}
+
+fn select_release_row(index: usize) -> TableRow {
+    let statuses = ["ready", "blocked"];
+    let teams = ["UI", "Runtime", "Platform", "QA"];
+    let score = 260_usize.saturating_sub(index % 260);
+
+    TableRow::new(format!("select-release-row-{index:03}"))
+        .with_cell("name", format!("Select release {index:03}"))
+        .with_cell("status", statuses[index % statuses.len()])
+        .with_cell("team", teams[(index / 3) % teams.len()])
+        .with_cell("score", score)
+}
+
+fn multiline_release_row(index: usize) -> TableRow {
+    let statuses = ["Draft", "Review", "Ready", "Held"];
+    let score = 240_usize.saturating_sub(index % 240);
+
+    TableRow::new(format!("multiline-release-row-{index:03}"))
+        .with_cell("name", format!("Release note {index:03}"))
+        .with_cell(
+            "notes",
+            format!("User-visible summary {index:03}\nRollback: pending"),
+        )
+        .with_cell("status", statuses[(index / 3) % statuses.len()])
+        .with_cell("score", score)
+}
+
 fn filter_board_row(index: usize) -> TableRow {
     let team = if index.is_multiple_of(3) {
         "UI"
@@ -3927,6 +6022,20 @@ fn grouped_release_row(index: usize) -> TableRow {
         .with_cell("score", score)
 }
 
+fn grouped_custom_aggregation_row(index: usize) -> TableRow {
+    let status = ["Ready", "Review", "Blocked", "Verify"][index % 4];
+    let (team, score) = match index {
+        0..=3 => ("UI", index + 1),
+        _ => ("Platform", (index - 3) * 10),
+    };
+
+    TableRow::new(format!("grouped-custom-aggregation-row-{index:03}"))
+        .with_cell("name", format!("Custom aggregate {index:03}"))
+        .with_cell("team", team)
+        .with_cell("status", status)
+        .with_cell("score", score)
+}
+
 fn release_matrix_row(index: usize) -> TableRow {
     let statuses = ["Ready", "Review", "Build", "Verify", "Blocked"];
     let mut row = TableRow::new(format!("release-matrix-row-{index:03}"))
@@ -3937,6 +6046,22 @@ fn release_matrix_row(index: usize) -> TableRow {
         row = row.with_cell(
             format!("metric_{metric:02}"),
             (index + 1) * (metric + 3) % 997,
+        );
+    }
+
+    row
+}
+
+fn row_pinning_row(index: usize) -> TableRow {
+    let statuses = ["Queued", "Ready", "Review", "Blocked"];
+    let mut row = TableRow::new(format!("row-pinning-row-{index:03}"))
+        .with_cell("name", format!("Review lane {index:03}"))
+        .with_cell("status", statuses[(index / 4) % statuses.len()]);
+
+    for metric in 0..RELEASE_MATRIX_METRIC_COUNT {
+        row = row.with_cell(
+            format!("metric_{metric:02}"),
+            (index + 11) * (metric + 5) % 991,
         );
     }
 
@@ -4644,7 +6769,7 @@ pub fn listbox_samples(tokens: ThemeTokens) -> [ListboxSample; 2] {
     [
         ListboxSample {
             id: "assignee-listbox",
-            summary: "Grouped listbox with one disabled option and roving active metadata.",
+            summary: "Grouped listbox with shared roving navigation, typeahead, and one disabled option.",
             state: listbox_state(
                 Size::Medium,
                 false,
@@ -4746,7 +6871,7 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
     [
         SelectSample {
             id: "priority-select",
-            summary: "Open select keeps selected and active option state distinct.",
+            summary: "Open select keeps stable trigger selection distinct from popup active state.",
             state: select_state(
                 Size::Medium,
                 false,
@@ -4843,7 +6968,7 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
     [
         ComboboxSample {
             id: "framework-combobox",
-            summary: "Editable combobox keeps selected and active state distinct while filtering grouped options.",
+            summary: "Editable combobox keeps stable selected value while query filtering changes the visible list.",
             state: combobox_state(
                 Size::Medium,
                 false,
@@ -4952,7 +7077,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 4] {
     [
         command_sample_from_local(
             "ranked-search",
-            "Ranked query puts label and value matches ahead of keyword-only commands.",
+            "Ranked query keeps stable selected value while label and value matches outrank keyword-only commands.",
             Size::Medium,
             false,
             Some(true),

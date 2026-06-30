@@ -1,5 +1,6 @@
 //! Combobox component built from editable text input, overlay, and listbox state.
 
+use crate::choice;
 use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
@@ -23,8 +24,8 @@ use crate::listbox::{
     ListboxState,
 };
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, gpui_overlay_state,
-    outside_press_open_change,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
+    gpui_overlay_state, outside_press_open_change,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::text_input::adapter::TextInputController;
@@ -103,7 +104,7 @@ impl ComboboxOptionDescriptor {
     }
 
     fn matches_query(&self, query: &str) -> bool {
-        let query = normalize_query(query);
+        let query = choice::normalize_query(query);
         if query.is_empty() {
             return true;
         }
@@ -375,9 +376,13 @@ impl ComboboxState {
                 .iter()
                 .map(|group| group.options_ref().len())
                 .sum::<usize>();
-        let selected_option = selected_value
-            .and_then(|value| find_combobox_option(&raw_groups, &raw_options, value))
-            .filter(|option| !option.disabled_state());
+        let selected_option = choice::resolve_enabled_value(
+            &raw_options,
+            raw_groups.iter().map(|group| group.options_ref()),
+            selected_value,
+            ComboboxOptionDescriptor::value,
+            ComboboxOptionDescriptor::disabled_state,
+        );
         let selected_value = selected_option.map(|option| option.value().to_owned());
         let listbox = ListboxState::resolve(
             size,
@@ -944,8 +949,7 @@ impl RenderOnce for Combobox {
                             event.keystroke.key.as_str(),
                         ) {
                             ComboboxKeyboardAction::Navigate(value) => {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = true;
                                     runtime.active_value = Some(value);
@@ -957,8 +961,7 @@ impl RenderOnce for Combobox {
                                 }
                             }
                             ComboboxKeyboardAction::Select(selection) => {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
                                     runtime.selected_value = Some(selection.value().to_owned());
                                     runtime.active_value = Some(selection.value().to_owned());
@@ -975,8 +978,7 @@ impl RenderOnce for Combobox {
                                 }
                             }
                             ComboboxKeyboardAction::Open => {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = true;
                                 });
@@ -985,8 +987,7 @@ impl RenderOnce for Combobox {
                                 }
                             }
                             ComboboxKeyboardAction::Close => {
-                                cx.stop_propagation();
-                                window.prevent_default();
+                                consume_overlay_event(window, cx);
                                 close_combobox(runtime.clone(), on_open_change.clone(), window, cx);
                             }
                             ComboboxKeyboardAction::Ignore => {}
@@ -1205,8 +1206,7 @@ fn combobox_content_element(
         .aria_label(label)
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             if event.keystroke.key.as_str() == "escape" {
-                cx.stop_propagation();
-                window.prevent_default();
+                consume_overlay_event(window, cx);
                 close_combobox(
                     escape_runtime.clone(),
                     escape_open_change.clone(),
@@ -1331,26 +1331,6 @@ impl ComboboxGroup {
         }
         has_options.then_some(group)
     }
-}
-
-fn normalize_query(query: &str) -> String {
-    query.trim().to_lowercase()
-}
-
-fn find_combobox_option<'a>(
-    groups: &'a [ComboboxGroupDescriptor],
-    options: &'a [ComboboxOptionDescriptor],
-    value: &str,
-) -> Option<&'a ComboboxOptionDescriptor> {
-    options
-        .iter()
-        .find(|option| option.value() == value)
-        .or_else(|| {
-            groups
-                .iter()
-                .flat_map(ComboboxGroupDescriptor::options_ref)
-                .find(|option| option.value() == value)
-        })
 }
 
 impl ThemeResolver {
