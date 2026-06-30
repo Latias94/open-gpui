@@ -26,6 +26,12 @@ pub use crate::{
         resolve_outside_press,
     },
     sizing::{Density, Sizable, Size},
+    split::{
+        SplitTreeChild, SplitTreeNode, SplitterHandleLayout, SplitterHandleState, SplitterHitMap,
+        SplitterHitTarget, SplitterJunctionHitRegion, SplitterLayoutScene, SplitterMetrics,
+        SplitterPanelDescriptor, SplitterPanelLayout, SplitterPanelState, SplitterResizeOutcome,
+        SplitterResizeResult, SplitterState,
+    },
     table::{
         TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
         TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind,
