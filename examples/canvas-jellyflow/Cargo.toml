@@ -16,7 +16,9 @@ name = "open-gpui-canvas-jellyflow"
 path = "src/main.rs"
 
 [dependencies]
-jellyflow = { path = "../../../jellyflow/crates/jellyflow" }
+# Temporarily disabled while the example is kept out of the workspace; this
+# sibling checkout should not be pulled into open-gpui formatting or builds.
+# jellyflow = { path = "../../../jellyflow/crates/jellyflow" }
 open_gpui.workspace = true
 open_gpui_canvas.workspace = true
 open_gpui_platform.workspace = true

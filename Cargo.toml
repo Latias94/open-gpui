@@ -27,7 +27,9 @@ members = [
     "crates/util",
     "crates/util_macros",
     "examples/canvas-notes",
-    "examples/canvas-jellyflow",
+    # Temporarily kept out of the workspace because it depends on a sibling
+    # jellyflow checkout via a local path dependency.
+    # "examples/canvas-jellyflow",
     "examples/docking-native",
     "examples/smoke-native",
     "examples/ui-foundation-gallery",
