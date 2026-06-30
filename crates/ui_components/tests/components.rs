@@ -1979,9 +1979,8 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "on_row_activate",
             "on_row_expansion_request",
             "on_cell_edit_change",
-            "table_state",
             "state",
-            "render_plan",
+            "diagnostics",
         ],
         "TableFacetedFilter" => &[
             "new",
