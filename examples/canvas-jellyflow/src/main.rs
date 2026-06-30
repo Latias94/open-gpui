@@ -16,7 +16,7 @@ use jellyflow::{
             },
             connection::ConnectionHandleRef,
             geometry::{HandleBounds, HandlePosition},
-            measurement::NodeHandleMeasurementSource,
+            measurement::{NodeHandleMeasurementSource, NodeMeasurement, NodeMeasurementStatus},
         },
         schema::{
             MenuSurface, NodeChromeKind, NodeKindViewDescriptor, NodeKitRegistry, NodeRegistry,
@@ -26,22 +26,26 @@ use jellyflow::{
     },
 };
 use jellyflow_open_gpui::{
-    OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiControlPlan, OpenGpuiControlPrimitive,
-    OpenGpuiDynamicPortPolicy, OpenGpuiInspectorPlan, OpenGpuiInspectorSurface,
+    OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiBoundsCollector, OpenGpuiControlPlan,
+    OpenGpuiControlPrimitive, OpenGpuiDynamicPortPolicy, OpenGpuiInspectorPlan,
+    OpenGpuiInspectorSurface, OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource,
+    OpenGpuiMeasurementContext, OpenGpuiMeasurementId,
     OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource, OpenGpuiMenuPlan,
     OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout,
     OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
     OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
     OpenGpuiRepeatableSurfaceLayout as NodeRepeatableSurfaceLayout,
-    OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection,
-    project_actions_for_surface, project_inspectors_for_surface, project_menu,
-    project_node_measurement, project_slot_controls, repeatable_item_projection,
-    repeatable_surface_projection,
+    OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection, OpenGpuiViewBounds,
+    OpenGpuiViewPoint, OpenGpuiViewSize, layout_pass_measurement_from_regions,
+    measured_surface_anchors, project_actions_for_surface, project_inspectors_for_surface,
+    project_menu, project_node_measurement, project_slot_controls,
+    projected_node_surface_graph_layout, repeatable_item_projection, repeatable_surface_projection,
+    resolve_inspector_target_bounds,
 };
 use open_gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Pixels, Window,
-    WindowBounds, WindowOptions, div, point, prelude::*, px, rgb, size,
+    WindowBounds, WindowOptions, div, measured_element, point, prelude::*, px, rgb, size,
 };
 use open_gpui_canvas::{
     CanvasDocument, CanvasEditor, CanvasEditorInputHandler, CanvasEvent, CanvasHandle,
@@ -71,10 +75,21 @@ node-local slot/control/anchor regions during layout or prepaint.";
 
 struct JellyflowCanvasView {
     editor: CanvasEditor,
+    store: NodeGraphStore,
     focus_handle: FocusHandle,
     projection: ProjectionSummary,
     semantic_registry: NodeRegistry,
     node_kit_registry: NodeKitRegistry,
+    measured_regions: OpenGpuiBoundsCollector,
+    measurement_revision: u64,
+    measurement_frame_pending: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayoutPassMeasurementConsume {
+    NoRegions,
+    Unchanged,
+    Changed,
 }
 
 #[derive(Clone)]
@@ -122,6 +137,8 @@ struct NodeSurfaceSummary {
     blackboards: usize,
     repeatables: Vec<NodeRepeatableSurfaceProjection>,
     repeatable_items: Vec<NodeRepeatableItemProjection>,
+    measurement: Option<NodeMeasurement>,
+    inspector_target: Option<OpenGpuiInspectorTargetBounds>,
     node_data: Value,
 }
 
@@ -147,6 +164,7 @@ struct SelectedNodeSummary {
     detail: String,
     ports: String,
     inspectors: Vec<OpenGpuiInspectorPlan>,
+    inspector_target: Option<OpenGpuiInspectorTargetBounds>,
 }
 
 struct JellyflowNodeKind;
@@ -182,7 +200,22 @@ impl CanvasNodeRenderPolicy for JellyflowNodeKind {
 }
 
 impl Render for JellyflowCanvasView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let measurement_consume = self.consume_layout_pass_measurements();
+        self.measured_regions.clear();
+        if matches!(
+            measurement_consume,
+            LayoutPassMeasurementConsume::NoRegions | LayoutPassMeasurementConsume::Changed
+        ) && !self.measurement_frame_pending
+        {
+            self.measurement_frame_pending = true;
+            cx.on_next_frame(window, |this, window, cx| {
+                this.measurement_frame_pending = false;
+                window.refresh();
+                cx.notify();
+            });
+        }
+
         let model = CanvasPaintModel::from(&self.editor);
         let render_model = model.clone();
         let selected = self.selected_node_summary();
@@ -422,15 +455,19 @@ impl JellyflowCanvasView {
 
     fn render_node_surfaces(&self, model: &CanvasPaintModel) -> Vec<AnyElement> {
         let zoom = model.viewport().zoom;
+        let collector = self.measured_regions.clone();
         self.editor
             .document()
             .nodes()
             .filter_map(|node| {
                 let surface = self.node_surface_summary(node, zoom)?;
+                let jelly_node = jelly_node_id_from_node(node)?;
                 Some(
                     render_node_surface(
                         model.viewport().document_bounds_to_view(node.bounds()),
+                        jelly_node,
                         surface,
+                        collector.clone(),
                     )
                     .into_any_element(),
                 )
@@ -439,14 +476,17 @@ impl JellyflowCanvasView {
     }
 
     fn node_surface_summary(&self, node: &CanvasNode, zoom: f32) -> Option<NodeSurfaceSummary> {
+        let jelly_node = jelly_node_id_from_node(node)?;
         node_surface_summary_for_node(
             node,
+            jelly_node,
             zoom,
             self.editor
                 .selection()
                 .contains_node(&NodeId::from(node.id.as_str())),
             &self.semantic_registry,
             &self.node_kit_registry,
+            self.store.node_measurement(jelly_node),
         )
     }
 
@@ -454,6 +494,11 @@ impl JellyflowCanvasView {
         let id = self.editor.selection().selected_nodes().next()?;
         let node = self.editor.document().node(id)?;
         let inspectors = self.inspector_plans_for_canvas_node(node);
+        let jelly_node = jelly_node_id_from_node(node)?;
+        let measurement = self.store.node_measurement(jelly_node);
+        let inspector_target = inspectors.first().map(|inspector| {
+            resolve_inspector_target_bounds(inspector, measurement.as_ref(), None)
+        });
         Some(SelectedNodeSummary {
             id: node.id.as_str().to_string(),
             kind: data_string(node, "jellyflow_kind")
@@ -465,6 +510,7 @@ impl JellyflowCanvasView {
                 .to_string(),
             ports: format!("ports: {}", data_string(node, "ports").unwrap_or("none")),
             inspectors,
+            inspector_target,
         })
     }
 
@@ -546,6 +592,152 @@ impl JellyflowCanvasView {
     fn is_pointer_interacting(&self) -> bool {
         !self.editor.is_tool_state_idle()
     }
+
+    fn consume_layout_pass_measurements(&mut self) -> LayoutPassMeasurementConsume {
+        let regions = self.measured_regions.regions();
+        if regions.is_empty() {
+            return LayoutPassMeasurementConsume::NoRegions;
+        }
+
+        let mut changed = false;
+        let node_ids = self
+            .store
+            .graph()
+            .nodes()
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+
+        for node_id in node_ids {
+            let Some(node) = self.store.graph().nodes().get(&node_id).cloned() else {
+                continue;
+            };
+            let node_regions = regions
+                .iter()
+                .filter(|region| region.node == Some(node_id))
+                .cloned()
+                .collect::<Vec<_>>();
+            if node_regions.is_empty() {
+                continue;
+            }
+
+            let Some(canvas_node) = self
+                .editor
+                .document()
+                .node(&NodeId::from(canvas_node_id(&node_id)))
+            else {
+                continue;
+            };
+            let Some(descriptor) = self.semantic_registry.view_descriptor(&node.kind) else {
+                continue;
+            };
+            let node_size = node.size.unwrap_or(JellySize {
+                width: canvas_node.size.width.as_f32(),
+                height: canvas_node.size.height.as_f32(),
+            });
+            let fallback_layout = projected_node_surface_graph_layout(
+                &descriptor,
+                &node,
+                self.store.graph(),
+                &node_id,
+                node_size,
+            );
+            let fallback_anchors = measured_surface_anchors(
+                &descriptor,
+                self.store.graph(),
+                &node_id,
+                &fallback_layout,
+            );
+            let node_view_bounds = self
+                .editor
+                .viewport()
+                .document_bounds_to_view(canvas_node.bounds());
+            let context = OpenGpuiMeasurementContext::new(
+                node_id,
+                OpenGpuiViewPoint::new(
+                    node_view_bounds.origin.x.as_f32(),
+                    node_view_bounds.origin.y.as_f32(),
+                ),
+                1.0 / self.editor.viewport().zoom.max(f32::EPSILON),
+                node_size,
+            )
+            .with_revision(0);
+            let (mut measurement, _coverage) =
+                layout_pass_measurement_from_regions(context, node_regions, fallback_anchors);
+            let existing = self.store.node_measurement(node_id);
+            assign_layout_pass_revision(
+                self.store.node_measurement_status(node_id),
+                existing.as_ref(),
+                &mut measurement,
+                &mut self.measurement_revision,
+            );
+            let outcome = self.store.report_node_measurement(measurement);
+            if let Ok(outcome) = outcome {
+                changed |= outcome.changed();
+            }
+        }
+
+        if changed {
+            self.refresh_editor_from_store();
+            LayoutPassMeasurementConsume::Changed
+        } else {
+            LayoutPassMeasurementConsume::Unchanged
+        }
+    }
+
+    fn refresh_editor_from_store(&mut self) {
+        let selection = self
+            .editor
+            .selection()
+            .selected_nodes()
+            .next()
+            .map(|id| id.clone());
+        let Ok((document, projection)) = project_store(&self.store) else {
+            return;
+        };
+        let Ok(mut editor) =
+            CanvasEditor::try_new_with_kind_registry(document, jellyflow_kind_registry())
+        else {
+            return;
+        };
+        if let Some(id) = selection {
+            let _ = editor.apply_tool_intent(CanvasToolIntent::ReplaceSelection(HitTarget::Node(
+                id.clone(),
+            )));
+        }
+        self.editor = editor;
+        self.projection = projection;
+    }
+}
+
+fn assign_layout_pass_revision(
+    status: NodeMeasurementStatus,
+    existing: Option<&NodeMeasurement>,
+    measurement: &mut NodeMeasurement,
+    next_revision: &mut u64,
+) {
+    if status.is_fresh()
+        && let Some(existing) = existing
+        && node_measurement_regions_match(existing, measurement)
+    {
+        measurement.revision = existing.revision;
+        return;
+    }
+
+    let floor = existing
+        .map(|measurement| measurement.revision)
+        .unwrap_or(0);
+    *next_revision = (*next_revision).max(floor).saturating_add(1);
+    measurement.revision = *next_revision;
+}
+
+fn node_measurement_regions_match(left: &NodeMeasurement, right: &NodeMeasurement) -> bool {
+    left.node == right.node
+        && left.density == right.density
+        && left.size == right.size
+        && left.handles == right.handles
+        && left.slots == right.slots
+        && left.anchors == right.anchors
 }
 
 fn render_selected_inspector_panel(summary: &SelectedNodeSummary) -> AnyElement {
@@ -564,6 +756,13 @@ fn render_selected_inspector_panel(summary: &SelectedNodeSummary) -> AnyElement 
         .border_color(rgb(0xe2e8f0))
         .pt_3()
         .child(div().text_xs().text_color(rgb(0x64748b)).child("Inspector"))
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(0x64748b))
+                .truncate()
+                .child(inspector_target_status_label(summary.inspector_target)),
+        )
         .when(inspectors.is_empty(), |this| {
             this.child(
                 div()
@@ -662,7 +861,12 @@ fn render_inspector_card(inspector: &OpenGpuiInspectorPlan) -> AnyElement {
         .into_any_element()
 }
 
-fn render_node_surface(bounds: Bounds<Pixels>, surface: NodeSurfaceSummary) -> impl IntoElement {
+fn render_node_surface(
+    bounds: Bounds<Pixels>,
+    node_id: JellyNodeId,
+    surface: NodeSurfaceSummary,
+    collector: OpenGpuiBoundsCollector,
+) -> impl IntoElement {
     let zoom = surface.zoom;
     let pad = if zoom >= 1.0 { px(10.0) } else { px(8.0) };
     let top = bounds.top() + pad;
@@ -778,30 +982,69 @@ fn render_node_surface(bounds: Bounds<Pixels>, surface: NodeSurfaceSummary) -> i
                 .flex_shrink_1()
                 .min_w(px(0.0))
                 .child(format!(
-                    "a{} m{} i{} b{} · {} plans",
+                    "a{} m{} i{} b{} · {} plans · {}",
                     surface.actions,
                     surface.menus,
                     surface.inspectors,
                     surface.blackboards,
-                    surface_action_plan_count(&surface)
+                    surface_action_plan_count(&surface),
+                    surface_measurement_summary(&surface)
                 )),
         )
         .children(render_surface_chrome(&surface, bounds))
+        .child(render_inspector_target_highlight(
+            &surface,
+            inner_width,
+            inner_height,
+        ))
         .children(render_surface_slots(
+            node_id,
             component_layout,
             surface.document_bounds,
             surface.node_data.clone(),
             inner_width,
             inner_height,
+            collector,
         ))
+}
+
+fn render_inspector_target_highlight(
+    surface: &NodeSurfaceSummary,
+    view_width: Pixels,
+    view_height: Pixels,
+) -> AnyElement {
+    let Some(target) = surface.inspector_target else {
+        return div().into_any_element();
+    };
+    if target.source != OpenGpuiInspectorTargetSource::Measured {
+        return div().into_any_element();
+    }
+    let Some(rect) = target.rect else {
+        return div().into_any_element();
+    };
+    let rect = slot_view_rect(rect, surface.document_bounds, view_width, view_height);
+
+    div()
+        .absolute()
+        .left(rect.origin.x)
+        .top(rect.origin.y)
+        .w(rect.size.width)
+        .h(rect.size.height)
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(0x2563eb))
+        .bg(rgb(0xdbeafe))
+        .into_any_element()
 }
 
 fn node_surface_summary_for_node(
     node: &CanvasNode,
+    jelly_node: JellyNodeId,
     zoom: f32,
     selected: bool,
     semantic_registry: &NodeRegistry,
     node_kit_registry: &NodeKitRegistry,
+    measurement: Option<NodeMeasurement>,
 ) -> Option<NodeSurfaceSummary> {
     let kind = NodeKindKey::new(data_string(node, "jellyflow_kind").unwrap_or(node.kind.as_str()));
     let descriptor = semantic_registry.view_descriptor(&kind)?;
@@ -817,17 +1060,13 @@ fn node_surface_summary_for_node(
         .collect();
     let document_bounds = jelly_rect_from_bounds(node.bounds());
     let chrome = resolve_node_chrome_facts(
-        NodeChromeFactsRequest::new(
-            jelly_node_id_from_node(node)?,
-            document_bounds,
-            &descriptor.chrome,
-        )
-        .with_state(NodeChromeState {
-            selected,
-            hovered: false,
-            focused: false,
-        })
-        .with_policy(NodeChromeLayoutPolicy::default().with_zoom(zoom)),
+        NodeChromeFactsRequest::new(jelly_node, document_bounds, &descriptor.chrome)
+            .with_state(NodeChromeState {
+                selected,
+                hovered: false,
+                focused: false,
+            })
+            .with_policy(NodeChromeLayoutPolicy::default().with_zoom(zoom)),
     )
     .map(|facts| facts.chrome)
     .unwrap_or_default();
@@ -837,6 +1076,19 @@ fn node_surface_summary_for_node(
         .to_string();
     let action_menus = node_action_menus(&descriptor);
     let toolbar_menu = node_toolbar_menu(&descriptor);
+    let inspector_target = if selected {
+        project_inspectors_for_surface(
+            &descriptor,
+            &data,
+            &OpenGpuiInspectorSurface::Node {
+                node_kind: descriptor.kind.0.clone(),
+            },
+        )
+        .first()
+        .map(|inspector| resolve_inspector_target_bounds(inspector, measurement.as_ref(), None))
+    } else {
+        None
+    };
 
     Some(NodeSurfaceSummary {
         node_kind: descriptor.kind.0.clone(),
@@ -858,6 +1110,8 @@ fn node_surface_summary_for_node(
         blackboards: descriptor.blackboards.len(),
         repeatables,
         repeatable_items,
+        measurement,
+        inspector_target,
         node_data: data,
     })
 }
@@ -871,6 +1125,28 @@ fn render_surface_chrome(
         .iter()
         .filter_map(|chrome| render_node_chrome(chrome, surface, view_bounds))
         .collect()
+}
+
+fn surface_measurement_summary(surface: &NodeSurfaceSummary) -> String {
+    surface
+        .measurement
+        .as_ref()
+        .map(|measurement| {
+            format!(
+                "measured s{} a{}",
+                measurement.slots.len(),
+                measurement.anchors.len()
+            )
+        })
+        .unwrap_or_else(|| "projection fallback".to_string())
+}
+
+fn inspector_target_status_label(target: Option<OpenGpuiInspectorTargetBounds>) -> &'static str {
+    match target.map(|target| target.source) {
+        Some(OpenGpuiInspectorTargetSource::Measured) => "target: measured layout-pass bounds",
+        Some(OpenGpuiInspectorTargetSource::Fallback) => "target: projection fallback bounds",
+        Some(OpenGpuiInspectorTargetSource::Missing) | None => "target: missing bounds",
+    }
 }
 
 fn render_surface_action_summary(surface: &NodeSurfaceSummary) -> AnyElement {
@@ -1159,38 +1435,72 @@ fn chrome_view_bounds(
 }
 
 fn render_surface_slots(
+    node_id: JellyNodeId,
     layout: NodeSurfaceComponentLayout,
     document_bounds: JellyRect,
     node_data: Value,
     view_width: Pixels,
     view_height: Pixels,
+    collector: OpenGpuiBoundsCollector,
 ) -> Vec<AnyElement> {
     let mut elements = layout
         .slots
         .into_iter()
-        .map(|slot| render_node_slot(slot, document_bounds, &node_data, view_width, view_height))
+        .map(|slot| {
+            render_node_slot(
+                node_id,
+                slot,
+                document_bounds,
+                &node_data,
+                view_width,
+                view_height,
+                collector.clone(),
+            )
+        })
         .map(|slot| slot.into_any_element())
         .collect::<Vec<_>>();
     elements.extend(layout.repeatable_items.into_iter().map(|repeatable| {
-        render_repeatable_item_row(repeatable, document_bounds, view_width, view_height)
-            .into_any_element()
+        render_repeatable_item_row(
+            node_id,
+            repeatable,
+            document_bounds,
+            view_width,
+            view_height,
+            collector.clone(),
+        )
+        .into_any_element()
     }));
     elements.extend(layout.repeatables.into_iter().map(|repeatable| {
-        render_repeatable_row(repeatable, document_bounds, view_width, view_height)
-            .into_any_element()
+        render_repeatable_row(
+            node_id,
+            repeatable,
+            document_bounds,
+            view_width,
+            view_height,
+            collector.clone(),
+        )
+        .into_any_element()
     }));
     elements
 }
 
 fn render_node_slot(
+    node_id: JellyNodeId,
     slot_layout: NodeSurfaceSlotLayout,
     document_bounds: JellyRect,
     node_data: &Value,
     view_width: Pixels,
     view_height: Pixels,
+    collector: OpenGpuiBoundsCollector,
 ) -> impl IntoElement {
     let slot = slot_layout.slot;
     let rect = slot_view_rect(slot_layout.rect, document_bounds, view_width, view_height);
+    let slot_key = slot.key.clone();
+    let anchor_key = slot_layout
+        .descriptor
+        .as_ref()
+        .and_then(|descriptor| descriptor.anchor.clone())
+        .unwrap_or_else(|| slot_key.clone());
     let fill = match slot.kind {
         NodeSurfaceSlotKind::Header => rgb(0xe0f2fe),
         NodeSurfaceSlotKind::Body => rgb(0xf1f5f9),
@@ -1218,7 +1528,7 @@ fn render_node_slot(
     };
     let status = if slot.visible { "visible" } else { "hidden" };
 
-    div()
+    let row = div()
         .absolute()
         .left(rect.origin.x)
         .top(rect.origin.y)
@@ -1237,11 +1547,30 @@ fn render_node_slot(
         .overflow_hidden()
         .child(render_slot_label(&slot, label, status))
         .child(render_slot_value(
+            node_id,
             &slot,
             slot_layout.descriptor.as_ref(),
             node_data,
             value,
+            collector.clone(),
         ))
+        .child(render_slot_anchor_measurement(
+            node_id,
+            anchor_key,
+            slot_anchor_view_rect(
+                slot_layout.anchor_rect,
+                document_bounds,
+                view_width,
+                view_height,
+            ),
+            collector.clone(),
+        ));
+
+    render_measured_region(
+        OpenGpuiMeasurementId::slot(node_id, slot_key),
+        collector,
+        row,
+    )
 }
 
 fn slot_view_rect(
@@ -1261,6 +1590,52 @@ fn slot_view_rect(
             px((rect.size.width / width * view_width.as_f32()).max(1.0)),
             px((rect.size.height / height * view_height.as_f32()).max(1.0)),
         ),
+    )
+}
+
+fn slot_anchor_view_rect(
+    rect: JellyRect,
+    document_bounds: JellyRect,
+    view_width: Pixels,
+    view_height: Pixels,
+) -> Bounds<Pixels> {
+    slot_view_rect(rect, document_bounds, view_width, view_height)
+}
+
+fn gpui_view_bounds(bounds: Bounds<Pixels>) -> OpenGpuiViewBounds {
+    OpenGpuiViewBounds::new(
+        OpenGpuiViewPoint::new(bounds.origin.x.as_f32(), bounds.origin.y.as_f32()),
+        OpenGpuiViewSize::new(bounds.size.width.as_f32(), bounds.size.height.as_f32()),
+    )
+}
+
+fn render_measured_region(
+    id: OpenGpuiMeasurementId,
+    collector: OpenGpuiBoundsCollector,
+    child: impl IntoElement,
+) -> AnyElement {
+    let element_id = id.element_id();
+    measured_element(element_id, child, move |_, bounds, global_id, _, _| {
+        collector.record_id(id.clone(), gpui_view_bounds(bounds), global_id);
+    })
+    .into_any_element()
+}
+
+fn render_slot_anchor_measurement(
+    node_id: JellyNodeId,
+    anchor_key: String,
+    rect: Bounds<Pixels>,
+    collector: OpenGpuiBoundsCollector,
+) -> AnyElement {
+    render_measured_region(
+        OpenGpuiMeasurementId::anchor(node_id, anchor_key),
+        collector,
+        div()
+            .absolute()
+            .left(rect.origin.x)
+            .top(rect.origin.y)
+            .w(rect.size.width)
+            .h(rect.size.height),
     )
 }
 
@@ -1300,15 +1675,18 @@ fn render_slot_label(
 }
 
 fn render_slot_value(
+    node_id: JellyNodeId,
     slot: &NodeSurfaceSlotProjection,
     descriptor: Option<&NodeSurfaceSlotDescriptor>,
     node_data: &Value,
     value: String,
+    collector: OpenGpuiBoundsCollector,
 ) -> AnyElement {
     if let Some(descriptor) = descriptor
         && !descriptor.controls.is_empty()
     {
-        return render_slot_controls(descriptor, node_data, &value).into_any_element();
+        return render_slot_controls(node_id, descriptor, node_data, &value, collector)
+            .into_any_element();
     }
 
     match slot.kind {
@@ -1342,16 +1720,26 @@ fn render_slot_value(
 }
 
 fn render_slot_controls(
+    node_id: JellyNodeId,
     descriptor: &NodeSurfaceSlotDescriptor,
     node_data: &Value,
     value: &str,
+    collector: OpenGpuiBoundsCollector,
 ) -> impl IntoElement {
     let plans = project_slot_controls(node_data, descriptor);
     let controls = plans
         .iter()
         .take(2)
         .enumerate()
-        .map(|(index, control)| render_control_plan(control, index))
+        .map(|(index, control)| {
+            render_node_control_plan(
+                node_id,
+                descriptor.key.as_str(),
+                control,
+                index,
+                collector.clone(),
+            )
+        })
         .collect::<Vec<_>>();
 
     div()
@@ -1370,6 +1758,20 @@ fn render_slot_controls(
                 .child(format!("{value} · {}", plans.len())),
         )
         .children(controls)
+}
+
+fn render_node_control_plan(
+    node_id: JellyNodeId,
+    slot_key: &str,
+    control: &OpenGpuiControlPlan,
+    index: usize,
+    collector: OpenGpuiBoundsCollector,
+) -> AnyElement {
+    render_measured_region(
+        OpenGpuiMeasurementId::control_in_slot(node_id, slot_key, control.key.clone()),
+        collector,
+        render_control_plan(control, index),
+    )
 }
 
 fn render_control_plan(control: &OpenGpuiControlPlan, index: usize) -> AnyElement {
@@ -1539,13 +1941,16 @@ fn render_action_buttons(slot: &NodeSurfaceSlotProjection, value: &str) -> impl 
 }
 
 fn render_repeatable_row(
+    node_id: JellyNodeId,
     repeatable: NodeRepeatableSurfaceLayout,
     document_bounds: JellyRect,
     view_width: Pixels,
     view_height: Pixels,
+    collector: OpenGpuiBoundsCollector,
 ) -> impl IntoElement {
     let rect = slot_view_rect(repeatable.rect, document_bounds, view_width, view_height);
-    div()
+    let key = repeatable.projection.key.clone();
+    let row = div()
         .absolute()
         .left(rect.origin.x)
         .top(rect.origin.y)
@@ -1581,16 +1986,29 @@ fn render_repeatable_row(
             )
             .variant(BadgeVariant::Outline)
             .with_size(Size::XSmall),
-        )
+        );
+
+    render_measured_region(OpenGpuiMeasurementId::slot(node_id, key), collector, row)
 }
 
 fn render_repeatable_item_row(
+    node_id: JellyNodeId,
     repeatable: NodeRepeatableItemLayout,
     document_bounds: JellyRect,
     view_width: Pixels,
     view_height: Pixels,
+    collector: OpenGpuiBoundsCollector,
 ) -> impl IntoElement {
     let rect = slot_view_rect(repeatable.rect, document_bounds, view_width, view_height);
+    let anchor_rect = slot_anchor_view_rect(
+        repeatable.anchor_rect,
+        document_bounds,
+        view_width,
+        view_height,
+    );
+    let slot_key = repeatable.projection.slot_key.clone();
+    let item_id = repeatable.projection.item_id.clone();
+    let anchor = repeatable.projection.anchor.clone();
     let fill = if repeatable.projection.has_graph_port() {
         rgb(0xecfeff)
     } else {
@@ -1608,7 +2026,7 @@ fn render_repeatable_item_row(
         .map(|port| format!("port {}", port.0))
         .unwrap_or_else(|| "display".to_string());
 
-    div()
+    let row = div()
         .absolute()
         .left(rect.origin.x)
         .top(rect.origin.y)
@@ -1648,6 +2066,18 @@ fn render_repeatable_item_row(
             .variant(BadgeVariant::Outline)
             .with_size(Size::XSmall),
         )
+        .child(render_slot_anchor_measurement(
+            node_id,
+            anchor,
+            anchor_rect,
+            collector.clone(),
+        ));
+
+    render_measured_region(
+        OpenGpuiMeasurementId::repeatable_item(node_id, slot_key, item_id),
+        collector,
+        row,
+    )
 }
 
 fn adapter_slot_limit_for_height(inner_height: Pixels, semantic_slot_limit: usize) -> usize {
@@ -1857,7 +2287,7 @@ fn project_store(
     let graph = store.graph();
     let kit_registry = NodeKitRegistry::builtin();
     let semantic_registry = kit_registry.node_registry();
-    let measured_store = projection_measurement_store(store, &semantic_registry);
+    let measured_store = measurement_store_with_projection_fallback(store, &semantic_registry);
     let mut builder = CanvasDocument::builder();
 
     for (id, node) in graph.nodes().iter() {
@@ -2102,7 +2532,7 @@ fn project_node(
     canvas_node
 }
 
-fn projection_measurement_store(
+fn measurement_store_with_projection_fallback(
     store: &NodeGraphStore,
     semantic_registry: &NodeRegistry,
 ) -> NodeGraphStore {
@@ -2112,11 +2542,30 @@ fn projection_measurement_store(
         NodeGraphEditorConfig::default(),
     );
 
+    let existing_measurements = store
+        .graph()
+        .nodes()
+        .keys()
+        .filter_map(|id| match store.node_measurement_status(*id) {
+            NodeMeasurementStatus::Fresh { .. } => store.node_measurement(*id),
+            NodeMeasurementStatus::Missing | NodeMeasurementStatus::Dirty { .. } => None,
+        })
+        .collect::<Vec<_>>();
+
+    for measurement in existing_measurements {
+        measured_store
+            .report_node_measurement(measurement)
+            .expect("live GPUI measurement should match the graph");
+    }
+
     let measurements = measured_store
         .graph()
         .nodes()
         .iter()
         .filter_map(|(id, node)| {
+            if measured_store.node_measurement(*id).is_some() {
+                return None;
+            }
             let descriptor = semantic_registry.view_descriptor(&node.kind)?;
             Some(project_node_measurement(
                 id,
@@ -2204,7 +2653,7 @@ fn jellyflow_kind_registry() -> CanvasKindRegistry {
     registry
 }
 
-fn demo_editor() -> (CanvasEditor, ProjectionSummary) {
+fn demo_state() -> (NodeGraphStore, CanvasEditor, ProjectionSummary) {
     let store = make_demo_store();
     let (document, projection) = project_store(&store).expect("demo graph should project");
     let mut editor = CanvasEditor::try_new_with_kind_registry(document, jellyflow_kind_registry())
@@ -2214,7 +2663,7 @@ fn demo_editor() -> (CanvasEditor, ProjectionSummary) {
             NodeId::from(canvas_node_id(&JellyNodeId::from_u128(INITIAL_SELECTION))),
         )))
         .expect("initial selection should exist");
-    (editor, projection)
+    (store, editor, projection)
 }
 
 fn canvas_value_from_json(value: Value) -> open_gpui_canvas::CanvasValue {
@@ -2438,7 +2887,7 @@ fn port_y(index: usize, count: usize, height: f32) -> f32 {
 fn main() {
     application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(CANVAS_WIDTH), px(CANVAS_HEIGHT)), cx);
-        let (editor, projection) = demo_editor();
+        let (store, editor, projection) = demo_state();
         let node_kit_registry = NodeKitRegistry::builtin();
         let semantic_registry = node_kit_registry.node_registry();
 
@@ -2450,10 +2899,14 @@ fn main() {
             |_, cx| {
                 cx.new(|cx| JellyflowCanvasView {
                     editor,
+                    store,
                     focus_handle: cx.focus_handle(),
                     projection,
                     semantic_registry,
                     node_kit_registry,
+                    measured_regions: OpenGpuiBoundsCollector::new(),
+                    measurement_revision: 1,
+                    measurement_frame_pending: false,
                 })
             },
         )
@@ -2467,7 +2920,10 @@ fn main() {
 mod tests {
     use super::*;
     use jellyflow::runtime::{
-        runtime::measurement::{MeasuredSurfaceAnchor, NodeMeasurement},
+        runtime::measurement::{
+            MeasuredSurfaceAnchor, NodeInternalsInvalidation, NodeInternalsInvalidationReason,
+            NodeMeasurement,
+        },
         schema::NodeControlKind,
     };
     use jellyflow_open_gpui::{
@@ -2476,6 +2932,9 @@ mod tests {
         testing::{
             assert_authoring_interaction_regression_gates, assert_product_fixture_regression_gates,
         },
+    };
+    use open_gpui_canvas::{
+        CanvasConnectionEndpointRole, CanvasGeometryFacts, CanvasRuntime, connection_hit_options,
     };
 
     #[test]
@@ -2546,7 +3005,7 @@ mod tests {
 
     #[test]
     fn semantic_chrome_projects_into_gpui_node_surface_summary() {
-        let (editor, _) = demo_editor();
+        let (_store, editor, _) = demo_state();
         let node_kit_registry = NodeKitRegistry::builtin();
         let semantic_registry = node_kit_registry.node_registry();
         let model = CanvasPaintModel::from(&editor);
@@ -2574,10 +3033,12 @@ mod tests {
         );
         let surface = node_surface_summary_for_node(
             node,
+            JellyNodeId::from_u128(3),
             model.viewport().zoom,
             true,
             &semantic_registry,
             &node_kit_registry,
+            None,
         )
         .expect("llm surface summary");
 
@@ -2655,10 +3116,12 @@ mod tests {
             .expect("shader-card canvas node exists");
         let surface = node_surface_summary_for_node(
             shader_node,
+            jelly_node_id_from_node(shader_node).expect("shader jelly node id"),
             1.0,
             false,
             &semantic_registry,
             &node_kit_registry,
+            None,
         )
         .expect("shader surface summary");
 
@@ -2700,10 +3163,12 @@ mod tests {
             .expect("shader-card canvas node exists");
         let surface = node_surface_summary_for_node(
             shader_node,
+            node_id,
             1.0,
             false,
             &semantic_registry,
             &node_kit_registry,
+            None,
         )
         .expect("shader surface summary");
 
@@ -2838,10 +3303,12 @@ mod tests {
             .expect("table-card canvas node exists");
         let surface = node_surface_summary_for_node(
             table_node,
+            jelly_node_id_from_node(table_node).expect("table jelly node id"),
             1.0,
             true,
             &semantic_registry,
             &node_kit_registry,
+            None,
         )
         .expect("table surface summary");
 
@@ -2953,8 +3420,199 @@ mod tests {
 
     #[test]
     fn projected_handles_use_runtime_measurement_facts() {
-        let store = make_demo_store();
+        let (measured_store, transform, prompt, completion) = measured_transform_store();
         let semantic_registry = NodeKitRegistry::builtin().node_registry();
+
+        let node = measured_store.graph().nodes().get(&transform).unwrap();
+        let canvas_node = project_node(
+            &transform,
+            node,
+            measured_store.graph(),
+            &measured_store,
+            &semantic_registry,
+        );
+        let prompt_handle = canvas_node
+            .handles
+            .iter()
+            .find(|handle| handle.id.as_str() == canvas_port_id(&prompt))
+            .unwrap();
+        let completion_handle = canvas_node
+            .handles
+            .iter()
+            .find(|handle| handle.id.as_str() == canvas_port_id(&completion))
+            .unwrap();
+
+        assert_eq!(prompt_handle.position, point(px(0.0), px(51.0)));
+        assert_eq!(completion_handle.position, point(px(268.0), px(150.0)));
+        let resolution = measured_store.resolve_node_handle_measurement(ConnectionHandleRef::new(
+            transform,
+            prompt,
+            PortDirection::In,
+        ));
+        assert!(matches!(
+            resolution.source,
+            NodeHandleMeasurementSource::MeasuredAnchor { .. }
+        ));
+    }
+
+    #[test]
+    fn canvas_hit_testing_uses_measured_handle_positions_for_connection_targets() {
+        let (measured_store, transform, prompt, _) = measured_transform_store();
+        let (document, _) = project_store(&measured_store).expect("measured graph projects");
+        let runtime =
+            CanvasRuntime::rebuild_with_kind_registry(&document, &jellyflow_kind_registry());
+        let node = document
+            .node(&NodeId::from(canvas_node_id(&transform)))
+            .expect("transform canvas node");
+        let measured_prompt_point = node.position + point(px(0.0), px(51.0));
+
+        let hits = runtime
+            .precise_hit_test_with_kind_registry(
+                &document,
+                &jellyflow_kind_registry(),
+                measured_prompt_point,
+                connection_hit_options(),
+            )
+            .map(|record| record.target.clone())
+            .collect::<Vec<_>>();
+
+        assert!(hits.contains(&HitTarget::Handle {
+            node_id: NodeId::from(canvas_node_id(&transform)),
+            handle_id: open_gpui_canvas::HandleId::from(canvas_port_id(&prompt)),
+        }));
+    }
+
+    #[test]
+    fn dirty_live_measurements_downgrade_to_projection_until_next_layout_pass() {
+        let (mut measured_store, transform, prompt, _) = measured_transform_store();
+        assert_eq!(
+            measured_store.node_measurement_status(transform),
+            NodeMeasurementStatus::Fresh { revision: 7 }
+        );
+        let semantic_registry = NodeKitRegistry::builtin().node_registry();
+        let projection_store =
+            measurement_store_with_projection_fallback(&make_demo_store(), &semantic_registry);
+        let expected = projection_store
+            .resolve_node_handle_measurement(ConnectionHandleRef::new(
+                transform,
+                prompt,
+                PortDirection::In,
+            ))
+            .bounds
+            .map(handle_position_from_bounds)
+            .expect("projection fallback prompt handle");
+        assert_eq!(
+            measured_store.invalidate_node_internals(NodeInternalsInvalidation::one(
+                transform,
+                NodeInternalsInvalidationReason::DataChanged
+            )),
+            jellyflow::runtime::runtime::measurement::NodeMeasurementOutcome::Changed
+        );
+        let (document, _) = project_store(&measured_store).expect("dirty graph projects");
+        let node = document
+            .node(&NodeId::from(canvas_node_id(&transform)))
+            .expect("transform canvas node");
+        let prompt_handle = node
+            .handle(Some(&open_gpui_canvas::HandleId::from(canvas_port_id(
+                &prompt,
+            ))))
+            .expect("prompt handle");
+
+        assert_eq!(
+            prompt_handle.position,
+            point(px(expected.x), px(expected.y)),
+            "dirty measured anchor should not override projection fallback"
+        );
+    }
+
+    #[test]
+    fn unchanged_layout_pass_measurements_reuse_revision() {
+        let node = JellyNodeId::from_u128(3);
+        let mut next_revision = 7;
+        let mut measurement = NodeMeasurement::new(node)
+            .with_revision(0)
+            .with_size(Some(JellySize {
+                width: 120.0,
+                height: 80.0,
+            }))
+            .with_anchors([MeasuredSurfaceAnchor::new(
+                "prompt.measured",
+                JellyRect {
+                    origin: JellyPoint { x: 0.0, y: 24.0 },
+                    size: JellySize {
+                        width: 16.0,
+                        height: 18.0,
+                    },
+                },
+                HandlePosition::Left,
+            )
+            .with_port_key(PortKey::new("prompt"))]);
+        let existing = measurement.clone().with_revision(7);
+
+        assign_layout_pass_revision(
+            NodeMeasurementStatus::Fresh { revision: 7 },
+            Some(&existing),
+            &mut measurement,
+            &mut next_revision,
+        );
+
+        assert_eq!(measurement.revision, 7);
+        assert_eq!(next_revision, 7);
+
+        assign_layout_pass_revision(
+            NodeMeasurementStatus::Dirty {
+                revision: 7,
+                reason: NodeInternalsInvalidationReason::DataChanged,
+            },
+            Some(&existing),
+            &mut measurement,
+            &mut next_revision,
+        );
+
+        assert_eq!(measurement.revision, 8);
+        assert_eq!(next_revision, 8);
+    }
+
+    #[test]
+    fn invalid_connection_feedback_uses_measured_handle_positions() {
+        let (measured_store, transform, _, completion) = measured_transform_store();
+        let (document, _) = project_store(&measured_store).expect("measured graph projects");
+        let registry = jellyflow_kind_registry();
+        let runtime = CanvasRuntime::rebuild_with_kind_registry(&document, &registry);
+        let facts = CanvasGeometryFacts::with_kind_registry(&document, &registry);
+        let node = document
+            .node(&NodeId::from(canvas_node_id(&transform)))
+            .expect("transform canvas node");
+        let measured_completion_point = node.position + point(px(268.0), px(150.0));
+        let records = runtime
+            .precise_hit_test_with_kind_registry(
+                &document,
+                &registry,
+                measured_completion_point,
+                connection_hit_options(),
+            )
+            .collect::<Vec<_>>();
+
+        assert!(records.iter().any(|record| {
+            record.target
+                == HitTarget::Handle {
+                    node_id: NodeId::from(canvas_node_id(&transform)),
+                    handle_id: open_gpui_canvas::HandleId::from(canvas_port_id(&completion)),
+                }
+        }));
+        assert!(
+            facts
+                .connection_endpoint_at(
+                    records.iter().copied(),
+                    CanvasConnectionEndpointRole::Target
+                )
+                .is_none(),
+            "the measured source handle should be visible for hover but rejected as an invalid target"
+        );
+    }
+
+    fn measured_transform_store() -> (NodeGraphStore, JellyNodeId, JellyPortId, JellyPortId) {
+        let store = make_demo_store();
         let transform = JellyNodeId::from_u128(3);
         let prompt = JellyPortId::from_u128(30);
         let completion = JellyPortId::from_u128(31);
@@ -3002,36 +3660,7 @@ mod tests {
             )
             .unwrap();
 
-        let node = measured_store.graph().nodes().get(&transform).unwrap();
-        let canvas_node = project_node(
-            &transform,
-            node,
-            measured_store.graph(),
-            &measured_store,
-            &semantic_registry,
-        );
-        let prompt_handle = canvas_node
-            .handles
-            .iter()
-            .find(|handle| handle.id.as_str() == canvas_port_id(&prompt))
-            .unwrap();
-        let completion_handle = canvas_node
-            .handles
-            .iter()
-            .find(|handle| handle.id.as_str() == canvas_port_id(&completion))
-            .unwrap();
-
-        assert_eq!(prompt_handle.position, point(px(0.0), px(51.0)));
-        assert_eq!(completion_handle.position, point(px(268.0), px(150.0)));
-        let resolution = measured_store.resolve_node_handle_measurement(ConnectionHandleRef::new(
-            transform,
-            prompt,
-            PortDirection::In,
-        ));
-        assert!(matches!(
-            resolution.source,
-            NodeHandleMeasurementSource::MeasuredAnchor { .. }
-        ));
+        (measured_store, transform, prompt, completion)
     }
 
     #[test]
