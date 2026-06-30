@@ -22,8 +22,9 @@ use jellyflow::{
             },
         },
         schema::{
-            NodeChromeKind, NodeKindViewDescriptor, NodeKitKey, NodeKitRegistry, NodeRegistry,
-            NodeSurfaceProjection, NodeSurfaceSlotKind, NodeSurfaceSlotProjection,
+            NodeChromeKind, NodeControlKind, NodeKindViewDescriptor, NodeKitKey, NodeKitRegistry,
+            NodeRegistry, NodeRepeatableCollectionDescriptor, NodeSurfaceProjection,
+            NodeSurfaceSlotDescriptor, NodeSurfaceSlotKind, NodeSurfaceSlotProjection,
             NodeSurfaceSlotVisibility,
         },
     },
@@ -49,6 +50,10 @@ const CANVAS_WIDTH: f32 = 1140.0;
 const CANVAS_HEIGHT: f32 = 650.0;
 const NODE_SURFACE_CHROME_HEIGHT: f32 = 78.0;
 const NODE_SURFACE_SLOT_ROW_HEIGHT: f32 = 26.0;
+const GPUI_LAYOUT_PASS_MEASUREMENT_GAP: &str = "canvas-jellyflow can project Jellyflow \
+authoring controls, repeatables, and actions through open-gpui components, but it cannot claim \
+full layout-pass measurement until open-gpui exposes a stable element-bounds callback for \
+node-local slot/control/anchor regions during layout or prepaint.";
 
 struct JellyflowCanvasView {
     editor: CanvasEditor,
@@ -70,6 +75,16 @@ struct ProjectionSummary {
     source: String,
     adapter: String,
     kit: String,
+    capability: GpuiAuthoringCapabilitySummary,
+}
+
+#[derive(Clone)]
+struct GpuiAuthoringCapabilitySummary {
+    controls: &'static str,
+    repeatables: &'static str,
+    actions: &'static str,
+    layout_measurement: NodeSurfaceMeasurementSource,
+    layout_gap: &'static str,
 }
 
 #[derive(Clone)]
@@ -79,38 +94,91 @@ struct NodeSurfaceSummary {
     title: String,
     summary: String,
     slots: Vec<NodeSurfaceSlotProjection>,
+    slot_descriptors: Vec<NodeSurfaceSlotDescriptor>,
     chrome: Vec<ResolvedNodeChrome>,
     document_bounds: JellyRect,
     selected: bool,
     zoom: f32,
     projection: NodeSurfaceProjection,
+    actions: usize,
+    menus: usize,
+    inspectors: usize,
+    blackboards: usize,
+    repeatables: Vec<NodeRepeatableSurfaceProjection>,
 }
 
 #[derive(Clone)]
 struct NodeSurfaceComponentLayout {
     slots: Vec<NodeSurfaceSlotLayout>,
+    repeatables: Vec<NodeRepeatableSurfaceLayout>,
+    measurement_source: NodeSurfaceMeasurementSource,
 }
 
 #[derive(Clone)]
 struct NodeSurfaceSlotLayout {
     slot: NodeSurfaceSlotProjection,
+    descriptor: Option<NodeSurfaceSlotDescriptor>,
     rect: JellyRect,
     anchor_rect: JellyRect,
 }
 
+#[derive(Clone)]
+struct NodeRepeatableSurfaceProjection {
+    key: String,
+    label: String,
+    item_count: usize,
+    controls: usize,
+}
+
+#[derive(Clone)]
+struct NodeRepeatableSurfaceLayout {
+    projection: NodeRepeatableSurfaceProjection,
+    rect: JellyRect,
+    anchor_rect: JellyRect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeSurfaceMeasurementSource {
+    ProjectionFallback,
+    LayoutPass,
+}
+
 impl NodeSurfaceComponentLayout {
-    fn new(slots: Vec<NodeSurfaceSlotProjection>, node_size: JellySize, slot_limit: usize) -> Self {
+    fn new(
+        slots: Vec<(NodeSurfaceSlotProjection, Option<NodeSurfaceSlotDescriptor>)>,
+        repeatables: Vec<NodeRepeatableSurfaceProjection>,
+        node_size: JellySize,
+        slot_limit: usize,
+    ) -> Self {
         let slots = ordered_visible_slot_projections(slots)
             .into_iter()
             .take(slot_limit)
             .enumerate()
-            .map(|(index, slot)| NodeSurfaceSlotLayout {
+            .map(|(index, (slot, descriptor))| NodeSurfaceSlotLayout {
                 rect: slot_row_rect(index, node_size),
                 anchor_rect: slot_anchor_rect(index, node_size),
                 slot,
+                descriptor,
+            })
+            .collect::<Vec<_>>();
+        let slot_count = slots.len();
+        let repeatables = repeatables
+            .into_iter()
+            .enumerate()
+            .map(|(index, projection)| {
+                let row_index = slot_count + index;
+                NodeRepeatableSurfaceLayout {
+                    rect: slot_row_rect(row_index, node_size),
+                    anchor_rect: slot_anchor_rect(row_index, node_size),
+                    projection,
+                }
             })
             .collect();
-        Self { slots }
+        Self {
+            slots,
+            repeatables,
+            measurement_source: NodeSurfaceMeasurementSource::ProjectionFallback,
+        }
     }
 
     fn slot_rect(&self, key: &str) -> Option<JellyRect> {
@@ -357,6 +425,47 @@ impl JellyflowCanvasView {
                             .child(format!("kit: {}", self.projection.kit)),
                     ),
             )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0x64748b))
+                            .child("Authoring capabilities"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .line_height(px(18.0))
+                            .text_color(rgb(0x475569))
+                            .child(format!(
+                                "controls: {} / repeatables: {} / actions: {}",
+                                self.projection.capability.controls,
+                                self.projection.capability.repeatables,
+                                self.projection.capability.actions
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .line_height(px(18.0))
+                            .text_color(rgb(0x475569))
+                            .child(format!(
+                                "measurement: {:?}",
+                                self.projection.capability.layout_measurement
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .line_height(px(18.0))
+                            .text_color(rgb(0x64748b))
+                            .child(self.projection.capability.layout_gap),
+                    ),
+            )
             .child(selection)
     }
 
@@ -479,7 +588,16 @@ fn render_node_surface(bounds: Bounds<Pixels>, surface: NodeSurfaceSummary) -> i
     let inner_height = (bounds.size.height - pad * 2.0).max(px(0.0));
     let slot_limit = adapter_slot_limit_for_height(inner_height, surface.projection.slot_limit);
     let component_layout = NodeSurfaceComponentLayout::new(
-        surface.slots.clone(),
+        surface
+            .slots
+            .iter()
+            .cloned()
+            .map(|slot| {
+                let descriptor = surface_slot_descriptor_for_projection(&surface, &slot);
+                (slot, descriptor)
+            })
+            .collect(),
+        surface.repeatables.clone(),
         JellySize {
             width: surface.document_bounds.size.width,
             height: surface.document_bounds.size.height,
@@ -563,6 +681,22 @@ fn render_node_surface(bounds: Bounds<Pixels>, surface: NodeSurfaceSummary) -> i
                 .min_w(px(0.0))
                 .child(surface.summary.clone()),
         )
+        .child(
+            div()
+                .absolute()
+                .left(px(8.0))
+                .top(px(64.0))
+                .right(px(8.0))
+                .text_xs()
+                .text_color(rgb(0x94a3b8))
+                .truncate()
+                .flex_shrink_1()
+                .min_w(px(0.0))
+                .child(format!(
+                    "a{} m{} i{} b{}",
+                    surface.actions, surface.menus, surface.inspectors, surface.blackboards
+                )),
+        )
         .children(render_surface_chrome(&surface, bounds))
         .children(render_surface_slots(
             component_layout,
@@ -586,6 +720,7 @@ fn node_surface_summary_for_node(
     let layout_hints = node_kit_registry.layout_hints_for_kind(&kind)?;
     let projection = NodeSurfaceProjection::from_layout_hints(layout_hints, zoom);
     let slots = descriptor.surface_slots_projection(&data, Some(layout_hints), zoom);
+    let repeatables = repeatable_surface_projection(&descriptor, &data);
     let document_bounds = jelly_rect_from_bounds(node.bounds());
     let chrome = resolve_node_chrome_facts(
         NodeChromeFactsRequest::new(
@@ -613,11 +748,17 @@ fn node_surface_summary_for_node(
         title,
         summary,
         slots,
+        slot_descriptors: descriptor.surface_slots.clone(),
         chrome,
         document_bounds,
         selected,
         zoom,
         projection,
+        actions: descriptor.actions.len(),
+        menus: descriptor.menus.len(),
+        inspectors: descriptor.inspectors.len(),
+        blackboards: descriptor.blackboards.len(),
+        repeatables,
     })
 }
 
@@ -630,6 +771,50 @@ fn render_surface_chrome(
         .iter()
         .filter_map(|chrome| render_node_chrome(chrome, surface, view_bounds))
         .collect()
+}
+
+fn surface_slot_descriptor_for_projection(
+    surface: &NodeSurfaceSummary,
+    slot: &NodeSurfaceSlotProjection,
+) -> Option<NodeSurfaceSlotDescriptor> {
+    // The GPUI proof currently keeps descriptor lookup local to the projected surface summary.
+    // The cloned slot descriptor lets local components render controls without carrying runtime
+    // widget types across the headless boundary.
+    surface
+        .slot_descriptors
+        .iter()
+        .find(|candidate| candidate.key == slot.key)
+        .cloned()
+}
+
+fn repeatable_surface_projection(
+    descriptor: &NodeKindViewDescriptor,
+    data: &Value,
+) -> Vec<NodeRepeatableSurfaceProjection> {
+    descriptor
+        .repeatable_collections
+        .iter()
+        .map(|collection| {
+            let item_count = collection.item_projections(data).len();
+            NodeRepeatableSurfaceProjection {
+                key: collection.key.clone(),
+                label: collection
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| collection.key.clone()),
+                item_count,
+                controls: repeatable_control_count(collection),
+            }
+        })
+        .collect()
+}
+
+fn repeatable_control_count(collection: &NodeRepeatableCollectionDescriptor) -> usize {
+    collection
+        .item_template_slots
+        .iter()
+        .map(|slot| slot.controls.len())
+        .sum()
 }
 
 fn render_node_chrome(
@@ -747,12 +932,17 @@ fn render_surface_slots(
     view_width: Pixels,
     view_height: Pixels,
 ) -> Vec<AnyElement> {
-    layout
+    let mut elements = layout
         .slots
         .into_iter()
         .map(|slot| render_node_slot(slot, document_bounds, view_width, view_height))
         .map(|slot| slot.into_any_element())
-        .collect()
+        .collect::<Vec<_>>();
+    elements.extend(layout.repeatables.into_iter().map(|repeatable| {
+        render_repeatable_row(repeatable, document_bounds, view_width, view_height)
+            .into_any_element()
+    }));
+    elements
 }
 
 fn semantic_component_priority(kind: NodeSurfaceSlotKind) -> usize {
@@ -826,7 +1016,11 @@ fn render_node_slot(
         .bg(fill)
         .overflow_hidden()
         .child(render_slot_label(&slot, label, status))
-        .child(render_slot_value(&slot, value))
+        .child(render_slot_value(
+            &slot,
+            slot_layout.descriptor.as_ref(),
+            value,
+        ))
 }
 
 fn slot_view_rect(
@@ -884,7 +1078,17 @@ fn render_slot_label(
     }
 }
 
-fn render_slot_value(slot: &NodeSurfaceSlotProjection, value: String) -> AnyElement {
+fn render_slot_value(
+    slot: &NodeSurfaceSlotProjection,
+    descriptor: Option<&NodeSurfaceSlotDescriptor>,
+    value: String,
+) -> AnyElement {
+    if let Some(descriptor) = descriptor
+        && !descriptor.controls.is_empty()
+    {
+        return render_slot_controls(slot, descriptor, &value).into_any_element();
+    }
+
     match slot.kind {
         NodeSurfaceSlotKind::ActionRow => render_action_buttons(slot, &value).into_any_element(),
         NodeSurfaceSlotKind::Preview => div()
@@ -913,6 +1117,83 @@ fn render_slot_value(slot: &NodeSurfaceSlotProjection, value: String) -> AnyElem
             .child(value)
             .into_any_element(),
     }
+}
+
+fn render_slot_controls(
+    slot: &NodeSurfaceSlotProjection,
+    descriptor: &NodeSurfaceSlotDescriptor,
+    value: &str,
+) -> impl IntoElement {
+    let controls = descriptor
+        .controls
+        .iter()
+        .take(2)
+        .enumerate()
+        .map(|(index, control)| match control.kind {
+            NodeControlKind::Toggle => Badge::new(
+                format!("jellyflow-control-toggle:{}:{index}", control.key),
+                control
+                    .display_label()
+                    .unwrap_or(control.key.as_str())
+                    .to_string(),
+            )
+            .variant(BadgeVariant::Outline)
+            .with_size(Size::XSmall)
+            .into_any_element(),
+            NodeControlKind::Slider | NodeControlKind::NumberInput => div()
+                .w(px(72.0))
+                .flex_shrink_0()
+                .child(
+                    Progress::new(
+                        format!("jellyflow-control-progress:{}:{index}", control.key),
+                        value.to_string(),
+                    )
+                    .value(42.0)
+                    .with_size(Size::XSmall),
+                )
+                .into_any_element(),
+            NodeControlKind::Select
+            | NodeControlKind::Asset
+            | NodeControlKind::VariablePicker
+            | NodeControlKind::PortBinding => Button::new(
+                format!("jellyflow-control-select:{}:{index}", control.key),
+                control
+                    .display_label()
+                    .unwrap_or(control.key.as_str())
+                    .to_string(),
+            )
+            .variant(ButtonVariant::Secondary)
+            .with_size(Size::XSmall)
+            .into_any_element(),
+            _ => Badge::new(
+                format!("jellyflow-control-text:{}:{index}", control.key),
+                control
+                    .display_label()
+                    .unwrap_or(control.key.as_str())
+                    .to_string(),
+            )
+            .variant(BadgeVariant::Default)
+            .with_size(Size::XSmall)
+            .into_any_element(),
+        })
+        .collect::<Vec<_>>();
+
+    div()
+        .flex()
+        .items_center()
+        .justify_end()
+        .gap_1()
+        .min_w(px(0.0))
+        .overflow_hidden()
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(0x475569))
+                .truncate()
+                .min_w(px(0.0))
+                .child(format!("{} · {}", slot.value, descriptor.controls.len())),
+        )
+        .children(controls)
 }
 
 fn render_action_buttons(slot: &NodeSurfaceSlotProjection, value: &str) -> impl IntoElement {
@@ -944,6 +1225,52 @@ fn render_action_buttons(slot: &NodeSurfaceSlotProjection, value: &str) -> impl 
         .min_w(px(0.0))
         .overflow_hidden()
         .children(actions)
+}
+
+fn render_repeatable_row(
+    repeatable: NodeRepeatableSurfaceLayout,
+    document_bounds: JellyRect,
+    view_width: Pixels,
+    view_height: Pixels,
+) -> impl IntoElement {
+    let rect = slot_view_rect(repeatable.rect, document_bounds, view_width, view_height);
+    div()
+        .absolute()
+        .left(rect.origin.x)
+        .top(rect.origin.y)
+        .w(rect.size.width)
+        .h(rect.size.height)
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .min_w(px(0.0))
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .bg(rgb(0xf8fafc))
+        .border_1()
+        .border_color(rgb(0xcbd5e1))
+        .overflow_hidden()
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(0x334155))
+                .truncate()
+                .min_w(px(0.0))
+                .child(format!(
+                    "{} · {} items",
+                    repeatable.projection.label, repeatable.projection.item_count
+                )),
+        )
+        .child(
+            Badge::new(
+                format!("jellyflow-repeatable:{}", repeatable.projection.key),
+                format!("{} controls", repeatable.projection.controls),
+            )
+            .variant(BadgeVariant::Outline)
+            .with_size(Size::XSmall),
+        )
 }
 
 fn adapter_slot_limit_for_height(inner_height: Pixels, semantic_slot_limit: usize) -> usize {
@@ -1203,11 +1530,18 @@ fn project_store(
         canvas_nodes: document.nodes().count(),
         canvas_edges: document.edges().count(),
         layout_preset: "tree -> tidy_tree".to_string(),
-        last_commit: "node-kit gpui proof now uses builtin semantic overlays".to_string(),
+        last_commit: "node-kit gpui proof now uses builtin semantic descriptors".to_string(),
         source: "jellyflow graph v1".to_string(),
-        adapter: "open-gpui-canvas overlay example".to_string(),
+        adapter: "open-gpui-canvas component-layout projection example".to_string(),
         kit: "workflow.automation / erd.table / shader.blueprint / mind-map.knowledge-canvas"
             .to_string(),
+        capability: GpuiAuthoringCapabilitySummary {
+            controls: "partial/local",
+            repeatables: "projection",
+            actions: "partial/local",
+            layout_measurement: NodeSurfaceMeasurementSource::ProjectionFallback,
+            layout_gap: GPUI_LAYOUT_PASS_MEASUREMENT_GAP,
+        },
     };
 
     Ok((document, projection))
@@ -1426,19 +1760,33 @@ fn projected_node_surface_component_layout(
                 .surface_slot(&slot.key)
                 .is_some_and(|descriptor_slot| descriptor_slot.is_visible())
         })
+        .map(|slot| {
+            let descriptor_slot = descriptor.surface_slot(&slot.key).cloned();
+            (slot, descriptor_slot)
+        })
         .collect();
-    NodeSurfaceComponentLayout::new(slots, node_size, usize::MAX)
+    NodeSurfaceComponentLayout::new(
+        slots,
+        repeatable_surface_projection(descriptor, &node.data),
+        node_size,
+        usize::MAX,
+    )
 }
 
 fn measured_surface_slots(layout: &NodeSurfaceComponentLayout) -> Vec<MeasuredSurfaceSlot> {
-    layout
+    let mut slots = layout
         .slots
         .iter()
         .map(|slot| {
             MeasuredSurfaceSlot::new(slot.slot.key.clone(), slot.rect)
                 .with_visibility(slot_projection_visibility(&slot.slot))
         })
-        .collect()
+        .collect::<Vec<_>>();
+    slots.extend(layout.repeatables.iter().map(|repeatable| {
+        MeasuredSurfaceSlot::new(repeatable.projection.key.clone(), repeatable.rect)
+            .with_visibility(NodeSurfaceSlotVisibility::Visible)
+    }));
+    slots
 }
 
 fn measured_surface_anchors(
@@ -1535,10 +1883,10 @@ fn handle_position_from_bounds(bounds: HandleBounds) -> JellyPoint {
 }
 
 fn ordered_visible_slot_projections(
-    mut slots: Vec<NodeSurfaceSlotProjection>,
-) -> Vec<NodeSurfaceSlotProjection> {
-    slots.retain(|slot| slot.visible);
-    slots.sort_by_key(|slot| (semantic_component_priority(slot.kind), slot.key.clone()));
+    mut slots: Vec<(NodeSurfaceSlotProjection, Option<NodeSurfaceSlotDescriptor>)>,
+) -> Vec<(NodeSurfaceSlotProjection, Option<NodeSurfaceSlotDescriptor>)> {
+    slots.retain(|(slot, _)| slot.visible);
+    slots.sort_by_key(|(slot, _)| (semantic_component_priority(slot.kind), slot.key.clone()));
     slots
 }
 
@@ -1913,7 +2261,20 @@ mod tests {
 
     #[test]
     fn projected_handles_follow_semantic_slot_anchors_after_node_resize() {
-        let store = make_demo_store();
+        let mut store = make_demo_store();
+        let transform = JellyNodeId::from_u128(3);
+        let before_size = store.graph().nodes().get(&transform).unwrap().size;
+        store
+            .dispatch_transaction(&GraphTransaction::from_ops([GraphOp::SetNodeSize {
+                id: transform,
+                from: before_size,
+                to: Some(JellySize {
+                    width: 328.0,
+                    height: 268.0,
+                }),
+            }]))
+            .expect("resize transform node");
+
         let (document, _) = project_store(&store).unwrap();
         let node = document
             .node(&NodeId::from(canvas_node_id(&JellyNodeId::from_u128(3))))
@@ -1930,11 +2291,7 @@ mod tests {
             .find(|handle| handle.id.as_str() == canvas_port_id(&JellyPortId::from_u128(31)))
             .unwrap();
         let semantic_registry = NodeKitRegistry::builtin().node_registry();
-        let jelly_node = store
-            .graph()
-            .nodes()
-            .get(&JellyNodeId::from_u128(3))
-            .unwrap();
+        let jelly_node = store.graph().nodes().get(&transform).unwrap();
         let descriptor = semantic_registry.view_descriptor(&jelly_node.kind).unwrap();
         let layout = projected_node_surface_component_layout(
             &descriptor,
@@ -1948,10 +2305,10 @@ mod tests {
             .anchor_rect("field.completion")
             .expect("completion component anchor");
 
-        assert_eq!(node.size.width, px(268.0));
-        assert_eq!(node.size.height, px(228.0));
+        assert_eq!(node.size.width, px(328.0));
+        assert_eq!(node.size.height, px(268.0));
         assert_eq!(prompt.position.x, px(0.0));
-        assert_eq!(completion.position.x, px(268.0));
+        assert_eq!(completion.position.x, px(328.0));
         assert_eq!(
             prompt.position.y,
             px(prompt_anchor.origin.y + prompt_anchor.size.height * 0.5)
@@ -1998,6 +2355,57 @@ mod tests {
         assert_eq!(prompt_measurement.rect, prompt_layout_rect);
         assert_eq!(completion_anchor.rect, completion_layout_anchor);
         assert_eq!(completion_anchor.port_key, Some(PortKey::new("completion")));
+        assert_eq!(
+            layout.measurement_source,
+            NodeSurfaceMeasurementSource::ProjectionFallback
+        );
+    }
+
+    #[test]
+    fn gpui_surface_consumes_controls_repeatables_and_actions_as_local_projection() {
+        let (document, projection) =
+            project_kit_fixture("erd.table", "erd.customer_orders").expect("erd projects");
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let table_node = document
+            .nodes()
+            .find(|node| node.kind == "table-card")
+            .expect("table-card canvas node exists");
+        let surface = node_surface_summary_for_node(
+            table_node,
+            1.0,
+            true,
+            &semantic_registry,
+            &node_kit_registry,
+        )
+        .expect("table surface summary");
+
+        assert!(surface.slot_descriptors.iter().any(|slot| {
+            slot.controls
+                .iter()
+                .any(|control| control.kind == NodeControlKind::TextInput)
+        }));
+        assert!(
+            surface
+                .repeatables
+                .iter()
+                .any(|repeatable| repeatable.key == "table.columns"
+                    && repeatable.item_count >= 1
+                    && repeatable.controls >= 2)
+        );
+        assert!(surface.actions >= 3);
+        assert!(surface.menus >= 1);
+        assert_eq!(
+            projection.capability.layout_measurement,
+            NodeSurfaceMeasurementSource::ProjectionFallback
+        );
+        assert_eq!(projection.capability.controls, "partial/local");
+        assert!(
+            projection
+                .capability
+                .layout_gap
+                .contains("element-bounds callback")
+        );
     }
 
     #[test]
