@@ -27,15 +27,17 @@ use jellyflow::{
 };
 use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiControlPlan, OpenGpuiControlPrimitive,
-    OpenGpuiDynamicPortPolicy, OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
-    OpenGpuiMenuPlan, OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
+    OpenGpuiDynamicPortPolicy, OpenGpuiInspectorPlan, OpenGpuiInspectorSurface,
+    OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource, OpenGpuiMenuPlan,
+    OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout,
     OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
     OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
     OpenGpuiRepeatableSurfaceLayout as NodeRepeatableSurfaceLayout,
     OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection,
-    project_actions_for_surface, project_menu, project_node_measurement, project_slot_controls,
-    repeatable_item_projection, repeatable_surface_projection,
+    project_actions_for_surface, project_inspectors_for_surface, project_menu,
+    project_node_measurement, project_slot_controls, repeatable_item_projection,
+    repeatable_surface_projection,
 };
 use open_gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Pixels, Window,
@@ -138,12 +140,13 @@ struct RepeatableItemSnapshot {
     controls: usize,
 }
 
-struct NodeSummary {
+struct SelectedNodeSummary {
     id: String,
     kind: String,
     title: String,
     detail: String,
     ports: String,
+    inspectors: Vec<OpenGpuiInspectorPlan>,
 }
 
 struct JellyflowNodeKind;
@@ -271,7 +274,7 @@ impl JellyflowCanvasView {
             )))
     }
 
-    fn render_sidebar(&self, selected: Option<NodeSummary>) -> impl IntoElement {
+    fn render_sidebar(&self, selected: Option<SelectedNodeSummary>) -> impl IntoElement {
         let selection = match selected {
             Some(summary) => div()
                 .flex()
@@ -281,29 +284,35 @@ impl JellyflowCanvasView {
                     div()
                         .text_xs()
                         .text_color(rgb(0x64748b))
-                        .child(summary.kind),
+                        .child(summary.kind.clone()),
                 )
                 .child(
                     div()
                         .text_lg()
                         .line_height(px(22.0))
                         .text_color(rgb(0x111827))
-                        .child(summary.title),
+                        .child(summary.title.clone()),
                 )
                 .child(
                     div()
                         .text_sm()
                         .line_height(px(20.0))
                         .text_color(rgb(0x334155))
-                        .child(summary.detail),
+                        .child(summary.detail.clone()),
                 )
                 .child(
                     div()
                         .text_xs()
                         .text_color(rgb(0x64748b))
-                        .child(summary.ports),
+                        .child(summary.ports.clone()),
                 )
-                .child(div().text_xs().text_color(rgb(0x64748b)).child(summary.id)),
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0x64748b))
+                        .child(summary.id.clone()),
+                )
+                .child(render_selected_inspector_panel(&summary)),
             None => div().flex().flex_col().gap_3().child(
                 div()
                     .text_sm()
@@ -441,10 +450,11 @@ impl JellyflowCanvasView {
         )
     }
 
-    fn selected_node_summary(&self) -> Option<NodeSummary> {
+    fn selected_node_summary(&self) -> Option<SelectedNodeSummary> {
         let id = self.editor.selection().selected_nodes().next()?;
         let node = self.editor.document().node(id)?;
-        Some(NodeSummary {
+        let inspectors = self.inspector_plans_for_canvas_node(node);
+        Some(SelectedNodeSummary {
             id: node.id.as_str().to_string(),
             kind: data_string(node, "jellyflow_kind")
                 .unwrap_or(node.kind.as_str())
@@ -454,7 +464,24 @@ impl JellyflowCanvasView {
                 .unwrap_or("Jellyflow node projected into open-gpui-canvas")
                 .to_string(),
             ports: format!("ports: {}", data_string(node, "ports").unwrap_or("none")),
+            inspectors,
         })
+    }
+
+    fn inspector_plans_for_canvas_node(&self, node: &CanvasNode) -> Vec<OpenGpuiInspectorPlan> {
+        let kind =
+            NodeKindKey::new(data_string(node, "jellyflow_kind").unwrap_or(node.kind.as_str()));
+        let Some(descriptor) = self.semantic_registry.view_descriptor(&kind) else {
+            return Vec::new();
+        };
+        let node_data = Value::Object(node.data.clone());
+        project_inspectors_for_surface(
+            &descriptor,
+            &node_data,
+            &OpenGpuiInspectorSurface::Node {
+                node_kind: descriptor.kind.0.clone(),
+            },
+        )
     }
 
     fn handle_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
@@ -519,6 +546,120 @@ impl JellyflowCanvasView {
     fn is_pointer_interacting(&self) -> bool {
         !self.editor.is_tool_state_idle()
     }
+}
+
+fn render_selected_inspector_panel(summary: &SelectedNodeSummary) -> AnyElement {
+    let inspectors = summary
+        .inspectors
+        .iter()
+        .take(2)
+        .map(render_inspector_card)
+        .collect::<Vec<_>>();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .border_t_1()
+        .border_color(rgb(0xe2e8f0))
+        .pt_3()
+        .child(div().text_xs().text_color(rgb(0x64748b)).child("Inspector"))
+        .when(inspectors.is_empty(), |this| {
+            this.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(0x94a3b8))
+                    .child("No semantic inspector for selection"),
+            )
+        })
+        .children(inspectors)
+        .into_any_element()
+}
+
+fn render_inspector_card(inspector: &OpenGpuiInspectorPlan) -> AnyElement {
+    let controls = inspector
+        .controls
+        .iter()
+        .take(2)
+        .enumerate()
+        .map(|(index, control)| render_control_plan(control, index))
+        .collect::<Vec<_>>();
+    let actions = inspector
+        .action_menu
+        .actions
+        .iter()
+        .take(2)
+        .enumerate()
+        .map(|(index, action)| render_action_button(action, index))
+        .collect::<Vec<_>>();
+    let status = inspector
+        .read_only_reason
+        .as_deref()
+        .unwrap_or(if inspector.editable {
+            "editable"
+        } else {
+            "read-only"
+        });
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(0xdbe3ea))
+        .bg(rgb(0xf8fafc))
+        .p_2()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .line_height(px(18.0))
+                        .text_color(rgb(0x111827))
+                        .truncate()
+                        .child(inspector.label.clone()),
+                )
+                .child(
+                    Badge::new(
+                        format!("jellyflow-inspector-status:{}", inspector.key),
+                        status.to_owned(),
+                    )
+                    .variant(if inspector.editable {
+                        BadgeVariant::Default
+                    } else {
+                        BadgeVariant::Outline
+                    })
+                    .with_size(Size::XSmall),
+                ),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(0x64748b))
+                .truncate()
+                .child(format!(
+                    "{} controls · {} actions",
+                    inspector.controls.len(),
+                    inspector.action_menu.actions.len()
+                )),
+        )
+        .children(controls)
+        .when(!actions.is_empty(), |this| {
+            this.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .overflow_hidden()
+                    .children(actions),
+            )
+        })
+        .into_any_element()
 }
 
 fn render_node_surface(bounds: Bounds<Pixels>, surface: NodeSurfaceSummary) -> impl IntoElement {
@@ -2474,6 +2615,23 @@ mod tests {
                 node_kind: "demo.llm".to_owned(),
             }
         );
+
+        let inspectors = project_inspectors_for_surface(
+            &semantic_registry
+                .view_descriptor(&NodeKindKey::new("demo.llm"))
+                .expect("llm descriptor"),
+            &Value::Object(node.data.clone()),
+            &OpenGpuiInspectorSurface::Node {
+                node_kind: "demo.llm".to_owned(),
+            },
+        );
+        assert!(inspectors.iter().any(|inspector| {
+            inspector.key == "inspector.llm"
+                && inspector
+                    .controls
+                    .iter()
+                    .any(|control| control.key == "inspector.model" && control.is_editable())
+        }));
     }
 
     #[test]
