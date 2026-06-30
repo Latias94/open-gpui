@@ -1,7 +1,9 @@
 use crate::{
-    DockViewportDropRoute,
+    DockEdgeDockSizing, DockNodeId, DockPolicyError, DockViewportDropRoute, DropZone,
+    drag::DockDragPayload,
     drop_runtime::resolution_target,
     drop_target::{DockDropResolution, DockResolvedDropTarget, DockResolvedDropTargetKind},
+    geometry::{self, DockDropBox, DockDropBoxKind, DockDropBoxSet, DockDropGuideStyle},
 };
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
 
@@ -14,9 +16,111 @@ pub(crate) enum DockDropRoutePreviewKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockDropPreview {
-    pub(crate) bounds: Bounds<Pixels>,
-    pub(crate) rejected: bool,
-    pub(crate) payload_tab: bool,
+    pub(crate) scene: DockPreviewScene,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPreviewScene {
+    pub(crate) decision: DockPreviewDecision,
+    pub(crate) layers: Vec<DockPreviewLayer>,
+    pub(crate) body: DockPreviewBody,
+    pub(crate) payload_tabs: Option<DockPreviewPayloadTabs>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum DockPreviewDecision {
+    Allowed,
+    Rejected { reason: Option<DockPolicyError> },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPreviewLayer {
+    pub(crate) kind: DockPreviewLayerKind,
+    pub(crate) availability: DockPreviewAvailability,
+    pub(crate) active_split: Option<DockPreviewSplit>,
+    pub(crate) drop_boxes: Vec<DockPreviewDropBox>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum DockPreviewLayerKind {
+    Inner,
+    Outer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DockPreviewAvailability {
+    pub(crate) center: bool,
+    pub(crate) sides: bool,
+}
+
+impl DockPreviewAvailability {
+    fn filtered_by_decision(mut self, decision: &DockPreviewDecision) -> Self {
+        let DockPreviewDecision::Rejected { reason } = decision else {
+            return self;
+        };
+        match reason {
+            Some(
+                DockPolicyError::CenterMergeDisabled
+                | DockPolicyError::SameStackCenterDropDisabled
+                | DockPolicyError::SplitPayloadCenterMergeRejected
+                | DockPolicyError::CentralRegionDockOverDisabled,
+            ) => {
+                self.center = false;
+            }
+            Some(DockPolicyError::EdgeSplitDisabled) => {
+                self.sides = false;
+            }
+            Some(DockPolicyError::DockClassRejected { .. }) => {
+                self.center = false;
+                self.sides = false;
+            }
+            Some(
+                DockPolicyError::FloatingDisabled
+                | DockPolicyError::PlatformViewportsDisabled
+                | DockPolicyError::SplitterResizeDisabled,
+            )
+            | None => {}
+        }
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPreviewSplit {
+    pub(crate) zone: DropZone,
+    pub(crate) explicit: bool,
+    pub(crate) ratio: Option<f32>,
+    pub(crate) sizing: Option<DockEdgeDockSizing>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DockPreviewDropBox {
+    pub(crate) kind: DockDropBoxKind,
+    pub(crate) zone: DropZone,
+    pub(crate) layer: DockPreviewLayerKind,
+    pub(crate) debug_node: Option<DockNodeId>,
+    pub(crate) hit_bounds: Bounds<Pixels>,
+    pub(crate) draw_bounds: Bounds<Pixels>,
+    pub(crate) preview_bounds: Bounds<Pixels>,
+    pub(crate) active: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DockPreviewBody {
+    pub(crate) future_bounds: Bounds<Pixels>,
+    pub(crate) body_bounds: Bounds<Pixels>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPreviewPayloadTabs {
+    pub(crate) target_tabs: Option<DockNodeId>,
+    pub(crate) insert_index: Option<usize>,
+    pub(crate) tabs: Vec<DockPreviewPayloadTab>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockPreviewPayloadTab {
+    pub(crate) title: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -27,22 +131,40 @@ pub(crate) struct DockDropRoutePreview {
 }
 
 impl DockDropPreview {
-    pub(crate) fn from_resolution(resolution: &DockDropResolution) -> Option<Self> {
+    pub(crate) fn from_resolution(
+        resolution: &DockDropResolution,
+        style: DockDropGuideStyle,
+    ) -> Option<Self> {
         let target = resolution_target(resolution)?;
-        let rejected = matches!(resolution, DockDropResolution::Rejected(_));
-        Self::from_target(target, rejected)
+        let decision = match resolution {
+            DockDropResolution::Valid(_) => DockPreviewDecision::allowed(),
+            DockDropResolution::Rejected(rejection) => {
+                DockPreviewDecision::rejected(Some(rejection.reason.clone()))
+            }
+        };
+        Self::from_target(target, decision, style)
     }
 
-    pub(crate) fn from_resolved_target(target: &DockResolvedDropTarget) -> Option<Self> {
-        Self::from_target(target, false)
+    pub(crate) fn from_resolved_target(
+        target: &DockResolvedDropTarget,
+        style: DockDropGuideStyle,
+    ) -> Option<Self> {
+        Self::from_target(target, DockPreviewDecision::allowed(), style)
     }
 
-    pub(crate) fn from_rejected_target(target: &DockResolvedDropTarget) -> Option<Self> {
-        Self::from_target(target, true)
+    pub(crate) fn from_rejected_target(
+        target: &DockResolvedDropTarget,
+        style: DockDropGuideStyle,
+    ) -> Option<Self> {
+        Self::from_target(target, DockPreviewDecision::rejected(None), style)
     }
 
-    fn from_target(target: &DockResolvedDropTarget, rejected: bool) -> Option<Self> {
-        let bounds = match &target.kind {
+    fn from_target(
+        target: &DockResolvedDropTarget,
+        decision: DockPreviewDecision,
+        style: DockDropGuideStyle,
+    ) -> Option<Self> {
+        let preview_bounds = match &target.kind {
             DockResolvedDropTargetKind::TabBar { .. }
             | DockResolvedDropTargetKind::LeafCenter { .. }
             | DockResolvedDropTargetKind::InnerEdge { .. }
@@ -50,20 +172,375 @@ impl DockDropPreview {
             | DockResolvedDropTargetKind::FloatingTitleBar { .. }
             | DockResolvedDropTargetKind::EmptyDockSpace { .. } => target.preview_bounds?,
         };
-        let payload_tab = !rejected
-            && matches!(
-                &target.kind,
-                DockResolvedDropTargetKind::TabBar { .. }
-                    | DockResolvedDropTargetKind::LeafCenter { .. }
-                    | DockResolvedDropTargetKind::FloatingTitleBar { .. }
-                    | DockResolvedDropTargetKind::EmptyDockSpace { .. }
-            );
+        let target_bounds = target.target_bounds.unwrap_or(preview_bounds);
+        let (target_tabs, insert_index) = match target.kind {
+            DockResolvedDropTargetKind::TabBar {
+                target_tabs,
+                insert_index,
+            } => (Some(target_tabs), Some(insert_index)),
+            DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
+            | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => {
+                (Some(target_tabs), None)
+            }
+            DockResolvedDropTargetKind::InnerEdge { .. }
+            | DockResolvedDropTargetKind::RootEdge { .. }
+            | DockResolvedDropTargetKind::EmptyDockSpace { .. } => (None, None),
+        };
+        let scene = DockPreviewScene::from_target(
+            target,
+            target_bounds,
+            preview_bounds,
+            target_tabs,
+            insert_index,
+            decision,
+            style,
+        );
 
-        Some(Self {
+        Some(Self { scene })
+    }
+
+    pub(crate) fn populate_payload_tabs(&mut self, payload: &DockDragPayload) {
+        let Some(payload_tabs) = self.scene.payload_tabs.as_mut() else {
+            return;
+        };
+        *payload_tabs = DockPreviewPayloadTabs::from_payload(
+            payload_tabs.target_tabs,
+            payload_tabs.insert_index,
+            payload,
+        );
+    }
+}
+
+impl DockPreviewScene {
+    pub(crate) fn from_target(
+        target: &DockResolvedDropTarget,
+        target_bounds: Bounds<Pixels>,
+        body_bounds: Bounds<Pixels>,
+        target_tabs: Option<DockNodeId>,
+        insert_index: Option<usize>,
+        decision: DockPreviewDecision,
+        style: DockDropGuideStyle,
+    ) -> Self {
+        let payload_tabs = payload_tabs_for_target(target, target_tabs, insert_index, &decision);
+        let layers = preview_layers_for_target(target, target_bounds, &decision, style);
+        Self {
+            decision,
+            layers,
+            body: DockPreviewBody {
+                future_bounds: target_bounds,
+                body_bounds,
+            },
+            payload_tabs,
+        }
+    }
+
+    pub(crate) fn active_split(&self) -> Option<&DockPreviewSplit> {
+        self.layers
+            .iter()
+            .find_map(|layer| layer.active_split.as_ref())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_drop_box(&self) -> Option<&DockPreviewDropBox> {
+        self.layers
+            .iter()
+            .flat_map(|layer| layer.drop_boxes.iter())
+            .find(|drop_box| drop_box.active)
+    }
+}
+
+impl DockPreviewDecision {
+    pub(crate) fn allowed() -> Self {
+        Self::Allowed
+    }
+
+    pub(crate) fn rejected(reason: Option<DockPolicyError>) -> Self {
+        Self::Rejected { reason }
+    }
+
+    pub(crate) fn is_allowed(&self) -> bool {
+        matches!(self, Self::Allowed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rejection_reason(&self) -> Option<&DockPolicyError> {
+        match self {
+            Self::Allowed => None,
+            Self::Rejected { reason } => reason.as_ref(),
+        }
+    }
+}
+
+impl DockPreviewPayloadTabs {
+    pub(crate) fn from_payload(
+        target_tabs: Option<DockNodeId>,
+        insert_index: Option<usize>,
+        payload: &DockDragPayload,
+    ) -> Self {
+        let tabs = payload
+            .preview_tabs()
+            .into_iter()
+            .map(|title| DockPreviewPayloadTab {
+                title: title.to_string(),
+            })
+            .collect();
+        Self {
+            target_tabs,
+            insert_index,
+            tabs,
+        }
+    }
+}
+
+fn payload_tabs_for_target(
+    target: &DockResolvedDropTarget,
+    target_tabs: Option<DockNodeId>,
+    insert_index: Option<usize>,
+    decision: &DockPreviewDecision,
+) -> Option<DockPreviewPayloadTabs> {
+    if !decision.is_allowed() {
+        return None;
+    }
+
+    match target.kind {
+        DockResolvedDropTargetKind::TabBar { .. }
+        | DockResolvedDropTargetKind::LeafCenter { .. }
+        | DockResolvedDropTargetKind::FloatingTitleBar { .. }
+        | DockResolvedDropTargetKind::EmptyDockSpace { .. } => Some(DockPreviewPayloadTabs {
+            target_tabs,
+            insert_index,
+            tabs: Vec::new(),
+        }),
+        DockResolvedDropTargetKind::InnerEdge { .. }
+        | DockResolvedDropTargetKind::RootEdge { .. } => None,
+    }
+}
+
+fn preview_layers_for_target(
+    target: &DockResolvedDropTarget,
+    bounds: Bounds<Pixels>,
+    decision: &DockPreviewDecision,
+    style: DockDropGuideStyle,
+) -> Vec<DockPreviewLayer> {
+    let mut layers = Vec::new();
+    if let Some(inner_bounds) = inner_layer_bounds_for_target(target, bounds) {
+        layers.push(preview_layer_for_target(
+            target,
+            inner_bounds,
+            DockPreviewLayerKind::Inner,
+            decision,
+            style,
+        ));
+    }
+    if outer_layer_available_for_target(target) {
+        layers.push(preview_layer_for_target(
+            target,
             bounds,
-            rejected,
-            payload_tab,
+            DockPreviewLayerKind::Outer,
+            decision,
+            style,
+        ));
+    }
+    layers
+}
+
+fn preview_layer_for_target(
+    target: &DockResolvedDropTarget,
+    bounds: Bounds<Pixels>,
+    kind: DockPreviewLayerKind,
+    decision: &DockPreviewDecision,
+    style: DockDropGuideStyle,
+) -> DockPreviewLayer {
+    let active = active_layer_for_target(target) == Some(kind);
+    let zone = active
+        .then(|| target.zone())
+        .flatten()
+        .filter(|zone| drop_zone_allowed_for_target(target, kind, *zone, decision));
+    let active_split = match zone {
+        Some(zone @ (DropZone::Left | DropZone::Right | DropZone::Top | DropZone::Bottom)) => {
+            Some(DockPreviewSplit {
+                zone,
+                explicit: true,
+                ratio: target.edge_sizing.map(DockEdgeDockSizing::new_child_share),
+                sizing: target.edge_sizing,
+            })
+        }
+        Some(DropZone::Center) | None => None,
+    };
+    DockPreviewLayer {
+        kind,
+        availability: availability_for_target(target, kind, decision),
+        active_split,
+        drop_boxes: preview_drop_boxes_for_layer(target, bounds, kind, decision, style),
+    }
+}
+
+fn active_layer_for_target(target: &DockResolvedDropTarget) -> Option<DockPreviewLayerKind> {
+    match target.kind {
+        DockResolvedDropTargetKind::RootEdge { .. } => Some(DockPreviewLayerKind::Outer),
+        DockResolvedDropTargetKind::TabBar { .. }
+        | DockResolvedDropTargetKind::LeafCenter { .. }
+        | DockResolvedDropTargetKind::InnerEdge { .. }
+        | DockResolvedDropTargetKind::FloatingTitleBar { .. }
+        | DockResolvedDropTargetKind::EmptyDockSpace { .. } => Some(DockPreviewLayerKind::Inner),
+    }
+}
+
+fn inner_layer_bounds_for_target(
+    target: &DockResolvedDropTarget,
+    fallback_bounds: Bounds<Pixels>,
+) -> Option<Bounds<Pixels>> {
+    match target.kind {
+        DockResolvedDropTargetKind::RootEdge { .. } => target.inner_target_bounds,
+        DockResolvedDropTargetKind::TabBar { .. }
+        | DockResolvedDropTargetKind::LeafCenter { .. }
+        | DockResolvedDropTargetKind::InnerEdge { .. }
+        | DockResolvedDropTargetKind::FloatingTitleBar { .. }
+        | DockResolvedDropTargetKind::EmptyDockSpace { .. } => Some(fallback_bounds),
+    }
+}
+
+fn outer_layer_available_for_target(target: &DockResolvedDropTarget) -> bool {
+    matches!(target.kind, DockResolvedDropTargetKind::RootEdge { .. })
+}
+
+fn availability_for_target(
+    target: &DockResolvedDropTarget,
+    layer: DockPreviewLayerKind,
+    decision: &DockPreviewDecision,
+) -> DockPreviewAvailability {
+    let availability = match (&target.kind, layer) {
+        (DockResolvedDropTargetKind::RootEdge { .. }, DockPreviewLayerKind::Inner) => {
+            DockPreviewAvailability {
+                center: false,
+                sides: false,
+            }
+        }
+        (DockResolvedDropTargetKind::RootEdge { .. }, DockPreviewLayerKind::Outer) => {
+            DockPreviewAvailability {
+                center: false,
+                sides: target.availability.sides,
+            }
+        }
+        (DockResolvedDropTargetKind::InnerEdge { .. }, DockPreviewLayerKind::Inner) => {
+            DockPreviewAvailability {
+                center: target.availability.center,
+                sides: target.availability.sides,
+            }
+        }
+        (
+            DockResolvedDropTargetKind::TabBar { .. }
+            | DockResolvedDropTargetKind::LeafCenter { .. }
+            | DockResolvedDropTargetKind::FloatingTitleBar { .. },
+            DockPreviewLayerKind::Inner,
+        ) => DockPreviewAvailability {
+            center: target.availability.center,
+            sides: target.availability.sides,
+        },
+        (DockResolvedDropTargetKind::EmptyDockSpace { .. }, DockPreviewLayerKind::Inner) => {
+            DockPreviewAvailability {
+                center: target.availability.center,
+                sides: false,
+            }
+        }
+        _ => DockPreviewAvailability {
+            center: false,
+            sides: false,
+        },
+    };
+    availability.filtered_by_decision(decision)
+}
+
+fn preview_drop_boxes_for_layer(
+    target: &DockResolvedDropTarget,
+    bounds: Bounds<Pixels>,
+    layer: DockPreviewLayerKind,
+    decision: &DockPreviewDecision,
+    style: DockDropGuideStyle,
+) -> Vec<DockPreviewDropBox> {
+    let set = match layer {
+        DockPreviewLayerKind::Inner => DockDropBoxSet::Inner,
+        DockPreviewLayerKind::Outer => DockDropBoxSet::Outer,
+    };
+    let active_drop_box = target
+        .drop_box
+        .filter(|drop_box| drop_box_allowed_for_target(target, layer, drop_box.kind, decision));
+    let active_kind = active_drop_box.map(|drop_box| drop_box.kind);
+    let debug_node = debug_node_for_target(target, layer);
+    geometry::drop_boxes_with_style(bounds, set, style)
+        .into_iter()
+        .filter(|drop_box| drop_box_allowed_for_target(target, layer, drop_box.kind, decision))
+        .map(|drop_box| {
+            let active = Some(drop_box.kind) == active_kind;
+            let drop_box = if active {
+                active_drop_box.unwrap_or(drop_box)
+            } else {
+                drop_box
+            };
+            preview_drop_box(drop_box, layer, debug_node, active)
         })
+        .collect()
+}
+
+fn drop_box_allowed_for_target(
+    target: &DockResolvedDropTarget,
+    layer: DockPreviewLayerKind,
+    kind: DockDropBoxKind,
+    decision: &DockPreviewDecision,
+) -> bool {
+    let availability = availability_for_target(target, layer, decision);
+    match kind {
+        DockDropBoxKind::Center => availability.center,
+        DockDropBoxKind::InnerEdge(_) | DockDropBoxKind::OuterEdge(_) => availability.sides,
+    }
+}
+
+fn drop_zone_allowed_for_target(
+    target: &DockResolvedDropTarget,
+    layer: DockPreviewLayerKind,
+    zone: DropZone,
+    decision: &DockPreviewDecision,
+) -> bool {
+    let availability = availability_for_target(target, layer, decision);
+    match zone {
+        DropZone::Center => availability.center,
+        DropZone::Left | DropZone::Right | DropZone::Top | DropZone::Bottom => availability.sides,
+    }
+}
+
+fn preview_drop_box(
+    drop_box: DockDropBox,
+    layer: DockPreviewLayerKind,
+    debug_node: Option<DockNodeId>,
+    active: bool,
+) -> DockPreviewDropBox {
+    DockPreviewDropBox {
+        kind: drop_box.kind,
+        zone: drop_box.kind.zone(),
+        layer,
+        debug_node,
+        hit_bounds: drop_box.hit_bounds,
+        draw_bounds: drop_box.draw_bounds,
+        preview_bounds: drop_box.preview_bounds,
+        active,
+    }
+}
+
+fn debug_node_for_target(
+    target: &DockResolvedDropTarget,
+    layer: DockPreviewLayerKind,
+) -> Option<DockNodeId> {
+    if layer != DockPreviewLayerKind::Inner {
+        return None;
+    }
+
+    match target.kind {
+        DockResolvedDropTargetKind::TabBar { target_tabs, .. }
+        | DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
+        | DockResolvedDropTargetKind::InnerEdge { target_tabs, .. }
+        | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => Some(target_tabs),
+        DockResolvedDropTargetKind::RootEdge { .. }
+        | DockResolvedDropTargetKind::EmptyDockSpace { .. } => None,
     }
 }
 
@@ -105,10 +582,205 @@ fn route_bounds(anchor: Point<Pixels>) -> Bounds<Pixels> {
 mod tests {
     use super::*;
     use crate::{
-        DockPolicyError, DockViewportRouteSelectionSource, DockViewportTargetHit,
+        DockEdgeDockSizing, DockPolicyError, DockViewportRouteSelectionSource,
+        DockViewportTargetHit,
+        drop_target::{
+            DockDropRejection, DockDropResolveSource, DockResolvedDropTargetAvailability,
+            DockResolvedDropTargetKind,
+        },
+        geometry::{DockDropBox, DockDropBoxKind},
         viewport_test_support::{handle, space},
     };
     use open_gpui::{point, px};
+    use slotmap::Key;
+
+    fn bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
+        Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
+    }
+
+    fn drop_box(kind: DockDropBoxKind) -> DockDropBox {
+        let hit_bounds = bounds(20.0, 30.0, 44.0, 36.0);
+        let draw_bounds = bounds(22.0, 32.0, 40.0, 32.0);
+        let preview_bounds = bounds(0.0, 0.0, 120.0, 80.0);
+        DockDropBox {
+            kind,
+            hit_bounds,
+            draw_bounds,
+            preview_bounds,
+        }
+    }
+
+    fn resolved_target(
+        kind: DockResolvedDropTargetKind,
+        drop_box: Option<DockDropBox>,
+    ) -> DockResolvedDropTarget {
+        let edge_sizing = match kind {
+            DockResolvedDropTargetKind::InnerEdge { .. }
+            | DockResolvedDropTargetKind::RootEdge { .. } => Some(DockEdgeDockSizing::fallback()),
+            DockResolvedDropTargetKind::TabBar { .. }
+            | DockResolvedDropTargetKind::LeafCenter { .. }
+            | DockResolvedDropTargetKind::FloatingTitleBar { .. }
+            | DockResolvedDropTargetKind::EmptyDockSpace { .. } => None,
+        };
+        DockResolvedDropTarget {
+            kind,
+            source: DockDropResolveSource::LeafBody,
+            target_bounds: Some(bounds(0.0, 0.0, 320.0, 200.0)),
+            inner_target_bounds: Some(bounds(0.0, 0.0, 320.0, 200.0)),
+            availability: DockResolvedDropTargetAvailability::all(),
+            drop_box,
+            preview_bounds: Some(bounds(0.0, 0.0, 320.0, 200.0)),
+            edge_sizing,
+            edge_plan: None,
+            is_central_region: false,
+        }
+    }
+
+    #[test]
+    fn center_target_builds_scene_with_payload_tab_capability() {
+        let tabs = DockNodeId::null();
+        let preview = DockDropPreview::from_resolved_target(
+            &resolved_target(
+                DockResolvedDropTargetKind::LeafCenter {
+                    root: tabs,
+                    target_tabs: tabs,
+                },
+                Some(drop_box(DockDropBoxKind::Center)),
+            ),
+            DockDropGuideStyle::default(),
+        )
+        .expect("center target should produce preview");
+
+        assert!(preview.scene.decision.is_allowed());
+        assert!(preview.scene.payload_tabs.is_some());
+        assert_eq!(preview.scene.active_split(), None);
+        assert_eq!(
+            preview
+                .scene
+                .active_drop_box()
+                .map(|drop_box| drop_box.kind),
+            Some(DockDropBoxKind::Center)
+        );
+        assert_eq!(preview.scene.layers[0].kind, DockPreviewLayerKind::Inner);
+        assert!(preview.scene.layers[0].availability.center);
+        assert!(preview.scene.layers[0].availability.sides);
+        assert_eq!(preview.scene.layers[0].drop_boxes.len(), 5);
+        assert_eq!(
+            preview
+                .scene
+                .layers
+                .iter()
+                .flat_map(|layer| layer.drop_boxes.iter())
+                .filter(|drop_box| drop_box.active)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn edge_target_builds_scene_with_explicit_split_and_no_payload_tabs() {
+        let tabs = DockNodeId::null();
+        let preview = DockDropPreview::from_resolved_target(
+            &resolved_target(
+                DockResolvedDropTargetKind::InnerEdge {
+                    root: tabs,
+                    target_tabs: tabs,
+                    zone: DropZone::Left,
+                },
+                Some(drop_box(DockDropBoxKind::InnerEdge(DropZone::Left))),
+            ),
+            DockDropGuideStyle::default(),
+        )
+        .expect("edge target should produce preview");
+
+        let split = preview
+            .scene
+            .active_split()
+            .expect("edge target should expose active split");
+        assert_eq!(split.zone, DropZone::Left);
+        assert!(split.explicit);
+        assert_eq!(
+            split.ratio,
+            Some(DockEdgeDockSizing::fallback().new_child_share())
+        );
+        assert!(preview.scene.payload_tabs.is_none());
+        assert_eq!(preview.scene.layers[0].kind, DockPreviewLayerKind::Inner);
+        assert!(preview.scene.layers[0].availability.sides);
+        assert_eq!(
+            preview
+                .scene
+                .active_drop_box()
+                .map(|drop_box| drop_box.draw_bounds),
+            Some(bounds(22.0, 32.0, 40.0, 32.0))
+        );
+        assert_eq!(
+            preview
+                .scene
+                .active_drop_box()
+                .map(|drop_box| drop_box.preview_bounds),
+            Some(bounds(0.0, 0.0, 120.0, 80.0))
+        );
+    }
+
+    #[test]
+    fn root_edge_target_preserves_inner_layer_but_activates_outer_layer() {
+        let root = DockNodeId::null();
+        let preview = DockDropPreview::from_resolved_target(
+            &resolved_target(
+                DockResolvedDropTargetKind::RootEdge {
+                    root,
+                    leaf_tabs: None,
+                    zone: DropZone::Right,
+                },
+                Some(drop_box(DockDropBoxKind::OuterEdge(DropZone::Right))),
+            ),
+            DockDropGuideStyle::default(),
+        )
+        .expect("root edge target should produce preview");
+
+        assert_eq!(preview.scene.layers.len(), 2);
+        assert_eq!(preview.scene.layers[0].kind, DockPreviewLayerKind::Inner);
+        assert_eq!(preview.scene.layers[1].kind, DockPreviewLayerKind::Outer);
+        assert!(!preview.scene.layers[0].availability.center);
+        assert!(!preview.scene.layers[0].availability.sides);
+        assert!(preview.scene.layers[0].drop_boxes.is_empty());
+        assert!(!preview.scene.layers[1].availability.center);
+        assert!(preview.scene.layers[1].availability.sides);
+        assert_eq!(
+            preview
+                .scene
+                .active_drop_box()
+                .map(|drop_box| drop_box.layer),
+            Some(DockPreviewLayerKind::Outer)
+        );
+    }
+
+    #[test]
+    fn rejected_resolution_builds_rejected_scene_without_payload_tabs() {
+        let tabs = DockNodeId::null();
+        let target = resolved_target(
+            DockResolvedDropTargetKind::LeafCenter {
+                root: tabs,
+                target_tabs: tabs,
+            },
+            Some(drop_box(DockDropBoxKind::Center)),
+        );
+        let preview = DockDropPreview::from_resolution(
+            &DockDropResolution::Rejected(DockDropRejection {
+                target,
+                reason: DockPolicyError::CenterMergeDisabled,
+            }),
+            DockDropGuideStyle::default(),
+        )
+        .expect("rejected target should still produce preview");
+
+        assert!(!preview.scene.decision.is_allowed());
+        assert_eq!(
+            preview.scene.decision.rejection_reason(),
+            Some(&DockPolicyError::CenterMergeDisabled)
+        );
+        assert!(preview.scene.payload_tabs.is_none());
+    }
 
     #[test]
     fn known_viewport_route_preview_uses_host_pointer_anchor() {

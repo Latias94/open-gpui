@@ -3,7 +3,7 @@ use crate::{
     DockViewportActivationTransaction, DockViewportFocusRequest, DockViewportWindowEffects,
     drag::{DockDragPayload, DockDragPayloadKind, DockDragTearOffGeometry},
     interaction::DockRuntimeDragSession,
-    workspace_transaction::DockWorkspaceDropPayload,
+    workspace_drop_transaction::DockWorkspaceDropPayload,
 };
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowBounds};
 use std::collections::BTreeMap;

@@ -1,13 +1,13 @@
 use crate::{
     DockFloatingContainer, DockHost, DockNodeId,
     debug::DockDebugRegion,
-    drag::{DockDragPayload, DockDragPayloadKind, DockDragPreview, DockDragTearOffGeometry},
+    drag::{DockDragPayload, DockDragPayloadKind, DockDragTearOffGeometry},
     drop_scene_fact,
     host_render_session::{DockFloatingChromeTarget, DockHostRenderSession},
     render::DockViewportHostSceneFrameSlot,
 };
 use open_gpui::{
-    AnyElement, AppContext, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement,
+    AnyElement, AppContext, Bounds, Context, DragMoveEvent, Empty, InteractiveElement, IntoElement,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
     StatefulInteractiveElement, Styled, Window, canvas, div, px, rgb, rgba, white,
 };
@@ -144,7 +144,10 @@ impl DockHost {
                     drop_scene_fact::floating_title_bar(floating, target_tabs, title_bounds, bounds)
                 },
             ));
-            let payload = DockDragPayload::new_floating(space.clone(), floating, title.clone());
+            let mut payload = DockDragPayload::new_floating(space.clone(), floating, title.clone());
+            if let Some(preview_titles) = session.multi_preview_tab_titles_for_node(floating) {
+                payload = payload.with_preview_tabs(preview_titles);
+            }
             let drag_entity = entity.clone();
             let drag_space = space.clone();
             let drag_surface_id = format!(
@@ -186,7 +189,7 @@ impl DockHost {
                                 cx,
                             );
                         });
-                        cx.new(|_| DockDragPreview::new(payload.title()))
+                        cx.new(|_| Empty)
                     },
                 )
                 .on_drag_move(cx.listener(
@@ -218,6 +221,9 @@ impl DockHost {
                                 tear_off_geometry,
                             );
                         }
+                        if !event.bounds.contains(&event.event.position) {
+                            return;
+                        }
                         let fact = drop_scene_fact::floating_title_bar(
                             floating,
                             target_tabs,
@@ -227,7 +233,7 @@ impl DockHost {
                                 bounds.size,
                             ),
                         );
-                        this.update_drop_scene_fact_from_render(
+                        this.update_local_drop_scene_fact_from_render(
                             &payload,
                             fact,
                             event.event.position,

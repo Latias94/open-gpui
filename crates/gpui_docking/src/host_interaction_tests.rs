@@ -1,6 +1,7 @@
 use crate::{
     DockCentralRegion, DockController, DockGraph, DockNode, DockNodeId, DockPanel,
-    DockPanelDescriptor, DockViewportRuntimeHandle, DockWorkspace, DropZone, SplitAxis,
+    DockPanelDescriptor, DockSpaceId, DockViewportRuntimeHandle, DockWorkspace, DropZone,
+    SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_scene_fact,
@@ -204,6 +205,44 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
         Modifiers::none(),
     );
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut drag_visual = VisualTestContext::from_window(window.into(), cx);
+    let preview = selector_for(&drag_visual, &host, DockDebugRegion::DropPreview)
+        .expect("center hover should render a drop preview");
+    let preview_body = selector_for(&drag_visual, &host, DockDebugRegion::DropPreviewBody)
+        .expect("center hover should render a preview body below the payload tab preview");
+    let preview_tab = selector_for(
+        &drag_visual,
+        &host,
+        DockDebugRegion::DropPayloadTabPreview { index: 0 },
+    )
+    .expect("center hover should render a payload tab preview");
+    let preview_bounds = debug_bounds(&mut drag_visual, &preview);
+    let preview_body_bounds = debug_bounds(&mut drag_visual, &preview_body);
+    let preview_tab_bounds = debug_bounds(&mut drag_visual, &preview_tab);
+    assert!(
+        preview_bounds.contains(&preview_tab_bounds.center()),
+        "payload tab preview should stay inside the center drop preview"
+    );
+    assert_close(
+        f32::from(preview_body_bounds.origin.y),
+        f32::from(preview_tab_bounds.origin.y + preview_tab_bounds.size.height),
+    );
+    assert!(
+        preview_body_bounds.origin.y
+            >= preview_tab_bounds.origin.y + preview_tab_bounds.size.height,
+        "center preview body should start below the payload tab preview"
+    );
+    assert_close(
+        f32::from(preview_body_bounds.origin.x),
+        f32::from(preview_bounds.origin.x),
+    );
+    assert_close(
+        f32::from(preview_body_bounds.size.width),
+        f32::from(preview_bounds.size.width),
+    );
+
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
     visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let visual = VisualTestContext::from_window(window.into(), cx);
@@ -223,6 +262,72 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
         assert_eq!(items, &vec![item("b"), item("a")]);
         assert_eq!(selected.as_ref(), items.get(1));
     });
+}
+
+#[open_gpui::test]
+fn tab_bar_append_preview_shifts_payload_tab_right_of_existing_tab(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(500.0), px(240.0)));
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: left_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: right_tabs,
+            item: item("b"),
+        },
+    )
+    .expect("target tab selector should be emitted");
+
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let target_bounds = debug_bounds(&mut visual, &target_tab);
+    let append_hover = point(target_bounds.right() + px(16.0), target_bounds.center().y);
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    visual.simulate_mouse_move(append_hover, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    let mut drag_visual = VisualTestContext::from_window(window.into(), cx);
+    let preview_tab = selector_for(
+        &drag_visual,
+        &host,
+        DockDebugRegion::DropPayloadTabPreview { index: 0 },
+    )
+    .expect("tab bar append hover should render a payload tab preview");
+    let preview_tab_bounds = debug_bounds(&mut drag_visual, &preview_tab);
+    let runtime_target_tab_bounds = host
+        .update(cx, |host, _| {
+            host.viewport_runtime().rendered_tab_label_bounds_for_tabs(
+                host.space(),
+                Some(window.window_id()),
+                right_tabs,
+                0,
+            )
+        })
+        .expect("runtime should expose target tab label bounds");
+
+    assert!(
+        preview_tab_bounds.origin.x >= runtime_target_tab_bounds.center().x,
+        "append preview should move toward the append slot after the existing tab: preview={preview_tab_bounds:?} runtime_target={runtime_target_tab_bounds:?} debug_target={target_bounds:?}"
+    );
 }
 
 #[open_gpui::test]
@@ -249,7 +354,7 @@ fn local_release_on_first_target_hit_does_not_commit(cx: &mut TestAppContext) {
                 window,
                 cx,
             );
-            host.update_drop_scene_fact_from_render(
+            host.update_local_drop_scene_fact_from_render(
                 &payload,
                 drop_scene_fact::leaf(right_tabs, right_tabs, target_bounds, false),
                 release_position,
@@ -303,14 +408,13 @@ fn local_release_after_preview_miss_does_not_commit(cx: &mut TestAppContext) {
                 window,
                 cx,
             );
-            host.update_drop_scene_fact_from_render(
+            host.update_local_drop_scene_fact_from_render(
                 &payload,
                 drop_scene_fact::leaf(right_tabs, right_tabs, target_bounds, false),
                 preview_position,
                 window,
                 cx,
             );
-            host.interaction_mut().finish_drop_acceptance_pass();
             host.drop_payload_release_from_render(
                 DockPayloadDropRelease::hovered_host(payload.clone(), space(), release_position),
                 window,
@@ -360,14 +464,13 @@ fn source_only_release_does_not_commit_cached_local_delivery_without_hover_signa
                 window,
                 cx,
             );
-            host.update_drop_scene_fact_from_render(
+            host.update_local_drop_scene_fact_from_render(
                 &payload,
                 drop_scene_fact::leaf(right_tabs, right_tabs, target_bounds, false),
                 release_position,
                 window,
                 cx,
             );
-            host.interaction_mut().finish_drop_acceptance_pass();
             host.drop_payload_release_from_render(
                 DockPayloadDropRelease::source_only(payload.clone(), space(), release_position),
                 window,
@@ -450,6 +553,174 @@ fn dragging_tab_bar_empty_area_moves_whole_stack(cx: &mut TestAppContext) {
         assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
         assert_eq!(selected.as_ref(), items.get(2));
     });
+}
+
+#[open_gpui::test]
+fn dragging_tab_bar_empty_area_renders_multi_tab_center_preview(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("c")],
+        selected: Some(item("c")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![source_tabs, target_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root);
+    let workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(560.0), px(240.0)));
+
+    let source_stack = selector_for(&visual, &host, DockDebugRegion::Tabs { node: source_tabs })
+        .expect("source tabs selector should be emitted");
+    let target_stack = selector_for(&visual, &host, DockDebugRegion::Tabs { node: target_tabs })
+        .expect("target tabs selector should be emitted");
+    let source_bounds = debug_bounds(&mut visual, &source_stack);
+    let start = point(
+        source_bounds.origin.x + source_bounds.size.width - px(8.0),
+        source_bounds.origin.y + px(12.0),
+    );
+    let end = debug_bounds(&mut visual, &target_stack).center();
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    let mut drag_visual = VisualTestContext::from_window(window.into(), cx);
+    let preview_body = selector_for(&drag_visual, &host, DockDebugRegion::DropPreviewBody)
+        .expect("center stack hover should render a preview body");
+    let first_tab = selector_for(
+        &drag_visual,
+        &host,
+        DockDebugRegion::DropPayloadTabPreview { index: 0 },
+    )
+    .expect("center stack hover should render the first payload tab preview");
+    let second_tab = selector_for(
+        &drag_visual,
+        &host,
+        DockDebugRegion::DropPayloadTabPreview { index: 1 },
+    )
+    .expect("center stack hover should render the second payload tab preview");
+    let preview_body_bounds = debug_bounds(&mut drag_visual, &preview_body);
+    let first_tab_bounds = debug_bounds(&mut drag_visual, &first_tab);
+    let second_tab_bounds = debug_bounds(&mut drag_visual, &second_tab);
+
+    assert!(
+        second_tab_bounds.origin.x >= first_tab_bounds.right(),
+        "payload tab previews should render in payload order: first={first_tab_bounds:?} second={second_tab_bounds:?}"
+    );
+    assert_close(
+        f32::from(preview_body_bounds.origin.y),
+        f32::from(first_tab_bounds.origin.y + first_tab_bounds.size.height),
+    );
+
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+}
+
+#[open_gpui::test]
+fn multi_tab_center_preview_clamps_payload_tabs_in_narrow_target(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("c")],
+        selected: Some(item("c")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![source_tabs, target_tabs],
+        fractions: vec![0.72, 0.28],
+    });
+    graph.set_root(space(), root);
+    let workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[("a", "A", "A"), ("b", "B", "B"), ("c", "C", "C")],
+    );
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(520.0), px(220.0)));
+
+    let source_stack = selector_for(&visual, &host, DockDebugRegion::Tabs { node: source_tabs })
+        .expect("source tabs selector should be emitted");
+    let target_stack = selector_for(&visual, &host, DockDebugRegion::Tabs { node: target_tabs })
+        .expect("target tabs selector should be emitted");
+    let source_bounds = debug_bounds(&mut visual, &source_stack);
+    let start = point(
+        source_bounds.origin.x + source_bounds.size.width - px(8.0),
+        source_bounds.origin.y + px(12.0),
+    );
+    let end = debug_bounds(&mut visual, &target_stack).center();
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    let mut drag_visual = VisualTestContext::from_window(window.into(), cx);
+    let preview = selector_for(&drag_visual, &host, DockDebugRegion::DropPreview)
+        .expect("center stack hover should render a narrow preview");
+    let first_tab = selector_for(
+        &drag_visual,
+        &host,
+        DockDebugRegion::DropPayloadTabPreview { index: 0 },
+    )
+    .expect("narrow center preview should render the first payload tab preview");
+    let second_tab = selector_for(
+        &drag_visual,
+        &host,
+        DockDebugRegion::DropPayloadTabPreview { index: 1 },
+    )
+    .expect("narrow center preview should render the second payload tab preview");
+    let preview_bounds = debug_bounds(&mut drag_visual, &preview);
+    let first_tab_bounds = debug_bounds(&mut drag_visual, &first_tab);
+    let second_tab_bounds = debug_bounds(&mut drag_visual, &second_tab);
+
+    assert!(
+        first_tab_bounds.size.width <= preview_bounds.size.width,
+        "first payload tab should be clipped to preview width: preview={preview_bounds:?} first={first_tab_bounds:?}"
+    );
+    assert!(
+        second_tab_bounds.size.width <= preview_bounds.size.width,
+        "second payload tab should be clipped to preview width: preview={preview_bounds:?} second={second_tab_bounds:?}"
+    );
+    assert!(
+        first_tab_bounds.origin.x >= preview_bounds.origin.x
+            && first_tab_bounds.origin.x < preview_bounds.right(),
+        "first payload tab should start inside preview bounds: preview={preview_bounds:?} first={first_tab_bounds:?}"
+    );
+    assert!(
+        second_tab_bounds.origin.x >= preview_bounds.origin.x
+            && second_tab_bounds.origin.x < preview_bounds.right(),
+        "second payload tab should retain a visible start inside preview bounds: preview={preview_bounds:?} second={second_tab_bounds:?}"
+    );
+
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
 }
 
 #[open_gpui::test]
@@ -631,6 +902,502 @@ fn dragging_tab_to_right_edge_creates_horizontal_split(cx: &mut TestAppContext) 
 }
 
 #[open_gpui::test]
+fn cross_window_tab_drag_to_bottom_edge_creates_vertical_split(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let (source_window, source_host, mut source_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let (target_window, target_host, mut target_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        target_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let target_bounds = debug_bounds(&mut target_visual, &target_tabs_selector);
+    let end = inner_edge_drop_position(target_bounds, DropZone::Bottom);
+
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
+
+    let preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
+        .expect("target host should render a vertical split preview during cross-window drag");
+    let preview_bounds = debug_bounds(&mut target_visual, &preview);
+    let preview_body = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::DropPreviewBody,
+    )
+    .expect("edge split preview should render a split body");
+    let preview_body_bounds = debug_bounds(&mut target_visual, &preview_body);
+    assert!(preview_bounds.size.width > px(0.0));
+    assert!(preview_bounds.contains(&preview_body_bounds.center()));
+    assert!(
+        preview_body_bounds.size.height < target_bounds.size.height,
+        "bottom-edge preview should occupy only a horizontal band"
+    );
+
+    target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let source_visual = VisualTestContext::from_window(source_window.into(), cx);
+    let target_visual = VisualTestContext::from_window(target_window.into(), cx);
+
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_some(),
+        "panel A should render in the target window after a bottom-edge drop"
+    );
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("b") }
+        )
+        .is_some(),
+        "panel B should remain visible in the target window after the split"
+    );
+    assert!(
+        selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_none(),
+        "panel A should leave the source window after the cross-window split"
+    );
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(controller.graph().root(&source_space), None);
+        let target_root = controller
+            .graph()
+            .root(&target_space)
+            .expect("target space should keep a root after the split");
+        let DockNode::Split { axis, children, .. } = controller
+            .graph()
+            .node(target_root)
+            .expect("target root should exist")
+        else {
+            panic!("target root should become a split after the cross-window drop");
+        };
+        assert_eq!(*axis, SplitAxis::Vertical);
+        assert_eq!(children.len(), 2);
+        assert_eq!(
+            controller.graph().collect_items_in_subtree(children[0]),
+            vec![item("b")],
+            "bottom-edge drop should keep the target tab in the top child"
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_subtree(children[1]),
+            vec![item("a")],
+            "bottom-edge drop should place the moved tab in the bottom child"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn cross_window_tab_drag_into_existing_split_reorients_target_child(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let left_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let right_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let target_root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left_tabs, right_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_root);
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let (source_window, source_host, mut source_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let (target_window, target_host, mut target_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        target_space.clone(),
+        size(px(480.0), px(260.0)),
+    );
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let right_child = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::SplitChild {
+            split: target_root,
+            index: 1,
+        },
+    )
+    .expect("target right child selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let right_child_bounds = debug_bounds(&mut target_visual, &right_child);
+    let end = inner_edge_drop_position(right_child_bounds, DropZone::Bottom);
+
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
+
+    let preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
+        .expect("nested target should render a vertical preview during the drag");
+    let preview_bounds = debug_bounds(&mut target_visual, &preview);
+    let preview_body = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::DropPreviewBody,
+    )
+    .expect("nested edge split preview should render a split body");
+    let preview_body_bounds = debug_bounds(&mut target_visual, &preview_body);
+    assert!(preview_bounds.size.width > px(0.0));
+    assert!(preview_bounds.contains(&preview_body_bounds.center()));
+    assert!(
+        preview_body_bounds.size.height < right_child_bounds.size.height,
+        "nested bottom-edge preview should occupy only a horizontal band"
+    );
+
+    target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let source_visual = VisualTestContext::from_window(source_window.into(), cx);
+    let target_visual = VisualTestContext::from_window(target_window.into(), cx);
+
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_some(),
+        "panel A should render in the target window after reorienting the child split"
+    );
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("b") }
+        )
+        .is_some(),
+        "panel B should remain in the left child"
+    );
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("c") }
+        )
+        .is_some(),
+        "panel C should remain visible in the target window after the reorientation"
+    );
+    assert!(
+        selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_none(),
+        "panel A should leave the source window after the cross-window drop"
+    );
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(controller.graph().root(&source_space), None);
+        let target_root = controller
+            .graph()
+            .root(&target_space)
+            .expect("target space should keep a root after the nested split");
+        let DockNode::Split { axis, children, .. } = controller
+            .graph()
+            .node(target_root)
+            .expect("target root should still be a split")
+        else {
+            panic!("target root should remain a split");
+        };
+        assert_eq!(*axis, SplitAxis::Horizontal);
+        assert_eq!(children.len(), 2);
+        assert_eq!(
+            controller.graph().collect_items_in_subtree(children[0]),
+            vec![item("b")],
+            "left child should remain unchanged"
+        );
+        let DockNode::Split {
+            axis: child_axis,
+            children: child_children,
+            ..
+        } = controller
+            .graph()
+            .node(children[1])
+            .expect("right child should become a split")
+        else {
+            panic!("right child should be reoriented into a split");
+        };
+        assert_eq!(*child_axis, SplitAxis::Vertical);
+        assert_eq!(child_children.len(), 2);
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_subtree(child_children[0]),
+            vec![item("c")],
+            "top child should keep the original right tab"
+        );
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_subtree(child_children[1]),
+            vec![item("a")],
+            "bottom child should contain the moved tab"
+        );
+    });
+}
+
+fn cross_window_tab_drag_to_edge_creates_split(
+    cx: &mut TestAppContext,
+    zone: DropZone,
+    expected_axis: SplitAxis,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let (source_window, source_host, mut source_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let (target_window, target_host, mut target_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        target_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let target_bounds = debug_bounds(&mut target_visual, &target_tabs_selector);
+    let end = inner_edge_drop_position(target_bounds, zone);
+
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
+
+    let preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
+        .expect("target host should render a split preview during the cross-window drag");
+    let preview_bounds = debug_bounds(&mut target_visual, &preview);
+    let preview_body = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::DropPreviewBody,
+    )
+    .expect("edge split preview should render a split body");
+    let preview_body_bounds = debug_bounds(&mut target_visual, &preview_body);
+    assert!(preview_bounds.size.width > px(0.0));
+    assert!(preview_bounds.size.height > px(0.0));
+    assert!(preview_bounds.contains(&preview_body_bounds.center()));
+    match zone {
+        DropZone::Left | DropZone::Right => assert!(
+            preview_body_bounds.size.width < target_bounds.size.width,
+            "side-edge preview should occupy only a vertical band"
+        ),
+        DropZone::Top | DropZone::Bottom => assert!(
+            preview_body_bounds.size.height < target_bounds.size.height,
+            "top/bottom-edge preview should occupy only a horizontal band"
+        ),
+        DropZone::Center => unreachable!("center is not an edge drop"),
+    }
+
+    target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let source_visual = VisualTestContext::from_window(source_window.into(), cx);
+    let target_visual = VisualTestContext::from_window(target_window.into(), cx);
+
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_some(),
+        "panel A should render in the target window after the cross-window drop"
+    );
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("b") }
+        )
+        .is_some(),
+        "panel B should remain visible in the target window after the split"
+    );
+    assert!(
+        selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_none(),
+        "panel A should leave the source window after the cross-window split"
+    );
+
+    let (first_expected, second_expected) = match zone {
+        DropZone::Left | DropZone::Top => (item("a"), item("b")),
+        DropZone::Right | DropZone::Bottom => (item("b"), item("a")),
+        DropZone::Center => unreachable!("center is not an edge drop"),
+    };
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(controller.graph().root(&source_space), None);
+        let target_root = controller
+            .graph()
+            .root(&target_space)
+            .expect("target space should keep a root after the split");
+        let DockNode::Split { axis, children, .. } = controller
+            .graph()
+            .node(target_root)
+            .expect("target root should exist")
+        else {
+            panic!("target root should become a split after the cross-window drop");
+        };
+        assert_eq!(*axis, expected_axis);
+        assert_eq!(children.len(), 2);
+        assert_eq!(
+            controller.graph().collect_items_in_subtree(children[0]),
+            vec![first_expected],
+            "edge drop should keep the expected item in the first child"
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_subtree(children[1]),
+            vec![second_expected],
+            "edge drop should place the moved item in the second child"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn cross_window_tab_drag_to_top_edge_creates_vertical_split(cx: &mut TestAppContext) {
+    cross_window_tab_drag_to_edge_creates_split(cx, DropZone::Top, SplitAxis::Vertical);
+}
+
+#[open_gpui::test]
+fn cross_window_tab_drag_to_left_edge_creates_horizontal_split(cx: &mut TestAppContext) {
+    cross_window_tab_drag_to_edge_creates_split(cx, DropZone::Left, SplitAxis::Horizontal);
+}
+
+#[open_gpui::test]
+fn cross_window_tab_drag_to_right_edge_creates_horizontal_split(cx: &mut TestAppContext) {
+    cross_window_tab_drag_to_edge_creates_split(cx, DropZone::Right, SplitAxis::Horizontal);
+}
+
+#[open_gpui::test]
 fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
     let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let (window, host, mut visual) = open_host(
@@ -669,11 +1436,24 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
     let preview = selector_for(&visual, &host, DockDebugRegion::DropPreview)
         .expect("drop preview selector should be emitted");
     let preview_bounds = debug_bounds(&mut visual, &preview);
+    let preview_body = selector_for(&visual, &host, DockDebugRegion::DropPreviewBody)
+        .expect("edge split preview should render a split body");
+    let preview_body_bounds = debug_bounds(&mut visual, &preview_body);
     assert!(preview_bounds.size.width > px(0.0));
     assert!(preview_bounds.size.height > px(0.0));
+    assert!(preview_bounds.contains(&preview_body_bounds.center()));
     assert!(
-        preview_bounds.size.width < target_bounds.size.width,
+        preview_body_bounds.size.width < target_bounds.size.width,
         "edge preview should occupy only an edge band"
+    );
+    assert!(
+        selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::DropPayloadTabPreview { index: 0 }
+        )
+        .is_none(),
+        "edge split previews should not render a payload tab label"
     );
     visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
@@ -725,8 +1505,15 @@ fn dragging_tab_to_root_edge_resolves_from_render_leaf_fact_root(cx: &mut TestAp
                     .with_preferred_size(source_bounds.size),
             );
             host.begin_host_drop_scene_from_render(&payload, root_bounds, end, window, cx);
-            host.update_root_drop_scene_from_render(&payload, root, root_bounds, end, window, cx);
-            host.update_drop_scene_fact_from_render(
+            host.update_local_root_drop_scene_from_render(
+                &payload,
+                root,
+                root_bounds,
+                end,
+                window,
+                cx,
+            );
+            host.update_local_drop_scene_fact_from_render(
                 &payload,
                 drop_scene_fact::leaf(root, right_tabs, target_bounds, false),
                 end,
@@ -1020,6 +1807,163 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
             );
         })
         .expect("detached viewport should remain live");
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
+}
+
+#[open_gpui::test]
+fn runtime_nested_tab_tear_off_uses_leaf_size_not_tab_label(cx: &mut TestAppContext) {
+    let source_space = crate::DockSpaceId::from("source:nested-tear-off");
+    let mut graph = DockGraph::new();
+    let left_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("left")],
+        selected: Some(item("left")),
+    });
+    let top_right_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("top")],
+        selected: Some(item("top")),
+    });
+    let bottom_right_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("bottom"), item("other")],
+        selected: Some(item("bottom")),
+    });
+    let right_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![top_right_tabs, bottom_right_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left_tabs, right_split],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(source_space.clone(), root);
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("left", "Panel Left", "Left"),
+            ("top", "Panel Top", "Top"),
+            ("bottom", "Panel Bottom", "Bottom"),
+            ("other", "Panel Other", "Other"),
+        ],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(640.0, 420.0),
+                app,
+            )
+        })
+        .expect("source viewport should open through runtime");
+    let source_window = opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("runtime viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("runtime viewport should expose DockHost root");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(opened.window(), cx);
+
+    let bottom_leaf = selector_for(
+        &visual,
+        &source_host,
+        DockDebugRegion::Tabs {
+            node: bottom_right_tabs,
+        },
+    )
+    .expect("bottom-right leaf selector should be emitted");
+    let bottom_tab = selector_for(
+        &visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: bottom_right_tabs,
+            item: item("bottom"),
+        },
+    )
+    .expect("bottom-right tab selector should be emitted");
+    let leaf_bounds = debug_bounds(&mut visual, &bottom_leaf);
+    let tab_bounds = debug_bounds(&mut visual, &bottom_tab);
+    let rendered_leaf_bounds = runtime
+        .borrow()
+        .rendered_leaf_bounds_for_tabs(
+            &source_space,
+            Some(opened.window().window_id()),
+            bottom_right_tabs,
+        )
+        .expect("source leaf bounds should be available before tab drag starts");
+    assert!(
+        rendered_leaf_bounds.size.width > tab_bounds.size.width * 2.0,
+        "test must distinguish the leaf from the tab label"
+    );
+    assert!(
+        rendered_leaf_bounds.size.height > tab_bounds.size.height * 3.0,
+        "test must distinguish the leaf from the tab label"
+    );
+    assert!(
+        leaf_bounds.contains(&rendered_leaf_bounds.origin)
+            && leaf_bounds.contains(&rendered_leaf_bounds.bottom_right()),
+        "rendered leaf bounds should describe the source leaf interior"
+    );
+
+    let start = tab_bounds.center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let outside_window = point(px(900.0), px(900.0));
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+    visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    let detached_space = cx.read_entity(&controller, |controller, _| {
+        let detached_space = controller
+            .graph()
+            .spaces()
+            .into_iter()
+            .find(|space| {
+                space
+                    .as_str()
+                    .starts_with("source:nested-tear-off:tear-off:bottom:")
+            })
+            .expect("outside release should create a detached viewport space");
+        assert_eq!(
+            controller.graph().collect_items_in_space(&detached_space),
+            vec![item("bottom")]
+        );
+        detached_space
+    });
+    let detached_bounds = runtime
+        .borrow()
+        .adapter()
+        .window_for_space(&detached_space)
+        .expect("detached space should have a runtime window")
+        .update(cx, |_, window, _| window.window_bounds().get_bounds())
+        .expect("detached viewport should remain live");
+
+    assert!(
+        detached_bounds.size.width >= rendered_leaf_bounds.size.width,
+        "tear-off width should come from the source leaf, not the tab label"
+    );
+    assert!(
+        detached_bounds.size.height >= rendered_leaf_bounds.size.height,
+        "tear-off height should come from the source leaf, not the tab label"
+    );
+    let expected_origin = outside_window - (start - rendered_leaf_bounds.origin);
+    assert_close(
+        f32::from(detached_bounds.origin.x),
+        f32::from(expected_origin.x),
+    );
+    assert_close(
+        f32::from(detached_bounds.origin.y),
+        f32::from(expected_origin.y),
+    );
     cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
 }
 
@@ -1864,7 +2808,7 @@ fn class_rejected_edge_hover_renders_rejected_drop_preview_without_commit(cx: &m
             .interaction()
             .drop_preview()
             .expect("drop preview should be tracked");
-        assert!(preview.rejected);
+        assert!(!preview.scene.decision.is_allowed());
     });
 
     visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());

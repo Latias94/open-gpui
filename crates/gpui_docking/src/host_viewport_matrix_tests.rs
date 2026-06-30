@@ -82,7 +82,7 @@ impl MatrixPayload {
 }
 
 #[open_gpui::test]
-fn source_only_known_viewport_release_matrix_rejects_unaccepted_backend_fallback(
+fn source_only_known_viewport_release_matrix_rejects_backend_fallback_without_current_route_facts(
     cx: &mut TestAppContext,
 ) {
     for case in matrix_cases() {
@@ -91,7 +91,7 @@ fn source_only_known_viewport_release_matrix_rejects_unaccepted_backend_fallback
 }
 
 #[open_gpui::test]
-fn source_only_known_viewport_root_edge_matrix_rejects_unaccepted_backend_fallback(
+fn source_only_known_viewport_root_edge_matrix_rejects_backend_fallback_without_current_route_facts(
     cx: &mut TestAppContext,
 ) {
     for case in root_only_matrix_cases() {
@@ -384,7 +384,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         runtime.commit_payload_drop_from_screen(&request, app)
     });
 
-    assert_source_only_unaccepted_backend_fallback_rejected(
+    assert_source_only_backend_fallback_without_current_route_facts_rejected(
         cx,
         &controller,
         &runtime,
@@ -487,7 +487,7 @@ fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixC
         runtime.commit_payload_drop_from_screen(&request, app)
     });
 
-    assert_source_only_unaccepted_backend_fallback_rejected(
+    assert_source_only_backend_fallback_without_current_route_facts_rejected(
         cx,
         &controller,
         &runtime,
@@ -611,7 +611,7 @@ fn run_overlapping_source_only_release_without_backend_route_selection_case(
     assert_case_graph_unmoved(cx, &controller, &source_space, &target_space, case);
 }
 
-fn assert_source_only_unaccepted_backend_fallback_rejected(
+fn assert_source_only_backend_fallback_without_current_route_facts_rejected(
     cx: &TestAppContext,
     controller: &open_gpui::Entity<DockController>,
     runtime: &DockViewportRuntimeHandle,
@@ -623,7 +623,7 @@ fn assert_source_only_unaccepted_backend_fallback_rejected(
     assert_eq!(
         result,
         Err(DockActionApplyError::DropTargetUnavailable),
-        "{}: source-only window stack fallback must not commit without an accepted routed preview",
+        "{}: source-only window stack fallback must not commit without current route facts",
         case.name
     );
     let status = runtime.runtime_status();
@@ -636,7 +636,7 @@ fn assert_source_only_unaccepted_backend_fallback_rejected(
                 .target,
             DockViewportRouteTarget::Unavailable
         ),
-        "{}: source-only window stack fallback should be recorded as unavailable without accepted preview, got {:?}",
+        "{}: source-only window stack fallback should be recorded as unavailable without current route facts, got {:?}",
         case.name,
         status.last_route
     );
@@ -1153,8 +1153,20 @@ fn assert_known_viewport_route(
         .as_ref()
         .unwrap_or_else(|| panic!("{}: hover/release should record a route", case_name))
         .target;
-    assert_eq!(target.space(), Some(target_space), "{}", case_name);
-    assert_eq!(target.host_position(), Some(host_position), "{}", case_name);
+    assert_eq!(
+        target.space(),
+        Some(target_space),
+        "{}: target={:?}",
+        case_name,
+        target
+    );
+    assert_eq!(
+        target.host_position(),
+        Some(host_position),
+        "{}: target={:?}",
+        case_name,
+        target
+    );
 }
 
 fn assert_target_hover_resolution(

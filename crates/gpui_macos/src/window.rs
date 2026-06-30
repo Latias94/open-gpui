@@ -1,8 +1,8 @@
 use crate::{
-    BoolExt, DisplayLink, MacDisplay, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
-    TISGetInputSourceProperty, events::platform_input_from_native,
-    kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
-    ns_string, renderer,
+    BoolExt, DisplayLink, DisplayLinkError, MacDisplay, NSRange, NSStringExt,
+    TISCopyCurrentKeyboardInputSource, TISGetInputSourceProperty,
+    events::platform_input_from_native, kTISPropertyInputSourceIsASCIICapable,
+    kTISPropertyInputSourceType, kTISTypeKeyboardInputMode, ns_string, renderer,
 };
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
@@ -50,7 +50,6 @@ use objc::{
     sel, sel_impl,
 };
 use objc2_app_kit::NSBeep;
-use open_gpui_util::ResultExt;
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
@@ -505,6 +504,24 @@ struct MacWindowState {
 }
 
 impl MacWindowState {
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
+    fn mark_closed(&mut self) {
+        self.closed.store(true, Ordering::Release);
+        self.stop_display_link();
+        self.synthetic_drag_counter += 1;
+        self.request_frame_callback = None;
+        self.event_callback = None;
+        self.activate_callback = None;
+        self.resize_callback = None;
+        self.moved_callback = None;
+        self.should_close_callback = None;
+        self.appearance_changed_callback = None;
+        self.input_handler.take();
+    }
+
     fn move_traffic_light(&self) {
         if let Some(traffic_light_position) = self.traffic_light_position {
             if self.is_fullscreen() {
@@ -557,22 +574,91 @@ impl MacWindowState {
     }
 
     fn start_display_link(&mut self) {
+        if self.is_closed() {
+            self.stop_display_link();
+            return;
+        }
+
+        let (visible, screen) = unsafe {
+            (
+                self.native_window
+                    .occlusionState()
+                    .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible),
+                self.native_window.screen(),
+            )
+        };
+        if !visible {
+            self.stop_display_link();
+            return;
+        }
+
         self.stop_display_link();
-        unsafe {
-            if !self
-                .native_window
-                .occlusionState()
-                .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
-            {
-                return;
+
+        if screen == nil {
+            log::debug!(
+                "skipping display link start for {:?}: window has no screen",
+                self.handle.window_id()
+            );
+            self.request_layer_display();
+            return;
+        }
+
+        let display_id = unsafe { display_id_for_screen(screen) };
+        if display_id == 0 {
+            log::debug!(
+                "skipping display link start for {:?}: screen returned display id 0",
+                self.handle.window_id()
+            );
+            self.request_layer_display();
+            return;
+        }
+
+        let display_link =
+            DisplayLink::new(display_id, self.native_view.as_ptr() as *mut c_void, step);
+        let Some(mut display_link) = display_link
+            .inspect_err(|error| self.log_display_link_start_failure(display_id, *error))
+            .ok()
+        else {
+            self.request_layer_display();
+            return;
+        };
+
+        match display_link.start() {
+            Ok(()) => {
+                self.display_link = Some(display_link);
+            }
+            Err(error) => {
+                self.log_display_link_start_failure(display_id, error);
+                self.request_layer_display();
             }
         }
-        let display_id = unsafe { display_id_for_screen(self.native_window.screen()) };
-        if let Some(mut display_link) =
-            DisplayLink::new(display_id, self.native_view.as_ptr() as *mut c_void, step).log_err()
-        {
-            display_link.start().log_err();
-            self.display_link = Some(display_link);
+    }
+
+    fn request_layer_display(&self) {
+        unsafe {
+            let _: () = msg_send![self.native_view.as_ptr(), setNeedsDisplay:YES];
+        }
+    }
+
+    fn log_display_link_start_failure(
+        &self,
+        display_id: CGDirectDisplayID,
+        error: DisplayLinkError,
+    ) {
+        let message = format!(
+            "{error}; window_id={:?}, display_id={display_id}, closed={}, visible={}",
+            self.handle.window_id(),
+            self.is_closed(),
+            unsafe {
+                self.native_window
+                    .occlusionState()
+                    .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+            }
+        );
+        if error.is_transient_create_failure() {
+            log::debug!("{message}");
+        } else {
+            log::warn!("{message}");
         }
     }
 
@@ -1130,14 +1216,13 @@ fn ns_rect_contains_point(rect: NSRect, point: NSPoint) -> bool {
 impl Drop for MacWindow {
     fn drop(&mut self) {
         let mut this = self.0.lock();
+        this.mark_closed();
         this.renderer.destroy();
         let window = this.native_window;
         let sheet_parent = this.sheet_parent.take();
-        this.display_link.take();
         unsafe {
             this.native_window.setDelegate_(nil);
         }
-        this.input_handler.take();
         this.foreground_executor
             .spawn(async move {
                 unsafe {
@@ -1640,29 +1725,47 @@ impl PlatformWindow for MacWindow {
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
-        self.0.as_ref().lock().request_frame_callback = Some(callback);
+        let mut lock = self.0.as_ref().lock();
+        if !lock.is_closed() {
+            lock.request_frame_callback = Some(callback);
+        }
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> open_gpui::DispatchEventResult>) {
-        self.0.as_ref().lock().event_callback = Some(callback);
+        let mut lock = self.0.as_ref().lock();
+        if !lock.is_closed() {
+            lock.event_callback = Some(callback);
+        }
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        self.0.as_ref().lock().activate_callback = Some(callback);
+        let mut lock = self.0.as_ref().lock();
+        if !lock.is_closed() {
+            lock.activate_callback = Some(callback);
+        }
     }
 
     fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        self.0.as_ref().lock().resize_callback = Some(callback);
+        let mut lock = self.0.as_ref().lock();
+        if !lock.is_closed() {
+            lock.resize_callback = Some(callback);
+        }
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        self.0.as_ref().lock().moved_callback = Some(callback);
+        let mut lock = self.0.as_ref().lock();
+        if !lock.is_closed() {
+            lock.moved_callback = Some(callback);
+        }
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.0.as_ref().lock().should_close_callback = Some(callback);
+        let mut lock = self.0.as_ref().lock();
+        if !lock.is_closed() {
+            lock.should_close_callback = Some(callback);
+        }
     }
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
@@ -1673,7 +1776,10 @@ impl PlatformWindow for MacWindow {
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
-        self.0.lock().appearance_changed_callback = Some(callback);
+        let mut lock = self.0.lock();
+        if !lock.is_closed() {
+            lock.appearance_changed_callback = Some(callback);
+        }
     }
 
     fn tabbed_windows(&self) -> Option<Vec<SystemWindowTab>> {
@@ -1713,23 +1819,38 @@ impl PlatformWindow for MacWindow {
     }
 
     fn on_move_tab_to_new_window(&self, callback: Box<dyn FnMut()>) {
-        self.0.as_ref().lock().move_tab_to_new_window_callback = Some(callback);
+        let mut lock = self.0.as_ref().lock();
+        if !lock.is_closed() {
+            lock.move_tab_to_new_window_callback = Some(callback);
+        }
     }
 
     fn on_merge_all_windows(&self, callback: Box<dyn FnMut()>) {
-        self.0.as_ref().lock().merge_all_windows_callback = Some(callback);
+        let mut lock = self.0.as_ref().lock();
+        if !lock.is_closed() {
+            lock.merge_all_windows_callback = Some(callback);
+        }
     }
 
     fn on_select_next_tab(&self, callback: Box<dyn FnMut()>) {
-        self.0.as_ref().lock().select_next_tab_callback = Some(callback);
+        let mut lock = self.0.as_ref().lock();
+        if !lock.is_closed() {
+            lock.select_next_tab_callback = Some(callback);
+        }
     }
 
     fn on_select_previous_tab(&self, callback: Box<dyn FnMut()>) {
-        self.0.as_ref().lock().select_previous_tab_callback = Some(callback);
+        let mut lock = self.0.as_ref().lock();
+        if !lock.is_closed() {
+            lock.select_previous_tab_callback = Some(callback);
+        }
     }
 
     fn on_toggle_tab_bar(&self, callback: Box<dyn FnMut()>) {
-        self.0.as_ref().lock().toggle_tab_bar_callback = Some(callback);
+        let mut lock = self.0.as_ref().lock();
+        if !lock.is_closed() {
+            lock.toggle_tab_bar_callback = Some(callback);
+        }
     }
 
     fn draw(&self, scene: &open_gpui::Scene) {
@@ -2093,6 +2214,9 @@ unsafe fn is_ime_input_source_active() -> bool {
 extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: bool) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
+    if lock.is_closed() {
+        return NO;
+    }
 
     let window_height = lock.content_size().height;
     let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
@@ -2108,7 +2232,10 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         } else {
             NO
         };
-        window_state.as_ref().lock().event_callback = callback;
+        let mut lock = window_state.as_ref().lock();
+        if !lock.is_closed() {
+            lock.event_callback = callback;
+        }
         handled
     };
 
@@ -2235,6 +2362,9 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let window_state = unsafe { get_window_state(this) };
     let weak_window_state = Arc::downgrade(&window_state);
     let mut lock = window_state.as_ref().lock();
+    if lock.is_closed() {
+        return;
+    }
     let window_height = lock.content_size().height;
     let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
 
@@ -2371,7 +2501,10 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
         if let Some(mut callback) = lock.event_callback.take() {
             drop(lock);
             callback(event);
-            window_state.lock().event_callback = Some(callback);
+            let mut lock = window_state.lock();
+            if !lock.is_closed() {
+                lock.event_callback = Some(callback);
+            }
         }
     }
 }
@@ -2379,6 +2512,9 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let lock = &mut *window_state.lock();
+    if lock.is_closed() {
+        return;
+    }
     unsafe {
         if lock
             .native_window
@@ -2395,7 +2531,10 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
 
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    window_state.as_ref().lock().move_traffic_light();
+    let lock = window_state.as_ref().lock();
+    if !lock.is_closed() {
+        lock.move_traffic_light();
+    }
 }
 
 extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
@@ -2432,16 +2571,25 @@ pub(crate) fn is_macos_version_at_least(version: NSOperatingSystemVersion) -> bo
 extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
+    if lock.is_closed() {
+        return;
+    }
     if let Some(mut callback) = lock.moved_callback.take() {
         drop(lock);
         callback();
-        window_state.lock().moved_callback = Some(callback);
+        let mut lock = window_state.lock();
+        if !lock.is_closed() {
+            lock.moved_callback = Some(callback);
+        }
     }
 }
 
 // Update the window scale factor and drawable size, and call the resize callback if any.
 fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
     let mut lock = window_state.as_ref().lock();
+    if lock.is_closed() {
+        return;
+    }
     let scale_factor = lock.scale_factor();
     let size = lock.content_size();
     let drawable_size = size.to_device_pixels(scale_factor);
@@ -2461,13 +2609,19 @@ fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
         let scale_factor = lock.scale_factor();
         drop(lock);
         callback(content_size, scale_factor);
-        window_state.as_ref().lock().resize_callback = Some(callback);
+        let mut lock = window_state.as_ref().lock();
+        if !lock.is_closed() {
+            lock.resize_callback = Some(callback);
+        }
     };
 }
 
 extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
+    if lock.is_closed() {
+        return;
+    }
     lock.start_display_link();
     drop(lock);
     update_window_scale_factor(&window_state);
@@ -2476,6 +2630,9 @@ extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let lock = window_state.lock();
+    if lock.is_closed() {
+        return;
+    }
     let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
 
     // AppKit also unhides the cursor on activation changes, so mirror that here.
@@ -2522,7 +2679,9 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
         let window_state = unsafe { get_window_state(this) };
         let mut lock = window_state.lock();
 
-        if lock.activated_least_once {
+        if lock.is_closed() {
+            return;
+        } else if lock.activated_least_once {
             if let Some(mut callback) = lock.request_frame_callback.take() {
                 lock.renderer.set_presents_with_transaction(true);
                 lock.stop_display_link();
@@ -2530,9 +2689,11 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
                 callback(Default::default());
 
                 let mut lock = window_state.lock();
-                lock.request_frame_callback = Some(callback);
-                lock.renderer.set_presents_with_transaction(false);
-                lock.start_display_link();
+                if !lock.is_closed() {
+                    lock.request_frame_callback = Some(callback);
+                    lock.renderer.set_presents_with_transaction(false);
+                    lock.start_display_link();
+                }
             }
         } else {
             lock.activated_least_once = true;
@@ -2542,6 +2703,9 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     executor
         .spawn(async move {
             let mut lock = window_state.as_ref().lock();
+            if lock.is_closed() {
+                return;
+            }
             if is_active {
                 lock.move_traffic_light();
             }
@@ -2549,7 +2713,10 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
             if let Some(mut callback) = lock.activate_callback.take() {
                 drop(lock);
                 callback(is_active);
-                window_state.lock().activate_callback = Some(callback);
+                let mut lock = window_state.lock();
+                if !lock.is_closed() {
+                    lock.activate_callback = Some(callback);
+                }
             };
         })
         .detach();
@@ -2558,10 +2725,16 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
 extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
+    if lock.is_closed() {
+        return YES;
+    }
     if let Some(mut callback) = lock.should_close_callback.take() {
         drop(lock);
         let should_close = callback();
-        window_state.lock().should_close_callback = Some(callback);
+        let mut lock = window_state.lock();
+        if !lock.is_closed() {
+            lock.should_close_callback = Some(callback);
+        }
         should_close as BOOL
     } else {
         YES
@@ -2573,7 +2746,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
         let close_callback = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
-            lock.closed.store(true, Ordering::Release);
+            lock.mark_closed();
             lock.close_callback.take()
         };
 
@@ -2630,13 +2803,19 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
         let scale_factor = lock.scale_factor();
         drop(lock);
         callback(content_size, scale_factor);
-        window_state.lock().resize_callback = Some(callback);
+        let mut lock = window_state.lock();
+        if !lock.is_closed() {
+            lock.resize_callback = Some(callback);
+        }
     };
 }
 
 extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
+    if lock.is_closed() {
+        return;
+    }
     if let Some(mut callback) = lock.request_frame_callback.take() {
         lock.renderer.set_presents_with_transaction(true);
         lock.stop_display_link();
@@ -2644,9 +2823,11 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
         callback(Default::default());
 
         let mut lock = window_state.lock();
-        lock.request_frame_callback = Some(callback);
-        lock.renderer.set_presents_with_transaction(false);
-        lock.start_display_link();
+        if !lock.is_closed() {
+            lock.request_frame_callback = Some(callback);
+            lock.renderer.set_presents_with_transaction(false);
+            lock.start_display_link();
+        }
     }
 }
 
@@ -2654,11 +2835,17 @@ extern "C" fn step(view: *mut c_void) {
     let view = view as id;
     let window_state = unsafe { get_window_state(&*view) };
     let mut lock = window_state.lock();
+    if lock.is_closed() {
+        return;
+    }
 
     if let Some(mut callback) = lock.request_frame_callback.take() {
         drop(lock);
         callback(Default::default());
-        window_state.lock().request_frame_callback = Some(callback);
+        let mut lock = window_state.lock();
+        if !lock.is_closed() {
+            lock.request_frame_callback = Some(callback);
+        }
     }
 }
 
@@ -2812,6 +2999,9 @@ extern "C" fn attributed_substring_for_proposed_range(
 extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
     let state = unsafe { get_window_state(this) };
     let mut lock = state.as_ref().lock();
+    if lock.is_closed() {
+        return;
+    }
     let keystroke = lock.keystroke_for_do_command.take();
     let mut event_callback = lock.event_callback.take();
     drop(lock);
@@ -2825,17 +3015,26 @@ extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
         state.as_ref().lock().do_command_handled = Some(!handled.propagate);
     }
 
-    state.as_ref().lock().event_callback = event_callback;
+    let mut lock = state.as_ref().lock();
+    if !lock.is_closed() {
+        lock.event_callback = event_callback;
+    }
 }
 
 extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
     unsafe {
         let state = get_window_state(this);
         let mut lock = state.as_ref().lock();
+        if lock.is_closed() {
+            return;
+        }
         if let Some(mut callback) = lock.appearance_changed_callback.take() {
             drop(lock);
             callback();
-            state.lock().appearance_changed_callback = Some(callback);
+            let mut lock = state.lock();
+            if !lock.is_closed() {
+                lock.appearance_changed_callback = Some(callback);
+            }
         }
     }
 }
@@ -2930,11 +3129,16 @@ async fn synthetic_drag(
         executor.timer(Duration::from_millis(16)).await;
         if let Some(window_state) = window_state.upgrade() {
             let mut lock = window_state.lock();
-            if lock.synthetic_drag_counter == drag_id {
+            if lock.is_closed() {
+                break;
+            } else if lock.synthetic_drag_counter == drag_id {
                 if let Some(mut callback) = lock.event_callback.take() {
                     drop(lock);
                     callback(PlatformInput::MouseMove(event.clone()));
-                    window_state.lock().event_callback = Some(callback);
+                    let mut lock = window_state.lock();
+                    if !lock.is_closed() {
+                        lock.event_callback = Some(callback);
+                    }
                 }
             } else {
                 break;
@@ -2956,13 +3160,18 @@ fn send_file_drop_event(
     };
 
     let mut lock = window_state.lock();
+    if lock.is_closed() {
+        return false;
+    }
     if let Some(mut callback) = lock.event_callback.take() {
         drop(lock);
         callback(PlatformInput::FileDrop(file_drop_event));
         let mut lock = window_state.lock();
-        lock.event_callback = Some(callback);
-        if let Some(external_files_dragged) = external_files_dragged {
-            lock.external_files_dragged = external_files_dragged;
+        if !lock.is_closed() {
+            lock.event_callback = Some(callback);
+            if let Some(external_files_dragged) = external_files_dragged {
+                lock.external_files_dragged = external_files_dragged;
+            }
         }
         true
     } else {
@@ -3092,10 +3301,16 @@ extern "C" fn move_tab_to_new_window(this: &Object, _: Sel, _: id) {
 
         let window_state = get_window_state(this);
         let mut lock = window_state.as_ref().lock();
+        if lock.is_closed() {
+            return;
+        }
         if let Some(mut callback) = lock.move_tab_to_new_window_callback.take() {
             drop(lock);
             callback();
-            window_state.lock().move_tab_to_new_window_callback = Some(callback);
+            let mut lock = window_state.lock();
+            if !lock.is_closed() {
+                lock.move_tab_to_new_window_callback = Some(callback);
+            }
         }
     }
 }
@@ -3106,10 +3321,16 @@ extern "C" fn merge_all_windows(this: &Object, _: Sel, _: id) {
 
         let window_state = get_window_state(this);
         let mut lock = window_state.as_ref().lock();
+        if lock.is_closed() {
+            return;
+        }
         if let Some(mut callback) = lock.merge_all_windows_callback.take() {
             drop(lock);
             callback();
-            window_state.lock().merge_all_windows_callback = Some(callback);
+            let mut lock = window_state.lock();
+            if !lock.is_closed() {
+                lock.merge_all_windows_callback = Some(callback);
+            }
         }
     }
 }
@@ -3117,20 +3338,32 @@ extern "C" fn merge_all_windows(this: &Object, _: Sel, _: id) {
 extern "C" fn select_next_tab(this: &Object, _sel: Sel, _id: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
+    if lock.is_closed() {
+        return;
+    }
     if let Some(mut callback) = lock.select_next_tab_callback.take() {
         drop(lock);
         callback();
-        window_state.lock().select_next_tab_callback = Some(callback);
+        let mut lock = window_state.lock();
+        if !lock.is_closed() {
+            lock.select_next_tab_callback = Some(callback);
+        }
     }
 }
 
 extern "C" fn select_previous_tab(this: &Object, _sel: Sel, _id: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
+    if lock.is_closed() {
+        return;
+    }
     if let Some(mut callback) = lock.select_previous_tab_callback.take() {
         drop(lock);
         callback();
-        window_state.lock().select_previous_tab_callback = Some(callback);
+        let mut lock = window_state.lock();
+        if !lock.is_closed() {
+            lock.select_previous_tab_callback = Some(callback);
+        }
     }
 }
 
@@ -3140,12 +3373,18 @@ extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
 
         let window_state = get_window_state(this);
         let mut lock = window_state.as_ref().lock();
+        if lock.is_closed() {
+            return;
+        }
         lock.move_traffic_light();
 
         if let Some(mut callback) = lock.toggle_tab_bar_callback.take() {
             drop(lock);
             callback();
-            window_state.lock().toggle_tab_bar_callback = Some(callback);
+            let mut lock = window_state.lock();
+            if !lock.is_closed() {
+                lock.toggle_tab_bar_callback = Some(callback);
+            }
         }
     }
 }

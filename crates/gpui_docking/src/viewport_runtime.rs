@@ -1,34 +1,45 @@
 #[cfg(test)]
 use crate::viewport_registry::DockViewportRouteUnavailableReason;
+#[cfg(test)]
+use crate::viewport_window_lifecycle::DockViewportReusableWindow;
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockDropDelivery,
-    DockDropWorkspaceCommit, DockItemId, DockSpaceId, DockViewportActivationBackendFocusApply,
-    DockViewportActivationBackendFocusObservation, DockViewportActivationBackendFocusRecordEffect,
+    DockDropWorkspaceCommit, DockItemId, DockNodeId, DockSpaceId,
+    DockViewportActivationBackendFocusApply, DockViewportActivationBackendFocusObservation,
+    DockViewportActivationBackendFocusRecordEffect,
     DockViewportActivationPendingBackendFocusEffect, DockViewportActivationTransaction,
     DockViewportAdapter, DockViewportBackendFocusState, DockViewportCloseCoordinator,
-    DockViewportCloseOutcome, DockViewportClosePlanState, DockViewportClosePolicy,
-    DockViewportCloseStatus, DockViewportCommittedTearOffMove, DockViewportDropActionOutcome,
-    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportDropRouteResolution, DockViewportFocusCoordinator, DockViewportFocusRequest,
-    DockViewportFocusStampFallbackPermit, DockViewportFrameCoordinator,
-    DockViewportHostSceneRenderExpiration, DockViewportHostSceneRenderToken, DockViewportIdentity,
+    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportCommittedTearOffMove,
+    DockViewportDropActionOutcome, DockViewportDropRoute, DockViewportDropRouteOutcome,
+    DockViewportDropRouteRequest, DockViewportDropRouteResolution, DockViewportFocusCoordinator,
+    DockViewportFocusRequest, DockViewportFocusStampFallbackPermit, DockViewportFrameCoordinator,
+    DockViewportIdentity, DockViewportPayloadDragBegin, DockViewportPayloadDragState,
     DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportPlatformFocusRestoreGate, DockViewportPlatformFocusRestorePolicy,
     DockViewportPlatformSyncRecord, DockViewportRegisterOutcome, DockViewportResolvedDropRoute,
-    DockViewportRestoreReadiness, DockViewportRouteSelectionSource, DockViewportRoutedDropPreview,
+    DockViewportRestoreReadiness, DockViewportRoutePreview, DockViewportRoutedDropPreview,
     DockViewportRoutedDropPreviewReplacement, DockViewportRoutedDropPreviewState,
-    DockViewportRuntimeHandle, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
-    DockViewportShouldCloseStatus, DockViewportTargetHit, DockViewportTearOffBeginOutcome,
+    DockViewportRuntimeHandle, DockViewportRuntimeStatus, DockViewportRuntimeUpdate,
+    DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus, DockViewportTearOffBeginOutcome,
     DockViewportTearOffCancelReason, DockViewportTearOffCancelled, DockViewportTearOffCompleted,
     DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
     DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffSourceStatus,
-    DockViewportWindowFacts, DockViewportWindowOwnership, DockViewportWindowRetirement,
+    DockViewportWindowEffects, DockViewportWindowFacts, DockViewportWindowOwnership,
+    DockViewportWindowRetirement,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
+    extend_unique_windows,
     interaction::DockRuntimeDragSession,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_registry::DockViewportPlatformRequests,
-    workspace_transaction::DockWorkspacePayloadDropRequest,
+    viewport_window_lifecycle::{
+        DockViewportCloseRecoveryActivation, DockViewportClosedWindowRefresh,
+        DockViewportReplacementCleanup, DockViewportReusableWindowOutcome,
+        DockViewportRuntimeWindowStateCleanup, DockViewportShouldCloseRefresh,
+        DockViewportSpaceFocusCleanup, DockViewportUnregisteredSpace,
+        DockViewportVacatedTearOffSource, DockViewportWindowLifecycleController,
+    },
+    workspace_drop_transaction::DockWorkspacePayloadDropRequest,
 };
 #[cfg(test)]
 use open_gpui::AppContext as _;
@@ -51,9 +62,7 @@ pub(crate) struct DockViewportRuntime {
     frame_coordinator: DockViewportFrameCoordinator,
     tear_off: DockViewportTearOffMachine,
     next_tear_off_space_index: u64,
-    active_drag: Option<DockViewportActivePayloadDrag>,
-    drag_tear_off_geometry: Option<DockRuntimeDragTearOffGeometry>,
-    next_drag_session_id: u64,
+    payload_drag: DockViewportPayloadDragState,
     window_ownership: DockViewportWindowOwnership,
     focus: DockViewportFocusCoordinator,
     backend_focus: DockViewportBackendFocusState,
@@ -62,79 +71,16 @@ pub(crate) struct DockViewportRuntime {
     status: DockViewportRuntimeStatus,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct DockRuntimeDragTearOffGeometry {
-    drag_session_id: u64,
-    geometry: DockDragTearOffGeometry,
-}
-
 #[derive(Debug)]
 pub(crate) struct DockViewportRuntimeRegistration {
     pub(crate) outcome: DockViewportRegisterOutcome,
     window_effects: DockViewportWindowEffects,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct DockViewportWindowEffects {
-    close_now: Vec<AnyWindowHandle>,
-    refresh: Vec<AnyWindowHandle>,
-    close_after_current_effect: Vec<AnyWindowHandle>,
-}
-
-impl DockViewportWindowEffects {
-    pub(crate) fn new(
-        close_now: impl IntoIterator<Item = AnyWindowHandle>,
-        refresh: impl IntoIterator<Item = AnyWindowHandle>,
-        close_after_current_effect: impl IntoIterator<Item = AnyWindowHandle>,
-    ) -> Self {
-        let mut effects = Self::default();
-        extend_unique_windows(&mut effects.close_now, close_now);
-        extend_unique_windows(&mut effects.refresh, refresh);
-        extend_unique_windows(
-            &mut effects.close_after_current_effect,
-            close_after_current_effect,
-        );
-        effects
-    }
-
-    fn refresh_only(refresh: impl IntoIterator<Item = AnyWindowHandle>) -> Self {
-        Self::new(Vec::new(), refresh, Vec::new())
-    }
-
-    pub(crate) fn close_now(&self) -> &[AnyWindowHandle] {
-        &self.close_now
-    }
-
-    pub(crate) fn refresh(&self) -> &[AnyWindowHandle] {
-        &self.refresh
-    }
-
-    pub(crate) fn close_after_current_effect(&self) -> &[AnyWindowHandle] {
-        &self.close_after_current_effect
-    }
-
-    pub(crate) fn has_effects(&self) -> bool {
-        !self.close_now.is_empty()
-            || !self.refresh.is_empty()
-            || !self.close_after_current_effect.is_empty()
-    }
-}
-
 impl DockViewportRuntimeRegistration {
     pub(crate) fn window_effects(&self) -> DockViewportWindowEffects {
         self.window_effects.clone()
     }
-}
-
-#[derive(Default)]
-struct DockViewportReplacementCleanup {
-    replaced_windows: Vec<AnyWindowHandle>,
-    affected_windows: Vec<AnyWindowHandle>,
-}
-
-struct DockViewportUnregisteredSpace {
-    window: AnyWindowHandle,
-    affected_windows: Vec<AnyWindowHandle>,
 }
 
 struct DockViewportBackendRouteRequest {
@@ -148,133 +94,10 @@ struct DockViewportDropRouteSnapshotRefresh {
     window_effects: DockViewportWindowEffects,
 }
 
-#[derive(Default)]
-struct DockViewportVacatedTearOffSource {
+#[derive(Debug, Default)]
+struct DockViewportVacatedPayloadDropSource {
     windows: Vec<AnyWindowHandle>,
     affected_windows: Vec<AnyWindowHandle>,
-}
-
-pub(crate) struct DockViewportClosedWindowRefresh {
-    pub(crate) outcome: DockViewportCloseOutcome,
-    window_effects: DockViewportWindowEffects,
-}
-
-pub(crate) struct DockViewportShouldCloseRefresh {
-    pub(crate) outcome: DockViewportShouldCloseOutcome,
-    window_effects: DockViewportWindowEffects,
-}
-
-pub(crate) struct DockViewportCloseRecoveryActivation {
-    pub(crate) activation: Option<DockViewportActivationTransaction>,
-    window_effects: DockViewportWindowEffects,
-}
-
-impl DockViewportClosedWindowRefresh {
-    pub(crate) fn window_effects(&self) -> DockViewportWindowEffects {
-        self.window_effects.clone()
-    }
-}
-
-impl DockViewportShouldCloseRefresh {
-    pub(crate) fn window_effects(&self) -> DockViewportWindowEffects {
-        self.window_effects.clone()
-    }
-}
-
-impl DockViewportCloseRecoveryActivation {
-    fn none() -> Self {
-        Self {
-            activation: None,
-            window_effects: DockViewportWindowEffects::default(),
-        }
-    }
-
-    pub(crate) fn window_effects(&self) -> DockViewportWindowEffects {
-        self.window_effects.clone()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DockViewportSpaceFocusCleanup {
-    Remove,
-    Preserve,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DockViewportRuntimeWindowStateCleanup {
-    SpaceUnregistered,
-    ReplacedSameSpaceMapping,
-    ReplacedDifferentSpaceMapping,
-    ClosedWindow,
-}
-
-impl DockViewportRuntimeWindowStateCleanup {
-    fn discard_close_plan(self) -> bool {
-        !matches!(self, Self::ClosedWindow)
-    }
-
-    fn focus_cleanup(self) -> DockViewportSpaceFocusCleanup {
-        match self {
-            Self::ReplacedSameSpaceMapping => DockViewportSpaceFocusCleanup::Preserve,
-            Self::SpaceUnregistered | Self::ReplacedDifferentSpaceMapping | Self::ClosedWindow => {
-                DockViewportSpaceFocusCleanup::Remove
-            }
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct DockViewportRuntimeUpdate {
-    changed: bool,
-    windows: Vec<AnyWindowHandle>,
-    pointer_input_sync: Option<DockViewportPointerInputSyncRequest>,
-}
-
-impl DockViewportRuntimeUpdate {
-    pub(crate) fn changed(&self) -> bool {
-        self.changed
-    }
-
-    fn mark_changed(&mut self, changed: bool) {
-        self.changed |= changed;
-    }
-
-    fn extend_windows(&mut self, windows: impl IntoIterator<Item = AnyWindowHandle>) {
-        extend_unique_windows(&mut self.windows, windows);
-    }
-
-    fn set_pointer_input_sync(
-        &mut self,
-        pointer_input_sync: Option<DockViewportPointerInputSyncRequest>,
-    ) {
-        if let Some(next) = pointer_input_sync {
-            debug_assert!(
-                self.pointer_input_sync.is_none() || self.pointer_input_sync == Some(next)
-            );
-            if self.pointer_input_sync.is_none() {
-                self.pointer_input_sync = Some(next);
-            }
-        }
-    }
-
-    fn merge(&mut self, update: DockViewportRuntimeUpdate) {
-        self.mark_changed(update.changed);
-        self.extend_windows(update.windows);
-        self.set_pointer_input_sync(update.pointer_input_sync);
-    }
-
-    pub(crate) fn pointer_input_sync(&self) -> Option<DockViewportPointerInputSyncRequest> {
-        self.pointer_input_sync
-    }
-
-    fn without_pointer_input_sync(mut self) -> Self {
-        self.pointer_input_sync = None;
-        self
-    }
-
-    pub(crate) fn into_windows(self) -> Vec<AnyWindowHandle> {
-        self.windows
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -315,17 +138,6 @@ impl DockViewportResolvedDropRouteOutcome {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DockViewportRouteSnapshotResampleBarrier {
-    /// The hovered-host request was resolved from a target window whose facts cannot be refreshed
-    /// from the current app context. The sampled route remains the authoritative release snapshot.
-    HoveredHostTargetWindow,
-    /// A source-only release has a routed preview whose target window is not owned by this runtime
-    /// context and cannot be refreshed here. The delivery gate still requires target-render
-    /// acceptance before replaying the snapshot.
-    RoutedPreviewTargetWindow,
-}
-
 #[derive(Debug)]
 struct DockViewportDropRouteSnapshot {
     request: DockViewportDropRouteRequest,
@@ -350,172 +162,10 @@ impl DockViewportDropRouteSnapshot {
         }
     }
 
-    fn request(&self) -> &DockViewportDropRouteRequest {
-        &self.request
-    }
-
-    fn resolve_accepted_routed_preview<C: open_gpui::AppContext>(
-        &self,
-        runtime: &DockViewportRuntime,
-        cx: &mut C,
-    ) -> Option<DockViewportResolvedDropRoute> {
-        runtime.resolve_accepted_routed_preview_resolution(
-            &self.request,
-            &self.route_resolution,
-            cx,
-        )
-    }
-
-    fn resample_barrier<C: open_gpui::AppContext>(
-        &self,
-        runtime: &DockViewportRuntime,
-        cx: &mut C,
-    ) -> Option<DockViewportRouteSnapshotResampleBarrier> {
-        runtime.route_snapshot_resample_barrier(&self.request, &self.route_resolution, cx)
-    }
-
     fn into_route_selection(self) -> DockViewportDropRouteSnapshotSelection {
         DockViewportDropRouteSnapshotSelection {
             request: self.request,
             route: self.route_resolution.into_route(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DockViewportPointerInputSyncRequest {
-    window: AnyWindowHandle,
-    /// Desired live platform state. Route facts only change after a later window-facts refresh
-    /// observes whether the backend actually applied this request.
-    accepts_pointer_input: bool,
-}
-
-pub(crate) struct DockViewportPayloadDragBegin {
-    pub(crate) session: DockRuntimeDragSession,
-    pub(crate) pointer_input_sync: Option<DockViewportPointerInputSyncRequest>,
-}
-
-impl DockViewportPointerInputSyncRequest {
-    fn new(window: AnyWindowHandle, accepts_pointer_input: bool) -> Self {
-        Self {
-            window,
-            accepts_pointer_input,
-        }
-    }
-
-    pub(crate) fn window(&self) -> AnyWindowHandle {
-        self.window
-    }
-
-    pub(crate) fn requested_accepts_pointer_input(&self) -> bool {
-        self.accepts_pointer_input
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DockViewportActivePayloadDrag {
-    session: DockRuntimeDragSession,
-    source_window: Option<AnyWindowHandle>,
-    source_window_accepts_pointer_input: Option<bool>,
-    /// Most recent viewport route target observed during this drag.
-    ///
-    /// This is preview bookkeeping, not hover route selection. Releases still re-resolve current backend
-    /// facts unless they can replay an accepted routed preview.
-    last_routed_viewport_identity: Option<DockViewportIdentity>,
-    /// Most recent route-ready viewport selected by current drag route selection.
-    ///
-    /// Mirrors ImGui's `MouseLastHoveredViewport`: it is used to keep the mouse reference viewport
-    /// stable when the backend cannot report a hovered viewport for a drag snapshot. It does not
-    /// authorize delivery by itself; targets still need the normal accepted-preview path.
-    last_hovered_viewport_identity: Option<DockViewportIdentity>,
-}
-
-impl DockViewportActivePayloadDrag {
-    fn new(
-        session: DockRuntimeDragSession,
-        source_window: Option<AnyWindowHandle>,
-        source_window_accepts_pointer_input: Option<bool>,
-    ) -> Self {
-        Self {
-            session,
-            source_window,
-            source_window_accepts_pointer_input,
-            last_routed_viewport_identity: None,
-            last_hovered_viewport_identity: None,
-        }
-    }
-
-    fn session(&self) -> &DockRuntimeDragSession {
-        &self.session
-    }
-
-    fn source_space(&self) -> &DockSpaceId {
-        self.session.source_space()
-    }
-
-    fn source_window(&self) -> Option<AnyWindowHandle> {
-        self.source_window
-    }
-
-    fn source_window_accepts_pointer_input(&self) -> Option<bool> {
-        self.source_window_accepts_pointer_input
-    }
-
-    fn matches_session(&self, session: &DockRuntimeDragSession) -> bool {
-        self.session == *session
-    }
-
-    fn accepts_payload(&self, payload: &DockDragPayload) -> bool {
-        self.session.accepts_payload(payload)
-    }
-
-    fn record_last_routed_viewport_identity(&mut self, identity: Option<DockViewportIdentity>) {
-        self.last_routed_viewport_identity = identity;
-    }
-
-    fn record_last_hovered_viewport_identity(&mut self, identity: Option<DockViewportIdentity>) {
-        if let Some(identity) = identity {
-            self.last_hovered_viewport_identity = Some(identity);
-        }
-    }
-
-    #[cfg(test)]
-    fn last_routed_viewport_identity(&self) -> Option<&DockViewportIdentity> {
-        self.last_routed_viewport_identity.as_ref()
-    }
-
-    fn last_hovered_viewport_identity(&self) -> Option<&DockViewportIdentity> {
-        self.last_hovered_viewport_identity.as_ref()
-    }
-
-    fn clear_last_routed_viewport_identity_if_window_matches(&mut self, window_id: WindowId) {
-        if self
-            .last_routed_viewport_identity
-            .as_ref()
-            .is_some_and(|identity| identity.window_id() == window_id)
-        {
-            self.last_routed_viewport_identity = None;
-        }
-        self.clear_last_hovered_viewport_identity_if_window_matches(window_id);
-    }
-
-    fn clear_last_hovered_viewport_identity_if_window_matches(&mut self, window_id: WindowId) {
-        if self
-            .last_hovered_viewport_identity
-            .as_ref()
-            .is_some_and(|identity| identity.window_id() == window_id)
-        {
-            self.last_hovered_viewport_identity = None;
-        }
-    }
-
-    fn clear_last_routed_viewport_identity_for_session(
-        &mut self,
-        session: &DockRuntimeDragSession,
-    ) {
-        if self.matches_session(session) {
-            self.last_routed_viewport_identity = None;
-            self.last_hovered_viewport_identity = None;
         }
     }
 }
@@ -536,19 +186,6 @@ pub(crate) struct DockViewportTearOffPlacement {
 struct DockViewportTearOffPlacementPolicy {}
 
 const DOCK_TEAR_OFF_MAX_WORK_AREA_FRACTION: f32 = 0.90;
-
-impl DockRuntimeDragTearOffGeometry {
-    fn new(drag_session_id: u64, geometry: DockDragTearOffGeometry) -> Self {
-        Self {
-            drag_session_id,
-            geometry,
-        }
-    }
-
-    fn matches_drag_session(&self, session: &DockRuntimeDragSession) -> bool {
-        self.drag_session_id == session.id()
-    }
-}
 
 impl DockViewportTearOffPlacement {
     fn new(window_bounds: WindowBounds, source: DockViewportTearOffPlacementSource) -> Self {
@@ -681,9 +318,7 @@ impl DockViewportRuntime {
             frame_coordinator: DockViewportFrameCoordinator::default(),
             tear_off: DockViewportTearOffMachine::default(),
             next_tear_off_space_index: 0,
-            active_drag: None,
-            drag_tear_off_geometry: None,
-            next_drag_session_id: 0,
+            payload_drag: DockViewportPayloadDragState::default(),
             window_ownership: DockViewportWindowOwnership::default(),
             focus: DockViewportFocusCoordinator::default(),
             backend_focus: DockViewportBackendFocusState::default(),
@@ -707,9 +342,7 @@ impl DockViewportRuntime {
             frame_coordinator: DockViewportFrameCoordinator::default(),
             tear_off: DockViewportTearOffMachine::default(),
             next_tear_off_space_index: 0,
-            active_drag: None,
-            drag_tear_off_geometry: None,
-            next_drag_session_id: 0,
+            payload_drag: DockViewportPayloadDragState::default(),
             window_ownership: DockViewportWindowOwnership::default(),
             focus: DockViewportFocusCoordinator::default(),
             backend_focus: DockViewportBackendFocusState::default(),
@@ -776,31 +409,19 @@ impl DockViewportRuntime {
         payload: &DockDragPayload,
         focus_item: Option<DockItemId>,
     ) -> DockViewportPayloadDragBegin {
-        let id = self.next_drag_session_id.wrapping_add(1);
-        self.next_drag_session_id = id;
-        let session = DockRuntimeDragSession::with_focus_item(id, payload, focus_item);
         let source_window = self
             .adapter
             .window_for_space(payload.identity().source_space());
         let source_window_accepts_pointer_input =
             source_window.and_then(|_| self.source_window_accepts_pointer_input(payload));
-        self.active_drag = Some(DockViewportActivePayloadDrag::new(
-            session.clone(),
+        let begin = self.payload_drag.begin(
+            payload,
+            focus_item,
             source_window,
             source_window_accepts_pointer_input,
-        ));
-        self.drag_tear_off_geometry = None;
+        );
         self.clear_routed_drop_preview();
-        let pointer_sync = match (source_window, source_window_accepts_pointer_input) {
-            (Some(window), Some(true)) => {
-                Some(DockViewportPointerInputSyncRequest::new(window, false))
-            }
-            _ => None,
-        };
-        DockViewportPayloadDragBegin {
-            session,
-            pointer_input_sync: pointer_sync,
-        }
+        begin
     }
 
     pub(crate) fn update_payload_drag_tear_off_geometry(
@@ -808,43 +429,22 @@ impl DockViewportRuntime {
         session: &DockRuntimeDragSession,
         geometry: DockDragTearOffGeometry,
     ) -> bool {
-        if !self
-            .active_drag
-            .as_ref()
-            .is_some_and(|drag| drag.matches_session(session))
-        {
-            return false;
-        }
-        let next = Some(DockRuntimeDragTearOffGeometry::new(session.id(), geometry));
-        if self.drag_tear_off_geometry == next {
-            return false;
-        }
-        self.drag_tear_off_geometry = next;
-        true
+        self.payload_drag
+            .update_tear_off_geometry(session, geometry)
     }
 
     pub(crate) fn active_payload_drag_tear_off_geometry(
         &self,
         session: Option<&DockRuntimeDragSession>,
     ) -> Option<DockDragTearOffGeometry> {
-        let session = session?;
-        self.drag_tear_off_geometry
-            .filter(|geometry| geometry.matches_drag_session(session))
-            .map(|geometry| geometry.geometry)
+        self.payload_drag.tear_off_geometry(session)
     }
 
     pub(crate) fn active_payload_drag_session(
         &self,
         payload: &DockDragPayload,
     ) -> Option<DockRuntimeDragSession> {
-        self.active_drag
-            .as_ref()
-            .filter(|drag| drag.accepts_payload(payload))
-            .map(|drag| drag.session().clone())
-    }
-
-    pub(crate) fn has_active_payload_drag(&self) -> bool {
-        self.active_drag.is_some()
+        self.payload_drag.active_session_for_payload(payload)
     }
 
     fn source_window_accepts_pointer_input(&self, payload: &DockDragPayload) -> Option<bool> {
@@ -852,6 +452,32 @@ impl DockViewportRuntime {
             return Some(true);
         };
         Some(snapshot.input_mask.drag_restore_accepts_pointer_input())
+    }
+
+    fn window_for_viewport_identity(
+        &self,
+        identity: &DockViewportIdentity,
+    ) -> Option<AnyWindowHandle> {
+        let window = self.adapter.window_for_space(identity.space())?;
+        (window.window_id() == identity.window_id()).then_some(window)
+    }
+
+    pub(crate) fn record_payload_drag_hovered_viewport(
+        &mut self,
+        session: &DockRuntimeDragSession,
+        space: DockSpaceId,
+        window_id: WindowId,
+    ) -> bool {
+        if !self.payload_drag.matches_session(Some(session)) {
+            return false;
+        }
+        if !self.adapter.is_live_window_for_space(&space, window_id) {
+            return false;
+        }
+        self.payload_drag
+            .record_last_hovered_viewport_identity(Some(DockViewportIdentity::new(
+                space, window_id,
+            )))
     }
 
     #[cfg(test)]
@@ -866,35 +492,20 @@ impl DockViewportRuntime {
         &mut self,
         session: &DockRuntimeDragSession,
     ) -> DockViewportRuntimeUpdate {
-        if !self
-            .active_drag
-            .as_ref()
-            .is_some_and(|drag| drag.matches_session(session))
-        {
+        let Some(finish) = self.payload_drag.finish(session) else {
             return DockViewportRuntimeUpdate::default();
-        }
-        let active_drag = self
-            .active_drag
-            .take()
-            .expect("active drag should match the requested session");
-        let pointer_sync = match (
-            active_drag.source_window(),
-            active_drag.source_window_accepts_pointer_input(),
-        ) {
-            (Some(window), Some(accepts)) => {
-                Some(DockViewportPointerInputSyncRequest::new(window, accepts))
-            }
-            _ => None,
         };
+        let last_routed_window = finish
+            .last_routed_viewport_identity()
+            .and_then(|identity| self.window_for_viewport_identity(identity));
+        let last_hovered_window = finish
+            .last_hovered_viewport_identity()
+            .and_then(|identity| self.window_for_viewport_identity(identity));
         let mut update = self.clear_routed_drop_preview_for_drag_session(Some(session));
+        update.extend_windows(last_routed_window);
+        update.extend_windows(last_hovered_window);
         update.mark_changed(true);
-        if self
-            .drag_tear_off_geometry
-            .is_some_and(|geometry| geometry.matches_drag_session(session))
-        {
-            self.drag_tear_off_geometry = None;
-        }
-        update.set_pointer_input_sync(pointer_sync);
+        update.set_pointer_input_sync(finish.pointer_input_sync());
         update
     }
 
@@ -902,19 +513,7 @@ impl DockViewportRuntime {
         &self,
         session: Option<&DockRuntimeDragSession>,
     ) -> Result<(), DockActionApplyError> {
-        let Some(session) = session else {
-            return Err(DockActionApplyError::DropDragSessionMissing);
-        };
-        if self
-            .active_drag
-            .as_ref()
-            .is_some_and(|drag| drag.matches_session(session))
-        {
-            return Ok(());
-        }
-        Err(DockActionApplyError::DropDragSessionStale {
-            session: session.id(),
-        })
+        self.payload_drag.validate_session(session)
     }
 
     fn record_confirmed_backend_focused_window(&mut self, window_id: WindowId) -> Option<bool> {
@@ -1144,28 +743,6 @@ impl DockViewportRuntime {
         update
     }
 
-    pub(crate) fn expire_viewport_host_scene_if_not_rendered_after(
-        &mut self,
-        token: DockViewportHostSceneRenderToken,
-    ) -> DockViewportRuntimeUpdate {
-        let current_window_id = self
-            .adapter
-            .window_for_space(token.identity().space())
-            .map(|window| window.window_id());
-        match self
-            .frame_coordinator
-            .expire_host_scene_if_not_rendered_after(token, current_window_id)
-        {
-            DockViewportHostSceneRenderExpiration::StillCurrent
-            | DockViewportHostSceneRenderExpiration::StaleIdentity(_) => {
-                DockViewportRuntimeUpdate::default()
-            }
-            DockViewportHostSceneRenderExpiration::Expired(identity) => {
-                self.mark_viewport_window_snapshot_stale(identity.window_id())
-            }
-        }
-    }
-
     pub(crate) fn apply_platform_window_facts(
         &mut self,
         window_id: WindowId,
@@ -1306,13 +883,6 @@ impl DockViewportRuntime {
         Some(registration)
     }
 
-    pub(crate) fn mark_rendered_viewport_host_scene(
-        &mut self,
-        identity: DockViewportIdentity,
-    ) -> DockViewportHostSceneRenderToken {
-        self.frame_coordinator.mark_host_scene_rendered(identity)
-    }
-
     #[cfg(test)]
     pub(crate) fn push_viewport_host_scene_fact(
         &mut self,
@@ -1331,6 +901,37 @@ impl DockViewportRuntime {
         self.frame_coordinator.push_frame_fact(frame, fact)
     }
 
+    pub(crate) fn rendered_leaf_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        self.frame_coordinator
+            .leaf_bounds_for_tabs(space, window_id, tabs)
+    }
+
+    pub(crate) fn rendered_tab_bar_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        self.frame_coordinator
+            .tab_bar_bounds_for_tabs(space, window_id, tabs)
+    }
+
+    pub(crate) fn rendered_tab_label_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+        target_index: usize,
+    ) -> Option<Bounds<Pixels>> {
+        self.frame_coordinator
+            .tab_label_bounds_for_tabs(space, window_id, tabs, target_index)
+    }
+
     pub(crate) fn routed_drop_preview_for(
         &self,
         space: &DockSpaceId,
@@ -1339,8 +940,12 @@ impl DockViewportRuntime {
         self.routed_drop_preview.preview_for(space, window_id)
     }
 
-    pub(crate) fn has_routed_drop_preview(&self) -> bool {
-        self.routed_drop_preview.has_preview()
+    pub(crate) fn routed_drop_route_preview_for(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<crate::drop_preview::DockDropRoutePreview> {
+        self.routed_drop_preview.route_preview_for(space, window_id)
     }
 
     #[cfg(test)]
@@ -1353,32 +958,57 @@ impl DockViewportRuntime {
     }
 
     #[cfg(test)]
-    pub(crate) fn routed_drop_preview_is_accepted(&self) -> bool {
-        self.routed_drop_preview.is_currently_accepted()
-    }
-
     pub(crate) fn update_routed_drop_preview(
         &mut self,
         resolution: &DockViewportResolvedDropRoute,
-        payload_title: impl Into<String>,
+        payload: &DockDragPayload,
     ) -> DockViewportRuntimeUpdate {
-        let payload_title = payload_title.into();
-        let active_drag_session_id = self.active_drag.as_ref().map(|drag| drag.session().id());
-        if let Some(active_drag) = self.active_drag.as_mut()
+        self.update_routed_drop_preview_inner(resolution, payload, None, None, None)
+    }
+
+    pub(crate) fn update_host_routed_drop_preview(
+        &mut self,
+        resolution: &DockViewportResolvedDropRoute,
+        payload: &DockDragPayload,
+        host_space: DockSpaceId,
+        host_window_id: WindowId,
+        host_position: Point<Pixels>,
+    ) -> DockViewportRuntimeUpdate {
+        self.update_routed_drop_preview_inner(
+            resolution,
+            payload,
+            Some(host_space),
+            Some(host_window_id),
+            Some(host_position),
+        )
+    }
+
+    fn update_routed_drop_preview_inner(
+        &mut self,
+        resolution: &DockViewportResolvedDropRoute,
+        payload: &DockDragPayload,
+        host_space: Option<DockSpaceId>,
+        host_window_id: Option<WindowId>,
+        host_position: Option<Point<Pixels>>,
+    ) -> DockViewportRuntimeUpdate {
+        let active_drag_session_id = self.payload_drag.active_session_id();
+        if let Some(active_drag_session) = self.payload_drag.active_session()
             && let Some(identity) = crate::last_routed_viewport_identity_from_resolution(
                 resolution,
-                Some(active_drag.session()),
+                Some(active_drag_session),
             )
         {
-            active_drag.record_last_routed_viewport_identity(Some(identity));
+            self.payload_drag
+                .record_last_routed_viewport_identity(Some(identity));
         }
-        if let Some(active_drag) = self.active_drag.as_mut()
+        if let Some(active_drag_session) = self.payload_drag.active_session()
             && let Some(identity) = crate::route_selection_viewport_identity_from_resolution(
                 resolution,
-                Some(active_drag.session()),
+                Some(active_drag_session),
             )
         {
-            active_drag.record_last_hovered_viewport_identity(Some(identity));
+            self.payload_drag
+                .record_last_hovered_viewport_identity(Some(identity));
         }
         let next = match resolution.route() {
             DockViewportDropRoute::Local { .. } | DockViewportDropRoute::KnownViewport { .. } => {
@@ -1388,7 +1018,7 @@ impl DockViewportRuntime {
                         crate::routed_drop_preview_from_target(
                             target,
                             active_drag_session_id,
-                            payload_title,
+                            payload,
                         )
                     })
             }
@@ -1398,41 +1028,30 @@ impl DockViewportRuntime {
                     crate::routed_rejected_drop_preview_from_target(
                         target,
                         active_drag_session_id,
-                        payload_title,
+                        payload,
                     )
                 }),
             DockViewportDropRoute::TearOff => None,
             DockViewportDropRoute::Unavailable => None,
         };
+        let next_route_preview = match (host_space, host_window_id, host_position) {
+            (Some(space), Some(window_id), Some(position)) => {
+                crate::routed_drop_route_preview_for_host(
+                    resolution,
+                    space,
+                    window_id,
+                    position,
+                    active_drag_session_id,
+                )
+            }
+            _ => None,
+        };
         let next_resolution = match resolution.route() {
             DockViewportDropRoute::Unavailable => None,
             _ => Some(resolution.clone()),
         };
-        let starts_acceptance_pass = matches!(
-            resolution.route(),
-            DockViewportDropRoute::Local { .. } | DockViewportDropRoute::KnownViewport { .. }
-        ) && next.is_some();
-        if starts_acceptance_pass {
-            self.routed_drop_preview.start_acceptance_pass();
-        }
-        let mut target_window = None;
-        if starts_acceptance_pass && let Some(preview) = next.as_ref() {
-            target_window = self.adapter.window_for_space(preview.space());
-        }
-        let mut update = self.replace_routed_drop_preview(next, next_resolution);
-        if starts_acceptance_pass {
-            update.extend_windows(target_window);
-        }
+        let update = self.replace_routed_drop_preview(next, next_route_preview, next_resolution);
         update
-    }
-
-    pub(crate) fn finish_routed_drop_acceptance_pass(
-        &mut self,
-        space: &DockSpaceId,
-        window_id: WindowId,
-    ) -> bool {
-        self.routed_drop_preview
-            .finish_acceptance_pass(space, window_id)
     }
 
     #[cfg(test)]
@@ -1470,9 +1089,12 @@ impl DockViewportRuntime {
     fn replace_routed_drop_preview(
         &mut self,
         next: Option<DockViewportRoutedDropPreview>,
+        next_route_preview: Option<DockViewportRoutePreview>,
         next_resolution: Option<DockViewportResolvedDropRoute>,
     ) -> DockViewportRuntimeUpdate {
-        let replacement = self.routed_drop_preview.replace(next, next_resolution);
+        let replacement =
+            self.routed_drop_preview
+                .replace(next, next_route_preview, next_resolution);
         let mut update = DockViewportRuntimeUpdate::default();
         update.mark_changed(replacement.has_changed());
         update.extend_windows(self.windows_for_routed_preview_replacement(&replacement));
@@ -1491,18 +1113,17 @@ impl DockViewportRuntime {
     }
 
     pub(crate) fn clear_routed_drop_preview(&mut self) -> DockViewportRuntimeUpdate {
-        self.replace_routed_drop_preview(None, None)
+        self.replace_routed_drop_preview(None, None, None)
     }
 
     fn clear_routed_drop_preview_if_window_matches(
         &mut self,
         window_id: WindowId,
     ) -> DockViewportRuntimeUpdate {
-        if let Some(active_drag) = self.active_drag.as_mut() {
-            active_drag.clear_last_routed_viewport_identity_if_window_matches(window_id);
-        }
+        self.payload_drag
+            .clear_last_viewport_identity_if_window_matches(window_id);
         if self.routed_drop_preview.targets_window(window_id) {
-            self.replace_routed_drop_preview(None, None)
+            self.replace_routed_drop_preview(None, None, None)
         } else {
             DockViewportRuntimeUpdate::default()
         }
@@ -1515,9 +1136,8 @@ impl DockViewportRuntime {
         let Some(session) = session else {
             return DockViewportRuntimeUpdate::default();
         };
-        if let Some(active_drag) = self.active_drag.as_mut() {
-            active_drag.clear_last_routed_viewport_identity_for_session(session);
-        }
+        self.payload_drag
+            .clear_last_viewport_identity_for_session(session);
         let replacement = self
             .routed_drop_preview
             .clear_for_drag_session(Some(session));
@@ -1540,8 +1160,6 @@ impl DockViewportRuntime {
         }
         self.window_ownership.clear_window_state(window_id);
         self.backend_focus.discard_window(window_id);
-        self.frame_coordinator
-            .forget_window_render_epochs(window_id);
         self.frame_coordinator.unregister_space(space);
         self.clear_pending_activation_for(space, window_id);
         self.status.clear_window_references(space, window_id);
@@ -1565,10 +1183,10 @@ impl DockViewportRuntime {
         space: &DockSpaceId,
     ) -> DockViewportRuntimeUpdate {
         let Some(session) = self
-            .active_drag
-            .as_ref()
-            .filter(|drag| drag.source_space() == space)
-            .map(|drag| drag.session().clone())
+            .payload_drag
+            .active_session()
+            .filter(|session| session.source_space() == space)
+            .cloned()
         else {
             return DockViewportRuntimeUpdate::default();
         };
@@ -1667,7 +1285,8 @@ impl DockViewportRuntime {
     ) -> Vec<AnyWindowHandle> {
         self.register_opened_viewport_with_cleanup(space, window)
             .window_effects
-            .close_now
+            .close_now()
+            .to_vec()
     }
 
     pub(crate) fn register_opened_viewport_with_cleanup(
@@ -1868,19 +1487,73 @@ impl DockViewportRuntime {
         let focus_request = focus_item
             .map(DockViewportFocusRequest::panel)
             .unwrap_or_else(DockViewportFocusRequest::no_panel_focus);
-        let (reusable, reusable_effects) = self
-            .reusable_window_for_space_with_cleanup(&target_space, cx)
-            .into_parts();
-        let activation = match reusable {
-            DockViewportReusableWindow::Reused(window) => Some(
-                DockViewportActivationTransaction::new(target_space.clone(), window, focus_request),
-            ),
-            DockViewportReusableWindow::Missing | DockViewportReusableWindow::Stale => None,
-        };
+        let (activation, reusable_effects) = DockViewportWindowLifecycleController::drop_activation(
+            self.reusable_window_for_space_with_cleanup(&target_space, cx),
+            target_space.clone(),
+            focus_request,
+        );
+        let vacated_source =
+            self.vacate_empty_payload_drop_source_viewport(&source_space, &target_space, cx);
+        let window_effects = reusable_effects.merge(DockViewportWindowEffects::new(
+            Vec::new(),
+            vacated_source.affected_windows,
+            vacated_source.windows,
+        ));
         Ok(DockViewportDropRouteOutcome::Action(
             DockViewportDropActionOutcome::new(drop_outcome.action(), activation)
-                .with_window_effects(reusable_effects),
+                .with_window_effects(window_effects),
         ))
+    }
+
+    pub(crate) fn vacate_empty_payload_drop_source_viewport_with_cleanup(
+        &mut self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        cx: &App,
+    ) -> DockViewportWindowEffects {
+        let vacated_source =
+            self.vacate_empty_payload_drop_source_viewport(source_space, target_space, cx);
+        DockViewportWindowEffects::new(
+            Vec::new(),
+            vacated_source.affected_windows,
+            vacated_source.windows,
+        )
+    }
+
+    fn vacate_empty_payload_drop_source_viewport(
+        &mut self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        cx: &App,
+    ) -> DockViewportVacatedPayloadDropSource {
+        if source_space == target_space {
+            return DockViewportVacatedPayloadDropSource::default();
+        }
+        let source_is_empty = {
+            let controller = self.controller.read(cx);
+            controller
+                .graph()
+                .collect_items_in_space(source_space)
+                .is_empty()
+        };
+        if !source_is_empty {
+            return DockViewportVacatedPayloadDropSource::default();
+        }
+        let Some(unregistered) = self.unregister_space_runtime_state(source_space) else {
+            return DockViewportVacatedPayloadDropSource::default();
+        };
+        let windows = if self
+            .retire_runtime_window_for_close(unregistered.window)
+            .should_close_window()
+        {
+            vec![unregistered.window]
+        } else {
+            Vec::new()
+        };
+        DockViewportVacatedPayloadDropSource {
+            windows,
+            affected_windows: unregistered.affected_windows,
+        }
     }
 
     pub(crate) fn prepare_tear_off_drop_delivery(
@@ -2046,26 +1719,23 @@ impl DockViewportRuntime {
             initial_route_request.request,
             &policy,
         );
-
-        if initial_snapshot.resample_barrier(self, cx).is_some() {
-            let replay_refresh = self
-                .resampled_backend_route_snapshot_without_window_fact_refresh(request, &policy, cx);
-            update.mark_changed(replay_refresh.changed);
-            let replay_snapshot = replay_refresh.snapshot;
-            if let Some(resolution) = replay_snapshot.resolve_accepted_routed_preview(self, cx) {
-                let request = replay_snapshot.request();
-                self.status.record_route(request, resolution.route());
-                return resolved_drop_route_outcome(resolution, update);
-            }
-            let selection = replay_snapshot.into_route_selection();
-            let resolution = self.resolve_payload_drop_delivery_resolution(
-                &selection.request,
-                selection.route,
-                cx,
+        let initial_route = initial_snapshot.route_resolution.route_ref();
+        let initial_unavailable_reason = initial_snapshot.route_resolution.unavailable_reason();
+        if initial_route_request.changed
+            || initial_unavailable_reason.is_some()
+            || matches!(
+                initial_route,
+                DockViewportDropRoute::TearOff | DockViewportDropRoute::Rejected(_)
+            )
+        {
+            log::debug!(
+                "[DEBUG-docking-native] runtime route snapshot source_space={} source_node={:?} route={:?} initial_changed={} initial_unavailable_reason={:?}",
+                request.source_space().as_str(),
+                request.source_node(),
+                initial_route,
+                initial_route_request.changed,
+                initial_unavailable_reason
             );
-            self.status
-                .record_route(&selection.request, resolution.route());
-            return resolved_drop_route_outcome(resolution, update);
         }
 
         let DockViewportDropRouteSnapshotRefresh {
@@ -2074,13 +1744,7 @@ impl DockViewportRuntime {
             window_effects: resampled_effects,
         } = self.resampled_drop_route_snapshot(request, &policy, cx);
         update.mark_changed(resampled_changed);
-        update.extend_windows(resampled_effects.refresh);
-        if let Some(resolution) = resampled_snapshot.resolve_accepted_routed_preview(self, cx) {
-            let request = resampled_snapshot.request();
-            self.status.record_route(request, resolution.route());
-            return resolved_drop_route_outcome(resolution, update);
-        }
-
+        update.extend_windows(resampled_effects.refresh().iter().cloned());
         let selection = resampled_snapshot.into_route_selection();
         let resolution =
             self.resolve_payload_drop_delivery_resolution(&selection.request, selection.route, cx);
@@ -2107,24 +1771,6 @@ impl DockViewportRuntime {
             ),
             changed: frame_changed || route_request.changed,
             window_effects: DockViewportWindowEffects::refresh_only(frame_update.into_windows()),
-        }
-    }
-
-    fn resampled_backend_route_snapshot_without_window_fact_refresh<C: open_gpui::AppContext>(
-        &mut self,
-        request: &DockViewportDropRouteRequest,
-        policy: &crate::DockPolicy,
-        cx: &mut C,
-    ) -> DockViewportDropRouteSnapshotRefresh {
-        let route_request = self.resampled_backend_route_request(request, cx);
-        DockViewportDropRouteSnapshotRefresh {
-            snapshot: DockViewportDropRouteSnapshot::resolve(
-                &self.adapter,
-                route_request.request,
-                policy,
-            ),
-            changed: route_request.changed,
-            window_effects: DockViewportWindowEffects::default(),
         }
     }
 
@@ -2186,14 +1832,13 @@ impl DockViewportRuntime {
         let Some(drag_session) = request.drag_session() else {
             return request;
         };
-        let Some(active_drag) = self
-            .active_drag
-            .as_ref()
-            .filter(|drag| drag.matches_session(drag_session))
-        else {
+        if !self.payload_drag.matches_session(Some(drag_session)) {
             return request;
-        };
-        let Some(identity) = active_drag.last_hovered_viewport_identity() else {
+        }
+        let Some(identity) = self
+            .payload_drag
+            .last_hovered_viewport_identity(Some(drag_session))
+        else {
             return request;
         };
         let Some(window) = self.adapter.window_for_space(identity.space()) else {
@@ -2232,69 +1877,6 @@ impl DockViewportRuntime {
             return request;
         }
         request.with_focus_stamp_window_stack(focused_windows)
-    }
-
-    fn route_snapshot_resample_barrier<C: open_gpui::AppContext>(
-        &self,
-        request: &DockViewportDropRouteRequest,
-        route_resolution: &DockViewportDropRouteResolution,
-        cx: &mut C,
-    ) -> Option<DockViewportRouteSnapshotResampleBarrier> {
-        if self.hovered_host_request_uses_authoritative_target_snapshot(
-            request,
-            route_resolution,
-            cx,
-        ) {
-            return Some(DockViewportRouteSnapshotResampleBarrier::HoveredHostTargetWindow);
-        }
-        if self.source_only_request_uses_routed_preview_target_snapshot(request, cx) {
-            return Some(DockViewportRouteSnapshotResampleBarrier::RoutedPreviewTargetWindow);
-        }
-        None
-    }
-
-    fn hovered_host_request_uses_authoritative_target_snapshot<C: open_gpui::AppContext>(
-        &self,
-        request: &DockViewportDropRouteRequest,
-        route_resolution: &DockViewportDropRouteResolution,
-        cx: &mut C,
-    ) -> bool {
-        if request.release_origin() != crate::interaction::DockPayloadDropReleaseOrigin::HoveredHost
-            || request.event_receiver_window().is_some()
-        {
-            return false;
-        }
-        let Some(window) = route_resolution.target_window(&self.adapter) else {
-            return false;
-        };
-        !self
-            .window_ownership
-            .window_allows_runtime_snapshot_resample(window, cx)
-    }
-
-    fn source_only_request_uses_routed_preview_target_snapshot<C: open_gpui::AppContext>(
-        &self,
-        request: &DockViewportDropRouteRequest,
-        cx: &mut C,
-    ) -> bool {
-        if request.release_origin() != crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly
-        {
-            return false;
-        }
-        let Some(target) = self.routed_drop_preview.resolution_target_snapshot() else {
-            return false;
-        };
-        let target_space = target.target_space();
-        let Some(target_window_id) = target.target_window_id() else {
-            return false;
-        };
-        self.adapter
-            .window_for_space(target_space)
-            .filter(|window| window.window_id() == target_window_id)
-            .is_some_and(|window| {
-                self.window_ownership
-                    .unowned_window_blocks_runtime_snapshot_resample(window, cx)
-            })
     }
 
     fn resolve_payload_drop_delivery_resolution<C: open_gpui::AppContext>(
@@ -2337,24 +1919,6 @@ impl DockViewportRuntime {
     }
 
     #[cfg(test)]
-    fn resolve_payload_drop_route_with_accepted_routed_preview<C: open_gpui::AppContext>(
-        &self,
-        request: &DockViewportDropRouteRequest,
-        policy: &crate::DockPolicy,
-        cx: &mut C,
-    ) -> DockViewportDropRoute {
-        let route_resolution = self
-            .adapter
-            .resolve_payload_drop_route_resolution(request, policy);
-        let Some(accepted_preview_route) =
-            self.resolve_accepted_routed_preview_route(request, &route_resolution, cx)
-        else {
-            return route_resolution.into_route();
-        };
-        accepted_preview_route
-    }
-
-    #[cfg(test)]
     pub(crate) fn resolve_payload_drop_route_for_test(
         &mut self,
         request: &DockViewportDropRouteRequest,
@@ -2364,7 +1928,9 @@ impl DockViewportRuntime {
         let policy = cx.read_entity(&self.controller, |controller, _| {
             controller.workspace().policy().to_owned()
         });
-        self.resolve_payload_drop_route_with_accepted_routed_preview(request, &policy, cx)
+        self.adapter
+            .resolve_payload_drop_route_resolution(request, &policy)
+            .into_route()
     }
 
     #[cfg(test)]
@@ -2373,155 +1939,19 @@ impl DockViewportRuntime {
         session: Option<&DockRuntimeDragSession>,
     ) -> Option<DockViewportIdentity> {
         let session = session?;
-        self.active_drag
-            .as_ref()
-            .filter(|drag| drag.matches_session(session))
-            .and_then(DockViewportActivePayloadDrag::last_routed_viewport_identity)
+        self.payload_drag
+            .last_routed_viewport_identity(Some(session))
             .cloned()
     }
 
     #[cfg(test)]
-    fn resolve_accepted_routed_preview_route<C: open_gpui::AppContext>(
+    pub(crate) fn last_hovered_viewport_identity_for_drag_session(
         &self,
-        request: &DockViewportDropRouteRequest,
-        route_resolution: &DockViewportDropRouteResolution,
-        cx: &mut C,
-    ) -> Option<DockViewportDropRoute> {
-        self.resolve_accepted_routed_preview_resolution(request, route_resolution, cx)
-            .map(|resolution| resolution.route().clone())
-    }
-
-    fn resolve_accepted_routed_preview_resolution<C: open_gpui::AppContext>(
-        &self,
-        request: &DockViewportDropRouteRequest,
-        route_resolution: &DockViewportDropRouteResolution,
-        cx: &mut C,
-    ) -> Option<DockViewportResolvedDropRoute> {
-        if !self.can_replay_accepted_routed_preview(request, route_resolution) {
-            return None;
-        }
-        let drag_session = request.drag_session()?;
-        if !self
-            .active_drag
-            .as_ref()
-            .is_some_and(|drag| drag.matches_session(drag_session))
-        {
-            return None;
-        }
-        let accepted = self
-            .routed_drop_preview
-            .accepted_for_drag_session(drag_session.id())?;
-        let target = accepted.target().clone();
-        let target_space = target.target_space().clone();
-        let target_window_id = target.target_window_id()?;
-        let accepted_target_key = accepted.target_key().clone();
-        let host_position = self.accepted_routed_preview_host_position(request, &target_space)?;
-        let facts_generation = self
-            .adapter
-            .snapshot_facts_generation(&target_space, target_window_id)?;
-        let target_window = self.adapter.window_for_space(&target_space)?;
-        if target_window.window_id() != target_window_id {
-            return None;
-        }
-        let route = if target_space == *request.source_space() {
-            DockViewportDropRoute::Local {
-                host_position,
-                window_id: target_window_id,
-                facts_generation,
-                source: DockViewportRouteSelectionSource::AcceptedRoutedPreview,
-            }
-        } else {
-            DockViewportDropRoute::KnownViewport {
-                target: DockViewportTargetHit::with_facts_generation(
-                    target_space.clone(),
-                    target_window,
-                    host_position,
-                    facts_generation,
-                ),
-                source: DockViewportRouteSelectionSource::AcceptedRoutedPreview,
-            }
-        };
-        let resolution = cx.read_entity(&self.controller, |controller, _| {
-            let workspace = controller.workspace();
-            let payload_classes = workspace.payload_dock_classes_for_viewport_payload(
-                request.payload(),
-                request.source_node(),
-            );
-            crate::resolve_workspace_target_for_route(
-                &self.adapter,
-                self.frame_coordinator.host_scenes(),
-                &route,
-                request,
-                workspace,
-                &payload_classes,
-            )
-        });
-        DockViewportResolvedDropRoute::from_accepted_workspace_route_target(
-            request,
-            route,
-            resolution,
-            &accepted_target_key,
-        )
-    }
-
-    fn can_replay_accepted_routed_preview(
-        &self,
-        request: &DockViewportDropRouteRequest,
-        route_resolution: &DockViewportDropRouteResolution,
-    ) -> bool {
-        let replayable_coordinate_space = request.coordinate_space()
-            == crate::DockViewportPointerCoordinateSpace::GlobalScreen
-            || request.release_origin()
-                == crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly;
-        if !replayable_coordinate_space {
-            return false;
-        }
-        let Some(drag_session) = request.drag_session() else {
-            return false;
-        };
-        let Some(accepted) = self
-            .routed_drop_preview
-            .accepted_for_drag_session(drag_session.id())
-        else {
-            return false;
-        };
-        match route_resolution.route_ref() {
-            DockViewportDropRoute::Unavailable => {
-                route_resolution.unavailable_reason()
-                    == Some(crate::DockViewportDropRouteUnavailableReason::NoViewportRouteSelection)
-            }
-            DockViewportDropRoute::TearOff => false,
-            DockViewportDropRoute::Rejected(_) => false,
-            DockViewportDropRoute::Local { window_id, .. } => {
-                accepted.target_window_id() == Some(*window_id)
-            }
-            DockViewportDropRoute::KnownViewport { target, .. } => {
-                accepted.matches_target(target.space(), target.window_id())
-            }
-        }
-    }
-
-    fn accepted_routed_preview_host_position(
-        &self,
-        request: &DockViewportDropRouteRequest,
-        target_space: &DockSpaceId,
-    ) -> Option<Point<Pixels>> {
-        match request.coordinate_space() {
-            crate::DockViewportPointerCoordinateSpace::GlobalScreen => self
-                .adapter
-                .global_screen_to_host(target_space, request.release_position()),
-            crate::DockViewportPointerCoordinateSpace::SourceLocalOnly
-                if request.release_origin()
-                    == crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly
-                    && target_space == request.source_space() =>
-            {
-                self.adapter
-                    .window_to_host(target_space, request.release_position())
-            }
-            crate::DockViewportPointerCoordinateSpace::TrustedHoveredWindowLocal
-            | crate::DockViewportPointerCoordinateSpace::EventReceiverLocal
-            | crate::DockViewportPointerCoordinateSpace::SourceLocalOnly => None,
-        }
+        session: Option<&DockRuntimeDragSession>,
+    ) -> Option<DockViewportIdentity> {
+        self.payload_drag
+            .last_hovered_viewport_identity(session)
+            .cloned()
     }
 
     #[cfg(test)]
@@ -2629,8 +2059,8 @@ impl DockViewportRuntime {
         DockViewportTearOffCompleted::new(
             commit.pending,
             outcome,
-            window_effects.close_now,
-            window_effects.refresh,
+            window_effects.close_now().to_vec(),
+            window_effects.refresh().to_vec(),
             vacated_source.windows,
             vacated_source.affected_windows,
             commit.action,
@@ -2689,7 +2119,7 @@ impl DockViewportRuntime {
     ) -> Option<DockItemId> {
         self.controller
             .read(cx)
-            .graph()
+            .workspace()
             .activation_focus_item_for_viewport_payload(
                 request.payload(),
                 request.source_node(),
@@ -2707,7 +2137,7 @@ impl DockViewportRuntime {
         let focused_item = self.focus.focused_panel(&payload.source_space)?;
         self.controller
             .read(cx)
-            .graph()
+            .workspace()
             .drag_focus_item_for_payload(payload, Some(focused_item))
     }
 
@@ -2748,10 +2178,10 @@ impl DockViewportRuntime {
             self.clear_routed_drop_preview_if_window_matches(window_id)
                 .into_windows()
         };
-        DockViewportClosedWindowRefresh {
+        DockViewportClosedWindowRefresh::new(
             outcome,
-            window_effects: DockViewportWindowEffects::refresh_only(affected_windows),
-        }
+            DockViewportWindowEffects::refresh_only(affected_windows),
+        )
     }
 
     #[cfg(test)]
@@ -2770,27 +2200,13 @@ impl DockViewportRuntime {
         cx: &mut App,
     ) -> DockViewportClosedWindowRefresh {
         let pending_state = self.close_coordinator.take_window_close_state(window_id);
-        let close = self.cleanup_closed_window(window_id);
-        let outcome = match pending_state {
-            Some(DockViewportClosePlanState::Pending(plan)) if close.outcome.space().is_some() => {
-                let close_status =
-                    crate::commit_prevalidated_merge_back_plan(&self.controller, &plan, cx);
-                if close_status == DockViewportCloseStatus::MergedBack {
-                    close.outcome.with_merge_back(plan)
-                } else {
-                    close.outcome.with_status(close_status)
-                }
-            }
-            Some(DockViewportClosePlanState::Discarded) => close
-                .outcome
-                .with_status(DockViewportCloseStatus::MergeBackFailed),
-            _ => close.outcome,
-        };
-        self.status.record_close(&outcome);
-        DockViewportClosedWindowRefresh {
-            outcome,
-            window_effects: close.window_effects,
-        }
+        let close = DockViewportWindowLifecycleController::complete_pending_close_plan(
+            self.cleanup_closed_window(window_id),
+            pending_state,
+            |plan| crate::commit_prevalidated_merge_back_plan(&self.controller, plan, cx),
+        );
+        self.status.record_close(&close.outcome);
+        close
     }
 
     #[cfg(test)]
@@ -2808,33 +2224,13 @@ impl DockViewportRuntime {
         outcome: &DockViewportCloseOutcome,
         cx: &mut App,
     ) -> DockViewportCloseRecoveryActivation {
-        if outcome.status() != DockViewportCloseStatus::MergedBack {
-            return DockViewportCloseRecoveryActivation::none();
-        }
         let Some(target_space) = outcome.merge_target_space().cloned() else {
             return DockViewportCloseRecoveryActivation::none();
         };
-        let focus_request = outcome.focus_item().cloned().map_or_else(
-            DockViewportFocusRequest::no_panel_focus,
-            DockViewportFocusRequest::panel,
-        );
-        let (reusable, reusable_effects) = self
-            .reusable_window_for_space_with_cleanup(&target_space, cx)
-            .into_parts();
-        let activation = match reusable {
-            DockViewportReusableWindow::Reused(window) => {
-                Some(DockViewportActivationTransaction::close_recovery(
-                    target_space,
-                    window,
-                    focus_request,
-                ))
-            }
-            DockViewportReusableWindow::Missing | DockViewportReusableWindow::Stale => None,
-        };
-        DockViewportCloseRecoveryActivation {
-            activation,
-            window_effects: reusable_effects,
-        }
+        DockViewportWindowLifecycleController::close_recovery_activation(
+            outcome,
+            self.reusable_window_for_space_with_cleanup(&target_space, cx),
+        )
     }
 
     pub(crate) fn handle_window_should_close_with_app_and_refresh(
@@ -2845,10 +2241,10 @@ impl DockViewportRuntime {
         if self.adapter.window_close_requested(window_id) {
             let outcome = self.allowed_should_close_outcome(window_id);
             self.status.record_should_close(&outcome);
-            return DockViewportShouldCloseRefresh {
+            return DockViewportShouldCloseRefresh::new(
                 outcome,
-                window_effects: DockViewportWindowEffects::default(),
-            };
+                DockViewportWindowEffects::default(),
+            );
         }
         let outcome = self
             .adapter
@@ -2868,10 +2264,10 @@ impl DockViewportRuntime {
             .apply_allowed_should_close_route_invalidation(&outcome)
             .into_windows();
         self.status.record_should_close(&outcome);
-        DockViewportShouldCloseRefresh {
+        DockViewportShouldCloseRefresh::new(
             outcome,
-            window_effects: DockViewportWindowEffects::refresh_only(affected_windows),
-        }
+            DockViewportWindowEffects::refresh_only(affected_windows),
+        )
     }
 
     fn allowed_should_close_outcome(&self, window_id: WindowId) -> DockViewportShouldCloseOutcome {
@@ -2980,21 +2376,6 @@ fn undock_limited_work_area_size(work_area: Bounds<Pixels>) -> open_gpui::Size<P
         .map(|dimension| (dimension * DOCK_TEAR_OFF_MAX_WORK_AREA_FRACTION).floor())
 }
 
-fn extend_unique_windows(
-    windows: &mut Vec<AnyWindowHandle>,
-    next_windows: impl IntoIterator<Item = AnyWindowHandle>,
-) {
-    for window in next_windows {
-        if windows
-            .iter()
-            .any(|existing| existing.window_id() == window.window_id())
-        {
-            continue;
-        }
-        windows.push(window);
-    }
-}
-
 fn resolved_drop_route_outcome(
     resolution: DockViewportResolvedDropRoute,
     update: DockViewportRuntimeUpdate,
@@ -3004,51 +2385,5 @@ fn resolved_drop_route_outcome(
     DockViewportResolvedDropRouteRefresh {
         outcome: DockViewportResolvedDropRouteOutcome::new(resolution, changed),
         window_effects,
-    }
-}
-
-pub(crate) enum DockViewportReusableWindow {
-    Missing,
-    Reused(AnyWindowHandle),
-    Stale,
-}
-
-pub(crate) struct DockViewportReusableWindowOutcome {
-    window: DockViewportReusableWindow,
-    window_effects: DockViewportWindowEffects,
-}
-
-impl DockViewportReusableWindowOutcome {
-    fn missing() -> Self {
-        Self {
-            window: DockViewportReusableWindow::Missing,
-            window_effects: DockViewportWindowEffects::default(),
-        }
-    }
-
-    fn reused(window: AnyWindowHandle) -> Self {
-        Self {
-            window: DockViewportReusableWindow::Reused(window),
-            window_effects: DockViewportWindowEffects::default(),
-        }
-    }
-
-    fn stale() -> Self {
-        Self::stale_with_affected_windows(Vec::new())
-    }
-
-    fn stale_with_affected_windows(affected_windows: Vec<AnyWindowHandle>) -> Self {
-        Self {
-            window: DockViewportReusableWindow::Stale,
-            window_effects: DockViewportWindowEffects::new(
-                Vec::new(),
-                affected_windows,
-                Vec::new(),
-            ),
-        }
-    }
-
-    pub(crate) fn into_parts(self) -> (DockViewportReusableWindow, DockViewportWindowEffects) {
-        (self.window, self.window_effects)
     }
 }

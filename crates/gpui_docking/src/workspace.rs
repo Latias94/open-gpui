@@ -1,6 +1,8 @@
 use crate::{
-    DockGraph, DockGraphMutationError, DockItemId, DockOp, DockPanel, DockPanelDescriptor,
-    DockPanelRegistry, DockPolicy, DockSpaceId, host::DockHostOptions,
+    DockGraph, DockGraphMutationError, DockItemId, DockNodeId, DockOp, DockPanel,
+    DockPanelDescriptor, DockPanelRegistry, DockPolicy, DockSpaceId, DockViewportDropPayload,
+    drag::DockDragPayload, host::DockHostOptions,
+    workspace_drop_transaction::DockWorkspaceDropPayload,
 };
 
 /// Owner for one logical docking workspace.
@@ -16,7 +18,6 @@ pub struct DockWorkspace {
     options: DockHostOptions,
     policy: DockPolicy,
 }
-
 impl DockWorkspace {
     /// Creates a workspace for one dock space and graph.
     pub fn new(space: impl Into<DockSpaceId>, graph: DockGraph) -> Self {
@@ -142,5 +143,89 @@ impl DockWorkspace {
     /// Replaces the workspace docking interaction policy.
     pub fn set_policy(&mut self, policy: DockPolicy) {
         self.policy = policy;
+    }
+
+    pub(crate) fn activation_focus_item_for_workspace_payload(
+        &self,
+        payload: &DockWorkspaceDropPayload<'_>,
+        target_space: Option<&DockSpaceId>,
+        frozen_focus_item: Option<&DockItemId>,
+    ) -> Option<DockItemId> {
+        let item = match payload {
+            DockWorkspaceDropPayload::Item { item, .. } => (*item).clone(),
+            DockWorkspaceDropPayload::Tabs { .. } | DockWorkspaceDropPayload::Floating { .. } => {
+                frozen_focus_item?.clone()
+            }
+        };
+
+        match target_space {
+            Some(space) if self.graph.find_item_in_space(space, &item).is_some() => Some(item),
+            Some(_) => None,
+            None => Some(item),
+        }
+    }
+
+    pub(crate) fn activation_focus_item_for_viewport_payload(
+        &self,
+        payload: &DockViewportDropPayload,
+        source_node: DockNodeId,
+        frozen_focus_item: Option<&DockItemId>,
+    ) -> Option<DockItemId> {
+        let workspace_payload = payload.as_workspace_payload(source_node);
+        self.resolve_payload_focus_item(&workspace_payload, None, frozen_focus_item)
+    }
+
+    pub(crate) fn drag_focus_item_for_payload(
+        &self,
+        payload: &DockDragPayload,
+        recorded_focus_item: Option<&DockItemId>,
+    ) -> Option<DockItemId> {
+        let workspace_payload = payload.as_workspace_payload();
+        self.resolve_payload_focus_item(&workspace_payload, None, recorded_focus_item)
+    }
+
+    fn resolve_payload_focus_item(
+        &self,
+        payload: &DockWorkspaceDropPayload<'_>,
+        target_space: Option<&DockSpaceId>,
+        frozen_focus_item: Option<&DockItemId>,
+    ) -> Option<DockItemId> {
+        let item = match payload {
+            DockWorkspaceDropPayload::Item { item, .. } => (*item).clone(),
+            DockWorkspaceDropPayload::Tabs { .. } | DockWorkspaceDropPayload::Floating { .. } => {
+                let item = frozen_focus_item?;
+                self.payload_contains_workspace_focus_item(payload, item)
+                    .then_some(item.clone())?
+            }
+        };
+
+        match target_space {
+            Some(space) if self.graph.find_item_in_space(space, &item).is_some() => Some(item),
+            Some(_) => None,
+            None => Some(item),
+        }
+    }
+
+    fn payload_contains_workspace_focus_item(
+        &self,
+        payload: &DockWorkspaceDropPayload<'_>,
+        item: &DockItemId,
+    ) -> bool {
+        match payload {
+            DockWorkspaceDropPayload::Item {
+                source_tabs: _,
+                item: payload_item,
+            } => *payload_item == item,
+            DockWorkspaceDropPayload::Tabs { source_tabs } => self
+                .graph
+                .collect_items_in_subtree(*source_tabs)
+                .iter()
+                .any(|candidate| candidate == item),
+            DockWorkspaceDropPayload::Floating { floating } => self
+                .graph
+                .collect_items_in_subtree(*floating)
+                .iter()
+                .any(|candidate| candidate == item),
+        }
     }
 }

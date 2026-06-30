@@ -1,13 +1,14 @@
 use crate::{
-    DockItemId, DockNodeId, DockPolicy, DockSpaceId, DockViewportDropRoute,
-    DockViewportFocusCommand, DockViewportFocusCommandSource, DockViewportResolvedDropRoute,
+    DockItemId, DockNodeId, DockPolicy, DockSpaceId, DockViewportFocusCommand,
+    DockViewportFocusCommandSource,
     drag::{DockDragPayload, DockDragPayloadIdentity, DockDragTearOffGeometry},
-    drop_preview::{DockDropPreview, DockDropRoutePreview},
+    drop_preview::DockDropPreview,
     drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
     drop_target::{DockDropTargetValidator, DockEdgePlanResolver, DockResolvedDropTarget},
     geometry::{self, DockDropGuideStyle},
     viewport_drop_scene::DockViewportHostSceneFrame,
-    workspace_transaction::{DockWorkspacePayloadDropRequest, DockWorkspaceResolvedDropTarget},
+    workspace_drop_target::DockWorkspaceResolvedDropTarget,
+    workspace_drop_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{Bounds, Pixels, Point, point};
 
@@ -15,8 +16,8 @@ use open_gpui::{Bounds, Pixels, Point, point};
 pub(crate) struct DockInteractionRuntime {
     splitter_drag: Option<SplitterDrag>,
     floating_drag: Option<FloatingDrag>,
+    payload_drag_anchor: Option<DockPayloadDragAnchor>,
     drop: DockDropRuntime,
-    drop_route_preview: Option<DockDropRoutePreview>,
     outside_release_poll: Option<DockOutsideReleasePollSession>,
     next_outside_release_poll_id: u64,
     viewport_host_scene_frame: Option<DockViewportHostSceneFrame>,
@@ -38,6 +39,13 @@ pub(crate) struct FloatingDrag {
     pub(crate) floating: DockNodeId,
     pub(crate) start_position: Point<Pixels>,
     pub(crate) initial_bounds: Bounds<Pixels>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPayloadDragAnchor {
+    source_space: DockSpaceId,
+    source_node: DockNodeId,
+    position: Point<Pixels>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -418,6 +426,36 @@ impl DockInteractionRuntime {
 }
 
 impl DockInteractionRuntime {
+    pub(crate) fn record_payload_drag_anchor(
+        &mut self,
+        source_space: DockSpaceId,
+        source_node: DockNodeId,
+        position: Point<Pixels>,
+    ) {
+        self.payload_drag_anchor = Some(DockPayloadDragAnchor {
+            source_space,
+            source_node,
+            position,
+        });
+    }
+
+    pub(crate) fn payload_drag_anchor_position(
+        &self,
+        payload: &DockDragPayload,
+    ) -> Option<Point<Pixels>> {
+        self.payload_drag_anchor
+            .as_ref()
+            .filter(|anchor| {
+                anchor.source_space == payload.source_space
+                    && anchor.source_node == payload.source_node
+            })
+            .map(|anchor| anchor.position)
+    }
+
+    pub(crate) fn clear_any_payload_drag_anchor(&mut self) -> bool {
+        self.payload_drag_anchor.take().is_some()
+    }
+
     pub(crate) fn start_splitter_drag(
         &mut self,
         split: DockNodeId,
@@ -510,7 +548,7 @@ impl DockInteractionRuntime {
         self.drop.begin_scene(scene, policy)
     }
 
-    pub(crate) fn ensure_drop_scene_with_validator(
+    pub(crate) fn begin_drop_scene_with_validator(
         &mut self,
         scene: DockHostDropScene,
         policy: &DockPolicy,
@@ -518,7 +556,7 @@ impl DockInteractionRuntime {
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
     ) -> bool {
         self.drop
-            .ensure_scene_with_validator(scene, policy, target_validator, edge_plan_resolver)
+            .begin_scene_with_validator(scene, policy, target_validator, edge_plan_resolver)
     }
 
     #[cfg(test)]
@@ -581,7 +619,7 @@ impl DockInteractionRuntime {
         if release.origin() == DockPayloadDropReleaseOrigin::SourceOnly {
             return None;
         }
-        let target = self.drop.take_accepted_target_at(
+        let target = self.drop.take_release_target_at(
             release.release_position(),
             policy,
             target_validator,
@@ -590,26 +628,8 @@ impl DockInteractionRuntime {
         Some(DockLocalDropDelivery::from_release(release, target))
     }
 
-    pub(crate) fn clear_drop_acceptance(&mut self) -> bool {
+    pub(crate) fn clear_drop_resolution(&mut self) -> bool {
         self.drop.clear()
-    }
-
-    pub(crate) fn update_drop_route_preview(
-        &mut self,
-        resolution: &DockViewportResolvedDropRoute,
-        host_position: Point<Pixels>,
-    ) -> bool {
-        let route = resolution.route();
-        if matches!(route, DockViewportDropRoute::Unavailable) {
-            return self.clear_drop_route_preview();
-        }
-        let preview_changed =
-            self.set_drop_route_preview(DockDropRoutePreview::from_route(route, host_position));
-        preview_changed
-    }
-
-    pub(crate) fn clear_drop_route_preview(&mut self) -> bool {
-        self.set_drop_route_preview(None)
     }
 
     #[cfg(test)]
@@ -782,25 +802,9 @@ impl DockInteractionRuntime {
     }
 
     pub(crate) fn drop_preview(&self) -> Option<DockDropPreview> {
-        self.drop
-            .drop_resolution()
-            .and_then(DockDropPreview::from_resolution)
-    }
-
-    pub(crate) fn finish_drop_acceptance_pass(&mut self) -> bool {
-        self.drop.finish_acceptance_pass()
-    }
-
-    pub(crate) fn drop_route_preview(&self) -> Option<DockDropRoutePreview> {
-        self.drop_route_preview.clone()
-    }
-
-    fn set_drop_route_preview(&mut self, preview: Option<DockDropRoutePreview>) -> bool {
-        if self.drop_route_preview == preview {
-            return false;
-        }
-        self.drop_route_preview = preview;
-        true
+        self.drop.drop_resolution().and_then(|resolution| {
+            DockDropPreview::from_resolution(resolution, self.drop.drop_guide_style())
+        })
     }
 
     #[cfg(test)]
@@ -830,7 +834,7 @@ mod tests {
     use crate::{
         DockItemId, DockNodeId,
         drop_target::{DockLeafDropTarget, DockResolvedDropTargetKind},
-        workspace_transaction::DockWorkspaceDropPayload,
+        workspace_drop_transaction::DockWorkspaceDropPayload,
     };
     use open_gpui::{point, px, size};
     use slotmap::Key;
@@ -845,6 +849,19 @@ mod tests {
             DockNodeId::null(),
             DockItemId::from(item),
             title.to_string(),
+        )
+    }
+
+    fn item_payload_for_node(
+        space: impl Into<DockSpaceId>,
+        source_node: DockNodeId,
+        item: &str,
+    ) -> DockDragPayload {
+        DockDragPayload::new_item(
+            space.into(),
+            source_node,
+            DockItemId::from(item),
+            item.to_string(),
         )
     }
 
@@ -881,6 +898,42 @@ mod tests {
             DockSpaceId::from("host"),
             point(px(120.0), px(80.0)),
         )
+    }
+
+    #[test]
+    fn payload_drag_anchor_matches_any_payload_from_same_source_tabs() {
+        let mut runtime = DockInteractionRuntime::default();
+        let mut graph = crate::DockGraph::new();
+        let source_tabs = graph.insert_node(crate::DockNode::Tabs {
+            items: Vec::new(),
+            selected: None,
+        });
+        let position = point(px(42.0), px(17.0));
+        let source_space = DockSpaceId::from("main");
+        let item_payload = item_payload_for_node(source_space.clone(), source_tabs, "a");
+        let tabs_payload =
+            DockDragPayload::new_tabs(source_space.clone(), source_tabs, "tabs".to_string());
+
+        runtime.record_payload_drag_anchor(source_space, source_tabs, position);
+
+        assert_eq!(
+            runtime.payload_drag_anchor_position(&item_payload),
+            Some(position)
+        );
+        assert_eq!(
+            runtime.payload_drag_anchor_position(&tabs_payload),
+            Some(position)
+        );
+        assert_eq!(
+            runtime.payload_drag_anchor_position(&item_payload_for_node(
+                DockSpaceId::from("other"),
+                source_tabs,
+                "a",
+            )),
+            None
+        );
+        assert!(runtime.clear_any_payload_drag_anchor());
+        assert_eq!(runtime.payload_drag_anchor_position(&item_payload), None);
     }
 
     #[test]
@@ -926,7 +979,7 @@ mod tests {
     }
 
     #[test]
-    fn local_drop_delivery_packages_previously_accepted_target_for_workspace_commit() {
+    fn local_drop_delivery_packages_current_resolved_target_for_workspace_commit() {
         let tabs = DockNodeId::null();
         let position = point(px(120.0), px(90.0));
         let mut runtime = DockInteractionRuntime::default();
@@ -942,7 +995,6 @@ mod tests {
             }),
             &DockPolicy::default(),
         );
-        assert!(runtime.finish_drop_acceptance_pass());
 
         let release = DockPayloadDropRelease::hovered_host(
             item_payload("a", "Panel A"),
@@ -951,7 +1003,7 @@ mod tests {
         );
         let delivery = runtime
             .take_local_drop_delivery(&release, &DockPolicy::default(), None, None)
-            .expect("previously accepted target should produce a local delivery");
+            .expect("current resolved target should produce a local delivery");
         let request = delivery.workspace_request();
 
         assert_eq!(request.source_space, &DockSpaceId::from("main"));
@@ -986,7 +1038,6 @@ mod tests {
             }),
             &DockPolicy::default(),
         );
-        assert!(runtime.finish_drop_acceptance_pass());
 
         let payload =
             DockDragPayload::new_tabs(DockSpaceId::from("main"), tabs, "Tabs".to_string());
@@ -1003,7 +1054,7 @@ mod tests {
         );
         let delivery = runtime
             .take_local_drop_delivery(&release, &DockPolicy::default(), None, None)
-            .expect("previously accepted target should produce a local delivery");
+            .expect("current resolved target should produce a local delivery");
         let request = delivery.workspace_request();
 
         assert_eq!(request.frozen_focus_item, Some(&focus_item));
@@ -1030,7 +1081,6 @@ mod tests {
             }),
             &DockPolicy::default(),
         );
-        assert!(runtime.finish_drop_acceptance_pass());
 
         let release = DockPayloadDropRelease::source_only(
             item_payload("a", "Panel A"),
@@ -1311,26 +1361,10 @@ mod tests {
     }
 
     #[test]
-    fn drop_preview_prefers_local_resolution_over_route_preview() {
+    fn drop_preview_uses_local_resolution() {
         let tabs = DockNodeId::null();
         let mut runtime = DockInteractionRuntime::default();
         let position = point(px(80.0), px(60.0));
-        let rejected_route =
-            DockViewportDropRoute::Rejected(crate::DockPolicyError::PlatformViewportsDisabled);
-        let rejected_resolution = DockViewportResolvedDropRoute::new(rejected_route, None);
-
-        assert!(runtime.update_drop_route_preview(&rejected_resolution, position,));
-        assert!(
-            runtime.drop_preview().is_none(),
-            "route marker should not be exposed as a target drop preview"
-        );
-        assert_eq!(
-            runtime
-                .drop_route_preview()
-                .expect("route preview should be visible")
-                .kind,
-            crate::drop_preview::DockDropRoutePreviewKind::Rejected
-        );
 
         runtime.begin_drop_scene(DockHostDropScene::new(position), &DockPolicy::default());
         runtime.push_drop_scene_fact(
@@ -1348,10 +1382,6 @@ mod tests {
         assert!(
             runtime.drop_preview().is_some(),
             "local target preview should be visible"
-        );
-        assert!(
-            runtime.drop_route_preview().is_some(),
-            "route marker remains separate from the local target preview"
         );
     }
 

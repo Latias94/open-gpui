@@ -1,10 +1,8 @@
 use crate::{
-    DockGraph, DockItemId, DockNodeId, DockSpaceId, workspace_transaction::DockWorkspaceDropPayload,
+    DockGraph, DockItemId, DockNodeId, DockSpaceId,
+    workspace_drop_transaction::DockWorkspaceDropPayload,
 };
-use open_gpui::{
-    Bounds, Context, IntoElement, ParentElement, Pixels, Point, Render, Size, Styled, Window, div,
-    rgb, white,
-};
+use open_gpui::{Bounds, Pixels, Point, Size};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockDragPayload {
@@ -12,6 +10,7 @@ pub(crate) struct DockDragPayload {
     pub(crate) source_node: DockNodeId,
     pub(crate) kind: DockDragPayloadKind,
     title: String,
+    preview_tabs: Option<Vec<DockDragPreviewTab>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +25,17 @@ pub(crate) struct DockDragPayloadIdentity {
     source_space: DockSpaceId,
     source_node: DockNodeId,
     kind: DockDragPayloadKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockDragPreviewTab {
+    title: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DockDragPreviewTabs<'a> {
+    default_title: &'a str,
+    explicit: Option<&'a [DockDragPreviewTab]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -47,6 +57,7 @@ impl DockDragPayload {
             source_space,
             source_node: source_tabs,
             kind: DockDragPayloadKind::Item { item },
+            preview_tabs: None,
             title,
         }
     }
@@ -60,6 +71,7 @@ impl DockDragPayload {
             source_space,
             source_node: source_tabs,
             kind: DockDragPayloadKind::Tabs,
+            preview_tabs: None,
             title,
         }
     }
@@ -73,8 +85,17 @@ impl DockDragPayload {
             source_space,
             source_node: floating,
             kind: DockDragPayloadKind::Floating { floating },
+            preview_tabs: None,
             title,
         }
+    }
+
+    pub(crate) fn with_preview_tabs(mut self, titles: impl IntoIterator<Item = String>) -> Self {
+        let tabs: Vec<_> = titles.into_iter().map(DockDragPreviewTab::new).collect();
+        if !tabs.is_empty() {
+            self.preview_tabs = Some(tabs);
+        }
+        self
     }
 
     #[cfg(test)]
@@ -98,8 +119,11 @@ impl DockDragPayload {
         }
     }
 
-    pub(crate) fn title(&self) -> &str {
-        &self.title
+    pub(crate) fn preview_tabs(&self) -> DockDragPreviewTabs<'_> {
+        DockDragPreviewTabs {
+            default_title: &self.title,
+            explicit: self.preview_tabs.as_deref(),
+        }
     }
 
     pub(crate) fn identity(&self) -> DockDragPayloadIdentity {
@@ -136,6 +160,44 @@ impl DockDragPayload {
             vec![source_node]
         } else {
             nodes
+        }
+    }
+}
+
+impl DockDragPreviewTab {
+    pub(crate) fn new(title: String) -> Self {
+        Self { title }
+    }
+
+    pub(crate) fn title(&self) -> &str {
+        &self.title
+    }
+}
+
+pub(crate) enum DockDragPreviewTabsIter<'a> {
+    Default(Option<&'a str>),
+    Explicit(std::slice::Iter<'a, DockDragPreviewTab>),
+}
+
+impl<'a> IntoIterator for DockDragPreviewTabs<'a> {
+    type IntoIter = DockDragPreviewTabsIter<'a>;
+    type Item = &'a str;
+
+    fn into_iter(self) -> Self::IntoIter {
+        match self.explicit {
+            Some(explicit) => DockDragPreviewTabsIter::Explicit(explicit.iter()),
+            None => DockDragPreviewTabsIter::Default(Some(self.default_title)),
+        }
+    }
+}
+
+impl<'a> Iterator for DockDragPreviewTabsIter<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Default(title) => title.take(),
+            Self::Explicit(tabs) => tabs.next().map(DockDragPreviewTab::title),
         }
     }
 }
@@ -190,32 +252,6 @@ impl DockDragTearOffGeometry {
     }
 }
 
-pub(crate) struct DockDragPreview {
-    title: String,
-}
-
-impl DockDragPreview {
-    pub(crate) fn new(title: impl Into<String>) -> Self {
-        Self {
-            title: title.into(),
-        }
-    }
-}
-
-impl Render for DockDragPreview {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .px_2()
-            .py_1()
-            .rounded_sm()
-            .bg(rgb(0x334155))
-            .text_color(white())
-            .text_sm()
-            .shadow_md()
-            .child(self.title.clone())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,5 +300,35 @@ mod tests {
 
         assert_eq!(original.identity(), renamed.identity());
         assert_ne!(original, renamed);
+    }
+
+    #[test]
+    fn drag_payload_preview_tabs_do_not_affect_identity() {
+        let source_space = DockSpaceId::from("main");
+        let source_tabs = DockNodeId::null();
+        let original =
+            DockDragPayload::new_tabs(source_space.clone(), source_tabs, "2 tabs".to_string())
+                .with_preview_tabs(["Panel A".to_string(), "Panel B".to_string()]);
+        let renamed = DockDragPayload::new_tabs(source_space, source_tabs, "2 tabs".to_string())
+            .with_preview_tabs(["Renamed A".to_string(), "Renamed B".to_string()]);
+
+        assert_eq!(original.identity(), renamed.identity());
+        assert_ne!(
+            original.preview_tabs().into_iter().collect::<Vec<_>>(),
+            renamed.preview_tabs().into_iter().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn tabs_payload_carries_preview_tabs_in_order() {
+        let payload = DockDragPayload::new_tabs(
+            DockSpaceId::from("main"),
+            DockNodeId::null(),
+            "2 tabs".to_string(),
+        )
+        .with_preview_tabs(["Panel A".to_string(), "Panel C".to_string()]);
+
+        let titles: Vec<_> = payload.preview_tabs().into_iter().collect();
+        assert_eq!(titles, vec!["Panel A", "Panel C"]);
     }
 }

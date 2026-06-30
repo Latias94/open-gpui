@@ -7,6 +7,7 @@ use crate::{
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
+const DOCKING_DEBUG_PREFIX: &str = "[DEBUG-docking-native]";
 
 impl DockHost {
     pub(crate) fn publish_viewport_host_scene_interaction(
@@ -63,14 +64,27 @@ impl DockHost {
         let resolution_outcome = runtime.resolve_payload_drop_delivery_outcome(&request, cx);
         let route_resolution_changed = resolution_outcome.changed();
         let resolution = resolution_outcome.resolution();
-        let routed_preview_changed =
-            runtime.update_routed_drop_preview(resolution, payload.title(), cx);
+        let routed_preview_changed = runtime.update_host_routed_drop_preview(
+            resolution,
+            payload,
+            self.space().clone(),
+            window.window_handle().window_id(),
+            position,
+            cx,
+        );
+        if route_resolution_changed || routed_preview_changed {
+            log::debug!(
+                "{DOCKING_DEBUG_PREFIX} hover preview route outcome space={} window_id={:?} origin={:?} route={:?} route_changed={} preview_changed={}",
+                self.space().as_str(),
+                window.window_handle().window_id(),
+                DockPayloadDropReleaseOrigin::HoveredHost,
+                resolution.route(),
+                route_resolution_changed,
+                routed_preview_changed
+            );
+        }
         DockHostInteractionOutcome::from_session_changed(
-            route_resolution_changed
-                || self
-                    .interaction_mut()
-                    .update_drop_route_preview(resolution, position)
-                || routed_preview_changed,
+            route_resolution_changed || routed_preview_changed,
         )
     }
 
@@ -82,7 +96,22 @@ impl DockHost {
     ) -> Option<DockHostInteractionOutcome> {
         let runtime = self.viewport_runtime().clone();
         let release_request = self.viewport_drop_route_request_from_release(release, window, cx);
+        log::debug!(
+            "{DOCKING_DEBUG_PREFIX} commit routed payload release space={} window_id={:?} origin={:?} drag_session={:?} release_position=({}, {})",
+            self.space().as_str(),
+            window.window_handle().window_id(),
+            release.origin(),
+            release.drag_session().as_ref().map(|session| session.id()),
+            release.release_position().x,
+            release.release_position().y
+        );
         let result = runtime.commit_payload_drop_from_screen(&release_request, cx);
+        log::debug!(
+            "{DOCKING_DEBUG_PREFIX} commit result space={} window_id={:?} success={}",
+            self.space().as_str(),
+            window.window_handle().window_id(),
+            result.is_ok()
+        );
         Some(DockHostInteractionOutcome::from_routed_drop_result(result))
     }
 

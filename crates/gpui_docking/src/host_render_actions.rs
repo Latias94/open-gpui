@@ -7,6 +7,23 @@ use crate::{
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
 
 impl DockHost {
+    pub(crate) fn record_payload_drag_anchor_from_render(
+        &mut self,
+        source_space: DockSpaceId,
+        source_node: DockNodeId,
+        position: Point<Pixels>,
+    ) {
+        self.interaction_mut()
+            .record_payload_drag_anchor(source_space, source_node, position);
+    }
+
+    pub(crate) fn payload_drag_anchor_position_from_render(
+        &self,
+        payload: &DockDragPayload,
+    ) -> Option<Point<Pixels>> {
+        self.interaction().payload_drag_anchor_position(payload)
+    }
+
     pub(crate) fn begin_payload_drag_from_render(
         &mut self,
         payload: &DockDragPayload,
@@ -55,12 +72,15 @@ impl DockHost {
     }
 
     pub(crate) fn finish_payload_drag_session(
-        &self,
+        &mut self,
         session: &DockRuntimeDragSession,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.viewport_runtime()
-            .finish_payload_drag_with_app(session, cx)
+        let changed = self
+            .viewport_runtime()
+            .finish_payload_drag_with_app(session, cx);
+        let anchor_cleared = self.interaction_mut().clear_any_payload_drag_anchor();
+        changed || anchor_cleared
     }
 
     pub(crate) fn select_tab_from_render(
@@ -106,7 +126,7 @@ impl DockHost {
         changed || session_changed
     }
 
-    pub(crate) fn update_drop_scene_fact_from_render(
+    pub(crate) fn update_local_drop_scene_fact_from_render(
         &mut self,
         payload: &DockDragPayload,
         fact: DockHostDropSceneFact,
@@ -115,9 +135,6 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> bool {
         self.update_drop_scene_fact_interaction(payload, fact, position, window, cx)
-            .merge(
-                self.update_viewport_drop_route_preview_interaction(payload, position, window, cx),
-            )
             .finish(cx)
     }
 
@@ -129,6 +146,7 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        let _ = self.record_payload_drag_hovered_viewport_from_render(payload, window);
         self.schedule_outside_release_poll_from_host(payload, window, cx);
         self.publish_viewport_host_scene_interaction(host_bounds, position, window, cx);
         self.update_floating_drag_interaction(position, cx)
@@ -139,7 +157,7 @@ impl DockHost {
             .finish(cx)
     }
 
-    pub(crate) fn update_root_drop_scene_from_render(
+    pub(crate) fn update_local_root_drop_scene_from_render(
         &mut self,
         payload: &DockDragPayload,
         root: DockNodeId,
@@ -149,13 +167,10 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> bool {
         self.update_root_drop_scene_interaction(payload, root, bounds, position, window, cx)
-            .merge(
-                self.update_viewport_drop_route_preview_interaction(payload, position, window, cx),
-            )
             .finish(cx)
     }
 
-    pub(crate) fn update_empty_space_drop_scene_from_render(
+    pub(crate) fn update_local_empty_space_drop_scene_from_render(
         &mut self,
         payload: &DockDragPayload,
         position: Point<Pixels>,
@@ -167,7 +182,6 @@ impl DockHost {
         self.update_empty_space_drop_scene_interaction(
             payload, position, bounds, is_central, window, cx,
         )
-        .merge(self.update_viewport_drop_route_preview_interaction(payload, position, window, cx))
         .finish(cx)
     }
 
@@ -226,5 +240,21 @@ impl DockHost {
 
     pub(crate) fn finish_splitter_drag_from_render(&mut self, cx: &mut Context<Self>) -> bool {
         self.finish_splitter_drag_interaction().finish(cx)
+    }
+
+    fn record_payload_drag_hovered_viewport_from_render(
+        &self,
+        payload: &DockDragPayload,
+        window: &Window,
+    ) -> bool {
+        let Some(session) = self.active_payload_drag_session(payload) else {
+            return false;
+        };
+        self.viewport_runtime()
+            .record_payload_drag_hovered_viewport(
+                &session,
+                self.space().clone(),
+                window.window_handle().window_id(),
+            )
     }
 }

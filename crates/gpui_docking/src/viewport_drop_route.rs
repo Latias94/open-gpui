@@ -45,17 +45,17 @@ pub(crate) enum DockViewportDropRoute {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockViewportDropRouteUnavailableReason {
     /// The pointer is inside a registered viewport window, but that window cannot currently provide
-    /// a host target. The release must not replay an underlay preview through this opaque window.
+    /// a host target. The release must not borrow an underlay preview through this opaque window.
     BlockedByViewportWindow,
     /// A viewport window or host target was present, but no current backend route selection chose
     /// a route-capable target.
     NoViewportRouteSelection,
-    /// The backend explicitly reported hovered=None for this snapshot. This must not be treated as
-    /// an unavailable backend signal; hovered-host releases cannot replay through it.
+    /// The backend explicitly reported hovered=None for this snapshot. This must be treated as an
+    /// authoritative unavailable state for hovered-host releases.
     TrustedHoveredNone,
 }
 
-/// A viewport drop route plus internal routing diagnostics used by runtime replay policy.
+/// A viewport drop route plus internal routing diagnostics used by release-time delivery policy.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportDropRouteResolution {
     route: DockViewportDropRoute,
@@ -115,29 +115,8 @@ impl DockViewportDropRouteResolution {
         &self.route
     }
 
-    pub(crate) fn target_window(&self, adapter: &DockViewportAdapter) -> Option<AnyWindowHandle> {
-        self.route.target_window(adapter)
-    }
-
     pub(crate) fn unavailable_reason(&self) -> Option<DockViewportDropRouteUnavailableReason> {
         self.unavailable_reason
-    }
-}
-
-impl DockViewportDropRoute {
-    fn target_window(&self, adapter: &DockViewportAdapter) -> Option<AnyWindowHandle> {
-        match self {
-            DockViewportDropRoute::Local { window_id, .. } => adapter
-                .space_for_window_id(*window_id)
-                .and_then(|space| adapter.window_for_space(space)),
-            DockViewportDropRoute::KnownViewport { target, .. } => {
-                let window = adapter.window_for_space(target.space())?;
-                (window.window_id() == target.window_id()).then_some(window)
-            }
-            DockViewportDropRoute::TearOff
-            | DockViewportDropRoute::Unavailable
-            | DockViewportDropRoute::Rejected(_) => None,
-        }
     }
 }
 
@@ -742,9 +721,11 @@ impl DockViewportAdapter {
                 DockViewportDropRouteUnavailableReason::BlockedByViewportWindow,
             );
         };
-        if request.release_origin() == DockPayloadDropReleaseOrigin::SourceOnly
+        let source_only_cross_viewport_without_trusted_hover = request.release_origin()
+            == DockPayloadDropReleaseOrigin::SourceOnly
             && target.space() != request.source_space()
-        {
+            && route_selection_source != DockViewportRouteSelectionSource::TrustedHoveredWindow;
+        if source_only_cross_viewport_without_trusted_hover {
             return DockViewportDropRoutePlan::unavailable(
                 DockViewportDropRouteUnavailableReason::NoViewportRouteSelection,
             );
@@ -1307,7 +1288,7 @@ mod tests {
         assert_eq!(
             route,
             DockViewportDropRoute::Unavailable,
-            "source-only global releases need an accepted preview; backend fallback must not grant cross-viewport delivery"
+            "source-only global releases require current route facts; backend fallback must not grant cross-viewport delivery"
         );
     }
 
@@ -1348,7 +1329,50 @@ mod tests {
         assert_eq!(
             route,
             DockViewportDropRoute::Unavailable,
-            "source-only releases must replay an accepted routed preview; window stack fallback is preview route selection only"
+            "source-only releases must not use window-stack fallback as release authority; window stack fallback is preview route selection only"
+        );
+    }
+
+    #[test]
+    fn source_only_global_drop_accepts_trusted_hovered_cross_viewport_route() {
+        let source = space("source");
+        let target_space = space("target");
+        let target_window = handle(2);
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, target_space.clone(), target_window);
+        adapter.update_snapshot(
+            &target_space,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                400.0, 0.0, 320.0, 240.0,
+            ))),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+        let request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
+            source,
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(430.0), px(50.0)),
+            None,
+            DockViewportPlatformSignals::from_target_context(
+                DockViewportTargetContext::new().with_trusted_hovered_window(target_window),
+            ),
+            DockPayloadDropReleaseOrigin::SourceOnly,
+        );
+
+        let route = adapter.resolve_payload_drop_route(&request, &DockPolicy::default());
+
+        assert_eq!(
+            route,
+            DockViewportDropRoute::KnownViewport {
+                target: DockViewportTargetHit::with_facts_generation(
+                    target_space,
+                    target_window,
+                    point(px(20.0), px(30.0)),
+                    1,
+                ),
+                source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
+            },
+            "source-only release should still accept current trusted hovered-window route facts"
         );
     }
 
@@ -1458,7 +1482,7 @@ mod tests {
         assert_eq!(
             route,
             DockViewportDropRoute::Unavailable,
-            "trusted hovered=None is an explicit backend signal; floating payloads must rely on no-input/fallback or accepted preview routing instead of event-receiver guesses"
+            "trusted hovered=None is an explicit backend signal; floating payloads must rely on current no-input/fallback routing instead of event-receiver guesses"
         );
     }
 
@@ -1502,7 +1526,7 @@ mod tests {
                 facts_generation: 1,
                 source: DockViewportRouteSelectionSource::EventReceiverLocalScene,
             },
-            "explicit event-receiver scene proof may produce a same-window candidate; workspace delivery still requires the accepted local target snapshot"
+            "explicit event-receiver scene proof may produce a same-window candidate; workspace delivery still requires the current local target snapshot"
         );
     }
 
@@ -1676,7 +1700,7 @@ mod tests {
         assert_eq!(
             adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
             DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled),
-            "event-receiver scene proof belongs to hovered-host render paths; source-only capture replay should continue through tear-off policy"
+            "event-receiver scene proof belongs to hovered-host render paths; source-only captured release should continue through tear-off policy"
         );
     }
 

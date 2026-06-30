@@ -1,14 +1,14 @@
 use crate::{
     DockAction, DockActionApplyError, DockController, DockDropDelivery, DockGraph,
     DockGraphDropTarget, DockItemId, DockNode, DockNodeId, DockPanel, DockPolicy, DockSpaceId,
-    DockViewportClosePolicy, DockViewportDropOutcomeKind, DockViewportDropPayload,
-    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportFocusCommand, DockViewportFocusRequest, DockViewportInputStatus,
-    DockViewportOpenStatus, DockViewportPlatformSignals, DockViewportRouteStatus,
-    DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportStaleStatusReason,
-    DockViewportTargetContext, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockViewportWindowFacts,
-    DockWorkspace, DropZone, SplitAxis,
+    DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropOutcomeKind,
+    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
+    DockViewportDropRouteRequest, DockViewportFocusCommand, DockViewportFocusRequest,
+    DockViewportInputStatus, DockViewportOpenStatus, DockViewportPlatformSignals,
+    DockViewportRouteStatus, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
+    DockViewportStaleStatusReason, DockViewportTargetContext, DockViewportTearOffBeginOutcome,
+    DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    DockViewportWindowFacts, DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::DockDropRoutePreviewKind,
@@ -20,8 +20,8 @@ use crate::{
     viewport_registry::{DockViewportRouteUnavailableReason, DockViewportStaleReason},
 };
 use open_gpui::{
-    AppContext as _, Focusable, TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
-    point, px, size,
+    AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext,
+    WindowBounds, WindowOptions, point, px, size,
 };
 use slotmap::Key;
 
@@ -64,6 +64,22 @@ fn target_center_host_position() -> open_gpui::Point<open_gpui::Pixels> {
     center_drop_position(floating_bounds(0.0, 0.0, 360.0, 220.0))
 }
 
+fn assert_tabs_node_items(
+    graph: &DockGraph,
+    tabs: DockNodeId,
+    expected_items: &[DockItemId],
+    context: &str,
+) {
+    let DockNode::Tabs { items, selected } = graph
+        .node(tabs)
+        .unwrap_or_else(|| panic!("{context}: tabs node should exist"))
+    else {
+        panic!("{context}: node should be tabs");
+    };
+    assert_eq!(items.as_slice(), expected_items, "{context}");
+    assert_eq!(selected.as_ref(), expected_items.first(), "{context}");
+}
+
 fn cache_known_viewport_preview(
     cx: &mut TestAppContext,
     runtime: &DockViewportRuntimeHandle,
@@ -74,6 +90,36 @@ fn cache_known_viewport_preview(
     hovered_window: impl Into<open_gpui::AnyWindowHandle>,
     drag_session: Option<DockRuntimeDragSession>,
     payload_title: &str,
+) -> crate::DockViewportResolvedDropRoute {
+    let drag_payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_node,
+        item("__test__"),
+        payload_title.to_string(),
+    );
+    cache_known_viewport_preview_with_payload(
+        cx,
+        runtime,
+        source_space,
+        source_node,
+        payload,
+        release_position,
+        hovered_window,
+        drag_session,
+        &drag_payload,
+    )
+}
+
+fn cache_known_viewport_preview_with_payload(
+    cx: &mut TestAppContext,
+    runtime: &DockViewportRuntimeHandle,
+    source_space: DockSpaceId,
+    source_node: DockNodeId,
+    payload: DockViewportDropPayload,
+    release_position: open_gpui::Point<open_gpui::Pixels>,
+    hovered_window: impl Into<open_gpui::AnyWindowHandle>,
+    drag_session: Option<DockRuntimeDragSession>,
+    drag_payload: &DockDragPayload,
 ) -> crate::DockViewportResolvedDropRoute {
     let request = DockViewportDropRouteRequest::from_target_context(
         source_space,
@@ -94,7 +140,7 @@ fn cache_known_viewport_preview(
         resolution.route()
     );
     let preview_changed =
-        cx.update(|app| runtime.update_routed_drop_preview(&resolution, payload_title, app));
+        cx.update(|app| runtime.update_routed_drop_preview(&resolution, drag_payload, app));
     let preview_target = resolution
         .routed_preview_target_snapshot()
         .expect("known viewport preview should carry a routed preview target");
@@ -103,33 +149,65 @@ fn cache_known_viewport_preview(
         .target_window_id()
         .expect("known viewport preview should target a window");
     let preview = runtime.routed_drop_preview_for(target_space, target_window_id);
-    assert!(
-        runtime.finish_routed_drop_acceptance_pass(target_space, target_window_id),
-        "routed preview acceptance should pass; changed={preview_changed:?} target_space={target_space:?} target_window_id={target_window_id:?} route={:?} delivery={:?} preview={preview:?}",
-        resolution.route(),
-        resolution.delivery()
-    );
+    let _ = (preview_changed, preview);
     resolution
 }
 
-fn accepted_resolution_for_request(
+fn cache_host_route_preview(
+    cx: &mut TestAppContext,
+    runtime: &DockViewportRuntimeHandle,
+    resolution: &crate::DockViewportResolvedDropRoute,
+    payload_title: &str,
+    host_space: DockSpaceId,
+    host_window_id: open_gpui::WindowId,
+    host_position: open_gpui::Point<open_gpui::Pixels>,
+) {
+    let payload = DockDragPayload::new_item(
+        DockSpaceId::from("__test__"),
+        Default::default(),
+        item("__test__"),
+        payload_title.to_string(),
+    );
+    cache_host_route_preview_with_payload(
+        cx,
+        runtime,
+        resolution,
+        &payload,
+        host_space,
+        host_window_id,
+        host_position,
+    );
+}
+
+fn cache_host_route_preview_with_payload(
+    cx: &mut TestAppContext,
+    runtime: &DockViewportRuntimeHandle,
+    resolution: &crate::DockViewportResolvedDropRoute,
+    payload: &DockDragPayload,
+    host_space: DockSpaceId,
+    host_window_id: open_gpui::WindowId,
+    host_position: open_gpui::Point<open_gpui::Pixels>,
+) {
+    cx.update(|app| {
+        runtime.update_host_routed_drop_preview(
+            resolution,
+            payload,
+            host_space,
+            host_window_id,
+            host_position,
+            app,
+        );
+    });
+}
+
+fn fresh_delivery_for_request(
     cx: &mut TestAppContext,
     runtime: &DockViewportRuntimeHandle,
     request: &DockViewportDropRouteRequest,
-    target_space: &DockSpaceId,
-    target_window_id: open_gpui::WindowId,
-    payload_title: &str,
-) -> crate::DockViewportResolvedDropRoute {
-    let preview_resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(request, app));
-    cx.update(|app| {
-        runtime.update_routed_drop_preview(&preview_resolution, payload_title, app);
-    });
-    assert!(
-        runtime.finish_routed_drop_acceptance_pass(target_space, target_window_id),
-        "target viewport should accept the routed preview; route={:?}",
-        preview_resolution.route()
-    );
-    cx.update(|app| runtime.resolve_payload_drop_delivery(request, app))
+) -> DockDropDelivery {
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(request, app));
+    DockDropDelivery::from_resolution(resolution)
+        .expect("fresh current-facts route should mint a delivery")
 }
 
 fn backend_route_resolution_fixture(
@@ -228,7 +306,7 @@ fn resolve_payload_drop_delivery_for_request_outcome_reports_backend_route_selec
     );
     assert!(
         settled.resolution().delivery().is_none(),
-        "release resolution without an accepted routed preview must not expose delivery permit"
+        "release resolution without current route facts must not expose delivery"
     );
 
     target_window
@@ -245,7 +323,7 @@ fn resolve_payload_drop_delivery_for_request_outcome_reports_backend_route_selec
     );
     assert!(
         focused.resolution().delivery().is_none(),
-        "backend focus resampling alone must not grant delivery permit"
+        "backend focus resampling alone must not grant delivery"
     );
     let focused_again =
         cx.update(|app| runtime.resolve_payload_drop_delivery_for_request_outcome(&request, app));
@@ -2961,16 +3039,9 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         DockViewportTargetContext::new().with_trusted_hovered_window(opened.window()),
     )
     .with_drag_session(Some(session.clone()));
-    let _accepted_resolution = accepted_resolution_for_request(
-        cx,
-        &runtime,
-        &request,
-        &target_space,
-        opened.window().window_id(),
-        "Panel A",
-    );
+    let plan = fresh_delivery_for_request(cx, &runtime, &request);
     let result = cx.update(|app| {
-        let result = runtime.commit_payload_drop_from_screen(&request, app);
+        let result = runtime.deliver_drop_commit_delivery(plan, app);
         let status = runtime.runtime_status();
         let target = &status
             .last_route
@@ -3026,14 +3097,23 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         );
     });
     cx.run_until_parked();
-    let active_window_after_drop = source_opened
+    let active_window_after_drop = opened
         .window()
         .update(cx, |_, _, app| app.active_window())
-        .expect("source window should be live");
+        .expect("target window should be live");
     assert_eq!(
         active_window_after_drop.map(|window| window.window_id()),
         Some(opened.window().window_id()),
         "successful routed drop should activate the destination viewport"
+    );
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&source_space),
+        None,
+        "empty source viewport should be unregistered after routed drop"
+    );
+    assert!(
+        source_opened.window().update(cx, |_, _, _| ()).is_err(),
+        "empty source viewport should close after routed drop"
     );
     cx.read_entity(&controller, |controller, _| {
         let DockNode::Tabs { items, selected } = controller
@@ -3116,19 +3196,8 @@ fn viewport_runtime_handle_delivers_known_viewport_drop_directly(cx: &mut TestAp
         DockViewportTargetContext::new().with_trusted_hovered_window(opened.window()),
     )
     .with_drag_session(Some(session.clone()));
-    let accepted_resolution = accepted_resolution_for_request(
-        cx,
-        &runtime,
-        &request,
-        &target_space,
-        opened.window().window_id(),
-        "Panel A",
-    );
-    let result = cx.update(|app| {
-        let plan = DockDropDelivery::from_resolution(accepted_resolution)
-            .expect("accepted preview should mint plan");
-        runtime.deliver_drop_commit_delivery(plan, app)
-    });
+    let plan = fresh_delivery_for_request(cx, &runtime, &request);
+    let result = cx.update(|app| runtime.deliver_drop_commit_delivery(plan, app));
 
     let DockViewportDropRouteOutcome::Action(action) = result.expect("drop should commit") else {
         panic!("known viewport drop should produce a normal action outcome");
@@ -3245,16 +3314,7 @@ fn viewport_runtime_handle_delivers_commit_deliveries_directly(cx: &mut TestAppC
         DockViewportTargetContext::new().with_trusted_hovered_window(first_target.window()),
     )
     .with_drag_session(Some(session.clone()));
-    let first_resolution = accepted_resolution_for_request(
-        cx,
-        &runtime,
-        &first_request,
-        &first_target_space,
-        first_target.window().window_id(),
-        "Panel A",
-    );
-    let first_plan = DockDropDelivery::from_resolution(first_resolution)
-        .expect("first accepted preview should mint a commit plan");
+    let first_plan = fresh_delivery_for_request(cx, &runtime, &first_request);
     let second_request = DockViewportDropRouteRequest::from_target_context(
         source_space.clone(),
         source_tabs,
@@ -3266,16 +3326,7 @@ fn viewport_runtime_handle_delivers_commit_deliveries_directly(cx: &mut TestAppC
         DockViewportTargetContext::new().with_trusted_hovered_window(second_target.window()),
     )
     .with_drag_session(Some(session.clone()));
-    let second_resolution = accepted_resolution_for_request(
-        cx,
-        &runtime,
-        &second_request,
-        &second_target_space,
-        second_target.window().window_id(),
-        "Panel A",
-    );
-    let second_plan = DockDropDelivery::from_resolution(second_resolution)
-        .expect("second accepted preview should mint a commit plan");
+    let second_plan = fresh_delivery_for_request(cx, &runtime, &second_request);
 
     let second_result = cx.update(|app| runtime.deliver_drop_commit_delivery(second_plan, app));
     let first_result = cx.update(|app| runtime.deliver_drop_commit_delivery(first_plan, app));
@@ -3423,7 +3474,7 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
     let changed = source_window
         .update(cx, |host, window, cx| {
             let changed = host.drop_payload_release_from_render(
-                DockPayloadDropRelease::source_only_with_session(
+                DockPayloadDropRelease::hovered_host_with_session(
                     payload.clone(),
                     source_space.clone(),
                     release_in_source_window,
@@ -3464,14 +3515,23 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
     );
     cx.run_until_parked();
 
-    let active_window_after_drop = source_opened
+    let active_window_after_drop = target_opened
         .window()
         .update(cx, |_, _, app| app.active_window())
-        .expect("source window should be live");
+        .expect("target window should be live");
     assert_eq!(
         active_window_after_drop.map(|window| window.window_id()),
         Some(target_opened.window().window_id()),
         "host interaction should consume the routed activation transaction"
+    );
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&source_space),
+        None,
+        "empty source viewport should be unregistered after rendered routed drop"
+    );
+    assert!(
+        source_opened.window().update(cx, |_, _, _| ()).is_err(),
+        "empty source viewport should close after rendered routed drop"
     );
     target_opened
         .window()
@@ -3598,10 +3658,17 @@ fn hovered_host_release_does_not_consume_cached_delivery_for_another_window(
         "Panel A",
     );
 
+    cache_host_route_preview(
+        cx,
+        &runtime,
+        &resolution,
+        "Panel A",
+        source_space.clone(),
+        source_opened.window().window_id(),
+        target_center_host_position(),
+    );
     source_window
         .update(cx, |host, window, cx| {
-            host.interaction_mut()
-                .update_drop_route_preview(&resolution, target_center_host_position());
             host.drop_payload_release_from_render(
                 DockPayloadDropRelease::hovered_host_with_session(
                     payload.clone(),
@@ -3726,10 +3793,17 @@ fn hovered_host_release_rejects_cached_delivery_when_release_point_misses_target
         Some(session.clone()),
         "Panel A",
     );
+    cache_host_route_preview(
+        cx,
+        &runtime,
+        &resolution,
+        "Panel A",
+        target_space.clone(),
+        target_opened.window().window_id(),
+        target_center_host_position(),
+    );
     target_window
-        .update(cx, |host, window, cx| {
-            host.interaction_mut()
-                .update_drop_route_preview(&resolution, target_center_host_position());
+        .update(cx, |_host, window, cx| {
             window.refresh();
             cx.notify();
         })
@@ -3785,7 +3859,7 @@ fn hovered_host_release_rejects_cached_delivery_when_release_point_misses_target
 }
 
 #[open_gpui::test]
-fn hovered_host_release_rejects_fresh_route_without_cached_delivery(cx: &mut TestAppContext) {
+fn hovered_host_release_commits_fresh_route_without_cached_delivery(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");
     let mut graph = DockGraph::new();
@@ -3853,7 +3927,7 @@ fn hovered_host_release_rejects_fresh_route_without_cached_delivery(cx: &mut Tes
                 window,
                 cx,
             );
-            host.update_drop_scene_fact_from_render(
+            host.update_local_drop_scene_fact_from_render(
                 &payload,
                 crate::drop_scene_fact::leaf(
                     target_tabs,
@@ -3882,31 +3956,17 @@ fn hovered_host_release_rejects_fresh_route_without_cached_delivery(cx: &mut Tes
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
             controller.graph().collect_items_in_space(&source_space),
-            vec![item("a")],
-            "fresh hovered-host route must not commit without an accepted preview token"
+            Vec::<DockItemId>::new(),
+            "fresh hovered-host local commit should remove the item from the source viewport"
         );
         assert_eq!(
             controller.graph().collect_items_in_space(&target_space),
-            vec![item("b")]
+            vec![item("b"), item("a")]
         );
     });
-    let status = runtime.runtime_status();
-    assert_eq!(
-        status.last_drop_outcome.as_ref().map(|record| record.kind),
-        Some(DockViewportDropOutcomeKind::Error)
-    );
-    assert!(
-        matches!(
-            status.last_route.as_ref().map(|record| &record.target),
-            Some(crate::DockViewportRouteTarget::KnownViewport { window_id, .. })
-                if *window_id == target_opened.window().window_id()
-        ),
-        "fresh release should still record the current route for diagnostics, got {:?}",
-        status.last_route
-    );
     assert!(
         runtime.active_payload_drag_session(&payload).is_none(),
-        "rejected uncached hovered-host release should still finish the drag session"
+        "committed uncached hovered-host release should still finish the drag session"
     );
 }
 
@@ -3995,7 +4055,7 @@ fn hovered_host_release_uses_accepted_local_target_instead_of_stale_cached_deliv
                 window,
                 cx,
             );
-            host.update_drop_scene_fact_from_render(
+            host.update_local_drop_scene_fact_from_render(
                 &payload,
                 crate::drop_scene_fact::leaf(
                     target_tabs,
@@ -4007,7 +4067,6 @@ fn hovered_host_release_uses_accepted_local_target_instead_of_stale_cached_deliv
                 window,
                 cx,
             );
-            host.interaction_mut().finish_drop_acceptance_pass();
             host.drop_payload_release_from_render(
                 DockPayloadDropRelease::hovered_host_with_session(
                     payload.clone(),
@@ -4050,9 +4109,7 @@ fn hovered_host_release_uses_accepted_local_target_instead_of_stale_cached_deliv
 }
 
 #[open_gpui::test]
-fn hovered_host_release_rejects_when_release_point_misses_accepted_preview(
-    cx: &mut TestAppContext,
-) {
+fn hovered_host_release_rejects_when_release_point_misses_current_target(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");
     let mut graph = DockGraph::new();
@@ -4125,10 +4182,17 @@ fn hovered_host_release_rejects_when_release_point_misses_accepted_preview(
         "Panel A",
     );
 
+    cache_host_route_preview(
+        cx,
+        &runtime,
+        &resolution,
+        "Panel A",
+        target_space.clone(),
+        target_opened.window().window_id(),
+        target_center_host_position(),
+    );
     target_window
         .update(cx, |host, window, cx| {
-            host.interaction_mut()
-                .update_drop_route_preview(&resolution, target_center_host_position());
             let missed = point(px(720.0), px(420.0));
             host.drop_payload_release_from_render(
                 DockPayloadDropRelease::hovered_host_with_session(
@@ -4141,7 +4205,7 @@ fn hovered_host_release_rejects_when_release_point_misses_accepted_preview(
                 cx,
             )
         })
-        .expect("target host should reject miss outside accepted preview");
+        .expect("target host should reject miss outside the current target");
     cx.run_until_parked();
 
     cx.read_entity(&controller, |controller, _| {
@@ -4242,10 +4306,17 @@ fn host_render_route_preview_uses_route_debug_selector(cx: &mut TestAppContext) 
         "Panel A",
     );
 
+    cache_host_route_preview(
+        cx,
+        &runtime,
+        &resolution,
+        "Panel A",
+        source_space.clone(),
+        source_opened.window().window_id(),
+        target_center_host_position(),
+    );
     source_window
-        .update(cx, |host, window, cx| {
-            host.interaction_mut()
-                .update_drop_route_preview(&resolution, target_center_host_position());
+        .update(cx, |_host, window, cx| {
             window.refresh();
             cx.notify();
         })
@@ -4276,7 +4347,7 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
     let target_space = DockSpaceId::from("target");
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
-        items: vec![item("a")],
+        items: vec![item("a"), item("c")],
         selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
@@ -4289,6 +4360,7 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
     let mut workspace = DockWorkspace::new(source_space.clone(), graph);
     workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
     let controller = cx.new(|_| DockController::new(workspace));
     let runtime = DockViewportRuntimeHandle::new(controller);
 
@@ -4336,44 +4408,96 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
 
     let target_screen_position =
         screen_position_for_host_position(target_bounds, target_center_host_position());
-    let resolution = cache_known_viewport_preview(
+    let stack_payload =
+        DockDragPayload::new_tabs(source_space.clone(), source_tabs, "2 tabs".to_string())
+            .with_preview_tabs(["Panel A".to_string(), "Panel C".to_string()]);
+    let resolution = cache_known_viewport_preview_with_payload(
         cx,
         &runtime,
         source_space.clone(),
         source_tabs,
-        DockViewportDropPayload::Item(item("a")),
+        DockViewportDropPayload::Tabs,
         target_screen_position,
         target_opened.window(),
         None,
-        "Panel A",
+        &stack_payload,
     );
 
+    cache_host_route_preview_with_payload(
+        cx,
+        &runtime,
+        &resolution,
+        &stack_payload,
+        source_space.clone(),
+        source_opened.window().window_id(),
+        target_center_host_position(),
+    );
     source_window
-        .update(cx, |host, window, cx| {
-            host.interaction_mut()
-                .update_drop_route_preview(&resolution, target_center_host_position());
+        .update(cx, |_host, window, cx| {
             window.refresh();
             cx.notify();
         })
         .expect("source host should update route preview");
     cx.run_until_parked();
 
+    let routed_preview = runtime
+        .routed_drop_preview_for(&target_space, target_opened.window().window_id())
+        .expect("target runtime should retain routed preview scene");
+    assert_eq!(
+        routed_preview
+            .preview
+            .scene
+            .payload_tabs
+            .as_ref()
+            .map(|payload_tabs| payload_tabs.tabs.len()),
+        Some(2),
+        "routed preview scene should preserve all stack payload tabs before target render"
+    );
+
     let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
     let target_preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
         .expect("target viewport should render the routed drop preview");
     let target_preview_bounds = debug_bounds(&mut target_visual, &target_preview);
+    let target_preview_body = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::DropPreviewBody,
+    )
+    .expect("target viewport should render a preview body below the payload tab preview");
+    let target_preview_body_bounds = debug_bounds(&mut target_visual, &target_preview_body);
+    let target_preview_tab = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::DropPayloadTabPreview { index: 0 },
+    )
+    .expect("target viewport should render the first payload tab label inside the routed preview");
+    let target_preview_second_tab = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::DropPayloadTabPreview { index: 1 },
+    )
+    .expect(
+        "target viewport should preserve the second payload tab label inside the routed preview",
+    );
+    let target_preview_tab_bounds = debug_bounds(&mut target_visual, &target_preview_tab);
+    let target_preview_second_tab_bounds =
+        debug_bounds(&mut target_visual, &target_preview_second_tab);
     assert!(
         target_preview_bounds.size.width > px(0.0) && target_preview_bounds.size.height > px(0.0),
         "target routed drop preview should have visible bounds"
     );
     assert!(
-        selector_for(
-            &target_visual,
-            &target_host,
-            DockDebugRegion::DropPayloadTabPreview
-        )
-        .is_some(),
-        "target viewport should render the payload tab label inside the routed preview"
+        target_preview_second_tab_bounds.origin.x >= target_preview_tab_bounds.right(),
+        "target routed payload tab previews should keep stack order: first={target_preview_tab_bounds:?} second={target_preview_second_tab_bounds:?}"
+    );
+    assert_close(
+        f32::from(target_preview_body_bounds.origin.y),
+        f32::from(target_preview_tab_bounds.origin.y + target_preview_tab_bounds.size.height),
+    );
+    assert!(
+        target_preview_body_bounds.origin.y
+            >= target_preview_tab_bounds.origin.y + target_preview_tab_bounds.size.height,
+        "target routed preview body should start below the payload tab preview"
     );
     assert!(
         selector_for(
@@ -4389,7 +4513,7 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
 }
 
 #[open_gpui::test]
-fn local_preview_render_does_not_accept_hidden_routed_preview(cx: &mut TestAppContext) {
+fn local_preview_render_keeps_hidden_routed_preview_deliverable(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");
     let mut graph = DockGraph::new();
@@ -4473,8 +4597,8 @@ fn local_preview_render_does_not_accept_hidden_routed_preview(cx: &mut TestAppCo
         preview_resolution.route()
     );
     assert!(
-        preview_resolution.delivery().is_none(),
-        "fresh routed preview must not mint delivery before target render acceptance"
+        preview_resolution.delivery().is_some(),
+        "fresh routed preview should mint delivery from current route facts"
     );
 
     target_window
@@ -4497,17 +4621,9 @@ fn local_preview_render_does_not_accept_hidden_routed_preview(cx: &mut TestAppCo
         })
         .expect("target host should publish a local drop preview");
     cx.update(|app| {
-        runtime.update_routed_drop_preview(&preview_resolution, "Panel A", app);
+        runtime.update_routed_drop_preview(&preview_resolution, &payload, app);
     });
-    assert!(
-        !runtime.routed_drop_preview_is_accepted(),
-        "publishing a routed preview while local preview exists must not accept the hidden routed preview"
-    );
     cx.run_until_parked();
-    assert!(
-        !runtime.routed_drop_preview_is_accepted(),
-        "rendering the local preview must not accept the hidden routed preview"
-    );
     target_window
         .update(cx, |host, _, _| {
             assert!(
@@ -4518,10 +4634,6 @@ fn local_preview_render_does_not_accept_hidden_routed_preview(cx: &mut TestAppCo
         .expect("target host should remain live after render");
 
     let target_visual = VisualTestContext::from_window(target_opened.window(), cx);
-    assert!(
-        !runtime.routed_drop_preview_is_accepted(),
-        "visual inspection must still leave the hidden routed preview unaccepted"
-    );
     assert!(
         selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_some(),
         "target viewport should render the local drop preview"
@@ -4534,13 +4646,23 @@ fn local_preview_render_does_not_accept_hidden_routed_preview(cx: &mut TestAppCo
             release_resolution.route(),
             DockViewportDropRoute::KnownViewport { .. }
         ),
-        "hidden routed preview must not be upgraded to AcceptedRoutedPreview, got {:?}",
+        "hidden routed preview must not become release authority, got {:?}",
         release_resolution.route()
     );
+    let delivery = DockDropDelivery::from_resolution(release_resolution)
+        .expect("current routed target should remain deliverable after local preview render");
+    let workspace_target = delivery
+        .workspace_target()
+        .expect("known viewport delivery should carry a workspace target");
     assert_eq!(
-        DockDropDelivery::from_resolution(release_resolution),
-        Err(DockActionApplyError::DropTargetUnavailable),
-        "a routed preview that was not the rendered preview must not authorize delivery"
+        workspace_target.target_space(),
+        &target_space,
+        "delivery should still point at the current routed viewport target"
+    );
+    assert_eq!(
+        workspace_target.target_window_id(),
+        Some(target_opened.window().window_id()),
+        "delivery should keep the target viewport window identity"
     );
 }
 
@@ -4643,10 +4765,17 @@ fn source_release_prefers_local_target_over_cached_route_delivery(cx: &mut TestA
         "Panel A",
     );
 
+    cache_host_route_preview(
+        cx,
+        &runtime,
+        &resolution,
+        "Panel A",
+        source_space.clone(),
+        source_opened.window().window_id(),
+        target_center_host_position(),
+    );
     source_window
-        .update(cx, |host, window, cx| {
-            host.interaction_mut()
-                .update_drop_route_preview(&resolution, target_center_host_position());
+        .update(cx, |_host, window, cx| {
             window.refresh();
             cx.notify();
         })
@@ -4825,10 +4954,17 @@ fn source_only_release_does_not_consume_cached_route_delivery(cx: &mut TestAppCo
         ),
         "preview setup should resolve the target viewport"
     );
+    cache_host_route_preview(
+        cx,
+        &runtime,
+        &resolution,
+        "Panel A",
+        source_space.clone(),
+        source_opened.window().window_id(),
+        target_center_host_position(),
+    );
     source_window
-        .update(cx, |host, window, cx| {
-            host.interaction_mut()
-                .update_drop_route_preview(&resolution, target_center_host_position());
+        .update(cx, |_host, window, cx| {
             window.refresh();
             cx.notify();
         })
@@ -4874,7 +5010,7 @@ fn source_only_release_does_not_consume_cached_route_delivery(cx: &mut TestAppCo
 }
 
 #[open_gpui::test]
-fn source_only_release_with_known_empty_hover_does_not_commit_to_accepted_routed_preview(
+fn source_only_release_with_known_empty_hover_does_not_commit_from_stale_routed_preview(
     cx: &mut TestAppContext,
 ) {
     let source_space = DockSpaceId::from("source");
@@ -4983,28 +5119,24 @@ fn source_only_release_with_known_empty_hover_does_not_commit_to_accepted_routed
         preview_resolution
             .delivery()
             .and_then(|delivery| delivery.drag_session_id()),
-        None,
-        "fresh preview should not mint delivery before target acceptance"
+        Some(session.id()),
+        "fresh preview should mint delivery bound to the active drag session"
     );
     cx.update(|app| {
-        runtime.update_routed_drop_preview(&preview_resolution, "Panel A", app);
+        runtime.update_routed_drop_preview(&preview_resolution, &payload, app);
     });
-    assert!(
-        runtime
-            .finish_routed_drop_acceptance_pass(&target_space, target_opened.window().window_id())
-    );
     assert!(
         runtime
             .routed_drop_preview_for(&target_space, target_opened.window().window_id())
             .is_some(),
-        "accepted preview should produce a routed preview for the target window"
+        "routed preview publication should produce a preview for the target window"
     );
     assert_eq!(
         runtime
             .last_routed_viewport_identity_for_drag_session(Some(&session))
             .map(|identity| identity.window_id()),
         Some(target_opened.window().window_id()),
-        "accepted preview should remember the last routed viewport identity for this drag session"
+        "routed preview publication should remember the last routed viewport identity for this drag session"
     );
     let hovered_none_release_request = DockViewportDropRouteRequest::from_platform_signals(
         source_space.clone(),
@@ -5022,11 +5154,11 @@ fn source_only_release_with_known_empty_hover_does_not_commit_to_accepted_routed
     assert_eq!(
         hovered_none_resolution.route(),
         &DockViewportDropRoute::Unavailable,
-        "trusted hovered=None is authoritative and must not replay the accepted preview"
+        "trusted hovered=None is authoritative and must not reuse stale routed preview state"
     );
     assert!(
         hovered_none_resolution.delivery().is_none(),
-        "trusted hovered=None must not mint delivery from an accepted preview"
+        "trusted hovered=None must not mint delivery from stale routed preview state"
     );
     let release_request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
         source_space.clone(),
@@ -5045,14 +5177,14 @@ fn source_only_release_with_known_empty_hover_does_not_commit_to_accepted_routed
     assert_eq!(
         raw_release_route,
         DockViewportDropRoute::Unavailable,
-        "raw route should trust hovered=None instead of replaying the accepted routed preview"
+        "raw route should trust hovered=None instead of reusing cached routed preview state"
     );
     let release_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&release_request, app));
     assert_eq!(
         release_resolution.route(),
         &DockViewportDropRoute::Unavailable,
-        "runtime route should trust hovered=None instead of replaying the accepted routed preview"
+        "runtime route should trust hovered=None instead of reusing cached routed preview state"
     );
 
     let commit_result =
@@ -5060,7 +5192,7 @@ fn source_only_release_with_known_empty_hover_does_not_commit_to_accepted_routed
     assert_eq!(
         commit_result,
         Err(DockActionApplyError::DropTargetUnavailable),
-        "trusted hovered=None should prevent cross-viewport commit from the accepted preview"
+        "trusted hovered=None should prevent cross-viewport commit from stale routed preview state"
     );
     cx.run_until_parked();
     let status = runtime.runtime_status();
@@ -5198,7 +5330,7 @@ fn release_delivery_resamples_platform_target_context_after_reconcile(cx: &mut T
     assert_eq!(
         stale_route,
         DockViewportDropRoute::Unavailable,
-        "without backend resampling or accepted preview replay, the stale snapshot has no viewport route selection"
+        "without current backend route selection, the stale snapshot has no viewport route selection"
     );
 
     cx.set_platform_hovered_window(Some(target_opened.window()));
@@ -5216,8 +5348,8 @@ fn release_delivery_resamples_platform_target_context_after_reconcile(cx: &mut T
         refreshed_resolution.route()
     );
     assert!(
-        refreshed_resolution.delivery().is_none(),
-        "a freshly resolved backend route still must not mint delivery before target acceptance"
+        refreshed_resolution.delivery().is_some(),
+        "a freshly resolved backend route should mint delivery from current target facts"
     );
     assert!(
         refreshed_resolution
@@ -5352,7 +5484,7 @@ fn runtime_opened_viewports_publish_host_scene_for_cross_window_drop(cx: &mut Te
 }
 
 #[open_gpui::test]
-fn runtime_opened_viewports_reject_source_only_dock_back_without_accepted_preview(
+fn runtime_opened_viewports_reject_source_only_dock_back_without_current_route_facts(
     cx: &mut TestAppContext,
 ) {
     let target_space = DockSpaceId::from("main");
@@ -5518,7 +5650,7 @@ fn runtime_opened_viewports_reject_source_only_dock_back_without_accepted_previe
         assert_eq!(
             controller.graph().collect_items_in_space(&source_space),
             vec![item("a")],
-            "without an accepted preview, source-only dock-back must leave the source payload in place"
+            "without current route facts, source-only dock-back must leave the source payload in place"
         );
     });
 }
@@ -5618,7 +5750,7 @@ fn runtime_opened_viewports_do_not_reuse_previewed_target_when_source_only_relea
         "preview route should target the main viewport"
     );
     cx.update(|app| {
-        runtime.update_routed_drop_preview(&resolution, "Panel A", app);
+        runtime.update_routed_drop_preview(&resolution, &payload, app);
     });
     assert!(
         runtime
@@ -5790,6 +5922,1474 @@ fn runtime_opened_viewports_support_cross_window_stack_drag(cx: &mut TestAppCont
         };
         assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
         assert_eq!(selected.as_ref(), items.get(2));
+    });
+}
+
+#[open_gpui::test]
+fn runtime_opened_cross_window_inner_edge_drag_docks_nested_vertical_split(
+    cx: &mut TestAppContext,
+) {
+    for zone in [DropZone::Top, DropZone::Bottom] {
+        let source_space = DockSpaceId::from(format!("source:{zone:?}"));
+        let target_space = DockSpaceId::from(format!("target:{zone:?}"));
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a"), item("d")],
+            selected: Some(item("a")),
+        });
+        let target_left_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        let target_right_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("c")],
+            selected: Some(item("c")),
+        });
+        let target_root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![target_left_tabs, target_right_tabs],
+            fractions: vec![0.5, 0.5],
+        });
+        graph.set_root(source_space.clone(), source_tabs);
+        graph.set_root(target_space.clone(), target_root);
+
+        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+        workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+        workspace.register_panel_view(item("d"), "Panel D", test_view(cx, "D"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+        let source_opened = cx
+            .update(|app| {
+                runtime.open_viewport(
+                    source_space.clone(),
+                    viewport_window_options(360.0, 220.0),
+                    app,
+                )
+            })
+            .unwrap_or_else(|error| panic!("{zone:?}: source viewport should open: {error}"));
+        let target_opened = cx
+            .update(|app| {
+                runtime.open_viewport(
+                    target_space.clone(),
+                    viewport_window_options(420.0, 240.0),
+                    app,
+                )
+            })
+            .unwrap_or_else(|error| panic!("{zone:?}: target viewport should open: {error}"));
+        let source_window = source_opened
+            .window()
+            .downcast::<crate::DockHost>()
+            .expect("source viewport should render DockHost");
+        let target_window = target_opened
+            .window()
+            .downcast::<crate::DockHost>()
+            .expect("target viewport should render DockHost");
+        let source_host = source_window
+            .root(cx)
+            .expect("source viewport should expose DockHost root");
+        let target_host = target_window
+            .root(cx)
+            .expect("target viewport should expose DockHost root");
+        cx.run_until_parked();
+
+        let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+        let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+
+        let source_tab = selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::Tab {
+                tabs: source_tabs,
+                item: item("a"),
+            },
+        )
+        .unwrap_or_else(|| panic!("{zone:?}: source tab selector should be emitted"));
+        let _left_tabs_selector = selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Tabs {
+                node: target_left_tabs,
+            },
+        )
+        .unwrap_or_else(|| panic!("{zone:?}: left target tabs selector should be emitted"));
+        let right_tabs_selector = selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Tabs {
+                node: target_right_tabs,
+            },
+        )
+        .unwrap_or_else(|| panic!("{zone:?}: right target tabs selector should be emitted"));
+
+        let start = debug_bounds(&mut source_visual, &source_tab).center();
+        let threshold = point(start.x + px(24.0), start.y);
+        let end =
+            inner_edge_drop_position(debug_bounds(&mut target_visual, &right_tabs_selector), zone);
+
+        source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+        target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        let target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+        let source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+        assert!(
+            selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_none(),
+            "{zone:?}: target drop preview should clear after release"
+        );
+        assert!(
+            selector_for(&source_visual, &source_host, DockDebugRegion::DropPreview).is_none(),
+            "{zone:?}: source drop preview should clear after release"
+        );
+
+        assert_eq!(
+            runtime.borrow().adapter().window_for_space(&source_space),
+            Some(source_opened.window()),
+            "{zone:?}: source viewport should stay registered"
+        );
+        assert_eq!(
+            runtime.borrow().adapter().window_for_space(&target_space),
+            Some(target_opened.window()),
+            "{zone:?}: target viewport should stay registered"
+        );
+        let registered = runtime.registered_viewport_spaces();
+        assert_eq!(registered.len(), 2, "{zone:?}");
+        assert!(registered.contains(&source_space), "{zone:?}");
+        assert!(registered.contains(&target_space), "{zone:?}");
+
+        let payload = DockDragPayload::new_item(
+            source_space.clone(),
+            source_tabs,
+            item("a"),
+            "Panel A".to_string(),
+        );
+        assert_eq!(
+            runtime.active_payload_drag_session(&payload),
+            None,
+            "{zone:?}: drag session should finish after release"
+        );
+        assert_eq!(
+            runtime.routed_drop_preview_for(&target_space, target_opened.window().window_id()),
+            None,
+            "{zone:?}: routed preview should clear after release"
+        );
+
+        cx.read_entity(&controller, |controller, _| {
+            assert_tabs_node_items(
+                controller.graph(),
+                target_left_tabs,
+                &[item("b")],
+                &format!("{zone:?}: left target tabs should stay intact"),
+            );
+            assert_tabs_node_items(
+                controller.graph(),
+                source_tabs,
+                &[item("d")],
+                &format!("{zone:?}: source tabs should retain the remaining item"),
+            );
+            let DockNode::Split { axis, children, .. } = controller
+                .graph()
+                .node(target_root)
+                .unwrap_or_else(|| panic!("{zone:?}: target root should still exist"))
+            else {
+                panic!("{zone:?}: target root should remain a split");
+            };
+            assert_eq!(*axis, SplitAxis::Horizontal, "{zone:?}");
+            assert_eq!(children.len(), 2, "{zone:?}");
+            assert_eq!(children[0], target_left_tabs, "{zone:?}");
+            let nested_vertical = children[1];
+            let DockNode::Split {
+                axis: nested_axis,
+                children: nested_children,
+                ..
+            } = controller
+                .graph()
+                .node(nested_vertical)
+                .unwrap_or_else(|| panic!("{zone:?}: nested vertical split should exist"))
+            else {
+                panic!("{zone:?}: nested child should be a split");
+            };
+            assert_eq!(*nested_axis, SplitAxis::Vertical, "{zone:?}");
+            assert_eq!(nested_children.len(), 2, "{zone:?}");
+            let (moved_index, old_index) = match zone {
+                DropZone::Top => (0, 1),
+                DropZone::Bottom => (1, 0),
+                _ => unreachable!(),
+            };
+            assert_eq!(nested_children[old_index], target_right_tabs, "{zone:?}");
+            assert_tabs_node_items(
+                controller.graph(),
+                nested_children[moved_index],
+                &[item("a")],
+                &format!("{zone:?}: moved tab should become the new nested child"),
+            );
+        });
+    }
+}
+
+#[open_gpui::test]
+fn runtime_opened_cross_window_inner_edge_drag_docks_nested_horizontal_split(
+    cx: &mut TestAppContext,
+) {
+    for zone in [DropZone::Left, DropZone::Right] {
+        let source_space = DockSpaceId::from(format!("source-horizontal:{zone:?}"));
+        let target_space = DockSpaceId::from(format!("target-horizontal:{zone:?}"));
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a"), item("d")],
+            selected: Some(item("a")),
+        });
+        let target_top_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        let target_bottom_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("c")],
+            selected: Some(item("c")),
+        });
+        let target_root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Vertical,
+            children: vec![target_top_tabs, target_bottom_tabs],
+            fractions: vec![0.5, 0.5],
+        });
+        graph.set_root(source_space.clone(), source_tabs);
+        graph.set_root(target_space.clone(), target_root);
+
+        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+        workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+        workspace.register_panel_view(item("d"), "Panel D", test_view(cx, "D"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+        let source_opened = cx
+            .update(|app| {
+                runtime.open_viewport(
+                    source_space.clone(),
+                    viewport_window_options(360.0, 220.0),
+                    app,
+                )
+            })
+            .unwrap_or_else(|error| panic!("{zone:?}: source viewport should open: {error}"));
+        let target_opened = cx
+            .update(|app| {
+                runtime.open_viewport(
+                    target_space.clone(),
+                    viewport_window_options(420.0, 300.0),
+                    app,
+                )
+            })
+            .unwrap_or_else(|error| panic!("{zone:?}: target viewport should open: {error}"));
+        let source_window = source_opened
+            .window()
+            .downcast::<crate::DockHost>()
+            .expect("source viewport should render DockHost");
+        let target_window = target_opened
+            .window()
+            .downcast::<crate::DockHost>()
+            .expect("target viewport should render DockHost");
+        let source_host = source_window
+            .root(cx)
+            .expect("source viewport should expose DockHost root");
+        let target_host = target_window
+            .root(cx)
+            .expect("target viewport should expose DockHost root");
+        cx.run_until_parked();
+
+        let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+        let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+
+        let source_tab = selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::Tab {
+                tabs: source_tabs,
+                item: item("a"),
+            },
+        )
+        .unwrap_or_else(|| panic!("{zone:?}: source tab selector should be emitted"));
+        let _top_tabs_selector = selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Tabs {
+                node: target_top_tabs,
+            },
+        )
+        .unwrap_or_else(|| panic!("{zone:?}: top target tabs selector should be emitted"));
+        let bottom_tabs_selector = selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Tabs {
+                node: target_bottom_tabs,
+            },
+        )
+        .unwrap_or_else(|| panic!("{zone:?}: bottom target tabs selector should be emitted"));
+
+        let start = debug_bounds(&mut source_visual, &source_tab).center();
+        let threshold = point(start.x + px(24.0), start.y);
+        let end = inner_edge_drop_position(
+            debug_bounds(&mut target_visual, &bottom_tabs_selector),
+            zone,
+        );
+
+        source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+        target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        let target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+        let source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+        assert!(
+            selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_none(),
+            "{zone:?}: target drop preview should clear after release"
+        );
+        assert!(
+            selector_for(&source_visual, &source_host, DockDebugRegion::DropPreview).is_none(),
+            "{zone:?}: source drop preview should clear after release"
+        );
+
+        assert_eq!(
+            runtime.borrow().adapter().window_for_space(&source_space),
+            Some(source_opened.window()),
+            "{zone:?}: source viewport should stay registered"
+        );
+        assert_eq!(
+            runtime.borrow().adapter().window_for_space(&target_space),
+            Some(target_opened.window()),
+            "{zone:?}: target viewport should stay registered"
+        );
+        let registered = runtime.registered_viewport_spaces();
+        assert_eq!(registered.len(), 2, "{zone:?}");
+        assert!(registered.contains(&source_space), "{zone:?}");
+        assert!(registered.contains(&target_space), "{zone:?}");
+
+        let payload = DockDragPayload::new_item(
+            source_space.clone(),
+            source_tabs,
+            item("a"),
+            "Panel A".to_string(),
+        );
+        assert_eq!(
+            runtime.active_payload_drag_session(&payload),
+            None,
+            "{zone:?}: drag session should finish after release"
+        );
+        assert_eq!(
+            runtime.routed_drop_preview_for(&target_space, target_opened.window().window_id()),
+            None,
+            "{zone:?}: routed preview should clear after release"
+        );
+
+        cx.read_entity(&controller, |controller, _| {
+            assert_tabs_node_items(
+                controller.graph(),
+                target_top_tabs,
+                &[item("b")],
+                &format!("{zone:?}: top target tabs should stay intact"),
+            );
+            assert_tabs_node_items(
+                controller.graph(),
+                source_tabs,
+                &[item("d")],
+                &format!("{zone:?}: source tabs should retain the remaining item"),
+            );
+            let DockNode::Split { axis, children, .. } = controller
+                .graph()
+                .node(target_root)
+                .unwrap_or_else(|| panic!("{zone:?}: target root should still exist"))
+            else {
+                panic!("{zone:?}: target root should remain a split");
+            };
+            assert_eq!(*axis, SplitAxis::Vertical, "{zone:?}");
+            assert_eq!(children.len(), 2, "{zone:?}");
+            assert_eq!(children[0], target_top_tabs, "{zone:?}");
+            let nested_horizontal = children[1];
+            let DockNode::Split {
+                axis: nested_axis,
+                children: nested_children,
+                ..
+            } = controller
+                .graph()
+                .node(nested_horizontal)
+                .unwrap_or_else(|| panic!("{zone:?}: nested horizontal split should exist"))
+            else {
+                panic!("{zone:?}: nested child should be a split");
+            };
+            assert_eq!(*nested_axis, SplitAxis::Horizontal, "{zone:?}");
+            assert_eq!(nested_children.len(), 2, "{zone:?}");
+            let (moved_index, old_index) = match zone {
+                DropZone::Left => (0, 1),
+                DropZone::Right => (1, 0),
+                _ => unreachable!(),
+            };
+            assert_eq!(nested_children[old_index], target_bottom_tabs, "{zone:?}");
+            assert_tabs_node_items(
+                controller.graph(),
+                nested_children[moved_index],
+                &[item("a")],
+                &format!("{zone:?}: moved tab should become the new nested child"),
+            );
+        });
+    }
+}
+
+#[open_gpui::test]
+fn runtime_opened_cross_window_inner_edge_drag_then_re_docks_nested_mixed_axes(
+    cx: &mut TestAppContext,
+) {
+    for first_zone in [DropZone::Top, DropZone::Bottom] {
+        let second_zone = match first_zone {
+            DropZone::Top => DropZone::Left,
+            DropZone::Bottom => DropZone::Right,
+            _ => unreachable!(),
+        };
+        let source_space = DockSpaceId::from(format!("source-mixed:{first_zone:?}"));
+        let target_space = DockSpaceId::from(format!("target-mixed:{first_zone:?}"));
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a"), item("d")],
+            selected: Some(item("a")),
+        });
+        let target_left_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        let target_right_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("c")],
+            selected: Some(item("c")),
+        });
+        let target_root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![target_left_tabs, target_right_tabs],
+            fractions: vec![0.5, 0.5],
+        });
+        graph.set_root(source_space.clone(), source_tabs);
+        graph.set_root(target_space.clone(), target_root);
+
+        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+        workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+        workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+        workspace.register_panel_view(item("d"), "Panel D", test_view(cx, "D"));
+        let controller = cx.new(|_| DockController::new(workspace));
+        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+        let source_opened = cx
+            .update(|app| {
+                runtime.open_viewport(
+                    source_space.clone(),
+                    viewport_window_options(360.0, 220.0),
+                    app,
+                )
+            })
+            .unwrap_or_else(|error| panic!("{first_zone:?}: source viewport should open: {error}"));
+        let target_opened = cx
+            .update(|app| {
+                runtime.open_viewport(
+                    target_space.clone(),
+                    viewport_window_options(420.0, 240.0),
+                    app,
+                )
+            })
+            .unwrap_or_else(|error| panic!("{first_zone:?}: target viewport should open: {error}"));
+        let source_window = source_opened
+            .window()
+            .downcast::<crate::DockHost>()
+            .expect("source viewport should render DockHost");
+        let target_window = target_opened
+            .window()
+            .downcast::<crate::DockHost>()
+            .expect("target viewport should render DockHost");
+        let source_host = source_window
+            .root(cx)
+            .expect("source viewport should expose DockHost root");
+        let target_host = target_window
+            .root(cx)
+            .expect("target viewport should expose DockHost root");
+        let source_any_window = source_opened.window();
+        cx.run_until_parked();
+
+        let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+        let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+
+        let source_a_tab = selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::Tab {
+                tabs: source_tabs,
+                item: item("a"),
+            },
+        )
+        .unwrap_or_else(|| panic!("{first_zone:?}: source tab selector should be emitted"));
+        let target_right_tabs_selector = selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Tabs {
+                node: target_right_tabs,
+            },
+        )
+        .unwrap_or_else(|| panic!("{first_zone:?}: target right tabs selector should be emitted"));
+
+        let start = debug_bounds(&mut source_visual, &source_a_tab).center();
+        let threshold = point(start.x + px(24.0), start.y);
+        let first_end = inner_edge_drop_position(
+            debug_bounds(&mut target_visual, &target_right_tabs_selector),
+            first_zone,
+        );
+
+        source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+        target_visual.simulate_mouse_move(first_end, MouseButton::Left, Modifiers::none());
+        target_visual.simulate_mouse_up(first_end, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        let moved_tabs = cx.read_entity(&controller, |controller, _| {
+            let DockNode::Split { axis, children, .. } = controller
+                .graph()
+                .node(target_root)
+                .unwrap_or_else(|| panic!("{first_zone:?}: target root should still exist"))
+            else {
+                panic!("{first_zone:?}: target root should remain a split");
+            };
+            assert_eq!(*axis, SplitAxis::Horizontal, "{first_zone:?}");
+            assert_eq!(children.len(), 2, "{first_zone:?}");
+            assert_eq!(children[0], target_left_tabs, "{first_zone:?}");
+            let nested_vertical = children[1];
+            let DockNode::Split {
+                axis: nested_axis,
+                children: nested_children,
+                ..
+            } = controller
+                .graph()
+                .node(nested_vertical)
+                .unwrap_or_else(|| panic!("{first_zone:?}: nested vertical split should exist"))
+            else {
+                panic!("{first_zone:?}: nested child should be a split");
+            };
+            assert_eq!(*nested_axis, SplitAxis::Vertical, "{first_zone:?}");
+            assert_eq!(nested_children.len(), 2, "{first_zone:?}");
+            let (moved_index, old_index) = match first_zone {
+                DropZone::Top => (0, 1),
+                DropZone::Bottom => (1, 0),
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                nested_children[old_index], target_right_tabs,
+                "{first_zone:?}"
+            );
+            let moved_tabs = nested_children[moved_index];
+            assert_tabs_node_items(
+                controller.graph(),
+                moved_tabs,
+                &[item("a")],
+                &format!("{first_zone:?}: moved tab should become the new nested child"),
+            );
+            moved_tabs
+        });
+
+        let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+        let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+        let source_d_tab = selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::Tab {
+                tabs: source_tabs,
+                item: item("d"),
+            },
+        )
+        .unwrap_or_else(|| panic!("{first_zone:?}: remaining source tab selector should exist"));
+        let target_right_tabs_selector = selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Tabs {
+                node: target_right_tabs,
+            },
+        )
+        .unwrap_or_else(|| panic!("{first_zone:?}: target right tabs selector should exist"));
+
+        let start = debug_bounds(&mut source_visual, &source_d_tab).center();
+        let threshold = point(start.x + px(24.0), start.y);
+        let second_end = inner_edge_drop_position(
+            debug_bounds(&mut target_visual, &target_right_tabs_selector),
+            second_zone,
+        );
+
+        source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+        target_visual.simulate_mouse_move(second_end, MouseButton::Left, Modifiers::none());
+        let hovered_target = cx
+            .read_entity(&target_host, |host, _| {
+                host.interaction().resolved_drop_target().cloned()
+            })
+            .unwrap_or_else(|| {
+                panic!("{first_zone:?}: second-stage nested hover should resolve an active target")
+            });
+        assert!(
+            matches!(
+                hovered_target.kind,
+                DockResolvedDropTargetKind::InnerEdge {
+                    target_tabs,
+                    zone,
+                    ..
+                } if target_tabs == target_right_tabs && zone == second_zone
+            ),
+            "{first_zone:?}: second-stage nested hover should stay inside the target leaf and resolve {second_zone:?}, got {hovered_target:?}"
+        );
+        target_visual.simulate_mouse_up(second_end, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        let target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+        let source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+        assert!(
+            selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_none(),
+            "{first_zone:?}: target drop preview should clear after the second release"
+        );
+        assert!(
+            selector_for(&source_visual, &source_host, DockDebugRegion::DropPreview).is_none(),
+            "{first_zone:?}: source drop preview should clear after the second release"
+        );
+
+        let second_payload = DockDragPayload::new_item(
+            source_space.clone(),
+            source_tabs,
+            item("d"),
+            "Panel D".to_string(),
+        );
+        assert_eq!(
+            runtime.active_payload_drag_session(&second_payload),
+            None,
+            "{first_zone:?}: second drag session should finish after release"
+        );
+        assert_eq!(
+            runtime.routed_drop_preview_for(&target_space, target_opened.window().window_id()),
+            None,
+            "{first_zone:?}: routed preview should clear after the second release"
+        );
+
+        cx.read_entity(&controller, |controller, _| {
+            assert_eq!(controller.graph().root(&source_space), None);
+            assert_eq!(controller.graph().collect_items_in_space(&source_space), []);
+            assert_tabs_node_items(
+                controller.graph(),
+                target_left_tabs,
+                &[item("b")],
+                &format!("{first_zone:?}: left target tabs should stay intact"),
+            );
+            let DockNode::Split { axis, children, .. } = controller
+                .graph()
+                .node(target_root)
+                .unwrap_or_else(|| panic!("{first_zone:?}: target root should still exist"))
+            else {
+                panic!("{first_zone:?}: target root should remain a split");
+            };
+            assert_eq!(*axis, SplitAxis::Horizontal, "{first_zone:?}");
+            assert_eq!(children.len(), 2, "{first_zone:?}");
+            assert_eq!(children[0], target_left_tabs, "{first_zone:?}");
+            let split_child = children[1];
+            let DockNode::Split {
+                axis: nested_axis,
+                children: nested_children,
+                ..
+            } = controller
+                .graph()
+                .node(split_child)
+                .unwrap_or_else(|| panic!("{first_zone:?}: nested split should still exist"))
+            else {
+                panic!("{first_zone:?}: nested child should remain a split");
+            };
+            assert_eq!(*nested_axis, SplitAxis::Vertical, "{first_zone:?}");
+            assert_eq!(nested_children.len(), 2, "{first_zone:?}");
+            let (moved_index, wrapped_index) = match first_zone {
+                DropZone::Top => (0, 1),
+                DropZone::Bottom => (1, 0),
+                _ => unreachable!(),
+            };
+            assert_eq!(nested_children[moved_index], moved_tabs, "{first_zone:?}");
+            assert_tabs_node_items(
+                controller.graph(),
+                moved_tabs,
+                &[item("a")],
+                &format!("{first_zone:?}: first-stage moved tab should stay in the nested split"),
+            );
+            let wrapped_leaf = nested_children[wrapped_index];
+            let DockNode::Split {
+                axis: wrapped_axis,
+                children: wrapped_children,
+                ..
+            } = controller.graph().node(wrapped_leaf).unwrap_or_else(|| {
+                panic!("{first_zone:?}: target leaf should be wrapped inside the nested split")
+            })
+            else {
+                panic!("{first_zone:?}: target leaf should become a horizontal split");
+            };
+            assert_eq!(*wrapped_axis, SplitAxis::Horizontal, "{first_zone:?}");
+            assert_eq!(wrapped_children.len(), 2, "{first_zone:?}");
+            let (inserted_index, old_index) = match second_zone {
+                DropZone::Left => (0, 1),
+                DropZone::Right => (1, 0),
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                wrapped_children[old_index], target_right_tabs,
+                "{first_zone:?}"
+            );
+            assert_tabs_node_items(
+                controller.graph(),
+                wrapped_children[inserted_index],
+                &[item("d")],
+                &format!(
+                    "{first_zone:?}: second-stage moved tab should dock inside the target leaf"
+                ),
+            );
+        });
+
+        cx.update(|app| app.refresh_windows());
+        assert_eq!(
+            runtime.borrow().adapter().window_for_space(&source_space),
+            None,
+            "{first_zone:?}: vacated source viewport should be unregistered after refresh"
+        );
+        assert_eq!(
+            runtime.borrow().adapter().window_for_space(&target_space),
+            Some(target_opened.window()),
+            "{first_zone:?}: target viewport should remain registered"
+        );
+        assert_eq!(
+            runtime.registered_viewport_spaces(),
+            vec![target_space.clone()],
+            "{first_zone:?}: only the target viewport should remain registered after refresh"
+        );
+        assert!(
+            source_any_window.update(cx, |_, _, _| ()).is_err(),
+            "{first_zone:?}: vacated source viewport should close after the second commit refresh"
+        );
+    }
+}
+
+#[open_gpui::test]
+fn runtime_opened_cross_window_inner_edge_drag_closes_vacated_source_viewport(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source:single");
+    let target_space = DockSpaceId::from("target:single");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_left_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let target_right_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let target_root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![target_left_tabs, target_right_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_root);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("source viewport should open");
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                viewport_window_options(420.0, 240.0),
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    let source_window = source_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("source viewport should render DockHost");
+    let target_window = target_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("target viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("source viewport should expose DockHost root");
+    let target_host = target_window
+        .root(cx)
+        .expect("target viewport should expose DockHost root");
+    let source_any_window = source_opened.window();
+    cx.run_until_parked();
+
+    let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+    let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let right_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs {
+            node: target_right_tabs,
+        },
+    )
+    .expect("right target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let end = inner_edge_drop_position(
+        debug_bounds(&mut target_visual, &right_tabs_selector),
+        DropZone::Bottom,
+    );
+
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    let target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+    let source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+    assert!(
+        selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_none(),
+        "target drop preview should clear after release"
+    );
+    assert!(
+        selector_for(&source_visual, &source_host, DockDebugRegion::DropPreview).is_none(),
+        "source drop preview should clear after release"
+    );
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    assert_eq!(
+        runtime.active_payload_drag_session(&payload),
+        None,
+        "drag session should finish after release"
+    );
+    assert_eq!(
+        runtime.routed_drop_preview_for(&target_space, target_opened.window().window_id()),
+        None,
+        "routed preview should clear after release"
+    );
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(controller.graph().root(&source_space), None);
+        assert_eq!(controller.graph().collect_items_in_space(&source_space), []);
+        let DockNode::Split { axis, children, .. } = controller
+            .graph()
+            .node(target_root)
+            .expect("target root should still exist")
+        else {
+            panic!("target root should remain a split");
+        };
+        assert_eq!(*axis, SplitAxis::Horizontal);
+        assert_eq!(children[0], target_left_tabs);
+        let DockNode::Split {
+            axis: nested_axis,
+            children: nested_children,
+            ..
+        } = controller
+            .graph()
+            .node(children[1])
+            .expect("right target should be wrapped in a nested split")
+        else {
+            panic!("right target should become a nested split");
+        };
+        assert_eq!(*nested_axis, SplitAxis::Vertical);
+        assert_eq!(nested_children[0], target_right_tabs);
+        assert_tabs_node_items(
+            controller.graph(),
+            nested_children[1],
+            &[item("a")],
+            "moved tab should dock below the old right target",
+        );
+    });
+
+    cx.update(|app| app.refresh_windows());
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&source_space),
+        None,
+        "vacated source viewport should be unregistered after refresh"
+    );
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&target_space),
+        Some(target_opened.window()),
+        "target viewport should remain registered"
+    );
+    assert_eq!(
+        runtime.registered_viewport_spaces(),
+        vec![target_space.clone()],
+        "only the target viewport should remain registered after refresh"
+    );
+    assert!(
+        source_any_window.update(cx, |_, _, _| ()).is_err(),
+        "vacated source viewport should close after commit effects refresh"
+    );
+}
+
+#[open_gpui::test]
+fn runtime_opened_cross_window_center_tab_merge_closes_vacated_source_viewport(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source:center");
+    let target_space = DockSpaceId::from("target:center");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("source viewport should open");
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                viewport_window_options(420.0, 240.0),
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    let source_window = source_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("source viewport should render DockHost");
+    let target_window = target_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("target viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("source viewport should expose DockHost root");
+    let target_host = target_window
+        .root(cx)
+        .expect("target viewport should expose DockHost root");
+    let source_any_window = source_opened.window();
+    cx.run_until_parked();
+
+    let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+    let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let end = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    assert_eq!(
+        runtime.active_payload_drag_session(&DockDragPayload::new_item(
+            source_space.clone(),
+            source_tabs,
+            item("a"),
+            "Panel A".to_string(),
+        )),
+        None,
+        "drag session should finish after center merge release"
+    );
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(controller.graph().root(&source_space), None);
+        assert_eq!(controller.graph().collect_items_in_space(&source_space), []);
+        let DockNode::Tabs { items, selected } = controller
+            .graph()
+            .node(target_tabs)
+            .expect("target tabs should still exist after center merge")
+        else {
+            panic!("center merge target should remain a tabs node");
+        };
+        assert_eq!(
+            items.as_slice(),
+            &[item("b"), item("a")],
+            "center merge should append the source tab to the target tab bar"
+        );
+        assert_eq!(
+            *selected,
+            Some(item("a")),
+            "center merge should select the payload tab after it is merged back"
+        );
+    });
+
+    cx.update(|app| app.refresh_windows());
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&source_space),
+        None,
+        "vacated source viewport should be unregistered after center tab merge"
+    );
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&target_space),
+        Some(target_opened.window()),
+        "target viewport should remain registered after center tab merge"
+    );
+    assert!(
+        source_any_window.update(cx, |_, _, _| ()).is_err(),
+        "vacated source viewport should close after its last tab merges back"
+    );
+}
+
+#[open_gpui::test]
+fn runtime_opened_cross_window_drag_clears_state_when_source_window_closes_before_release(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("source viewport should open");
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    let source_window = source_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("source viewport should render DockHost");
+    let target_window = target_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("target viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("source viewport should expose DockHost root");
+    let target_host = target_window
+        .root(cx)
+        .expect("target viewport should expose DockHost root");
+    cx.run_until_parked();
+    let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+    let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let target = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_move(target, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "A".to_string(),
+    );
+    let session = runtime
+        .active_payload_drag_session(&payload)
+        .expect("drag session should be active before source close");
+    assert_eq!(
+        runtime
+            .last_hovered_viewport_identity_for_drag_session(Some(&session))
+            .as_ref()
+            .map(|identity| identity.window_id()),
+        Some(target_window.window_id()),
+        "dragging into the target viewport should remember the target as the last hovered viewport"
+    );
+
+    let close = cx.update(|app| {
+        runtime.handle_window_closed_with_app(source_opened.window().window_id(), app)
+    });
+    assert_eq!(close.status(), DockViewportCloseStatus::Closed);
+    cx.run_until_parked();
+
+    let target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+    assert!(
+        selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_none(),
+        "target viewport drop preview should clear when the source window closes"
+    );
+    assert_eq!(
+        runtime.active_payload_drag_session(&payload),
+        None,
+        "closing the source window should finish the active drag session"
+    );
+    assert!(
+        !runtime.has_routed_drop_preview_for_drag_session(Some(&session)),
+        "closing the source window should clear the routed preview"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { items, selected } = controller
+            .graph()
+            .node(target_tabs)
+            .expect("target tabs should still exist")
+        else {
+            panic!("target should remain tabs");
+        };
+        assert_eq!(items, &vec![item("b")]);
+        assert_eq!(selected.as_ref(), items.first());
+    });
+}
+
+#[open_gpui::test]
+fn runtime_opened_cross_window_drag_clears_target_preview_when_target_window_closes(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("source viewport should open");
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    let source_window = source_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("source viewport should render DockHost");
+    let target_window = target_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("target viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("source viewport should expose DockHost root");
+    let target_host = target_window
+        .root(cx)
+        .expect("target viewport should expose DockHost root");
+    cx.run_until_parked();
+    let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+    let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let target = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_move(target, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "A".to_string(),
+    );
+    let session = runtime
+        .active_payload_drag_session(&payload)
+        .expect("drag session should remain active before target close");
+
+    let close = cx.update(|app| {
+        runtime.handle_window_closed_with_app(target_opened.window().window_id(), app)
+    });
+    assert_eq!(close.status(), DockViewportCloseStatus::Closed);
+    cx.run_until_parked();
+
+    let source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+    assert!(
+        selector_for(&source_visual, &source_host, DockDebugRegion::DropPreview).is_none(),
+        "source viewport drop preview should clear when the target window closes"
+    );
+    assert_eq!(
+        runtime.routed_drop_preview_for(&target_space, target_window.window_id()),
+        None,
+        "closing the target window should clear its routed preview"
+    );
+    assert!(
+        runtime.active_payload_drag_session(&payload).is_some(),
+        "closing the target window should not finish the source drag session"
+    );
+    assert!(
+        !runtime.has_routed_drop_preview_for_drag_session(Some(&session)),
+        "closing the target window should clear the routed preview session state"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { items, selected } = controller
+            .graph()
+            .node(source_tabs)
+            .expect("source tabs should still exist")
+        else {
+            panic!("source should remain tabs");
+        };
+        assert_eq!(items, &vec![item("a")]);
+        assert_eq!(selected.as_ref(), items.first());
+    });
+}
+
+#[open_gpui::test]
+fn runtime_opened_cross_window_bottom_edge_drag_clears_state_when_target_window_closes(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("source viewport should open");
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    let source_window = source_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("source viewport should render DockHost");
+    let target_window = target_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("target viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("source viewport should expose DockHost root");
+    let target_host = target_window
+        .root(cx)
+        .expect("target viewport should expose DockHost root");
+    cx.run_until_parked();
+    let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+    let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let target_tabs_bounds = debug_bounds(&mut target_visual, &target_tabs_selector);
+    let end = inner_edge_drop_position(target_tabs_bounds, DropZone::Bottom);
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_some(),
+        "bottom-edge target should render a visible drop preview before close"
+    );
+
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "A".to_string(),
+    );
+    let session = runtime
+        .active_payload_drag_session(&payload)
+        .expect("drag session should be active before target close");
+
+    let close = cx.update(|app| {
+        runtime.handle_window_closed_with_app(target_opened.window().window_id(), app)
+    });
+    assert_eq!(close.status(), DockViewportCloseStatus::Closed);
+    cx.run_until_parked();
+
+    let source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+    assert!(
+        selector_for(&source_visual, &source_host, DockDebugRegion::DropPreview).is_none(),
+        "source viewport drop preview should clear when the bottom-edge target window closes"
+    );
+    assert_eq!(
+        runtime.routed_drop_preview_for(&target_space, target_window.window_id()),
+        None,
+        "closing the bottom-edge target window should clear its routed preview"
+    );
+    assert!(
+        runtime.active_payload_drag_session(&payload).is_some(),
+        "closing the bottom-edge target window should not finish the source drag session"
+    );
+    assert!(
+        !runtime.has_routed_drop_preview_for_drag_session(Some(&session)),
+        "closing the bottom-edge target window should clear the routed preview session state"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { items, selected } = controller
+            .graph()
+            .node(source_tabs)
+            .expect("source tabs should still exist")
+        else {
+            panic!("source should remain tabs");
+        };
+        assert_eq!(items, &vec![item("a")]);
+        assert_eq!(selected.as_ref(), items.first());
     });
 }
 
@@ -5966,14 +7566,7 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
         DockViewportTargetContext::new().with_trusted_hovered_window(opened.window()),
     )
     .with_drag_session(Some(session.clone()));
-    let resolution = accepted_resolution_for_request(
-        cx,
-        &runtime,
-        &request,
-        &target_space,
-        opened.window().window_id(),
-        "Stack",
-    );
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     let result = cx.update(|app| {
         runtime
             .deliver_drop_commit_delivery(DockDropDelivery::from_resolution(resolution)?, app)
@@ -6127,14 +7720,6 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
         DockPayloadDropReleaseOrigin::HoveredHost,
     )
     .with_drag_session(Some(session.clone()));
-    let _resolution = accepted_resolution_for_request(
-        cx,
-        &runtime,
-        &request,
-        &target_space,
-        target_opened.window().window_id(),
-        "Panel A",
-    );
     let result = cx.update(|app| runtime.commit_payload_drop_from_screen(&request, app));
 
     let DockViewportDropRouteOutcome::Action(action) =

@@ -1,14 +1,78 @@
-use anyhow::Result;
 use core_graphics::display::CGDirectDisplayID;
 use dispatch2::{
     _dispatch_source_type_data_add, DispatchObject, DispatchQueue, DispatchRetained, DispatchSource,
 };
-use open_gpui_util::ResultExt;
-use std::ffi::c_void;
+use std::{error::Error, ffi::c_void, fmt};
+
+const K_CV_RETURN_INVALID_ARGUMENT: i32 = -6661;
+const K_CV_RETURN_UNSUPPORTED: i32 = -6663;
+const K_CV_RETURN_DISPLAY_LINK_NOT_RUNNING: i32 = -6672;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DisplayLinkError {
+    Create { code: i32 },
+    SetOutputCallback { code: i32 },
+    AssignDisplay { code: i32 },
+    Start { code: i32 },
+    Stop { code: i32 },
+    MissingDisplayLink,
+}
+
+impl DisplayLinkError {
+    pub(crate) fn is_transient_create_failure(self) -> bool {
+        matches!(
+            self,
+            Self::Create {
+                code: K_CV_RETURN_INVALID_ARGUMENT | K_CV_RETURN_UNSUPPORTED
+            }
+        )
+    }
+
+    fn is_not_running(self) -> bool {
+        matches!(
+            self,
+            Self::Stop {
+                code: K_CV_RETURN_DISPLAY_LINK_NOT_RUNNING
+            }
+        )
+    }
+}
+
+impl fmt::Display for DisplayLinkError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Create { code } => {
+                write!(formatter, "could not create display link, code: {code}")
+            }
+            Self::SetOutputCallback { code } => {
+                write!(
+                    formatter,
+                    "could not set display link output callback, code: {code}"
+                )
+            }
+            Self::AssignDisplay { code } => {
+                write!(
+                    formatter,
+                    "could not assign display to display link, code: {code}"
+                )
+            }
+            Self::Start { code } => {
+                write!(formatter, "could not start display link, code: {code}")
+            }
+            Self::Stop { code } => {
+                write!(formatter, "could not stop display link, code: {code}")
+            }
+            Self::MissingDisplayLink => formatter.write_str("display link handle is missing"),
+        }
+    }
+}
+
+impl Error for DisplayLinkError {}
 
 pub struct DisplayLink {
     display_link: Option<sys::DisplayLink>,
     frame_requests: DispatchRetained<DispatchSource>,
+    started: bool,
 }
 
 impl DisplayLink {
@@ -16,7 +80,7 @@ impl DisplayLink {
         display_id: CGDirectDisplayID,
         data: *mut c_void,
         callback: extern "C" fn(*mut c_void),
-    ) -> Result<DisplayLink> {
+    ) -> Result<DisplayLink, DisplayLinkError> {
         unsafe extern "C" fn display_link_callback(
             _display_link_out: *mut sys::CVDisplayLink,
             _current_time: *const sys::CVTimeStamp,
@@ -52,28 +116,44 @@ impl DisplayLink {
             Ok(Self {
                 display_link: Some(display_link),
                 frame_requests,
+                started: false,
             })
         }
     }
 
-    pub fn start(&mut self) -> Result<()> {
+    pub fn start(&mut self) -> Result<(), DisplayLinkError> {
         unsafe {
-            self.display_link.as_mut().unwrap().start()?;
+            self.display_link
+                .as_mut()
+                .ok_or(DisplayLinkError::MissingDisplayLink)?
+                .start()?;
         }
+        self.started = true;
         Ok(())
     }
 
-    pub fn stop(&mut self) -> Result<()> {
-        unsafe {
-            self.display_link.as_mut().unwrap().stop()?;
+    pub fn stop(&mut self) -> Result<(), DisplayLinkError> {
+        if !self.started {
+            return Ok(());
         }
+        unsafe {
+            self.display_link
+                .as_mut()
+                .ok_or(DisplayLinkError::MissingDisplayLink)?
+                .stop()?;
+        }
+        self.started = false;
         Ok(())
     }
 }
 
 impl Drop for DisplayLink {
     fn drop(&mut self) {
-        self.stop().log_err();
+        if let Err(error) = self.stop()
+            && !error.is_not_running()
+        {
+            log::warn!("{error}");
+        }
         // We see occasional segfaults on the CVDisplayLink thread.
         //
         // It seems possible that this happens because CVDisplayLinkRelease releases the CVDisplayLink
@@ -92,7 +172,7 @@ mod sys {
     //! Apple docs: [CVDisplayLink](https://developer.apple.com/documentation/corevideo/cvdisplaylinkoutputcallback?language=objc)
     #![allow(dead_code, non_upper_case_globals)]
 
-    use anyhow::Result;
+    use super::{DisplayLinkError, K_CV_RETURN_INVALID_ARGUMENT};
     use core_graphics::display::CGDirectDisplayID;
     use foreign_types::{ForeignType, foreign_type};
     use std::{
@@ -220,24 +300,31 @@ mod sys {
             display_id: CGDirectDisplayID,
             callback: CVDisplayLinkOutputCallback,
             user_info: *mut c_void,
-        ) -> Result<Self> {
+        ) -> Result<Self, DisplayLinkError> {
             unsafe {
                 let mut display_link: *mut CVDisplayLink = 0 as _;
 
                 let code = CVDisplayLinkCreateWithActiveCGDisplays(&mut display_link);
-                anyhow::ensure!(code == 0, "could not create display link, code: {}", code);
+                if code != 0 {
+                    return Err(DisplayLinkError::Create { code });
+                }
+                if display_link.is_null() {
+                    return Err(DisplayLinkError::Create {
+                        code: K_CV_RETURN_INVALID_ARGUMENT,
+                    });
+                }
 
                 let mut display_link = DisplayLink::from_ptr(display_link);
 
                 let code = CVDisplayLinkSetOutputCallback(&mut display_link, callback, user_info);
-                anyhow::ensure!(code == 0, "could not set output callback, code: {}", code);
+                if code != 0 {
+                    return Err(DisplayLinkError::SetOutputCallback { code });
+                }
 
                 let code = CVDisplayLinkSetCurrentCGDisplay(&mut display_link, display_id);
-                anyhow::ensure!(
-                    code == 0,
-                    "could not assign display to display link, code: {}",
-                    code
-                );
+                if code != 0 {
+                    return Err(DisplayLinkError::AssignDisplay { code });
+                }
 
                 Ok(display_link)
             }
@@ -246,19 +333,23 @@ mod sys {
 
     impl DisplayLinkRef {
         /// Apple docs: [CVDisplayLinkStart](https://developer.apple.com/documentation/corevideo/1457193-cvdisplaylinkstart?language=objc)
-        pub unsafe fn start(&mut self) -> Result<()> {
+        pub unsafe fn start(&mut self) -> Result<(), DisplayLinkError> {
             unsafe {
                 let code = CVDisplayLinkStart(self);
-                anyhow::ensure!(code == 0, "could not start display link, code: {}", code);
+                if code != 0 {
+                    return Err(DisplayLinkError::Start { code });
+                }
                 Ok(())
             }
         }
 
         /// Apple docs: [CVDisplayLinkStop](https://developer.apple.com/documentation/corevideo/1457281-cvdisplaylinkstop?language=objc)
-        pub unsafe fn stop(&mut self) -> Result<()> {
+        pub unsafe fn stop(&mut self) -> Result<(), DisplayLinkError> {
             unsafe {
                 let code = CVDisplayLinkStop(self);
-                anyhow::ensure!(code == 0, "could not stop display link, code: {}", code);
+                if code != 0 {
+                    return Err(DisplayLinkError::Stop { code });
+                }
                 Ok(())
             }
         }

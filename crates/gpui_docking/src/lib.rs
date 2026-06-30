@@ -131,7 +131,6 @@ mod viewport;
 mod viewport_activation;
 mod viewport_backend_focus;
 mod viewport_close;
-mod viewport_close_plan;
 mod viewport_coordinates;
 mod viewport_drop_delivery;
 mod viewport_drop_route;
@@ -140,6 +139,7 @@ mod viewport_focus;
 mod viewport_frame_coordinator;
 mod viewport_identity;
 mod viewport_open;
+mod viewport_payload_drag;
 mod viewport_placement;
 mod viewport_placement_adapter;
 mod viewport_placement_options;
@@ -150,22 +150,26 @@ mod viewport_registration;
 mod viewport_registry;
 mod viewport_routed_preview;
 mod viewport_runtime;
+mod viewport_runtime_effects;
 mod viewport_runtime_handle;
 mod viewport_runtime_status;
 mod viewport_target_context;
 mod viewport_target_resolver;
 mod viewport_tear_off;
 mod viewport_tear_off_move;
+mod viewport_window_lifecycle;
 mod viewport_window_ownership;
 mod workspace;
 mod workspace_action;
+mod workspace_drop_target;
+mod workspace_drop_transaction;
 mod workspace_floating_transaction;
+mod workspace_merge_transaction;
 mod workspace_move_transaction;
 mod workspace_move_validation;
 mod workspace_panel_lifecycle;
 mod workspace_panel_transaction;
 mod workspace_resize_transaction;
-mod workspace_transaction;
 
 #[cfg(test)]
 mod host_floating_tests;
@@ -181,6 +185,8 @@ mod host_test_support;
 mod host_tests;
 #[cfg(test)]
 mod host_viewport_matrix_tests;
+#[cfg(test)]
+mod host_viewport_model_tests;
 #[cfg(test)]
 mod host_viewport_runtime_handle_tests;
 #[cfg(test)]
@@ -225,13 +231,19 @@ pub(crate) use viewport_activation::{
 };
 pub(crate) use viewport_backend_focus::*;
 pub use viewport_close::*;
-pub(crate) use viewport_close_plan::*;
+#[allow(unused_imports)]
+pub(crate) use viewport_close::{
+    DockMergeBackTarget, DockViewportCloseCoordinator, DockViewportClosePlanEffect,
+    DockViewportClosePlanState, DockViewportMergeBackClosePlan,
+    commit_prevalidated_merge_back_plan,
+};
 pub(crate) use viewport_drop_delivery::*;
 pub(crate) use viewport_drop_route::*;
 pub use viewport_focus::*;
 pub(crate) use viewport_frame_coordinator::*;
 pub(crate) use viewport_identity::*;
 pub use viewport_open::*;
+pub(crate) use viewport_payload_drag::*;
 pub use viewport_placement::*;
 pub use viewport_placement_adapter::*;
 pub use viewport_placement_validation::*;
@@ -240,6 +252,7 @@ pub(crate) use viewport_registration::*;
 pub(crate) use viewport_registry::{DockViewportSnapshot, DockViewportWindowFacts};
 pub(crate) use viewport_routed_preview::*;
 pub(crate) use viewport_runtime::*;
+pub(crate) use viewport_runtime_effects::*;
 pub use viewport_runtime_handle::*;
 pub use viewport_runtime_status::*;
 pub(crate) use viewport_target_context::*;
@@ -252,5 +265,9 @@ pub(crate) use viewport_tear_off::{
     DockViewportTearOffOpenOutcome, DockViewportTearOffPending, DockViewportTearOffRequest,
 };
 pub(crate) use viewport_tear_off_move::*;
+#[allow(unused_imports)]
+pub(crate) use viewport_window_lifecycle::{
+    DockViewportReusableWindow, DockViewportReusableWindowOutcome,
+};
 pub(crate) use viewport_window_ownership::*;
 pub use workspace::*;

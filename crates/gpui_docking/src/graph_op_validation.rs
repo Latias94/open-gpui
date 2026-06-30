@@ -1,8 +1,173 @@
+#[cfg(test)]
+use crate::SplitFractionsUpdate;
 use crate::{
     DockGraphDropTarget, DockGraphMutationError, DockItemId, DockNodeId, DockOp, DockSpaceId,
 };
+#[cfg(test)]
+use std::collections::HashSet;
 
 use super::{DockGraph, DockNode, DropZone};
+
+impl DockGraph {
+    pub(in crate::graph) fn target_space_is_empty_for_open(&self, space: &DockSpaceId) -> bool {
+        self.root(space).is_none() && self.floating_containers(space).is_empty()
+    }
+
+    pub(in crate::graph) fn target_space_is_empty_for_item_move(
+        &self,
+        source_space: &DockSpaceId,
+        item: &DockItemId,
+        target_space: &DockSpaceId,
+    ) -> bool {
+        if self.root(target_space).is_some() {
+            return false;
+        }
+        if source_space != target_space {
+            return self.floating_containers(target_space).is_empty();
+        }
+
+        let target_items = self.collect_items_in_space(target_space);
+        if target_items.is_empty() {
+            return true;
+        }
+        matches!(target_items.as_slice(), [target_item] if target_item == item)
+    }
+
+    pub(in crate::graph) fn target_space_is_empty_for_tabs_move(
+        &self,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+        target_space: &DockSpaceId,
+    ) -> bool {
+        if self.root(target_space).is_some() {
+            return false;
+        }
+        if source_space != target_space {
+            return self.floating_containers(target_space).is_empty();
+        }
+
+        let target_items = self.collect_items_in_space(target_space);
+        if target_items.is_empty() {
+            return true;
+        }
+        let source_items = self.collect_items_in_subtree(source_tabs);
+        !source_items.is_empty() && target_items == source_items
+    }
+
+    pub(in crate::graph) fn target_space_is_empty_for_floating_move(
+        &self,
+        source_space: &DockSpaceId,
+        floating: DockNodeId,
+        target_space: &DockSpaceId,
+    ) -> bool {
+        if self.root(target_space).is_some() {
+            return false;
+        }
+        if source_space != target_space {
+            return self.floating_containers(target_space).is_empty();
+        }
+
+        let floatings = self.floating_containers(target_space);
+        !floatings.is_empty() && floatings.iter().all(|entry| entry.node == floating)
+    }
+
+    pub(in crate::graph) fn require_tabs_node(
+        &self,
+        tabs: DockNodeId,
+    ) -> Result<&[DockItemId], DockGraphMutationError> {
+        match self.node(tabs) {
+            Some(DockNode::Tabs { items, .. }) => Ok(items),
+            Some(_) => Err(DockGraphMutationError::NodeIsNotTabs { node: tabs }),
+            None => Err(DockGraphMutationError::TabsNodeNotFound { tabs }),
+        }
+    }
+
+    pub(in crate::graph) fn require_non_empty_tabs_node(
+        &self,
+        tabs: DockNodeId,
+    ) -> Result<(), DockGraphMutationError> {
+        let items = self.require_tabs_node(tabs)?;
+        if items.is_empty() {
+            return Err(DockGraphMutationError::TabsNodeEmpty { tabs });
+        }
+        Ok(())
+    }
+
+    pub(in crate::graph) fn require_source_node_in_space(
+        &self,
+        space: &DockSpaceId,
+        node: DockNodeId,
+    ) -> Result<DockNodeId, DockGraphMutationError> {
+        self.root_for_node_in_space(space, node).ok_or_else(|| {
+            DockGraphMutationError::SourceNodeNotInSpace {
+                space: space.clone(),
+                node,
+            }
+        })
+    }
+
+    pub(in crate::graph) fn require_target_node_in_space(
+        &self,
+        space: &DockSpaceId,
+        target: DockNodeId,
+    ) -> Result<DockNodeId, DockGraphMutationError> {
+        self.root_for_node_in_space(space, target).ok_or_else(|| {
+            DockGraphMutationError::TargetNodeNotInSpace {
+                space: space.clone(),
+                target,
+            }
+        })
+    }
+
+    pub(in crate::graph) fn validate_split_fractions(
+        &self,
+        split: DockNodeId,
+        fractions: &[f32],
+    ) -> Result<(), DockGraphMutationError> {
+        let Some(node) = self.node(split) else {
+            return Err(DockGraphMutationError::SplitNodeNotFound { split });
+        };
+        let DockNode::Split { children, .. } = node else {
+            return Err(DockGraphMutationError::NodeIsNotSplit { node: split });
+        };
+        if children.len() < 2 {
+            return Err(DockGraphMutationError::SplitTooFewChildren {
+                split,
+                children_len: children.len(),
+            });
+        }
+        if fractions.len() != children.len() {
+            return Err(DockGraphMutationError::SplitFractionsLenMismatch {
+                split,
+                children_len: children.len(),
+                fractions_len: fractions.len(),
+            });
+        }
+        for (index, fraction) in fractions.iter().copied().enumerate() {
+            if !fraction.is_finite() || fraction < 0.0 {
+                return Err(DockGraphMutationError::SplitFractionInvalid { split, index });
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(in crate::graph) fn validate_split_fraction_updates(
+        &self,
+        updates: &[SplitFractionsUpdate],
+    ) -> Result<(), DockGraphMutationError> {
+        let mut seen = HashSet::new();
+        for update in updates {
+            if !seen.insert(update.split) {
+                return Err(DockGraphMutationError::DuplicateSplitFractionUpdate {
+                    split: update.split,
+                });
+            }
+            self.validate_split_fractions(update.split, &update.fractions)?;
+        }
+        Ok(())
+    }
+}
 
 impl DockGraph {
     /// Applies an operation with validation for the common error-prone cases.

@@ -701,12 +701,20 @@ The docking native example exercises the public multi-window setup: applications
 `DockController`, wrap it in a `DockViewportRuntimeHandle`, register window-close cleanup, and open
 controller-backed primary and secondary `DockHost` viewports. The runtime panel reports both the
 last route target and the route selection source, so dogfood runs can distinguish trusted hovered
-window routes, window-stack fallback routes, focus-stamp fallback routes, and accepted routed-preview
-replays. It also reports the current platform viewport capability snapshot, splitting route facts
+window routes, window-stack fallback routes, focus-stamp fallback routes, and current-facts
+rejections. It also reports the current platform viewport capability snapshot, splitting route facts
 from placement facts so platform-boundary regressions are visible during native dogfood. The
 placement restore line reports matched and missing restored windows, and the tear-off status line
 reports whether a viewport opened from suggested bounds or drag-source geometry, so placement
 authority regressions are visible in the same panel.
+
+Docking target previews are scene-owned. During dogfood, every target-window preview should be
+explainable from one `DockPreviewScene`: the preview body, payload tab previews, active and inactive
+drop boxes, rejected state, inner/outer layer identity, and routed target preview shape. Rendering
+must not recreate guide availability independently from the scene. Debug selectors reflect that
+contract: target-stack guides use `dock:<space>:drop-guide:inner:<tabs>:<zone>`, root/host guides
+use `dock:<space>:drop-guide:outer:<zone>`, and the split body is exposed separately from the
+full target preview container as `dock:<space>:drop-preview:body`.
 
 Manual native docking dogfood should use the same example after the automated checks pass:
 
@@ -737,6 +745,31 @@ Manual native docking dogfood should use the same example after the automated ch
    state.
 11. Drag over the empty central dogfood window; empty central-space preview, rejection, and
    passthrough behavior must match the visible policy state.
+12. While dragging over a valid tabs target, confirm the guide affordance is target-owned and
+    box-shaped rather than a floating five-button cluster. Center hover should show a center box,
+    side hover should highlight only the corresponding side box, and inactive boxes should remain
+    visibly weaker than the active one.
+13. Hover the center of a compatible target and confirm the destination window renders one dock
+    preview plus one contained payload tab preview. Hover any split edge and confirm the preview
+    becomes an edge band and the payload tab preview disappears.
+14. Reproduce a nested-target case by docking into a child region, then dragging another tab into
+    the remaining nested leaf. Confirm hovering the left or right side of that nested leaf resolves
+    inside the nested leaf itself rather than snapping to the neighboring region or to the root
+    edge.
+15. Drag a tab or stack outside every valid host. Confirm the route marker reads as tear-off or
+    rejection only; no fake blue dock target or payload tooltip should appear at the source.
+16. Drag the two-tab `Preview` / `Diff` stack over a compatible target stack center. The
+    destination preview must show a shared preview body plus two selected-tab-like payload tab
+    previews in payload order; the previews should clip to the target tab bar instead of becoming a
+    single dark rectangle.
+17. Repeat the same two-tab stack drag across windows. The target window must render the same
+    payload tab preview structure as a local hover, while the source window shows only route-marker
+    feedback when applicable.
+18. Hover a side drop box for the root central leaf and a side drop box for a nested child leaf.
+    The root central leaf should use outer split semantics; the nested child leaf should keep
+    inner split semantics.
+19. Hover rejected center and route targets. The target preview must use rejected tokens, suppress
+    payload tab previews, and leave the graph unchanged on release.
 
 Current platform caveats for docking multi-viewport dogfood:
 
@@ -745,6 +778,9 @@ Current platform caveats for docking multi-viewport dogfood:
   follow-up platform API work, not as proof of full ImGui PlatformIO parity.
 - No-input, no-focus-on-appearing, alpha, topmost, and no-taskbar viewport flags are not modeled in
   GPUI's platform trait yet.
+- Transparent platform payload-window rendering and screenshot or pixel-regression infrastructure
+  remain deferred. Current verification locks preview capability and semantic selectors rather than
+  pixel-perfect Dear ImGui styling.
 
 Before publishing a crate, confirm that the packaged archive carries the expected attribution files:
 

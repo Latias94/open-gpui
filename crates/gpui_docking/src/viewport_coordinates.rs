@@ -213,6 +213,7 @@ impl DockViewportAdapter {
     ///
     /// Returns `None` when the viewport is unknown, bounds snapshots are stale, the backend did
     /// not publish global window bounds, or the point is outside the host bounds.
+    #[cfg(test)]
     pub(crate) fn global_screen_to_host(
         &self,
         space: &DockSpaceId,

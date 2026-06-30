@@ -3,7 +3,7 @@ use crate::{
     DockPolicy, DockPolicyError, DockSpaceId, DockViewportDropPayload, DockWorkspace,
     drag::{DockDragPayload, DockDragPayloadKind},
     drop_target::{DockResolvedDropTarget, DockResolvedDropTargetKind},
-    workspace_transaction::DockWorkspaceDropPayload,
+    workspace_drop_transaction::DockWorkspaceDropPayload,
 };
 
 pub(crate) struct DockWorkspaceMoveValidation<'a> {

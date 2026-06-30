@@ -109,6 +109,34 @@ impl DockViewportHostSceneSnapshot {
         self.scene.push_fact(fact);
     }
 
+    fn leaf_bounds_for_tabs(&self, tabs: DockNodeId) -> Option<Bounds<Pixels>> {
+        self.scene
+            .leaves
+            .iter()
+            .find(|leaf| leaf.target_tabs == tabs)
+            .map(|leaf| leaf.bounds)
+    }
+
+    fn tab_bar_bounds_for_tabs(&self, tabs: DockNodeId) -> Option<Bounds<Pixels>> {
+        self.scene
+            .tab_bars
+            .iter()
+            .find(|target| target.target_tabs == tabs)
+            .map(|target| target.bounds)
+    }
+
+    fn tab_label_bounds_for_tabs(
+        &self,
+        tabs: DockNodeId,
+        target_index: usize,
+    ) -> Option<Bounds<Pixels>> {
+        self.scene
+            .tab_labels
+            .iter()
+            .find(|target| target.target_tabs == tabs && target.target_index == target_index)
+            .map(|target| target.bounds)
+    }
+
     #[cfg(test)]
     pub(crate) fn global_screen_position(&self) -> Option<Point<Pixels>> {
         let screen_bounds = self.current_bounds.global_screen_bounds()?;
@@ -123,6 +151,13 @@ impl DockViewportHostSceneSnapshot {
 pub(crate) struct DockViewportHostSceneRegistry {
     scenes: BTreeMap<DockSpaceId, DockViewportHostSceneSnapshot>,
     next_generation: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockViewportResolvedFrame {
+    pub(crate) frame: DockViewportHostSceneFrame,
+    pub(crate) drop_guide_style: DockDropGuideStyle,
+    pub(crate) resolution: DockDropResolution,
 }
 
 impl DockViewportHostSceneRegistry {
@@ -175,6 +210,46 @@ impl DockViewportHostSceneRegistry {
         Some(scene.frame())
     }
 
+    pub(crate) fn leaf_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        let snapshot = self.scenes.get(space)?;
+        if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
+            return None;
+        }
+        snapshot.leaf_bounds_for_tabs(tabs)
+    }
+
+    pub(crate) fn tab_bar_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        let snapshot = self.scenes.get(space)?;
+        if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
+            return None;
+        }
+        snapshot.tab_bar_bounds_for_tabs(tabs)
+    }
+
+    pub(crate) fn tab_label_bounds_for_tabs(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        tabs: DockNodeId,
+        target_index: usize,
+    ) -> Option<Bounds<Pixels>> {
+        let snapshot = self.scenes.get(space)?;
+        if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
+            return None;
+        }
+        snapshot.tab_label_bounds_for_tabs(tabs, target_index)
+    }
+
     #[cfg(test)]
     fn current_frame(
         &self,
@@ -217,7 +292,7 @@ impl DockViewportHostSceneRegistry {
             target_validator,
             None,
         )
-        .and_then(|(_, resolution)| resolution.target())
+        .and_then(|resolved| resolved.resolution.target())
     }
 
     pub(crate) fn resolve_frame_for_window(
@@ -230,12 +305,13 @@ impl DockViewportHostSceneRegistry {
         policy: &DockPolicy,
         target_validator: Option<&DockDropTargetValidator<'_>>,
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
-    ) -> Option<(DockViewportHostSceneFrame, DockDropResolution)> {
+    ) -> Option<DockViewportResolvedFrame> {
         let snapshot = self.scenes.get(space)?;
         if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
             return None;
         }
         let frame = snapshot.frame();
+        let drop_guide_style = snapshot.scene.drop_guide_style();
         let mut scene = snapshot.scene.clone().excluding_nodes(excluded_nodes);
         scene.position = point(
             snapshot.host_bounds.origin.x + host_position.x,
@@ -244,7 +320,11 @@ impl DockViewportHostSceneRegistry {
         scene = scene.with_payload_size(payload_size);
         let resolution =
             scene.resolve_drop_with_validator(policy, target_validator, edge_plan_resolver)?;
-        Some((frame, resolution))
+        Some(DockViewportResolvedFrame {
+            frame,
+            drop_guide_style,
+            resolution,
+        })
     }
 
     #[cfg(test)]
@@ -268,8 +348,8 @@ impl DockViewportHostSceneRegistry {
 mod tests {
     use super::*;
     use crate::{
-        DockPolicy,
-        drop_target::{DockEmptySpaceDropTarget, DockResolvedDropTargetKind},
+        DockGraph, DockNode, DockPolicy,
+        drop_target::{DockEmptySpaceDropTarget, DockLeafDropTarget, DockResolvedDropTargetKind},
         viewport_test_support::{bounds, space},
     };
     use open_gpui::{WindowId, point, px};
@@ -505,6 +585,53 @@ mod tests {
                 )
                 .is_some(),
             "window-local scene facts should still resolve for the receiving viewport"
+        );
+    }
+
+    #[test]
+    fn host_scene_leaf_bounds_for_tabs_is_bound_to_space_and_window() {
+        let source_space = space("main");
+        let other_space = space("other");
+        let window_id = WindowId::from(1);
+        let other_window_id = WindowId::from(2);
+        let mut graph = DockGraph::new();
+        let tabs = graph.insert_node(DockNode::Tabs {
+            items: Vec::new(),
+            selected: None,
+        });
+        let leaf_bounds = bounds(20.0, 30.0, 400.0, 240.0);
+        let mut registry = DockViewportHostSceneRegistry::default();
+
+        let frame = registry
+            .register(snapshot(source_space.clone(), window_id))
+            .frame;
+        assert!(
+            registry
+                .push_frame_fact(
+                    &frame,
+                    DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                        root: tabs,
+                        target_tabs: tabs,
+                        bounds: leaf_bounds,
+                        is_central: false,
+                    })
+                )
+                .is_some()
+        );
+
+        assert_eq!(
+            registry.leaf_bounds_for_tabs(&source_space, Some(window_id), tabs),
+            Some(leaf_bounds)
+        );
+        assert_eq!(
+            registry.leaf_bounds_for_tabs(&source_space, Some(other_window_id), tabs),
+            None,
+            "a stale window id must not reuse another viewport's leaf bounds"
+        );
+        assert_eq!(
+            registry.leaf_bounds_for_tabs(&other_space, Some(window_id), tabs),
+            None,
+            "leaf bounds are scoped to the rendered dock space"
         );
     }
 
