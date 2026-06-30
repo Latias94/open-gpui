@@ -2,7 +2,9 @@ use crate::{
     DockHost, DockNode, DockNodeId, DropZone,
     debug::DockDebugRegion,
     drag::DockDragPayload,
-    drop_preview::{DockDropPreview, DockDropRoutePreview, DockPreviewDropBox},
+    drop_preview::{
+        DockDropPreview, DockDropRoutePreview, DockPreviewDropBox, DockPreviewTabInsertionIndex,
+    },
     drop_runtime::DockHostDropSceneFact,
     drop_scene_fact, geometry,
     host_render_session::{DockHostRenderSession, selected_index},
@@ -10,7 +12,7 @@ use crate::{
         DockPayloadDropRelease, DockRenderedOutsideReleaseDecision,
         DockRenderedOutsideReleaseRequest,
     },
-    overlay_scene::DockOverlayScene,
+    overlay_scene::{DockOverlayLayer, DockOverlayScene},
     render_split::DockRenderSplitInput,
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
@@ -38,10 +40,17 @@ struct DockDropPreviewTabLayout {
     tab_bounds: Vec<DockDropPreviewTabPlacement>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct DockDropPreviewTabPlacement {
     index: usize,
+    title: String,
     tab_bounds: Bounds<Pixels>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct DockDropPreviewPayloadTab {
+    index: usize,
+    title: String,
 }
 
 impl Render for DockHost {
@@ -200,13 +209,18 @@ impl DockHost {
         &self,
         session: &DockHostRenderSession,
         preview_bounds: Bounds<Pixels>,
-        payload_tabs: &crate::drop_preview::DockPreviewPayloadTabs,
+        overlay_scene: &DockOverlayScene,
         window: &Window,
     ) -> Option<DockDropPreviewTabLayout> {
-        let target_tabs = payload_tabs.target_tabs?;
+        let insertion = overlay_scene.tab_insertion()?;
+        let target_tabs = insertion.target_node?;
         let DockNode::Tabs { items, .. } = session.node(target_tabs)?.clone() else {
             return None;
         };
+        let payload_tabs = overlay_payload_tabs(overlay_scene);
+        if payload_tabs.is_empty() {
+            return None;
+        }
         let tab_height = px(f32::from(preview_bounds.size.height)
             .min(DROP_PREVIEW_TAB_HEIGHT)
             .max(0.0));
@@ -217,8 +231,13 @@ impl DockHost {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
         let tab_gap = px(DROP_PREVIEW_TAB_GAP);
-        let insert_index = payload_tabs
-            .insert_index
+        let insert_index = insertion
+            .tab_insertion
+            .as_ref()
+            .map(|insertion| match insertion.index {
+                DockPreviewTabInsertionIndex::At(index) => index,
+                DockPreviewTabInsertionIndex::Append => items.len(),
+            })
             .unwrap_or(items.len())
             .min(items.len());
         let mut tab_left = self
@@ -253,8 +272,8 @@ impl DockHost {
         let tab_strip_right = f32::from(preview_bounds.origin.x + preview_bounds.size.width);
         let tab_gap = f32::from(tab_gap);
         let requested_left = f32::from(tab_left).max(tab_strip_left);
-        let mut tab_widths = Vec::with_capacity(payload_tabs.tabs.len());
-        for payload_tab in &payload_tabs.tabs {
+        let mut tab_widths = Vec::with_capacity(payload_tabs.len());
+        for payload_tab in &payload_tabs {
             let payload_title = payload_tab.title.as_str();
             let payload_line = window.text_system().shape_line(
                 SharedString::from(payload_title.to_string()),
@@ -292,10 +311,11 @@ impl DockHost {
         let tab_strip_width = tab_widths.iter().sum::<f32>() + total_gap;
         let mut tab_left =
             requested_left.min((tab_strip_right - tab_strip_width).max(tab_strip_left));
-        let mut tab_bounds = Vec::with_capacity(payload_tabs.tabs.len());
-        for (index, tab_width) in tab_widths.into_iter().enumerate() {
+        let mut tab_bounds = Vec::with_capacity(payload_tabs.len());
+        for (payload_tab, tab_width) in payload_tabs.iter().zip(tab_widths) {
             tab_bounds.push(DockDropPreviewTabPlacement {
-                index,
+                index: payload_tab.index,
+                title: payload_tab.title.clone(),
                 tab_bounds: Bounds::new(
                     point(px(tab_left), preview_bounds.origin.y),
                     open_gpui::size(px(tab_width), tab_height),
@@ -596,9 +616,9 @@ impl DockHost {
             .h(bounds.size.height)
             .overflow_hidden();
 
-        if let Some(payload_tabs) = payload_tabs_for_render(scene)
+        if overlay_scene.has_payload_tab_preview()
             && let Some(layout) =
-                self.drop_preview_tab_layout(session, bounds, &payload_tabs, window)
+                self.drop_preview_tab_layout(session, bounds, &overlay_scene, window)
         {
             let body_selector = self.record_debug_selector(
                 DockDebugRegion::DropPreviewBody,
@@ -636,7 +656,6 @@ impl DockHost {
                     .bg(palette.border),
             );
             for placement in layout.tab_bounds {
-                let tab = &payload_tabs.tabs[placement.index];
                 let tab_selector = self.record_debug_selector(
                     DockDebugRegion::DropPayloadTabPreview {
                         index: placement.index,
@@ -670,7 +689,7 @@ impl DockHost {
                         .rounded_t_sm()
                         .rounded_br_sm()
                         .border_b_0()
-                        .child(tab.title.clone()),
+                        .child(placement.title),
                 );
             }
         } else {
@@ -847,14 +866,20 @@ impl DockHost {
     }
 }
 
-fn payload_tabs_for_render(
-    scene: &crate::drop_preview::DockPreviewScene,
-) -> Option<crate::drop_preview::DockPreviewPayloadTabs> {
-    let payload_tabs = scene.payload_tabs.as_ref()?;
-    if !scene.decision.is_allowed() || scene.active_split().is_some() {
-        return None;
-    }
-    (!payload_tabs.tabs.is_empty()).then(|| payload_tabs.clone())
+fn overlay_payload_tabs(overlay_scene: &DockOverlayScene) -> Vec<DockDropPreviewPayloadTab> {
+    let mut tabs = overlay_scene
+        .payload_tabs()
+        .filter_map(payload_tab_from_overlay_layer)
+        .collect::<Vec<_>>();
+    tabs.sort_by_key(|tab| tab.index);
+    tabs
+}
+
+fn payload_tab_from_overlay_layer(layer: &DockOverlayLayer) -> Option<DockDropPreviewPayloadTab> {
+    Some(DockDropPreviewPayloadTab {
+        index: layer.payload_index?,
+        title: layer.payload_title.clone().unwrap_or_default(),
+    })
 }
 
 fn guide_directional_cue(
@@ -1099,6 +1124,65 @@ mod tests {
             bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(56.0), px(40.0))),
             rejected,
         }
+    }
+
+    #[test]
+    fn payload_tab_render_inputs_come_from_overlay_layers() {
+        let overlay = DockOverlayScene {
+            layers: vec![
+                DockOverlayLayer {
+                    kind: crate::overlay_scene::DockOverlayLayerKind::TabInsertion,
+                    bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(3.0), px(26.0))),
+                    target_node: None,
+                    zone: Some(DropZone::Center),
+                    preview_layer: None,
+                    active: true,
+                    payload_index: None,
+                    payload_title: None,
+                    drop_box: None,
+                    tab_insertion: None,
+                },
+                DockOverlayLayer {
+                    kind: crate::overlay_scene::DockOverlayLayerKind::PayloadTab,
+                    bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(80.0), px(26.0))),
+                    target_node: None,
+                    zone: Some(DropZone::Center),
+                    preview_layer: None,
+                    active: true,
+                    payload_index: Some(1),
+                    payload_title: Some("Diff".to_string()),
+                    drop_box: None,
+                    tab_insertion: None,
+                },
+                DockOverlayLayer {
+                    kind: crate::overlay_scene::DockOverlayLayerKind::PayloadTab,
+                    bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(80.0), px(26.0))),
+                    target_node: None,
+                    zone: Some(DropZone::Center),
+                    preview_layer: None,
+                    active: true,
+                    payload_index: Some(0),
+                    payload_title: Some("Preview".to_string()),
+                    drop_box: None,
+                    tab_insertion: None,
+                },
+            ],
+        };
+
+        assert!(overlay.has_payload_tab_preview());
+        assert_eq!(
+            overlay_payload_tabs(&overlay),
+            vec![
+                DockDropPreviewPayloadTab {
+                    index: 0,
+                    title: "Preview".to_string(),
+                },
+                DockDropPreviewPayloadTab {
+                    index: 1,
+                    title: "Diff".to_string(),
+                },
+            ]
+        );
     }
 
     #[test]

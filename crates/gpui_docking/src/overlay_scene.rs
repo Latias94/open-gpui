@@ -21,6 +21,7 @@ pub(crate) struct DockOverlayLayer {
     pub(crate) preview_layer: Option<DockPreviewLayerKind>,
     pub(crate) active: bool,
     pub(crate) payload_index: Option<usize>,
+    pub(crate) payload_title: Option<String>,
     pub(crate) drop_box: Option<DockPreviewDropBox>,
     pub(crate) tab_insertion: Option<DockPreviewTabInsertion>,
 }
@@ -57,6 +58,7 @@ impl DockOverlayScene {
                 preview_layer: None,
                 active: preview.decision.is_allowed(),
                 payload_index: None,
+                payload_title: None,
                 drop_box: None,
                 tab_insertion: None,
             });
@@ -72,6 +74,7 @@ impl DockOverlayScene {
                     preview_layer: Some(drop_box.layer),
                     active: drop_box.active,
                     payload_index: None,
+                    payload_title: None,
                     drop_box: Some(*drop_box),
                     tab_insertion: None,
                 });
@@ -90,12 +93,13 @@ impl DockOverlayScene {
                     preview_layer: None,
                     active: preview.decision.is_allowed(),
                     payload_index: None,
+                    payload_title: None,
                     drop_box: None,
                     tab_insertion: Some(insertion),
                 });
             }
 
-            for (index, _tab) in payload_tabs.tabs.iter().enumerate() {
+            for (index, tab) in payload_tabs.tabs.iter().enumerate() {
                 scene.layers.push(DockOverlayLayer {
                     kind: DockOverlayLayerKind::PayloadTab,
                     bounds: payload_tabs
@@ -108,6 +112,7 @@ impl DockOverlayScene {
                     preview_layer: None,
                     active: preview.decision.is_allowed(),
                     payload_index: Some(index),
+                    payload_title: Some(tab.title.clone()),
                     drop_box: None,
                     tab_insertion: None,
                 });
@@ -126,6 +131,7 @@ impl DockOverlayScene {
                 preview_layer: None,
                 active: true,
                 payload_index: None,
+                payload_title: None,
                 drop_box: None,
                 tab_insertion: None,
             });
@@ -144,6 +150,7 @@ impl DockOverlayScene {
                 preview_layer: None,
                 active: !preview.rejected,
                 payload_index: None,
+                payload_title: None,
                 drop_box: None,
                 tab_insertion: None,
             }],
@@ -155,5 +162,21 @@ impl DockOverlayScene {
             .iter()
             .filter(|layer| layer.kind == DockOverlayLayerKind::GuideBox)
             .filter_map(|layer| layer.drop_box)
+    }
+
+    pub(crate) fn tab_insertion(&self) -> Option<&DockOverlayLayer> {
+        self.layers
+            .iter()
+            .find(|layer| layer.kind == DockOverlayLayerKind::TabInsertion && layer.active)
+    }
+
+    pub(crate) fn payload_tabs(&self) -> impl Iterator<Item = &DockOverlayLayer> + '_ {
+        self.layers
+            .iter()
+            .filter(|layer| layer.kind == DockOverlayLayerKind::PayloadTab && layer.active)
+    }
+
+    pub(crate) fn has_payload_tab_preview(&self) -> bool {
+        self.tab_insertion().is_some() && self.payload_tabs().next().is_some()
     }
 }

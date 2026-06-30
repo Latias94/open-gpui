@@ -230,6 +230,14 @@ fn overlay_scene_orders_center_tab_insertion_after_guides_before_payload_tabs() 
     assert_eq!(kinds[8], DockOverlayLayerKind::PayloadTab);
     assert_eq!(overlay.layers[6].target_node, Some(tabs));
     assert_eq!(overlay.layers[6].zone, Some(DropZone::Center));
+    assert_eq!(
+        overlay
+            .payload_tabs()
+            .map(|layer| (layer.payload_index, layer.payload_title.as_deref()))
+            .collect::<Vec<_>>(),
+        vec![(Some(0), Some("Preview")), (Some(1), Some("Diff"))]
+    );
+    assert!(overlay.has_payload_tab_preview());
 }
 
 #[test]
