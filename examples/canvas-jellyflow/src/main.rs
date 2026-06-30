@@ -25,13 +25,16 @@ use jellyflow::{
     },
 };
 use jellyflow_open_gpui::{
-    OpenGpuiControlPlan, OpenGpuiControlPrimitive,
+    OpenGpuiControlPlan, OpenGpuiControlPrimitive, OpenGpuiDynamicPortPolicy,
     OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
     OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout,
+    OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
+    OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
     OpenGpuiRepeatableSurfaceLayout as NodeRepeatableSurfaceLayout,
     OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection,
-    project_node_measurement, project_slot_controls, repeatable_surface_projection,
+    project_node_measurement, project_slot_controls, repeatable_item_projection,
+    repeatable_surface_projection,
 };
 use open_gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Pixels, Window,
@@ -52,6 +55,7 @@ use open_gpui_ui_components::{
 use open_gpui_ui_core::Size;
 use serde_json::Value;
 
+const REPEATABLE_ITEM_SNAPSHOTS_FIELD: &str = "jellyflow_repeatable_items";
 const INITIAL_SELECTION: u128 = 2;
 const CANVAS_WIDTH: f32 = 1140.0;
 const CANVAS_HEIGHT: f32 = 650.0;
@@ -112,7 +116,23 @@ struct NodeSurfaceSummary {
     inspectors: usize,
     blackboards: usize,
     repeatables: Vec<NodeRepeatableSurfaceProjection>,
+    repeatable_items: Vec<NodeRepeatableItemProjection>,
     node_data: Value,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct RepeatableItemSnapshot {
+    collection_key: String,
+    item_id: String,
+    item_index: usize,
+    slot_key: String,
+    anchor: String,
+    label: String,
+    port_key: Option<String>,
+    port_id: Option<String>,
+    port_direction: Option<PortDirection>,
+    dynamic_port_policy: OpenGpuiDynamicPortPolicy,
+    controls: usize,
 }
 
 struct NodeSummary {
@@ -506,7 +526,7 @@ fn render_node_surface(bounds: Bounds<Pixels>, surface: NodeSurfaceSummary) -> i
     let inner_width = (bounds.size.width - pad * 2.0).max(px(0.0));
     let inner_height = (bounds.size.height - pad * 2.0).max(px(0.0));
     let slot_limit = adapter_slot_limit_for_height(inner_height, surface.projection.slot_limit);
-    let component_layout = NodeSurfaceComponentLayout::new(
+    let component_layout = NodeSurfaceComponentLayout::with_repeatable_items(
         surface
             .slots
             .iter()
@@ -517,6 +537,7 @@ fn render_node_surface(bounds: Bounds<Pixels>, surface: NodeSurfaceSummary) -> i
             })
             .collect(),
         surface.repeatables.clone(),
+        surface.repeatable_items.clone(),
         JellySize {
             width: surface.document_bounds.size.width,
             height: surface.document_bounds.size.height,
@@ -641,6 +662,10 @@ fn node_surface_summary_for_node(
     let projection = NodeSurfaceProjection::from_layout_hints(layout_hints, zoom);
     let slots = descriptor.surface_slots_projection(&data, Some(layout_hints), zoom);
     let repeatables = repeatable_surface_projection(&descriptor, &data);
+    let repeatable_items = repeatable_item_snapshots_from_node(node)
+        .into_iter()
+        .map(repeatable_item_projection_from_snapshot)
+        .collect();
     let document_bounds = jelly_rect_from_bounds(node.bounds());
     let chrome = resolve_node_chrome_facts(
         NodeChromeFactsRequest::new(
@@ -679,6 +704,7 @@ fn node_surface_summary_for_node(
         inspectors: descriptor.inspectors.len(),
         blackboards: descriptor.blackboards.len(),
         repeatables,
+        repeatable_items,
         node_data: data,
     })
 }
@@ -830,6 +856,10 @@ fn render_surface_slots(
         .map(|slot| render_node_slot(slot, document_bounds, &node_data, view_width, view_height))
         .map(|slot| slot.into_any_element())
         .collect::<Vec<_>>();
+    elements.extend(layout.repeatable_items.into_iter().map(|repeatable| {
+        render_repeatable_item_row(repeatable, document_bounds, view_width, view_height)
+            .into_any_element()
+    }));
     elements.extend(layout.repeatables.into_iter().map(|repeatable| {
         render_repeatable_row(repeatable, document_bounds, view_width, view_height)
             .into_any_element()
@@ -1239,6 +1269,72 @@ fn render_repeatable_row(
         )
 }
 
+fn render_repeatable_item_row(
+    repeatable: NodeRepeatableItemLayout,
+    document_bounds: JellyRect,
+    view_width: Pixels,
+    view_height: Pixels,
+) -> impl IntoElement {
+    let rect = slot_view_rect(repeatable.rect, document_bounds, view_width, view_height);
+    let fill = if repeatable.projection.has_graph_port() {
+        rgb(0xecfeff)
+    } else {
+        rgb(0xfffbeb)
+    };
+    let stroke = if repeatable.projection.has_graph_port() {
+        rgb(0x67e8f9)
+    } else {
+        rgb(0xfbbf24)
+    };
+    let badge = repeatable
+        .projection
+        .port_key
+        .as_ref()
+        .map(|port| format!("port {}", port.0))
+        .unwrap_or_else(|| "display".to_string());
+
+    div()
+        .absolute()
+        .left(rect.origin.x)
+        .top(rect.origin.y)
+        .w(rect.size.width)
+        .h(rect.size.height)
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .min_w(px(0.0))
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .bg(fill)
+        .border_1()
+        .border_color(stroke)
+        .overflow_hidden()
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(0x334155))
+                .truncate()
+                .min_w(px(0.0))
+                .child(format!(
+                    "{} · {}",
+                    repeatable.projection.label, repeatable.projection.item_id
+                )),
+        )
+        .child(
+            Badge::new(
+                format!(
+                    "jellyflow-repeatable-item:{}:{}",
+                    repeatable.projection.collection_key, repeatable.projection.item_id
+                ),
+                badge,
+            )
+            .variant(BadgeVariant::Outline)
+            .with_size(Size::XSmall),
+        )
+}
+
 fn adapter_slot_limit_for_height(inner_height: Pixels, semantic_slot_limit: usize) -> usize {
     let available = (inner_height.as_f32() - NODE_SURFACE_CHROME_HEIGHT).max(0.0);
     let height_limit = (available / NODE_SURFACE_SLOT_ROW_HEIGHT).floor() as usize;
@@ -1530,6 +1626,27 @@ fn project_kit_fixture(
     project_store(&store).map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
 }
 
+#[cfg(test)]
+fn project_schema_node(
+    kind: &str,
+) -> Result<(CanvasDocument, ProjectionSummary, JellyNodeId), Box<dyn std::error::Error>> {
+    use jellyflow::runtime::runtime::create_node::CreateNodeRequest;
+
+    let registry = NodeKitRegistry::builtin().node_registry();
+    let mut store = NodeGraphStore::new(
+        Graph::new(GraphId::from_u128(900)),
+        NodeGraphViewState::default(),
+        NodeGraphEditorConfig::default(),
+    );
+    let outcome = store.apply_create_node_from_schema(
+        &registry,
+        CreateNodeRequest::new(NodeKindKey::new(kind), JellyPoint::default()),
+    )?;
+    let node_id = outcome.node_id();
+    let (document, projection) = project_store(&store)?;
+    Ok((document, projection, node_id))
+}
+
 fn project_edge_route(edge: &Edge) -> open_gpui_canvas::CanvasEdgeRoute {
     match edge.view.route_kind {
         Some(jellyflow::core::EdgeRouteKind::Straight) => {
@@ -1577,6 +1694,15 @@ fn project_node(
     canvas_node.data.insert(
         "ports".to_string(),
         serde_json::json!(port_summary(node, graph)),
+    );
+    canvas_node.data.insert(
+        REPEATABLE_ITEM_SNAPSHOTS_FIELD.to_string(),
+        Value::Array(
+            repeatable_item_projection(&descriptor, node, graph, id)
+                .into_iter()
+                .map(repeatable_item_projection_to_snapshot_value)
+                .collect(),
+        ),
     );
 
     let input_ports = node
@@ -1812,6 +1938,13 @@ fn jelly_node_id_from_str(id: &str) -> Option<JellyNodeId> {
         .or_else(|| serde_json::from_value(Value::String(id.to_string())).ok())
 }
 
+fn jelly_port_id_from_str(id: &str) -> Option<JellyPortId> {
+    id.parse::<u128>()
+        .ok()
+        .map(JellyPortId::from_u128)
+        .or_else(|| serde_json::from_value(Value::String(id.to_string())).ok())
+}
+
 fn jelly_rect_from_bounds(bounds: Bounds<Pixels>) -> JellyRect {
     JellyRect {
         origin: JellyPoint {
@@ -1822,6 +1955,122 @@ fn jelly_rect_from_bounds(bounds: Bounds<Pixels>) -> JellyRect {
             width: bounds.size.width.as_f32(),
             height: bounds.size.height.as_f32(),
         },
+    }
+}
+
+fn repeatable_item_projection_to_snapshot_value(item: NodeRepeatableItemProjection) -> Value {
+    serde_json::json!({
+        "collection_key": item.collection_key,
+        "item_id": item.item_id,
+        "item_index": item.item_index,
+        "slot_key": item.slot_key,
+        "anchor": item.anchor,
+        "label": item.label,
+        "port_key": item.port_key.map(|port| port.0),
+        "port_id": item.port_id.map(|port| port.0.to_string()),
+        "port_direction": item.port_direction.map(port_direction_snapshot_value),
+        "dynamic_port_policy": dynamic_port_policy_snapshot_value(item.dynamic_port_policy),
+        "controls": item.controls,
+    })
+}
+
+fn repeatable_item_snapshots_from_node(node: &CanvasNode) -> Vec<RepeatableItemSnapshot> {
+    node.data
+        .get(REPEATABLE_ITEM_SNAPSHOTS_FIELD)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(repeatable_item_snapshot_from_value)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn repeatable_item_snapshot_from_value(value: &Value) -> Option<RepeatableItemSnapshot> {
+    let object = value.as_object()?;
+    Some(RepeatableItemSnapshot {
+        collection_key: object.get("collection_key")?.as_str()?.to_string(),
+        item_id: object.get("item_id")?.as_str()?.to_string(),
+        item_index: object
+            .get("item_index")
+            .and_then(Value::as_u64)
+            .unwrap_or_default() as usize,
+        slot_key: object.get("slot_key")?.as_str()?.to_string(),
+        anchor: object.get("anchor")?.as_str()?.to_string(),
+        label: object.get("label")?.as_str()?.to_string(),
+        port_key: object
+            .get("port_key")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        port_id: object
+            .get("port_id")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        port_direction: object
+            .get("port_direction")
+            .and_then(Value::as_str)
+            .and_then(port_direction_from_snapshot_value),
+        dynamic_port_policy: object
+            .get("dynamic_port_policy")
+            .and_then(Value::as_str)
+            .and_then(dynamic_port_policy_from_snapshot_value)
+            .unwrap_or(OpenGpuiDynamicPortPolicy::DisplayOnly),
+        controls: object
+            .get("controls")
+            .and_then(Value::as_u64)
+            .unwrap_or_default() as usize,
+    })
+}
+
+fn repeatable_item_projection_from_snapshot(
+    snapshot: RepeatableItemSnapshot,
+) -> NodeRepeatableItemProjection {
+    NodeRepeatableItemProjection {
+        collection_key: snapshot.collection_key,
+        item_id: snapshot.item_id,
+        item_index: snapshot.item_index,
+        slot_key: snapshot.slot_key,
+        anchor: snapshot.anchor,
+        label: snapshot.label,
+        port_key: snapshot.port_key.map(PortKey::new),
+        port_id: snapshot.port_id.as_deref().and_then(jelly_port_id_from_str),
+        port_direction: snapshot.port_direction,
+        dynamic_port_policy: snapshot.dynamic_port_policy,
+        controls: snapshot.controls,
+        item_data: Value::Null,
+    }
+}
+
+fn port_direction_snapshot_value(direction: PortDirection) -> &'static str {
+    match direction {
+        PortDirection::In => "in",
+        PortDirection::Out => "out",
+    }
+}
+
+fn port_direction_from_snapshot_value(value: &str) -> Option<PortDirection> {
+    match value {
+        "in" => Some(PortDirection::In),
+        "out" => Some(PortDirection::Out),
+        _ => None,
+    }
+}
+
+fn dynamic_port_policy_snapshot_value(policy: OpenGpuiDynamicPortPolicy) -> &'static str {
+    match policy {
+        OpenGpuiDynamicPortPolicy::DisplayOnly => "display_only",
+        OpenGpuiDynamicPortPolicy::BoundToGraphPort => "bound_to_graph_port",
+        OpenGpuiDynamicPortPolicy::MissingGraphPort => "missing_graph_port",
+    }
+}
+
+fn dynamic_port_policy_from_snapshot_value(value: &str) -> Option<OpenGpuiDynamicPortPolicy> {
+    match value {
+        "display_only" => Some(OpenGpuiDynamicPortPolicy::DisplayOnly),
+        "bound_to_graph_port" => Some(OpenGpuiDynamicPortPolicy::BoundToGraphPort),
+        "missing_graph_port" => Some(OpenGpuiDynamicPortPolicy::MissingGraphPort),
+        _ => None,
     }
 }
 
@@ -2067,10 +2316,51 @@ mod tests {
                 .any(|slot| slot.kind == NodeSurfaceSlotKind::Preview)
         );
         assert!(
+            surface
+                .repeatables
+                .iter()
+                .any(|repeatable| repeatable.key == "shader.inputs")
+        );
+        assert!(
             shader_node
                 .handles
                 .iter()
                 .any(|handle| handle.role == HandleRole::Source)
+        );
+    }
+
+    #[test]
+    fn shader_default_node_projects_dynamic_repeatable_items_into_surface_summary() {
+        let (document, projection, node_id) =
+            project_schema_node("demo.shader.mix").expect("shader schema node projects");
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let shader_node = document
+            .node(&NodeId::from(canvas_node_id(&node_id)))
+            .expect("shader-card canvas node exists");
+        let surface = node_surface_summary_for_node(
+            shader_node,
+            1.0,
+            false,
+            &semantic_registry,
+            &node_kit_registry,
+        )
+        .expect("shader surface summary");
+
+        assert_eq!(projection.canvas_nodes, 1);
+        let factor = surface
+            .repeatable_items
+            .iter()
+            .find(|item| item.collection_key == "shader.inputs" && item.item_id == "factor")
+            .expect("factor repeatable item projects");
+        let factor_port = factor
+            .port_id
+            .expect("factor repeatable item binds a graph port");
+        assert!(
+            shader_node
+                .handles
+                .iter()
+                .any(|handle| handle.id.as_str() == canvas_port_id(&factor_port))
         );
     }
 
@@ -2207,6 +2497,15 @@ mod tests {
                 .any(|repeatable| repeatable.key == "table.columns"
                     && repeatable.item_count >= 1
                     && repeatable.controls >= 2)
+        );
+        assert!(
+            surface
+                .repeatable_items
+                .iter()
+                .any(|item| item.collection_key == "table.columns"
+                    && item.item_id == "qty"
+                    && item.port_key == Some(PortKey::new("field_qty"))
+                    && item.dynamic_port_policy == OpenGpuiDynamicPortPolicy::MissingGraphPort)
         );
         assert!(surface.actions >= 3);
         assert!(surface.menus >= 1);
