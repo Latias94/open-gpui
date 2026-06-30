@@ -219,4 +219,10 @@ fn presentation_scene_uses_central_child_fraction_for_resolved_grid(cx: &mut Tes
     assert_close(f32::from(central_pane.bounds.size.width), 500.0);
     assert_close(f32::from(right_pane.bounds.size.width), 300.0);
     assert!(central_pane.is_central);
+
+    assert_eq!(scene.splitters.len(), 2);
+    assert_close(f32::from(scene.splitters[0].bounds.origin.x), 197.0);
+    assert_close(f32::from(scene.splitters[0].bounds.size.width), 6.0);
+    assert_close(f32::from(scene.splitters[1].bounds.origin.x), 697.0);
+    assert_close(f32::from(scene.splitters[1].bounds.size.width), 6.0);
 }

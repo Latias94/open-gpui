@@ -67,9 +67,20 @@ pub struct SplitterMetrics {
     handle_thickness: UiPx,
     handle_hit_size: UiPx,
     radius: UiPx,
+    handle_placement: SplitterHandlePlacement,
 }
 
 impl SplitterMetrics {
+    /// Creates explicit metrics for adapters that do not use size tokens directly.
+    pub const fn new(handle_thickness: UiPx, handle_hit_size: UiPx, radius: UiPx) -> Self {
+        Self {
+            handle_thickness,
+            handle_hit_size,
+            radius,
+            handle_placement: SplitterHandlePlacement::BetweenPanels,
+        }
+    }
+
     /// Resolves metrics from the shared foundation size vocabulary.
     pub const fn from_size(size: Size) -> Self {
         Self {
@@ -84,7 +95,14 @@ impl SplitterMetrics {
                 Size::Large => ui_px(14.0),
             },
             radius: size.control_radius(),
+            handle_placement: SplitterHandlePlacement::BetweenPanels,
         }
+    }
+
+    /// Returns metrics with a different handle placement strategy.
+    pub const fn with_handle_placement(mut self, placement: SplitterHandlePlacement) -> Self {
+        self.handle_placement = placement;
+        self
     }
 
     /// Returns the painted handle thickness.
@@ -101,6 +119,20 @@ impl SplitterMetrics {
     pub const fn radius(self) -> UiPx {
         self.radius
     }
+
+    /// Returns whether handle hit bounds reserve layout space or overlay panel boundaries.
+    pub const fn handle_placement(self) -> SplitterHandlePlacement {
+        self.handle_placement
+    }
+}
+
+/// Strategy used when resolving handle hit bounds in a split layout scene.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitterHandlePlacement {
+    /// Handle hit bounds occupy space between panels.
+    BetweenPanels,
+    /// Handle hit bounds are centered over the adjacent panel boundary.
+    OverlayBoundary,
 }
 
 /// Resolved state for one split panel.
@@ -430,6 +462,15 @@ pub struct SplitterLayoutScene {
 impl SplitterLayoutScene {
     /// Resolves a flat layout scene from an ordered splitter state.
     pub fn from_state(state: &SplitterState, bounds: UiRect) -> Self {
+        Self::from_state_with_metrics(state, bounds, state.metrics())
+    }
+
+    /// Resolves a flat layout scene from an ordered splitter state using adapter metrics.
+    pub fn from_state_with_metrics(
+        state: &SplitterState,
+        bounds: UiRect,
+        metrics: SplitterMetrics,
+    ) -> Self {
         let mut scene = Self {
             group_id: state.group_id().to_owned(),
             orientation: state.orientation(),
@@ -438,7 +479,7 @@ impl SplitterLayoutScene {
             handles: Vec::new(),
             junctions: Vec::new(),
         };
-        scene.push_state_layout(state, bounds, true);
+        scene.push_state_layout_with_metrics(state, bounds, true, metrics);
         scene.resolve_junctions();
         scene
     }
@@ -535,6 +576,16 @@ impl SplitterLayoutScene {
         bounds: UiRect,
         record_panels: bool,
     ) -> Vec<UiRect> {
+        self.push_state_layout_with_metrics(state, bounds, record_panels, state.metrics())
+    }
+
+    fn push_state_layout_with_metrics(
+        &mut self,
+        state: &SplitterState,
+        bounds: UiRect,
+        record_panels: bool,
+        metrics: SplitterMetrics,
+    ) -> Vec<UiRect> {
         let is_vertical = matches!(state.orientation(), Orientation::Vertical);
         let handle_count = state.handles().len();
         let axis_length = if is_vertical {
@@ -551,9 +602,18 @@ impl SplitterLayoutScene {
             return Vec::new();
         }
 
-        let handle_hit = state.metrics().handle_hit_size().as_f32();
-        let handle_thickness = state.metrics().handle_thickness().as_f32();
-        let panel_axis = (axis_length - handle_hit * handle_count as f32).max(0.0);
+        let handle_hit = metrics.handle_hit_size().as_f32();
+        let handle_thickness = metrics.handle_thickness().as_f32();
+        let reserves_handle_space = matches!(
+            metrics.handle_placement(),
+            SplitterHandlePlacement::BetweenPanels
+        );
+        let reserved_axis = if reserves_handle_space {
+            handle_hit * handle_count as f32
+        } else {
+            0.0
+        };
+        let panel_axis = (axis_length - reserved_axis).max(0.0);
         let mut cursor = if is_vertical {
             bounds.origin.y.as_f32()
         } else {
@@ -587,14 +647,19 @@ impl SplitterLayoutScene {
             cursor += length;
 
             if let Some(handle) = state.handles().get(index) {
+                let handle_origin = if reserves_handle_space {
+                    cursor
+                } else {
+                    cursor - handle_hit / 2.0
+                };
                 let handle_bounds = if is_vertical {
                     ui_rect(
-                        ui_point(bounds.origin.x, ui_px(cursor)),
+                        ui_point(bounds.origin.x, ui_px(handle_origin)),
                         ui_size(bounds.size.width, ui_px(handle_hit)),
                     )
                 } else {
                     ui_rect(
-                        ui_point(ui_px(cursor), bounds.origin.y),
+                        ui_point(ui_px(handle_origin), bounds.origin.y),
                         ui_size(ui_px(handle_hit), bounds.size.height),
                     )
                 };
@@ -613,7 +678,9 @@ impl SplitterLayoutScene {
                     bounds: handle_bounds,
                     visual_bounds,
                 });
-                cursor += handle_hit;
+                if reserves_handle_space {
+                    cursor += handle_hit;
+                }
             }
         }
 
@@ -1147,6 +1214,30 @@ mod tests {
         assert!((scene.handles()[0].bounds().origin.x.as_f32() - 100.0).abs() < 0.001);
         assert_eq!(scene.handles()[0].before_id(), "nav");
         assert_eq!(scene.handles()[0].after_id(), "main");
+    }
+
+    #[test]
+    fn split_layout_scene_can_overlay_handles_on_panel_boundaries() {
+        let state = SplitterState::resolve(
+            "dock",
+            Orientation::Horizontal,
+            Size::Medium,
+            false,
+            [
+                SplitterPanelDescriptor::new("left", 0.25).min_fraction(0.0),
+                SplitterPanelDescriptor::new("right", 0.75).min_fraction(0.0),
+            ],
+        );
+        let metrics = SplitterMetrics::new(ui_px(2.0), ui_px(6.0), ui_px(0.0))
+            .with_handle_placement(SplitterHandlePlacement::OverlayBoundary);
+        let scene =
+            SplitterLayoutScene::from_state_with_metrics(&state, rect(400.0, 200.0), metrics);
+
+        assert!((scene.panels()[0].bounds().size.width.as_f32() - 100.0).abs() < 0.001);
+        assert!((scene.panels()[1].bounds().origin.x.as_f32() - 100.0).abs() < 0.001);
+        assert!((scene.panels()[1].bounds().size.width.as_f32() - 300.0).abs() < 0.001);
+        assert!((scene.handles()[0].bounds().origin.x.as_f32() - 97.0).abs() < 0.001);
+        assert!((scene.handles()[0].bounds().size.width.as_f32() - 6.0).abs() < 0.001);
     }
 
     #[test]

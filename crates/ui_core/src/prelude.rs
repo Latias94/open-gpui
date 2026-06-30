@@ -28,10 +28,10 @@ pub use crate::{
     },
     sizing::{Density, Sizable, Size},
     split::{
-        SplitTreeChild, SplitTreeNode, SplitterHandleLayout, SplitterHandleState, SplitterHitMap,
-        SplitterHitTarget, SplitterJunctionHitRegion, SplitterLayoutScene, SplitterMetrics,
-        SplitterPanelDescriptor, SplitterPanelLayout, SplitterPanelState, SplitterResizeOutcome,
-        SplitterResizeResult, SplitterState,
+        SplitTreeChild, SplitTreeNode, SplitterHandleLayout, SplitterHandlePlacement,
+        SplitterHandleState, SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion,
+        SplitterLayoutScene, SplitterMetrics, SplitterPanelDescriptor, SplitterPanelLayout,
+        SplitterPanelState, SplitterResizeOutcome, SplitterResizeResult, SplitterState,
     },
     table::{
         TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,

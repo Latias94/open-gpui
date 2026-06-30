@@ -297,6 +297,10 @@ impl DockSplitLayout {
         self.shares.get(index).copied()
     }
 
+    pub(crate) fn shares(&self) -> &[f32] {
+        &self.shares
+    }
+
     pub(crate) fn handles(&self) -> Vec<DockSplitHandleLayout> {
         let mut cursor = 0.0_f32;
         self.shares
