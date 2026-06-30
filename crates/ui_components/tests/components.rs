@@ -218,22 +218,22 @@ const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
     PublicSurfaceOwnerEntry {
         name: "primitives::active_descendant",
         owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
-        home: "primitives/active_descendant.rs",
+        home: "removed",
     },
     PublicSurfaceOwnerEntry {
         name: "primitives::collection",
         owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
-        home: "primitives/collection.rs",
+        home: "removed",
     },
     PublicSurfaceOwnerEntry {
         name: "primitives::controllable_state",
         owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
-        home: "primitives/controllable_state.rs",
+        home: "removed",
     },
     PublicSurfaceOwnerEntry {
         name: "primitives::overlay",
         owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
-        home: "primitives/overlay.rs",
+        home: "removed",
     },
     PublicSurfaceOwnerEntry {
         name: "primitives::field_state",
@@ -12011,7 +12011,9 @@ fn public_surface_owner_map_homes_point_to_real_sources() {
         .expect("lib.rs should expose a gpui_adapter module");
 
     for entry in PUBLIC_SURFACE_OWNER_MAP {
-        if entry.home == "gpui_adapter" {
+        if entry.home == "removed" {
+            continue;
+        } else if entry.home == "gpui_adapter" {
             assert!(
                 gpui_adapter_source.contains(entry.name),
                 "`{}` should stay exported through the gpui_adapter owner group",
@@ -12050,15 +12052,16 @@ fn primitive_owner_map_classifies_every_public_primitive_module_once() {
         );
     }
 
+    owners.retain(|_, owner| *owner != PublicSurfaceOwnerClass::DeprecatedRemovalTarget);
     assert_eq!(
         owners.keys().cloned().collect::<Vec<_>>(),
         modules,
-        "every public primitives module should be explicitly classified before U2 removes shallow aliases"
+        "every remaining public primitives module should be explicitly classified after U2 removes shallow aliases"
     );
 }
 
 #[test]
-fn primitive_deletion_target_inventory_tracks_shallow_reexports() {
+fn primitive_deletion_target_inventory_blocks_removed_shallow_reexports() {
     let deletion_targets = PUBLIC_SURFACE_OWNER_MAP
         .iter()
         .filter(|entry| entry.owner == PublicSurfaceOwnerClass::DeprecatedRemovalTarget)
@@ -12083,15 +12086,54 @@ fn primitive_deletion_target_inventory_tracks_shallow_reexports() {
     );
 
     let primitives_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/primitives");
+    let public_modules = public_primitive_modules_from_mod();
     for module in deletion_targets {
         let source_path = primitives_dir.join(format!("{module}.rs"));
-        let source = std::fs::read_to_string(&source_path)
-            .unwrap_or_else(|error| panic!("failed to read {source_path:?}: {error}"));
         assert!(
-            source.contains("pub use open_gpui_ui_core::"),
-            "primitive deletion target `{module}` should still be a direct ui_core pass-through before U2"
+            !source_path.exists(),
+            "removed shallow primitive module `{module}` should not keep a compatibility file"
+        );
+        assert!(
+            !public_modules.contains(&module),
+            "removed shallow primitive module `{module}` should not stay in primitives/mod.rs"
         );
     }
+}
+
+#[test]
+fn primitive_modules_do_not_reexport_ui_core_as_pass_through_aliases() {
+    let primitives_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/primitives");
+    let entries = std::fs::read_dir(&primitives_dir)
+        .unwrap_or_else(|error| panic!("failed to read {primitives_dir:?}: {error}"));
+    let mut offenders = Vec::new();
+
+    for entry in entries {
+        let path = entry
+            .unwrap_or_else(|error| panic!("failed to read primitive source entry: {error}"))
+            .path();
+        if path.file_name().is_some_and(|name| name == "mod.rs")
+            || path.extension().is_none_or(|extension| extension != "rs")
+        {
+            continue;
+        }
+
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {path:?}: {error}"));
+        if source.contains("pub use open_gpui_ui_core::") {
+            offenders.push(
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("<unknown>")
+                    .to_owned(),
+            );
+        }
+    }
+
+    assert_eq!(
+        offenders,
+        Vec::<String>::new(),
+        "ui_components::primitives must own adapter behavior, not pass through ui_core aliases"
+    );
 }
 
 #[test]

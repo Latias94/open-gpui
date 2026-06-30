@@ -66,9 +66,7 @@ pub use crate::number_input::{
 };
 pub use crate::overlay::OverlayResolvedState;
 pub use crate::popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
-pub use crate::primitives::{
-    ActiveDescendant, CollectionPosition, ControllableState, UiA11yElementExt,
-};
+pub use crate::primitives::UiA11yElementExt;
 pub use crate::progress::{
     Progress, ProgressColors, ProgressMetrics, ProgressState, ProgressVisualMode,
 };
@@ -162,16 +160,17 @@ pub use crate::virtualized_list::{
     virtualized_list_scroll_target,
 };
 pub use open_gpui_ui_core::{
-    GridViewport2D, Sizable, Size, TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH,
-    TABLE_MIN_COLUMN_WIDTH, TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE,
-    TableAggregateKind, TableAggregation, TableCellEditor, TableCellValue, TableColumn,
-    TableColumnFacets, TableColumnGroup, TableColumnGroupId, TableColumnId, TableColumnNode,
-    TableColumnPinning, TableColumnRegion, TableColumnRegions, TableColumnResizeDirection,
-    TableColumnResizeMode, TableColumnResizeState, TableColumnResizeUpdate, TableColumnSizing,
-    TableColumnVisibilityOverrides, TableColumnWidthPolicy, TableExpansionMode,
-    TableExpansionState, TableFacetRange, TableFacetValueCount, TableFilter, TableFilterKind,
-    TableGlobalFacetSummary, TableGroupRow, TableNumericFilterBound, TableNumericFilterOperator,
-    TablePagination, TableResolvedColumnSizing, TableResolvedColumnSizingRegions, TableResolvedRow,
+    ActiveDescendant, CollectionPosition, ControllableState, GridViewport2D, Sizable, Size,
+    TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
+    TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind, TableAggregation,
+    TableCellEditor, TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup,
+    TableColumnGroupId, TableColumnId, TableColumnNode, TableColumnPinning, TableColumnRegion,
+    TableColumnRegions, TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState,
+    TableColumnResizeUpdate, TableColumnSizing, TableColumnVisibilityOverrides,
+    TableColumnWidthPolicy, TableExpansionMode, TableExpansionState, TableFacetRange,
+    TableFacetValueCount, TableFilter, TableFilterKind, TableGlobalFacetSummary, TableGroupRow,
+    TableNumericFilterBound, TableNumericFilterOperator, TablePagination,
+    TableResolvedColumnSizing, TableResolvedColumnSizingRegions, TableResolvedRow,
     TableResolvedRowKind, TableResolvedState, TableRow, TableRowChildrenLoadState, TableRowId,
     TableRowModel, TableRowModelStage, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
     TableRowRegions, TableSelectOption, TableSelectionActivationMode, TableSelectionMode,

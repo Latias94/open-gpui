@@ -324,8 +324,10 @@ without GPUI runtime types. `gpui adapter helper` names are public only through
 names such as render plans are public to explain resolved geometry and row/window projection, but
 they are not component facades. `internal implementation detail` names are public anatomy owned by
 one official family. `deprecated removal target` names are shallow compatibility surfaces scheduled
-for deletion; the current targets are the pass-through `ui_components::primitives` modules for
-active-descendant, collection metadata, controllable state, and overlay policy aliases.
+for deletion or already deleted. The removed targets are the former pass-through
+`ui_components::primitives` modules for active-descendant, collection metadata, controllable state,
+and overlay policy aliases. Import those neutral contracts from `open_gpui_ui_core`; remaining
+`ui_components::primitives` modules must own GPUI adapter behavior or component-family anatomy.
 
 The foundation component families above are official rendered components. Their resolved states
 must stay aligned with the same ownership vocabulary as the older components:
