@@ -3173,6 +3173,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jellyflow-open-gpui"
+version = "0.3.0"
+dependencies = [
+ "jellyflow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jellyflow-runtime"
 version = "0.3.0"
 dependencies = [
@@ -4328,6 +4337,7 @@ name = "open-gpui-canvas-jellyflow"
 version = "0.1.0"
 dependencies = [
  "jellyflow",
+ "jellyflow-open-gpui",
  "open-gpui",
  "open-gpui-canvas",
  "open-gpui-platform",

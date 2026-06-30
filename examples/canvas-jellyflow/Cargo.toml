@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 jellyflow = { path = "../../../../crates/jellyflow" }
+jellyflow-open-gpui = { path = "../../../../crates/jellyflow-open-gpui" }
 open_gpui.workspace = true
 open_gpui_canvas.workspace = true
 open_gpui_platform.workspace = true
