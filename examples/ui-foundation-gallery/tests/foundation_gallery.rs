@@ -2574,6 +2574,46 @@ fn components_catalog_metadata_is_separate_from_rendering() {
 }
 
 #[test]
+fn verification_docs_list_current_ui_architecture_focused_gates() {
+    let verification = include_str!("../../../docs/verification.md");
+
+    for required in [
+        "primitive_deletion_target_inventory_blocks_removed_shallow_reexports",
+        "primitive_modules_do_not_reexport_ui_core_as_pass_through_aliases",
+        "public_surface_owner_map_classifies_official_gallery_catalog_once",
+        "public_surface_owner_map_aligns_adjacent_gallery_statuses",
+        "overlay_open_change_helpers_match_core_policies",
+        "dialog_runtime_respects_escape_policy_and_restores_trigger_focus",
+        "choice_surfaces_share_stable_value_resolution_and_query_normalization",
+        "table_diagnostics_exposes_faceting_metadata",
+        "table_diagnostics_exposes_editable_leaf_cell_kinds_for_leaf_cells_only",
+        "table_component_source_mapping_tracks_split_render_owners",
+        "row_window",
+        "virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts",
+        "theme_registry",
+        "theme_resolver",
+        "theme_snapshots",
+        "components_catalog_metadata_is_separate_from_rendering",
+        "official_component_catalog_entries_have_signals_and_sample_selectors",
+        "state_contract_catalog_entries_have_signals_and_readout_selectors",
+    ] {
+        assert!(
+            verification.contains(required),
+            "verification docs should list focused UI architecture gate `{required}`"
+        );
+    }
+
+    assert!(
+        !verification.contains("table_render_plan_exposes_"),
+        "verification docs should use Table diagnostics gates, not removed render-plan test names"
+    );
+    assert!(
+        verification.contains("cargo run -p xtask -- verify"),
+        "verification docs should keep the final integration gate visible"
+    );
+}
+
+#[test]
 fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
     let components_source = include_str!("../src/pages/components.rs");
     let render_source = include_str!("../src/pages/components/render.rs");

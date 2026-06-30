@@ -307,14 +307,17 @@ A component is official only when it satisfies the current-crate completion cont
   cannot prove;
 - `docs/verification.md` names any manual or automated gate added by the component.
 
-`examples/ui-foundation-gallery::pages::components::COMPONENT_CATALOG` is the current visible
-catalog for this contract. Entries marked `official` satisfy the checklist above. Entries marked
-`adapter-only` are public GPUI helper surfaces such as `TextInputController`, not standalone
-components. Entries marked `internal-anatomy` are public parts of a component family, such as
-toolbar or listbox item descriptors, and should not be promoted to standalone components without a
-new resolved-state contract. Entries marked `state-contract` are public renderer-neutral contracts
-with gallery readouts and signal coverage, but they are not themselves rendered GPUI components.
-They may sit beside an official adapter, as `TreeState` does for `Tree`. They must use
+`examples/ui-foundation-gallery::pages::components::catalog::COMPONENT_CATALOG` owns the current
+metadata for this contract. The Components page re-exports that catalog through
+`examples/ui-foundation-gallery::pages::components::COMPONENT_CATALOG` so tests and rendering can
+keep their stable consumer path, but rendering code must consume catalog metadata instead of
+owning it. Entries marked `official` satisfy the checklist above. Entries marked `adapter-only`
+are public GPUI helper surfaces such as `TextInputController`, not standalone components. Entries
+marked `internal-anatomy` are public parts of a component family, such as toolbar or listbox item
+descriptors, and should not be promoted to standalone components without a new resolved-state
+contract. Entries marked `state-contract` are public renderer-neutral contracts with gallery
+readouts and signal coverage, but they are not themselves rendered GPUI components. They may sit
+beside an official adapter, as `TreeState` does for `Tree`. They must use
 `state_contract_selector`, not the official `sample_selector`, and they must not satisfy the
 official rendered-component gate by accident. Entries marked `deferred` are planned components
 that must not be treated as shipped API until they satisfy the checklist.
@@ -324,10 +327,11 @@ Public surface ownership uses a stricter source-facing vocabulary than the visib
 `renderer-neutral state contract` names are public state/resolution models that can be consumed
 without GPUI runtime types. `gpui adapter helper` names are public only through
 `open_gpui_ui_components::gpui_adapter` or narrowly scoped adapter modules. `diagnostic surface`
-names such as render plans are public to explain resolved geometry and row/window projection, but
-they are not component facades. `internal implementation detail` names are public anatomy owned by
-one official family. `deprecated removal target` names are shallow compatibility surfaces scheduled
-for deletion or already deleted. The removed targets are the former pass-through
+names such as `TableRenderDiagnostics` and family render plans are public to explain resolved
+geometry and row/window projection, but they are not component facades or the default application
+state API. `internal implementation detail` names are public anatomy owned by one official family.
+`deprecated removal target` names are shallow compatibility surfaces scheduled for deletion or
+already deleted. The removed targets are the former pass-through
 `ui_components::primitives` modules for active-descendant, collection metadata, controllable state,
 and overlay policy aliases. Import those neutral contracts from `open_gpui_ui_core`; remaining
 `ui_components::primitives` modules must own GPUI adapter behavior or component-family anatomy.
@@ -649,13 +653,15 @@ should expose stable sample ids, real resolved state, and a short gate list that
 regression-prone behaviors each slice must keep covered.
 
 The Components page should keep the official component catalog visible and distinguish shipped
-components from adapter-only helpers, internal anatomy, and deferred primitives. It has two
-supported inspection modes: the full all-components conformance page, and a focused
-component-family view entered from official catalog cards. Focused mode may hide unrelated
-sections, but it must keep the section directory available, expose an explicit `All components`
-control, reset the page viewport when the family changes, and keep nested sample scrolling local to
-the sample viewport. Directory chips remain anchor jumps inside the current page mode; they must
-not implicitly change the focused family. The page should also keep these gates visible:
+components from adapter-only helpers, internal anatomy, state contracts, and deferred entries. Its
+catalog metadata lives in `components/catalog.rs`; `components/render.rs` consumes that metadata
+and owns only rendering. The page has two supported inspection modes: the full all-components
+conformance page, and a focused component-family view entered from official catalog cards. Focused
+mode may hide unrelated sections, but it must keep the section directory available, expose an
+explicit `All components` control, reset the page viewport when the family changes, and keep nested
+sample scrolling local to the sample viewport. Directory chips remain anchor jumps inside the
+current page mode; they must not implicitly change the focused family. The page should also keep
+these gates visible:
 
 - crate-root and prelude exports stay explicit;
 - adapter-only helper exports stay grouped under `open_gpui_ui_components::gpui_adapter`;
