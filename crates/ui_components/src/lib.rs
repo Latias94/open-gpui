@@ -228,7 +228,10 @@ pub use text_input::{
     TextInput, TextInputColors, TextInputDisplayMode, TextInputMetrics, TextInputState,
 };
 pub use textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
-pub use theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
+pub use theme::{
+    ThemeColor, ThemeDefinition, ThemeMode, ThemeRegistrationDiagnostics, ThemeRegistry,
+    ThemeRegistryEntry, ThemeResolver, ThemeSnapshot, ThemeValidationError,
+};
 pub use toast::{
     Toast, ToastAction, ToastColors, ToastDismiss, ToastDismissReason, ToastIntent, ToastMetrics,
     ToastStack, ToastStackState, ToastState,

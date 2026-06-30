@@ -37,16 +37,16 @@ use open_gpui_ui_components::{
     TableSelectionActivationMode, TableSelectionMode, TableSelectionScope, TableSort,
     TableSortDirection, TableStageMode, TableState, TableTextFilterOperator, TableToolbar,
     TableToolbarState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
-    TabsState, TextInput, TextInputDisplayMode, Textarea, ThemeColor, ThemeMode, ThemeResolver,
-    ThemeSnapshot, Toggle, ToggleGroup, ToggleGroupItem, ToggleVariant, Toolbar, ToolbarItem,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeChildrenLoadState,
-    TreeDropPosition, TreeItemDescriptor, TreeMove, TreeMoveTarget, TreeRenderPlan,
-    TreeRowRenderPlan, VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
-    VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys, apply_tree_move,
-    first_enabled,
+    TabsState, TextInput, TextInputDisplayMode, Textarea, ThemeColor, ThemeDefinition, ThemeMode,
+    ThemeRegistry, ThemeResolver, ThemeSnapshot, ThemeValidationError, Toggle, ToggleGroup,
+    ToggleGroupItem, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
+    ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy,
+    TooltipOpenIntent, Tree, TreeChildrenLoadState, TreeDropPosition, TreeItemDescriptor, TreeMove,
+    TreeMoveTarget, TreeRenderPlan, TreeRowRenderPlan, VirtualizedList, VirtualizedListActivation,
+    VirtualizedListItemDescriptor, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
+    VirtualizedListScrollStrategy, VirtualizedListState, VirtualizerItemKey, VirtualizerRange,
+    VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys,
+    apply_tree_move, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -15822,6 +15822,200 @@ fn default_theme_snapshots_expose_distinct_modes_and_revisions() {
         dark.color_rgb(semantic::FOCUS_RING, ColorState::FocusVisible),
         high_contrast.color_rgb(semantic::FOCUS_RING, ColorState::FocusVisible)
     );
+}
+
+#[test]
+fn theme_registry_preloads_builtin_snapshots_without_global_theme_state() {
+    let registry = ThemeRegistry::with_builtins();
+
+    assert_eq!(
+        registry
+            .entries()
+            .iter()
+            .map(|entry| (
+                entry.id(),
+                entry.snapshot().mode(),
+                entry.snapshot().revision()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("light", ThemeMode::Light, ThemeSnapshot::light().revision()),
+            ("dark", ThemeMode::Dark, ThemeSnapshot::dark().revision()),
+            (
+                "high-contrast",
+                ThemeMode::HighContrast,
+                ThemeSnapshot::high_contrast().revision()
+            ),
+        ]
+    );
+    assert_eq!(
+        registry
+            .snapshot("dark")
+            .and_then(|snapshot| snapshot.color_rgb(semantic::SURFACE, ColorState::Default)),
+        ThemeSnapshot::dark().color_rgb(semantic::SURFACE, ColorState::Default)
+    );
+}
+
+#[test]
+fn theme_registry_registers_user_definition_with_fallback_diagnostics() {
+    let mut registry = ThemeRegistry::with_builtins();
+    let entry = registry
+        .register(
+            ThemeDefinition::new("forest", "Forest", ThemeMode::Dark, 9001)
+                .fallback_mode(ThemeMode::Light)
+                .color(ThemeColor::new(
+                    semantic::ACCENT,
+                    ColorState::Default,
+                    0x227755,
+                ))
+                .color(ThemeColor::new(
+                    semantic::ACCENT,
+                    ColorState::Hover,
+                    0x1b6044,
+                )),
+        )
+        .expect("valid user theme definition should register");
+    let snapshot = entry.snapshot();
+
+    assert_eq!(entry.id(), "forest");
+    assert_eq!(entry.label(), "Forest");
+    assert_eq!(snapshot.mode(), ThemeMode::Dark);
+    assert_eq!(snapshot.revision(), 9001);
+    assert_eq!(
+        entry.diagnostics().fallback_mode(),
+        ThemeMode::Light,
+        "the registry should record which built-in table filled omitted optional tokens"
+    );
+    assert!(
+        entry.diagnostics().fallback_color_count() > 0,
+        "omitted optional token/state entries should be filled from the fallback snapshot"
+    );
+    assert_eq!(
+        snapshot.color_rgb(semantic::ACCENT, ColorState::Default),
+        Some(0x227755)
+    );
+    assert_eq!(
+        snapshot.color_rgb(semantic::SURFACE, ColorState::Default),
+        ThemeSnapshot::light().color_rgb(semantic::SURFACE, ColorState::Default)
+    );
+    assert_eq!(
+        u32::from(ThemeResolver::resolve_with(
+            ColorIntent::new(semantic::ACCENT, 0x1f7a66),
+            snapshot
+        )),
+        0x227755ff
+    );
+}
+
+#[test]
+fn theme_registry_rejects_missing_required_identity_fields() {
+    let mut registry = ThemeRegistry::new();
+
+    assert_eq!(
+        registry.register(ThemeDefinition::draft()).unwrap_err(),
+        ThemeValidationError::MissingId
+    );
+    assert_eq!(
+        registry
+            .register(ThemeDefinition::draft().id("  "))
+            .unwrap_err(),
+        ThemeValidationError::MissingId
+    );
+    assert_eq!(
+        registry
+            .register(ThemeDefinition::draft().id("brand"))
+            .unwrap_err(),
+        ThemeValidationError::MissingLabel
+    );
+    assert_eq!(
+        registry
+            .register(ThemeDefinition::draft().id("brand").label("Brand"))
+            .unwrap_err(),
+        ThemeValidationError::MissingMode
+    );
+    assert_eq!(
+        registry
+            .register(
+                ThemeDefinition::draft()
+                    .id("brand")
+                    .label("Brand")
+                    .mode(ThemeMode::Light)
+            )
+            .unwrap_err(),
+        ThemeValidationError::MissingRevision
+    );
+}
+
+#[test]
+fn theme_registry_replaces_existing_definition_by_stable_id() {
+    let mut registry = ThemeRegistry::new();
+
+    registry
+        .register(
+            ThemeDefinition::new("brand", "Brand", ThemeMode::Light, 1).color(ThemeColor::new(
+                semantic::ACCENT,
+                ColorState::Default,
+                0x111111,
+            )),
+        )
+        .expect("initial theme should register");
+    registry
+        .register(
+            ThemeDefinition::new("brand", "Brand refreshed", ThemeMode::Light, 2).color(
+                ThemeColor::new(semantic::ACCENT, ColorState::Default, 0x222222),
+            ),
+        )
+        .expect("theme refresh should replace by id");
+
+    assert_eq!(registry.entries().len(), 1);
+    let snapshot = registry
+        .snapshot("brand")
+        .expect("brand snapshot should exist");
+    assert_eq!(snapshot.revision(), 2);
+    assert_eq!(
+        snapshot.color_rgb(semantic::ACCENT, ColorState::Default),
+        Some(0x222222)
+    );
+}
+
+#[test]
+fn theme_registry_types_are_exported_from_root_and_prelude() {
+    use open_gpui_ui_components::{self as root, prelude};
+
+    let mut root_registry: root::ThemeRegistry = root::ThemeRegistry::with_builtins();
+    let root_definition: root::ThemeDefinition =
+        root::ThemeDefinition::new("root-brand", "Root brand", root::ThemeMode::Light, 7);
+    let root_entry: root::ThemeRegistryEntry = root_registry
+        .register(root_definition)
+        .expect("root ThemeRegistry should register exported ThemeDefinition")
+        .clone();
+    let root_diagnostics: root::ThemeRegistrationDiagnostics = root_entry.diagnostics();
+    let root_error: root::ThemeValidationError = root::ThemeValidationError::MissingId;
+
+    let mut prelude_registry: prelude::ThemeRegistry = prelude::ThemeRegistry::with_builtins();
+    let prelude_definition: prelude::ThemeDefinition = prelude::ThemeDefinition::new(
+        "prelude-brand",
+        "Prelude brand",
+        prelude::ThemeMode::Dark,
+        8,
+    );
+    let prelude_entry: prelude::ThemeRegistryEntry = prelude_registry
+        .register(prelude_definition)
+        .expect("prelude ThemeRegistry should register exported ThemeDefinition")
+        .clone();
+    let prelude_diagnostics: prelude::ThemeRegistrationDiagnostics = prelude_entry.diagnostics();
+    let prelude_error: prelude::ThemeValidationError = prelude::ThemeValidationError::MissingLabel;
+
+    assert_eq!(root_entry.snapshot().revision(), 7);
+    assert_eq!(prelude_entry.snapshot().revision(), 8);
+    assert_eq!(root_diagnostics.fallback_mode(), root::ThemeMode::Light);
+    assert!(root_diagnostics.fallback_color_count() > 0);
+    assert_eq!(
+        prelude_diagnostics.fallback_mode(),
+        prelude::ThemeMode::Dark
+    );
+    assert_eq!(root_error, root::ThemeValidationError::MissingId);
+    assert_eq!(prelude_error, prelude::ThemeValidationError::MissingLabel);
 }
 
 #[test]

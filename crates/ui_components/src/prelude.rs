@@ -128,7 +128,10 @@ pub use crate::text_input::{
     TextInput, TextInputColors, TextInputDisplayMode, TextInputMetrics, TextInputState,
 };
 pub use crate::textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
-pub use crate::theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
+pub use crate::theme::{
+    ThemeColor, ThemeDefinition, ThemeMode, ThemeRegistrationDiagnostics, ThemeRegistry,
+    ThemeRegistryEntry, ThemeResolver, ThemeSnapshot, ThemeValidationError,
+};
 pub use crate::toast::{
     Toast, ToastAction, ToastColors, ToastDismiss, ToastDismissReason, ToastIntent, ToastMetrics,
     ToastStack, ToastStackState, ToastState,

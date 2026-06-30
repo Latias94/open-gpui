@@ -366,6 +366,15 @@ revision is the cache invalidation hook for future app-level theme providers. Co
 read global theme state directly; keep the resolved component state renderer-neutral and pass theme
 snapshots at the adapter edge.
 
+`ThemeRegistry` is the app-level owner for built-in and user-loaded theme snapshots. The registry
+preloads light, dark, and high-contrast entries, validates `ThemeDefinition` identity fields,
+replaces entries by stable id, and stores owned color tables behind `ThemeRegistryEntry`.
+`ThemeRegistrationDiagnostics` records which built-in mode supplied fallback colors and how many
+entries were filled from that fallback. Missing optional token/state colors are completed from a
+built-in snapshot; missing id, label, mode, or revision fail validation. The registry intentionally
+does not expose or mutate a global active theme: consumers choose an entry, take its immutable
+`ThemeSnapshot`, and pass that snapshot to `ThemeResolver::resolve_with`.
+
 ## Accessibility References
 
 Adapters may wire explicit AccessKit relationships such as controls, labelled-by, active descendant,
@@ -705,9 +714,10 @@ Before extraction, keep these boundary rules explicit:
 
 ## Current Known Gaps
 
-The runtime theme table currently covers semantic component colors for light, dark, and
-high-contrast snapshots, but there is not yet an app-level theme registry, user theme loading, or
-JSON schema. Single-line editable text input now uses GPUI's `EntityInputHandler`/
+The runtime theme table covers semantic component colors for light, dark, high-contrast, and
+registry-loaded snapshots. A JSON schema and file-loader facade are still follow-up work; UIs
+should construct `ThemeDefinition` values explicitly and register them before handing immutable
+snapshots to component adapters. Single-line editable text input now uses GPUI's `EntityInputHandler`/
 `ElementInputHandler` path through `TextInputController`. Applications can either supply an
 adapter-owned controller directly or use the standard controlled shape
 `TextInput::value(...).on_change(...)`; the latter creates a keyed adapter controller internally,
