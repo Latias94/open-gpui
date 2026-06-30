@@ -29,7 +29,7 @@ pub use rows::{TableCellRenderPlan, TableRowRenderPlan};
 
 /// Fully resolved render contract for a concrete [`Table`] instance.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TableRenderPlan {
+pub struct TableRenderDiagnostics {
     table_id: String,
     label: String,
     metrics: TableMetrics,
@@ -62,7 +62,7 @@ pub struct TableRenderPlan {
     cell_role: Role,
 }
 
-impl TableRenderPlan {
+impl TableRenderDiagnostics {
     pub(super) fn resolve(
         table_id: String,
         label: String,

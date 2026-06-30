@@ -10,12 +10,16 @@ use open_gpui_ui_core::{
 use super::content_fit::{content_fit_measure_key, table_content_fit_rendered_rows};
 use super::runtime::{TableResolvedCache, TableRuntime};
 use super::virtualization::{measured_virtualizer_state, row_render_key};
-use super::{Table, TableColumnRenderPlan, TableMetrics, TableRenderPlan, nonnegative_px};
+use super::{Table, TableColumnRenderPlan, TableMetrics, TableRenderDiagnostics, nonnegative_px};
 use crate::geometry::ui_px_from_gpui;
 
 impl Table {
-    /// Resolves table row models and the virtual render window for a viewport.
-    pub fn render_plan(&self, scroll_offset: UiPx, viewport_extent: UiPx) -> TableRenderPlan {
+    /// Resolves diagnostic table row models and virtual render windows for a viewport.
+    pub fn diagnostics(
+        &self,
+        scroll_offset: UiPx,
+        viewport_extent: UiPx,
+    ) -> TableRenderDiagnostics {
         let metrics = self.metrics_for_viewport(viewport_extent);
         let table = Rc::new(self.state.resolve());
         let columns = self.resolve_columns(&table);
@@ -39,7 +43,7 @@ impl Table {
             self.resolve_virtualizer(&table, metrics, scroll_offset)
         };
 
-        TableRenderPlan::resolve(
+        TableRenderDiagnostics::resolve(
             self.id.clone(),
             self.label.to_string(),
             metrics,
@@ -55,14 +59,14 @@ impl Table {
         )
     }
 
-    pub(super) fn render_plan_with_runtime(
+    pub(super) fn diagnostics_with_runtime(
         &self,
         scroll_offset: UiPx,
         viewport_extent: UiPx,
         horizontal_scroll_handle: ScrollHandle,
         window: &Window,
         runtime: &mut TableRuntime,
-    ) -> TableRenderPlan {
+    ) -> TableRenderDiagnostics {
         let metrics = self.metrics_for_viewport(viewport_extent);
         let state = runtime
             .expansion_override
@@ -129,7 +133,7 @@ impl Table {
             )
             .clone();
 
-        TableRenderPlan::resolve(
+        TableRenderDiagnostics::resolve(
             self.id.clone(),
             self.label.to_string(),
             metrics,

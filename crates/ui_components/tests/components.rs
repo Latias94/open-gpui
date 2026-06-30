@@ -181,7 +181,7 @@ const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
         home: "gpui_adapter",
     },
     PublicSurfaceOwnerEntry {
-        name: "TableRenderPlan",
+        name: "TableRenderDiagnostics",
         owner: PublicSurfaceOwnerClass::DiagnosticSurface,
         home: "table/render_plan/mod.rs",
     },
@@ -4443,7 +4443,7 @@ fn scroll_area_builder_state_keeps_gpui_handle_out_of_resolved_state() {
 }
 
 #[test]
-fn table_render_plan_uses_core_state_and_virtualizer_contracts() {
+fn table_diagnostics_uses_core_state_and_virtualizer_contracts() {
     let state = sample_table_state(100)
         .with_sorting([TableSort::new("score", TableSortDirection::Descending)])
         .with_selected_rows(["row-0091"])
@@ -4453,7 +4453,7 @@ fn table_render_plan_uses_core_state_and_virtualizer_contracts() {
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
         .overscan(4);
-    let plan = table.render_plan(ui_px(120.0), ui_px(96.0));
+    let plan = table.diagnostics(ui_px(120.0), ui_px(96.0));
 
     assert_eq!(plan.role(), Role::Table);
     assert_eq!(plan.row_role(), Role::Row);
@@ -4493,7 +4493,7 @@ fn table_render_plan_uses_core_state_and_virtualizer_contracts() {
 }
 
 #[test]
-fn table_render_plan_exposes_tree_row_metadata_for_adapter_rendering() {
+fn table_diagnostics_exposes_tree_row_metadata_for_adapter_rendering() {
     let state = TableState::new([TableRow::new("root")
         .with_cell("name", "Workspace")
         .with_cell("status", "Ready")
@@ -4512,7 +4512,7 @@ fn table_render_plan_exposes_tree_row_metadata_for_adapter_rendering() {
     let plan = Table::new("tree-table", "Tree table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .diagnostics(UiPx::ZERO, ui_px(96.0));
 
     assert_eq!(plan.rows().len(), 2);
     assert_eq!(plan.rows()[0].id().as_str(), "root");
@@ -4533,7 +4533,7 @@ fn table_render_plan_exposes_tree_row_metadata_for_adapter_rendering() {
 }
 
 #[test]
-fn table_render_plan_exposes_manual_expansion_and_child_load_metadata() {
+fn table_diagnostics_exposes_manual_expansion_and_child_load_metadata() {
     let manual_state = TableState::new([TableRow::new("root")
         .with_cell("name", "Workspace")
         .with_child(TableRow::new("child").with_cell("name", "Loaded child"))])
@@ -4543,7 +4543,7 @@ fn table_render_plan_exposes_manual_expansion_and_child_load_metadata() {
         .expansion_mode(TableExpansionMode::Manual)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .diagnostics(UiPx::ZERO, ui_px(96.0));
 
     assert_eq!(
         manual_plan
@@ -4569,7 +4569,7 @@ fn table_render_plan_exposes_manual_expansion_and_child_load_metadata() {
     let loading_plan = Table::new("loading-tree", "Loading tree", loading_state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .diagnostics(UiPx::ZERO, ui_px(96.0));
     let loading_row = &loading_plan.rows()[0];
 
     assert!(loading_row.is_tree_branch());
@@ -4588,7 +4588,7 @@ fn table_render_plan_exposes_manual_expansion_and_child_load_metadata() {
 }
 
 #[test]
-fn table_render_plan_exposes_manual_row_model_metadata() {
+fn table_diagnostics_exposes_manual_row_model_metadata() {
     let state = TableState::new([
         TableRow::new("row-020")
             .with_cell("name", "Delta")
@@ -4613,7 +4613,7 @@ fn table_render_plan_exposes_manual_row_model_metadata() {
     let plan = Table::new("manual-row-model", "Manual row model", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .diagnostics(UiPx::ZERO, ui_px(96.0));
 
     assert_eq!(plan.filtering_mode(), TableStageMode::Manual);
     assert_eq!(plan.sorting_mode(), TableStageMode::Manual);
@@ -4631,7 +4631,7 @@ fn table_render_plan_exposes_manual_row_model_metadata() {
 }
 
 #[test]
-fn table_render_plan_exposes_faceting_metadata() {
+fn table_diagnostics_exposes_faceting_metadata() {
     let state = TableState::new([
         TableRow::new("row-1")
             .with_cell("team", "UI")
@@ -4670,7 +4670,7 @@ fn table_render_plan_exposes_faceting_metadata() {
     let plan = Table::new("faceted-table", "Faceted table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .diagnostics(UiPx::ZERO, ui_px(96.0));
 
     assert_eq!(plan.faceting_mode(), TableStageMode::Client);
     assert_eq!(plan.column_facets().len(), 3);
@@ -4716,7 +4716,7 @@ fn table_render_plan_exposes_faceting_metadata() {
 }
 
 #[test]
-fn table_render_plan_exposes_global_facet_summary() {
+fn table_diagnostics_exposes_global_facet_summary() {
     let state = TableState::new([
         TableRow::new("row-1")
             .with_cell("team", "UI")
@@ -4754,7 +4754,7 @@ fn table_render_plan_exposes_global_facet_summary() {
     let plan = Table::new("global-facet-table", "Global facet table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .diagnostics(UiPx::ZERO, ui_px(96.0));
 
     let summary: &TableGlobalFacetSummary = plan.global_facet_summary();
     assert_eq!(summary.mode(), TableStageMode::Client);
@@ -5563,7 +5563,7 @@ fn table_predicate_filter_change_updates_only_target_predicate_filters() {
 }
 
 #[test]
-fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
+fn table_diagnostics_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
     let state = TableState::new([
         TableRow::new("row-a")
             .with_cell("name", "Alpha")
@@ -5591,7 +5591,7 @@ fn table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
     let plan = Table::new("editable-plan-table", "Editable plan table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(120.0))
-        .render_plan(UiPx::ZERO, ui_px(120.0));
+        .diagnostics(UiPx::ZERO, ui_px(120.0));
 
     let name_column = plan
         .columns()
@@ -5873,9 +5873,9 @@ fn table_cell_edit_change_updates_boolean_source_row_and_preserves_table_state()
 }
 
 #[test]
-fn table_render_plan_exposes_pinned_column_regions() {
+fn table_diagnostics_exposes_pinned_column_regions() {
     let flat_plan = Table::new("flat-table", "Flat table", sample_table_state(1))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .diagnostics(UiPx::ZERO, ui_px(96.0));
     assert!(!flat_plan.uses_split_pinned_layout());
     assert!(
         flat_plan.pinned_layout().is_none(),
@@ -5903,7 +5903,7 @@ fn table_render_plan_exposes_pinned_column_regions() {
     let plan = Table::new("pinned-table", "Pinned table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .diagnostics(UiPx::ZERO, ui_px(96.0));
     let layout = plan
         .pinned_layout()
         .expect("pinned columns should request split pinned layout metadata");
@@ -5995,7 +5995,7 @@ fn table_render_plan_exposes_pinned_column_regions() {
 }
 
 #[test]
-fn table_render_plan_exposes_row_pinning_regions() {
+fn table_diagnostics_exposes_row_pinning_regions() {
     let state = sample_table_state(12)
         .with_pagination(TablePagination::new(1, 4))
         .with_row_pinning(
@@ -6007,7 +6007,7 @@ fn table_render_plan_exposes_row_pinning_regions() {
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
         .overscan(0)
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .diagnostics(UiPx::ZERO, ui_px(96.0));
 
     assert_eq!(
         plan.top_rows()
@@ -6065,7 +6065,7 @@ fn table_render_plan_exposes_row_pinning_regions() {
 }
 
 #[test]
-fn table_render_plan_respects_page_only_row_pinning_policy() {
+fn table_diagnostics_respects_page_only_row_pinning_policy() {
     let state = sample_table_state(12)
         .with_pagination(TablePagination::new(1, 4))
         .with_row_pinning(
@@ -6082,7 +6082,7 @@ fn table_render_plan_respects_page_only_row_pinning_policy() {
     .row_height(ui_px(24.0))
     .viewport_extent(ui_px(96.0))
     .overscan(0)
-    .render_plan(UiPx::ZERO, ui_px(96.0));
+    .diagnostics(UiPx::ZERO, ui_px(96.0));
 
     assert!(plan.top_rows().is_empty());
     assert_eq!(
@@ -6105,7 +6105,7 @@ fn table_render_plan_respects_page_only_row_pinning_policy() {
 }
 
 #[test]
-fn table_render_plan_exposes_center_column_window_metadata() {
+fn table_diagnostics_exposes_center_column_window_metadata() {
     let plan = Table::new(
         "center-window-table",
         "Center window table",
@@ -6114,7 +6114,7 @@ fn table_render_plan_exposes_center_column_window_metadata() {
     .row_height(ui_px(24.0))
     .viewport_extent(ui_px(96.0))
     .overscan(4)
-    .render_plan(UiPx::ZERO, ui_px(96.0));
+    .diagnostics(UiPx::ZERO, ui_px(96.0));
     let window = plan
         .center_column_window()
         .expect("center columns should resolve window metadata");
@@ -6160,7 +6160,7 @@ fn table_center_column_window_matches_exact_size_virtualizer() {
     .row_height(ui_px(24.0))
     .viewport_extent(ui_px(96.0))
     .overscan(4)
-    .render_plan(UiPx::ZERO, ui_px(96.0));
+    .diagnostics(UiPx::ZERO, ui_px(96.0));
     let center_columns = plan
         .column_regions()
         .iter()
@@ -6236,7 +6236,7 @@ fn table_center_column_window_preserves_full_accessibility_indexes() {
     .row_height(ui_px(24.0))
     .viewport_extent(ui_px(96.0))
     .overscan(0)
-    .render_plan(UiPx::ZERO, ui_px(96.0));
+    .diagnostics(UiPx::ZERO, ui_px(96.0));
     let center_columns = plan
         .column_regions()
         .iter()
@@ -6269,7 +6269,7 @@ fn table_virtualizer_snapshot_restores_measurements_without_overriding_live_scro
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
         .virtualizer_snapshot(snapshot);
-    let plan = table.render_plan(ui_px(120.0), ui_px(96.0));
+    let plan = table.diagnostics(ui_px(120.0), ui_px(96.0));
 
     assert_eq!(plan.virtualizer().scroll_offset(), ui_px(120.0));
     let measured_row = plan
@@ -6283,7 +6283,7 @@ fn table_virtualizer_snapshot_restores_measurements_without_overriding_live_scro
 }
 
 #[test]
-fn table_render_plan_disambiguates_duplicate_row_ids_for_rendering() {
+fn table_diagnostics_disambiguates_duplicate_row_ids_for_rendering() {
     let state = TableState::new([
         TableRow::new("duplicate").with_cell("name", "First"),
         TableRow::new("duplicate").with_cell("name", "Second"),
@@ -6294,7 +6294,7 @@ fn table_render_plan_disambiguates_duplicate_row_ids_for_rendering() {
     let table = Table::new("duplicate-table", "Duplicate rows", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(120.0));
-    let plan = table.render_plan(UiPx::ZERO, ui_px(120.0));
+    let plan = table.diagnostics(UiPx::ZERO, ui_px(120.0));
 
     assert_eq!(plan.table().duplicate_row_ids()[0].as_str(), "duplicate");
     assert_eq!(plan.rows()[0].id().as_str(), "duplicate");
@@ -6314,7 +6314,7 @@ fn table_render_plan_disambiguates_duplicate_row_ids_for_rendering() {
 }
 
 #[test]
-fn table_render_plan_exposes_column_sizing_metadata_and_matching_cell_widths() {
+fn table_diagnostics_exposes_column_sizing_metadata_and_matching_cell_widths() {
     let state = TableState::new([TableRow::new("row-a")
         .with_cell("name", "Alpha")
         .with_cell("team", "UI")
@@ -6342,7 +6342,7 @@ fn table_render_plan_exposes_column_sizing_metadata_and_matching_cell_widths() {
     let plan = Table::new("sized-table", "Sized table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .diagnostics(UiPx::ZERO, ui_px(96.0));
 
     assert_eq!(plan.total_column_width(), ui_px(370.0));
     assert_eq!(
@@ -6381,7 +6381,7 @@ fn table_render_plan_exposes_column_sizing_metadata_and_matching_cell_widths() {
 }
 
 #[test]
-fn table_render_plan_preserves_column_width_policies() {
+fn table_diagnostics_preserves_column_width_policies() {
     let state = TableState::new([TableRow::new("row-a")
         .with_cell("name", "Alpha")
         .with_cell("status", "Ready")])
@@ -6393,7 +6393,7 @@ fn table_render_plan_preserves_column_width_policies() {
     let plan = Table::new("policy-table", "Policy table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .render_plan(UiPx::ZERO, ui_px(96.0));
+        .diagnostics(UiPx::ZERO, ui_px(96.0));
     let status_column = plan
         .columns()
         .iter()
@@ -6407,7 +6407,7 @@ fn table_render_plan_preserves_column_width_policies() {
 }
 
 #[test]
-fn table_render_plan_exposes_nested_header_groups_and_region_widths() {
+fn table_diagnostics_exposes_nested_header_groups_and_region_widths() {
     let state = TableState::new([TableRow::new("row-a")
         .with_cell("name", "Alpha")
         .with_cell("team", "UI")
@@ -6444,7 +6444,7 @@ fn table_render_plan_exposes_nested_header_groups_and_region_widths() {
     let plan = Table::new("nested-headers", "Nested headers", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(240.0))
-        .render_plan(UiPx::ZERO, ui_px(240.0));
+        .diagnostics(UiPx::ZERO, ui_px(240.0));
 
     assert_eq!(plan.header_row_count(), 3);
     assert_eq!(plan.left_header_groups().header_row_count(), 2);
@@ -6870,7 +6870,7 @@ fn tree_runtime_drag_move_emits_controlled_payload(cx: &mut open_gpui::TestAppCo
 #[test]
 fn table_header_action_cycles_sorting_without_render_coupling() {
     let unsorted = Table::new("sort-cycle", "Sort cycle", sample_table_state(8))
-        .render_plan(UiPx::ZERO, ui_px(120.0));
+        .diagnostics(UiPx::ZERO, ui_px(120.0));
     let name_action = unsorted
         .columns()
         .iter()
@@ -6891,7 +6891,7 @@ fn table_header_action_cycles_sorting_without_render_coupling() {
     );
 
     let ascending = Table::new("sort-cycle", "Sort cycle", ascending_state)
-        .render_plan(UiPx::ZERO, ui_px(120.0));
+        .diagnostics(UiPx::ZERO, ui_px(120.0));
     let descending_action = ascending
         .columns()
         .iter()
@@ -6909,7 +6909,7 @@ fn table_header_action_cycles_sorting_without_render_coupling() {
 
     let descending_state = descending_action.apply_to(sample_table_state(8));
     let descending = Table::new("sort-cycle", "Sort cycle", descending_state)
-        .render_plan(UiPx::ZERO, ui_px(120.0));
+        .diagnostics(UiPx::ZERO, ui_px(120.0));
     let clear_action = descending
         .columns()
         .iter()
@@ -6946,7 +6946,9 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     );
     let virtualizer: root::VirtualizerState =
         root::VirtualizerState::new(4, ui_px(24.0)).with_overscan(2);
-    let root_plan: root::TableRenderPlan = table.state();
+    let root_state_readout: &root::TableState = table.state();
+    assert_eq!(root_state_readout.resolve().final_model().rows().len(), 1);
+    let root_plan: root::TableRenderDiagnostics = table.diagnostics(UiPx::ZERO, ui_px(96.0));
     let _root_region_plan: &root::TableColumnRegionRenderPlan = &root_plan.column_regions()[0];
     let _root_header_groups: &root::TableResolvedHeaderGroupRegions =
         root_plan.table().header_groups();
@@ -6994,7 +6996,8 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
             .pinned_right(["status"]),
     );
     let root_pinned_render_plan =
-        root::Table::new("root-pinned-table", "Root pinned table", root_pinned_state).state();
+        root::Table::new("root-pinned-table", "Root pinned table", root_pinned_state)
+            .diagnostics(UiPx::ZERO, ui_px(96.0));
     let root_pinned_layout: root::TablePinnedLayoutPlan = root_pinned_render_plan
         .pinned_layout()
         .expect("exported pinned layout plan should resolve")
@@ -7025,7 +7028,7 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .with_columns([root::TableColumn::new("name", "Name")])
         .with_row_pinning(root_row_pinning.clone()),
     )
-    .state()
+    .diagnostics(UiPx::ZERO, ui_px(96.0))
     .table()
     .row_regions()
     .clone();
@@ -7068,9 +7071,9 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .sort_action()
         .expect("sortable exported table column should expose a header action")
         .clone();
-    let _root_cache_key: root::TableStateCacheKey = table.table_state().cache_key();
+    let _root_cache_key: root::TableStateCacheKey = table.state().cache_key();
     let _prelude_header_action: prelude::TableHeaderAction = header_action;
-    let _prelude_cache_key: prelude::TableStateCacheKey = table.table_state().cache_key();
+    let _prelude_cache_key: prelude::TableStateCacheKey = table.state().cache_key();
     let _root_aggregation: root::TableAggregation =
         root::TableAggregation::new("score", root::TableAggregateKind::Sum);
     let _prelude_aggregation: prelude::TableAggregation =
@@ -7246,7 +7249,7 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .clone();
     let _prelude_tree_row: prelude::TableTreeRow = root_tree_row;
     let _resolved_kind: Option<&root::TableGroupRow> =
-        table.table_state().resolve().final_model().rows()[0].group();
+        table.state().resolve().final_model().rows()[0].group();
     let _root_table_modifiers: root::TableInputModifiers = root::TableInputModifiers::default();
     let _prelude_table_modifiers: prelude::TableInputModifiers =
         prelude::TableInputModifiers::default();
@@ -7317,7 +7320,7 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     );
     let _prelude_resize_change: prelude::TableColumnSizingChange = root_resize_change;
     let _root_resolved_sizing: root::TableResolvedColumnSizing = table
-        .table_state()
+        .state()
         .resolve()
         .visible_column_sizing()
         .column(&root::TableColumnId::new("name"))
@@ -7325,11 +7328,8 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .clone();
     let _prelude_resolved_sizing: prelude::TableResolvedColumnSizing =
         _root_resolved_sizing.clone();
-    let _root_resolved_sizing_regions: root::TableResolvedColumnSizingRegions = table
-        .table_state()
-        .resolve()
-        .visible_column_sizing()
-        .clone();
+    let _root_resolved_sizing_regions: root::TableResolvedColumnSizingRegions =
+        table.state().resolve().visible_column_sizing().clone();
     let _prelude_resolved_sizing_regions: prelude::TableResolvedColumnSizingRegions =
         _root_resolved_sizing_regions.clone();
     let _root_default_width = root::TABLE_DEFAULT_COLUMN_WIDTH;
@@ -7339,11 +7339,8 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _prelude_min_width = prelude::TABLE_MIN_COLUMN_WIDTH;
     let _prelude_max_width = prelude::TABLE_MAX_COLUMN_WIDTH;
     let _prelude_region: prelude::TableColumnRegion = prelude::TableColumnRegion::Center;
-    let _prelude_regions: prelude::TableColumnRegions = table
-        .table_state()
-        .resolve()
-        .visible_column_regions()
-        .clone();
+    let _prelude_regions: prelude::TableColumnRegions =
+        table.state().resolve().visible_column_regions().clone();
 
     assert_eq!(root_plan.role(), Role::Table);
     assert!(!root_plan.column_facets().is_empty());
@@ -9095,7 +9092,7 @@ fn table_center_column_window_recomputes_geometry_for_center_column_resize() {
     .row_height(ui_px(24.0))
     .viewport_extent(ui_px(96.0))
     .overscan(0)
-    .render_plan(UiPx::ZERO, ui_px(96.0));
+    .diagnostics(UiPx::ZERO, ui_px(96.0));
     let base_center_columns = base_plan
         .column_regions()
         .iter()
@@ -9115,7 +9112,7 @@ fn table_center_column_window_recomputes_geometry_for_center_column_resize() {
     .row_height(ui_px(24.0))
     .viewport_extent(ui_px(96.0))
     .overscan(0)
-    .render_plan(UiPx::ZERO, ui_px(96.0));
+    .diagnostics(UiPx::ZERO, ui_px(96.0));
     let resized_center_columns = resized_plan
         .column_regions()
         .iter()

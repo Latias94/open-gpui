@@ -17,8 +17,8 @@ use crate::scroll_area::ScrollArea;
 use super::runtime::TableRuntime;
 use super::virtualization::table_rows_virtual_size;
 use super::{
-    TableCellEditHandler, TableRenderPlan, TableRowActivationHandler, TableRowExpansionHandler,
-    TableRowSelectionHandler,
+    TableCellEditHandler, TableRenderDiagnostics, TableRowActivationHandler,
+    TableRowExpansionHandler, TableRowSelectionHandler,
 };
 
 use rows::render_table_row_band;
@@ -27,7 +27,7 @@ pub(super) use scroll::handle_table_vertical_scroll_wheel;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_table_body(
-    plan: &TableRenderPlan,
+    plan: &TableRenderDiagnostics,
     scroll_viewport_id: String,
     horizontal_scroll_handle: ScrollHandle,
     vertical_scroll_handle: ScrollHandle,

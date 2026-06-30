@@ -20,7 +20,7 @@ use open_gpui_ui_components::{
     TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableColumnVisibilityChange,
     TableColumnVisibilityOverrides, TableExpansionMode, TableExpansionState, TableFacetValueCount,
     TableFacetedFilterChange, TableFilter, TableGlobalFilterChange, TablePagination,
-    TablePredicateFilterChange, TableRangeFilterChange, TableRenderPlan, TableRow,
+    TablePredicateFilterChange, TableRangeFilterChange, TableRenderDiagnostics, TableRow,
     TableRowActivation, TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning,
     TableRowPinningPolicy, TableSelectOption, TableSort, TableStageMode, TableState, Tabs,
     TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, Tag, TagState, TagVariant,
@@ -2962,7 +2962,7 @@ pub struct TableSampleStateSummary {
 }
 
 impl TableSampleStateSummary {
-    fn from_plan(plan: &TableRenderPlan, state: &TableState) -> Self {
+    fn from_plan(plan: &TableRenderDiagnostics, state: &TableState) -> Self {
         let visible = plan.virtualizer().visible_range();
         let overscan = plan.virtualizer().overscan_range();
         let final_rows = plan.table().final_model().rows();
@@ -3160,9 +3160,9 @@ impl TableSample {
     }
 
     /// Resolves the table plan used by gallery tests and state rows.
-    pub fn render_plan(&self) -> TableRenderPlan {
+    pub fn render_plan(&self) -> TableRenderDiagnostics {
         self.build_table()
-            .render_plan(UiPx::ZERO, self.viewport_extent)
+            .diagnostics(UiPx::ZERO, self.viewport_extent)
     }
 
     /// Returns the precomputed state summary used by the gallery page.
@@ -3174,7 +3174,7 @@ impl TableSample {
     pub fn state_summary_for_state(&self, state: &TableState) -> TableSampleStateSummary {
         let plan = self
             .build_table_with_state(state.clone())
-            .render_plan(UiPx::ZERO, self.viewport_extent);
+            .diagnostics(UiPx::ZERO, self.viewport_extent);
         TableSampleStateSummary::from_plan(&plan, state)
     }
 }
@@ -5447,7 +5447,7 @@ impl TableSample {
     fn with_state_summary(self) -> Self {
         let plan = self
             .build_table()
-            .render_plan(UiPx::ZERO, self.viewport_extent);
+            .diagnostics(UiPx::ZERO, self.viewport_extent);
         Self {
             state_summary: TableSampleStateSummary::from_plan(&plan, &self.state),
             ..self

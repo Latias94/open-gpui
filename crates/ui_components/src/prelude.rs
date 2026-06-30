@@ -113,7 +113,7 @@ pub use crate::table::{
     TableHeaderGroupRenderPlan, TableInputModifiers, TableMetrics, TablePinnedLayoutPlan,
     TablePredicateFilter, TablePredicateFilterChange, TablePredicateFilterOperator,
     TablePredicateFilterOperatorOptionState, TablePredicateFilterState, TableRangeFilter,
-    TableRangeFilterChange, TableRangeFilterState, TableRenderPlan, TableResolvedHeaderCell,
+    TableRangeFilterChange, TableRangeFilterState, TableRenderDiagnostics, TableResolvedHeaderCell,
     TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions, TableResolvedHeaderKind,
     TableRowAction, TableRowActivation, TableRowActivationKind, TableRowExpansionToggle,
     TableRowMeasureMode, TableRowRenderPlan, TableRowSelectionChange, TableSelectionScope,

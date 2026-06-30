@@ -213,7 +213,7 @@ pub use table::{
     TableHeaderGroupRenderPlan, TableInputModifiers, TableMetrics, TablePinnedLayoutPlan,
     TablePredicateFilter, TablePredicateFilterChange, TablePredicateFilterOperator,
     TablePredicateFilterOperatorOptionState, TablePredicateFilterState, TableRangeFilter,
-    TableRangeFilterChange, TableRangeFilterState, TableRenderPlan, TableRowAction,
+    TableRangeFilterChange, TableRangeFilterState, TableRenderDiagnostics, TableRowAction,
     TableRowActivation, TableRowActivationKind, TableRowExpansionToggle, TableRowMeasureMode,
     TableRowRenderPlan, TableRowSelectionChange, TableSelectionScope, TableToolbar,
     TableToolbarState,

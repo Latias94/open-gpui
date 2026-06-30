@@ -68,7 +68,7 @@ pub use render_plan::{
     TableCellRenderPlan, TableCenterColumnWindowPlan, TableColumnRegionRenderPlan,
     TableColumnRenderPlan, TableHeaderCellRenderPlan, TableHeaderGroupRegionRenderPlan,
     TableHeaderGroupRegionsRenderPlan, TableHeaderGroupRenderPlan, TablePinnedLayoutPlan,
-    TableRenderPlan, TableRowRenderPlan,
+    TableRenderDiagnostics, TableRowRenderPlan,
 };
 use resize::{TableColumnResizeDrag, TableResizeRenderConfig, handle_table_column_resize_drag};
 use runtime::TableRuntime;
@@ -294,13 +294,8 @@ impl Table {
     }
 
     /// Returns the renderer-neutral table input.
-    pub const fn table_state(&self) -> &TableState {
+    pub const fn state(&self) -> &TableState {
         &self.state
-    }
-
-    /// Returns a default resolved plan at scroll origin.
-    pub fn state(&self) -> TableRenderPlan {
-        self.render_plan(UiPx::ZERO, self.metrics.viewport_extent())
     }
 }
 
@@ -338,7 +333,7 @@ impl RenderOnce for Table {
         let resize_drag_runtime = resize_config.runtime.clone();
         let resize_drag_config = resize_config.clone();
         let plan = runtime.update(cx, |runtime, cx| {
-            let plan = self.render_plan_with_runtime(
+            let plan = self.diagnostics_with_runtime(
                 scroll_offset,
                 viewport_extent,
                 horizontal_scroll_handle.clone(),
