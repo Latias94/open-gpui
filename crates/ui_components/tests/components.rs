@@ -227,6 +227,11 @@ const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
         home: "table/render_plan/mod.rs",
     },
     PublicSurfaceOwnerEntry {
+        name: "TableToolbarColors",
+        owner: PublicSurfaceOwnerClass::OfficialComponentRecipe,
+        home: "table/toolbar.rs",
+    },
+    PublicSurfaceOwnerEntry {
         name: "TreeRenderPlan",
         owner: PublicSurfaceOwnerClass::DiagnosticSurface,
         home: "tree/render_plan.rs",
@@ -5341,6 +5346,8 @@ fn table_toolbar_state_resolves_slot_counts_and_summary() {
     assert_eq!(state.tokens(), tokens);
     assert_eq!(state.foreground().token(), TEST_TEXT);
     assert_eq!(state.muted_foreground().token(), TEST_TEXT_MUTED);
+    assert_eq!(state.colors().foreground().token(), TEST_TEXT);
+    assert_eq!(state.colors().muted_foreground().token(), TEST_TEXT_MUTED);
 
     let empty = TableToolbar::new("empty-table-toolbar", "Filters").state();
     assert_eq!(empty.primary_control_count(), 0);
@@ -7176,7 +7183,8 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         root::TablePredicateFilterChange::new("name", root_predicate_operator, "Al");
     let root_table_toolbar: root::TableToolbar =
         root::TableToolbar::new("root-table-toolbar", "Filters").summary("2 visible controls");
-    let _root_table_toolbar_state: root::TableToolbarState = root_table_toolbar.state();
+    let root_table_toolbar_state: root::TableToolbarState = root_table_toolbar.state();
+    let _root_table_toolbar_colors: root::TableToolbarColors = root_table_toolbar_state.colors();
     let prelude_global_filter: prelude::TableGlobalFilter =
         prelude::TableGlobalFilter::new("prelude-global-filter", "Search").default_query("ready");
     let _prelude_global_filter_state: prelude::TableGlobalFilterState =
@@ -7200,7 +7208,9 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let prelude_table_toolbar: prelude::TableToolbar =
         prelude::TableToolbar::new("prelude-table-toolbar", "Filters")
             .summary("2 visible controls");
-    let _prelude_table_toolbar_state: prelude::TableToolbarState = prelude_table_toolbar.state();
+    let prelude_table_toolbar_state: prelude::TableToolbarState = prelude_table_toolbar.state();
+    let _prelude_table_toolbar_colors: prelude::TableToolbarColors =
+        prelude_table_toolbar_state.colors();
     let root_faceted_filter: root::TableFacetedFilter =
         root::TableFacetedFilter::new("root-status-filter", "Status", "status")
             .facets(root_facets.clone())
@@ -16726,6 +16736,14 @@ fn default_theme_resolves_all_current_component_color_intents() {
             .state(),
         Command::new("closed-command", "Commands").state(),
     ];
+    let table_toolbars = [
+        TableToolbar::new("table-toolbar", "Filters")
+            .summary("2 filtered")
+            .state(),
+        TableToolbar::new("small-table-toolbar", "Filters")
+            .small()
+            .state(),
+    ];
 
     for state in buttons {
         let colors = state.colors();
@@ -17048,6 +17066,13 @@ fn default_theme_resolves_all_current_component_color_intents() {
             colors.border(),
             colors.focus_ring(),
         ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in table_toolbars {
+        let colors = state.colors();
+        for intent in [colors.foreground(), colors.muted_foreground()] {
             assert_theme_has_exact_color(theme, intent);
         }
     }

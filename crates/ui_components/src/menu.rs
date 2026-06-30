@@ -18,7 +18,7 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::color::{ColorIntent, ColorState};
+use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::menu_runtime::{
     MenuRuntime, handle_menu_submenu_surface_hover, update_menu_hover_target,
@@ -2564,56 +2564,6 @@ fn menu_initial_focus_handle(
         InitialFocusIntent::Target(_) => None,
         InitialFocusIntent::TargetOrFirstFocusable(_) => {
             Some(runtime.read(cx).content_focus.clone())
-        }
-    }
-}
-
-impl ThemeResolver {
-    pub(crate) const fn menu_colors(tokens: ThemeTokens, open: bool) -> MenuColors {
-        let trigger_state = if open {
-            ColorState::Selected
-        } else {
-            ColorState::Default
-        };
-
-        MenuColors {
-            surface: ColorIntent::new(tokens.surface, 0xffffff),
-            foreground: ColorIntent::new(tokens.text, 0x18202a),
-            border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            item_background: ColorIntent::new(tokens.surface, 0xffffff),
-            item_hover_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                ColorState::Hover,
-                0xf1f5ee,
-            ),
-            item_focus_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                ColorState::FocusVisible,
-                0xe8ede6,
-            ),
-            item_disabled_foreground: ColorIntent::with_state(
-                tokens.text_muted,
-                ColorState::Disabled,
-                0x7a8491,
-            ),
-            separator: ColorIntent::new(tokens.border, 0xcfd5cc),
-            trigger_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                trigger_state,
-                0xf6f7f2,
-            ),
-            trigger_hover_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                ColorState::Hover,
-                0xf1f5ee,
-            ),
-            trigger_foreground: ColorIntent::new(tokens.text, 0x18202a),
-            trigger_border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            focus_ring: ColorIntent::with_state(
-                tokens.focus_ring,
-                ColorState::FocusVisible,
-                0x2f80ed,
-            ),
         }
     }
 }

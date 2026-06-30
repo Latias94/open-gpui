@@ -217,7 +217,7 @@ pub use table::{
     TableRangeFilterChange, TableRangeFilterState, TableRenderDiagnostics, TableRowAction,
     TableRowActivation, TableRowActivationKind, TableRowExpansionToggle, TableRowMeasureMode,
     TableRowRenderPlan, TableRowSelectionChange, TableSelectionScope, TableToolbar,
-    TableToolbarState,
+    TableToolbarColors, TableToolbarState,
 };
 pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

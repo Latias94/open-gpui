@@ -72,7 +72,7 @@ pub use render_plan::{
 };
 use resize::{TableColumnResizeDrag, TableResizeRenderConfig, handle_table_column_resize_drag};
 use runtime::TableRuntime;
-pub use toolbar::{TableToolbar, TableToolbarState};
+pub use toolbar::{TableToolbar, TableToolbarColors, TableToolbarState};
 
 type TableSortHandler = Rc<dyn Fn(TableHeaderAction, &mut Window, &mut App)>;
 pub(super) type TableColumnSizingHandler =

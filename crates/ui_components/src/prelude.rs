@@ -117,7 +117,7 @@ pub use crate::table::{
     TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions, TableResolvedHeaderKind,
     TableRowAction, TableRowActivation, TableRowActivationKind, TableRowExpansionToggle,
     TableRowMeasureMode, TableRowRenderPlan, TableRowSelectionChange, TableSelectionScope,
-    TableToolbar, TableToolbarState,
+    TableToolbar, TableToolbarColors, TableToolbarState,
 };
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

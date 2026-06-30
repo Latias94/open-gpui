@@ -20,7 +20,7 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::color::{ColorIntent, ColorState};
+use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::listbox::{ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState};
 use crate::overlay::{
@@ -482,12 +482,12 @@ impl CommandIndexSnapshot {
 /// Resolved command color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandColors {
-    surface: ColorIntent,
-    foreground: ColorIntent,
-    muted_foreground: ColorIntent,
-    border: ColorIntent,
-    shortcut_foreground: ColorIntent,
-    focus_ring: ColorIntent,
+    pub(crate) surface: ColorIntent,
+    pub(crate) foreground: ColorIntent,
+    pub(crate) muted_foreground: ColorIntent,
+    pub(crate) border: ColorIntent,
+    pub(crate) shortcut_foreground: ColorIntent,
+    pub(crate) focus_ring: ColorIntent,
 }
 
 impl CommandColors {
@@ -2485,27 +2485,6 @@ fn sort_ranked_command_items(items: &mut [FlattenedCommandItem]) {
             .cmp(&a.rank.score)
             .then_with(|| a.source_index.cmp(&b.source_index))
     });
-}
-
-impl ThemeResolver {
-    pub(crate) const fn command_colors(tokens: ThemeTokens) -> CommandColors {
-        CommandColors {
-            surface: ColorIntent::new(tokens.surface, 0xffffff),
-            foreground: ColorIntent::new(tokens.text, 0x18202a),
-            muted_foreground: ColorIntent::new(tokens.text_muted, 0x5a6472),
-            border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            shortcut_foreground: ColorIntent::with_state(
-                tokens.text_muted,
-                ColorState::Message,
-                0x5a6472,
-            ),
-            focus_ring: ColorIntent::with_state(
-                tokens.focus_ring,
-                ColorState::FocusVisible,
-                0x2f80ed,
-            ),
-        }
-    }
 }
 
 #[cfg(test)]

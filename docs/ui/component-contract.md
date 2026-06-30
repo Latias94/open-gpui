@@ -379,6 +379,16 @@ built-in snapshot; missing id, label, mode, or revision fail validation. The reg
 does not expose or mutate a global active theme: consumers choose an entry, take its immutable
 `ThemeSnapshot`, and pass that snapshot to `ThemeResolver::resolve_with`.
 
+Theme module ownership is intentionally split: `theme/snapshot.rs` owns immutable snapshot data,
+`theme/registry.rs` owns explicit registration and fallback diagnostics, `theme/resolver.rs` owns
+intent-to-color resolution, `theme/palette.rs` owns the built-in token tables, and
+`theme/recipes.rs` owns component color recipes. Component files should call
+`ThemeResolver::*_colors` but should not add local `impl ThemeResolver` blocks. The
+`scan-theme-drift` xtask gate checks recipe catalog coverage and built-in palette token/state
+shape, so missing recipe or token additions fail before visual drift reaches gallery tests.
+Table composition recipes follow the same rule: `TableToolbarState` exposes `TableToolbarColors`
+from the shared theme recipe rather than hand-assembling toolbar text intents in the table module.
+
 ## Accessibility References
 
 Adapters may wire explicit AccessKit relationships such as controls, labelled-by, active descendant,

@@ -14,7 +14,7 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::color::{ColorIntent, ColorState};
+use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::listbox::{
     Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
@@ -51,15 +51,15 @@ const fn select_open_mode_from_disclosure(mode: OverlayDisclosureOpenMode) -> Se
 /// Resolved select color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectColors {
-    trigger_background: ColorIntent,
-    trigger_hover_background: ColorIntent,
-    trigger_foreground: ColorIntent,
-    trigger_placeholder_foreground: ColorIntent,
-    trigger_border: ColorIntent,
-    content_background: ColorIntent,
-    content_foreground: ColorIntent,
-    content_border: ColorIntent,
-    focus_ring: ColorIntent,
+    pub(crate) trigger_background: ColorIntent,
+    pub(crate) trigger_hover_background: ColorIntent,
+    pub(crate) trigger_foreground: ColorIntent,
+    pub(crate) trigger_placeholder_foreground: ColorIntent,
+    pub(crate) trigger_border: ColorIntent,
+    pub(crate) content_background: ColorIntent,
+    pub(crate) content_foreground: ColorIntent,
+    pub(crate) content_border: ColorIntent,
+    pub(crate) focus_ring: ColorIntent,
 }
 
 impl SelectColors {
@@ -987,38 +987,4 @@ fn close_select(
         set_overlay_open(&mut runtime.open, false);
     });
     emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
-}
-
-impl ThemeResolver {
-    pub(crate) const fn select_colors(tokens: ThemeTokens, open: bool) -> SelectColors {
-        let trigger_state = if open {
-            ColorState::Selected
-        } else {
-            ColorState::Default
-        };
-
-        SelectColors {
-            trigger_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                trigger_state,
-                0xf6f7f2,
-            ),
-            trigger_hover_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                ColorState::Hover,
-                0xf1f5ee,
-            ),
-            trigger_foreground: ColorIntent::new(tokens.text, 0x18202a),
-            trigger_placeholder_foreground: ColorIntent::new(tokens.text_muted, 0x5a6472),
-            trigger_border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            content_background: ColorIntent::new(tokens.surface, 0xffffff),
-            content_foreground: ColorIntent::new(tokens.text, 0x18202a),
-            content_border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            focus_ring: ColorIntent::with_state(
-                tokens.focus_ring,
-                ColorState::FocusVisible,
-                0x2f80ed,
-            ),
-        }
-    }
 }

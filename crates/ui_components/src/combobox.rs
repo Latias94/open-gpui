@@ -17,7 +17,7 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::color::{ColorIntent, ColorState};
+use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::listbox::{
     Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
@@ -177,10 +177,10 @@ impl ComboboxGroupDescriptor {
 /// Resolved combobox color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ComboboxColors {
-    popup_background: ColorIntent,
-    popup_foreground: ColorIntent,
-    popup_border: ColorIntent,
-    focus_ring: ColorIntent,
+    pub(crate) popup_background: ColorIntent,
+    pub(crate) popup_foreground: ColorIntent,
+    pub(crate) popup_border: ColorIntent,
+    pub(crate) focus_ring: ColorIntent,
 }
 
 impl ComboboxColors {
@@ -1386,21 +1386,6 @@ impl ComboboxGroup {
             }
         }
         has_options.then_some(group)
-    }
-}
-
-impl ThemeResolver {
-    pub(crate) const fn combobox_colors(tokens: ThemeTokens) -> ComboboxColors {
-        ComboboxColors {
-            popup_background: ColorIntent::new(tokens.surface, 0xffffff),
-            popup_foreground: ColorIntent::new(tokens.text, 0x18202a),
-            popup_border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            focus_ring: ColorIntent::with_state(
-                tokens.focus_ring,
-                ColorState::FocusVisible,
-                0x2f80ed,
-            ),
-        }
     }
 }
 

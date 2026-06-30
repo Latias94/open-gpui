@@ -12,7 +12,7 @@ use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
 use crate::choice::{self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
-use crate::color::{ColorIntent, ColorState};
+use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::theme::ThemeResolver;
 
@@ -1355,42 +1355,4 @@ fn flatten_listbox_options(
     }
 
     flattened
-}
-
-impl ThemeResolver {
-    pub(crate) const fn listbox_colors(tokens: ThemeTokens) -> ListboxColors {
-        ListboxColors {
-            surface: ColorIntent::new(tokens.surface, 0xffffff),
-            foreground: ColorIntent::new(tokens.text, 0x18202a),
-            muted_foreground: ColorIntent::new(tokens.text_muted, 0x5a6472),
-            border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            option_background: ColorIntent::new(tokens.surface, 0xffffff),
-            option_hover_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                ColorState::Hover,
-                0xf1f5ee,
-            ),
-            option_active_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                ColorState::FocusVisible,
-                0xe8ede6,
-            ),
-            option_selected_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                ColorState::Selected,
-                0xe8ede6,
-            ),
-            option_disabled_foreground: ColorIntent::with_state(
-                tokens.text_muted,
-                ColorState::Disabled,
-                0x7a8491,
-            ),
-            separator: ColorIntent::new(tokens.border, 0xcfd5cc),
-            focus_ring: ColorIntent::with_state(
-                tokens.focus_ring,
-                ColorState::FocusVisible,
-                0x2f80ed,
-            ),
-        }
-    }
 }
