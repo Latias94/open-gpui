@@ -2473,6 +2473,9 @@ mod tests {
     use jellyflow_open_gpui::{
         plan_action_dispatch, plan_dropped_wire_insert, project_dropped_wire_menu,
         projected_node_surface_component_layout,
+        testing::{
+            assert_authoring_interaction_regression_gates, assert_product_fixture_regression_gates,
+        },
     };
 
     #[test]
@@ -2912,6 +2915,12 @@ mod tests {
         assert_eq!(insert.node_kind, "demo.llm");
         assert_eq!(insert.source, source);
         assert_eq!(insert.pointer, pointer);
+    }
+
+    #[test]
+    fn canvas_example_consumes_adapter_product_fixture_gates() {
+        assert_product_fixture_regression_gates();
+        assert_authoring_interaction_regression_gates();
     }
 
     #[test]
