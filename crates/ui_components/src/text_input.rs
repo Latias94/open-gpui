@@ -414,8 +414,14 @@ pub(crate) mod adapter {
         pub fn select_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
             let start = text_editing::clamp_to_char_boundary(self.value(), range.start);
             let end = text_editing::clamp_to_char_boundary(self.value(), range.end);
-            self.selected_range = start.min(end)..start.max(end);
-            self.selection_reversed = end < start;
+            let projection = EditableTextDocument::from_parts(
+                self.value(),
+                TextSelection::from_offsets(start, end),
+                self.marked_range.clone(),
+                self.editing_policy(),
+            )
+            .into_projection();
+            self.apply_editing_projection(projection);
             cx.notify();
         }
 
@@ -955,9 +961,10 @@ impl TextInputState {
         tokens: ThemeTokens,
     ) -> Self {
         let colors = ThemeResolver::text_input_colors(tokens, disabled, read_only, invalid);
+        let value = value.into();
 
         Self {
-            value: value.into(),
+            value: TextEditingPolicy::single_line().normalize_text(value.as_str()),
             placeholder: placeholder.map(Into::into),
             size,
             display_mode,
@@ -1135,7 +1142,10 @@ impl TextInput {
 
     /// Sets the displayed value.
     pub fn value(mut self, value: impl Into<SharedString>) -> Self {
-        self.value = value.into();
+        let value = value.into();
+        self.value = TextEditingPolicy::single_line()
+            .normalize_text(value.as_ref())
+            .into();
         self
     }
 

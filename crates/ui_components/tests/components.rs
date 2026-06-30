@@ -14366,6 +14366,17 @@ fn combobox_state_filters_query_without_clearing_selection() {
 }
 
 #[test]
+fn combobox_state_normalizes_query_with_text_input_policy() {
+    let state = Combobox::new("newline-combobox", "Framework")
+        .default_query("re\r\nmix")
+        .option(ComboboxOption::new("remix", "Remix"))
+        .state();
+
+    assert_eq!(state.query(), "re  mix");
+    assert_eq!(state.input().value(), "re  mix");
+}
+
+#[test]
 fn combobox_state_scrollable_content_tracks_filtered_option_count() {
     let scrollable = Combobox::new("scrolling-combobox", "Scrolling combobox")
         .placeholder("Search frameworks")
@@ -14875,19 +14886,22 @@ fn command_state_keeps_disabled_matches_visible_but_non_activatable() {
 #[test]
 fn command_state_models_controlled_and_default_query_ownership() {
     let controlled = Command::new("controlled-query-command", "Commands")
-        .query("open")
+        .query("open\r\n")
         .default_query("ignored")
         .item(CommandItem::new("open-file", "Open File"))
         .state();
     let seeded = Command::new("seeded-query-command", "Commands")
-        .default_query("file")
+        .default_query("new\n")
+        .item(CommandItem::new("new-file", "New File"))
         .item(CommandItem::new("open-file", "Open File"))
         .state();
 
-    assert_eq!(controlled.query(), "open");
+    assert_eq!(controlled.query(), "open  ");
+    assert_eq!(controlled.input().value(), "open  ");
     assert_eq!(controlled.query_mode(), CommandQueryMode::Controlled);
     assert_eq!(controlled.filtered_item_count(), 1);
-    assert_eq!(seeded.query(), "file");
+    assert_eq!(seeded.query(), "new ");
+    assert_eq!(seeded.input().value(), "new ");
     assert_eq!(seeded.query_mode(), CommandQueryMode::Uncontrolled);
 }
 
@@ -17383,6 +17397,16 @@ fn filled_text_input_reports_value_state() {
     assert_eq!(state.value(), "hello@example.com");
     assert_eq!(state.display_text().as_ref(), "hello@example.com");
     assert!(!state.displaying_placeholder());
+}
+
+#[test]
+fn text_input_state_normalizes_static_values_with_single_line_policy() {
+    let state = TextInput::new("query", "Search")
+        .value("alpha\r\nbeta\ngamma")
+        .state();
+
+    assert_eq!(state.value(), "alpha  beta gamma");
+    assert_eq!(state.display_text().as_ref(), "alpha  beta gamma");
 }
 
 #[test]

@@ -28,6 +28,7 @@ use crate::overlay::{
     resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_area::{ScrollAreaAxis, ScrollAreaState};
+use crate::text_editing::TextEditingPolicy;
 use crate::text_input::adapter::TextInputController;
 use crate::text_input::{TextInputDisplayMode, TextInputState};
 use crate::theme::ThemeResolver;
@@ -1134,6 +1135,7 @@ impl CommandState {
         let label = label.into();
         let placeholder = placeholder.into();
         let query = query.into();
+        let query = TextEditingPolicy::single_line().normalize_text(query.as_str());
         let empty_label = empty_label.into();
         let open_mode = if open.is_some() {
             CommandOpenMode::Controlled
@@ -1834,13 +1836,15 @@ impl Command {
 
     /// Applies controlled search query text.
     pub fn query(mut self, query: impl Into<String>) -> Self {
-        self.query = Some(query.into());
+        let query = query.into();
+        self.query = Some(TextEditingPolicy::single_line().normalize_text(query.as_str()));
         self
     }
 
     /// Applies the default search query for adapter-owned input state.
     pub fn default_query(mut self, query: impl Into<String>) -> Self {
-        self.default_query = query.into();
+        let query = query.into();
+        self.default_query = TextEditingPolicy::single_line().normalize_text(query.as_str());
         self
     }
 
