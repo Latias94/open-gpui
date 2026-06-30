@@ -1623,8 +1623,8 @@ fn render_components_section(
                                                     let state_summary =
                                                         sample.state_summary_for_state(&table_state);
                                                     let mut table = sample.build_table_with_state(table_state);
-                                                    let table_diagnostics = table
-                                                        .diagnostics(UiPx::ZERO, sample.viewport_extent);
+                                                    let table_behavior = table
+                                                        .behavior_snapshot(UiPx::ZERO, sample.viewport_extent);
                                                     let global_filter_control: Option<AnyElement> =
                                                         if sample_id == "filter-board" {
                                                             let query = table
@@ -1766,7 +1766,7 @@ fn render_components_section(
                                                                     values.iter().cloned().collect::<Vec<_>>()
                                                                 })
                                                                 .unwrap_or_default();
-                                                            table_diagnostics
+                                                            table_behavior
                                                                 .column_facet(&status_column)
                                                                 .cloned()
                                                                 .map(|facets| {
@@ -1829,7 +1829,7 @@ fn render_components_section(
                                                                     filter.number_range_bounds()
                                                                 })
                                                                 .unwrap_or((None, None));
-                                                            table_diagnostics
+                                                            table_behavior
                                                                 .column_facet(&score_column)
                                                                 .cloned()
                                                                 .map(|facets| {

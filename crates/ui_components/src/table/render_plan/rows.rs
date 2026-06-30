@@ -98,11 +98,6 @@ impl TableCellRenderPlan {
         self.width
     }
 
-    /// Returns whether this resolved leaf cell should render an editor.
-    pub const fn text_editable(&self) -> bool {
-        self.editor.is_some()
-    }
-
     /// Returns the editor configured for this resolved leaf cell.
     pub const fn editor(&self) -> Option<TableCellEditor> {
         self.editor

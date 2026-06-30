@@ -102,22 +102,22 @@ pub use crate::splitter::{
 };
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use crate::table::{
-    Table, TableCellEditApplyOutcome, TableCellEditChange, TableCellRenderPlan,
-    TableCenterColumnWindowPlan, TableColumnOrderChange, TableColumnOrderPlacement,
-    TableColumnRegionRenderPlan, TableColumnRenderPlan, TableColumnSizingChange,
+    Table, TableBehaviorSnapshot, TableCellBehaviorSnapshot, TableCellEditApplyOutcome,
+    TableCellEditChange, TableColumnBehaviorSnapshot, TableColumnOrderChange,
+    TableColumnOrderPlacement, TableColumnRegionSnapshot, TableColumnSizingChange,
     TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
     TableColumnVisibilityItemState, TableColumnVisibilityState, TableFacetedFilter,
     TableFacetedFilterChange, TableFacetedFilterOptionState, TableFacetedFilterState,
     TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction,
-    TableHeaderCellRenderPlan, TableHeaderGroupRegionRenderPlan, TableHeaderGroupRegionsRenderPlan,
-    TableHeaderGroupRenderPlan, TableInputModifiers, TableMetrics, TablePinnedLayoutPlan,
-    TablePredicateFilter, TablePredicateFilterChange, TablePredicateFilterOperator,
+    TableHeaderSummarySnapshot, TableInputModifiers, TableMetrics, TablePredicateFilter,
+    TablePredicateFilterChange, TablePredicateFilterOperator,
     TablePredicateFilterOperatorOptionState, TablePredicateFilterState, TableRangeFilter,
-    TableRangeFilterChange, TableRangeFilterState, TableRenderDiagnostics, TableResolvedHeaderCell,
+    TableRangeFilterChange, TableRangeFilterState, TableResolvedHeaderCell,
     TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions, TableResolvedHeaderKind,
-    TableRowAction, TableRowActivation, TableRowActivationKind, TableRowExpansionToggle,
-    TableRowMeasureMode, TableRowRenderPlan, TableRowSelectionChange, TableSelectionScope,
-    TableToolbar, TableToolbarColors, TableToolbarState,
+    TableRowAction, TableRowActivation, TableRowActivationKind, TableRowBehaviorSnapshot,
+    TableRowCountSnapshot, TableRowExpansionToggle, TableRowMeasureMode, TableRowSelectionChange,
+    TableSelectionScope, TableToolbar, TableToolbarColors, TableToolbarState,
+    TableTreeSummarySnapshot, TableVisibleRowsSnapshot,
 };
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

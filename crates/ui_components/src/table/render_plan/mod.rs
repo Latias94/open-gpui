@@ -2,10 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use open_gpui_ui_core::{
-    GridViewport2D, Role, TableColumnFacets, TableColumnId, TableColumnRegion,
-    TableGlobalFacetSummary, TableResolvedRow, TableResolvedState, TableRowId, TableRowRegion,
-    TableSelectionPolicy, TableSelectionSummary, TableStageMode, TableState, UiPx,
-    VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerResolvedState,
+    Role, TableColumnFacets, TableColumnId, TableColumnRegion, TableGlobalFacetSummary,
+    TableResolvedRow, TableResolvedState, TableRowId, TableRowRegion, TableSelectionPolicy,
+    TableSelectionSummary, TableStageMode, TableState, UiPx, VirtualizerItemKey,
+    VirtualizerItemMeasurement, VirtualizerResolvedState,
 };
 
 use crate::row_window::RowWindow;
@@ -22,10 +22,7 @@ pub use columns::{
     TableCenterColumnWindowPlan, TableColumnRegionRenderPlan, TableColumnRenderPlan,
     TablePinnedLayoutPlan,
 };
-pub use header::{
-    TableHeaderCellRenderPlan, TableHeaderGroupRegionRenderPlan, TableHeaderGroupRegionsRenderPlan,
-    TableHeaderGroupRenderPlan,
-};
+pub use header::{TableHeaderCellRenderPlan, TableHeaderGroupRegionsRenderPlan};
 pub use rows::{TableCellRenderPlan, TableRowRenderPlan};
 
 /// Fully resolved render contract for a concrete [`Table`] instance.
@@ -43,7 +40,6 @@ pub struct TableRenderDiagnostics {
     header_groups: TableHeaderGroupRegionsRenderPlan,
     pinned_layout: Option<TablePinnedLayoutPlan>,
     center_column_window: Option<TableCenterColumnWindowPlan>,
-    grid_viewport: Option<GridViewport2D>,
     total_column_width: UiPx,
     filtering_mode: TableStageMode,
     sorting_mode: TableStageMode,
@@ -109,9 +105,6 @@ impl TableRenderDiagnostics {
                 metrics.overscan(),
             )
         });
-        let grid_viewport = center_column_window.as_ref().map(|center_window| {
-            GridViewport2D::new(virtualizer.clone(), center_window.virtualizer().clone())
-        });
         let duplicate_row_ids = table
             .duplicate_row_ids()
             .iter()
@@ -166,7 +159,6 @@ impl TableRenderDiagnostics {
             header_groups,
             pinned_layout,
             center_column_window,
-            grid_viewport,
             total_column_width,
             filtering_mode: state.filtering_mode(),
             sorting_mode: state.sorting_mode(),
@@ -264,11 +256,6 @@ impl TableRenderDiagnostics {
         self.table.column_facets()
     }
 
-    /// Returns resolved facet metadata for one configured column.
-    pub fn column_facet(&self, column: &TableColumnId) -> Option<&TableColumnFacets> {
-        self.table.column_facet(column)
-    }
-
     /// Returns resolved facet metadata for the global filter context.
     pub fn global_facet_summary(&self) -> &TableGlobalFacetSummary {
         self.table.global_facet_summary()
@@ -284,11 +271,6 @@ impl TableRenderDiagnostics {
         &self.columns
     }
 
-    /// Returns the measured content-fit widths that informed this render plan.
-    pub fn content_fit_widths(&self) -> &BTreeMap<TableColumnId, UiPx> {
-        &self.content_fit_widths
-    }
-
     /// Returns visible columns split into render regions.
     pub fn column_regions(&self) -> &[TableColumnRegionRenderPlan] {
         &self.column_regions
@@ -297,21 +279,6 @@ impl TableRenderDiagnostics {
     /// Returns nested header groups split into render regions.
     pub fn header_groups(&self) -> &TableHeaderGroupRegionsRenderPlan {
         &self.header_groups
-    }
-
-    /// Returns left-pinned header rows.
-    pub fn left_header_groups(&self) -> &TableHeaderGroupRegionRenderPlan {
-        self.header_groups.left()
-    }
-
-    /// Returns center header rows.
-    pub fn center_header_groups(&self) -> &TableHeaderGroupRegionRenderPlan {
-        self.header_groups.center()
-    }
-
-    /// Returns right-pinned header rows.
-    pub fn right_header_groups(&self) -> &TableHeaderGroupRegionRenderPlan {
-        self.header_groups.right()
     }
 
     /// Returns the maximum header row count across all regions.
@@ -332,16 +299,6 @@ impl TableRenderDiagnostics {
     /// Returns center-column window metadata, when the center lane exists.
     pub fn center_column_window(&self) -> Option<&TableCenterColumnWindowPlan> {
         self.center_column_window.as_ref()
-    }
-
-    /// Returns the combined row and center-column viewport when both axes are available.
-    pub fn grid_viewport(&self) -> Option<&GridViewport2D> {
-        self.grid_viewport.as_ref()
-    }
-
-    /// Returns whether this render plan needs split pinned-column layout.
-    pub fn uses_split_pinned_layout(&self) -> bool {
-        self.pinned_layout.is_some()
     }
 
     /// Returns the summed resolved width of all visible columns.
@@ -365,11 +322,6 @@ impl TableRenderDiagnostics {
 
     /// Returns virtualized center rows in render order.
     pub fn rows(&self) -> &[TableRowRenderPlan] {
-        &self.rows
-    }
-
-    /// Returns virtualized center rows in render order.
-    pub fn center_rows(&self) -> &[TableRowRenderPlan] {
         &self.rows
     }
 

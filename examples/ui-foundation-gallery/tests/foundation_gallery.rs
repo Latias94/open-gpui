@@ -2130,7 +2130,7 @@ fn components_page_samples_expose_component_metadata() {
         release_queue.state.sorting()[0].direction().as_str(),
         "descending"
     );
-    let release_plan = release_queue.render_plan();
+    let release_plan = release_queue.behavior_snapshot();
     assert_eq!(release_plan.role(), Role::Table);
     assert_eq!(release_plan.column_header_role(), Role::ColumnHeader);
     assert_eq!(release_plan.cell_role(), Role::Cell);
@@ -2139,11 +2139,11 @@ fn components_page_samples_expose_component_metadata() {
     assert!(release_plan.rendered_row_count() <= release_plan.visible_row_count() + 5);
 
     let filter_board = table_sample(tables, "filter-board");
-    let filter_plan = filter_board.render_plan();
+    let filter_plan = filter_board.behavior_snapshot();
     let filter_summary = filter_board.state_summary();
-    assert_eq!(filter_plan.table().filtered_model().rows().len(), 60);
-    assert_eq!(filter_plan.table().final_model().rows().len(), 24);
-    assert_eq!(filter_plan.table().final_model().selected_count(), 1);
+    assert_eq!(filter_plan.row_counts().filtered_rows(), 60);
+    assert_eq!(filter_plan.row_counts().final_rows(), 24);
+    assert_eq!(filter_plan.row_counts().selected_rows(), 1);
     assert_eq!(filter_summary.facet_columns, 4);
     assert_eq!(filter_summary.manual_facet_columns, 0);
     assert_eq!(filter_summary.status_facet_values, 4);
@@ -2179,7 +2179,7 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(score_range.max(), 177.0);
 
     let server_paged = table_sample(tables, "server-paged");
-    let server_page_plan = server_paged.render_plan();
+    let server_page_plan = server_paged.behavior_snapshot();
     let server_page_summary = server_paged.state_summary();
     assert_eq!(server_paged.state.rows().len(), 8);
     assert_eq!(server_page_plan.filtering_mode(), TableStageMode::Manual);
@@ -2232,8 +2232,6 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(server_score_range.max(), 64.0);
     assert_eq!(
         server_page_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .map(|row| row.id().as_str())
@@ -2251,7 +2249,7 @@ fn components_page_samples_expose_component_metadata() {
     );
 
     let release_resize = table_sample(tables, "release-resize");
-    let resize_plan = release_resize.render_plan();
+    let resize_plan = release_resize.behavior_snapshot();
     assert_eq!(release_resize.state.rows().len(), 160);
     assert_eq!(
         resize_plan.columns()[0].width(),
@@ -2268,7 +2266,7 @@ fn components_page_samples_expose_component_metadata() {
     );
 
     let editable_release = table_sample(tables, "editable-release");
-    let editable_plan = editable_release.render_plan();
+    let editable_plan = editable_release.behavior_snapshot();
     assert_eq!(editable_release.state.rows().len(), 32);
     assert!(
         editable_plan.columns()[0].text_editable(),
@@ -2288,7 +2286,7 @@ fn components_page_samples_expose_component_metadata() {
     );
 
     let toggle_release = table_sample(tables, "toggle-release");
-    let toggle_plan = toggle_release.render_plan();
+    let toggle_plan = toggle_release.behavior_snapshot();
     assert_eq!(toggle_release.state.rows().len(), 28);
     assert_eq!(
         toggle_plan.columns()[1].editor(),
@@ -2301,15 +2299,15 @@ fn components_page_samples_expose_component_metadata() {
         "toggle-release first visible enabled cell should render as a checkbox editor"
     );
     assert_eq!(
-        toggle_plan.table().final_model().rows()[0]
+        toggle_plan.rows()[0]
             .cell(&TableColumnId::new("enabled"))
-            .map(TableCellValue::filter_text)
+            .map(|cell| cell.text())
             .as_deref(),
         Some("true")
     );
 
     let multiline_release = table_sample(tables, "multiline-release");
-    let multiline_plan = multiline_release.render_plan();
+    let multiline_plan = multiline_release.behavior_snapshot();
     assert_eq!(multiline_release.state.rows().len(), 24);
     assert_eq!(
         multiline_plan.columns()[1].editor(),
@@ -2327,7 +2325,7 @@ fn components_page_samples_expose_component_metadata() {
     );
 
     let select_release = table_sample(tables, "select-release");
-    let select_plan = select_release.render_plan();
+    let select_plan = select_release.behavior_snapshot();
     assert_eq!(select_release.state.rows().len(), 28);
     assert_eq!(
         select_plan.columns()[1].editor(),
@@ -2351,7 +2349,7 @@ fn components_page_samples_expose_component_metadata() {
     );
 
     let grouped_release = table_sample(tables, "release-rollup");
-    let grouped_plan = grouped_release.render_plan();
+    let grouped_plan = grouped_release.behavior_snapshot();
     assert_eq!(grouped_release.state.grouping()[0].as_str(), "team");
     assert_eq!(grouped_release.state.aggregations().len(), 2);
     assert_eq!(
@@ -2374,37 +2372,17 @@ fn components_page_samples_expose_component_metadata() {
         grouped_plan.column_region_width(TableColumnRegion::Right),
         ui_px(164.0)
     );
-    assert!(grouped_plan.uses_split_pinned_layout());
-    let grouped_layout = grouped_plan
-        .pinned_layout()
-        .expect("release-rollup should render through the split sticky pinned layout");
-    assert_eq!(grouped_layout.left_width(), ui_px(188.0));
-    assert_eq!(grouped_layout.center_width(), ui_px(400.0));
-    assert_eq!(grouped_layout.right_width(), ui_px(164.0));
-    assert_eq!(grouped_layout.total_width(), ui_px(752.0));
-    assert!(
-        grouped_plan
-            .table()
-            .final_model()
-            .rows()
-            .iter()
-            .any(|row| row.is_group())
-    );
-    assert!(
-        grouped_plan
-            .table()
-            .final_model()
-            .rows()
-            .iter()
-            .any(|row| row.is_leaf())
-    );
+    assert!(grouped_plan.uses_split_pinned_columns());
+    assert_eq!(grouped_plan.column_regions().total_width(), ui_px(752.0));
+    assert!(grouped_plan.row_counts().group_rows() >= 1);
+    assert!(grouped_plan.row_counts().leaf_rows() > 0);
     assert!(
         grouped_plan.rendered_row_count()
             <= grouped_plan.visible_row_count() + grouped_release.overscan
     );
 
     let release_matrix = table_sample(tables, "release-matrix");
-    let matrix_plan = release_matrix.render_plan();
+    let matrix_plan = release_matrix.behavior_snapshot();
     assert_eq!(release_matrix.state.rows().len(), 480);
     assert_eq!(
         release_matrix.state.column_pinning().left()[0].as_str(),
@@ -2430,14 +2408,8 @@ fn components_page_samples_expose_component_metadata() {
         matrix_plan.column_region_width(TableColumnRegion::Right),
         ui_px(148.0)
     );
-    assert!(matrix_plan.uses_split_pinned_layout());
-    let matrix_layout = matrix_plan
-        .pinned_layout()
-        .expect("release-matrix should render through the split sticky pinned layout");
-    assert_eq!(matrix_layout.left_width(), ui_px(172.0));
-    assert_eq!(matrix_layout.center_width(), ui_px(1516.0));
-    assert_eq!(matrix_layout.right_width(), ui_px(148.0));
-    assert_eq!(matrix_layout.total_width(), ui_px(1836.0));
+    assert!(matrix_plan.uses_split_pinned_columns());
+    assert_eq!(matrix_plan.column_regions().total_width(), ui_px(1836.0));
     assert_eq!(matrix_plan.aria_column_count(), 16);
     assert_eq!(matrix_plan.columns().len(), 16);
     assert!(
@@ -2446,10 +2418,10 @@ fn components_page_samples_expose_component_metadata() {
             .iter()
             .any(|column| column.id().as_str() == "metric_13")
     );
-    assert_eq!(matrix_plan.table().final_model().selected_count(), 1);
+    assert_eq!(matrix_plan.row_counts().selected_rows(), 1);
 
     let row_pinning = table_sample(tables, "row-pinning");
-    let row_pinning_plan = row_pinning.render_plan();
+    let row_pinning_plan = row_pinning.behavior_snapshot();
     let row_pinning_summary = row_pinning.state_summary();
     assert_eq!(row_pinning.state.rows().len(), 96);
     assert_eq!(row_pinning_summary.core_rows, 96);
@@ -2465,23 +2437,19 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(row_pinning_summary.pinned_center_width_px, 1516);
     assert_eq!(row_pinning_summary.pinned_right_width_px, 148);
     assert_eq!(row_pinning_summary.total_column_width_px, 1836);
-    assert!(row_pinning_plan.uses_split_pinned_layout());
-    assert_eq!(row_pinning_plan.virtualizer().count(), 11);
+    assert!(row_pinning_plan.uses_split_pinned_columns());
+    assert_eq!(row_pinning_plan.row_counts().pinned_center_rows(), 11);
     assert_eq!(row_pinning_plan.aria_row_count(), 15);
     assert_eq!(
         row_pinning_plan
-            .table()
-            .top_rows()
-            .iter()
+            .rows_for_region(TableRowRegion::Top)
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
         ["row-pinning-row-003"]
     );
     assert_eq!(
         row_pinning_plan
-            .table()
-            .center_rows()
-            .iter()
+            .rows_for_region(TableRowRegion::Center)
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
         [
@@ -2500,16 +2468,14 @@ fn components_page_samples_expose_component_metadata() {
     );
     assert_eq!(
         row_pinning_plan
-            .table()
-            .bottom_rows()
-            .iter()
+            .rows_for_region(TableRowRegion::Bottom)
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
         ["row-pinning-row-030", "row-pinning-row-070"]
     );
 
     let dependency_tree = table_sample(tables, "dependency-tree");
-    let tree_plan = dependency_tree.render_plan();
+    let tree_plan = dependency_tree.behavior_snapshot();
     let tree_summary = dependency_tree.state_summary();
     assert_eq!(dependency_tree.state.rows().len(), 1);
     assert_eq!(tree_summary.core_rows, 7);
@@ -2526,8 +2492,6 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(tree_plan.aria_row_count(), 5);
     assert_eq!(
         tree_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .map(|row| row.id().as_str())
@@ -2539,25 +2503,15 @@ fn components_page_samples_expose_component_metadata() {
             "dependency-docs"
         ]
     );
-    assert!(
-        tree_plan
-            .table()
-            .final_model()
-            .row(&TableRowId::new("dependency-ui-table"))
-            .is_some(),
-        "collapsed tree descendants should remain addressable by stable row id"
-    );
     assert_eq!(
         tree_plan
-            .table()
-            .final_model()
             .row(&TableRowId::new("dependency-ui"))
             .and_then(|row| row.tree_expanded()),
         Some(false)
     );
 
     let server_tree = table_sample(tables, "server-tree");
-    let server_plan = server_tree.render_plan();
+    let server_plan = server_tree.behavior_snapshot();
     let server_summary = server_tree.state_summary();
     assert_eq!(
         server_tree.state.expansion_mode(),
@@ -2581,8 +2535,6 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(server_plan.aria_row_count(), 4);
     assert_eq!(
         server_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .map(|row| row.id().as_str())
@@ -2696,8 +2648,8 @@ fn verification_docs_list_current_ui_architecture_focused_gates() {
         "overlay_open_change_helpers_match_core_policies",
         "dialog_runtime_respects_escape_policy_and_restores_trigger_focus",
         "choice_surfaces_share_stable_value_resolution_and_query_normalization",
-        "table_diagnostics_exposes_faceting_metadata",
-        "table_diagnostics_exposes_editable_leaf_cell_kinds_for_leaf_cells_only",
+        "table_behavior_snapshot_exposes_faceting_metadata",
+        "table_behavior_snapshot_exposes_editable_leaf_cell_kinds_for_leaf_cells_only",
         "table_component_source_mapping_tracks_split_render_owners",
         "row_window",
         "virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts",
@@ -3154,12 +3106,12 @@ fn components_page_tabs_samples_expose_roving_focus_contract() {
 fn components_page_table_samples_expose_virtualized_row_model_contract() {
     let samples = pages::components::table_samples(ThemeTokens::default());
     let release_queue = table_sample(samples, "release-queue");
-    let release_plan = release_queue.render_plan();
+    let release_plan = release_queue.behavior_snapshot();
     let release_summary = release_queue.state_summary();
 
     assert_eq!(release_queue.id, "release-queue");
     assert_eq!(release_queue.state.rows().len(), 10_000);
-    assert_eq!(release_plan.table().final_model().rows().len(), 10_000);
+    assert_eq!(release_plan.row_counts().final_rows(), 10_000);
     assert_eq!(release_summary.core_rows, 10_000);
     assert_eq!(release_summary.final_rows, 10_000);
     assert_eq!(
@@ -3171,24 +3123,24 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         release_plan.visible_row_count()
     );
     assert_eq!(
-        release_plan.table().final_model().rows()[0].id().as_str(),
+        release_plan.rows()[0].id().as_str(),
         "release-queue-row-0000"
     );
-    assert_eq!(release_plan.virtualizer().count(), 10_000);
-    assert!(!release_plan.virtualizer().visible_range().is_empty());
+    assert_eq!(release_plan.row_counts().pinned_center_rows(), 10_000);
+    assert!(!release_plan.visible_rows().visible_range().is_empty());
     assert!(release_plan.rendered_row_count() <= release_plan.visible_row_count() + 5);
     assert_eq!(release_plan.row_role(), Role::Row);
     assert_eq!(release_plan.column_header_role(), Role::ColumnHeader);
     assert_eq!(release_plan.cell_role(), Role::Cell);
 
     let filter_board = table_sample(samples, "filter-board");
-    let filter_plan = filter_board.render_plan();
+    let filter_plan = filter_board.behavior_snapshot();
     let filter_summary = filter_board.state_summary();
 
     assert_eq!(filter_board.id, "filter-board");
     assert_eq!(filter_board.state.rows().len(), 180);
-    assert_eq!(filter_plan.table().filtered_model().rows().len(), 60);
-    assert_eq!(filter_plan.table().final_model().rows().len(), 24);
+    assert_eq!(filter_plan.row_counts().filtered_rows(), 60);
+    assert_eq!(filter_plan.row_counts().final_rows(), 24);
     assert_eq!(filter_summary.filtered_rows, 60);
     assert_eq!(filter_summary.final_rows, 24);
     assert_eq!(filter_summary.selected_rows, 1);
@@ -3198,11 +3150,8 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(filter_summary.status_facet_total_count, 60);
     assert_eq!(filter_summary.score_facet_min, Some(0));
     assert_eq!(filter_summary.score_facet_max, Some(177));
-    assert_eq!(
-        filter_plan.table().final_model().rows()[0].id().as_str(),
-        "filter-board-row-177"
-    );
-    assert_eq!(filter_plan.table().final_model().selected_count(), 1);
+    assert_eq!(filter_plan.rows()[0].id().as_str(), "filter-board-row-177");
+    assert_eq!(filter_plan.row_counts().selected_rows(), 1);
     assert_eq!(filter_plan.aria_column_count(), 4);
     let filter_status_facet = filter_plan
         .column_facet(&TableColumnId::new("status"))
@@ -3212,7 +3161,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(facet_total_count(filter_status_facet), 60);
 
     let server_paged = table_sample(samples, "server-paged");
-    let server_page_plan = server_paged.render_plan();
+    let server_page_plan = server_paged.behavior_snapshot();
     let server_page_summary = server_paged.state_summary();
 
     assert_eq!(server_paged.id, "server-paged");
@@ -3253,8 +3202,6 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(server_score_range.max(), 64.0);
     assert_eq!(
         server_page_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .map(|row| row.id().as_str())
@@ -3271,23 +3218,21 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         ],
         "manual modes should preserve the supplied server page snapshot"
     );
-    assert_eq!(server_page_plan.table().final_model().selected_count(), 1);
+    assert_eq!(server_page_plan.row_counts().selected_rows(), 1);
     assert!(
         server_page_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .any(|row| row.id().as_str() == "server-paged-row-0018" && row.selected())
     );
 
     let release_resize = table_sample(samples, "release-resize");
-    let resize_plan = release_resize.render_plan();
+    let resize_plan = release_resize.behavior_snapshot();
     let resize_summary = release_resize.state_summary();
 
     assert_eq!(release_resize.id, "release-resize");
     assert_eq!(release_resize.state.rows().len(), 160);
-    assert_eq!(resize_plan.table().final_model().rows().len(), 160);
+    assert_eq!(resize_plan.row_counts().final_rows(), 160);
     assert_eq!(resize_summary.core_rows, 160);
     assert_eq!(resize_summary.total_column_width_px, 520);
     assert_eq!(resize_summary.resizable_columns, 3);
@@ -3301,7 +3246,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert!(!resize_plan.columns()[3].resizable());
 
     let content_fit_release = table_sample(samples, "content-fit-release");
-    let content_fit_plan = content_fit_release.render_plan();
+    let content_fit_plan = content_fit_release.behavior_snapshot();
     let content_fit_summary = content_fit_release.state_summary();
 
     assert_eq!(content_fit_release.id, "content-fit-release");
@@ -3315,7 +3260,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(content_fit_plan.columns()[3].width(), ui_px(84.0));
 
     let toggle_release = table_sample(samples, "toggle-release");
-    let toggle_plan = toggle_release.render_plan();
+    let toggle_plan = toggle_release.behavior_snapshot();
     let toggle_summary = toggle_release.state_summary();
 
     assert_eq!(toggle_release.id, "toggle-release");
@@ -3331,15 +3276,15 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         Some(TableCellEditor::Checkbox)
     );
     assert_eq!(
-        toggle_plan.table().final_model().rows()[0]
+        toggle_plan.rows()[0]
             .cell(&TableColumnId::new("enabled"))
-            .map(TableCellValue::filter_text)
+            .map(|cell| cell.text())
             .as_deref(),
         Some("true")
     );
 
     let select_release = table_sample(samples, "select-release");
-    let select_plan = select_release.render_plan();
+    let select_plan = select_release.behavior_snapshot();
     let select_summary = select_release.state_summary();
 
     assert_eq!(select_release.id, "select-release");
@@ -3358,7 +3303,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(select_plan.rows()[0].cells()[1].select_options().len(), 2);
 
     let multiline_release = table_sample(samples, "multiline-release");
-    let multiline_plan = multiline_release.render_plan();
+    let multiline_plan = multiline_release.behavior_snapshot();
     let multiline_summary = multiline_release.state_summary();
 
     assert_eq!(multiline_release.id, "multiline-release");
@@ -3375,15 +3320,15 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         Some(TableCellEditor::MultilineText { rows: 3 })
     );
     assert_eq!(
-        multiline_plan.table().final_model().rows()[0]
+        multiline_plan.rows()[0]
             .cell(&TableColumnId::new("notes"))
-            .map(TableCellValue::filter_text)
+            .map(|cell| cell.text())
             .as_deref(),
         Some("User-visible summary 000\nRollback: pending")
     );
 
     let grouped_release = table_sample(samples, "release-rollup");
-    let grouped_plan = grouped_release.render_plan();
+    let grouped_plan = grouped_release.behavior_snapshot();
     let grouped_summary = grouped_release.state_summary();
 
     assert_eq!(grouped_release.id, "release-rollup");
@@ -3414,14 +3359,12 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(grouped_summary.pinned_center_width_px, 400);
     assert_eq!(grouped_summary.pinned_right_width_px, 164);
     assert_eq!(grouped_summary.total_column_width_px, 752);
-    assert!(grouped_plan.uses_split_pinned_layout());
+    assert!(grouped_plan.uses_split_pinned_columns());
     assert!(grouped_summary.group_rows >= 5);
     assert!(grouped_summary.leaf_rows > 0);
     assert!(grouped_summary.expanded_rows < grouped_summary.grouped_rows);
 
     let ui_group = grouped_plan
-        .table()
-        .final_model()
         .row(&TableRowId::new("group:team=UI"))
         .expect("expanded UI group should be visible and addressable");
     assert!(ui_group.is_group());
@@ -3429,63 +3372,45 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         ui_group
             .cell(&TableColumnId::new("name"))
             .expect("group count aggregate should be present")
-            .filter_text(),
+            .text(),
         "64"
     );
     assert!(
         !ui_group
             .cell(&TableColumnId::new("score"))
             .expect("group score aggregate should be present")
-            .filter_text()
+            .text()
             .is_empty()
     );
     assert!(
         grouped_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .any(|row| row.id().as_str() == "grouped-release-row-000" && row.is_leaf())
     );
     assert!(
         grouped_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .all(|row| row.id().as_str() != "grouped-release-row-001"),
         "Runtime leaf row should stay hidden because that group starts collapsed"
     );
-    assert!(
-        grouped_plan
-            .table()
-            .final_model()
-            .row(&TableRowId::new("grouped-release-row-001"))
-            .is_some(),
-        "collapsed descendants should stay addressable by stable row id"
-    );
     assert_eq!(
         grouped_plan
-            .column_regions()
+            .columns()
             .iter()
-            .map(|region| (
-                region.region(),
-                region
-                    .columns()
-                    .iter()
-                    .map(|column| column.id().as_str())
-                    .collect::<Vec<_>>()
-            ))
+            .map(|column| (column.region(), column.id().as_str()))
             .collect::<Vec<_>>(),
         [
-            (TableColumnRegion::Left, vec!["name"]),
-            (TableColumnRegion::Center, vec!["team", "score"]),
-            (TableColumnRegion::Right, vec!["status"]),
+            (TableColumnRegion::Left, "name"),
+            (TableColumnRegion::Center, "team"),
+            (TableColumnRegion::Center, "score"),
+            (TableColumnRegion::Right, "status"),
         ]
     );
 
     let custom_grouped = table_sample(samples, "grouped-custom-aggregation");
-    let custom_plan = custom_grouped.render_plan();
+    let custom_plan = custom_grouped.behavior_snapshot();
     let custom_summary = custom_grouped.state_summary();
 
     assert_eq!(custom_grouped.id, "grouped-custom-aggregation");
@@ -3501,40 +3426,36 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(custom_summary.group_rows, 2);
     assert_eq!(custom_summary.leaf_rows, 8);
     assert_eq!(custom_summary.expanded_group_inputs, 2);
-    assert_eq!(custom_plan.table().final_model().rows().len(), 10);
+    assert_eq!(custom_plan.row_counts().final_rows(), 10);
     let custom_ui_group = custom_plan
-        .table()
-        .final_model()
         .row(&TableRowId::new("group:team=UI"))
         .expect("expanded UI custom group should be visible and addressable");
     assert_eq!(
         custom_ui_group
             .cell(&TableColumnId::new("name"))
             .expect("custom group count aggregate should be present")
-            .filter_text(),
+            .text(),
         "4"
     );
     assert_eq!(
         custom_ui_group
             .cell(&TableColumnId::new("score"))
             .expect("custom score aggregate should be present")
-            .filter_text(),
+            .text(),
         "11"
     );
     assert_eq!(
         custom_plan
-            .table()
-            .final_model()
             .row(&TableRowId::new("group:team=Platform"))
             .expect("expanded Platform custom group should be visible and addressable")
             .cell(&TableColumnId::new("score"))
             .expect("platform custom score aggregate should be present")
-            .filter_text(),
+            .text(),
         "101"
     );
 
     let release_matrix = table_sample(samples, "release-matrix");
-    let matrix_plan = release_matrix.render_plan();
+    let matrix_plan = release_matrix.behavior_snapshot();
     let matrix_summary = release_matrix.state_summary();
 
     assert_eq!(release_matrix.id, "release-matrix");
@@ -3556,47 +3477,15 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(matrix_summary.pinned_center_width_px, 1516);
     assert_eq!(matrix_summary.pinned_right_width_px, 148);
     assert_eq!(matrix_summary.total_column_width_px, 1836);
-    assert!(matrix_plan.uses_split_pinned_layout());
+    assert!(matrix_plan.uses_split_pinned_columns());
     assert_eq!(matrix_plan.aria_column_count(), 16);
-    assert_eq!(matrix_plan.header_row_count(), 3);
-    assert_eq!(matrix_plan.left_header_groups().header_row_count(), 3);
-    assert_eq!(matrix_plan.center_header_groups().header_row_count(), 3);
-    assert_eq!(matrix_plan.right_header_groups().header_row_count(), 3);
+    assert_eq!(matrix_plan.header_summary().header_rows(), 3);
+    assert_eq!(matrix_plan.header_summary().visible_group_headers(), 4);
     assert_eq!(
         matrix_plan
-            .left_header_groups()
-            .group_at_depth(1)
-            .expect("left header group row should exist")
-            .headers()[0]
-            .label(),
-        "Identity"
-    );
-    assert_eq!(
-        matrix_plan
-            .center_header_groups()
-            .group_at_depth(1)
-            .expect("center header group row should exist")
-            .headers()[0]
-            .label(),
-        "Metrics"
-    );
-    assert_eq!(
-        matrix_plan
-            .right_header_groups()
-            .group_at_depth(1)
-            .expect("right header group row should exist")
-            .headers()[0]
-            .label(),
-        "Delivery"
-    );
-    assert_eq!(
-        matrix_plan
-            .column_regions()
-            .iter()
-            .find(|region| region.region() == TableColumnRegion::Center)
-            .expect("release-matrix should expose a center column region")
             .columns()
             .iter()
+            .filter(|column| column.region() == TableColumnRegion::Center)
             .map(|column| column.id().as_str())
             .collect::<Vec<_>>(),
         [
@@ -3617,7 +3506,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         ]
     );
     let row_pinning = table_sample(samples, "row-pinning");
-    let row_pinning_plan = row_pinning.render_plan();
+    let row_pinning_plan = row_pinning.behavior_snapshot();
     let row_pinning_summary = row_pinning.state_summary();
 
     assert_eq!(row_pinning.id, "row-pinning");
@@ -3638,21 +3527,19 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
         row_pinning_summary.rendered_rows,
         row_pinning_plan.rendered_row_count()
     );
-    assert_eq!(row_pinning_plan.virtualizer().count(), 11);
+    assert_eq!(row_pinning_plan.row_counts().pinned_center_rows(), 11);
     assert_eq!(row_pinning_plan.aria_row_count(), 15);
-    assert!(row_pinning_plan.uses_split_pinned_layout());
+    assert!(row_pinning_plan.uses_split_pinned_columns());
     assert_eq!(
         row_pinning_plan
-            .top_rows()
-            .iter()
+            .rows_for_region(TableRowRegion::Top)
             .map(|row| (row.id().as_str(), row.region(), row.region_index()))
             .collect::<Vec<_>>(),
         [("row-pinning-row-003", TableRowRegion::Top, 0)]
     );
     assert_eq!(
         row_pinning_plan
-            .center_rows()
-            .iter()
+            .rows_for_region(TableRowRegion::Center)
             .map(|row| (row.id().as_str(), row.region(), row.region_index()))
             .collect::<Vec<_>>(),
         [
@@ -3671,8 +3558,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     );
     assert_eq!(
         row_pinning_plan
-            .bottom_rows()
-            .iter()
+            .rows_for_region(TableRowRegion::Bottom)
             .map(|row| (row.id().as_str(), row.region(), row.region_index()))
             .collect::<Vec<_>>(),
         [
@@ -3682,7 +3568,7 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     );
 
     let dependency_tree = table_sample(samples, "dependency-tree");
-    let tree_plan = dependency_tree.render_plan();
+    let tree_plan = dependency_tree.behavior_snapshot();
     let tree_summary = dependency_tree.state_summary();
 
     assert_eq!(dependency_tree.state.rows().len(), 1);
@@ -3699,12 +3585,10 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(tree_summary.pinned_center_width_px, 604);
     assert_eq!(tree_summary.pinned_right_width_px, 132);
     assert_eq!(tree_summary.total_column_width_px, 956);
-    assert!(tree_plan.uses_split_pinned_layout());
+    assert!(tree_plan.uses_split_pinned_columns());
     assert_eq!(tree_plan.aria_column_count(), 7);
     assert_eq!(
         tree_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .map(|row| (
@@ -3721,17 +3605,9 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
             ("dependency-docs", 1, None, false),
         ]
     );
-    assert!(
-        tree_plan
-            .table()
-            .final_model()
-            .row(&TableRowId::new("dependency-ui-table"))
-            .is_some(),
-        "collapsed source-tree descendants should stay addressable by stable row id"
-    );
 
     let server_tree = table_sample(samples, "server-tree");
-    let server_plan = server_tree.render_plan();
+    let server_plan = server_tree.behavior_snapshot();
     let server_summary = server_tree.state_summary();
 
     assert_eq!(server_tree.state.rows().len(), 3);
@@ -3753,13 +3629,11 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     assert_eq!(server_summary.pinned_center_columns, 5);
     assert_eq!(server_summary.pinned_right_columns, 1);
     assert_eq!(server_summary.total_column_width_px, 956);
-    assert!(server_plan.uses_split_pinned_layout());
+    assert!(server_plan.uses_split_pinned_columns());
     assert_eq!(server_plan.aria_column_count(), 7);
     assert_eq!(server_plan.aria_row_count(), 4);
     assert_eq!(
         server_plan
-            .table()
-            .final_model()
             .rows()
             .iter()
             .map(|row| row.id().as_str())
@@ -3768,18 +3642,12 @@ fn components_page_table_samples_expose_virtualized_row_model_contract() {
     );
 
     let server_workspace = server_plan
-        .table()
-        .final_model()
         .row(&TableRowId::new("server-workspace"))
         .expect("server workspace row should resolve");
     let server_cache = server_plan
-        .table()
-        .final_model()
         .row(&TableRowId::new("server-cache"))
         .expect("server cache row should resolve");
     let server_failed = server_plan
-        .table()
-        .final_model()
         .row(&TableRowId::new("server-failed"))
         .expect("server failed row should resolve");
 
@@ -6179,7 +6047,7 @@ fn components_gallery_smoke_content_fit_table_cell_edit_widens_name_column(
             .iter()
             .find(|sample| sample.id == SAMPLE_ID)
             .expect("content-fit sample should exist")
-            .render_plan()
+            .behavior_snapshot()
             .columns()[0]
             .width_policy(),
         TableColumnWidthPolicy::ContentFit
@@ -6229,13 +6097,11 @@ fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
         .iter()
         .find(|sample| sample.id == "release-rollup")
         .expect("release-rollup table sample should exist");
-    let plan = sample.render_plan();
+    let plan = sample.behavior_snapshot();
     let later_row_index = plan.visible_row_count() + sample.overscan + 5;
-    let first_row_id = plan.table().final_model().rows()[0]
-        .id()
-        .as_str()
-        .to_owned();
-    let later_row_id = plan.table().final_model().rows()[later_row_index]
+    let first_row_id = plan.rows()[0].id().as_str().to_owned();
+    let resolved = sample.state.resolve();
+    let later_row_id = resolved.final_model().rows()[later_row_index]
         .id()
         .as_str()
         .to_owned();
@@ -6317,17 +6183,17 @@ fn components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_samp
         .iter()
         .find(|sample| sample.id == "release-rollup")
         .expect("release-rollup table sample should exist");
-    let plan = sample.render_plan();
+    let plan = sample.behavior_snapshot();
     assert!(
-        plan.uses_split_pinned_layout(),
+        plan.uses_split_pinned_columns(),
         "release-rollup should exercise sticky pinned table lanes"
     );
     let first_rendered_row = plan
         .rows()
         .iter()
-        .find(|row| row.row().is_leaf())
+        .find(|row| row.is_leaf())
         .unwrap_or(&plan.rows()[0]);
-    let first_row_key = first_rendered_row.render_key().to_owned();
+    let first_row_key = first_rendered_row.id().as_str().to_owned();
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Components);
     let table_entry = pages::components::COMPONENT_CATALOG
@@ -6504,12 +6370,12 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
         .iter()
         .find(|sample| sample.id == "release-matrix")
         .expect("release-matrix table sample should exist");
-    let plan = sample.render_plan();
+    let plan = sample.behavior_snapshot();
     assert!(
-        plan.uses_split_pinned_layout(),
+        plan.uses_split_pinned_columns(),
         "release-matrix should exercise sticky pinned table lanes"
     );
-    let first_row_key = plan.rows()[0].render_key().to_owned();
+    let first_row_key = plan.rows()[0].id().as_str().to_owned();
     let far_header = "table:component-table:release-matrix:header:metric_13";
     let far_cell = format!("table:component-table:release-matrix:cell:{first_row_key}:metric_13");
     let left_group = "table:component-table:release-matrix:header-group:left:1:identity";
@@ -6655,9 +6521,9 @@ fn components_gallery_smoke_column_visibility_updates_release_matrix(
 
     let table_samples = pages::components::table_samples(ThemeTokens::default());
     let sample = table_sample(&table_samples, SAMPLE_ID);
-    let plan = sample.render_plan();
+    let plan = sample.behavior_snapshot();
     assert_eq!(plan.aria_column_count(), 16);
-    let first_row_key = plan.rows()[0].render_key().to_owned();
+    let first_row_key = plan.rows()[0].id().as_str().to_owned();
     let metric_cell =
         format!("table:component-table:release-matrix:cell:{first_row_key}:metric_03");
 
@@ -6776,24 +6642,35 @@ fn components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample(
         .iter()
         .find(|sample| sample.id == "row-pinning")
         .expect("row-pinning table sample should exist");
-    let plan = sample.render_plan();
-    assert_eq!(plan.top_rows().len(), 1);
-    assert_eq!(plan.center_rows().len(), 11);
-    assert_eq!(plan.bottom_rows().len(), 2);
+    let plan = sample.behavior_snapshot();
+    assert_eq!(plan.row_counts().pinned_top_rows(), 1);
+    assert_eq!(plan.row_counts().pinned_center_rows(), 11);
+    assert_eq!(plan.row_counts().pinned_bottom_rows(), 2);
     assert!(
-        plan.uses_split_pinned_layout(),
+        plan.uses_split_pinned_columns(),
         "row-pinning should combine row-pinned bands with pinned column lanes"
     );
 
-    let top_row_key = plan.top_rows()[0].render_key().to_owned();
-    let bottom_row_key = plan.bottom_rows()[1].render_key().to_owned();
+    let top_row_key = plan
+        .rows_for_region(TableRowRegion::Top)
+        .next()
+        .expect("row-pinning should render a top-pinned row")
+        .id()
+        .as_str()
+        .to_owned();
+    let bottom_row_key = plan
+        .rows_for_region(TableRowRegion::Bottom)
+        .nth(1)
+        .expect("row-pinning should render two bottom-pinned rows")
+        .id()
+        .as_str()
+        .to_owned();
     let center_cell_selectors = plan
-        .center_rows()
-        .iter()
+        .rows_for_region(TableRowRegion::Center)
         .map(|row| {
             format!(
                 "table:component-table:row-pinning:cell:{}:name",
-                row.render_key()
+                row.id().as_str()
             )
         })
         .collect::<Vec<_>>();

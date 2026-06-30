@@ -1,7 +1,7 @@
 use open_gpui_ui_core::{
     TableCellEditor, TableColumn, TableColumnId, TableColumnRegion, TableColumnWidthPolicy,
     TableResolvedColumnSizing, TableSelectOption, TableSortDirection, UiPx, VirtualizerItemKey,
-    VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState, VirtualizerState,
+    VirtualizerItemMeasurement, VirtualizerResolvedState, VirtualizerState,
 };
 
 use super::super::{TableHeaderAction, nonnegative_px};
@@ -23,7 +23,6 @@ pub struct TableColumnRenderPlan {
     min_width: UiPx,
     max_width: UiPx,
     start: UiPx,
-    after: UiPx,
     resizable: bool,
 }
 
@@ -54,7 +53,6 @@ impl TableColumnRenderPlan {
             min_width: sizing.min_width(),
             max_width: sizing.max_width(),
             start: sizing.start(),
-            after: sizing.after(),
             resizable: sizing.resizable(),
         }
     }
@@ -82,11 +80,6 @@ impl TableColumnRenderPlan {
     /// Returns whether this column is sortable in the contract.
     pub const fn sortable(&self) -> bool {
         self.sortable
-    }
-
-    /// Returns whether leaf cells in this column render text editors.
-    pub const fn text_editable(&self) -> bool {
-        self.editor.is_some()
     }
 
     /// Returns the configured editor for leaf cells in this column.
@@ -119,24 +112,9 @@ impl TableColumnRenderPlan {
         self.width
     }
 
-    /// Returns the lower width bound.
-    pub const fn min_width(&self) -> UiPx {
-        self.min_width
-    }
-
-    /// Returns the upper width bound.
-    pub const fn max_width(&self) -> UiPx {
-        self.max_width
-    }
-
     /// Returns the offset from the start edge of this column's region.
     pub const fn start(&self) -> UiPx {
         self.start
-    }
-
-    /// Returns the offset from the end edge of this column's region.
-    pub const fn after(&self) -> UiPx {
-        self.after
     }
 
     /// Returns whether the column can be resized.
@@ -144,22 +122,13 @@ impl TableColumnRenderPlan {
         self.resizable
     }
 
-    /// Returns the label exposed to assistive technology.
-    pub fn accessible_label(&self) -> String {
-        match self.sort_direction {
-            Some(direction) => format!("{}, sorted {}", self.label, direction.as_str()),
-            None => self.label.clone(),
-        }
-    }
-
     pub(in crate::table) fn with_width(mut self, width: UiPx) -> Self {
         self.width = width.max(self.min_width).min(self.max_width);
         self
     }
 
-    pub(in crate::table) fn with_offsets(mut self, start: UiPx, after: UiPx) -> Self {
+    pub(in crate::table) fn with_start(mut self, start: UiPx) -> Self {
         self.start = start;
-        self.after = after;
         self
     }
 
@@ -186,7 +155,6 @@ impl TableColumnRenderPlan {
             min_width,
             max_width,
             start: UiPx::ZERO,
-            after: UiPx::ZERO,
             resizable: true,
         }
     }
@@ -235,17 +203,14 @@ impl TableColumnRegionRenderPlan {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TablePinnedLayoutPlan {
     table_id: String,
-    left_width: UiPx,
     center_width: UiPx,
-    right_width: UiPx,
-    total_width: UiPx,
 }
 
 impl TablePinnedLayoutPlan {
     pub(super) fn from_column_regions(
         table_id: &str,
         regions: &[TableColumnRegionRenderPlan],
-        total_width: UiPx,
+        _total_width: UiPx,
     ) -> Option<Self> {
         let region_plan = |region| regions.iter().find(|plan| plan.region() == region);
         let left = region_plan(TableColumnRegion::Left);
@@ -263,42 +228,10 @@ impl TablePinnedLayoutPlan {
 
         Some(Self {
             table_id: table_id.to_owned(),
-            left_width: left
-                .map(TableColumnRegionRenderPlan::total_width)
-                .unwrap_or(UiPx::ZERO),
             center_width: center
                 .map(TableColumnRegionRenderPlan::total_width)
                 .unwrap_or(UiPx::ZERO),
-            right_width: right
-                .map(TableColumnRegionRenderPlan::total_width)
-                .unwrap_or(UiPx::ZERO),
-            total_width,
         })
-    }
-
-    /// Returns the table identity this layout plan belongs to.
-    pub fn table_id(&self) -> &str {
-        &self.table_id
-    }
-
-    /// Returns the total width of the left pinned lane.
-    pub const fn left_width(&self) -> UiPx {
-        self.left_width
-    }
-
-    /// Returns the total width of the horizontally scrollable center lane.
-    pub const fn center_width(&self) -> UiPx {
-        self.center_width
-    }
-
-    /// Returns the total width of the right pinned lane.
-    pub const fn right_width(&self) -> UiPx {
-        self.right_width
-    }
-
-    /// Returns the total width across all visible lanes.
-    pub const fn total_width(&self) -> UiPx {
-        self.total_width
     }
 
     /// Returns the stable adapter id for the header center scroll viewport.
@@ -306,33 +239,9 @@ impl TablePinnedLayoutPlan {
         format!("table:{}:header-center-scroll", self.table_id)
     }
 
-    /// Returns the stable debug selector for the header center scroll viewport.
-    pub fn header_center_scroll_selector(&self) -> String {
-        format!("scroll-area:{}", self.header_center_scroll_id())
-    }
-
-    /// Returns the stable debug selector for one header region lane.
-    pub fn header_region_selector(&self, region: TableColumnRegion) -> String {
-        format!("table:{}:header-region:{}", self.table_id, region.as_str())
-    }
-
     /// Returns the stable adapter id for one body-row center scroll viewport.
     pub fn row_center_scroll_id(&self, row_render_key: &str) -> String {
         format!("table:{}:row-center-scroll:{row_render_key}", self.table_id)
-    }
-
-    /// Returns the stable debug selector for one body-row center scroll viewport.
-    pub fn row_center_scroll_selector(&self, row_render_key: &str) -> String {
-        format!("scroll-area:{}", self.row_center_scroll_id(row_render_key))
-    }
-
-    /// Returns the stable debug selector for one body-row region lane.
-    pub fn row_region_selector(&self, row_render_key: &str, region: TableColumnRegion) -> String {
-        format!(
-            "table:{}:row-region:{row_render_key}:{}",
-            self.table_id,
-            region.as_str()
-        )
     }
 }
 
@@ -401,24 +310,9 @@ impl TableCenterColumnWindowPlan {
         self.virtualizer.total_size()
     }
 
-    /// Returns the visible center-column range before overscan.
-    pub const fn visible_range(&self) -> &VirtualizerRange {
-        self.virtualizer.visible_range()
-    }
-
-    /// Returns the rendered center-column range after overscan.
-    pub const fn overscan_range(&self) -> &VirtualizerRange {
-        self.virtualizer.overscan_range()
-    }
-
     /// Returns the rendered center columns in window order.
     pub fn rendered_columns(&self) -> &[TableColumnRenderPlan] {
         &self.rendered_columns
-    }
-
-    /// Returns the rendered center column count.
-    pub fn rendered_column_count(&self) -> usize {
-        self.rendered_columns.len()
     }
 
     /// Returns the leading spacer width before the first rendered center column.
@@ -432,12 +326,18 @@ impl TableCenterColumnWindowPlan {
     }
 
     /// Returns whether the center lane is currently virtualized.
+    #[cfg(test)]
     pub fn virtualized(&self) -> bool {
         self.rendered_columns.len() < self.virtualizer.count()
     }
 
-    /// Returns the resolved virtualizer state.
-    pub const fn virtualizer(&self) -> &VirtualizerResolvedState {
-        &self.virtualizer
+    #[cfg(test)]
+    pub const fn visible_range(&self) -> &open_gpui_ui_core::VirtualizerRange {
+        self.virtualizer.visible_range()
+    }
+
+    #[cfg(test)]
+    pub const fn overscan_range(&self) -> &open_gpui_ui_core::VirtualizerRange {
+        self.virtualizer.overscan_range()
     }
 }

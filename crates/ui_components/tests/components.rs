@@ -21,32 +21,31 @@ use open_gpui_ui_components::{
     SidebarCollapseMode, SidebarItem, SidebarItemDescriptor, SidebarSection,
     SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton, Splitter,
     SplitterPanel, SplitterPanelDescriptor, SplitterState, StatusCue, Switch, Table,
-    TableCellEditApplyOutcome, TableCellEditChange, TableCellEditor, TableCellValue,
-    TableCenterColumnWindowPlan, TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId,
-    TableColumnOrderChange, TableColumnOrderPlacement, TableColumnPinning, TableColumnRegion,
-    TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange, TableColumnVisibility,
-    TableColumnVisibilityAction, TableColumnVisibilityChange, TableColumnVisibilityOverrides,
-    TableColumnVisibilityState, TableExpansionMode, TableFacetValueCount, TableFacetedFilter,
-    TableFacetedFilterChange, TableFacetedFilterState, TableFilter, TableGlobalFacetSummary,
-    TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction,
-    TableNumericFilterOperator, TablePagination, TablePredicateFilter, TablePredicateFilterChange,
+    TableCellEditApplyOutcome, TableCellEditChange, TableCellEditor, TableCellValue, TableColumn,
+    TableColumnFacets, TableColumnGroup, TableColumnId, TableColumnOrderChange,
+    TableColumnOrderPlacement, TableColumnPinning, TableColumnRegion, TableColumnResizeMode,
+    TableColumnSizing, TableColumnSizingChange, TableColumnVisibility, TableColumnVisibilityAction,
+    TableColumnVisibilityChange, TableColumnVisibilityOverrides, TableColumnVisibilityState,
+    TableExpansionMode, TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange,
+    TableFacetedFilterState, TableFilter, TableGlobalFacetSummary, TableGlobalFilter,
+    TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction, TableNumericFilterOperator,
+    TablePagination, TablePredicateFilter, TablePredicateFilterChange,
     TablePredicateFilterOperator, TablePredicateFilterOperatorOptionState,
     TablePredicateFilterState, TableRangeFilter, TableRangeFilterChange, TableRangeFilterState,
-    TableResolvedHeaderKind, TableRow, TableRowChildrenLoadState, TableRowId, TableRowMeasureMode,
-    TableRowPinning, TableRowPinningPolicy, TableRowRegion, TableSelectOption,
-    TableSelectionActivationMode, TableSelectionMode, TableSelectionScope, TableSort,
-    TableSortDirection, TableStageMode, TableState, TableTextFilterOperator, TableToolbar,
-    TableToolbarState, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
-    TabsState, TextInput, TextInputDisplayMode, Textarea, ThemeColor, ThemeDefinition, ThemeMode,
-    ThemeRegistry, ThemeResolver, ThemeSnapshot, ThemeValidationError, Toggle, ToggleGroup,
-    ToggleGroupItem, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
-    ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy,
-    TooltipOpenIntent, Tree, TreeChildrenLoadState, TreeDropPosition, TreeItemDescriptor, TreeMove,
-    TreeMoveTarget, TreeRenderPlan, TreeRowRenderPlan, VirtualizedList, VirtualizedListActivation,
-    VirtualizedListItemDescriptor, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
-    VirtualizedListScrollStrategy, VirtualizedListState, VirtualizerItemKey, VirtualizerRange,
-    VirtualizerSnapshot, VirtualizerSnapshotItem, VirtualizerState, active_index_from_str_keys,
-    apply_tree_move, first_enabled,
+    TableRow, TableRowChildrenLoadState, TableRowId, TableRowMeasureMode, TableRowPinning,
+    TableRowPinningPolicy, TableRowRegion, TableSelectOption, TableSelectionActivationMode,
+    TableSelectionMode, TableSelectionScope, TableSort, TableSortDirection, TableStageMode,
+    TableState, TableTextFilterOperator, TableToolbar, TableToolbarState, Tabs, TabsActivationMode,
+    TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput, TextInputDisplayMode,
+    Textarea, ThemeColor, ThemeDefinition, ThemeMode, ThemeRegistry, ThemeResolver, ThemeSnapshot,
+    ThemeValidationError, Toggle, ToggleGroup, ToggleGroupItem, ToggleVariant, Toolbar,
+    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeChildrenLoadState,
+    TreeDropPosition, TreeItemDescriptor, TreeMove, TreeMoveTarget, TreeRenderPlan,
+    TreeRowRenderPlan, VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
+    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
+    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
+    VirtualizerSnapshotItem, active_index_from_str_keys, apply_tree_move, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -222,9 +221,9 @@ const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
         home: "gpui_adapter",
     },
     PublicSurfaceOwnerEntry {
-        name: "TableRenderDiagnostics",
-        owner: PublicSurfaceOwnerClass::DiagnosticSurface,
-        home: "table/render_plan/mod.rs",
+        name: "TableBehaviorSnapshot",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        home: "table/behavior.rs",
     },
     PublicSurfaceOwnerEntry {
         name: "TableToolbarColors",
@@ -4488,7 +4487,7 @@ fn scroll_area_builder_state_keeps_gpui_handle_out_of_resolved_state() {
 }
 
 #[test]
-fn table_diagnostics_uses_core_state_and_virtualizer_contracts() {
+fn table_behavior_snapshot_uses_core_state_and_virtualizer_contracts() {
     let state = sample_table_state(100)
         .with_sorting([TableSort::new("score", TableSortDirection::Descending)])
         .with_selected_rows(["row-0091"])
@@ -4498,34 +4497,38 @@ fn table_diagnostics_uses_core_state_and_virtualizer_contracts() {
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
         .overscan(4);
-    let plan = table.diagnostics(ui_px(120.0), ui_px(96.0));
+    let snapshot = table.behavior_snapshot(ui_px(120.0), ui_px(96.0));
 
-    assert_eq!(plan.role(), Role::Table);
-    assert_eq!(plan.row_role(), Role::Row);
-    assert_eq!(plan.column_header_role(), Role::ColumnHeader);
-    assert_eq!(plan.cell_role(), Role::Cell);
-    assert_eq!(plan.columns().len(), 3);
-    assert_eq!(plan.aria_column_count(), 3);
-    assert_eq!(plan.aria_row_count(), 51);
+    assert_eq!(snapshot.role(), Role::Table);
+    assert_eq!(snapshot.row_role(), Role::Row);
+    assert_eq!(snapshot.column_header_role(), Role::ColumnHeader);
+    assert_eq!(snapshot.cell_role(), Role::Cell);
+    assert_eq!(snapshot.columns().len(), 3);
+    assert_eq!(snapshot.aria_column_count(), 3);
+    assert_eq!(snapshot.aria_row_count(), 51);
     assert_eq!(
-        *plan.virtualizer().visible_range(),
+        *snapshot.visible_rows().visible_range(),
         VirtualizerRange::new(5, 9)
     );
     assert_eq!(
-        *plan.virtualizer().overscan_range(),
+        *snapshot.visible_rows().overscan_range(),
         VirtualizerRange::new(3, 11)
     );
-    assert!(plan.rendered_row_count() <= plan.visible_row_count() + plan.metrics().overscan());
-    assert_eq!(plan.rows()[0].model_index(), 3);
-    assert_eq!(plan.rows()[0].id().as_str(), "row-0093");
     assert!(
-        plan.rows()
+        snapshot.row_counts().rendered_rows()
+            <= snapshot.row_counts().visible_rows() + snapshot.metrics().overscan()
+    );
+    assert_eq!(snapshot.rows()[0].model_index(), 3);
+    assert_eq!(snapshot.rows()[0].id().as_str(), "row-0093");
+    assert!(
+        snapshot
+            .rows()
             .iter()
             .any(|row| row.id().as_str() == "row-0091" && row.selected()),
         "expected selection to follow row id after filtering and sorting"
     );
 
-    let score_column = plan
+    let score_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "score")
@@ -4538,7 +4541,7 @@ fn table_diagnostics_uses_core_state_and_virtualizer_contracts() {
 }
 
 #[test]
-fn table_diagnostics_exposes_tree_row_metadata_for_adapter_rendering() {
+fn table_behavior_snapshot_exposes_tree_row_metadata_for_adapter_rendering() {
     let state = TableState::new([TableRow::new("root")
         .with_cell("name", "Workspace")
         .with_cell("status", "Ready")
@@ -4554,22 +4557,22 @@ fn table_diagnostics_exposes_tree_row_metadata_for_adapter_rendering() {
     .with_column_pinning(TableColumnPinning::new().pinned_left(["name"]))
     .with_expanded_rows(["root"])
     .with_pagination(TablePagination::disabled());
-    let plan = Table::new("tree-table", "Tree table", state)
+    let snapshot = Table::new("tree-table", "Tree table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .diagnostics(UiPx::ZERO, ui_px(96.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
-    assert_eq!(plan.rows().len(), 2);
-    assert_eq!(plan.rows()[0].id().as_str(), "root");
-    assert!(plan.rows()[0].is_tree_branch());
-    assert_eq!(plan.rows()[0].tree_expanded(), Some(true));
-    assert_eq!(plan.rows()[0].depth(), 0);
-    assert_eq!(plan.rows()[1].id().as_str(), "child");
-    assert!(!plan.rows()[1].is_tree_branch());
-    assert_eq!(plan.rows()[1].tree_expanded(), None);
-    assert_eq!(plan.rows()[1].depth(), 1);
+    assert_eq!(snapshot.rows().len(), 2);
+    assert_eq!(snapshot.rows()[0].id().as_str(), "root");
+    assert!(snapshot.rows()[0].is_tree_branch());
+    assert_eq!(snapshot.rows()[0].tree_expanded(), Some(true));
+    assert_eq!(snapshot.rows()[0].depth(), 0);
+    assert_eq!(snapshot.rows()[1].id().as_str(), "child");
+    assert!(!snapshot.rows()[1].is_tree_branch());
+    assert_eq!(snapshot.rows()[1].tree_expanded(), None);
+    assert_eq!(snapshot.rows()[1].depth(), 1);
     assert_eq!(
-        plan.rows()[0]
+        snapshot.rows()[0]
             .cells_for_region(TableColumnRegion::Left)
             .map(|cell| cell.column_id().as_str())
             .collect::<Vec<_>>(),
@@ -4578,20 +4581,20 @@ fn table_diagnostics_exposes_tree_row_metadata_for_adapter_rendering() {
 }
 
 #[test]
-fn table_diagnostics_exposes_manual_expansion_and_child_load_metadata() {
+fn table_behavior_snapshot_exposes_manual_expansion_and_child_load_metadata() {
     let manual_state = TableState::new([TableRow::new("root")
         .with_cell("name", "Workspace")
         .with_child(TableRow::new("child").with_cell("name", "Loaded child"))])
     .with_columns([TableColumn::new("name", "Name").with_width(ui_px(160.0))])
     .with_pagination(TablePagination::disabled());
-    let manual_plan = Table::new("manual-tree", "Manual tree", manual_state)
+    let manual_snapshot = Table::new("manual-tree", "Manual tree", manual_state)
         .expansion_mode(TableExpansionMode::Manual)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .diagnostics(UiPx::ZERO, ui_px(96.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
     assert_eq!(
-        manual_plan
+        manual_snapshot
             .rows()
             .iter()
             .map(|row| row.id().as_str())
@@ -4599,10 +4602,10 @@ fn table_diagnostics_exposes_manual_expansion_and_child_load_metadata() {
         ["root", "child"],
         "manual expansion should render the caller-supplied visible tree snapshot"
     );
-    assert_eq!(manual_plan.rows()[0].tree_expanded(), Some(false));
-    assert_eq!(manual_plan.rows()[0].loaded_child_count(), 1);
+    assert_eq!(manual_snapshot.rows()[0].tree_expanded(), Some(false));
+    assert_eq!(manual_snapshot.rows()[0].loaded_child_count(), 1);
     assert_eq!(
-        manual_plan.rows()[0].children_load_state(),
+        manual_snapshot.rows()[0].children_load_state(),
         Some(&TableRowChildrenLoadState::Idle)
     );
 
@@ -4611,11 +4614,11 @@ fn table_diagnostics_exposes_manual_expansion_and_child_load_metadata() {
         .with_children_loading("Loading children")])
     .with_columns([TableColumn::new("name", "Name").with_width(ui_px(160.0))])
     .with_pagination(TablePagination::disabled());
-    let loading_plan = Table::new("loading-tree", "Loading tree", loading_state)
+    let loading_snapshot = Table::new("loading-tree", "Loading tree", loading_state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .diagnostics(UiPx::ZERO, ui_px(96.0));
-    let loading_row = &loading_plan.rows()[0];
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    let loading_row = &loading_snapshot.rows()[0];
 
     assert!(loading_row.is_tree_branch());
     assert_eq!(loading_row.loaded_child_count(), 0);
@@ -4633,7 +4636,7 @@ fn table_diagnostics_exposes_manual_expansion_and_child_load_metadata() {
 }
 
 #[test]
-fn table_diagnostics_exposes_manual_row_model_metadata() {
+fn table_behavior_snapshot_exposes_manual_row_model_metadata() {
     let state = TableState::new([
         TableRow::new("row-020")
             .with_cell("name", "Delta")
@@ -4655,18 +4658,19 @@ fn table_diagnostics_exposes_manual_row_model_metadata() {
     .with_manual_sorting()
     .with_pagination(TablePagination::manual(10, 2, 42));
 
-    let plan = Table::new("manual-row-model", "Manual row model", state)
+    let snapshot = Table::new("manual-row-model", "Manual row model", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .diagnostics(UiPx::ZERO, ui_px(96.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
-    assert_eq!(plan.filtering_mode(), TableStageMode::Manual);
-    assert_eq!(plan.sorting_mode(), TableStageMode::Manual);
-    assert_eq!(plan.pagination_mode(), TableStageMode::Manual);
-    assert_eq!(plan.pagination_row_count(), Some(42));
-    assert_eq!(plan.pagination_page_count(), Some(21));
+    assert_eq!(snapshot.filtering_mode(), TableStageMode::Manual);
+    assert_eq!(snapshot.sorting_mode(), TableStageMode::Manual);
+    assert_eq!(snapshot.pagination_mode(), TableStageMode::Manual);
+    assert_eq!(snapshot.pagination_row_count(), Some(42));
+    assert_eq!(snapshot.pagination_page_count(), Some(21));
     assert_eq!(
-        plan.rows()
+        snapshot
+            .rows()
             .iter()
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
@@ -4676,7 +4680,7 @@ fn table_diagnostics_exposes_manual_row_model_metadata() {
 }
 
 #[test]
-fn table_diagnostics_exposes_faceting_metadata() {
+fn table_behavior_snapshot_exposes_faceting_metadata() {
     let state = TableState::new([
         TableRow::new("row-1")
             .with_cell("team", "UI")
@@ -4712,15 +4716,16 @@ fn table_diagnostics_exposes_faceting_metadata() {
         ])],
     );
 
-    let plan = Table::new("faceted-table", "Faceted table", state)
+    let snapshot = Table::new("faceted-table", "Faceted table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .diagnostics(UiPx::ZERO, ui_px(96.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
-    assert_eq!(plan.faceting_mode(), TableStageMode::Client);
-    assert_eq!(plan.column_facets().len(), 3);
+    assert_eq!(snapshot.faceting_mode(), TableStageMode::Client);
+    assert_eq!(snapshot.column_facets().len(), 3);
     assert_eq!(
-        plan.rows()
+        snapshot
+            .rows()
             .iter()
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
@@ -4728,7 +4733,7 @@ fn table_diagnostics_exposes_faceting_metadata() {
         "pagination still limits the rendered row window"
     );
 
-    let status = plan
+    let status = snapshot
         .column_facet(&TableColumnId::new("status"))
         .expect("status facet should resolve");
     assert_eq!(status.mode(), TableStageMode::Manual);
@@ -4739,7 +4744,7 @@ fn table_diagnostics_exposes_faceting_metadata() {
         "manual facet payloads should survive render-plan resolution"
     );
 
-    let team = plan
+    let team = snapshot
         .column_facet(&TableColumnId::new("team"))
         .expect("team facet should resolve");
     assert_eq!(team.mode(), TableStageMode::Client);
@@ -4750,7 +4755,7 @@ fn table_diagnostics_exposes_faceting_metadata() {
         "client facets ignore their own column filter and honor the other filters"
     );
 
-    let score = plan
+    let score = snapshot
         .column_facet(&TableColumnId::new("score"))
         .expect("score facet should resolve");
     let range = score
@@ -4761,7 +4766,7 @@ fn table_diagnostics_exposes_faceting_metadata() {
 }
 
 #[test]
-fn table_diagnostics_exposes_global_facet_summary() {
+fn table_behavior_snapshot_exposes_global_facet_summary() {
     let state = TableState::new([
         TableRow::new("row-1")
             .with_cell("team", "UI")
@@ -4796,12 +4801,12 @@ fn table_diagnostics_exposes_global_facet_summary() {
     .with_global_filter("done")
     .with_pagination(TablePagination::disabled());
 
-    let plan = Table::new("global-facet-table", "Global facet table", state)
+    let snapshot = Table::new("global-facet-table", "Global facet table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .diagnostics(UiPx::ZERO, ui_px(96.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
-    let summary: &TableGlobalFacetSummary = plan.global_facet_summary();
+    let summary: &TableGlobalFacetSummary = snapshot.global_facet_summary();
     assert_eq!(summary.mode(), TableStageMode::Client);
     assert_eq!(summary.row_count(), 2);
     assert!(summary.column_facet(&TableColumnId::new("notes")).is_none());
@@ -5610,7 +5615,7 @@ fn table_predicate_filter_change_updates_only_target_predicate_filters() {
 }
 
 #[test]
-fn table_diagnostics_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
+fn table_behavior_snapshot_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
     let state = TableState::new([
         TableRow::new("row-a")
             .with_cell("name", "Alpha")
@@ -5635,32 +5640,32 @@ fn table_diagnostics_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
     .with_grouping(["score"])
     .with_all_rows_expanded()
     .with_pagination(TablePagination::disabled());
-    let plan = Table::new("editable-plan-table", "Editable plan table", state)
+    let snapshot = Table::new("editable-plan-table", "Editable plan table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(120.0))
-        .diagnostics(UiPx::ZERO, ui_px(120.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(120.0));
 
-    let name_column = plan
+    let name_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "name")
         .expect("name column should resolve");
-    let score_column = plan
+    let score_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "score")
         .expect("score column should resolve");
-    let notes_column = plan
+    let notes_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "notes")
         .expect("notes column should resolve");
-    let enabled_column = plan
+    let enabled_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "enabled")
         .expect("enabled column should resolve");
-    let status_column = plan
+    let status_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "status")
@@ -5681,10 +5686,10 @@ fn table_diagnostics_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
     assert!(!score_column.text_editable());
     assert_eq!(score_column.editor(), None);
 
-    let group_row = plan
+    let group_row = snapshot
         .rows()
         .iter()
-        .find(|row| row.row().is_group())
+        .find(|row| row.is_group())
         .expect("group row should resolve");
     let group_name_cell = group_row
         .cells()
@@ -5714,7 +5719,7 @@ fn table_diagnostics_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
         .expect("group status cell should resolve");
     assert_eq!(group_status_cell.editor(), None);
 
-    let editable_leaf = plan
+    let editable_leaf = snapshot
         .rows()
         .iter()
         .find(|row| row.id().as_str() == "row-a")
@@ -5751,7 +5756,7 @@ fn table_diagnostics_exposes_editable_leaf_cell_kinds_for_leaf_cells_only() {
     assert_eq!(editable_status.select_options().len(), 2);
     assert_eq!(editable_status.select_options()[1].value(), "blocked");
 
-    let missing_leaf = plan
+    let missing_leaf = snapshot
         .rows()
         .iter()
         .find(|row| row.id().as_str() == "row-b")
@@ -5920,14 +5925,11 @@ fn table_cell_edit_change_updates_boolean_source_row_and_preserves_table_state()
 }
 
 #[test]
-fn table_diagnostics_exposes_pinned_column_regions() {
-    let flat_plan = Table::new("flat-table", "Flat table", sample_table_state(1))
-        .diagnostics(UiPx::ZERO, ui_px(96.0));
-    assert!(!flat_plan.uses_split_pinned_layout());
-    assert!(
-        flat_plan.pinned_layout().is_none(),
-        "unpinned tables should keep the flat render topology"
-    );
+fn table_behavior_snapshot_exposes_pinned_column_regions() {
+    let flat_snapshot = Table::new("flat-table", "Flat table", sample_table_state(1))
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    assert_eq!(flat_snapshot.column_regions().left_columns(), 0);
+    assert_eq!(flat_snapshot.column_regions().right_columns(), 0);
 
     let state = TableState::new([TableRow::new("row-a")
         .with_cell("name", "Alpha")
@@ -5947,59 +5949,23 @@ fn table_diagnostics_exposes_pinned_column_regions() {
             .pinned_right(["status"]),
     )
     .with_pagination(TablePagination::disabled());
-    let plan = Table::new("pinned-table", "Pinned table", state)
+    let snapshot = Table::new("pinned-table", "Pinned table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .diagnostics(UiPx::ZERO, ui_px(96.0));
-    let layout = plan
-        .pinned_layout()
-        .expect("pinned columns should request split pinned layout metadata");
-    assert!(plan.uses_split_pinned_layout());
-    assert_eq!(layout.table_id(), "pinned-table");
-    assert_eq!(layout.left_width(), ui_px(256.0));
-    assert_eq!(layout.center_width(), ui_px(128.0));
-    assert_eq!(layout.right_width(), ui_px(128.0));
-    assert_eq!(layout.total_width(), ui_px(512.0));
-    assert_eq!(
-        layout.header_center_scroll_id(),
-        "table:pinned-table:header-center-scroll"
-    );
-    assert_eq!(
-        layout.header_center_scroll_selector(),
-        "scroll-area:table:pinned-table:header-center-scroll"
-    );
-    assert_eq!(
-        layout.header_region_selector(TableColumnRegion::Left),
-        "table:pinned-table:header-region:left"
-    );
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    let regions = snapshot.column_regions();
+    assert_eq!(regions.left_width(), ui_px(256.0));
+    assert_eq!(regions.center_width(), ui_px(128.0));
+    assert_eq!(regions.right_width(), ui_px(128.0));
+    assert_eq!(regions.total_width(), ui_px(512.0));
 
-    let region_columns = plan
-        .column_regions()
+    let region_columns = snapshot
+        .columns()
         .iter()
-        .map(|region| {
-            (
-                region.region(),
-                region
-                    .columns()
-                    .iter()
-                    .map(|column| column.id().as_str())
-                    .collect::<Vec<_>>(),
-            )
-        })
+        .map(|column| (column.id().as_str(), column.region()))
         .collect::<Vec<_>>();
     assert_eq!(
         region_columns,
-        [
-            (TableColumnRegion::Left, vec!["score", "name"]),
-            (TableColumnRegion::Center, vec!["team"]),
-            (TableColumnRegion::Right, vec!["status"]),
-        ]
-    );
-    assert_eq!(
-        plan.columns()
-            .iter()
-            .map(|column| (column.id().as_str(), column.region()))
-            .collect::<Vec<_>>(),
         [
             ("score", TableColumnRegion::Left),
             ("name", TableColumnRegion::Left),
@@ -6008,19 +5974,7 @@ fn table_diagnostics_exposes_pinned_column_regions() {
         ]
     );
 
-    let row = &plan.rows()[0];
-    assert_eq!(
-        layout.row_center_scroll_id(row.render_key()),
-        "table:pinned-table:row-center-scroll:row-a"
-    );
-    assert_eq!(
-        layout.row_center_scroll_selector(row.render_key()),
-        "scroll-area:table:pinned-table:row-center-scroll:row-a"
-    );
-    assert_eq!(
-        layout.row_region_selector(row.render_key(), TableColumnRegion::Right),
-        "table:pinned-table:row-region:row-a:right"
-    );
+    let row = &snapshot.rows()[0];
     assert_eq!(
         row.cells_for_region(TableColumnRegion::Left)
             .map(|cell| cell.column_id().as_str())
@@ -6042,7 +5996,7 @@ fn table_diagnostics_exposes_pinned_column_regions() {
 }
 
 #[test]
-fn table_diagnostics_exposes_row_pinning_regions() {
+fn table_behavior_snapshot_exposes_row_pinning_regions() {
     let state = sample_table_state(12)
         .with_pagination(TablePagination::new(1, 4))
         .with_row_pinning(
@@ -6050,22 +6004,22 @@ fn table_diagnostics_exposes_row_pinning_regions() {
                 .pinned_top(["row-0001"])
                 .pinned_bottom(["row-0005", "row-0010"]),
         );
-    let plan = Table::new("row-pinning-table", "Row pinning table", state)
+    let snapshot = Table::new("row-pinning-table", "Row pinning table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
         .overscan(0)
-        .diagnostics(UiPx::ZERO, ui_px(96.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
     assert_eq!(
-        plan.top_rows()
-            .iter()
+        snapshot
+            .rows_for_region(TableRowRegion::Top)
             .map(|row| (row.id().as_str(), row.region(), row.region_index()))
             .collect::<Vec<_>>(),
         [("row-0001", TableRowRegion::Top, 0)]
     );
     assert_eq!(
-        plan.center_rows()
-            .iter()
+        snapshot
+            .rows_for_region(TableRowRegion::Center)
             .map(|row| (row.id().as_str(), row.region(), row.region_index()))
             .collect::<Vec<_>>(),
         [
@@ -6076,8 +6030,8 @@ fn table_diagnostics_exposes_row_pinning_regions() {
         "the center region should be the current page with pinned duplicates removed"
     );
     assert_eq!(
-        plan.bottom_rows()
-            .iter()
+        snapshot
+            .rows_for_region(TableRowRegion::Bottom)
             .map(|row| (row.id().as_str(), row.region(), row.region_index()))
             .collect::<Vec<_>>(),
         [
@@ -6086,33 +6040,23 @@ fn table_diagnostics_exposes_row_pinning_regions() {
         ]
     );
     assert_eq!(
-        plan.rendered_rows()
-            .map(|row| row.id().as_str())
-            .collect::<Vec<_>>(),
-        [
-            "row-0001", "row-0004", "row-0006", "row-0007", "row-0005", "row-0010",
-        ]
-    );
-    assert_eq!(
-        plan.table()
-            .final_model()
+        snapshot
             .rows()
             .iter()
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
         [
             "row-0001", "row-0004", "row-0006", "row-0007", "row-0005", "row-0010",
-        ],
-        "final visual rows should match the top + center + bottom render order"
+        ]
     );
-    assert_eq!(plan.virtualizer().count(), 3);
-    assert_eq!(plan.rendered_row_count(), 6);
-    assert_eq!(plan.visible_row_count(), 6);
-    assert_eq!(plan.aria_row_count(), 7);
+    assert_eq!(snapshot.row_counts().pinned_center_rows(), 3);
+    assert_eq!(snapshot.row_counts().rendered_rows(), 6);
+    assert_eq!(snapshot.row_counts().visible_rows(), 6);
+    assert_eq!(snapshot.aria_row_count(), 7);
 }
 
 #[test]
-fn table_diagnostics_respects_page_only_row_pinning_policy() {
+fn table_behavior_snapshot_respects_page_only_row_pinning_policy() {
     let state = sample_table_state(12)
         .with_pagination(TablePagination::new(1, 4))
         .with_row_pinning(
@@ -6121,7 +6065,7 @@ fn table_diagnostics_respects_page_only_row_pinning_policy() {
                 .pinned_bottom(["row-0005", "row-0010"]),
         )
         .with_row_pinning_policy(TableRowPinningPolicy::PageOnly);
-    let plan = Table::new(
+    let snapshot = Table::new(
         "row-pinning-page-only-table",
         "Row pinning page-only table",
         state,
@@ -6129,31 +6073,31 @@ fn table_diagnostics_respects_page_only_row_pinning_policy() {
     .row_height(ui_px(24.0))
     .viewport_extent(ui_px(96.0))
     .overscan(0)
-    .diagnostics(UiPx::ZERO, ui_px(96.0));
+    .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
-    assert!(plan.top_rows().is_empty());
+    assert_eq!(snapshot.row_counts().pinned_top_rows(), 0);
     assert_eq!(
-        plan.center_rows()
-            .iter()
+        snapshot
+            .rows_for_region(TableRowRegion::Center)
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
         ["row-0004", "row-0006", "row-0007"],
         "outside-page pinned rows should be omitted under page-only policy"
     );
     assert_eq!(
-        plan.bottom_rows()
-            .iter()
+        snapshot
+            .rows_for_region(TableRowRegion::Bottom)
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
         ["row-0005"]
     );
-    assert_eq!(plan.virtualizer().count(), 3);
-    assert_eq!(plan.aria_row_count(), 5);
+    assert_eq!(snapshot.row_counts().pinned_center_rows(), 3);
+    assert_eq!(snapshot.aria_row_count(), 5);
 }
 
 #[test]
-fn table_diagnostics_exposes_center_column_window_metadata() {
-    let plan = Table::new(
+fn table_behavior_snapshot_exposes_center_column_summary_without_window_internals() {
+    let snapshot = Table::new(
         "center-window-table",
         "Center window table",
         sample_center_window_table_state(),
@@ -6161,150 +6105,27 @@ fn table_diagnostics_exposes_center_column_window_metadata() {
     .row_height(ui_px(24.0))
     .viewport_extent(ui_px(96.0))
     .overscan(4)
-    .diagnostics(UiPx::ZERO, ui_px(96.0));
-    let window = plan
-        .center_column_window()
-        .expect("center columns should resolve window metadata");
+    .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
-    assert_eq!(window.center_width(), ui_px(540.0));
-    assert!(!window.virtualized());
-    assert_eq!(*window.visible_range(), VirtualizerRange::new(0, 6));
-    assert_eq!(*window.overscan_range(), VirtualizerRange::new(0, 6));
-    assert_eq!(window.leading_spacer_width(), UiPx::ZERO);
-    assert_eq!(window.trailing_spacer_width(), UiPx::ZERO);
-    assert_eq!(window.rendered_column_count(), 6);
-    assert_eq!(
-        window
-            .rendered_columns()
-            .iter()
-            .map(|column| column.id().as_str())
-            .collect::<Vec<_>>(),
-        [
-            "metric_00",
-            "metric_01",
-            "metric_02",
-            "metric_03",
-            "metric_04",
-            "metric_05",
-        ]
-    );
+    let regions = snapshot.column_regions();
+    assert_eq!(regions.left_columns(), 1);
+    assert_eq!(regions.center_columns(), 6);
+    assert_eq!(regions.right_columns(), 1);
+    assert_eq!(regions.left_width(), ui_px(140.0));
+    assert_eq!(regions.center_width(), ui_px(540.0));
+    assert_eq!(regions.right_width(), ui_px(132.0));
+    assert_eq!(regions.aria_columns(), 8);
     assert!(
-        window
-            .rendered_columns()
+        snapshot
+            .columns()
             .iter()
-            .all(|column| column.region() == TableColumnRegion::Center),
-        "pinned left/right columns must stay outside the center window"
+            .filter(|column| column.region() == TableColumnRegion::Center)
+            .all(|column| column.id().as_str().starts_with("metric_"))
     );
 }
 
 #[test]
-fn table_center_column_window_matches_exact_size_virtualizer() {
-    let plan = Table::new(
-        "wide-center-window-table",
-        "Wide center window table",
-        sample_center_window_table_state(),
-    )
-    .row_height(ui_px(24.0))
-    .viewport_extent(ui_px(96.0))
-    .overscan(4)
-    .diagnostics(UiPx::ZERO, ui_px(96.0));
-    let center_columns = plan
-        .column_regions()
-        .iter()
-        .find(|region| region.region() == TableColumnRegion::Center)
-        .expect("center region should resolve")
-        .columns();
-    let window =
-        TableCenterColumnWindowPlan::resolve(center_columns, ui_px(170.0), ui_px(120.0), 2)
-            .expect("center column window should resolve");
-    let expected = VirtualizerState::new(center_columns.len(), center_columns[0].width())
-        .with_viewport_extent(ui_px(120.0))
-        .with_scroll_offset(ui_px(170.0))
-        .with_overscan(2)
-        .resolve_known_size_window(|index| {
-            let column = &center_columns[index];
-            (
-                VirtualizerItemKey::new(column.id().as_str().to_owned()),
-                column.width(),
-            )
-        });
-
-    assert!(window.virtualized());
-    assert!(window.rendered_column_count() < center_columns.len());
-    assert_eq!(window.center_width(), expected.total_size());
-    assert_eq!(window.visible_range(), expected.visible_range());
-    assert_eq!(window.overscan_range(), expected.overscan_range());
-    assert_eq!(window.rendered_column_count(), expected.items().len());
-    assert_eq!(
-        window.leading_spacer_width(),
-        expected
-            .items()
-            .first()
-            .map(|item| item.start())
-            .unwrap_or(UiPx::ZERO)
-    );
-    assert_eq!(
-        window.trailing_spacer_width(),
-        expected
-            .items()
-            .last()
-            .map(|item| expected.total_size() - item.end())
-            .unwrap_or(UiPx::ZERO)
-    );
-    assert_eq!(
-        window
-            .rendered_columns()
-            .iter()
-            .map(|column| column.id().as_str())
-            .collect::<Vec<_>>(),
-        expected
-            .items()
-            .iter()
-            .map(|item| item.key().as_str())
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        plan.column_region_width(TableColumnRegion::Left),
-        ui_px(140.0)
-    );
-    assert_eq!(
-        plan.column_region_width(TableColumnRegion::Right),
-        ui_px(132.0)
-    );
-}
-
-#[test]
-fn table_center_column_window_preserves_full_accessibility_indexes() {
-    let plan = Table::new(
-        "accessibility-center-window-table",
-        "Accessibility center window table",
-        sample_center_window_table_state(),
-    )
-    .row_height(ui_px(24.0))
-    .viewport_extent(ui_px(96.0))
-    .overscan(0)
-    .diagnostics(UiPx::ZERO, ui_px(96.0));
-    let center_columns = plan
-        .column_regions()
-        .iter()
-        .find(|region| region.region() == TableColumnRegion::Center)
-        .expect("center region should resolve")
-        .columns();
-    let window = TableCenterColumnWindowPlan::resolve(center_columns, ui_px(420.0), ui_px(68.0), 0)
-        .expect("center column window should resolve");
-
-    assert_eq!(
-        window
-            .rendered_columns()
-            .iter()
-            .map(|column| (column.id().as_str(), column.aria_column_index()))
-            .collect::<Vec<_>>(),
-        [("metric_05", 7)]
-    );
-}
-
-#[test]
-fn table_virtualizer_snapshot_restores_measurements_without_overriding_live_scroll() {
+fn table_behavior_snapshot_keeps_virtualized_visible_range_stable_with_snapshot() {
     let snapshot = VirtualizerSnapshot::new(
         ui_px(0.0),
         [VirtualizerSnapshotItem::new(
@@ -6316,21 +6137,21 @@ fn table_virtualizer_snapshot_restores_measurements_without_overriding_live_scro
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
         .virtualizer_snapshot(snapshot);
-    let plan = table.diagnostics(ui_px(120.0), ui_px(96.0));
+    let snapshot = table.behavior_snapshot(ui_px(120.0), ui_px(96.0));
 
-    assert_eq!(plan.virtualizer().scroll_offset(), ui_px(120.0));
-    let measured_row = plan
-        .virtualizer()
-        .measurements()
-        .iter()
-        .find(|measurement| measurement.key().as_str() == "row-0005")
-        .expect("snapshot measurement should be restored by stable row key");
-    assert_eq!(measured_row.size(), ui_px(48.0));
-    assert!(measured_row.measured());
+    assert_eq!(
+        *snapshot.visible_rows().visible_range(),
+        VirtualizerRange::new(5, 8)
+    );
+    assert_eq!(
+        *snapshot.visible_rows().overscan_range(),
+        VirtualizerRange::new(2, 11)
+    );
+    assert_eq!(snapshot.rows()[0].id().as_str(), "row-0002");
 }
 
 #[test]
-fn table_diagnostics_disambiguates_duplicate_row_ids_for_rendering() {
+fn table_behavior_snapshot_preserves_duplicate_row_id_visibility() {
     let state = TableState::new([
         TableRow::new("duplicate").with_cell("name", "First"),
         TableRow::new("duplicate").with_cell("name", "Second"),
@@ -6341,27 +6162,21 @@ fn table_diagnostics_disambiguates_duplicate_row_ids_for_rendering() {
     let table = Table::new("duplicate-table", "Duplicate rows", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(120.0));
-    let plan = table.diagnostics(UiPx::ZERO, ui_px(120.0));
+    let snapshot = table.behavior_snapshot(UiPx::ZERO, ui_px(120.0));
 
-    assert_eq!(plan.table().duplicate_row_ids()[0].as_str(), "duplicate");
-    assert_eq!(plan.rows()[0].id().as_str(), "duplicate");
-    assert_eq!(plan.rows()[0].render_key(), "0:duplicate");
-    assert_eq!(plan.rows()[1].id().as_str(), "duplicate");
-    assert_eq!(plan.rows()[1].render_key(), "1:duplicate");
-    assert_eq!(plan.rows()[2].id().as_str(), "unique");
-    assert_eq!(plan.rows()[2].render_key(), "unique");
-
-    let keys = plan
-        .virtualizer()
-        .measurements()
-        .iter()
-        .map(|measurement| measurement.key().as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(keys, ["0:duplicate", "1:duplicate", "unique"]);
+    assert_eq!(
+        snapshot
+            .rows()
+            .iter()
+            .map(|row| row.id().as_str())
+            .collect::<Vec<_>>(),
+        ["duplicate", "duplicate", "unique"]
+    );
+    assert_eq!(snapshot.row_counts().rendered_rows(), 3);
 }
 
 #[test]
-fn table_diagnostics_exposes_column_sizing_metadata_and_matching_cell_widths() {
+fn table_behavior_snapshot_exposes_column_sizing_metadata_and_matching_cell_widths() {
     let state = TableState::new([TableRow::new("row-a")
         .with_cell("name", "Alpha")
         .with_cell("team", "UI")
@@ -6386,41 +6201,25 @@ fn table_diagnostics_exposes_column_sizing_metadata_and_matching_cell_widths() {
     )
     .with_column_sizing(TableColumnSizing::new().with_width("score", ui_px(95.0)))
     .with_pagination(TablePagination::disabled());
-    let plan = Table::new("sized-table", "Sized table", state)
+    let snapshot = Table::new("sized-table", "Sized table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .diagnostics(UiPx::ZERO, ui_px(96.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
 
-    assert_eq!(plan.total_column_width(), ui_px(370.0));
-    assert_eq!(
-        plan.column_region_width(TableColumnRegion::Left),
-        ui_px(190.0)
-    );
-    assert_eq!(
-        plan.column_region_width(TableColumnRegion::Center),
-        ui_px(120.0)
-    );
-    assert_eq!(
-        plan.column_region_width(TableColumnRegion::Right),
-        ui_px(60.0)
-    );
-    assert_eq!(plan.column_regions()[0].total_width(), ui_px(190.0));
-    assert_eq!(plan.column_regions()[1].total_width(), ui_px(120.0));
-    assert_eq!(plan.column_regions()[2].total_width(), ui_px(60.0));
+    assert_eq!(snapshot.column_regions().total_width(), ui_px(370.0));
+    assert_eq!(snapshot.column_regions().left_width(), ui_px(190.0));
+    assert_eq!(snapshot.column_regions().center_width(), ui_px(120.0));
+    assert_eq!(snapshot.column_regions().right_width(), ui_px(60.0));
 
-    let score_column = plan
+    let score_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "score")
         .expect("score column should be present");
     assert_eq!(score_column.width(), ui_px(90.0));
-    assert_eq!(score_column.min_width(), ui_px(70.0));
-    assert_eq!(score_column.max_width(), ui_px(90.0));
-    assert_eq!(score_column.start(), ui_px(0.0));
-    assert_eq!(score_column.after(), ui_px(100.0));
     assert!(score_column.resizable());
 
-    let score_cell = plan.rows()[0]
+    let score_cell = snapshot.rows()[0]
         .cells_for_region(TableColumnRegion::Left)
         .find(|cell| cell.column_id().as_str() == "score")
         .expect("score cell should be present");
@@ -6428,7 +6227,7 @@ fn table_diagnostics_exposes_column_sizing_metadata_and_matching_cell_widths() {
 }
 
 #[test]
-fn table_diagnostics_preserves_column_width_policies() {
+fn table_behavior_snapshot_preserves_column_width_policies() {
     let state = TableState::new([TableRow::new("row-a")
         .with_cell("name", "Alpha")
         .with_cell("status", "Ready")])
@@ -6437,11 +6236,11 @@ fn table_diagnostics_preserves_column_width_policies() {
         TableColumn::new("status", "Status").with_content_fit(),
     ])
     .with_pagination(TablePagination::disabled());
-    let plan = Table::new("policy-table", "Policy table", state)
+    let snapshot = Table::new("policy-table", "Policy table", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(96.0))
-        .diagnostics(UiPx::ZERO, ui_px(96.0));
-    let status_column = plan
+        .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    let status_column = snapshot
         .columns()
         .iter()
         .find(|column| column.id().as_str() == "status")
@@ -6454,7 +6253,7 @@ fn table_diagnostics_preserves_column_width_policies() {
 }
 
 #[test]
-fn table_diagnostics_exposes_nested_header_groups_and_region_widths() {
+fn table_behavior_snapshot_exposes_nested_header_summary_and_region_widths() {
     let state = TableState::new([TableRow::new("row-a")
         .with_cell("name", "Alpha")
         .with_cell("team", "UI")
@@ -6488,33 +6287,19 @@ fn table_diagnostics_exposes_nested_header_groups_and_region_widths() {
             .pinned_right(["status"]),
     )
     .with_pagination(TablePagination::disabled());
-    let plan = Table::new("nested-headers", "Nested headers", state)
+    let snapshot = Table::new("nested-headers", "Nested headers", state)
         .row_height(ui_px(24.0))
         .viewport_extent(ui_px(240.0))
-        .diagnostics(UiPx::ZERO, ui_px(240.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(240.0));
 
-    assert_eq!(plan.header_row_count(), 3);
-    assert_eq!(plan.left_header_groups().header_row_count(), 2);
-    assert_eq!(plan.center_header_groups().header_row_count(), 3);
-    assert_eq!(plan.right_header_groups().header_row_count(), 3);
-    assert_eq!(plan.left_header_groups().total_width(), ui_px(100.0));
+    assert_eq!(snapshot.header_summary().header_rows(), 3);
+    assert_eq!(snapshot.header_summary().visible_group_headers(), 3);
+    assert_eq!(snapshot.column_regions().left_width(), ui_px(100.0));
     assert_eq!(
-        plan.center_header_groups().total_width(),
+        snapshot.column_regions().center_width(),
         ui_px(120.0 + 80.0)
     );
-    assert_eq!(plan.right_header_groups().total_width(), ui_px(90.0));
-    assert_eq!(
-        plan.center_header_groups().groups()[0].headers()[0].label(),
-        "Identity"
-    );
-    assert_eq!(
-        plan.center_header_groups().groups()[1].headers()[0].label(),
-        "Team"
-    );
-    assert_eq!(
-        plan.center_header_groups().groups()[2].headers()[0].kind(),
-        TableResolvedHeaderKind::Placeholder
-    );
+    assert_eq!(snapshot.column_regions().right_width(), ui_px(90.0));
 }
 
 #[test]
@@ -6917,7 +6702,7 @@ fn tree_runtime_drag_move_emits_controlled_payload(cx: &mut open_gpui::TestAppCo
 #[test]
 fn table_header_action_cycles_sorting_without_render_coupling() {
     let unsorted = Table::new("sort-cycle", "Sort cycle", sample_table_state(8))
-        .diagnostics(UiPx::ZERO, ui_px(120.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(120.0));
     let name_action = unsorted
         .columns()
         .iter()
@@ -6938,7 +6723,7 @@ fn table_header_action_cycles_sorting_without_render_coupling() {
     );
 
     let ascending = Table::new("sort-cycle", "Sort cycle", ascending_state)
-        .diagnostics(UiPx::ZERO, ui_px(120.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(120.0));
     let descending_action = ascending
         .columns()
         .iter()
@@ -6956,7 +6741,7 @@ fn table_header_action_cycles_sorting_without_render_coupling() {
 
     let descending_state = descending_action.apply_to(sample_table_state(8));
     let descending = Table::new("sort-cycle", "Sort cycle", descending_state)
-        .diagnostics(UiPx::ZERO, ui_px(120.0));
+        .behavior_snapshot(UiPx::ZERO, ui_px(120.0));
     let clear_action = descending
         .columns()
         .iter()
@@ -6994,18 +6779,21 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let virtualizer: root::VirtualizerState =
         root::VirtualizerState::new(4, ui_px(24.0)).with_overscan(2);
     let root_state_readout: &root::TableState = table.state();
-    assert_eq!(root_state_readout.resolve().final_model().rows().len(), 1);
-    let root_plan: root::TableRenderDiagnostics = table.diagnostics(UiPx::ZERO, ui_px(96.0));
-    let _root_region_plan: &root::TableColumnRegionRenderPlan = &root_plan.column_regions()[0];
+    let root_resolved_state = root_state_readout.resolve();
+    assert_eq!(root_resolved_state.final_model().rows().len(), 1);
+    let root_snapshot: root::TableBehaviorSnapshot =
+        table.behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    let _prelude_snapshot: prelude::TableBehaviorSnapshot = root_snapshot.clone();
+    let _root_region_snapshot: root::TableColumnRegionSnapshot = root_snapshot.column_regions();
     let _root_header_groups: &root::TableResolvedHeaderGroupRegions =
-        root_plan.table().header_groups();
+        root_resolved_state.header_groups();
     let _root_header_kind: root::TableResolvedHeaderKind =
-        root_plan.table().center_header_groups()[0].headers()[0].kind();
+        root_resolved_state.center_header_groups()[0].headers()[0].kind();
     let _root_header_cell: &root::TableResolvedHeaderCell =
-        &root_plan.table().center_header_groups()[0].headers()[0];
+        &root_resolved_state.center_header_groups()[0].headers()[0];
     let _root_header_group: &root::TableResolvedHeaderGroup =
-        &root_plan.table().center_header_groups()[0];
-    let _root_header_plan: &root::TableHeaderGroupRegionsRenderPlan = root_plan.header_groups();
+        &root_resolved_state.center_header_groups()[0];
+    let _root_header_summary: root::TableHeaderSummarySnapshot = root_snapshot.header_summary();
     let root_group_id = root::TableColumnGroupId::new("identity");
     assert_eq!(root_group_id.as_str(), "identity");
     let root_column_group = root::TableColumnGroup::new(
@@ -7042,16 +6830,14 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
             .pinned_left(["name"])
             .pinned_right(["status"]),
     );
-    let root_pinned_render_plan =
+    let root_pinned_snapshot =
         root::Table::new("root-pinned-table", "Root pinned table", root_pinned_state)
-            .diagnostics(UiPx::ZERO, ui_px(96.0));
-    let root_pinned_layout: root::TablePinnedLayoutPlan = root_pinned_render_plan
-        .pinned_layout()
-        .expect("exported pinned layout plan should resolve")
-        .clone();
-    let _prelude_pinned_layout: prelude::TablePinnedLayoutPlan = root_pinned_layout.clone();
-    let _prelude_header_plan: &prelude::TableHeaderGroupRegionsRenderPlan = _root_header_plan;
-    assert_eq!(root_pinned_layout.table_id(), "root-pinned-table");
+            .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    let root_pinned_regions: root::TableColumnRegionSnapshot =
+        root_pinned_snapshot.column_regions();
+    let _prelude_pinned_regions: prelude::TableColumnRegionSnapshot = root_pinned_regions;
+    let _prelude_header_summary: prelude::TableHeaderSummarySnapshot = _root_header_summary;
+    assert_eq!(root_pinned_snapshot.table_id(), "root-pinned-table");
     let root_row_pinning: root::TableRowPinning = root::TableRowPinning::new()
         .pinned_top(["row-a"])
         .pinned_bottom(["row-b"]);
@@ -7065,7 +6851,7 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         prelude::TableRowPinningPolicy::KeepPinnedRows;
     let _root_row_region: root::TableRowRegion = root::TableRowRegion::Top;
     let _prelude_row_region: prelude::TableRowRegion = prelude::TableRowRegion::Bottom;
-    let root_row_regions: root::TableRowRegions = root::Table::new(
+    let root_row_counts: root::TableRowCountSnapshot = root::Table::new(
         "root-row-pinning-table",
         "Root row pinning table",
         root::TableState::new([
@@ -7075,26 +6861,10 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
         .with_columns([root::TableColumn::new("name", "Name")])
         .with_row_pinning(root_row_pinning.clone()),
     )
-    .diagnostics(UiPx::ZERO, ui_px(96.0))
-    .table()
-    .row_regions()
-    .clone();
-    let _prelude_row_regions: prelude::TableRowRegions = root_row_regions;
-    let root_center_window: root::TableCenterColumnWindowPlan =
-        root::TableCenterColumnWindowPlan::resolve(
-            root_pinned_render_plan
-                .column_regions()
-                .iter()
-                .find(|region| region.region() == root::TableColumnRegion::Center)
-                .expect("center region should resolve")
-                .columns(),
-            ui_px(0.0),
-            ui_px(128.0),
-            2,
-        )
-        .expect("exported center column window plan should resolve");
-    let _prelude_center_window: prelude::TableCenterColumnWindowPlan = root_center_window.clone();
-    assert_eq!(root_center_window.rendered_column_count(), 1);
+    .behavior_snapshot(UiPx::ZERO, ui_px(96.0))
+    .row_counts();
+    let _prelude_row_counts: prelude::TableRowCountSnapshot = root_row_counts;
+    assert_eq!(root_pinned_regions.center_columns(), 1);
     let root_grid_viewport: root::GridViewport2D = root::resolve_grid_viewport_2d(
         &root::VirtualizerState::new(2, ui_px(24.0))
             .with_viewport_extent(ui_px(24.0))
@@ -7114,7 +6884,7 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
                 .with_scroll_offset(ui_px(12.0)),
         );
     assert_eq!(root_grid_viewport.row_overscan_range().start(), 0);
-    let header_action: root::TableHeaderAction = root_plan.columns()[0]
+    let header_action: root::TableHeaderAction = root_snapshot.columns()[0]
         .sort_action()
         .expect("sortable exported table column should expose a header action")
         .clone();
@@ -7392,8 +7162,8 @@ fn table_public_exports_include_core_table_and_virtualizer_contracts() {
     let _prelude_regions: prelude::TableColumnRegions =
         table.state().resolve().visible_column_regions().clone();
 
-    assert_eq!(root_plan.role(), Role::Table);
-    assert!(!root_plan.column_facets().is_empty());
+    assert_eq!(root_snapshot.role(), Role::Table);
+    assert!(!root_snapshot.columns().is_empty());
     assert_eq!(
         root::TableRowActivationKind::DoubleClick.as_str(),
         "double-click"
@@ -9132,8 +8902,8 @@ fn table_runtime_center_column_window_still_emits_sort_for_rendered_center_heade
 }
 
 #[test]
-fn table_center_column_window_recomputes_geometry_for_center_column_resize() {
-    let base_plan = Table::new(
+fn table_behavior_snapshot_updates_center_column_summary_for_resize() {
+    let base_snapshot = Table::new(
         "center-window-resize-plan-table",
         "Center window resize plan table",
         sample_center_window_table_state()
@@ -9142,18 +8912,12 @@ fn table_center_column_window_recomputes_geometry_for_center_column_resize() {
     .row_height(ui_px(24.0))
     .viewport_extent(ui_px(96.0))
     .overscan(0)
-    .diagnostics(UiPx::ZERO, ui_px(96.0));
-    let base_center_columns = base_plan
-        .column_regions()
-        .iter()
-        .find(|region| region.region() == TableColumnRegion::Center)
-        .expect("center region should resolve")
-        .columns();
-    let base_window =
-        TableCenterColumnWindowPlan::resolve(base_center_columns, ui_px(420.0), ui_px(68.0), 0)
-            .expect("center column window should resolve");
+    .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    let base_metric = base_snapshot
+        .column(&TableColumnId::new("metric_05"))
+        .expect("metric_05 should resolve before resize");
 
-    let resized_plan = Table::new(
+    let resized_snapshot = Table::new(
         "center-window-resize-plan-table",
         "Center window resize plan table",
         sample_center_window_table_state()
@@ -9162,39 +8926,22 @@ fn table_center_column_window_recomputes_geometry_for_center_column_resize() {
     .row_height(ui_px(24.0))
     .viewport_extent(ui_px(96.0))
     .overscan(0)
-    .diagnostics(UiPx::ZERO, ui_px(96.0));
-    let resized_center_columns = resized_plan
-        .column_regions()
-        .iter()
-        .find(|region| region.region() == TableColumnRegion::Center)
-        .expect("center region should resolve after resize")
-        .columns();
-    let resized_window =
-        TableCenterColumnWindowPlan::resolve(resized_center_columns, ui_px(420.0), ui_px(68.0), 0)
-            .expect("center column window should resolve after resize");
+    .behavior_snapshot(UiPx::ZERO, ui_px(96.0));
+    let resized_metric = resized_snapshot
+        .column(&TableColumnId::new("metric_05"))
+        .expect("metric_05 should resolve after resize");
 
-    assert!(resized_window.center_width() > base_window.center_width());
-    assert_eq!(resized_window.visible_range(), base_window.visible_range());
     assert_eq!(
-        resized_window.overscan_range(),
-        base_window.overscan_range()
-    );
-    assert_eq!(
-        resized_window
-            .rendered_columns()
-            .iter()
-            .map(|column| column.id().as_str())
-            .collect::<Vec<_>>(),
-        base_window
-            .rendered_columns()
-            .iter()
-            .map(|column| column.id().as_str())
-            .collect::<Vec<_>>()
+        base_snapshot.column_regions().center_columns(),
+        resized_snapshot.column_regions().center_columns()
     );
     assert!(
-        resized_window.rendered_columns().last().unwrap().width()
-            > base_window.rendered_columns().last().unwrap().width(),
-        "expected the resized virtualized center header to widen"
+        resized_snapshot.column_regions().center_width()
+            > base_snapshot.column_regions().center_width()
+    );
+    assert!(
+        resized_metric.width() > base_metric.width(),
+        "expected the resized center column to widen"
     );
 }
 
@@ -12269,7 +12016,7 @@ fn surface_manifest_tracks_exports_gallery_and_docs_contracts() {
         "Command",
         "Tooltip",
         "Dialog",
-        "TableRenderDiagnostics",
+        "TableBehaviorSnapshot",
         "TreeState",
         "VirtualizedListState",
         "GpuiOverlayAdapterConfig",
@@ -12517,7 +12264,7 @@ fn component_contract_docs_match_current_public_surface_vocabulary() {
         "`adapter-only`",
         "`internal-anatomy`",
         "`state-contract`",
-        "`TableRenderDiagnostics`",
+        "`TableBehaviorSnapshot`",
         "not component facades",
         "default application",
         "state API",

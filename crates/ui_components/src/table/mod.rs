@@ -1,5 +1,6 @@
 //! Table component backed by renderer-neutral row-model and virtualizer contracts.
 
+mod behavior;
 mod body;
 mod cell;
 mod column_visibility;
@@ -39,6 +40,11 @@ pub use open_gpui_ui_core::{
 };
 use std::rc::Rc;
 
+pub use behavior::{
+    TableBehaviorSnapshot, TableCellBehaviorSnapshot, TableColumnBehaviorSnapshot,
+    TableColumnRegionSnapshot, TableHeaderSummarySnapshot, TableRowBehaviorSnapshot,
+    TableRowCountSnapshot, TableTreeSummarySnapshot, TableVisibleRowsSnapshot,
+};
 use body::{handle_table_vertical_scroll_wheel, render_table_body};
 pub use column_visibility::{
     TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
@@ -64,10 +70,9 @@ pub use predicate_filter::{
     TablePredicateFilterOperatorOptionState, TablePredicateFilterState,
 };
 pub use range_filter::{TableRangeFilter, TableRangeFilterChange, TableRangeFilterState};
-pub use render_plan::{
+pub(in crate::table) use render_plan::{
     TableCellRenderPlan, TableCenterColumnWindowPlan, TableColumnRegionRenderPlan,
-    TableColumnRenderPlan, TableHeaderCellRenderPlan, TableHeaderGroupRegionRenderPlan,
-    TableHeaderGroupRegionsRenderPlan, TableHeaderGroupRenderPlan, TablePinnedLayoutPlan,
+    TableColumnRenderPlan, TableHeaderCellRenderPlan, TablePinnedLayoutPlan,
     TableRenderDiagnostics, TableRowRenderPlan,
 };
 use resize::{TableColumnResizeDrag, TableResizeRenderConfig, handle_table_column_resize_drag};
@@ -475,7 +480,67 @@ mod tests {
 
         assert_eq!(columns[0].width(), committed_width);
         assert_eq!(columns[0].start(), UiPx::ZERO);
-        assert_eq!(columns[0].after(), UiPx::ZERO);
+    }
+
+    #[test]
+    fn center_column_window_resolves_known_width_range_and_spacers() {
+        let columns = test_center_columns([
+            ("metric_00", 80.0),
+            ("metric_01", 90.0),
+            ("metric_02", 100.0),
+            ("metric_03", 110.0),
+            ("metric_04", 120.0),
+            ("metric_05", 130.0),
+        ]);
+
+        let window = TableCenterColumnWindowPlan::resolve(&columns, ui_px(210.0), ui_px(170.0), 1)
+            .expect("center columns should resolve a virtual window");
+
+        assert!(window.virtualized());
+        assert_eq!(window.center_width(), ui_px(630.0));
+        assert_eq!(*window.visible_range(), VirtualizerRange::new(2, 4));
+        assert_eq!(*window.overscan_range(), VirtualizerRange::new(2, 5));
+        assert_eq!(window.leading_spacer_width(), ui_px(170.0));
+        assert_eq!(window.trailing_spacer_width(), ui_px(130.0));
+        assert_eq!(
+            window
+                .rendered_columns()
+                .iter()
+                .map(|column| column.id().as_str())
+                .collect::<Vec<_>>(),
+            ["metric_02", "metric_03", "metric_04"]
+        );
+    }
+
+    #[test]
+    fn center_column_window_recomputes_total_width_after_column_resize() {
+        let mut columns = test_center_columns([
+            ("metric_00", 80.0),
+            ("metric_01", 90.0),
+            ("metric_02", 100.0),
+            ("metric_03", 110.0),
+        ]);
+        let before = TableCenterColumnWindowPlan::resolve(&columns, ui_px(0.0), ui_px(190.0), 0)
+            .expect("center columns should resolve before resize");
+
+        columns[2] = columns[2].clone().with_width(ui_px(160.0));
+        let after = TableCenterColumnWindowPlan::resolve(&columns, ui_px(0.0), ui_px(190.0), 0)
+            .expect("center columns should resolve after resize");
+
+        assert_eq!(before.center_width(), ui_px(380.0));
+        assert_eq!(after.center_width(), ui_px(440.0));
+        assert_eq!(
+            after
+                .rendered_columns()
+                .iter()
+                .map(|column| (column.id().as_str(), column.width()))
+                .collect::<Vec<_>>(),
+            [
+                ("metric_00", ui_px(80.0)),
+                ("metric_01", ui_px(90.0)),
+                ("metric_02", ui_px(160.0))
+            ]
+        );
     }
 
     #[test]
@@ -556,5 +621,20 @@ mod tests {
         assert_eq!(resolved.measurements()[0].start(), ui_px(0.0));
         assert_eq!(resolved.measurements()[1].start(), ui_px(18.0));
         assert_eq!(resolved.measurements()[2].start(), ui_px(46.0));
+    }
+
+    fn test_center_columns<const N: usize>(widths: [(&str, f32); N]) -> Vec<TableColumnRenderPlan> {
+        widths
+            .into_iter()
+            .map(|(id, width)| {
+                TableColumnRenderPlan::test_content_fit_column(
+                    id,
+                    id,
+                    ui_px(width),
+                    ui_px(10.0),
+                    ui_px(400.0),
+                )
+            })
+            .collect()
     }
 }

@@ -203,21 +203,21 @@ pub use splitter::{
 };
 pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use table::{
-    Table, TableCellEditApplyOutcome, TableCellEditChange, TableCellRenderPlan,
-    TableCenterColumnWindowPlan, TableColumnOrderChange, TableColumnOrderPlacement,
-    TableColumnRegionRenderPlan, TableColumnRenderPlan, TableColumnSizingChange,
+    Table, TableBehaviorSnapshot, TableCellBehaviorSnapshot, TableCellEditApplyOutcome,
+    TableCellEditChange, TableColumnBehaviorSnapshot, TableColumnOrderChange,
+    TableColumnOrderPlacement, TableColumnRegionSnapshot, TableColumnSizingChange,
     TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
     TableColumnVisibilityItemState, TableColumnVisibilityState, TableFacetedFilter,
     TableFacetedFilterChange, TableFacetedFilterOptionState, TableFacetedFilterState,
     TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction,
-    TableHeaderCellRenderPlan, TableHeaderGroupRegionRenderPlan, TableHeaderGroupRegionsRenderPlan,
-    TableHeaderGroupRenderPlan, TableInputModifiers, TableMetrics, TablePinnedLayoutPlan,
-    TablePredicateFilter, TablePredicateFilterChange, TablePredicateFilterOperator,
+    TableHeaderSummarySnapshot, TableInputModifiers, TableMetrics, TablePredicateFilter,
+    TablePredicateFilterChange, TablePredicateFilterOperator,
     TablePredicateFilterOperatorOptionState, TablePredicateFilterState, TableRangeFilter,
-    TableRangeFilterChange, TableRangeFilterState, TableRenderDiagnostics, TableRowAction,
-    TableRowActivation, TableRowActivationKind, TableRowExpansionToggle, TableRowMeasureMode,
-    TableRowRenderPlan, TableRowSelectionChange, TableSelectionScope, TableToolbar,
-    TableToolbarColors, TableToolbarState,
+    TableRangeFilterChange, TableRangeFilterState, TableRowAction, TableRowActivation,
+    TableRowActivationKind, TableRowBehaviorSnapshot, TableRowCountSnapshot,
+    TableRowExpansionToggle, TableRowMeasureMode, TableRowSelectionChange, TableSelectionScope,
+    TableToolbar, TableToolbarColors, TableToolbarState, TableTreeSummarySnapshot,
+    TableVisibleRowsSnapshot,
 };
 pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

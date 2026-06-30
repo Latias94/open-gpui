@@ -15,28 +15,27 @@ use open_gpui_ui_components::{
     SidebarCollapseMode, SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide,
     SidebarState, SidebarVariant, Skeleton, SkeletonState, Slider, SliderState,
     SplitterPanelDescriptor, SplitterState, StatusCue, StatusCueState, Switch, SwitchState, Table,
-    TableAggregation, TableCellEditApplyOutcome, TableCellEditChange, TableCellValue, TableColumn,
-    TableColumnFacets, TableColumnGroup, TableColumnId, TableColumnOrderChange, TableColumnPinning,
-    TableColumnRegion, TableColumnSizing, TableColumnSizingChange, TableColumnVisibilityChange,
-    TableColumnVisibilityOverrides, TableExpansionMode, TableExpansionState, TableFacetValueCount,
-    TableFacetedFilterChange, TableFilter, TableGlobalFilterChange, TablePagination,
-    TablePredicateFilterChange, TableRangeFilterChange, TableRenderDiagnostics, TableRow,
+    TableAggregation, TableBehaviorSnapshot, TableCellEditApplyOutcome, TableCellEditChange,
+    TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup, TableColumnId,
+    TableColumnOrderChange, TableColumnPinning, TableColumnSizing, TableColumnSizingChange,
+    TableColumnVisibilityChange, TableColumnVisibilityOverrides, TableExpansionState,
+    TableFacetValueCount, TableFacetedFilterChange, TableFilter, TableGlobalFilterChange,
+    TablePagination, TablePredicateFilterChange, TableRangeFilterChange, TableRow,
     TableRowActivation, TableRowChildrenLoadState, TableRowExpansionToggle, TableRowPinning,
-    TableRowPinningPolicy, TableSelectOption, TableSort, TableStageMode, TableState, Tabs,
-    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, Tag, TagState, TagVariant,
-    TextInput, TextInputDisplayMode, TextInputState, Textarea, TextareaState, Toast, ToastStack,
-    ToastStackState, Toggle, ToggleGroup, ToggleGroupItem, ToggleGroupSelectionMode,
-    ToggleGroupState, ToggleState, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor,
-    ToolbarItemKind, ToolbarState, Tree, TreeItemDescriptor, TreeMove, TreeRenderPlan, TreeState,
-    VirtualizedList, VirtualizedListItemDescriptor, VirtualizedListMetrics,
-    VirtualizedListRenderPlan, VirtualizedListScrollStrategy, VirtualizedListState,
-    apply_tree_move,
+    TableSelectOption, TableSort, TableStageMode, TableState, Tabs, TabsActivationMode, TabsItem,
+    TabsItemDescriptor, TabsState, Tag, TagState, TagVariant, TextInput, TextInputDisplayMode,
+    TextInputState, Textarea, TextareaState, Toast, ToastStack, ToastStackState, Toggle,
+    ToggleGroup, ToggleGroupItem, ToggleGroupSelectionMode, ToggleGroupState, ToggleState,
+    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
+    Tree, TreeItemDescriptor, TreeMove, TreeRenderPlan, TreeState, VirtualizedList,
+    VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRenderPlan,
+    VirtualizedListScrollStrategy, VirtualizedListState, apply_tree_move,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
     OverlayPlacementAlignment, OverlayPlacementSide, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
@@ -2243,134 +2242,61 @@ pub struct TableSampleStateSummary {
 }
 
 impl TableSampleStateSummary {
-    fn from_plan(plan: &TableRenderDiagnostics, state: &TableState) -> Self {
-        let visible = plan.virtualizer().visible_range();
-        let overscan = plan.virtualizer().overscan_range();
-        let final_rows = plan.table().final_model().rows();
-        let row_regions = plan.table().row_regions();
-        let group_rows = final_rows.iter().filter(|row| row.is_group()).count();
-        let tree_rows = final_rows.iter().filter(|row| row.tree().is_some()).count();
-        let tree_branch_rows = final_rows.iter().filter(|row| row.is_tree_branch()).count();
-        let unloaded_tree_branches = final_rows
-            .iter()
-            .filter(|row| {
-                row.is_tree_branch()
-                    && row.loaded_child_count() == 0
-                    && row
-                        .children_load_state()
-                        .is_some_and(|state| *state == TableRowChildrenLoadState::Idle)
-            })
-            .count();
-        let loading_tree_rows = final_rows
-            .iter()
-            .filter(|row| {
-                row.children_load_state()
-                    .is_some_and(TableRowChildrenLoadState::is_loading)
-            })
-            .count();
-        let failed_tree_rows = final_rows
-            .iter()
-            .filter(|row| {
-                row.children_load_state()
-                    .is_some_and(TableRowChildrenLoadState::is_failed)
-            })
-            .count();
-        let tree_depth = final_rows.iter().map(|row| row.depth()).max().unwrap_or(0);
-        let regions = plan.table().visible_column_regions();
-        let header_groups = plan.table().header_groups();
-        let visible_group_ids = header_groups
-            .all()
-            .flat_map(|group| group.headers().iter())
-            .filter(|cell| cell.is_group())
-            .map(|cell| cell.source_id().to_owned())
-            .collect::<BTreeSet<_>>();
+    fn from_snapshot(snapshot: &TableBehaviorSnapshot) -> Self {
+        let visible = snapshot.visible_rows();
+        let rows = snapshot.row_counts();
+        let columns = snapshot.column_regions();
+        let header = snapshot.header_summary();
+        let tree = snapshot.tree_summary();
         let status_column = TableColumnId::new("status");
         let score_column = TableColumnId::new("score");
-        let status_facet = plan.column_facet(&status_column);
-        let score_range = plan
+        let status_facet = snapshot.column_facet(&status_column);
+        let score_range = snapshot
             .column_facet(&score_column)
             .and_then(|facet| facet.numeric_range());
         let score_facet_min = score_range.map(|range| range.min().round() as usize);
         let score_facet_max = score_range.map(|range| range.max().round() as usize);
-        let (all_rows_expanded, expanded_group_inputs, expanded_tree_inputs) =
-            match state.expansion() {
-                TableExpansionState::All => (
-                    true,
-                    plan.table()
-                        .grouped_model()
-                        .rows()
-                        .iter()
-                        .filter(|row| row.is_group())
-                        .count(),
-                    plan.table()
-                        .core_model()
-                        .rows()
-                        .iter()
-                        .filter(|row| row.is_tree_branch())
-                        .count(),
-                ),
-                TableExpansionState::Rows(rows) => (
-                    false,
-                    rows.iter()
-                        .filter(|row_id| {
-                            plan.table()
-                                .grouped_model()
-                                .row(row_id)
-                                .is_some_and(|row| row.is_group())
-                        })
-                        .count(),
-                    rows.iter()
-                        .filter(|row_id| {
-                            plan.table()
-                                .core_model()
-                                .row(row_id)
-                                .is_some_and(|row| row.is_tree_branch())
-                        })
-                        .count(),
-                ),
-            };
 
         Self {
-            core_rows: plan.table().core_model().rows().len(),
-            filtered_rows: plan.table().filtered_model().rows().len(),
-            final_rows: plan.table().final_model().rows().len(),
-            pinned_top_rows: row_regions.top().len(),
-            pinned_center_rows: row_regions.center().len(),
-            pinned_bottom_rows: row_regions.bottom().len(),
-            row_pinning_page_only: plan.table().row_pinning_policy()
-                == TableRowPinningPolicy::PageOnly,
-            rendered_rows: plan.rendered_row_count(),
-            visible_rows: plan.visible_row_count(),
-            visible_start: visible.start(),
-            visible_end: visible.end(),
-            overscan_start: overscan.start(),
-            overscan_end: overscan.end(),
-            aria_columns: plan.aria_column_count(),
-            aria_rows: plan.aria_row_count(),
-            selected_rows: plan.table().final_model().selected_count(),
-            header_rows: plan.header_row_count(),
-            header_groups: visible_group_ids.len(),
-            visible_leaf_columns: plan.columns().len(),
-            grouped_rows: plan.table().grouped_model().rows().len(),
-            expanded_rows: plan.table().expanded_model().rows().len(),
-            group_rows,
-            leaf_rows: final_rows.len().saturating_sub(group_rows),
-            tree_rows,
-            tree_branch_rows,
-            unloaded_tree_branches,
-            loading_tree_rows,
-            failed_tree_rows,
-            tree_depth,
-            manual_expansion: state.expansion_mode() == TableExpansionMode::Manual,
-            manual_filtering: plan.filtering_mode() == TableStageMode::Manual,
-            manual_sorting: plan.sorting_mode() == TableStageMode::Manual,
-            manual_pagination: plan.pagination_mode() == TableStageMode::Manual,
-            pagination_page_index: state.pagination().page_index(),
-            pagination_page_size: state.pagination().page_size(),
-            pagination_row_count: plan.pagination_row_count(),
-            pagination_page_count: plan.pagination_page_count(),
-            facet_columns: plan.column_facets().len(),
-            manual_facet_columns: plan
+            core_rows: rows.core_rows(),
+            filtered_rows: rows.filtered_rows(),
+            final_rows: rows.final_rows(),
+            pinned_top_rows: rows.pinned_top_rows(),
+            pinned_center_rows: rows.pinned_center_rows(),
+            pinned_bottom_rows: rows.pinned_bottom_rows(),
+            row_pinning_page_only: columns.row_pinning_page_only(),
+            rendered_rows: rows.rendered_rows(),
+            visible_rows: rows.visible_rows(),
+            visible_start: visible.visible_start(),
+            visible_end: visible.visible_end(),
+            overscan_start: visible.overscan_start(),
+            overscan_end: visible.overscan_end(),
+            aria_columns: snapshot.aria_column_count(),
+            aria_rows: snapshot.aria_row_count(),
+            selected_rows: rows.selected_rows(),
+            header_rows: header.header_rows(),
+            header_groups: header.visible_group_headers(),
+            visible_leaf_columns: snapshot.columns().len(),
+            grouped_rows: rows.grouped_rows(),
+            expanded_rows: rows.expanded_rows(),
+            group_rows: rows.group_rows(),
+            leaf_rows: rows.leaf_rows(),
+            tree_rows: tree.tree_rows(),
+            tree_branch_rows: tree.tree_branch_rows(),
+            unloaded_tree_branches: tree.unloaded_tree_branches(),
+            loading_tree_rows: tree.loading_tree_rows(),
+            failed_tree_rows: tree.failed_tree_rows(),
+            tree_depth: tree.tree_depth(),
+            manual_expansion: snapshot.manual_expansion(),
+            manual_filtering: snapshot.filtering_mode() == TableStageMode::Manual,
+            manual_sorting: snapshot.sorting_mode() == TableStageMode::Manual,
+            manual_pagination: snapshot.pagination_mode() == TableStageMode::Manual,
+            pagination_page_index: snapshot.pagination_page_index(),
+            pagination_page_size: snapshot.pagination_page_size(),
+            pagination_row_count: snapshot.pagination_row_count(),
+            pagination_page_count: snapshot.pagination_page_count(),
+            facet_columns: snapshot.column_facets().len(),
+            manual_facet_columns: snapshot
                 .column_facets()
                 .iter()
                 .filter(|facet| facet.mode() == TableStageMode::Manual)
@@ -2389,33 +2315,20 @@ impl TableSampleStateSummary {
                 .unwrap_or(0),
             score_facet_min,
             score_facet_max,
-            grouping_columns: state.grouping().len(),
-            aggregation_count: state.aggregations().len(),
-            custom_aggregation_count: plan.aggregation_fn_count(),
-            expanded_group_inputs,
-            expanded_tree_inputs,
-            all_rows_expanded,
-            pinned_left_columns: regions.left().len(),
-            pinned_center_columns: regions.center().len(),
-            pinned_right_columns: regions.right().len(),
-            pinned_left_width_px: plan
-                .column_region_width(TableColumnRegion::Left)
-                .as_f32()
-                .round() as usize,
-            pinned_center_width_px: plan
-                .column_region_width(TableColumnRegion::Center)
-                .as_f32()
-                .round() as usize,
-            pinned_right_width_px: plan
-                .column_region_width(TableColumnRegion::Right)
-                .as_f32()
-                .round() as usize,
-            total_column_width_px: plan.total_column_width().as_f32().round() as usize,
-            resizable_columns: plan
-                .columns()
-                .iter()
-                .filter(|column| column.resizable())
-                .count(),
+            grouping_columns: snapshot.grouping_columns().len(),
+            aggregation_count: snapshot.aggregation_count(),
+            custom_aggregation_count: snapshot.aggregation_fn_count(),
+            expanded_group_inputs: snapshot.expanded_group_inputs(),
+            expanded_tree_inputs: snapshot.expanded_tree_inputs(),
+            all_rows_expanded: snapshot.all_rows_expanded(),
+            pinned_left_columns: columns.left_columns(),
+            pinned_center_columns: columns.center_columns(),
+            pinned_right_columns: columns.right_columns(),
+            pinned_left_width_px: columns.left_width().as_f32().round() as usize,
+            pinned_center_width_px: columns.center_width().as_f32().round() as usize,
+            pinned_right_width_px: columns.right_width().as_f32().round() as usize,
+            total_column_width_px: columns.total_width().as_f32().round() as usize,
+            resizable_columns: columns.resizable_columns(),
         }
     }
 }
@@ -2440,10 +2353,10 @@ impl TableSample {
             .overscan(self.overscan)
     }
 
-    /// Resolves the table plan used by gallery tests and state rows.
-    pub fn render_plan(&self) -> TableRenderDiagnostics {
+    /// Resolves the public table behavior used by gallery tests and state rows.
+    pub fn behavior_snapshot(&self) -> TableBehaviorSnapshot {
         self.build_table()
-            .diagnostics(UiPx::ZERO, self.viewport_extent)
+            .behavior_snapshot(UiPx::ZERO, self.viewport_extent)
     }
 
     /// Returns the precomputed state summary used by the gallery page.
@@ -2453,10 +2366,10 @@ impl TableSample {
 
     /// Resolves the summary for a caller-supplied table state using this sample's layout settings.
     pub fn state_summary_for_state(&self, state: &TableState) -> TableSampleStateSummary {
-        let plan = self
+        let snapshot = self
             .build_table_with_state(state.clone())
-            .diagnostics(UiPx::ZERO, self.viewport_extent);
-        TableSampleStateSummary::from_plan(&plan, state)
+            .behavior_snapshot(UiPx::ZERO, self.viewport_extent);
+        TableSampleStateSummary::from_snapshot(&snapshot)
     }
 }
 
@@ -4726,11 +4639,11 @@ fn build_table_samples() -> Vec<TableSample> {
 
 impl TableSample {
     fn with_state_summary(self) -> Self {
-        let plan = self
+        let snapshot = self
             .build_table()
-            .diagnostics(UiPx::ZERO, self.viewport_extent);
+            .behavior_snapshot(UiPx::ZERO, self.viewport_extent);
         Self {
-            state_summary: TableSampleStateSummary::from_plan(&plan, &self.state),
+            state_summary: TableSampleStateSummary::from_snapshot(&snapshot),
             ..self
         }
     }

@@ -326,10 +326,11 @@ Public surface ownership uses a stricter source-facing vocabulary than the visib
 `official component` names are rendered GPUI components with inventory rows and sample selectors.
 `renderer-neutral state contract` names are public state/resolution models that can be consumed
 without GPUI runtime types. `gpui adapter helper` names are public only through
-`open_gpui_ui_components::gpui_adapter` or narrowly scoped adapter modules. `diagnostic surface`
-names such as `TableRenderDiagnostics` and family render plans are public to explain resolved
-geometry and row/window projection, but they are not component facades or the default application
-state API. `internal implementation detail` names are public anatomy owned by one official family.
+`open_gpui_ui_components::gpui_adapter` or narrowly scoped adapter modules. `TableBehaviorSnapshot`
+is the public Table behavior readout: it exposes user-observable state without leaking render-plan
+geometry, virtualizer internals, or adapter row layout. Crate-private render plans still explain
+resolved geometry and row/window projection for the adapter, but they are not component facades or
+the default application state API. `internal implementation detail` names are public anatomy owned by one official family.
 `deprecated removal target` names are shallow compatibility surfaces scheduled for deletion or
 already deleted. The removed targets are the former pass-through
 `ui_components::primitives` modules for active-descendant, collection metadata, controllable state,
@@ -494,7 +495,7 @@ until a later policy slice defines mixed filtering, sorting, and expansion seman
 Custom aggregation rows stay renderer-neutral and are surfaced in the Components gallery through
 the focused `grouped-custom-aggregation` sample.
 Content-fit width growth is also renderer-neutral: `TableColumn::with_content_fit` marks a column
-as adapter-measured, `TableRenderDiagnostics` exposes the measured widths as diagnostics, and the
+as adapter-measured, `TableBehaviorSnapshot` exposes the resulting column widths as behavior metadata, and the
 GPUI table adapter keeps header/body alignment stable while visible content changes. The Components
 gallery surfaces this behavior through the focused `content-fit-release` sample.
 `Table::row_measure_mode(TableRowMeasureMode::Measured)` is the sibling body-row height recipe:
@@ -544,10 +545,11 @@ parent metadata, selected state, and branch `aria-expanded` state keyed by stabl
 adapter keeps row activation independent from selection and expansion; callers decide whether a
 click, double-click, Enter, Space, Left, or Right payload changes app-owned `TableState`.
 `Table::state()` returns the renderer-neutral `TableState` input as the default application-facing
-readout. `Table::diagnostics(scroll_offset, viewport_extent)` is the explicit diagnostic surface
-for tests, gallery readouts, and adapter debugging; it is not the default state API. The diagnostic
-surface exposes `TableColumnRegionRenderPlan` entries and every rendered header/body row has stable
-`left`, `center`, and `right` region debug selectors.
+readout. `Table::behavior_snapshot(scroll_offset, viewport_extent)` is the explicit public behavior
+surface for tests, gallery readouts, and adapter debugging; it is not a layout API. The snapshot
+exposes row counts, visible and overscan row summaries, column-region counts and widths, header
+summaries, row/cell behavior, selection, sorting, filtering, pagination, faceting, and accessibility
+roles without exposing render-plan structures.
 Table module ownership is deliberately split by responsibility rather than by product feature:
 `open-gpui-ui-core::table` keeps renderer-neutral identity, rows, columns, headers, filtering,
 faceting, aggregation, sizing, selection, and row-model resolution behind `table/mod.rs` re-exports.
@@ -556,20 +558,18 @@ builder, while `resolve.rs`, `runtime.rs`, `render_plan.rs`, `layout.rs`, `virtu
 `content_fit.rs`, `header.rs`, `body.rs`, `cell.rs`, `editors.rs`, `resize.rs`, `interaction.rs`,
 filter recipes, `column_visibility.rs`, `toolbar.rs`, and `metrics.rs` own the concrete maintenance
 surfaces. This ownership note is about review locality only; it does not add a second public Table
-contract or promise behavior beyond the exported `TableState`, explicit
-`TableRenderDiagnostics`, `Table`, filter recipes, callback payloads, and stable
-gallery/debug-selector proofs.
-Region render plans expose summed widths, and header/body cells read the same resolved column
-widths. For pinned tables, `TableCenterColumnWindowPlan` virtualizes the shared horizontal center
-lane from adapter-owned horizontal scroll input: it exposes visible and overscan ranges, rendered
-center columns, total center width, and leading/trailing spacer widths. The adapter keeps left/right
-pinned lanes fully mounted while mounting only the rendered center-column window, so the center can
-scroll without moving pinned columns or the outer page. The header band is rendered as an absolute
-overlay at the top of the table root, and the body receives matching top padding so vertical scroll
-does not move the header. `TableRenderDiagnostics` also exposes the current filtering, sorting, pagination,
-and faceting ownership modes plus pagination row/page totals and
-per-column facet metadata so gallery readouts and consumers can distinguish local row-model
-transforms from app-owned server snapshots. Facet metadata covers deterministic unique value/count
+contract or promise behavior beyond the exported `TableState`, `TableBehaviorSnapshot`, `Table`,
+filter recipes, callback payloads, and stable gallery/debug-selector proofs.
+Crate-private region render plans expose summed widths to the adapter, and header/body cells read
+the same resolved column widths. For pinned tables, a crate-private center-column window virtualizes
+the shared horizontal center lane from adapter-owned horizontal scroll input. The adapter keeps
+left/right pinned lanes fully mounted while mounting only the rendered center-column window, so the
+center can scroll without moving pinned columns or the outer page. The header band is rendered as an
+absolute overlay at the top of the table root, and the body receives matching top padding so vertical
+scroll does not move the header. `TableBehaviorSnapshot` exposes the public behavior counterpart:
+current filtering, sorting, pagination, and faceting ownership modes, pagination row/page totals,
+column-region summaries, visible row windows, and per-column facet metadata so gallery readouts and
+consumers can distinguish local row-model transforms from app-owned server snapshots. Facet metadata covers deterministic unique value/count
 entries, numeric min/max ranges, and explicit manual/server payloads keyed by column id; concrete
 `TableFacetedFilter` is the official single-column categorical filter recipe over that metadata:
 it reads `TableColumnFacets`, renders a searchable `Popover` with checkbox facet rows, keeps query
@@ -599,11 +599,11 @@ owned column-order slice, and keeps sorting, filtering, pinning, sizing, and row
 untouched. The Components gallery uses `release-rollup` as the proof sample for that controlled
 reorder path.
 Nested header groups are resolved as renderer-neutral row families rather than data columns.
-`TableRenderDiagnostics` exposes nested header-group rows for the left, center, and right regions, with
-stable row counts, summed widths, and depth-specific group metadata. Pinned regions split group
-families when visibility or pinning crosses region boundaries, while group headers continue to stay
-leaf-column-driven for sort, resize, visibility, and selection behavior. Flat tables still resolve
-to a single header row.
+`TableBehaviorSnapshot` exposes nested-header behavior as a header-row count and visible group-header
+summary, while crate-private render plans keep the left, center, and right header-row layout details
+internal. Pinned regions split group families when visibility or pinning crosses region boundaries,
+while group headers continue to stay leaf-column-driven for sort, resize, visibility, and selection
+behavior. Flat tables still resolve to a single header row.
 Value cell editing is the official inline-edit recipe over table column metadata:
 `TableCellEditor::Text`, `TableCellEditor::MultilineText { rows }`,
 `TableCellEditor::Checkbox`, and `TableCellEditor::Select` opt columns into editable leaf cells,
@@ -618,15 +618,14 @@ editing, and server persistence remain application-owned or follow-up work.
 The fixed-option select path uses the same leaf-cell contract as text and checkbox editing: it is
 adapter-owned, keeps row activation suppressed when the editor consumes the click, and preserves
 the stable `(row_id, column_id)` edit payload shape.
-For row-pinned tables, `TableRenderDiagnostics` exposes top, center, and bottom `TableRowRenderPlan`
-regions with neutral `TableRowRegion` metadata, while the vertical virtualizer consumes only the
-center region. The GPUI adapter renders top and bottom row bands outside the center body
+For row-pinned tables, `TableBehaviorSnapshot` exposes top, center, and bottom row counts plus
+rendered rows with neutral `TableRowRegion` metadata, while the vertical virtualizer consumes only
+the center region. The GPUI adapter renders top and bottom row bands outside the center body
 `ScrollArea`, keeps `table:{id}:body:{top|center|bottom}` debug selectors stable, and reuses the
 normal row renderer so focus, activation, expansion, pinned-column lanes, and accessibility row
-indexes keep the same payload shape across pinned and center rows. `TableRenderDiagnostics` also exposes
-`GridViewport2D` when both a vertical row window and a horizontal center-column window are
-available, so the adapter can report the combined two-axis viewport without merging the row and
-column virtualizer contracts into a new standalone grid engine.
+indexes keep the same payload shape across pinned and center rows. Combined two-axis viewport
+details remain adapter-internal; public tests assert the resulting row/column behavior through
+`TableBehaviorSnapshot` and gallery runtime probes instead of inspecting the render plan.
 
 An official Table entry must satisfy the normal component completion gate: `Table` and `TableState`
 exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
@@ -811,7 +810,7 @@ sortable header action payloads, crate-root/prelude
 exports, table/cell roles, and a vertically virtualized GPUI recipe whose body scroll stays inside
 the table viewport.
 For pinned samples, the adapter renders fixed left/right lanes plus a shared horizontal center lane
-backed by `TableCenterColumnWindowPlan`, so off-window center headers and cells are unmounted while
+backed by crate-private center-column windowing, so off-window center headers and cells are unmounted while
 spacer geometry preserves the full scrollable width. It also ships GPUI resize handles with
 controlled commit callbacks and on-end/on-change resize mode support.
 For row-pinned samples, top and bottom row bands render outside the center vertical scroll area,
