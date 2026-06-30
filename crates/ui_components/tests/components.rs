@@ -11821,7 +11821,7 @@ fn official_component_catalog_names_from_gallery_source() -> Vec<String> {
 fn component_catalog_names_from_gallery_constructor(constructor: &str) -> Vec<String> {
     const GALLERY_COMPONENTS_SOURCE: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../examples/ui-foundation-gallery/src/pages/components.rs"
+        "/../../examples/ui-foundation-gallery/src/pages/components/catalog.rs"
     );
 
     let source = std::fs::read_to_string(GALLERY_COMPONENTS_SOURCE)

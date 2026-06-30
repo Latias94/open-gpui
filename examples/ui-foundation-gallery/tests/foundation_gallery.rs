@@ -2555,6 +2555,25 @@ fn components_page_state_contract_samples_expose_tree_and_virtualized_list_contr
 }
 
 #[test]
+fn components_catalog_metadata_is_separate_from_rendering() {
+    let components_source = include_str!("../src/pages/components.rs");
+    let catalog_source = include_str!("../src/pages/components/catalog.rs");
+    let render_source = include_str!("../src/pages/components/render.rs");
+
+    assert!(components_source.contains("pub mod catalog;"));
+    assert!(components_source.contains("pub use catalog::{"));
+    assert!(catalog_source.contains("pub const COMPONENT_CATALOG"));
+    assert!(catalog_source.contains("ComponentCatalogEntry::official("));
+    assert!(catalog_source.contains("ComponentCatalogEntry::state_contract("));
+    assert!(!components_source.contains("ComponentCatalogEntry::official("));
+    assert!(!render_source.contains("pub const COMPONENT_CATALOG"));
+    assert!(
+        render_source.contains("pages::components::COMPONENT_CATALOG"),
+        "rendering should consume catalog metadata instead of owning it"
+    );
+}
+
+#[test]
 fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
     let components_source = include_str!("../src/pages/components.rs");
     let render_source = include_str!("../src/pages/components/render.rs");
