@@ -124,15 +124,6 @@ impl LocalRect {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockSplitGeometry {
-    pub(crate) pane_bounds: Vec<Bounds<Pixels>>,
-    pub(crate) handle_hit_bounds: Vec<Bounds<Pixels>>,
-    pub(crate) handle_centers: Vec<Pixels>,
-    pub(crate) shares: Vec<f32>,
-    pub(crate) extent: Pixels,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockSplitLayout {
     shares: Vec<f32>,
 }
@@ -317,28 +308,12 @@ impl DockSplitLayout {
             .collect()
     }
 
-    pub(crate) fn geometry(
+    pub(crate) fn pane_bounds(
         &self,
         axis: SplitAxis,
         split_bounds: Bounds<Pixels>,
-        handle_thickness: Pixels,
-    ) -> DockSplitGeometry {
-        let extent = split_extent(axis, split_bounds);
-        let handle_centers = split_handle_centers(axis, split_bounds, self.handles());
-        let pane_bounds = split_pane_bounds(axis, split_bounds, &self.shares);
-        let handle_hit_bounds = handle_centers
-            .iter()
-            .copied()
-            .map(|center| split_handle_hit_bounds(axis, split_bounds, center, handle_thickness))
-            .collect();
-
-        DockSplitGeometry {
-            pane_bounds,
-            handle_hit_bounds,
-            handle_centers,
-            shares: self.shares.clone(),
-            extent,
-        }
+    ) -> Vec<Bounds<Pixels>> {
+        split_pane_bounds(axis, split_bounds, &self.shares)
     }
 }
 
@@ -420,38 +395,6 @@ fn split_pane_bounds(
             bounds
         })
         .collect()
-}
-
-fn split_handle_centers(
-    axis: SplitAxis,
-    split_bounds: Bounds<Pixels>,
-    handles: Vec<DockSplitHandleLayout>,
-) -> Vec<Pixels> {
-    let origin = axis_origin(axis, split_bounds);
-    let extent = split_extent(axis, split_bounds);
-    handles
-        .into_iter()
-        .map(|handle| origin + extent * handle.center_share)
-        .collect()
-}
-
-fn split_handle_hit_bounds(
-    axis: SplitAxis,
-    split_bounds: Bounds<Pixels>,
-    center: Pixels,
-    handle_thickness: Pixels,
-) -> Bounds<Pixels> {
-    let half_thickness = handle_thickness / 2.0;
-    match axis {
-        SplitAxis::Horizontal => Bounds::new(
-            point(center - half_thickness, split_bounds.origin.y),
-            size(handle_thickness, split_bounds.size.height),
-        ),
-        SplitAxis::Vertical => Bounds::new(
-            point(split_bounds.origin.x, center - half_thickness),
-            size(split_bounds.size.width, handle_thickness),
-        ),
-    }
 }
 
 fn axis_origin(axis: SplitAxis, split_bounds: Bounds<Pixels>) -> Pixels {
@@ -934,86 +877,61 @@ mod tests {
     }
 
     #[test]
-    fn splitter_handle_geometry_matches_fraction_boundaries() {
-        let geometry = DockSplitLayout::from_fractions(2, &[0.25, 0.75], None).geometry(
-            SplitAxis::Horizontal,
-            bounds(400.0, 100.0),
-            px(6.0),
-        );
+    fn split_pane_bounds_match_horizontal_fraction_boundaries() {
+        let pane_bounds = DockSplitLayout::from_fractions(2, &[0.25, 0.75], None)
+            .pane_bounds(SplitAxis::Horizontal, bounds(400.0, 100.0));
 
-        assert_eq!(geometry.pane_bounds.len(), 2);
-        assert_eq!(geometry.pane_bounds[0].origin.x, px(10.0));
-        assert_eq!(geometry.pane_bounds[0].size.width, px(100.0));
-        assert_eq!(geometry.pane_bounds[1].origin.x, px(110.0));
-        assert_eq!(geometry.pane_bounds[1].size.width, px(300.0));
-        assert_eq!(geometry.handle_centers, vec![px(110.0)]);
-        assert_eq!(geometry.handle_hit_bounds.len(), 1);
-        assert_eq!(geometry.handle_hit_bounds[0].origin.x, px(107.0));
-        assert_eq!(geometry.handle_hit_bounds[0].size.width, px(6.0));
-        assert_eq!(geometry.handle_hit_bounds[0].size.height, px(100.0));
+        assert_eq!(pane_bounds.len(), 2);
+        assert_eq!(pane_bounds[0].origin.x, px(10.0));
+        assert_eq!(pane_bounds[0].size.width, px(100.0));
+        assert_eq!(pane_bounds[1].origin.x, px(110.0));
+        assert_eq!(pane_bounds[1].size.width, px(300.0));
     }
 
     #[test]
-    fn vertical_split_geometry_matches_fraction_boundaries() {
-        let geometry = DockSplitLayout::from_fractions(2, &[0.25, 0.75], None).geometry(
-            SplitAxis::Vertical,
-            bounds(200.0, 400.0),
-            px(8.0),
-        );
+    fn split_pane_bounds_match_vertical_fraction_boundaries() {
+        let pane_bounds = DockSplitLayout::from_fractions(2, &[0.25, 0.75], None)
+            .pane_bounds(SplitAxis::Vertical, bounds(200.0, 400.0));
 
-        assert_eq!(geometry.pane_bounds[0].origin.y, px(20.0));
-        assert_eq!(geometry.pane_bounds[0].size.height, px(100.0));
-        assert_eq!(geometry.pane_bounds[1].origin.y, px(120.0));
-        assert_eq!(geometry.pane_bounds[1].size.height, px(300.0));
-        assert_eq!(geometry.handle_centers, vec![px(120.0)]);
-        assert_eq!(geometry.handle_hit_bounds[0].origin.y, px(116.0));
-        assert_eq!(geometry.handle_hit_bounds[0].size.height, px(8.0));
+        assert_eq!(pane_bounds[0].origin.y, px(20.0));
+        assert_eq!(pane_bounds[0].size.height, px(100.0));
+        assert_eq!(pane_bounds[1].origin.y, px(120.0));
+        assert_eq!(pane_bounds[1].size.height, px(300.0));
     }
 
     #[test]
-    fn split_geometry_repairs_fraction_input_once() {
-        let geometry = DockSplitLayout::from_fractions(3, &[f32::NAN], None).geometry(
-            SplitAxis::Horizontal,
-            bounds(300.0, 100.0),
-            px(6.0),
-        );
+    fn split_layout_repairs_fraction_input_once() {
+        let layout = DockSplitLayout::from_fractions(3, &[f32::NAN], None);
+        let pane_bounds = layout.pane_bounds(SplitAxis::Horizontal, bounds(300.0, 100.0));
 
-        assert_eq!(geometry.pane_bounds.len(), 3);
-        assert_eq!(geometry.handle_hit_bounds.len(), 2);
-        assert_close(geometry.shares.iter().sum(), 1.0);
-        assert_close(geometry.shares[0], 0.0);
-        assert_close(geometry.shares[1], 0.5);
-        assert_close(geometry.shares[2], 0.5);
+        assert_eq!(pane_bounds.len(), 3);
+        assert_close(layout.shares().iter().sum(), 1.0);
+        assert_close(layout.shares()[0], 0.0);
+        assert_close(layout.shares()[1], 0.5);
+        assert_close(layout.shares()[2], 0.5);
     }
 
     #[test]
     fn central_split_child_receives_remaining_space() {
-        let geometry = DockSplitLayout::from_fractions(3, &[0.2, 0.0, 0.3], Some(1)).geometry(
-            SplitAxis::Horizontal,
-            bounds(1000.0, 100.0),
-            px(6.0),
-        );
+        let layout = DockSplitLayout::from_fractions(3, &[0.2, 0.0, 0.3], Some(1));
+        let pane_bounds = layout.pane_bounds(SplitAxis::Horizontal, bounds(1000.0, 100.0));
 
-        assert_close(geometry.shares[0], 0.2);
-        assert_close(geometry.shares[1], 0.5);
-        assert_close(geometry.shares[2], 0.3);
-        assert_eq!(geometry.pane_bounds[0].size.width, px(200.0));
-        assert_eq!(geometry.pane_bounds[1].size.width, px(500.0));
-        assert_eq!(geometry.pane_bounds[2].size.width, px(300.0));
+        assert_close(layout.shares()[0], 0.2);
+        assert_close(layout.shares()[1], 0.5);
+        assert_close(layout.shares()[2], 0.3);
+        assert_eq!(pane_bounds[0].size.width, px(200.0));
+        assert_eq!(pane_bounds[1].size.width, px(500.0));
+        assert_eq!(pane_bounds[2].size.width, px(300.0));
     }
 
     #[test]
     fn central_split_child_yields_space_when_neighbors_over_allocate() {
-        let geometry = DockSplitLayout::from_fractions(3, &[0.8, 0.0, 0.7], Some(1)).geometry(
-            SplitAxis::Horizontal,
-            bounds(1000.0, 100.0),
-            px(6.0),
-        );
+        let layout = DockSplitLayout::from_fractions(3, &[0.8, 0.0, 0.7], Some(1));
 
-        assert_close(geometry.shares[0], 0.5333);
-        assert_close(geometry.shares[1], 0.0);
-        assert_close(geometry.shares[2], 0.4667);
-        assert_close(geometry.shares.iter().sum(), 1.0);
+        assert_close(layout.shares()[0], 0.5333);
+        assert_close(layout.shares()[1], 0.0);
+        assert_close(layout.shares()[2], 0.4667);
+        assert_close(layout.shares().iter().sum(), 1.0);
     }
 
     fn assert_close(actual: f32, expected: f32) {

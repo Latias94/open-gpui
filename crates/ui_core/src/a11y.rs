@@ -65,6 +65,8 @@ pub enum Role {
     SpinButton,
     /// A numeric slider.
     Slider,
+    /// A split view resize handle.
+    Splitter,
     /// A tab list container.
     TabList,
     /// A tab item.

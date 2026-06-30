@@ -47,8 +47,8 @@ impl DockGraph {
                     fractions,
                     self.central_child_index(children, central_node),
                 );
-                let geometry = layout.geometry(*axis, bounds, Pixels::ZERO);
-                for (child, child_bounds) in children.iter().copied().zip(geometry.pane_bounds) {
+                let pane_bounds = layout.pane_bounds(*axis, bounds);
+                for (child, child_bounds) in children.iter().copied().zip(pane_bounds) {
                     self.compute_layout_with_central(child, child_bounds, out, central_node);
                 }
             }

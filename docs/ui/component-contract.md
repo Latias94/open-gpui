@@ -595,6 +595,12 @@ fractions, per-panel min/max bounds, collapsible/collapsed metadata, handle adja
 state, and handle metrics. The state owns the constraint solver for normalizing fractions and
 clamping handle deltas; tests should exercise those rules without a GPUI window.
 
+`SplitterLayoutScene` is the shared resolved-geometry contract for split views. It turns a
+`SplitterState` plus bounds and metrics into panel rectangles and handle rectangles that callers can
+feed to renderers, overlays, hit maps, accessibility descriptors, or motion plans. `SplitterHitMap`
+consumes those resolved handle rectangles and owns handle/junction precedence; component and
+docking adapters should not carry their own handle hit solvers once the scene is available.
+
 The GPUI `Splitter` adapter renders resolved panel fractions and resize handles from that state and
 wires pointer dragging through keyed runtime state. Drag move events use the root splitter bounds to
 translate pixels into fraction deltas, then feed those deltas through `SplitterState::resized_by`.
@@ -605,6 +611,19 @@ state, but it should not invent sizing rules in the render body. Keyboard splitt
 controlled resize callbacks, application-level layout persistence, RTL behavior, and nested
 splitter arbitration should build on `SplitterState::resized_by` instead of duplicating
 min/max/collapse logic in adapter code.
+
+Docking consumes the same split primitives through its presentation scene. `DockGraph` continues to
+own docking semantics and graph mutation validation, while `DockPresentationScene` resolves split
+panes and splitters through core splitter scenes. Divider and corner hit maps consume those
+resolved splitter rectangles through `SplitterHitMap`, then commit graph changes through
+transactional resize actions. The remaining docking-local split layout helper exists only to derive
+graph child pane bounds; old handle-center and handle-hit geometry belongs in the core hit-map path.
+
+Renderer-neutral accessibility also follows this boundary. `open_gpui_ui_core::Role::Splitter`,
+orientation, selected state, disabled state, and action descriptors are the stable vocabulary;
+`ui_components::a11y` maps that vocabulary to GPUI roles and ARIA-style element state. Docking's
+accessibility scene should describe panes, tabs, tab bars, splitters, drop targets, drag sources,
+and overlay state from the same presentation scene rather than from render-local rectangles.
 
 ## Gallery Conformance Surface
 

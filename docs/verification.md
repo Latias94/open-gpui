@@ -78,6 +78,32 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_fo
 cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_focused_mode_resets_page_on_family_change
 ```
 
+For focused docking split, preview, motion, zoom, divider, and accessibility primitive work, keep
+the gates aligned to the shared primitive boundary:
+
+```sh
+cargo fmt --all -- --check
+cargo nextest run -p open-gpui-ui-core --no-fail-fast
+cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast
+cargo nextest run -p open-gpui-docking host_presentation_scene_tests host_viewport_preview_visual_tests host_transition_tests host_zoom_focus_tests host_divider_hit_map_tests host_accessibility_tests --no-fail-fast
+cargo check -p open-gpui-docking-native
+git diff --check
+```
+
+Use narrower checks while iterating:
+
+```sh
+cargo nextest run -p open-gpui-ui-core split --no-fail-fast
+cargo nextest run -p open-gpui-ui-components splitter gpui_adapter_maps_splitter_role --no-fail-fast
+cargo nextest run -p open-gpui-docking geometry host_accessibility_tests host_divider_hit_map_tests workspace_resize_policy_tests graph_split_tests interaction --no-fail-fast
+```
+
+These checks prove capability alignment instead of pixel parity: tab insertion previews remain tab
+previews, nested edge targets stay scoped to the pane that owns the guide, cross-window route
+markers stay separate from target previews, zoom/focus produce deterministic descriptors, divider
+and corner hits derive from the shared split hit map, and accessibility descriptors expose roles,
+bounds, orientation, selected state, disabled state, and actions.
+
 Table gallery gates now follow the same split: `open-gpui-ui-core` tests prove row-model,
 manual row-model stages, manual expansion, child-load metadata, virtualizer, column sizing,
 column-window, row pinning, and resize-math contracts without rendering, including grouped row ids,

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::{
     DockNodeId, SplitAxis,
     presentation_scene::{DockPresentationScene, DockPresentationSplitter},
@@ -90,6 +88,7 @@ impl DockDividerHitMap {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn targets(&self) -> &[DockDividerHitTarget] {
         &self.targets
     }

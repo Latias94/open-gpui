@@ -1,17 +1,18 @@
-#![allow(dead_code)]
-
 use crate::{
-    DockItemId, DockNodeId, DropZone,
+    DockItemId, DockNodeId, DropZone, SplitAxis,
     overlay_scene::{DockOverlayLayerKind, DockOverlayScene},
     presentation_scene::DockPresentationScene,
 };
 use open_gpui::{Bounds, Pixels};
+use open_gpui_ui_core::{AccessibleAction, Orientation};
 
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockAccessibilityScene {
     pub(crate) descriptors: Vec<DockAccessibilityDescriptor>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockAccessibilityDescriptor {
     pub(crate) role: DockAccessibilityRole,
@@ -21,8 +22,13 @@ pub(crate) struct DockAccessibilityDescriptor {
     pub(crate) label: Option<String>,
     pub(crate) zone: Option<DropZone>,
     pub(crate) active: bool,
+    pub(crate) orientation: Option<Orientation>,
+    pub(crate) selected: Option<bool>,
+    pub(crate) disabled: Option<bool>,
+    pub(crate) actions: Vec<AccessibleAction>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum DockAccessibilityRole {
     Pane,
@@ -39,6 +45,7 @@ pub(crate) enum DockAccessibilityRole {
 }
 
 impl DockAccessibilityScene {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn from_presentation(scene: &DockPresentationScene) -> Self {
         let mut descriptors = Vec::new();
 
@@ -51,6 +58,10 @@ impl DockAccessibilityScene {
                 label: pane.node.map(|node| format!("Pane {node:?}")),
                 zone: None,
                 active: true,
+                orientation: None,
+                selected: None,
+                disabled: Some(false),
+                actions: vec![AccessibleAction::Focus],
             });
         }
 
@@ -63,6 +74,10 @@ impl DockAccessibilityScene {
                 label: Some("Tabs".to_string()),
                 zone: None,
                 active: true,
+                orientation: Some(Orientation::Horizontal),
+                selected: None,
+                disabled: Some(false),
+                actions: Vec::new(),
             });
             descriptors.push(DockAccessibilityDescriptor {
                 role: DockAccessibilityRole::DropDestination,
@@ -72,10 +87,18 @@ impl DockAccessibilityScene {
                 label: Some("Tab drop destination".to_string()),
                 zone: Some(DropZone::Center),
                 active: true,
+                orientation: Some(Orientation::Horizontal),
+                selected: None,
+                disabled: Some(false),
+                actions: vec![AccessibleAction::CustomAction],
             });
         }
 
         for tab in &scene.tab_labels {
+            let selected = scene
+                .focus_regions
+                .iter()
+                .any(|focus| focus.tabs == tab.tabs && focus.item == tab.item);
             descriptors.push(DockAccessibilityDescriptor {
                 role: DockAccessibilityRole::Tab,
                 node: Some(tab.tabs),
@@ -84,6 +107,10 @@ impl DockAccessibilityScene {
                 label: Some(tab.title.clone()),
                 zone: None,
                 active: true,
+                orientation: None,
+                selected: Some(selected),
+                disabled: Some(false),
+                actions: vec![AccessibleAction::Click, AccessibleAction::Focus],
             });
             descriptors.push(DockAccessibilityDescriptor {
                 role: DockAccessibilityRole::DragSource,
@@ -93,6 +120,10 @@ impl DockAccessibilityScene {
                 label: Some(format!("Drag {}", tab.title)),
                 zone: None,
                 active: true,
+                orientation: None,
+                selected: Some(selected),
+                disabled: Some(false),
+                actions: vec![AccessibleAction::CustomAction],
             });
         }
 
@@ -105,6 +136,10 @@ impl DockAccessibilityScene {
                 label: Some(format!("Panel {}", focus.item)),
                 zone: None,
                 active: true,
+                orientation: None,
+                selected: Some(true),
+                disabled: Some(false),
+                actions: vec![AccessibleAction::Focus],
             });
             descriptors.push(DockAccessibilityDescriptor {
                 role: DockAccessibilityRole::FocusRegion,
@@ -114,6 +149,10 @@ impl DockAccessibilityScene {
                 label: Some("Focused pane".to_string()),
                 zone: None,
                 active: true,
+                orientation: None,
+                selected: Some(true),
+                disabled: Some(false),
+                actions: vec![AccessibleAction::Focus],
             });
         }
 
@@ -126,6 +165,10 @@ impl DockAccessibilityScene {
                 label: Some(format!("Splitter {}", splitter.index)),
                 zone: None,
                 active: true,
+                orientation: Some(orientation_for_axis(splitter.axis)),
+                selected: None,
+                disabled: Some(false),
+                actions: vec![AccessibleAction::Increment, AccessibleAction::Decrement],
             });
         }
 
@@ -138,12 +181,17 @@ impl DockAccessibilityScene {
                 label: Some("Floating container".to_string()),
                 zone: None,
                 active: true,
+                orientation: None,
+                selected: None,
+                disabled: Some(false),
+                actions: vec![AccessibleAction::Focus],
             });
         }
 
         Self { descriptors }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn with_overlay(mut self, overlay: &DockOverlayScene) -> Self {
         for layer in &overlay.layers {
             match layer.kind {
@@ -156,6 +204,10 @@ impl DockAccessibilityScene {
                         label: Some("Dock drop target".to_string()),
                         zone: layer.zone,
                         active: layer.active,
+                        orientation: None,
+                        selected: None,
+                        disabled: Some(!layer.active),
+                        actions: vec![AccessibleAction::CustomAction],
                     });
                     self.descriptors.push(DockAccessibilityDescriptor {
                         role: DockAccessibilityRole::DropDestination,
@@ -165,6 +217,10 @@ impl DockAccessibilityScene {
                         label: Some("Dock drop destination".to_string()),
                         zone: layer.zone,
                         active: layer.active,
+                        orientation: None,
+                        selected: None,
+                        disabled: Some(!layer.active),
+                        actions: vec![AccessibleAction::CustomAction],
                     });
                 }
                 DockOverlayLayerKind::PayloadTab | DockOverlayLayerKind::PayloadGhost => {
@@ -176,6 +232,10 @@ impl DockAccessibilityScene {
                         label: Some("Dock drag payload".to_string()),
                         zone: layer.zone,
                         active: layer.active,
+                        orientation: None,
+                        selected: None,
+                        disabled: Some(!layer.active),
+                        actions: vec![AccessibleAction::CustomAction],
                     });
                 }
                 DockOverlayLayerKind::RejectedState => {
@@ -187,6 +247,10 @@ impl DockAccessibilityScene {
                         label: Some("Rejected dock target".to_string()),
                         zone: layer.zone,
                         active: true,
+                        orientation: None,
+                        selected: None,
+                        disabled: Some(true),
+                        actions: Vec::new(),
                     });
                 }
                 DockOverlayLayerKind::RouteMarker
@@ -195,5 +259,13 @@ impl DockAccessibilityScene {
             }
         }
         self
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn orientation_for_axis(axis: SplitAxis) -> Orientation {
+    match axis {
+        SplitAxis::Horizontal => Orientation::Horizontal,
+        SplitAxis::Vertical => Orientation::Vertical,
     }
 }

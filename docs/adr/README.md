@@ -18,3 +18,4 @@ platform strategy, or ecosystem compatibility.
 - [ADR 0008: Open GPUI UI Component Productization Roadmap](0008-open-gpui-ui-component-productization-roadmap.md)
 - [ADR 0009: Open GPUI Table and Virtualizer Product Shape](0009-open-gpui-table-and-virtualizer-product-shape.md)
 - [ADR 0010: Docking Presentation Scene And Motion Model](0010-docking-presentation-scene-motion-model.md)
+- [ADR 0011: Docking Split Motion Primitive Boundary](0011-docking-split-motion-primitive-boundary.md)

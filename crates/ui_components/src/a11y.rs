@@ -40,6 +40,7 @@ pub fn gpui_role_from_ui(role: Role) -> GpuiRole {
         Role::Separator => GpuiRole::Group,
         Role::SpinButton => GpuiRole::SpinButton,
         Role::Slider => GpuiRole::Slider,
+        Role::Splitter => GpuiRole::Splitter,
         Role::TabList => GpuiRole::TabList,
         Role::Tab => GpuiRole::Tab,
         Role::TabPanel => GpuiRole::TabPanel,
@@ -105,6 +106,16 @@ pub trait UiA11yElementExt: StatefulInteractiveElement + Sized {
         StatefulInteractiveElement::aria_toggled(self, gpui_toggled_from_ui(toggled))
     }
 
+    /// Sets renderer-neutral selected state.
+    fn ui_aria_selected(self, selected: bool) -> Self {
+        StatefulInteractiveElement::aria_selected(self, selected)
+    }
+
+    /// Sets renderer-neutral disabled state.
+    fn ui_aria_disabled(self, disabled: bool) -> Self {
+        StatefulInteractiveElement::aria_disabled(self, disabled)
+    }
+
     /// Sets renderer-neutral orientation.
     fn ui_aria_orientation(self, orientation: Orientation) -> Self {
         StatefulInteractiveElement::aria_orientation(self, gpui_orientation_from_ui(orientation))
@@ -129,3 +140,13 @@ pub trait UiA11yElementExt: StatefulInteractiveElement + Sized {
 }
 
 impl<T> UiA11yElementExt for T where T: StatefulInteractiveElement + Sized {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gpui_adapter_maps_splitter_role() {
+        assert_eq!(gpui_role_from_ui(Role::Splitter), GpuiRole::Splitter);
+    }
+}

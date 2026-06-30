@@ -5,6 +5,7 @@ use crate::{
     overlay_scene::{DockOverlayLayer, DockOverlayLayerKind, DockOverlayScene},
 };
 use open_gpui::{TestAppContext, px, size};
+use open_gpui_ui_core::{AccessibleAction, Orientation};
 use slotmap::Key;
 
 #[open_gpui::test]
@@ -75,7 +76,44 @@ fn accessibility_scene_enumerates_splitters(cx: &mut TestAppContext) {
             .any(
                 |descriptor| descriptor.role == DockAccessibilityRole::Splitter
                     && descriptor.node == Some(root)
+                    && descriptor.orientation == Some(Orientation::Horizontal)
+                    && descriptor.disabled == Some(false)
+                    && descriptor.actions
+                        == vec![AccessibleAction::Increment, AccessibleAction::Decrement]
             )
+    );
+}
+
+#[open_gpui::test]
+fn accessibility_scene_marks_selected_tab_from_focus_region(cx: &mut TestAppContext) {
+    let (graph, _root, _floating) = floating_overlay_graph();
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(500.0), px(300.0)),
+    );
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(floating_bounds(0.0, 0.0, 500.0, 300.0), cx)
+    });
+    let selected_tab_node = scene
+        .tab_labels
+        .iter()
+        .find(|tab| tab.title == "Panel A")
+        .expect("selected floating tab label should be present")
+        .tabs;
+    let accessibility = DockAccessibilityScene::from_presentation(&scene);
+
+    assert!(
+        accessibility
+            .descriptors
+            .iter()
+            .any(|descriptor| descriptor.role == DockAccessibilityRole::Tab
+                && descriptor.node == Some(selected_tab_node)
+                && descriptor.label.as_deref() == Some("Panel A")
+                && descriptor.selected == Some(true)
+                && descriptor.actions.contains(&AccessibleAction::Click)
+                && descriptor.actions.contains(&AccessibleAction::Focus))
     );
 }
 
@@ -123,6 +161,8 @@ fn accessibility_scene_adds_overlay_drop_and_rejected_descriptors() {
                 |descriptor| descriptor.role == DockAccessibilityRole::DropTarget
                     && descriptor.node == Some(tabs)
                     && descriptor.zone == Some(DropZone::Center)
+                    && descriptor.disabled == Some(false)
+                    && descriptor.actions == vec![AccessibleAction::CustomAction]
             )
     );
     assert!(
@@ -132,6 +172,8 @@ fn accessibility_scene_adds_overlay_drop_and_rejected_descriptors() {
             .any(
                 |descriptor| descriptor.role == DockAccessibilityRole::RejectedDropTarget
                     && descriptor.node == Some(tabs)
+                    && descriptor.disabled == Some(true)
+                    && descriptor.actions.is_empty()
             )
     );
 }

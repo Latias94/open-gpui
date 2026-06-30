@@ -6,6 +6,16 @@ status: active
 
 # Log
 
+- 2026-06-30: Continued `docs/plans/2026-06-30-003-refactor-docking-split-motion-primitives-plan.md`
+  on `feat/docking-split-motion-primitives` through U10. U1-U9 are committed through `8373b99`.
+  U10 now extends docking accessibility descriptors with orientation, selected/disabled state, and
+  action metadata; adds `Role::Splitter` GPUI adapter coverage; removes the old docking-local split
+  handle-center / handle-hit geometry path; and records ADR 0011 for the `ui_core` /
+  `ui_components` / docking primitive boundary. Focused verification passed with
+  `cargo check -p open-gpui-docking --tests` and
+  `cargo nextest run -p open-gpui-docking geometry host_accessibility_tests --no-fail-fast`.
+  Next action is final required gates, `ce-code-review`, eligible fixes, final verification memory,
+  and commit.
 - 2026-06-30: Completed and verified the docking presentation scene and motion model implementation
   for `docs/plans/2026-06-30-002-refactor-docking-presentation-scene-motion-plan.md`. Added
   crate-private presentation, overlay, transition, zoom/focus, divider-hit-map, and accessibility
