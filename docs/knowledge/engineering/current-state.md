@@ -2,7 +2,7 @@
 type: Current State
 title: Docking runtime capability follow-up state
 status: active
-timestamp: 2026-07-01T10:34:36+08:00
+timestamp: 2026-07-01T11:27:26+08:00
 git_branch: main
 related_plan:
   - docs/plans/2026-06-30-003-refactor-docking-split-motion-primitives-plan.md
@@ -27,6 +27,11 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-core a11y --no-fail-fast
   - cargo nextest run -p open-gpui-ui-components a11y --no-fail-fast
   - cargo nextest run -p open-gpui-docking host_render_tests host_interaction_tests host_transition_tests host_zoom_focus_tests --no-fail-fast
+  - cargo check -p open-gpui-ui-core --tests
+  - cargo check -p open-gpui-docking --tests
+  - cargo nextest run -p open-gpui-ui-core split --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast
+  - cargo nextest run -p open-gpui-docking geometry workspace_resize_policy_tests host_interaction_tests::horizontal_splitter_drag_updates_width_fractions host_interaction_tests::vertical_splitter_drag_updates_height_fractions host_interaction_tests::splitter_drag_clamps_to_minimum_pane_size host_render_tests::central_split_child_uses_remaining_render_space host_render_tests::horizontal_split_uses_normalized_flex_shares host_render_tests::vertical_split_uses_normalized_flex_shares host_render_tests::unnormalized_split_fractions_are_repaired_for_rendering --no-fail-fast
   - git diff --check
   - python $HOME/.codex/skills/engineering-wiki-memory/scripts/wiki_memory.py validate --root docs/knowledge/engineering
 ---
@@ -66,12 +71,17 @@ verified_by:
   short-lived overlay descriptors for active drop/drag/reject feedback. GPUI currently lacks a
   generic hint/description field and platform drop action callback; the limitation is recorded in
   `docs/verification.md`.
-- In progress: Phase C continues with split primitive cleanup, visible corner-drag proof, routed
-  overlay cleanup proof, dogfood evidence, and ADR/helper deletion from U7-U11.
-- Last verified: Phase A, Phase B, U5, and U6 focused gates passed locally; see the runtime
+- Done: U7 split primitive cleanup is implemented locally. `open_gpui_ui_core::split` now owns
+  generic fraction normalization, fill-child share resolution, `SplitterState::resize_by_pixels`,
+  and pixel-delta adjacent resize helpers. Docking consumes those helpers for graph normalization,
+  render flex shares, presentation split layout, and splitter drag transactions; the docking-local
+  `split_fraction.rs` module and `DockSplitLayout` wrapper were deleted.
+- In progress: Phase C continues with visible corner-drag proof, routed overlay cleanup proof,
+  dogfood evidence, and ADR/helper deletion from U8-U11.
+- Last verified: Phase A, Phase B, U5, U6, and U7 focused gates passed locally; see the runtime
   capability verification evidence file.
 - Blocked: None.
-- Next action: commit U6, then continue with U7 split primitive consumption and cleanup.
+- Next action: commit U7, then continue with U8 corner drag and docking-private spatial navigation.
 
 # Citations
 

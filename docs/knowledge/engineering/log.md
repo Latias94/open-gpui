@@ -6,6 +6,20 @@ status: active
 
 # Log
 
+- 2026-07-01: Completed U7 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. `open_gpui_ui_core::split` now owns generic split fraction normalization, one-fill-child
+  share resolution, `SplitterState::resize_by_pixels`, and pixel-delta adjacent resize helpers.
+  Docking consumes those shared helpers for graph canonicalization, edge-dock fraction insertion,
+  graph mutation normalization, render flex shares, presentation-scene split layout, and splitter
+  drag resize transactions. Deleted the docking-local `split_fraction.rs` module and the
+  `DockSplitLayout` wrapper so docking-local geometry is narrowed to drop-guide hit boxes and GPUI
+  bounds conversion. Verification passed with `cargo check -p open-gpui-ui-core --tests`,
+  `cargo check -p open-gpui-docking --tests`,
+  `cargo nextest run -p open-gpui-ui-core split --no-fail-fast`,
+  `cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast`,
+  and focused docking geometry/resize/render splitter gates. Next action is commit U7, then continue
+  U8 corner drag and docking-private spatial navigation.
 - 2026-07-01: Completed U6 from
   `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
   tree. Docking accessibility descriptors now map into GPUI-facing stable element IDs, roles,

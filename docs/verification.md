@@ -104,6 +104,12 @@ markers stay separate from target previews, zoom/focus produce deterministic des
 and corner hits derive from the shared split hit map, and accessibility descriptors expose roles,
 bounds, orientation, selected state, disabled state, and actions.
 
+Shared split primitive coverage now owns generic fraction normalization, one-fill-child share
+resolution, and pixel-delta adjacent resize helpers in `open_gpui_ui_core`. Docking consumes those
+helpers for graph normalization, render flex shares, presentation-scene split layout, and splitter
+drag resize transactions. Docking-local geometry should remain limited to docking-specific
+drop-guide boxes, central-region target policy adapters, and GPUI `Bounds<Pixels>` conversion.
+
 Current docking accessibility output maps supported descriptor data into GPUI element state:
 stable IDs, roles, labels, selected/disabled state, orientation, numeric splitter values, tab
 focus/select actions, and splitter increment/decrement actions. Docking keeps hint strings and

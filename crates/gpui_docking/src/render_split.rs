@@ -2,7 +2,6 @@ use crate::{
     DockHost, DockNodeId, SplitAxis,
     accessibility_scene::{DockAccessibilityScene, gpui_accessible_action_from_ui},
     debug::DockDebugRegion,
-    geometry::DockSplitLayout,
     host_render_session::DockHostRenderSession,
     render::DockViewportHostSceneFrameSlot,
 };
@@ -10,7 +9,7 @@ use open_gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, ParentElement,
     StatefulInteractiveElement, Styled, Window, div, px, relative, rgb,
 };
-use open_gpui_ui_core::AccessibleAction;
+use open_gpui_ui_core::{AccessibleAction, resolve_split_fractions_with_fill_child};
 
 pub(crate) struct DockRenderSplitInput {
     node: DockNodeId,
@@ -59,7 +58,7 @@ impl DockHost {
             DockDebugRegion::Split { node },
             format!("{}:split:{}", session.selector_prefix(), node.as_u64()),
         );
-        let layout = DockSplitLayout::from_fractions(
+        let shares = resolve_split_fractions_with_fill_child(
             children.len(),
             &fractions,
             session.central_child_index(&children),
@@ -87,7 +86,7 @@ impl DockHost {
                     index
                 ),
             );
-            let share = layout.child_share(index).unwrap_or(1.0);
+            let share = shares.get(index).copied().unwrap_or(1.0);
             split = split.child(
                 div()
                     .id(selector.clone())
@@ -101,13 +100,12 @@ impl DockHost {
             );
         }
 
-        let handles = layout.handles();
-        if !handles.is_empty() {
+        if shares.len() >= 2 {
             let handle_size = session.splitter_handle_size();
             let handle_offset = -handle_size / 2.0;
-            for handle_layout in &handles {
-                let handle_index = handle_layout.index;
-                let handle_center_share = handle_layout.center_share;
+            let mut handle_center_share = 0.0_f32;
+            for (handle_index, share) in shares.iter().take(shares.len() - 1).enumerate() {
+                handle_center_share += *share;
                 let selector = self.record_debug_selector(
                     DockDebugRegion::SplitterHandle {
                         split: node,

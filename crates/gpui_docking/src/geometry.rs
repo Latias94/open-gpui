@@ -1,5 +1,6 @@
-use crate::{DropZone, SplitAxis, split_fraction};
+use crate::{DropZone, SplitAxis};
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
+use open_gpui_ui_core::resolve_split_fractions;
 
 const DEFAULT_DROP_GUIDE_FONT_SIZE: f32 = 16.0;
 const DEFAULT_MIN_SPLIT_PREVIEW_EXTENT: f32 = 8.0;
@@ -123,17 +124,6 @@ impl LocalRect {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockSplitLayout {
-    shares: Vec<f32>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct DockSplitHandleLayout {
-    pub(crate) index: usize,
-    pub(crate) center_share: f32,
-}
-
 pub(crate) fn resolve_inner_drop_geometry_with_style(
     bounds: Bounds<Pixels>,
     position: Point<Pixels>,
@@ -229,136 +219,6 @@ fn resolve_drop_geometry(
         .map(|drop_box| DockDropGeometry { drop_box })
 }
 
-fn split_shares(child_count: usize, fractions: &[f32]) -> Vec<f32> {
-    split_fraction::cleaned_shares(child_count, fractions)
-}
-
-fn split_shares_with_central(
-    child_count: usize,
-    fractions: &[f32],
-    central_child_index: Option<usize>,
-) -> Vec<f32> {
-    let Some(central_child_index) = central_child_index else {
-        return split_shares(child_count, fractions);
-    };
-    if child_count == 0 || central_child_index >= child_count {
-        return split_shares(child_count, fractions);
-    }
-    if child_count == 1 {
-        return vec![1.0];
-    }
-
-    let mut shares: Vec<f32> = (0..child_count)
-        .map(|index| {
-            if index == central_child_index {
-                0.0
-            } else {
-                clean_fraction(fractions.get(index).copied().unwrap_or(0.0))
-            }
-        })
-        .collect();
-
-    let non_central_sum: f32 = shares.iter().sum();
-    if non_central_sum > 1.0 {
-        for (index, share) in shares.iter_mut().enumerate() {
-            if index != central_child_index {
-                *share /= non_central_sum;
-            }
-        }
-        shares[central_child_index] = 0.0;
-    } else {
-        shares[central_child_index] = 1.0 - non_central_sum;
-    }
-
-    shares
-}
-
-impl DockSplitLayout {
-    pub(crate) fn from_fractions(
-        child_count: usize,
-        fractions: &[f32],
-        central_child_index: Option<usize>,
-    ) -> Self {
-        Self {
-            shares: split_shares_with_central(child_count, fractions, central_child_index),
-        }
-    }
-
-    pub(crate) fn child_share(&self, index: usize) -> Option<f32> {
-        self.shares.get(index).copied()
-    }
-
-    pub(crate) fn shares(&self) -> &[f32] {
-        &self.shares
-    }
-
-    pub(crate) fn handles(&self) -> Vec<DockSplitHandleLayout> {
-        let mut cursor = 0.0_f32;
-        self.shares
-            .iter()
-            .take(self.shares.len().saturating_sub(1))
-            .enumerate()
-            .map(|(index, share)| {
-                cursor += *share;
-                DockSplitHandleLayout {
-                    index,
-                    center_share: cursor,
-                }
-            })
-            .collect()
-    }
-
-    pub(crate) fn pane_bounds(
-        &self,
-        axis: SplitAxis,
-        split_bounds: Bounds<Pixels>,
-    ) -> Vec<Bounds<Pixels>> {
-        split_pane_bounds(axis, split_bounds, &self.shares)
-    }
-}
-
-fn clean_fraction(value: f32) -> f32 {
-    if value.is_finite() && value >= 0.0 {
-        value
-    } else {
-        0.0
-    }
-}
-
-pub(crate) fn resize_adjacent_split_fractions(
-    fractions: &[f32],
-    child_count: usize,
-    handle_index: usize,
-    split_extent: Pixels,
-    delta: Pixels,
-    min_pane_size: Pixels,
-) -> Option<Vec<f32>> {
-    if child_count < 2 || handle_index + 1 >= child_count {
-        return None;
-    }
-
-    let extent = f32::from(split_extent);
-    if !extent.is_finite() || extent <= f32::EPSILON {
-        return None;
-    }
-
-    let mut shares = split_shares(child_count, fractions);
-    let pair_total = shares[handle_index] + shares[handle_index + 1];
-    if !pair_total.is_finite() || pair_total <= f32::EPSILON {
-        return None;
-    }
-
-    let min_fraction = (f32::from(min_pane_size).max(0.0) / extent).clamp(0.0, pair_total / 2.0);
-    let delta_fraction = f32::from(delta) / extent;
-    let next_first =
-        (shares[handle_index] + delta_fraction).clamp(min_fraction, pair_total - min_fraction);
-
-    shares[handle_index] = next_first;
-    shares[handle_index + 1] = pair_total - next_first;
-    split_fraction::normalize_shares(&mut shares);
-    Some(shares)
-}
-
 fn valid_extent(value: f32) -> bool {
     value.is_finite() && value > 0.0
 }
@@ -370,14 +230,14 @@ fn split_extent(axis: SplitAxis, split_bounds: Bounds<Pixels>) -> Pixels {
     }
 }
 
-fn split_pane_bounds(
+pub(crate) fn split_pane_bounds(
     axis: SplitAxis,
     split_bounds: Bounds<Pixels>,
     shares: &[f32],
 ) -> Vec<Bounds<Pixels>> {
     let mut cursor = axis_origin(axis, split_bounds);
     let extent = split_extent(axis, split_bounds);
-    shares
+    resolve_split_fractions(shares.len(), shares)
         .iter()
         .map(|share| {
             let pane_extent = extent * *share;
@@ -878,8 +738,8 @@ mod tests {
 
     #[test]
     fn split_pane_bounds_match_horizontal_fraction_boundaries() {
-        let pane_bounds = DockSplitLayout::from_fractions(2, &[0.25, 0.75], None)
-            .pane_bounds(SplitAxis::Horizontal, bounds(400.0, 100.0));
+        let pane_bounds =
+            split_pane_bounds(SplitAxis::Horizontal, bounds(400.0, 100.0), &[0.25, 0.75]);
 
         assert_eq!(pane_bounds.len(), 2);
         assert_eq!(pane_bounds[0].origin.x, px(10.0));
@@ -890,8 +750,8 @@ mod tests {
 
     #[test]
     fn split_pane_bounds_match_vertical_fraction_boundaries() {
-        let pane_bounds = DockSplitLayout::from_fractions(2, &[0.25, 0.75], None)
-            .pane_bounds(SplitAxis::Vertical, bounds(200.0, 400.0));
+        let pane_bounds =
+            split_pane_bounds(SplitAxis::Vertical, bounds(200.0, 400.0), &[0.25, 0.75]);
 
         assert_eq!(pane_bounds[0].origin.y, px(20.0));
         assert_eq!(pane_bounds[0].size.height, px(100.0));
@@ -901,24 +761,28 @@ mod tests {
 
     #[test]
     fn split_layout_repairs_fraction_input_once() {
-        let layout = DockSplitLayout::from_fractions(3, &[f32::NAN], None);
-        let pane_bounds = layout.pane_bounds(SplitAxis::Horizontal, bounds(300.0, 100.0));
+        let shares = resolve_split_fractions(3, &[f32::NAN]);
+        let pane_bounds = split_pane_bounds(SplitAxis::Horizontal, bounds(300.0, 100.0), &shares);
 
         assert_eq!(pane_bounds.len(), 3);
-        assert_close(layout.shares().iter().sum(), 1.0);
-        assert_close(layout.shares()[0], 0.0);
-        assert_close(layout.shares()[1], 0.5);
-        assert_close(layout.shares()[2], 0.5);
+        assert_close(shares.iter().sum(), 1.0);
+        assert_close(shares[0], 0.0);
+        assert_close(shares[1], 0.5);
+        assert_close(shares[2], 0.5);
     }
 
     #[test]
     fn central_split_child_receives_remaining_space() {
-        let layout = DockSplitLayout::from_fractions(3, &[0.2, 0.0, 0.3], Some(1));
-        let pane_bounds = layout.pane_bounds(SplitAxis::Horizontal, bounds(1000.0, 100.0));
+        let shares = open_gpui_ui_core::resolve_split_fractions_with_fill_child(
+            3,
+            &[0.2, 0.0, 0.3],
+            Some(1),
+        );
+        let pane_bounds = split_pane_bounds(SplitAxis::Horizontal, bounds(1000.0, 100.0), &shares);
 
-        assert_close(layout.shares()[0], 0.2);
-        assert_close(layout.shares()[1], 0.5);
-        assert_close(layout.shares()[2], 0.3);
+        assert_close(shares[0], 0.2);
+        assert_close(shares[1], 0.5);
+        assert_close(shares[2], 0.3);
         assert_eq!(pane_bounds[0].size.width, px(200.0));
         assert_eq!(pane_bounds[1].size.width, px(500.0));
         assert_eq!(pane_bounds[2].size.width, px(300.0));
@@ -926,66 +790,22 @@ mod tests {
 
     #[test]
     fn central_split_child_yields_space_when_neighbors_over_allocate() {
-        let layout = DockSplitLayout::from_fractions(3, &[0.8, 0.0, 0.7], Some(1));
+        let shares = open_gpui_ui_core::resolve_split_fractions_with_fill_child(
+            3,
+            &[0.8, 0.0, 0.7],
+            Some(1),
+        );
 
-        assert_close(layout.shares()[0], 0.5333);
-        assert_close(layout.shares()[1], 0.0);
-        assert_close(layout.shares()[2], 0.4667);
-        assert_close(layout.shares().iter().sum(), 1.0);
+        assert_close(shares[0], 0.5333);
+        assert_close(shares[1], 0.0);
+        assert_close(shares[2], 0.4667);
+        assert_close(shares.iter().sum(), 1.0);
     }
 
     fn assert_close(actual: f32, expected: f32) {
         assert!(
             (actual - expected).abs() <= 0.001,
             "expected {actual} to be close to {expected}"
-        );
-    }
-
-    #[test]
-    fn positive_resize_delta_grows_first_adjacent_pane() {
-        let next =
-            resize_adjacent_split_fractions(&[0.25, 0.75], 2, 0, px(400.0), px(40.0), px(48.0))
-                .expect("resize should be valid");
-
-        assert_close(next[0], 0.35);
-        assert_close(next[1], 0.65);
-    }
-
-    #[test]
-    fn negative_resize_delta_shrinks_first_adjacent_pane() {
-        let next =
-            resize_adjacent_split_fractions(&[0.5, 0.5], 2, 0, px(400.0), px(-80.0), px(48.0))
-                .expect("resize should be valid");
-
-        assert_close(next[0], 0.3);
-        assert_close(next[1], 0.7);
-    }
-
-    #[test]
-    fn resize_clamps_at_minimum_pane_size() {
-        let next =
-            resize_adjacent_split_fractions(&[0.5, 0.5], 2, 0, px(400.0), px(-300.0), px(100.0))
-                .expect("resize should be valid");
-
-        assert_close(next[0], 0.25);
-        assert_close(next[1], 0.75);
-    }
-
-    #[test]
-    fn impossible_minimum_splits_adjacent_pair_evenly() {
-        let next =
-            resize_adjacent_split_fractions(&[0.5, 0.5], 2, 0, px(120.0), px(100.0), px(80.0))
-                .expect("resize should be valid");
-
-        assert_close(next[0], 0.5);
-        assert_close(next[1], 0.5);
-    }
-
-    #[test]
-    fn invalid_resize_handle_index_returns_none() {
-        assert!(
-            resize_adjacent_split_fractions(&[0.5, 0.5], 2, 1, px(400.0), px(10.0), px(48.0))
-                .is_none()
         );
     }
 }

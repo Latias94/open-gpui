@@ -421,6 +421,24 @@ impl SplitterState {
         }
     }
 
+    /// Applies a pixel delta to a handle for a split with the given axis extent.
+    pub fn resize_by_pixels(
+        &self,
+        handle_index: usize,
+        axis_extent: UiPx,
+        delta: UiPx,
+    ) -> SplitterResizeResult {
+        let axis_extent = axis_extent.as_f32();
+        if !axis_extent.is_finite() || axis_extent <= EPSILON {
+            return SplitterResizeResult {
+                state: self.clone(),
+                outcome: SplitterResizeOutcome::Rejected,
+            };
+        }
+
+        self.resize_by(handle_index, delta.as_f32() / axis_extent)
+    }
+
     /// Returns a new state with panel fractions overridden by runtime layout state.
     pub fn with_panel_fractions(&self, fractions: &[f32]) -> Self {
         if fractions.len() != self.panels.len() {
@@ -446,6 +464,139 @@ impl SplitterState {
         next.handles = resolve_handles(&next.panels, next.disabled);
         next
     }
+}
+
+/// Resolves a normalized list of split fractions for an ordered child list.
+pub fn resolve_split_fractions(child_count: usize, fractions: &[f32]) -> Vec<f32> {
+    let mut shares: Vec<f32> = (0..child_count)
+        .map(|index| fractions.get(index).copied().unwrap_or(1.0))
+        .collect();
+    normalize_split_fractions(&mut shares);
+    shares
+}
+
+/// Resolves split fractions while one child receives the remaining unassigned share.
+pub fn resolve_split_fractions_with_fill_child(
+    child_count: usize,
+    fractions: &[f32],
+    fill_child_index: Option<usize>,
+) -> Vec<f32> {
+    let Some(fill_child_index) = fill_child_index else {
+        return resolve_split_fractions(child_count, fractions);
+    };
+    if child_count == 0 || fill_child_index >= child_count {
+        return resolve_split_fractions(child_count, fractions);
+    }
+    if child_count == 1 {
+        return vec![1.0];
+    }
+
+    let mut shares = (0..child_count)
+        .map(|index| {
+            if index == fill_child_index {
+                0.0
+            } else {
+                sanitize_fraction(fractions.get(index).copied().unwrap_or(0.0))
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let non_fill_sum: f32 = shares.iter().sum();
+    if non_fill_sum > 1.0 {
+        for (index, share) in shares.iter_mut().enumerate() {
+            if index != fill_child_index {
+                *share /= non_fill_sum;
+            }
+        }
+        shares[fill_child_index] = 0.0;
+    } else {
+        shares[fill_child_index] = 1.0 - non_fill_sum;
+    }
+
+    shares
+}
+
+/// Normalizes split fractions in place, repairing invalid values.
+pub fn normalize_split_fractions(fractions: &mut Vec<f32>) {
+    for fraction in fractions.iter_mut() {
+        if !fraction.is_finite() || *fraction < 0.0 {
+            *fraction = 0.0;
+        }
+    }
+
+    let sum: f32 = fractions.iter().sum();
+    if !sum.is_finite() || sum <= EPSILON {
+        let len = fractions.len().max(1);
+        *fractions = vec![1.0 / len as f32; len];
+        return;
+    }
+
+    for fraction in fractions.iter_mut() {
+        *fraction /= sum;
+    }
+
+    if !fractions.is_empty() {
+        let rest: f32 = fractions
+            .iter()
+            .take(fractions.len().saturating_sub(1))
+            .sum();
+        let last = fractions.len().saturating_sub(1);
+        fractions[last] = (1.0 - rest).clamp(0.0, 1.0);
+    }
+}
+
+/// Resizes adjacent split fractions by a pixel delta along the split axis.
+pub fn resize_split_fractions_by_pixels(
+    fractions: &[f32],
+    handle_index: usize,
+    axis_extent: UiPx,
+    delta: UiPx,
+    min_panel_extent: UiPx,
+) -> Option<Vec<f32>> {
+    let child_count = fractions.len();
+    if child_count < 2 || handle_index + 1 >= child_count {
+        return None;
+    }
+
+    let extent = axis_extent.as_f32();
+    if !extent.is_finite() || extent <= EPSILON {
+        return None;
+    }
+
+    let shares = resolve_split_fractions(child_count, fractions);
+    let pair_total = shares[handle_index] + shares[handle_index + 1];
+    if !pair_total.is_finite() || pair_total <= EPSILON {
+        return None;
+    }
+
+    let min_fraction = (min_panel_extent.as_f32().max(0.0) / extent).clamp(0.0, pair_total / 2.0);
+    let max_pair_fraction = pair_total - min_fraction;
+    let panels = shares.iter().copied().enumerate().map(|(index, share)| {
+        let descriptor = SplitterPanelDescriptor::new(format!("panel-{index}"), share);
+        if index == handle_index || index == handle_index + 1 {
+            descriptor
+                .min_fraction(min_fraction)
+                .max_fraction(max_pair_fraction)
+        } else {
+            descriptor.min_fraction(0.0)
+        }
+    });
+    let state = SplitterState::resolve(
+        "split-fraction-resize",
+        Orientation::Horizontal,
+        Size::Medium,
+        false,
+        panels,
+    );
+    let resized = state.resize_by_pixels(handle_index, axis_extent, delta);
+    Some(
+        resized
+            .state()
+            .panels()
+            .iter()
+            .map(SplitterPanelState::fraction)
+            .collect(),
+    )
 }
 
 /// Resolved flat layout for an ordered splitter or split tree.
@@ -1204,6 +1355,64 @@ mod tests {
         )
     }
 
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() <= 0.001,
+            "expected {actual} to be close to {expected}"
+        );
+    }
+
+    #[test]
+    fn split_fraction_resolution_fills_missing_fractions() {
+        let shares = resolve_split_fractions(3, &[0.25]);
+
+        assert_close(shares.iter().sum(), 1.0);
+        assert_close(shares[0], 0.1111);
+        assert_close(shares[1], 0.4444);
+        assert_close(shares[2], 0.4444);
+    }
+
+    #[test]
+    fn split_fraction_normalization_repairs_invalid_values() {
+        let mut shares = vec![f32::NAN, -1.0, 3.0];
+
+        normalize_split_fractions(&mut shares);
+
+        assert_close(shares.iter().sum(), 1.0);
+        assert_close(shares[0], 0.0);
+        assert_close(shares[1], 0.0);
+        assert_close(shares[2], 1.0);
+    }
+
+    #[test]
+    fn split_fraction_normalization_falls_back_to_equal_shares_when_sum_is_empty() {
+        let mut shares = vec![0.0, f32::NAN, -1.0];
+
+        normalize_split_fractions(&mut shares);
+
+        assert_eq!(shares, vec![1.0 / 3.0; 3]);
+    }
+
+    #[test]
+    fn split_fraction_fill_child_receives_remaining_share() {
+        let shares = resolve_split_fractions_with_fill_child(3, &[0.2, 0.0, 0.3], Some(1));
+
+        assert_close(shares[0], 0.2);
+        assert_close(shares[1], 0.5);
+        assert_close(shares[2], 0.3);
+        assert_close(shares.iter().sum(), 1.0);
+    }
+
+    #[test]
+    fn split_fraction_fill_child_yields_when_siblings_over_allocate() {
+        let shares = resolve_split_fractions_with_fill_child(3, &[0.8, 0.0, 0.7], Some(1));
+
+        assert_close(shares[0], 0.5333);
+        assert_close(shares[1], 0.0);
+        assert_close(shares[2], 0.4667);
+        assert_close(shares.iter().sum(), 1.0);
+    }
+
     #[test]
     fn split_state_resize_reports_outcomes() {
         let state = SplitterState::resolve(
@@ -1232,6 +1441,123 @@ mod tests {
         let rejected = state.resize_by(0, f32::NAN);
         assert_eq!(rejected.outcome(), SplitterResizeOutcome::Rejected);
         assert_eq!(rejected.state(), &state);
+    }
+
+    #[test]
+    fn split_state_resize_by_pixels_converts_extent_to_fraction_delta() {
+        let state = SplitterState::resolve(
+            "editor",
+            Orientation::Horizontal,
+            Size::Small,
+            false,
+            [
+                SplitterPanelDescriptor::new("left", 0.25).min_fraction(0.12),
+                SplitterPanelDescriptor::new("right", 0.75).min_fraction(0.12),
+            ],
+        );
+
+        let applied = state.resize_by_pixels(0, ui_px(400.0), ui_px(40.0));
+        assert_eq!(applied.outcome(), SplitterResizeOutcome::Applied);
+        assert_close(applied.state().panels()[0].fraction(), 0.35);
+        assert_close(applied.state().panels()[1].fraction(), 0.65);
+
+        let clamped = state.resize_by_pixels(0, ui_px(400.0), ui_px(-300.0));
+        assert_eq!(clamped.outcome(), SplitterResizeOutcome::Clamped);
+        assert_close(clamped.state().panels()[0].fraction(), 0.12);
+        assert_close(clamped.state().panels()[1].fraction(), 0.88);
+    }
+
+    #[test]
+    fn split_state_resize_by_pixels_rejects_invalid_extent() {
+        let state = SplitterState::resolve(
+            "editor",
+            Orientation::Horizontal,
+            Size::Small,
+            false,
+            [
+                SplitterPanelDescriptor::new("left", 0.5),
+                SplitterPanelDescriptor::new("right", 0.5),
+            ],
+        );
+
+        let rejected = state.resize_by_pixels(0, ui_px(0.0), ui_px(40.0));
+
+        assert_eq!(rejected.outcome(), SplitterResizeOutcome::Rejected);
+        assert_eq!(rejected.state(), &state);
+    }
+
+    #[test]
+    fn split_fraction_pixel_resize_grows_first_adjacent_pane() {
+        let next = resize_split_fractions_by_pixels(
+            &[0.25, 0.75],
+            0,
+            ui_px(400.0),
+            ui_px(40.0),
+            ui_px(48.0),
+        )
+        .expect("resize should be valid");
+
+        assert_close(next[0], 0.35);
+        assert_close(next[1], 0.65);
+    }
+
+    #[test]
+    fn split_fraction_pixel_resize_shrinks_first_adjacent_pane() {
+        let next = resize_split_fractions_by_pixels(
+            &[0.5, 0.5],
+            0,
+            ui_px(400.0),
+            ui_px(-80.0),
+            ui_px(48.0),
+        )
+        .expect("resize should be valid");
+
+        assert_close(next[0], 0.3);
+        assert_close(next[1], 0.7);
+    }
+
+    #[test]
+    fn split_fraction_pixel_resize_clamps_at_minimum_pane_extent() {
+        let next = resize_split_fractions_by_pixels(
+            &[0.5, 0.5],
+            0,
+            ui_px(400.0),
+            ui_px(-300.0),
+            ui_px(100.0),
+        )
+        .expect("resize should be valid");
+
+        assert_close(next[0], 0.25);
+        assert_close(next[1], 0.75);
+    }
+
+    #[test]
+    fn split_fraction_pixel_resize_splits_impossible_minimum_evenly() {
+        let next = resize_split_fractions_by_pixels(
+            &[0.5, 0.5],
+            0,
+            ui_px(120.0),
+            ui_px(100.0),
+            ui_px(80.0),
+        )
+        .expect("resize should be valid");
+
+        assert_close(next[0], 0.5);
+        assert_close(next[1], 0.5);
+    }
+
+    #[test]
+    fn split_fraction_pixel_resize_rejects_invalid_handle_index() {
+        assert!(
+            resize_split_fractions_by_pixels(
+                &[0.5, 0.5],
+                1,
+                ui_px(400.0),
+                ui_px(10.0),
+                ui_px(48.0)
+            )
+            .is_none()
+        );
     }
 
     #[test]

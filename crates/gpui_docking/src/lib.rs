@@ -131,7 +131,6 @@ mod render;
 mod render_floating;
 mod render_split;
 mod render_tabs;
-mod split_fraction;
 mod transition_executor;
 mod transition_geometry;
 mod viewport;

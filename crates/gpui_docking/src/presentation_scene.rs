@@ -1,14 +1,15 @@
 #![allow(dead_code)]
 
 use crate::{
-    DockHost, DockItemId, DockNode, DockNodeId, DockSpaceId, SplitAxis, geometry::DockSplitLayout,
+    DockHost, DockItemId, DockNode, DockNodeId, DockSpaceId, SplitAxis,
     host_render_session::DockHostRenderSession, transition_geometry::DockMotionPreference,
     zoom_state::DockZoomScene,
 };
 use open_gpui::{Bounds, Context, Pixels, point, px, size};
 use open_gpui_ui_core::{
     Orientation, Size, SplitterHandlePlacement, SplitterLayoutScene, SplitterMetrics,
-    SplitterPanelDescriptor, SplitterState, UiRect, ui_point, ui_px, ui_rect, ui_size,
+    SplitterPanelDescriptor, SplitterState, UiRect, resolve_split_fractions_with_fill_child,
+    ui_point, ui_px, ui_rect, ui_size,
 };
 
 const PRESENTATION_TAB_BAR_HEIGHT: f32 = 28.0;
@@ -208,7 +209,7 @@ impl DockPresentationScene {
             return;
         }
 
-        let layout = DockSplitLayout::from_fractions(
+        let shares = resolve_split_fractions_with_fill_child(
             children.len(),
             &fractions,
             session.central_child_index(&children),
@@ -217,7 +218,7 @@ impl DockPresentationScene {
             split,
             axis,
             &children,
-            layout.shares(),
+            &shares,
             bounds,
             session.splitter_handle_size(),
         );
@@ -235,7 +236,7 @@ impl DockPresentationScene {
                     before: *before,
                     after: *after,
                     extent,
-                    shares: layout.shares().to_vec(),
+                    shares: shares.clone(),
                 });
                 self.overlay_anchors.push(DockPresentationOverlayAnchor {
                     kind: DockPresentationOverlayAnchorKind::Splitter,

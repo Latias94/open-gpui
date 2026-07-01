@@ -32,6 +32,8 @@ pub use crate::{
         SplitterHandleState, SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion,
         SplitterLayoutScene, SplitterMetrics, SplitterPanelDescriptor, SplitterPanelLayout,
         SplitterPanelState, SplitterResizeOutcome, SplitterResizeResult, SplitterState,
+        normalize_split_fractions, resize_split_fractions_by_pixels, resolve_split_fractions,
+        resolve_split_fractions_with_fill_child,
     },
     table::{
         TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,

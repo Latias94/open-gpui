@@ -123,3 +123,33 @@ U6 requirement that reduced motion changes timing only, not final accessibility 
 `host_render_tests::viewport_failed_panel_focus_preserves_current_focus_and_history` passed in the
 broader regression run, which protects against accessibility metadata accidentally making tab/panel
 elements steal GPUI focus during render.
+
+## U7 / Phase C Split Primitive Cleanup
+
+Implemented U7 shared split primitive cleanup:
+
+- `open_gpui_ui_core::split` now owns generic split fraction normalization, fill-child share
+  resolution, `SplitterState::resize_by_pixels`, and pixel-delta adjacent resize helpers.
+- Docking graph canonicalization, graph mutation, edge-dock insertion, render flex shares,
+  presentation-scene split layout, and splitter drag transactions consume those helpers directly.
+- Deleted the docking-local `split_fraction.rs` module and the `DockSplitLayout` wrapper. Docking
+  geometry now keeps docking-specific drop-guide boxes and GPUI `Bounds<Pixels>` conversion instead
+  of carrying generic split math.
+- `docs/verification.md` records the shared primitive boundary so future split changes keep generic
+  fraction/pixel math in `ui_core` and docking-specific policy in docking.
+
+## U7 Commands
+
+- `cargo check -p open-gpui-ui-core --tests` - passed.
+- `cargo check -p open-gpui-docking --tests` - passed.
+- `cargo nextest run -p open-gpui-ui-core split --no-fail-fast` - passed, 19 tests.
+- `cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast` -
+  passed, 13 tests.
+- `cargo nextest run -p open-gpui-docking geometry workspace_resize_policy_tests host_interaction_tests::horizontal_splitter_drag_updates_width_fractions host_interaction_tests::vertical_splitter_drag_updates_height_fractions host_interaction_tests::splitter_drag_clamps_to_minimum_pane_size host_render_tests::central_split_child_uses_remaining_render_space host_render_tests::horizontal_split_uses_normalized_flex_shares host_render_tests::vertical_split_uses_normalized_flex_shares host_render_tests::unnormalized_split_fractions_are_repaired_for_rendering --no-fail-fast` -
+  passed, 44 tests.
+
+## U7 Verification Notes
+
+The U7 extraction deliberately did not export rectangle-neighbor navigation or docking policy
+objects. `resolve_split_fractions_with_fill_child` is a generic fill-child helper; docking decides
+which child, if any, is the central fill child before calling it.

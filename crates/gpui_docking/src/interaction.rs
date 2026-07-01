@@ -5,12 +5,13 @@ use crate::{
     drop_preview::DockDropPreview,
     drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
     drop_target::{DockDropTargetValidator, DockEdgePlanResolver, DockResolvedDropTarget},
-    geometry::{self, DockDropGuideStyle},
+    geometry::DockDropGuideStyle,
     viewport_drop_scene::DockViewportHostSceneFrame,
     workspace_drop_target::DockWorkspaceResolvedDropTarget,
     workspace_drop_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{Bounds, Pixels, Point, point};
+use open_gpui_ui_core::{resize_split_fractions_by_pixels, ui_px};
 
 #[derive(Debug, Default)]
 pub(crate) struct DockInteractionRuntime {
@@ -532,13 +533,12 @@ impl DockInteractionRuntime {
                     position.y
                 };
                 let delta = current_position - axis.start_position;
-                geometry::resize_adjacent_split_fractions(
+                resize_split_fractions_by_pixels(
                     &axis.initial_fractions,
-                    axis.initial_fractions.len(),
                     axis.handle_index,
-                    axis.split_extent,
-                    delta,
-                    split_min_size,
+                    ui_px(f32::from(axis.split_extent)),
+                    ui_px(f32::from(delta)),
+                    ui_px(f32::from(split_min_size)),
                 )
                 .map(|fractions| DockSplitResize::new(axis.split, fractions))
             })

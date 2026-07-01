@@ -1,5 +1,6 @@
 use crate::{DockNodeId, geometry};
 use open_gpui::{Bounds, Pixels};
+use open_gpui_ui_core::resolve_split_fractions_with_fill_child;
 use std::collections::HashMap;
 
 use super::{DockGraph, DockNode};
@@ -42,12 +43,12 @@ impl DockGraph {
                     return;
                 }
 
-                let layout = geometry::DockSplitLayout::from_fractions(
+                let shares = resolve_split_fractions_with_fill_child(
                     children.len(),
                     fractions,
                     self.central_child_index(children, central_node),
                 );
-                let pane_bounds = layout.pane_bounds(*axis, bounds);
+                let pane_bounds = geometry::split_pane_bounds(*axis, bounds, &shares);
                 for (child, child_bounds) in children.iter().copied().zip(pane_bounds) {
                     self.compute_layout_with_central(child, child_bounds, out, central_node);
                 }
