@@ -196,43 +196,6 @@ fn ui_component_source_files() -> Vec<std::path::PathBuf> {
     files
 }
 
-fn official_component_catalog_names_from_gallery_source() -> Vec<String> {
-    let names =
-        component_catalog_names_from_gallery_constructor("ComponentCatalogEntry::official(");
-    assert!(
-        !names.is_empty(),
-        "Components gallery source should contain official catalog entries"
-    );
-    names
-}
-
-fn component_catalog_names_from_gallery_constructor(constructor: &str) -> Vec<String> {
-    const GALLERY_COMPONENTS_SOURCE: &str = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../examples/ui-foundation-gallery/src/pages/components/catalog.rs"
-    );
-
-    let source = std::fs::read_to_string(GALLERY_COMPONENTS_SOURCE)
-        .unwrap_or_else(|error| panic!("failed to read {GALLERY_COMPONENTS_SOURCE}: {error}"));
-    let mut remaining = source.as_str();
-    let mut names = Vec::new();
-
-    while let Some(marker_index) = remaining.find(constructor) {
-        remaining = &remaining[marker_index + constructor.len()..];
-        let name_start = remaining
-            .find('"')
-            .unwrap_or_else(|| panic!("missing catalog name opener after {constructor}"));
-        remaining = &remaining[name_start + 1..];
-        let name_end = remaining
-            .find('"')
-            .unwrap_or_else(|| panic!("missing catalog name closer after {constructor}"));
-        names.push(remaining[..name_end].to_string());
-        remaining = &remaining[name_end + 1..];
-    }
-
-    names
-}
-
 fn surface_manifest() -> Vec<SurfaceManifestEntry> {
     let root_exports = default_reexport_tokens("lib.rs");
     let prelude_exports = default_reexport_tokens("prelude.rs");
@@ -285,41 +248,6 @@ fn component_gallery_status(name: &str) -> Option<SurfaceGalleryStatus> {
         SurfaceGalleryStatus::NotInGallery => None,
         status => Some(status),
     }
-}
-
-fn overlay_catalog_names_from_gallery_source() -> Vec<String> {
-    component_catalog_names_from_source_constructor(
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../examples/ui-foundation-gallery/src/pages/overlay.rs"
-        ),
-        "OverlayCatalogEntry::official(",
-    )
-}
-
-fn component_catalog_names_from_source_constructor(
-    source_path: &str,
-    constructor: &str,
-) -> Vec<String> {
-    let source = std::fs::read_to_string(source_path)
-        .unwrap_or_else(|error| panic!("failed to read {source_path}: {error}"));
-    let mut remaining = source.as_str();
-    let mut names = Vec::new();
-
-    while let Some(marker_index) = remaining.find(constructor) {
-        remaining = &remaining[marker_index + constructor.len()..];
-        let name_start = remaining
-            .find('"')
-            .unwrap_or_else(|| panic!("missing catalog name opener after {constructor}"));
-        remaining = &remaining[name_start + 1..];
-        let name_end = remaining
-            .find('"')
-            .unwrap_or_else(|| panic!("missing catalog name closer after {constructor}"));
-        names.push(remaining[..name_end].to_string());
-        remaining = &remaining[name_end + 1..];
-    }
-
-    names
 }
 
 fn primitive_status_for_surface(entry: &PublicSurfaceOwnerEntry) -> SurfacePrimitiveStatus {

@@ -2635,7 +2635,6 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(components_source.contains("table_samples"));
     assert!(catalog_source.contains("pub const COMPONENT_CATALOG"));
     assert!(catalog_source.contains("ComponentCatalogEntry::registry_sample("));
-    assert!(!catalog_source.contains("ComponentCatalogEntry::official("));
     assert!(catalog_source.contains("ComponentCatalogEntry::state_contract("));
     assert!(conformance_source.contains("pub const COMPONENT_CONFORMANCE_GATES"));
     for module_path in [
@@ -2704,7 +2703,6 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(!render_source.contains("fn component_table_state_row"));
     assert!(!render_source.contains("fn render_components_section"));
     assert!(!render_source.contains("fn component_gallery_card_shell"));
-    assert!(!components_source.contains("ComponentCatalogEntry::official("));
     assert!(!components_source.contains("pub struct ButtonSample"));
     assert!(!components_source.contains("pub struct TableSampleRuntimeLog"));
     assert!(!render_source.contains("pub const COMPONENT_CATALOG"));
