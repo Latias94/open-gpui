@@ -302,7 +302,9 @@ select filtered options with ordered select/open callbacks. The focused Command 
 renderer-neutral ranking, controlled and default query ownership, stable-value selection across
 descriptor reorder, multi-select selected chips, virtualized result render plans, app-owned index
 snapshots, inline and dialog command filtering, keyboard activation, shortcut payloads, non-dialog
-content persistence, and dialog Escape/outside press dismissal. The focused gallery Command smoke
+content persistence, and dialog Escape/outside press dismissal. Command ownership is split across
+`command/descriptor.rs`, `command/model.rs`, `command/style.rs`, `command/render_plan.rs`, and
+`command/runtime.rs`, while `command/mod.rs` remains the public builder facade. The focused gallery Command smoke
 renders ranked, multi-select, virtualized, and indexed/loading samples in focused family mode,
 verifies selected chips, stable selected values, and snapshot metadata are inspectable, and
 confirms wheel input on the virtualized sample does not move the surrounding card.
@@ -328,22 +330,26 @@ label state, and source metadata staying outside image-loading ownership. The ga
 short-viewport smoke tests also verify those primitives are listed as official catalog entries and
 render visible samples with stable debug selectors.
 The public API inventory gate lives in `crates/ui_components/tests/public_surface.rs`. Its focused
-contract modules live under `crates/ui_components/tests/public_surface/`, while shared parsing and
-manifest helpers live in `crates/ui_components/tests/support/public_surface/mod.rs`. The component
+contract modules live under `crates/ui_components/tests/public_surface/`, while shared manifest
+projectors live in `crates/ui_components/tests/support/public_surface/mod.rs`. The product source
+of truth lives in `crates/ui_components/src/component_contract/mod.rs`; tests and gallery consume
+that typed registry instead of reading gallery source strings for shipped status. The component
 crate root and prelude both re-export the curated default surface from
 `crates/ui_components/src/public_api/default.rs`; GPUI runtime adapter helpers remain explicitly
 namespaced under `open_gpui_ui_components::gpui_adapter`. Key sentinels include
-`component_api_inventory_covers_official_gallery_catalog` and
-`component_api_inventory_uses_stable_ownership_vocabulary`. Run the focused proof with:
+`component_api_inventory_covers_official_gallery_catalog`,
+`component_api_inventory_uses_stable_ownership_vocabulary`, and
+`root_and_prelude_exports_match_registry_default_surface_intent`. Run the focused proof with:
 
 ```sh
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
 ```
 
-That gate checks that every official Components catalog entry has a matching API inventory row,
-that overlay families are explicitly listed, that public method baselines catch top-level builder
-drift, that render/controlled/default/policy vocabulary stays consistent, and that
-renderer-neutral resolved state remains free of GPUI runtime types.
+That gate checks that every registry-official component has a matching API inventory row, that
+overlay families are explicitly listed, that public method baselines catch top-level builder
+drift, that render/controlled/default/policy vocabulary stays consistent, that root/prelude
+default exports match registry intent, and that renderer-neutral resolved state remains free of
+GPUI runtime types.
 
 The foundation component family gate covers the shipped disclosure, numeric, navigation, display,
 action, and feedback additions: Accordion, Collapsible, Slider, NumberInput, ToggleGroup, Link,
@@ -524,10 +530,10 @@ docs ownership explicit while the UI component architecture is being deepened. T
 VirtualizedList, and Command expose behavior snapshots or state readouts; renderer assembly plans
 stay crate-private unless a future component deliberately promotes a narrower state contract.
 For the UI architecture deepening refactor, keep the focused gates below close to the code that
-changes them. They cover the public export map, removed primitive aliases, overlay runtime policy,
-choice/search behavior, the Table behavior-snapshot and internal render-plan boundary, shared
-row-window projection, theme registry, and gallery catalog/conformance/runtime/sample/render
-module split:
+changes them. They cover the component contract registry, public export map, removed primitive
+aliases, overlay runtime policy, choice/search behavior, the Command ownership split, the Table
+behavior-snapshot and internal render-plan boundary, shared row-window projection, theme registry,
+and gallery catalog/conformance/runtime/sample/render module split:
 
 The Components gallery root keeps `runtime`, `samples`, and render ownership private. Stable
 gallery API names are re-exported explicitly from `components.rs`; sample families live under
@@ -562,11 +568,13 @@ The binary-level gates above include these focused sentinels:
 `dialog_runtime_respects_escape_policy_and_restores_trigger_focus`,
 `choice_surfaces_share_stable_value_resolution_and_query_normalization`,
 `table_component_source_mapping_tracks_split_render_owners`, `row_window`,
+`command_component_source_mapping_tracks_split_owners`,
 `virtualized_list_behavior_snapshot_uses_item_descriptors_and_virtualizer_contracts`,
 `virtualized_list_behavior_snapshot_applies_builder_metrics`,
 `table_behavior_snapshot_exposes_center_column_summary_without_window_internals`,
 `table_behavior_snapshot_exposes_pinned_column_regions`, `theme_registry`, `theme_resolver`,
 `theme_snapshots`, `components_catalog_metadata_is_separate_from_rendering`,
+`components_catalog_consumes_component_contract_registry`,
 `official_component_catalog_entries_have_signals_and_sample_selectors`,
 `state_contract_catalog_entries_have_signals_and_readout_selectors`,
 `gallery_story_contracts_cover_components_state_readouts_and_overlays`,

@@ -4,6 +4,8 @@ fn component_contract_docs_match_current_public_surface_vocabulary() {
 
     for required in [
         "components::catalog::COMPONENT_CATALOG",
+        "open_gpui_ui_components::component_contract",
+        "component_contract/mod.rs",
         "components/catalog.rs",
         "components/render.rs",
         "components/samples/",
@@ -21,6 +23,9 @@ fn component_contract_docs_match_current_public_surface_vocabulary() {
         "`open_gpui_ui_components::choice`",
         "`open_gpui_ui_components::gpui_adapter`",
         "public_api/default.rs",
+        "root_and_prelude_exports_match_registry_default_surface_intent",
+        "command_component_source_mapping_tracks_split_owners",
+        "components_catalog_consumes_component_contract_registry",
         "must not use wildcard facade exports such as",
         "pub use runtime::*",
         "pub use samples::*",
@@ -37,6 +42,8 @@ fn component_contract_docs_match_current_public_surface_vocabulary() {
         "`ui_components::primitives::controllable_state`",
         "`ui_components::primitives::overlay`",
         "theme registry gap",
+        "COMPONENT_CATALOG` owns the current",
+        "gallery constructors for official status",
     ] {
         assert!(
             !contract.contains(removed),

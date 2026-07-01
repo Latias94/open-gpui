@@ -310,20 +310,26 @@ A component is official only when it satisfies the current-crate completion cont
   cannot prove;
 - `docs/verification.md` names any manual or automated gate added by the component.
 
-`examples/ui-foundation-gallery::pages::components::catalog::COMPONENT_CATALOG` owns the current
-metadata for this contract. The Components page re-exports that catalog through
-`examples/ui-foundation-gallery::pages::components::COMPONENT_CATALOG` so tests and rendering can
-keep their stable consumer path, but rendering code must consume catalog metadata instead of
-owning it. Entries marked `official` satisfy the checklist above. Entries marked `adapter-only`
-are public GPUI helper surfaces such as `TextInputController`, not standalone components. Entries
-marked `internal-anatomy` are public parts of a component family, such as `ToolbarItem`,
-`SidebarItem`, and `ListboxOption`, and should not be promoted to standalone components without a
-new resolved-state contract. Entries marked `state-contract` are public renderer-neutral contracts with gallery
-readouts and signal coverage, but they are not themselves rendered GPUI components. They may sit
-beside an official adapter, as `TreeState` does for `Tree`. They must use
-`state_contract_selector`, not the official `sample_selector`, and they must not satisfy the
-official rendered-component gate by accident. Entries marked `deferred` are planned components
-that must not be treated as shipped API until they satisfy the checklist.
+`open_gpui_ui_components::component_contract` owns the current product registry for this contract;
+its source home is `crates/ui_components/src/component_contract/mod.rs`.
+That registry classifies official components, official recipes, renderer-neutral state contracts,
+GPUI adapter helpers, public anatomy, diagnostics, and removed compatibility targets. It also
+records API inventory rows, source homes, docs tokens, gallery status, and default-export intent.
+`examples/ui-foundation-gallery::pages::components::catalog::COMPONENT_CATALOG` is a gallery view
+model over that registry. The Components page re-exports that catalog through
+`examples/ui-foundation-gallery::pages::components::COMPONENT_CATALOG` so tests and rendering keep
+their stable consumer path, but official status and family grouping are derived from the component
+crate registry. Entries with registry status `official` satisfy the checklist above. Entries with
+registry status `adapter-only` are public GPUI helper surfaces such as `TextInputController`, not
+standalone components. Entries with registry status `internal-anatomy` are public parts of a
+component family, such as `ToolbarItem`, `SidebarItem`, and `ListboxOption`, and should not be
+promoted to standalone components without a new resolved-state contract. Entries with registry
+status `state-contract` are public renderer-neutral contracts with gallery readouts and signal
+coverage, but they are not themselves rendered GPUI components. They may sit beside an official
+adapter, as `TreeState` does for `Tree`. They must use `state_contract_selector`, not the official
+`sample_selector`, and they must not satisfy the official rendered-component gate by accident.
+Entries with registry status `deferred` are planned components that must not be treated as shipped
+API until they satisfy the checklist and gain a registry entry.
 
 Public surface ownership uses a stricter source-facing vocabulary than the visible gallery status.
 `official component` names are rendered GPUI components with inventory rows and sample selectors.
@@ -703,13 +709,16 @@ and overlay state from the same presentation scene rather than from render-local
 ## Gallery Conformance Surface
 
 `examples/ui-foundation-gallery` is the durable conformance surface for official UI components. It
-should expose stable sample ids, real resolved state, and a short gate list that names the
-regression-prone behaviors each slice must keep covered.
+consumes `open_gpui_ui_components::component_contract` for shipped status, family grouping, and
+public-contract evidence, then adds gallery-owned sample selectors, focused-section ids, runtime
+probes, and rendered dogfood. It should expose stable sample ids, real resolved state, and a short
+gate list that names the regression-prone behaviors each slice must keep covered.
 
-The Components page should keep the official component catalog visible and distinguish shipped
-components from adapter-only helpers, internal anatomy, state contracts, and deferred entries. Its
-root module is a small facade: catalog metadata lives in `components/catalog.rs`; the visible
-conformance gate list lives in `components/conformance.rs`; `components/samples.rs`,
+The Components page should keep the registry-backed component catalog visible and distinguish
+shipped components from adapter-only helpers, internal anatomy, state contracts, and deferred
+entries. Its root module is a small facade: catalog view-model metadata lives in
+`components/catalog.rs`; the visible conformance gate list lives in `components/conformance.rs`;
+`components/samples.rs`,
 `components/runtime.rs`, and `components/render.rs` are private parent facades over explicit
 family-owned modules. Sample descriptors and static sample data live under
 `components/samples/`; Tree, Table, and VirtualizedList runtime probes live under
@@ -727,6 +736,12 @@ current page mode; they must not implicitly change the focused family. The page 
 these gates visible:
 
 - crate-root and prelude exports stay explicit;
+- registry default-export intent stays aligned through
+  `root_and_prelude_exports_match_registry_default_surface_intent`;
+- registry source ownership stays aligned through
+  `command_component_source_mapping_tracks_split_owners`;
+- gallery catalog status and family grouping stay registry-owned through
+  `components_catalog_consumes_component_contract_registry`;
 - adapter-only helper exports stay grouped under `open_gpui_ui_components::gpui_adapter`;
 - every official catalog entry keeps matching component/state signals and a rendered sample
   selector;
