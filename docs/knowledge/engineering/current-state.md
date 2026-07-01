@@ -48,12 +48,17 @@ verified_by:
   before falling back to append, and same-stack reorder hold no longer freezes a changed insert slot.
   Routed target previews now expose the same payload tab/ghost layer contract while source route
   markers remain separate.
-- In progress: Phase C is next: zoom/focus user surfaces, GPUI accessibility mapping, split primitive
-  cleanup, and visible corner-drag proof from U5-U8.
-- Last verified: Phase A and Phase B focused gates passed locally; see the runtime capability verification
-  evidence file.
+- Done: U5 zoom/focus presentation is implemented locally. Public host zoom/focus commands now use
+  the latest rendered presentation frame when available, emit transition executor plans, preserve
+  `DockGraph`, and expose short overlay-only focus pulse motion. Zoom egress uses deterministic
+  touching-preferred edges from `DockZoomScene.egress`; reduced-motion zoom/unzoom/focus samples
+  preserve final scene semantics.
+- In progress: Phase C continues with GPUI accessibility mapping, split primitive cleanup, and visible
+  corner-drag proof from U6-U8.
+- Last verified: Phase A, Phase B, and U5 focused gates passed locally; see the runtime capability
+  verification evidence file.
 - Blocked: None.
-- Next action: commit Phase B, then continue with U5/U6/U7/U8 capability work.
+- Next action: commit U5, then continue with U6 accessibility mapping.
 
 # Citations
 

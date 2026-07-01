@@ -1,14 +1,25 @@
 use crate::{
     DockHost, DockItemId, DockNode, DockNodeId, DockViewportFocusCommand, DockViewportFocusRequest,
+    presentation_scene::DockPresentationScene,
     transition_executor::{DockTransitionExecutionState, DockTransitionSample},
-    transition_geometry::DockTransitionPlan,
+    transition_geometry::{DockMotionPreference, DockTransitionPlan},
 };
 use open_gpui::{Context, Window};
-use open_gpui_ui_core::MotionSpec;
+use open_gpui_ui_core::{MotionDuration, MotionEasing, MotionSpec};
 
 impl DockHost {
     /// Presents one pane as a zoomed full-host pane without mutating the dock graph.
     pub fn zoom_pane(&mut self, target: DockNodeId, cx: &mut Context<Self>) -> bool {
+        if let Some(previous) = self.last_presentation_scene().cloned() {
+            return self.zoom_pane_with_scene(
+                target,
+                previous,
+                MotionSpec::layout(DockMotionPreference::Animated),
+                None,
+                cx,
+            );
+        }
+
         if self.zoom_state().target(self.space()) == Some(target) {
             return false;
         }
@@ -19,14 +30,71 @@ impl DockHost {
         true
     }
 
+    pub(crate) fn zoom_pane_with_scene(
+        &mut self,
+        target: DockNodeId,
+        previous: DockPresentationScene,
+        spec: MotionSpec,
+        window: Option<&Window>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.zoom_state().target(self.space()) == Some(target) {
+            return false;
+        }
+
+        let space = self.space().clone();
+        self.zoom_state_mut().zoom(space, target);
+        let Some(zoom_scene) = self.zoom_state().resolve(&previous, spec.preference()) else {
+            cx.notify();
+            return true;
+        };
+        let plan = DockTransitionPlan::from_zoom_scene(&previous, &zoom_scene, spec.preference());
+        self.set_last_presentation_scene(zoom_scene.scene.clone());
+        self.execute_transition_plan(plan, spec, window, cx);
+        true
+    }
+
     /// Clears the presentation-only zoom state for this host.
     pub fn unzoom(&mut self, cx: &mut Context<Self>) -> bool {
+        if let Some(previous) = self.last_presentation_scene().cloned() {
+            let final_scene = DockPresentationScene::from_render_session(
+                &self.render_session(cx),
+                previous.bounds,
+            );
+            return self.unzoom_with_scene(
+                previous,
+                final_scene,
+                MotionSpec::layout(DockMotionPreference::Animated),
+                None,
+                cx,
+            );
+        }
+
         let space = self.space().clone();
         if self.zoom_state_mut().unzoom(&space).is_none() {
             return false;
         }
 
         cx.notify();
+        true
+    }
+
+    pub(crate) fn unzoom_with_scene(
+        &mut self,
+        previous: DockPresentationScene,
+        final_scene: DockPresentationScene,
+        spec: MotionSpec,
+        window: Option<&Window>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let space = self.space().clone();
+        if self.zoom_state_mut().unzoom(&space).is_none() {
+            return false;
+        }
+
+        let plan = DockTransitionPlan::between(&previous, &final_scene, spec.preference());
+        self.set_last_presentation_scene(final_scene.clone());
+        self.execute_transition_plan(plan, spec, window, cx);
         true
     }
 
@@ -41,18 +109,82 @@ impl DockHost {
 
     /// Requests focus for the selected item inside one tabs pane.
     pub fn focus_pane(&mut self, target: DockNodeId, cx: &mut Context<Self>) -> bool {
-        let Some(item) = self.selected_item_for_tabs(target, cx) else {
+        let scene = self.last_presentation_scene().cloned();
+        let Some((item, changed)) = self.request_focus_pane_command(target, cx) else {
             return false;
+        };
+        if changed && let Some(scene) = scene {
+            self.execute_focus_ring_transition(
+                target,
+                &item,
+                scene,
+                Self::focus_pulse_motion(DockMotionPreference::Animated),
+                None,
+                cx,
+            );
+        }
+        changed
+    }
+
+    fn request_focus_pane_command(
+        &mut self,
+        target: DockNodeId,
+        cx: &mut Context<Self>,
+    ) -> Option<(DockItemId, bool)> {
+        let Some(item) = self.selected_item_for_tabs(target, cx) else {
+            return None;
         };
         self.viewport_runtime()
             .record_panel_focus(self.space().clone(), item.clone());
-        let changed = self.request_viewport_focus_command(
-            DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(item)),
-        );
+        let changed =
+            self.request_viewport_focus_command(DockViewportFocusCommand::viewport_activation(
+                DockViewportFocusRequest::panel(item.clone()),
+            ));
         if changed {
             cx.notify();
         }
-        changed
+        Some((item, changed))
+    }
+
+    fn focus_pulse_motion(preference: DockMotionPreference) -> MotionSpec {
+        MotionSpec::new(preference, MotionDuration::Short, MotionEasing::EaseOut)
+    }
+
+    pub(crate) fn focus_pane_with_scene(
+        &mut self,
+        target: DockNodeId,
+        scene: DockPresentationScene,
+        spec: MotionSpec,
+        window: Option<&Window>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some((item, changed)) = self.request_focus_pane_command(target, cx) else {
+            return false;
+        };
+        if !changed {
+            return false;
+        }
+        self.execute_focus_ring_transition(target, &item, scene, spec, window, cx);
+        true
+    }
+
+    fn execute_focus_ring_transition(
+        &mut self,
+        target: DockNodeId,
+        item: &DockItemId,
+        scene: DockPresentationScene,
+        spec: MotionSpec,
+        window: Option<&Window>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(focus) = scene
+            .focus_regions
+            .iter()
+            .find(|focus| focus.tabs == target && &focus.item == item)
+        {
+            let plan = DockTransitionPlan::from_focus_region(&scene, focus, spec.preference());
+            self.execute_transition_plan(plan, spec, window, cx);
+        }
     }
 
     /// Executes a transition plan through the docking adapter-owned motion executor.

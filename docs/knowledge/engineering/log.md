@@ -6,6 +6,20 @@ status: active
 
 # Log
 
+- 2026-07-01: Completed U5 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. Public host zoom/unzoom/focus commands now consume the last rendered presentation scene when
+  available, schedule transition executor plans, and preserve `DockGraph` authority. Zoom egress
+  reuses `DockZoomScene.egress` so sibling panes leave through deterministic touching-preferred
+  edges, while focus presentation is a short overlay-only `FocusRing` pulse aligned with GPUI focus
+  requests. Applied `$emil-design-eng` / `$review-animations` guidance by keeping zoom layout motion
+  at the existing 180ms ease-out budget and reducing high-frequency focus pulse motion to 120ms
+  ease-out without layout animation. Verification passed with focused `host_zoom_focus_tests`,
+  `host_transition_tests`, `host_render_tests::transition_sample_overlay_renders_from_executor`,
+  `cargo check -p open-gpui-docking --tests`, `cargo fmt --all -- --check`, and `git diff --check`.
+  During verification, stale background `cargo test -- --list` processes from prior interrupted
+  work caused temporary dyld-start hangs; after killing those stale test processes, nextest resumed
+  normally.
 - 2026-07-01: Completed Phase B / P0 from
   `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
   tree. Center/tab preview now has explicit `PayloadTab` and `PayloadGhost` overlay layers, overlay

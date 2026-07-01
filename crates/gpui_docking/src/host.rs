@@ -5,8 +5,8 @@ use crate::{
     DockViewportFocusCommand, DockViewportFocusRequest, DockViewportPlatformFocusRestoreGate,
     DockViewportRuntimeHandle, geometry::DockDropGuideStyle,
     host_render_session::DockHostRenderSession, interaction::DockInteractionRuntime,
-    transition_executor::DockTransitionExecutor, workspace::DockWorkspace,
-    zoom_state::DockZoomState,
+    presentation_scene::DockPresentationScene, transition_executor::DockTransitionExecutor,
+    workspace::DockWorkspace, zoom_state::DockZoomState,
 };
 use open_gpui::{
     AppContext as _, Context, Entity, FocusHandle, Pixels, Subscription, Window, WindowId, px,
@@ -65,6 +65,7 @@ pub struct DockHost {
     interaction: DockInteractionRuntime,
     zoom: DockZoomState,
     transitions: DockTransitionExecutor,
+    last_presentation_scene: Option<DockPresentationScene>,
 }
 
 impl DockHost {
@@ -89,6 +90,7 @@ impl DockHost {
             interaction: DockInteractionRuntime::default(),
             zoom: DockZoomState::default(),
             transitions: DockTransitionExecutor::default(),
+            last_presentation_scene: None,
         }
     }
 
@@ -153,6 +155,14 @@ impl DockHost {
 
     pub(crate) fn transition_executor_mut(&mut self) -> &mut DockTransitionExecutor {
         &mut self.transitions
+    }
+
+    pub(crate) fn last_presentation_scene(&self) -> Option<&DockPresentationScene> {
+        self.last_presentation_scene.as_ref()
+    }
+
+    pub(crate) fn set_last_presentation_scene(&mut self, scene: DockPresentationScene) {
+        self.last_presentation_scene = Some(scene);
     }
 
     pub(crate) fn viewport_runtime(&self) -> &DockViewportRuntimeHandle {

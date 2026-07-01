@@ -52,3 +52,36 @@ Implemented U4 and the routed-preview portion of U9:
 - `cargo fmt --all -- --check` - passed.
 - `cargo check -p open-gpui-docking --tests` - passed.
 - `git diff --check` - passed.
+
+## U5 / Phase C Zoom And Focus
+
+Implemented U5 zoom/unzoom/focus presentation capability:
+
+- Public host `zoom_pane`, `unzoom`, and `focus_pane` commands now use the latest rendered
+  presentation scene when available and schedule transition executor plans through the same adapter
+  path as drag/drop transitions.
+- `DockTransitionPlan::from_zoom_scene` consumes `DockZoomScene.egress` so non-target panes leave
+  through deterministic touching-preferred edges, while the zoomed pane/focus region become the
+  final semantic scene without mutating `DockGraph`.
+- `DockTransitionPlan::from_focus_region` emits a short-lived `FocusRing` overlay transition aligned
+  with GPUI focus requests instead of replacing focus authority.
+- Motion review against `$emil-design-eng` / `$review-animations` kept zoom/unzoom on the existing
+  180ms ease-out layout spec and made focus pulse 120ms ease-out overlay-only motion because focus
+  can be high-frequency and keyboard reachable.
+- Render caches the latest presentation frame from the host-scene probe so public commands can use
+  real rendered bounds without asking application callers to provide geometry.
+
+## U5 Commands
+
+- `cargo nextest run -p open-gpui-docking host_zoom_focus_tests --no-fail-fast` - passed, 10 tests.
+- `cargo nextest run -p open-gpui-docking host_transition_tests host_render_tests::transition_sample_overlay_renders_from_executor --no-fail-fast` - passed, 8 tests.
+- `cargo check -p open-gpui-docking --tests` - passed.
+- `cargo fmt --all -- --check` - passed.
+- `git diff --check` - passed.
+
+## U5 Verification Notes
+
+During U5 verification, stale background `cargo test -- --list` processes from prior interrupted
+work caused temporary test-binary startup hangs sampled at macOS `dyld_start`. Killing the stale
+test-list processes restored nextest execution; no source change was required for that environment
+issue.

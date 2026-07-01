@@ -1,12 +1,15 @@
 use crate::{
     DockViewportFocusRequest, SplitAxis,
-    host_test_support::{item, open_host, space, split_graph},
+    debug::DockDebugRegion,
+    host_test_support::{item, open_host, selector_for, space, split_graph},
     presentation_scene::DockPresentationOverlayAnchorKind,
-    transition_geometry::{DockMotionPreference, DockTransitionEdge},
+    transition_geometry::{DockMotionPreference, DockOverlayTransitionKind, DockTransitionEdge},
     zoom_state::{DockZoomScene, DockZoomState},
 };
 use open_gpui::{Bounds, TestAppContext, point, px, size};
+use open_gpui_ui_core::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
 use slotmap::Key;
+use std::time::Duration;
 
 fn host_bounds(width: f32, height: f32) -> Bounds<open_gpui::Pixels> {
     Bounds::new(point(px(0.0), px(0.0)), size(px(width), px(height)))
@@ -188,6 +191,127 @@ fn host_zoom_commands_present_target_without_mutating_graph(cx: &mut TestAppCont
 }
 
 #[open_gpui::test]
+fn public_zoom_command_uses_rendered_scene_for_transition(cx: &mut TestAppContext) {
+    let (graph, _root, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (_window, host, visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(220.0)),
+    );
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Host).is_some(),
+        "opening the host should produce a render frame before commands run"
+    );
+
+    host.update(cx, |host, cx| {
+        assert!(host.zoom_pane(right_tabs, cx));
+        let sample = host
+            .sample_transition_for_test(Duration::from_millis(0))
+            .expect("public zoom command should use the cached render scene");
+        assert_eq!(sample.final_scene.panes.len(), 1);
+        assert_eq!(sample.final_scene.panes[0].node, Some(right_tabs));
+        assert!(sample.pane_clips.iter().any(|clip| clip.node == left_tabs));
+        assert!(sample.overlays.iter().any(|overlay| {
+            overlay.kind == DockOverlayTransitionKind::FocusRing
+                && overlay.target_node == Some(right_tabs)
+        }));
+    });
+}
+
+#[open_gpui::test]
+fn host_zoom_command_samples_egress_and_focus_ring_transition(cx: &mut TestAppContext) {
+    let (graph, _root, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(220.0)),
+    );
+    let bounds = host_bounds(400.0, 220.0);
+    let previous = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
+    let spec = MotionSpec::new(
+        MotionPreference::Animated,
+        MotionDuration::Custom(Duration::from_millis(100)),
+        MotionEasing::Linear,
+    );
+
+    host.update(cx, |host, cx| {
+        assert!(host.zoom_pane_with_scene(right_tabs, previous.clone(), spec, None, cx));
+        let start = host
+            .sample_transition_for_test(Duration::from_millis(0))
+            .expect("zoom command should schedule a transition sample");
+        assert_eq!(start.final_scene.panes.len(), 1);
+        assert_eq!(start.final_scene.panes[0].node, Some(right_tabs));
+        assert_eq!(start.progress, 0.0);
+        assert!(start.overlays.iter().any(|overlay| {
+            overlay.kind == DockOverlayTransitionKind::FocusRing
+                && overlay.target_node == Some(right_tabs)
+                && overlay.bounds == bounds
+        }));
+
+        let midpoint = host
+            .sample_transition_for_test(Duration::from_millis(50))
+            .expect("zoom command should keep sampling while animated");
+        let leaving = midpoint
+            .pane_clips
+            .iter()
+            .find(|clip| clip.node == left_tabs)
+            .expect("zoom egress should clip the pane leaving the zoom target");
+        assert_eq!(
+            leaving.content_bounds,
+            previous
+                .pane_for_node(left_tabs)
+                .expect("left pane should be in the previous scene")
+                .bounds
+        );
+        assert_eq!(leaving.visible_bounds.size.width, px(100.0));
+        assert_eq!(leaving.visible_bounds.origin.x, px(0.0));
+    });
+}
+
+#[open_gpui::test]
+fn host_unzoom_command_samples_restored_scene_without_graph_mutation(cx: &mut TestAppContext) {
+    let (graph, root, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.4, 0.6);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(500.0), px(240.0)),
+    );
+    let bounds = host_bounds(500.0, 240.0);
+    let base = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
+    assert!(host.update(cx, |host, cx| host.zoom_pane(right_tabs, cx)));
+    let zoomed = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
+
+    host.update(cx, |host, cx| {
+        assert!(host.unzoom_with_scene(
+            zoomed.clone(),
+            base.clone(),
+            MotionSpec::layout(DockMotionPreference::Reduced),
+            None,
+            cx
+        ));
+        let sample = host
+            .sample_transition_for_test(Duration::from_millis(0))
+            .expect("reduced unzoom should expose one final sample");
+        assert_eq!(sample.final_scene, base);
+        assert_eq!(sample.progress, 1.0);
+        assert!(sample.complete);
+    });
+
+    let graph_root = host.update(cx, |host, cx| {
+        host.with_workspace(cx, |workspace| workspace.graph().root(&space()))
+    });
+    assert_eq!(graph_root, Some(root));
+    let restored = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
+    assert_eq!(
+        restored.pane_for_node(left_tabs).map(|pane| pane.bounds),
+        base.pane_for_node(left_tabs).map(|pane| pane.bounds)
+    );
+}
+
+#[open_gpui::test]
 fn host_focus_command_targets_selected_item_for_pane(cx: &mut TestAppContext) {
     let (graph, _root, _left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let (_window, host, _visual) = open_host(
@@ -208,4 +332,79 @@ fn host_focus_command_targets_selected_item_for_pane(cx: &mut TestAppContext) {
         pending_matches || recorded_matches
     });
     assert!(focus_reached_target);
+}
+
+#[open_gpui::test]
+fn host_focus_command_samples_focus_ring_without_overriding_focus_authority(
+    cx: &mut TestAppContext,
+) {
+    let (graph, _root, _left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(220.0)),
+    );
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(host_bounds(400.0, 220.0), cx)
+    });
+
+    host.update(cx, |host, cx| {
+        assert!(host.focus_pane_with_scene(
+            right_tabs,
+            scene.clone(),
+            MotionSpec::layout(DockMotionPreference::Animated),
+            None,
+            cx
+        ));
+        assert!(host.pending_focus_command().is_some_and(|command| {
+            command.request() == &DockViewportFocusRequest::panel(item("b"))
+        }));
+        let sample = host
+            .sample_transition_for_test(Duration::from_millis(0))
+            .expect("focus command should expose focus-ring transition sample");
+        assert_eq!(
+            sample.final_scene, scene,
+            "focus pulse should not replace the semantic presentation scene"
+        );
+        assert_eq!(sample.overlays.len(), 1);
+        assert_eq!(
+            sample.overlays[0].kind,
+            DockOverlayTransitionKind::FocusRing
+        );
+        assert_eq!(sample.overlays[0].target_node, Some(right_tabs));
+    });
+}
+
+#[open_gpui::test]
+fn public_focus_command_uses_short_overlay_only_motion(cx: &mut TestAppContext) {
+    let (graph, _root, _left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (_window, host, visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(220.0)),
+    );
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Host).is_some(),
+        "opening the host should produce a render frame before focus commands run"
+    );
+
+    let execution = host.update(cx, |host, cx| {
+        assert!(host.focus_pane(right_tabs, cx));
+        host.clear_transition_execution_for_test()
+            .expect("public focus command should schedule a focus pulse")
+    });
+
+    assert_eq!(execution.spec.duration(), MotionDuration::Short);
+    assert_eq!(execution.spec.easing(), MotionEasing::EaseOut);
+    assert!(
+        execution.plan.pane_transitions.is_empty(),
+        "focus pulse should not animate layout for high-frequency focus commands"
+    );
+    assert_eq!(execution.plan.overlay_transitions.len(), 1);
+    assert_eq!(
+        execution.plan.overlay_transitions[0].kind,
+        DockOverlayTransitionKind::FocusRing
+    );
 }

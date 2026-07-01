@@ -3,7 +3,10 @@
 use crate::{
     DockNodeId, DropZone, SplitAxis,
     overlay_scene::{DockOverlayLayerKind, DockOverlayScene},
-    presentation_scene::{DockPresentationPane, DockPresentationScene},
+    presentation_scene::{
+        DockPresentationFocusRegion, DockPresentationPane, DockPresentationScene,
+    },
+    zoom_state::DockZoomScene,
 };
 use open_gpui::{Bounds, Pixels, point};
 use open_gpui_ui_core::MotionPreference;
@@ -89,6 +92,7 @@ pub(crate) enum DockOverlayTransitionKind {
     RouteMarker,
     TabInsertion,
     PayloadGhost,
+    FocusRing,
     RejectedNoop,
 }
 
@@ -150,11 +154,69 @@ impl DockTransitionPlan {
         }
     }
 
+    pub(crate) fn from_zoom_scene(
+        previous: &DockPresentationScene,
+        zoom: &DockZoomScene,
+        preference: DockMotionPreference,
+    ) -> Self {
+        let mut plan = Self::between(previous, &zoom.scene, preference);
+        for egress in &zoom.egress {
+            if let Some(transition) = plan
+                .pane_transitions
+                .iter_mut()
+                .find(|transition| transition.node == egress.node)
+            {
+                let source_bounds = egress.edge.source_bounds(egress.from, previous.bounds);
+                transition.from = Some(egress.from);
+                transition.to = Some(source_bounds);
+                transition.slide = Some(DockSlideTransition {
+                    edge: egress.edge,
+                    source_bounds,
+                    final_bounds: egress.from,
+                    occlusion_bounds: egress.from,
+                });
+            }
+        }
+        if let Some(focus) = zoom.focus.as_ref() {
+            plan.overlay_transitions
+                .push(focus_ring_transition(focus, preference));
+        }
+        plan
+    }
+
+    pub(crate) fn from_focus_region(
+        final_scene: &DockPresentationScene,
+        focus: &DockPresentationFocusRegion,
+        preference: DockMotionPreference,
+    ) -> Self {
+        Self {
+            preference,
+            final_scene: final_scene.clone(),
+            pane_transitions: Vec::new(),
+            divider_transitions: Vec::new(),
+            overlay_transitions: vec![focus_ring_transition(focus, preference)],
+        }
+    }
+
     pub(crate) fn is_immediate(&self) -> bool {
         self.preference.is_immediate()
             && self.pane_transitions.iter().all(|item| item.immediate)
             && self.divider_transitions.iter().all(|item| item.immediate)
             && self.overlay_transitions.iter().all(|item| item.immediate)
+    }
+}
+
+fn focus_ring_transition(
+    focus: &DockPresentationFocusRegion,
+    preference: DockMotionPreference,
+) -> DockOverlayTransition {
+    DockOverlayTransition {
+        kind: DockOverlayTransitionKind::FocusRing,
+        bounds: focus.bounds,
+        target_node: Some(focus.tabs),
+        zone: None,
+        payload_index: None,
+        immediate: preference.is_immediate(),
     }
 }
 

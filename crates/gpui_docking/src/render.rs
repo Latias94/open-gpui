@@ -149,8 +149,10 @@ impl Render for DockHost {
 
         host = host.child(self.render_viewport_host_scene_probe(
             &viewport_host_scene_frame,
+            &session,
             session.drop_guide_style(),
             session.empty_central_requests_platform_pointer_passthrough(),
+            cx,
         ));
 
         if let Some(root) = session.root() {
@@ -1008,14 +1010,30 @@ impl DockHost {
     pub(crate) fn render_viewport_host_scene_probe(
         &self,
         frame_slot: &DockViewportHostSceneFrameSlot,
+        session: &DockHostRenderSession,
         drop_guide_style: geometry::DockDropGuideStyle,
         passthrough_pointer_input: bool,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
+        let entity = cx.entity();
         let runtime = self.viewport_runtime().clone();
         let space = self.space().clone();
+        let session = session.clone();
         let frame_slot = frame_slot.clone();
         canvas(
             move |bounds, window, app| {
+                entity.update(app, |host, _| {
+                    let base = DockPresentationScene::from_render_session(&session, bounds);
+                    let scene = host
+                        .zoom_state()
+                        .resolve(
+                            &base,
+                            crate::transition_geometry::DockMotionPreference::Animated,
+                        )
+                        .map(|zoom| zoom.scene)
+                        .unwrap_or(base);
+                    host.set_last_presentation_scene(scene);
+                });
                 let mouse_position = window.mouse_position();
                 let host_position = point(
                     mouse_position.x - bounds.origin.x,
