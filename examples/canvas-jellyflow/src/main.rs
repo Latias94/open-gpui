@@ -2,11 +2,9 @@ use jellyflow::{
     NodeGraphStore,
     core::{
         CanvasPoint as JellyPoint, CanvasRect as JellyRect, CanvasSize as JellySize, Edge,
-        EdgeId as JellyEdgeId, EdgeKind, Graph, GraphId, GraphOp, GraphTransaction, Node,
-        NodeId as JellyNodeId, NodeKindKey, Port, PortCapacity, PortDirection,
-        PortId as JellyPortId, PortKey, PortKind,
+        EdgeId as JellyEdgeId, Graph, Node, NodeId as JellyNodeId, NodeKindKey, PortDirection,
+        PortId as JellyPortId, PortKey,
     },
-    layout::{LayoutPresetBuilder, builtin_layout_engine_registry},
     runtime::{
         io::{NodeGraphEditorConfig, NodeGraphViewState},
         runtime::{
@@ -24,6 +22,11 @@ use jellyflow::{
             NodeSurfaceSlotProjection,
         },
     },
+};
+#[cfg(test)]
+use jellyflow::{
+    core::{EdgeKind, GraphId, GraphOp, GraphTransaction, Port, PortCapacity, PortKind},
+    layout::{LayoutPresetBuilder, builtin_layout_engine_registry},
 };
 #[cfg(test)]
 use jellyflow_open_gpui::OpenGpuiNodeRendererResolution;
@@ -75,9 +78,11 @@ use open_gpui_ui_core::Size;
 use serde_json::Value;
 
 mod node_component_kit;
+mod product_gallery;
 mod product_renderers;
 
 const REPEATABLE_ITEM_SNAPSHOTS_FIELD: &str = "jellyflow_repeatable_items";
+#[cfg(test)]
 const INITIAL_SELECTION: u128 = 2;
 const CANVAS_WIDTH: f32 = 1140.0;
 const CANVAS_HEIGHT: f32 = 650.0;
@@ -133,6 +138,7 @@ struct JellyflowCanvasView {
     store: NodeGraphStore,
     focus_handle: FocusHandle,
     projection: ProjectionSummary,
+    gallery: product_gallery::ProductGalleryState,
     semantic_registry: NodeRegistry,
     node_kit_registry: NodeKitRegistry,
     measured_regions: OpenGpuiBoundsCollector,
@@ -347,6 +353,7 @@ impl JellyflowCanvasView {
             .flex()
             .items_center()
             .justify_between()
+            .gap_3()
             .px_4()
             .border_b_1()
             .border_color(rgb(0xdbe3ea))
@@ -356,24 +363,38 @@ impl JellyflowCanvasView {
                     .flex()
                     .items_center()
                     .gap_3()
+                    .min_w(px(0.0))
                     .child(
                         div()
                             .text_sm()
+                            .truncate()
+                            .min_w(px(0.0))
                             .text_color(rgb(0x111827))
-                            .child("Jellyflow GPUI adapter fixture"),
+                            .child(self.gallery.active_case().label),
                     )
                     .child(
                         div()
                             .text_xs()
-                            .text_color(rgb(0x64748b))
-                            .child(self.projection.last_commit.clone()),
-                    ),
+                            .truncate()
+                            .text_color(rgb(self.gallery.active_case().accent))
+                            .child(self.gallery.active_case().family_label()),
+                    )
+                    .child(self.render_gallery_selector(view.clone())),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .truncate()
+                    .min_w(px(0.0))
+                    .text_color(rgb(0x64748b))
+                    .child(self.gallery.active_case().summary),
             )
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
+                    .flex_shrink_0()
                     .child(div().text_xs().text_color(rgb(0x475569)).child(format!(
                         "{} graph nodes / {} ports / {} edges / {} selected records",
                         self.projection.graph_nodes,
@@ -408,6 +429,40 @@ impl JellyflowCanvasView {
                         },
                     ),
             )
+    }
+
+    fn render_gallery_selector(&self, view: WeakEntity<JellyflowCanvasView>) -> AnyElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .overflow_hidden()
+            .children(self.gallery.cases().iter().map(|case| {
+                let id = case.id().to_owned();
+                let active = id == self.gallery.active_id();
+                let view = view.clone();
+                Button::new(
+                    format!("jellyflow-product-gallery-case:{id}"),
+                    case.family_label(),
+                )
+                .variant(if active {
+                    ButtonVariant::Default
+                } else {
+                    ButtonVariant::Secondary
+                })
+                .with_size(Size::XSmall)
+                .on_click(move |event, _window, cx| {
+                    cx.stop_propagation();
+                    let _ = event;
+                    let id = id.clone();
+                    view.update(cx, |this, cx| {
+                        this.switch_product_gallery_fixture(&id, cx);
+                    })
+                    .ok();
+                })
+                .into_any_element()
+            }))
+            .into_any_element()
     }
 
     fn render_sidebar(
@@ -515,6 +570,13 @@ impl JellyflowCanvasView {
                             .line_height(px(18.0))
                             .text_color(rgb(0x475569))
                             .child(format!("kit: {}", self.projection.kit)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .line_height(px(18.0))
+                            .text_color(rgb(0x64748b))
+                            .child(self.projection.last_commit.clone()),
                     ),
             )
             .child(
@@ -710,6 +772,42 @@ impl JellyflowCanvasView {
             eprintln!("canvas event failed: {error}");
         }
         cx.notify();
+    }
+
+    fn switch_product_gallery_fixture(&mut self, fixture_id: &str, cx: &mut Context<Self>) {
+        let Some(case) = self
+            .gallery
+            .cases()
+            .iter()
+            .find(|case| case.id() == fixture_id)
+            .cloned()
+        else {
+            eprintln!("product gallery fixture not found: {fixture_id}");
+            return;
+        };
+        if case.id() == self.gallery.active_id() {
+            return;
+        }
+
+        match project_product_gallery_case(&case).and_then(|(store, document, projection)| {
+            let editor = editor_for_document(document)
+                .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?;
+            Ok((store, editor, projection))
+        }) {
+            Ok((store, editor, projection)) => {
+                self.store = store;
+                self.editor = editor;
+                self.projection = projection;
+                self.gallery.set_active(case.id().to_owned());
+                self.measured_regions.clear();
+                self.measurement_revision = 1;
+                self.measurement_frame_pending = false;
+                cx.notify();
+            }
+            Err(error) => {
+                eprintln!("product gallery fixture projection failed: {fixture_id}: {error}");
+            }
+        }
     }
 
     fn dispatch_control_authoring_plan(
@@ -2719,6 +2817,7 @@ fn adapter_slot_limit_for_height(inner_height: Pixels, semantic_slot_limit: usiz
     semantic_slot_limit.min(height_limit)
 }
 
+#[cfg(test)]
 fn make_demo_store() -> NodeGraphStore {
     let graph = make_demo_graph().expect("demo graph transaction should apply");
     let mut store = NodeGraphStore::new(
@@ -2746,6 +2845,7 @@ fn make_demo_store() -> NodeGraphStore {
     store
 }
 
+#[cfg(test)]
 fn make_demo_graph() -> Result<Graph, Box<dyn std::error::Error>> {
     let source = JellyNodeId::from_u128(2);
     let transform = JellyNodeId::from_u128(3);
@@ -2833,6 +2933,7 @@ fn make_demo_graph() -> Result<Graph, Box<dyn std::error::Error>> {
     Ok(graph)
 }
 
+#[cfg(test)]
 fn make_node(kind: &str, label: &str, description: &str, x: f32, y: f32) -> Node {
     Node {
         kind: NodeKindKey::new(kind),
@@ -2883,6 +2984,7 @@ fn make_node(kind: &str, label: &str, description: &str, x: f32, y: f32) -> Node
     }
 }
 
+#[cfg(test)]
 fn make_port(node: JellyNodeId, key: &str, dir: PortDirection) -> Port {
     Port {
         node,
@@ -2898,6 +3000,7 @@ fn make_port(node: JellyNodeId, key: &str, dir: PortDirection) -> Port {
     }
 }
 
+#[cfg(test)]
 fn make_edge(from: JellyPortId, to: JellyPortId) -> Edge {
     Edge {
         kind: EdgeKind::Data,
@@ -2987,7 +3090,6 @@ fn project_store(
     Ok((document, projection))
 }
 
-#[cfg(test)]
 fn project_kit_fixture(
     kit_key: &str,
     fixture_key: &str,
@@ -3004,6 +3106,12 @@ fn project_kit_fixture(
     let (document, projection) =
         project_store(&store).map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?;
     Ok((store, document, projection))
+}
+
+fn project_product_gallery_case(
+    case: &product_gallery::ProductGalleryCase,
+) -> Result<(NodeGraphStore, CanvasDocument, ProjectionSummary), Box<dyn std::error::Error>> {
+    project_kit_fixture(case.kit_key(), case.fixture_key())
 }
 
 #[cfg(test)]
@@ -3296,10 +3404,11 @@ fn jellyflow_kind_registry() -> CanvasKindRegistry {
     registry
 }
 
+#[cfg(test)]
 fn demo_state() -> (NodeGraphStore, CanvasEditor, ProjectionSummary) {
     let store = make_demo_store();
     let (document, projection) = project_store(&store).expect("demo graph should project");
-    let mut editor = CanvasEditor::try_new_with_kind_registry(document, jellyflow_kind_registry())
+    let mut editor = editor_for_document(document)
         .expect("canvas editor should accept projected Jellyflow graph");
     editor
         .apply_tool_intent(CanvasToolIntent::ReplaceSelection(HitTarget::Node(
@@ -3307,6 +3416,32 @@ fn demo_state() -> (NodeGraphStore, CanvasEditor, ProjectionSummary) {
         )))
         .expect("initial selection should exist");
     (store, editor, projection)
+}
+
+fn product_gallery_state() -> (
+    product_gallery::ProductGalleryState,
+    NodeGraphStore,
+    CanvasEditor,
+    ProjectionSummary,
+) {
+    let gallery = product_gallery::ProductGalleryState::default();
+    let (store, document, projection) = project_product_gallery_case(gallery.active_case())
+        .expect("default product gallery fixture should project");
+    let editor =
+        editor_for_document(document).expect("canvas editor should accept product gallery fixture");
+    (gallery, store, editor, projection)
+}
+
+fn editor_for_document(document: CanvasDocument) -> Result<CanvasEditor, DocumentError> {
+    let initial_selection = document
+        .nodes()
+        .next()
+        .map(|node| NodeId::from(node.id.as_str()));
+    let mut editor = CanvasEditor::try_new_with_kind_registry(document, jellyflow_kind_registry())?;
+    if let Some(id) = initial_selection {
+        editor.apply_tool_intent(CanvasToolIntent::ReplaceSelection(HitTarget::Node(id)))?;
+    }
+    Ok(editor)
 }
 
 fn canvas_value_from_json(value: Value) -> open_gpui_canvas::CanvasValue {
@@ -3538,7 +3673,7 @@ fn main() {
         init_text_input(cx);
 
         let bounds = Bounds::centered(None, size(px(CANVAS_WIDTH), px(CANVAS_HEIGHT)), cx);
-        let (store, editor, projection) = demo_state();
+        let (gallery, store, editor, projection) = product_gallery_state();
         let node_kit_registry = NodeKitRegistry::builtin();
         let semantic_registry = node_kit_registry.node_registry();
 
@@ -3553,6 +3688,7 @@ fn main() {
                     store,
                     focus_handle: cx.focus_handle(),
                     projection,
+                    gallery,
                     semantic_registry,
                     node_kit_registry,
                     measured_regions: OpenGpuiBoundsCollector::new(),
@@ -4304,6 +4440,26 @@ mod tests {
                 .iter()
                 .any(|handle| handle.id.as_str() == canvas_port_id(&factor_port))
         );
+    }
+
+    #[test]
+    fn product_gallery_cases_build_canvas_editors_and_switch_fixture_state() {
+        let (mut gallery, _, _, _) = product_gallery_state();
+        assert_eq!(gallery.active_id(), "workflow.review");
+
+        let cases = gallery.cases().to_vec();
+        for case in cases {
+            let (store, document, projection) =
+                project_product_gallery_case(&case).expect("product fixture projects");
+            let editor = editor_for_document(document).expect("product fixture editor");
+
+            assert_eq!(projection.graph_nodes, store.graph().nodes().len());
+            assert_eq!(projection.graph_edges, store.graph().edges().len());
+            assert!(editor.document().nodes().next().is_some());
+        }
+
+        gallery.set_active("shader.material_mix");
+        assert_eq!(gallery.active_case().fixture_key(), "shader.material_mix");
     }
 
     #[test]
