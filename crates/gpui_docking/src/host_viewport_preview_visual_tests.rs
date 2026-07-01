@@ -13,7 +13,10 @@ use crate::{
         DockResolvedDropTargetAvailability, DockResolvedDropTargetKind,
     },
     geometry::{DockDropBox, DockDropBoxKind, DockDropGuideStyle},
-    overlay_scene::{DockOverlayLayerKind, DockOverlayScene},
+    overlay_scene::{
+        DockOverlayLayerKind, DockOverlayPayloadTabLayout, DockOverlayPayloadTabPlacement,
+        DockOverlayScene,
+    },
     viewport_test_support::{handle, space},
 };
 use open_gpui::{Bounds, Pixels, point, px, size};
@@ -83,6 +86,7 @@ fn center_preview_descriptor_reports_body_center_and_payload_tab_capability() {
                 target_tabs: Some(tabs),
                 index: DockPreviewTabInsertionIndex::Append,
                 has_slot_bounds: false,
+                slot_bounds: None,
                 clipping_bounds: bounds(0.0, 0.0, 320.0, 200.0),
             }),
             payload_tabs: Vec::new(),
@@ -117,6 +121,7 @@ fn center_preview_descriptor_includes_ordered_payload_tabs() {
             target_tabs: Some(tabs),
             index: DockPreviewTabInsertionIndex::Append,
             has_slot_bounds: false,
+            slot_bounds: None,
             clipping_bounds: bounds(0.0, 0.0, 320.0, 200.0),
         }),
         "center tab hover should expose the target insertion slot separately from payload tabs"
@@ -228,6 +233,8 @@ fn overlay_scene_orders_center_tab_insertion_after_guides_before_payload_tabs() 
     assert_eq!(kinds[6], DockOverlayLayerKind::TabInsertion);
     assert_eq!(kinds[7], DockOverlayLayerKind::PayloadTab);
     assert_eq!(kinds[8], DockOverlayLayerKind::PayloadTab);
+    assert_eq!(kinds[9], DockOverlayLayerKind::PayloadGhost);
+    assert_eq!(kinds[10], DockOverlayLayerKind::PayloadGhost);
     assert_eq!(overlay.layers[6].target_node, Some(tabs));
     assert_eq!(overlay.layers[6].zone, Some(DropZone::Center));
     assert_eq!(
@@ -237,7 +244,84 @@ fn overlay_scene_orders_center_tab_insertion_after_guides_before_payload_tabs() 
             .collect::<Vec<_>>(),
         vec![(Some(0), Some("Preview")), (Some(1), Some("Diff"))]
     );
+    assert_eq!(
+        overlay
+            .payload_ghosts()
+            .map(|layer| (layer.payload_index, layer.payload_title.as_deref()))
+            .collect::<Vec<_>>(),
+        vec![(Some(0), Some("Preview")), (Some(1), Some("Diff"))]
+    );
     assert!(overlay.has_payload_tab_preview());
+}
+
+#[test]
+fn overlay_scene_applies_precise_tab_layout_to_payload_tabs_and_ghosts() {
+    let tabs = DockNodeId::null();
+    let mut preview = DockDropPreview::from_resolved_target(
+        &resolved_target(
+            DockResolvedDropTargetKind::LeafCenter {
+                root: tabs,
+                target_tabs: tabs,
+            },
+            Some(drop_box(DockDropBoxKind::Center)),
+        ),
+        DockDropGuideStyle::default(),
+    )
+    .expect("center target should produce preview");
+    let payload = DockDragPayload::new_tabs(space("source"), tabs, "Preview / Diff".to_string())
+        .with_preview_tabs(["Preview".to_string(), "Diff".to_string()]);
+    preview.populate_payload_tabs(&payload);
+    let mut overlay = DockOverlayScene::from_preview(&preview.scene);
+    let layout = DockOverlayPayloadTabLayout {
+        body_bounds: bounds(0.0, 26.0, 320.0, 174.0),
+        insertion_bounds: bounds(96.0, 0.0, 3.0, 26.0),
+        payload_tabs: vec![
+            DockOverlayPayloadTabPlacement {
+                payload_index: 0,
+                bounds: bounds(98.0, 0.0, 88.0, 26.0),
+            },
+            DockOverlayPayloadTabPlacement {
+                payload_index: 1,
+                bounds: bounds(192.0, 0.0, 72.0, 26.0),
+            },
+        ],
+    };
+
+    overlay.apply_payload_tab_layout(&layout);
+
+    let insertion = overlay
+        .tab_insertion()
+        .expect("precise layout should keep insertion layer active");
+    assert_eq!(insertion.bounds, layout.insertion_bounds);
+    assert_eq!(
+        insertion
+            .tab_insertion
+            .as_ref()
+            .and_then(|insertion| insertion.slot_bounds),
+        Some(layout.insertion_bounds),
+        "insertion descriptor should carry precise slot bounds for transitions and tests"
+    );
+    assert_eq!(
+        overlay
+            .payload_tabs()
+            .map(|layer| (layer.payload_index, layer.bounds))
+            .collect::<Vec<_>>(),
+        vec![
+            (Some(0), layout.payload_tabs[0].bounds),
+            (Some(1), layout.payload_tabs[1].bounds),
+        ]
+    );
+    assert_eq!(
+        overlay
+            .payload_ghosts()
+            .map(|layer| (layer.payload_index, layer.bounds))
+            .collect::<Vec<_>>(),
+        vec![
+            (Some(0), layout.payload_tabs[0].bounds),
+            (Some(1), layout.payload_tabs[1].bounds),
+        ],
+        "payload ghosts should mirror the resolved payload tab geometry"
+    );
 }
 
 #[test]

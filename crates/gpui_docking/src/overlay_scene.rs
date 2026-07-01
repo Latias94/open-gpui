@@ -26,6 +26,19 @@ pub(crate) struct DockOverlayLayer {
     pub(crate) tab_insertion: Option<DockPreviewTabInsertion>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockOverlayPayloadTabLayout {
+    pub(crate) body_bounds: Bounds<Pixels>,
+    pub(crate) insertion_bounds: Bounds<Pixels>,
+    pub(crate) payload_tabs: Vec<DockOverlayPayloadTabPlacement>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DockOverlayPayloadTabPlacement {
+    pub(crate) payload_index: usize,
+    pub(crate) bounds: Bounds<Pixels>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum DockOverlayLayerKind {
     RouteMarker,
@@ -33,7 +46,6 @@ pub(crate) enum DockOverlayLayerKind {
     GuideBox,
     TabInsertion,
     PayloadTab,
-    #[allow(dead_code)]
     PayloadGhost,
     #[allow(dead_code)]
     FocusRing,
@@ -100,13 +112,34 @@ impl DockOverlayScene {
             }
 
             for (index, tab) in payload_tabs.tabs.iter().enumerate() {
+                let bounds = payload_tabs
+                    .insertion
+                    .as_ref()
+                    .map(|insertion| insertion.clipping_bounds)
+                    .unwrap_or(preview.body.body_bounds);
                 scene.layers.push(DockOverlayLayer {
                     kind: DockOverlayLayerKind::PayloadTab,
-                    bounds: payload_tabs
-                        .insertion
-                        .as_ref()
-                        .map(|insertion| insertion.clipping_bounds)
-                        .unwrap_or(preview.body.body_bounds),
+                    bounds,
+                    target_node: payload_tabs.target_tabs,
+                    zone: Some(DropZone::Center),
+                    preview_layer: None,
+                    active: preview.decision.is_allowed(),
+                    payload_index: Some(index),
+                    payload_title: Some(tab.title.clone()),
+                    drop_box: None,
+                    tab_insertion: None,
+                });
+            }
+
+            for (index, tab) in payload_tabs.tabs.iter().enumerate() {
+                let bounds = payload_tabs
+                    .insertion
+                    .as_ref()
+                    .map(|insertion| insertion.clipping_bounds)
+                    .unwrap_or(preview.body.body_bounds);
+                scene.layers.push(DockOverlayLayer {
+                    kind: DockOverlayLayerKind::PayloadGhost,
+                    bounds,
                     target_node: payload_tabs.target_tabs,
                     zone: Some(DropZone::Center),
                     preview_layer: None,
@@ -157,6 +190,37 @@ impl DockOverlayScene {
         }
     }
 
+    pub(crate) fn apply_payload_tab_layout(&mut self, layout: &DockOverlayPayloadTabLayout) {
+        for layer in &mut self.layers {
+            match layer.kind {
+                DockOverlayLayerKind::TargetBody => {
+                    layer.bounds = layout.body_bounds;
+                }
+                DockOverlayLayerKind::TabInsertion => {
+                    layer.bounds = layout.insertion_bounds;
+                    if let Some(insertion) = layer.tab_insertion.as_mut() {
+                        insertion.slot_bounds = Some(layout.insertion_bounds);
+                    }
+                }
+                DockOverlayLayerKind::PayloadTab | DockOverlayLayerKind::PayloadGhost => {
+                    if let Some(bounds) = layer.payload_index.and_then(|index| {
+                        layout
+                            .payload_tabs
+                            .iter()
+                            .find(|placement| placement.payload_index == index)
+                            .map(|placement| placement.bounds)
+                    }) {
+                        layer.bounds = bounds;
+                    }
+                }
+                DockOverlayLayerKind::RouteMarker
+                | DockOverlayLayerKind::GuideBox
+                | DockOverlayLayerKind::FocusRing
+                | DockOverlayLayerKind::RejectedState => {}
+            }
+        }
+    }
+
     pub(crate) fn guide_drop_boxes(&self) -> impl Iterator<Item = DockPreviewDropBox> + '_ {
         self.layers
             .iter()
@@ -174,6 +238,12 @@ impl DockOverlayScene {
         self.layers
             .iter()
             .filter(|layer| layer.kind == DockOverlayLayerKind::PayloadTab && layer.active)
+    }
+
+    pub(crate) fn payload_ghosts(&self) -> impl Iterator<Item = &DockOverlayLayer> + '_ {
+        self.layers
+            .iter()
+            .filter(|layer| layer.kind == DockOverlayLayerKind::PayloadGhost && layer.active)
     }
 
     pub(crate) fn has_payload_tab_preview(&self) -> bool {

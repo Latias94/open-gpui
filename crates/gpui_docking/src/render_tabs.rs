@@ -7,10 +7,16 @@ use crate::{
     render::DockViewportHostSceneFrameSlot,
 };
 use open_gpui::{
-    AnyElement, AppContext as _, Context, DragMoveEvent, Empty, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, StatefulInteractiveElement, Styled, Window, black, div, px, rgb,
-    white,
+    AnyElement, AppContext as _, Bounds, Context, DragMoveEvent, Empty, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window,
+    black, div, px, rgb, white,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RenderedTabHitTarget {
+    index: usize,
+    bounds: Bounds<Pixels>,
+}
 
 impl DockHost {
     pub(crate) fn render_tabs(
@@ -114,6 +120,18 @@ impl DockHost {
         }
 
         let stack_drag_entity = entity.clone();
+        let mut tab_hit_targets = Vec::with_capacity(items.len());
+        for index in 0..items.len() {
+            if let Some(bounds) = self.viewport_runtime().rendered_tab_label_bounds_for_tabs(
+                self.space(),
+                Some(window.window_handle().window_id()),
+                node,
+                index,
+            ) {
+                tab_hit_targets.push(RenderedTabHitTarget { index, bounds });
+            }
+        }
+        let tab_hit_targets_for_bar = tab_hit_targets.clone();
         let mut tab_bar = div()
             .id(format!(
                 "{}:tabs:{}:bar",
@@ -131,7 +149,33 @@ impl DockHost {
                         return;
                     }
                     let payload = event.drag(cx).clone();
-                    let fact = drop_scene_fact::tab_bar(node, tab_count, event.bounds, is_central);
+                    let position = event.event.position;
+                    let window_id = window.window_handle().window_id();
+                    let fact = tab_hit_targets_for_bar
+                        .iter()
+                        .copied()
+                        .chain((0..tab_count).filter_map(|index| {
+                            this.viewport_runtime()
+                                .rendered_tab_label_bounds_for_tabs(
+                                    this.space(),
+                                    Some(window_id),
+                                    node,
+                                    index,
+                                )
+                                .map(|bounds| RenderedTabHitTarget { index, bounds })
+                        }))
+                        .find(|target| target.bounds.contains(&position))
+                        .map(|target| {
+                            drop_scene_fact::tab_label(
+                                node,
+                                target.index,
+                                target.bounds,
+                                is_central,
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            drop_scene_fact::tab_bar(node, tab_count, event.bounds, is_central)
+                        });
                     this.update_local_drop_scene_fact_from_render(
                         &payload,
                         fact,

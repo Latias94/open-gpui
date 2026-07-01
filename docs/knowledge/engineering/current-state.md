@@ -13,6 +13,7 @@ related_adr:
 verified_by:
   - cargo check -p open-gpui-docking --tests
   - cargo nextest run -p open-gpui-docking host_transition_tests host_render_tests --no-fail-fast
+  - cargo nextest run -p open-gpui-docking host_viewport_preview_visual_tests host_transition_tests host_interaction_tests::tab_bar_preview_positions_payload_tab_at_leading_and_middle_slots host_interaction_tests::tab_bar_append_preview_shifts_payload_tab_right_of_existing_tab host_interaction_tests::dragging_tab_to_target_tab_bar_empty_area_appends drop_runtime::tests::reorder_target_updates_insert_index_within_same_tab_stack drop_runtime::tests::tabs_drop_preserves_reorder_target_while_pointer_stays_inside_tab host_viewport_preview_tests::handle_suite::source_hover_over_known_viewport_renders_target_drop_preview --no-fail-fast
   - cargo nextest run -p open-gpui-docking geometry host_accessibility_tests --no-fail-fast
   - cargo fmt --all -- --check
   - cargo nextest run -p open-gpui-ui-core --no-fail-fast
@@ -41,13 +42,18 @@ verified_by:
   now samples progress with deterministic test timing, reduced motion exposes a final sample once,
   entering panes keep final-size content bounds while reveal clips animate, and render consumes
   sampled overlay/clip/divider output as a root transition layer over the final semantic layout.
-- In progress: Phase B is next: precise tab insertion / payload ghost lifecycle and routed overlay
-  cleanup from U4 and U9.
-- Last verified: Phase A focused gates passed locally; see the runtime capability verification
+- Done: Phase B / P0 local and routed preview capability is implemented locally. Center/tab preview
+  now has explicit `PayloadTab` and `PayloadGhost` overlay layers, precise insertion slot geometry can
+  be applied to overlay descriptors, rendered tab-bar hover resolves label-specific insert indexes
+  before falling back to append, and same-stack reorder hold no longer freezes a changed insert slot.
+  Routed target previews now expose the same payload tab/ghost layer contract while source route
+  markers remain separate.
+- In progress: Phase C is next: zoom/focus user surfaces, GPUI accessibility mapping, split primitive
+  cleanup, and visible corner-drag proof from U5-U8.
+- Last verified: Phase A and Phase B focused gates passed locally; see the runtime capability verification
   evidence file.
 - Blocked: None.
-- Next action: commit Phase A, then continue with U4/U9 payload tab insertion and routed overlay
-  cleanup.
+- Next action: commit Phase B, then continue with U5/U6/U7/U8 capability work.
 
 # Citations
 

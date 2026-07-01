@@ -404,6 +404,18 @@ fn transition_plan_from_overlay_scene_describes_tab_insertion_and_payload_ghosts
                 drop_box: None,
                 tab_insertion: None,
             },
+            DockOverlayLayer {
+                kind: DockOverlayLayerKind::PayloadGhost,
+                bounds: floating_bounds(10.0, 0.0, 90.0, 26.0),
+                target_node: Some(tabs),
+                zone: Some(DropZone::Center),
+                preview_layer: None,
+                active: true,
+                payload_index: Some(0),
+                payload_title: Some("Preview".to_string()),
+                drop_box: None,
+                tab_insertion: None,
+            },
         ],
     };
 

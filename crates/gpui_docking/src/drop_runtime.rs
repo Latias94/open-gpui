@@ -13,6 +13,7 @@ use open_gpui::{Bounds, Pixels, Point, Size};
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct DockTabReorderHold {
     target_tabs: DockNodeId,
+    insert_index: usize,
     bounds: Bounds<Pixels>,
 }
 
@@ -263,11 +264,10 @@ impl DockDropRuntime {
         if let Some(existing) = self.resolution.as_ref().and_then(valid_target)
             && let Some(reorder_hold) = tab_reorder_hold(existing)
             && reorder_hold.bounds.contains(&scene.position)
-            && resolution
-                .as_ref()
-                .and_then(valid_target)
-                .and_then(DockResolvedDropTarget::center_target_tabs)
-                .is_some_and(|target_tabs| target_tabs == reorder_hold.target_tabs)
+            && should_hold_tab_reorder_target(
+                resolution.as_ref().and_then(valid_target),
+                reorder_hold,
+            )
         {
             resolution = Some(DockDropResolution::Valid(existing.clone()));
         }
@@ -388,7 +388,7 @@ fn valid_target(resolution: &DockDropResolution) -> Option<&DockResolvedDropTarg
 fn tab_reorder_hold(target: &DockResolvedDropTarget) -> Option<DockTabReorderHold> {
     let drop_target::DockResolvedDropTargetKind::TabBar {
         target_tabs,
-        insert_index: _,
+        insert_index,
     } = target.kind
     else {
         return None;
@@ -396,8 +396,31 @@ fn tab_reorder_hold(target: &DockResolvedDropTarget) -> Option<DockTabReorderHol
 
     Some(DockTabReorderHold {
         target_tabs,
+        insert_index,
         bounds: target.preview_bounds?,
     })
+}
+
+fn should_hold_tab_reorder_target(
+    target: Option<&DockResolvedDropTarget>,
+    hold: DockTabReorderHold,
+) -> bool {
+    let Some(target) = target else {
+        return false;
+    };
+    match target.kind {
+        drop_target::DockResolvedDropTargetKind::LeafCenter { .. } => {
+            target.center_target_tabs() == Some(hold.target_tabs)
+        }
+        drop_target::DockResolvedDropTargetKind::TabBar {
+            target_tabs,
+            insert_index,
+        } => target_tabs == hold.target_tabs && insert_index == hold.insert_index,
+        drop_target::DockResolvedDropTargetKind::InnerEdge { .. }
+        | drop_target::DockResolvedDropTargetKind::RootEdge { .. }
+        | drop_target::DockResolvedDropTargetKind::FloatingTitleBar { .. }
+        | drop_target::DockResolvedDropTargetKind::EmptyDockSpace { .. } => false,
+    }
 }
 
 #[cfg(test)]
@@ -704,6 +727,53 @@ mod tests {
         ));
 
         assert_eq!(resolved_tab_insert_index(&runtime), Some(0));
+    }
+
+    #[test]
+    fn reorder_target_updates_insert_index_within_same_tab_stack() {
+        let tabs = DockNodeId::null();
+        let mut runtime = DockDropRuntime::default();
+        let first_position = point(px(20.0), px(28.0));
+        let second_position = point(px(120.0), px(28.0));
+
+        runtime.begin_scene(
+            DockHostDropScene::new(first_position),
+            &DockPolicy::default(),
+        );
+        assert!(runtime.push_scene_fact(
+            first_position,
+            Vec::new(),
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs,
+                target_index: 0,
+                bounds: bounds(10.0, 20.0, 80.0, 24.0),
+                is_central: false,
+            }),
+            &DockPolicy::default()
+        ));
+        assert_eq!(resolved_tab_insert_index(&runtime), Some(0));
+
+        assert!(!runtime.begin_scene(
+            DockHostDropScene::new(second_position).preserve_on_miss(),
+            &DockPolicy::default()
+        ));
+        assert!(runtime.push_scene_fact(
+            second_position,
+            Vec::new(),
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs,
+                target_index: 1,
+                bounds: bounds(100.0, 20.0, 80.0, 24.0),
+                is_central: false,
+            }),
+            &DockPolicy::default()
+        ));
+
+        assert_eq!(
+            resolved_tab_insert_index(&runtime),
+            Some(1),
+            "same-stack reorder hold must not freeze the old tab insertion slot"
+        );
     }
 
     #[test]

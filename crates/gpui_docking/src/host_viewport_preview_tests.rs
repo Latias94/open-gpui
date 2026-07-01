@@ -1783,6 +1783,7 @@ mod handle_suite {
         interaction::{
             DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession,
         },
+        overlay_scene::{DockOverlayLayerKind, DockOverlayScene},
         viewport_activation::apply_viewport_activation_transaction,
         viewport_registry::{DockViewportRouteUnavailableReason, DockViewportStaleReason},
     };
@@ -2022,6 +2023,30 @@ mod handle_suite {
                 .map(|payload_tabs| payload_tabs.tabs.len()),
             Some(2),
             "routed preview scene should preserve all stack payload tabs before target render"
+        );
+        let routed_overlay = DockOverlayScene::from_preview(&routed_preview.preview.scene);
+        assert_eq!(
+            routed_overlay
+                .payload_tabs()
+                .map(|layer| (layer.payload_index, layer.payload_title.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![(Some(0), Some("Panel A")), (Some(1), Some("Panel C"))],
+            "target routed preview should expose visible payload tab layers"
+        );
+        assert_eq!(
+            routed_overlay
+                .payload_ghosts()
+                .map(|layer| (layer.payload_index, layer.payload_title.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![(Some(0), Some("Panel A")), (Some(1), Some("Panel C"))],
+            "target routed preview should expose payload ghost layers for overlay transitions"
+        );
+        assert!(
+            routed_overlay
+                .layers
+                .iter()
+                .any(|layer| layer.kind == DockOverlayLayerKind::TabInsertion),
+            "target routed preview should keep a tab insertion layer separate from payload ghosts"
         );
 
         let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);

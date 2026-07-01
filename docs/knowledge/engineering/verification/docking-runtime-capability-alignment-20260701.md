@@ -31,3 +31,24 @@ Implemented U1-U3 foundation for runtime transition capability:
 ## Notes
 
 The current Phase A render layer is intentionally descriptor-first and does not replace docking's recursive/flex pane layout. It renders sampled overlay, clip, divider, focus, and payload geometry above the final layout. Full absolute sampled pane rendering remains deferred until Phase A evidence proves it necessary.
+
+## Phase B / P0
+
+Implemented U4 and the routed-preview portion of U9:
+
+- Center/tab preview now emits explicit visible `PayloadTab` layers plus separate `PayloadGhost` layers for transition descriptors.
+- `DockOverlayScene::apply_payload_tab_layout` applies resolved body, insertion, payload tab, and ghost bounds to a single overlay descriptor before rendering.
+- `DockHost::render_target_drop_preview` resolves tab insertion geometry once from rendered tab label bounds and renders from overlay layer bounds rather than keeping a separate render-only model.
+- Tab-bar drag hover now prefers rendered tab label hit targets before falling back to append, so hovering the first tab's left half and the middle tab slot updates the insertion index precisely.
+- Same-stack reorder hold now preserves a tab reorder target only for same-slot or leaf-center fallback, and no longer freezes a changed tab insertion slot.
+- Routed target previews expose the same payload tab / payload ghost overlay contract while source route markers remain separate.
+
+## Phase B Commands
+
+- `cargo nextest run -p open-gpui-docking overlay_scene_orders_center_tab_insertion_after_guides_before_payload_tabs overlay_scene_applies_precise_tab_layout_to_payload_tabs_and_ghosts transition_plan_from_overlay_scene_describes_tab_insertion_and_payload_ghosts payload_tab_render_inputs_come_from_overlay_layers tab_bar_append_preview_shifts_payload_tab_right_of_existing_tab --no-fail-fast` - passed.
+- `cargo nextest run -p open-gpui-docking reorder_target_updates_insert_index_within_same_tab_stack tabs_drop_preserves_reorder_target_while_pointer_stays_inside_tab tab_bar_preview_positions_payload_tab_at_leading_and_middle_slots tab_bar_append_preview_shifts_payload_tab_right_of_existing_tab dragging_tab_to_target_tab_bar_empty_area_appends --no-fail-fast` - passed.
+- `cargo nextest run -p open-gpui-docking source_hover_over_known_viewport_renders_target_drop_preview overlay_scene_orders_center_tab_insertion_after_guides_before_payload_tabs overlay_scene_applies_precise_tab_layout_to_payload_tabs_and_ghosts transition_plan_from_overlay_scene_describes_tab_insertion_and_payload_ghosts --no-fail-fast` - passed.
+- `cargo nextest run -p open-gpui-docking host_viewport_preview_visual_tests host_transition_tests host_interaction_tests::tab_bar_preview_positions_payload_tab_at_leading_and_middle_slots host_interaction_tests::tab_bar_append_preview_shifts_payload_tab_right_of_existing_tab host_interaction_tests::dragging_tab_to_target_tab_bar_empty_area_appends drop_runtime::tests::reorder_target_updates_insert_index_within_same_tab_stack drop_runtime::tests::tabs_drop_preserves_reorder_target_while_pointer_stays_inside_tab host_viewport_preview_tests::handle_suite::source_hover_over_known_viewport_renders_target_drop_preview --no-fail-fast` - passed, 21 tests.
+- `cargo fmt --all -- --check` - passed.
+- `cargo check -p open-gpui-docking --tests` - passed.
+- `git diff --check` - passed.

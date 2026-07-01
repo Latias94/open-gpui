@@ -331,6 +331,144 @@ fn tab_bar_append_preview_shifts_payload_tab_right_of_existing_tab(cx: &mut Test
 }
 
 #[open_gpui::test]
+fn tab_bar_preview_positions_payload_tab_at_leading_and_middle_slots(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b"), item("c")],
+        selected: Some(item("b")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![source_tabs, target_tabs],
+        fractions: vec![0.4, 0.6],
+    });
+    graph.set_root(space(), root);
+    let workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(640.0), px(240.0)));
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_first = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: target_tabs,
+            item: item("b"),
+        },
+    )
+    .expect("first target tab selector should be emitted");
+    let target_second = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: target_tabs,
+            item: item("c"),
+        },
+    )
+    .expect("second target tab selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+
+    cx.run_until_parked();
+    let mut hover_visual = VisualTestContext::from_window(window.into(), cx);
+    let first_bounds = debug_bounds(&mut hover_visual, &target_first);
+    let leading_hover = point(first_bounds.origin.x + px(2.0), first_bounds.center().y);
+    hover_visual.simulate_mouse_move(leading_hover, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let leading_index = host
+        .update(cx, |host, _| {
+            match host.interaction().resolved_drop_target() {
+                Some(target) => match target.kind {
+                    DockResolvedDropTargetKind::TabBar { insert_index, .. } => Some(insert_index),
+                    _ => None,
+                },
+                None => None,
+            }
+        })
+        .expect("leading tab hover should resolve a tab insertion target");
+    assert_eq!(leading_index, 0);
+    let mut leading_visual = VisualTestContext::from_window(window.into(), cx);
+    let leading_preview_tab = selector_for(
+        &leading_visual,
+        &host,
+        DockDebugRegion::DropPayloadTabPreview { index: 0 },
+    )
+    .expect("leading tab hover should render a payload tab preview");
+    let leading_insertion = selector_for(
+        &leading_visual,
+        &host,
+        DockDebugRegion::DropTabInsertionPreview,
+    )
+    .expect("leading tab hover should render an insertion preview");
+    let leading_preview_tab_bounds = debug_bounds(&mut leading_visual, &leading_preview_tab);
+    let leading_insertion_bounds = debug_bounds(&mut leading_visual, &leading_insertion);
+    assert!(
+        leading_preview_tab_bounds.origin.x >= first_bounds.origin.x
+            && leading_preview_tab_bounds.origin.x < first_bounds.center().x,
+        "leading payload tab should start inside the first insertion slot, not append after the stack: preview={leading_preview_tab_bounds:?} first={first_bounds:?}"
+    );
+    assert!(
+        leading_insertion_bounds.center().x <= first_bounds.origin.x + px(4.0),
+        "leading slot should align with first tab start: insertion={leading_insertion_bounds:?} first={first_bounds:?}"
+    );
+
+    let second_bounds = debug_bounds(&mut leading_visual, &target_second);
+    let middle_hover = point(second_bounds.origin.x + px(2.0), second_bounds.center().y);
+    leading_visual.simulate_mouse_move(middle_hover, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut middle_visual = VisualTestContext::from_window(window.into(), cx);
+    let middle_preview_tab = selector_for(
+        &middle_visual,
+        &host,
+        DockDebugRegion::DropPayloadTabPreview { index: 0 },
+    )
+    .expect("middle tab hover should render a payload tab preview");
+    let middle_insertion = selector_for(
+        &middle_visual,
+        &host,
+        DockDebugRegion::DropTabInsertionPreview,
+    )
+    .expect("middle tab hover should render an insertion preview");
+    let middle_preview_tab_bounds = debug_bounds(&mut middle_visual, &middle_preview_tab);
+    let middle_insertion_bounds = debug_bounds(&mut middle_visual, &middle_insertion);
+    assert!(
+        (f32::from(middle_preview_tab_bounds.origin.x) - f32::from(second_bounds.origin.x)).abs()
+            <= 4.0,
+        "middle payload tab should start at the second tab slot, not append after the stack: preview={middle_preview_tab_bounds:?} second={second_bounds:?}"
+    );
+    assert_close(
+        f32::from(middle_insertion_bounds.center().x),
+        f32::from(second_bounds.origin.x),
+    );
+}
+
+#[open_gpui::test]
 fn local_release_on_first_target_hit_does_not_commit(cx: &mut TestAppContext) {
     let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let workspace =

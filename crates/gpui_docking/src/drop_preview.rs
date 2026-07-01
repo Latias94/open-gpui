@@ -176,6 +176,7 @@ pub(crate) struct DockPreviewTabInsertionVisualDescriptor {
     pub(crate) target_tabs: Option<DockNodeId>,
     pub(crate) index: DockPreviewTabInsertionIndex,
     pub(crate) has_slot_bounds: bool,
+    pub(crate) slot_bounds: Option<Bounds<Pixels>>,
     pub(crate) clipping_bounds: Bounds<Pixels>,
 }
 
@@ -412,6 +413,7 @@ impl From<&DockPreviewTabInsertion> for DockPreviewTabInsertionVisualDescriptor 
             target_tabs: insertion.target_tabs,
             index: insertion.index,
             has_slot_bounds: insertion.slot_bounds.is_some(),
+            slot_bounds: insertion.slot_bounds,
             clipping_bounds: insertion.clipping_bounds,
         }
     }

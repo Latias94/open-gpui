@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-07-01: Completed Phase B / P0 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. Center/tab preview now has explicit `PayloadTab` and `PayloadGhost` overlay layers, overlay
+  descriptors can carry applied insertion/body/payload geometry, tab-bar hover resolves rendered tab
+  label hit targets before append fallback, and same-stack reorder hold no longer freezes a changed
+  insert slot. Routed target previews expose the same payload tab/ghost contract while source route
+  markers stay separate. Verified focused U4/U9 gates, `cargo fmt --all -- --check`,
+  `cargo check -p open-gpui-docking --tests`, and `git diff --check`; next action is commit Phase B
+  and continue U5-U8.
 - 2026-07-01: Implemented Phase A / P0 for
   `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md`.
   `DockTransitionExecutor` now samples deterministic transition progress, reduced motion completes

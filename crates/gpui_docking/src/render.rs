@@ -13,7 +13,10 @@ use crate::{
         DockPayloadDropRelease, DockRenderedOutsideReleaseDecision,
         DockRenderedOutsideReleaseRequest,
     },
-    overlay_scene::{DockOverlayLayer, DockOverlayScene},
+    overlay_scene::{
+        DockOverlayLayer, DockOverlayPayloadTabLayout, DockOverlayPayloadTabPlacement,
+        DockOverlayScene,
+    },
     presentation_scene::DockPresentationScene,
     render_split::DockRenderSplitInput,
     transition_executor::{DockDividerSample, DockOverlaySample, DockPaneClipSample},
@@ -35,20 +38,6 @@ const DROP_PREVIEW_TAB_MIN_WIDTH: f32 = 72.0;
 const DROP_PREVIEW_TAB_MAX_WIDTH: f32 = 180.0;
 const DROP_PREVIEW_TAB_TEXT_PADDING: f32 = 22.0;
 const DROP_PREVIEW_TAB_MIN_VISIBLE_WIDTH: f32 = 18.0;
-
-#[derive(Debug, Clone, PartialEq)]
-struct DockDropPreviewTabLayout {
-    body_bounds: Bounds<Pixels>,
-    insertion_bounds: Bounds<Pixels>,
-    tab_bounds: Vec<DockDropPreviewTabPlacement>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct DockDropPreviewTabPlacement {
-    index: usize,
-    title: String,
-    tab_bounds: Bounds<Pixels>,
-}
 
 #[derive(Debug, Clone, PartialEq)]
 struct DockDropPreviewPayloadTab {
@@ -215,13 +204,13 @@ impl Render for DockHost {
 }
 
 impl DockHost {
-    fn drop_preview_tab_layout(
+    fn drop_preview_payload_tab_layout(
         &self,
         session: &DockHostRenderSession,
         preview_bounds: Bounds<Pixels>,
         overlay_scene: &DockOverlayScene,
         window: &Window,
-    ) -> Option<DockDropPreviewTabLayout> {
+    ) -> Option<DockOverlayPayloadTabLayout> {
         let insertion = overlay_scene.tab_insertion()?;
         let target_tabs = insertion.target_node?;
         let DockNode::Tabs { items, .. } = session.node(target_tabs)?.clone() else {
@@ -250,6 +239,10 @@ impl DockHost {
             })
             .unwrap_or(items.len())
             .min(items.len());
+        let rendered_insertion_x = self
+            .viewport_runtime()
+            .rendered_tab_label_bounds_for_tabs(self.space(), None, target_tabs, insert_index)
+            .map(|bounds| bounds.origin.x);
         let mut tab_left = self
             .viewport_runtime()
             .rendered_tab_bar_bounds_for_tabs(self.space(), None, target_tabs)
@@ -323,10 +316,9 @@ impl DockHost {
             requested_left.min((tab_strip_right - tab_strip_width).max(tab_strip_left));
         let mut tab_bounds = Vec::with_capacity(payload_tabs.len());
         for (payload_tab, tab_width) in payload_tabs.iter().zip(tab_widths) {
-            tab_bounds.push(DockDropPreviewTabPlacement {
-                index: payload_tab.index,
-                title: payload_tab.title.clone(),
-                tab_bounds: Bounds::new(
+            tab_bounds.push(DockOverlayPayloadTabPlacement {
+                payload_index: payload_tab.index,
+                bounds: Bounds::new(
                     point(px(tab_left), preview_bounds.origin.y),
                     open_gpui::size(px(tab_width), tab_height),
                 ),
@@ -334,11 +326,12 @@ impl DockHost {
             tab_left += tab_width + tab_gap;
         }
 
-        let first_tab_bounds = tab_bounds.first()?.tab_bounds;
+        let first_tab_bounds = tab_bounds.first()?.bounds;
         let insertion_width = px(3.0);
+        let insertion_x = rendered_insertion_x.unwrap_or(first_tab_bounds.origin.x);
         let insertion_bounds = Bounds::new(
             point(
-                first_tab_bounds.origin.x - insertion_width / 2.0,
+                insertion_x - insertion_width / 2.0,
                 first_tab_bounds.origin.y,
             ),
             open_gpui::size(insertion_width, first_tab_bounds.size.height),
@@ -352,10 +345,10 @@ impl DockHost {
             open_gpui::size(preview_bounds.size.width, body_height),
         );
 
-        Some(DockDropPreviewTabLayout {
+        Some(DockOverlayPayloadTabLayout {
             body_bounds,
             insertion_bounds,
-            tab_bounds,
+            payload_tabs: tab_bounds,
         })
     }
 
@@ -783,7 +776,7 @@ impl DockHost {
         window: &Window,
     ) -> AnyElement {
         let scene = &preview.scene;
-        let overlay_scene = DockOverlayScene::from_preview(scene);
+        let mut overlay_scene = DockOverlayScene::from_preview(scene);
         let bounds = scene
             .payload_tabs
             .as_ref()
@@ -793,6 +786,14 @@ impl DockHost {
                     .rendered_leaf_bounds_for_tabs(self.space(), None, tabs)
             })
             .unwrap_or(scene.body.future_bounds);
+        let payload_tab_layout = if overlay_scene.has_payload_tab_preview() {
+            self.drop_preview_payload_tab_layout(session, bounds, &overlay_scene, window)
+        } else {
+            None
+        };
+        if let Some(layout) = payload_tab_layout.as_ref() {
+            overlay_scene.apply_payload_tab_layout(layout);
+        }
         let selector = self.record_debug_selector(
             DockDebugRegion::DropPreview,
             format!("{}:drop-preview", session.selector_prefix()),
@@ -809,10 +810,18 @@ impl DockHost {
             .h(bounds.size.height)
             .overflow_hidden();
 
-        if overlay_scene.has_payload_tab_preview()
-            && let Some(layout) =
-                self.drop_preview_tab_layout(session, bounds, &overlay_scene, window)
-        {
+        if overlay_scene.has_payload_tab_preview() && payload_tab_layout.is_some() {
+            let body_layer = overlay_scene
+                .layers
+                .iter()
+                .find(|layer| layer.kind == crate::overlay_scene::DockOverlayLayerKind::TargetBody);
+            let insertion_layer = overlay_scene.tab_insertion();
+            let Some(body_layer) = body_layer else {
+                return element.into_any_element();
+            };
+            let Some(insertion_layer) = insertion_layer else {
+                return element.into_any_element();
+            };
             let body_selector = self.record_debug_selector(
                 DockDebugRegion::DropPreviewBody,
                 format!("{}:drop-preview:body", session.selector_prefix()),
@@ -821,14 +830,14 @@ impl DockHost {
                 .id(body_selector.clone())
                 .debug_selector(move || body_selector)
                 .absolute()
-                .left(layout.body_bounds.origin.x - bounds.origin.x)
-                .top(layout.body_bounds.origin.y - bounds.origin.y)
-                .w(layout.body_bounds.size.width)
-                .h(layout.body_bounds.size.height)
+                .left(body_layer.bounds.origin.x - bounds.origin.x)
+                .top(body_layer.bounds.origin.y - bounds.origin.y)
+                .w(body_layer.bounds.size.width)
+                .h(body_layer.bounds.size.height)
                 .border_1()
                 .border_color(palette.border)
                 .bg(palette.body_background);
-            if layout.body_bounds.size.height > px(0.0) {
+            if body_layer.bounds.size.height > px(0.0) {
                 body = body.rounded_b_sm().border_t_0();
             }
             element = element.child(body);
@@ -841,14 +850,19 @@ impl DockHost {
                     .id(insertion_selector.clone())
                     .debug_selector(move || insertion_selector)
                     .absolute()
-                    .left(layout.insertion_bounds.origin.x - bounds.origin.x)
-                    .top(layout.insertion_bounds.origin.y - bounds.origin.y)
-                    .w(layout.insertion_bounds.size.width)
-                    .h(layout.insertion_bounds.size.height)
+                    .left(insertion_layer.bounds.origin.x - bounds.origin.x)
+                    .top(insertion_layer.bounds.origin.y - bounds.origin.y)
+                    .w(insertion_layer.bounds.size.width)
+                    .h(insertion_layer.bounds.size.height)
                     .rounded_sm()
                     .bg(palette.border),
             );
-            for placement in layout.tab_bounds {
+            for placement in overlay_payload_tabs(&overlay_scene) {
+                let placement_bounds = overlay_scene
+                    .payload_tabs()
+                    .find(|layer| layer.payload_index == Some(placement.index))
+                    .map(|layer| layer.bounds)
+                    .unwrap_or(insertion_layer.bounds);
                 let tab_selector = self.record_debug_selector(
                     DockDebugRegion::DropPayloadTabPreview {
                         index: placement.index,
@@ -864,13 +878,13 @@ impl DockHost {
                         .id(tab_selector.clone())
                         .debug_selector(move || tab_selector)
                         .absolute()
-                        .left(placement.tab_bounds.origin.x - bounds.origin.x)
-                        .top(placement.tab_bounds.origin.y - bounds.origin.y)
+                        .left(placement_bounds.origin.x - bounds.origin.x)
+                        .top(placement_bounds.origin.y - bounds.origin.y)
                         .flex()
                         .items_center()
                         .justify_start()
-                        .h(placement.tab_bounds.size.height)
-                        .w(placement.tab_bounds.size.width)
+                        .h(placement_bounds.size.height)
+                        .w(placement_bounds.size.width)
                         .px_2()
                         .border_1()
                         .border_color(palette.border)

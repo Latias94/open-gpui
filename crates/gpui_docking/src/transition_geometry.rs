@@ -126,7 +126,7 @@ impl DockTransitionPlan {
                         DockOverlayLayerKind::TabInsertion => {
                             DockOverlayTransitionKind::TabInsertion
                         }
-                        DockOverlayLayerKind::PayloadTab | DockOverlayLayerKind::PayloadGhost => {
+                        DockOverlayLayerKind::PayloadGhost => {
                             DockOverlayTransitionKind::PayloadGhost
                         }
                         DockOverlayLayerKind::RejectedState => {
@@ -134,6 +134,7 @@ impl DockTransitionPlan {
                         }
                         DockOverlayLayerKind::TargetBody
                         | DockOverlayLayerKind::GuideBox
+                        | DockOverlayLayerKind::PayloadTab
                         | DockOverlayLayerKind::FocusRing => return None,
                     };
                     Some(DockOverlayTransition {
