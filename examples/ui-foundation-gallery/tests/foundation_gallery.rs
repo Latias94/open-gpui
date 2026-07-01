@@ -1455,7 +1455,7 @@ fn overlay_page_catalog_entries_have_signals_and_sample_selectors() {
 fn components_page_samples_expose_component_metadata() {
     let tokens = ThemeTokens::default();
     let catalog = pages::components::COMPONENT_CATALOG;
-    let gates = pages::components::CONFORMANCE_GATES;
+    let gates = pages::components::COMPONENT_CONFORMANCE_GATES;
     let buttons = pages::components::button_samples(tokens);
     let badges = pages::components::badge_samples(tokens);
     let accordions = pages::components::accordion_samples(tokens);
@@ -2620,14 +2620,25 @@ fn components_page_state_contract_samples_expose_tree_and_virtualized_list_contr
 fn components_catalog_metadata_is_separate_from_rendering() {
     let components_source = include_str!("../src/pages/components.rs");
     let catalog_source = include_str!("../src/pages/components/catalog.rs");
+    let conformance_source = include_str!("../src/pages/components/conformance.rs");
     let render_source = include_str!("../src/pages/components/render.rs");
+    let runtime_source = include_str!("../src/pages/components/runtime.rs");
+    let samples_source = include_str!("../src/pages/components/samples.rs");
 
     assert!(components_source.contains("pub mod catalog;"));
     assert!(components_source.contains("pub use catalog::{"));
+    assert!(components_source.contains("pub mod conformance;"));
+    assert!(components_source.contains("pub mod runtime;"));
+    assert!(components_source.contains("pub mod samples;"));
     assert!(catalog_source.contains("pub const COMPONENT_CATALOG"));
     assert!(catalog_source.contains("ComponentCatalogEntry::official("));
     assert!(catalog_source.contains("ComponentCatalogEntry::state_contract("));
+    assert!(conformance_source.contains("pub const COMPONENT_CONFORMANCE_GATES"));
+    assert!(runtime_source.contains("pub struct TableSampleRuntimeLog"));
+    assert!(samples_source.contains("pub struct ButtonSample"));
     assert!(!components_source.contains("ComponentCatalogEntry::official("));
+    assert!(!components_source.contains("pub struct ButtonSample"));
+    assert!(!components_source.contains("pub struct TableSampleRuntimeLog"));
     assert!(!render_source.contains("pub const COMPONENT_CATALOG"));
     assert!(
         render_source.contains("pages::components::COMPONENT_CATALOG"),
@@ -2679,16 +2690,16 @@ fn verification_docs_list_current_ui_architecture_focused_gates() {
 
 #[test]
 fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
-    let components_source = include_str!("../src/pages/components.rs");
+    let samples_source = include_str!("../src/pages/components/samples.rs");
     let render_source = include_str!("../src/pages/components/render.rs");
-    let splitter_struct_start = components_source
+    let splitter_struct_start = samples_source
         .find("pub struct SplitterSample {")
         .expect("expected SplitterSample struct to exist");
-    let splitter_struct_end = components_source[splitter_struct_start..]
+    let splitter_struct_end = samples_source[splitter_struct_start..]
         .find("impl_component_sample_selectors!(SplitterSample, \"component-splitter-sample\");")
         .map(|offset| splitter_struct_start + offset)
         .expect("expected SplitterSample selector impl to exist");
-    let splitter_struct = &components_source[splitter_struct_start..splitter_struct_end];
+    let splitter_struct = &samples_source[splitter_struct_start..splitter_struct_end];
     let splitter_section = render_source
         .split("component_page_section(\"splitter\")")
         .nth(1)
@@ -3947,7 +3958,7 @@ fn components_page_samples_keep_explicit_a11y_metadata() {
 
 #[test]
 fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
-    let gates = pages::components::CONFORMANCE_GATES;
+    let gates = pages::components::COMPONENT_CONFORMANCE_GATES;
     let signals = pages::components::SIGNALS;
 
     assert!(gates.iter().all(|gate| !gate.title.trim().is_empty()));

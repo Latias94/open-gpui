@@ -331,34 +331,37 @@ fn render_components_section(
             ))
             .into_any_element(),
         "gates" => {
-            let conformance_gate_cards = pages::components::CONFORMANCE_GATES.iter().map(|gate| {
-                let gate_selector = format!("component-gate:{}", gate.id);
-                gallery_card_shell(gate_selector.clone(), Some(gate_selector))
-                    .min_w(px(220.0))
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(open_gpui::FontWeight::BOLD)
-                            .child(gate.title),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .line_height(px(18.0))
-                            .text_color(rgb(0x5a6472))
-                            .child(gate.summary),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .line_height(px(18.0))
-                            .text_color(rgb(0x5a6472))
-                            .child(gate.evidence.join(" / ")),
-                    )
-            });
+            let conformance_gate_cards =
+                pages::components::COMPONENT_CONFORMANCE_GATES
+                    .iter()
+                    .map(|gate| {
+                        let gate_selector = format!("component-gate:{}", gate.id);
+                        gallery_card_shell(gate_selector.clone(), Some(gate_selector))
+                            .min_w(px(220.0))
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child(gate.title),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .line_height(px(18.0))
+                                    .text_color(rgb(0x5a6472))
+                                    .child(gate.summary),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .line_height(px(18.0))
+                                    .text_color(rgb(0x5a6472))
+                                    .child(gate.evidence.join(" / ")),
+                            )
+                    });
 
             component_page_section("gates")
                 .when(!show_component_section(focus_mode, "gates"), |this| {
