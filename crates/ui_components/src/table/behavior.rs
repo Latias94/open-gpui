@@ -8,7 +8,7 @@ use open_gpui_ui_core::{
     TableStageMode, TableState, UiPx, VirtualizerRange,
 };
 
-use super::render_plan::{TableCellRenderPlan, TableColumnRenderPlan, TableRenderDiagnostics};
+use super::render_plan::{TableCellRenderPlan, TableColumnRenderPlan, TableRenderPlan};
 use super::{TableHeaderAction, TableMetrics, TableRowMeasureMode};
 
 /// User-observable table behavior resolved for a viewport.
@@ -51,10 +51,7 @@ pub struct TableBehaviorSnapshot {
 }
 
 impl TableBehaviorSnapshot {
-    pub(in crate::table) fn from_diagnostics(
-        plan: &TableRenderDiagnostics,
-        state: &TableState,
-    ) -> Self {
+    pub(in crate::table) fn from_render_plan(plan: &TableRenderPlan, state: &TableState) -> Self {
         let table = plan.table();
         let visible = plan.virtualizer().visible_range();
         let overscan = plan.virtualizer().overscan_range();
@@ -62,8 +59,8 @@ impl TableBehaviorSnapshot {
         let group_rows = final_rows.iter().filter(|row| row.is_group()).count();
         let tree_summary = TableTreeSummarySnapshot::from_rows(final_rows);
         let row_counts = TableRowCountSnapshot::from_table(plan, table, group_rows);
-        let visible_rows = TableVisibleRowsSnapshot::from_diagnostics(plan, visible, overscan);
-        let column_regions = TableColumnRegionSnapshot::from_diagnostics(plan, table);
+        let visible_rows = TableVisibleRowsSnapshot::from_render_plan(plan, visible, overscan);
+        let column_regions = TableColumnRegionSnapshot::from_render_plan(plan, table);
         let header_summary = TableHeaderSummarySnapshot::from_table(plan, table);
         let columns = plan
             .columns()
@@ -366,11 +363,7 @@ pub struct TableRowCountSnapshot {
 }
 
 impl TableRowCountSnapshot {
-    fn from_table(
-        plan: &TableRenderDiagnostics,
-        table: &TableResolvedState,
-        group_rows: usize,
-    ) -> Self {
+    fn from_table(plan: &TableRenderPlan, table: &TableResolvedState, group_rows: usize) -> Self {
         let final_rows = table.final_model().rows().len();
         Self {
             core_rows: table.core_model().rows().len(),
@@ -484,8 +477,8 @@ pub struct TableVisibleRowsSnapshot {
 }
 
 impl TableVisibleRowsSnapshot {
-    fn from_diagnostics(
-        plan: &TableRenderDiagnostics,
+    fn from_render_plan(
+        plan: &TableRenderPlan,
         visible_range: &VirtualizerRange,
         overscan_range: &VirtualizerRange,
     ) -> Self {
@@ -560,7 +553,7 @@ pub struct TableColumnRegionSnapshot {
 }
 
 impl TableColumnRegionSnapshot {
-    fn from_diagnostics(plan: &TableRenderDiagnostics, table: &TableResolvedState) -> Self {
+    fn from_render_plan(plan: &TableRenderPlan, table: &TableResolvedState) -> Self {
         let regions = table.visible_column_regions();
         Self {
             left_columns: regions.left().len(),
@@ -659,7 +652,7 @@ pub struct TableHeaderSummarySnapshot {
 }
 
 impl TableHeaderSummarySnapshot {
-    fn from_table(plan: &TableRenderDiagnostics, table: &TableResolvedState) -> Self {
+    fn from_table(plan: &TableRenderPlan, table: &TableResolvedState) -> Self {
         let visible_group_headers = table
             .header_groups()
             .all()

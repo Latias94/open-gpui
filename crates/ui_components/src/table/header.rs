@@ -20,12 +20,12 @@ use super::resize::{
 };
 use super::{
     TableCenterColumnWindowPlan, TableColumnOrderHandler, TableColumnOrderPlacement,
-    TableColumnRenderPlan, TableHeaderCellRenderPlan, TableMetrics, TableRenderDiagnostics,
+    TableColumnRenderPlan, TableHeaderCellRenderPlan, TableMetrics, TableRenderPlan,
     TableSortHandler,
 };
 
 pub(super) fn render_table_header(
-    plan: &TableRenderDiagnostics,
+    plan: &TableRenderPlan,
     on_sort_requested: Option<TableSortHandler>,
     on_column_order_change: Option<TableColumnOrderHandler>,
     resize_config: TableResizeRenderConfig,

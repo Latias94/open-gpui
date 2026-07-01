@@ -11,18 +11,18 @@ use super::content_fit::{content_fit_measure_key, table_content_fit_rendered_row
 use super::runtime::{TableResolvedCache, TableRuntime};
 use super::virtualization::{measured_virtualizer_state, row_render_key};
 use super::{
-    Table, TableBehaviorSnapshot, TableColumnRenderPlan, TableMetrics, TableRenderDiagnostics,
+    Table, TableBehaviorSnapshot, TableColumnRenderPlan, TableMetrics, TableRenderPlan,
     nonnegative_px,
 };
 use crate::geometry::ui_px_from_gpui;
 
 impl Table {
     /// Resolves table row models and virtual render windows for internal rendering.
-    pub(in crate::table) fn diagnostics(
+    pub(in crate::table) fn render_plan(
         &self,
         scroll_offset: UiPx,
         viewport_extent: UiPx,
-    ) -> TableRenderDiagnostics {
+    ) -> TableRenderPlan {
         let metrics = self.metrics_for_viewport(viewport_extent);
         let table = Rc::new(self.state.resolve());
         let columns = self.resolve_columns(&table);
@@ -46,7 +46,7 @@ impl Table {
             self.resolve_virtualizer(&table, metrics, scroll_offset)
         };
 
-        TableRenderDiagnostics::resolve(
+        TableRenderPlan::resolve(
             self.id.clone(),
             self.label.to_string(),
             metrics,
@@ -68,18 +68,18 @@ impl Table {
         scroll_offset: UiPx,
         viewport_extent: UiPx,
     ) -> TableBehaviorSnapshot {
-        let plan = self.diagnostics(scroll_offset, viewport_extent);
-        TableBehaviorSnapshot::from_diagnostics(&plan, &self.state)
+        let plan = self.render_plan(scroll_offset, viewport_extent);
+        TableBehaviorSnapshot::from_render_plan(&plan, &self.state)
     }
 
-    pub(super) fn diagnostics_with_runtime(
+    pub(super) fn render_plan_with_runtime(
         &self,
         scroll_offset: UiPx,
         viewport_extent: UiPx,
         horizontal_scroll_handle: ScrollHandle,
         window: &Window,
         runtime: &mut TableRuntime,
-    ) -> TableRenderDiagnostics {
+    ) -> TableRenderPlan {
         let metrics = self.metrics_for_viewport(viewport_extent);
         let state = runtime
             .expansion_override
@@ -146,7 +146,7 @@ impl Table {
             )
             .clone();
 
-        TableRenderDiagnostics::resolve(
+        TableRenderPlan::resolve(
             self.id.clone(),
             self.label.to_string(),
             metrics,

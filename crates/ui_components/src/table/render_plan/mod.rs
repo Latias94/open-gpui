@@ -18,16 +18,16 @@ mod columns;
 mod header;
 mod rows;
 
-pub use columns::{
+pub(in crate::table) use columns::{
     TableCenterColumnWindowPlan, TableColumnRegionRenderPlan, TableColumnRenderPlan,
     TablePinnedLayoutPlan,
 };
-pub use header::{TableHeaderCellRenderPlan, TableHeaderGroupRegionsRenderPlan};
-pub use rows::{TableCellRenderPlan, TableRowRenderPlan};
+pub(in crate::table) use header::{TableHeaderCellRenderPlan, TableHeaderGroupRegionsRenderPlan};
+pub(in crate::table) use rows::{TableCellRenderPlan, TableRowRenderPlan};
 
-/// Fully resolved render contract for a concrete [`Table`] instance.
+/// Internal adapter render plan for a concrete [`Table`] viewport.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TableRenderDiagnostics {
+pub(in crate::table) struct TableRenderPlan {
     table_id: String,
     label: String,
     metrics: TableMetrics,
@@ -61,7 +61,7 @@ pub struct TableRenderDiagnostics {
     cell_role: Role,
 }
 
-impl TableRenderDiagnostics {
+impl TableRenderPlan {
     pub(super) fn resolve(
         table_id: String,
         label: String,

@@ -10,7 +10,7 @@ use super::columns::{TableColumnRegionRenderPlan, TableColumnRenderPlan};
 
 /// One resolved table header cell in render-plan form.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TableHeaderCellRenderPlan {
+pub(in crate::table) struct TableHeaderCellRenderPlan {
     id: String,
     label: String,
     depth: usize,
@@ -114,7 +114,7 @@ impl TableHeaderCellRenderPlan {
 
 /// One header row in a render region.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TableHeaderGroupRenderPlan {
+pub(in crate::table) struct TableHeaderGroupRenderPlan {
     headers: Vec<TableHeaderCellRenderPlan>,
 }
 
@@ -140,7 +140,7 @@ impl TableHeaderGroupRenderPlan {
 
 /// Header rows for one render region.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TableHeaderGroupRegionRenderPlan {
+pub(in crate::table) struct TableHeaderGroupRegionRenderPlan {
     groups: Vec<TableHeaderGroupRenderPlan>,
 }
 
@@ -171,7 +171,7 @@ impl TableHeaderGroupRegionRenderPlan {
 
 /// Header rows split into render regions.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TableHeaderGroupRegionsRenderPlan {
+pub(in crate::table) struct TableHeaderGroupRegionsRenderPlan {
     left: TableHeaderGroupRegionRenderPlan,
     center: TableHeaderGroupRegionRenderPlan,
     right: TableHeaderGroupRegionRenderPlan,

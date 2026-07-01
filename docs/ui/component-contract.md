@@ -339,16 +339,16 @@ and overlay policy aliases. Import those neutral contracts from `open_gpui_ui_co
 
 Breaking migration notes for the 0.3 UI deepening pass:
 
-- Replace public `Table::diagnostics(scroll_offset, viewport_extent)` calls with
+- Replace old table render-plan probes with
   `Table::behavior_snapshot(scroll_offset, viewport_extent)`. Application tests, gallery readouts,
   and integration probes should consume `TableBehaviorSnapshot`, `TableRowBehaviorSnapshot`,
   `TableColumnBehaviorSnapshot`, `TableColumnRegionSnapshot`, `TableHeaderSummarySnapshot`,
   `TableTreeSummarySnapshot`, and `TableVisibleRowsSnapshot`.
 - Remove imports of table render-plan internals from application code, including
-  `TableRenderDiagnostics`, `TableColumnRenderPlan`, `TableCellRenderPlan`,
+  the internal `TableRenderPlan`, `TableColumnRenderPlan`, `TableCellRenderPlan`,
   `TableCenterColumnWindowPlan`, `TableColumnRegionRenderPlan`, header render-plan types,
-  `TablePinnedLayoutPlan`, and `TableRowRenderPlan`. Those structures are crate-private adapter
-  implementation details; algorithm coverage belongs in `crates/ui_components/src/table` module
+  `TablePinnedLayoutPlan`, and `TableRowRenderPlan`. Those structures are private to the table
+  adapter implementation; algorithm coverage belongs in `crates/ui_components/src/table` module
   tests.
 - Replace removed primitive pass-through imports under `open_gpui_ui_components::primitives` with
   their renderer-neutral owners in `open_gpui_ui_core` or with the official component/adapter API

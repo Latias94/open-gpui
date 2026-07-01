@@ -8,7 +8,7 @@ use super::super::{TableHeaderAction, nonnegative_px};
 
 /// One resolved table column in render order.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TableColumnRenderPlan {
+pub(in crate::table) struct TableColumnRenderPlan {
     id: TableColumnId,
     label: String,
     region: TableColumnRegion,
@@ -162,7 +162,7 @@ impl TableColumnRenderPlan {
 
 /// Resolved table columns for one render lane.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TableColumnRegionRenderPlan {
+pub(in crate::table) struct TableColumnRegionRenderPlan {
     region: TableColumnRegion,
     columns: Vec<TableColumnRenderPlan>,
     total_width: UiPx,
@@ -201,7 +201,7 @@ impl TableColumnRegionRenderPlan {
 
 /// Adapter layout metadata for sticky pinned table column regions.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TablePinnedLayoutPlan {
+pub(in crate::table) struct TablePinnedLayoutPlan {
     table_id: String,
     center_width: UiPx,
 }
@@ -247,7 +247,7 @@ impl TablePinnedLayoutPlan {
 
 /// Resolved render metadata for the virtualized center column lane.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TableCenterColumnWindowPlan {
+pub(in crate::table) struct TableCenterColumnWindowPlan {
     virtualizer: VirtualizerResolvedState,
     rendered_columns: Vec<TableColumnRenderPlan>,
     leading_spacer_width: UiPx,

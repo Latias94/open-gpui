@@ -72,8 +72,8 @@ pub use predicate_filter::{
 pub use range_filter::{TableRangeFilter, TableRangeFilterChange, TableRangeFilterState};
 pub(in crate::table) use render_plan::{
     TableCellRenderPlan, TableCenterColumnWindowPlan, TableColumnRegionRenderPlan,
-    TableColumnRenderPlan, TableHeaderCellRenderPlan, TablePinnedLayoutPlan,
-    TableRenderDiagnostics, TableRowRenderPlan,
+    TableColumnRenderPlan, TableHeaderCellRenderPlan, TablePinnedLayoutPlan, TableRenderPlan,
+    TableRowRenderPlan,
 };
 use resize::{TableColumnResizeDrag, TableResizeRenderConfig, handle_table_column_resize_drag};
 use runtime::TableRuntime;
@@ -338,7 +338,7 @@ impl RenderOnce for Table {
         let resize_drag_runtime = resize_config.runtime.clone();
         let resize_drag_config = resize_config.clone();
         let plan = runtime.update(cx, |runtime, cx| {
-            let plan = self.diagnostics_with_runtime(
+            let plan = self.render_plan_with_runtime(
                 scroll_offset,
                 viewport_extent,
                 horizontal_scroll_handle.clone(),

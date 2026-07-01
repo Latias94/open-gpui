@@ -7,7 +7,7 @@ use super::columns::TableColumnRenderPlan;
 
 /// One resolved table cell in render order.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TableCellRenderPlan {
+pub(in crate::table) struct TableCellRenderPlan {
     column_id: TableColumnId,
     value: Option<TableCellValue>,
     text: String,
@@ -126,7 +126,7 @@ fn resolved_table_cell_text(
 
 /// One resolved virtualized row to render.
 #[derive(Debug, Clone, PartialEq)]
-pub struct TableRowRenderPlan {
+pub(in crate::table) struct TableRowRenderPlan {
     row: TableResolvedRow,
     region: TableRowRegion,
     render_key: String,
