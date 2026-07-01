@@ -370,8 +370,16 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentCatalog,
         docs_token: Some("Tree"),
         default_export: true,
-        source_inputs: &["tree.rs", "tree/movement.rs", "tree/render_plan.rs"],
-        source_home: "tree.rs",
+        source_inputs: &[
+            "tree/mod.rs",
+            "tree/descriptor.rs",
+            "tree/model.rs",
+            "tree/runtime.rs",
+            "tree/style.rs",
+            "tree/movement.rs",
+            "tree/render_plan.rs",
+        ],
+        source_home: "tree/mod.rs",
     },
     ComponentContractEntry {
         name: "Listbox",
@@ -788,8 +796,13 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentContract,
         docs_token: Some("TreeState"),
         default_export: true,
-        source_inputs: &["tree.rs"],
-        source_home: "tree.rs",
+        source_inputs: &[
+            "tree/model.rs",
+            "tree/descriptor.rs",
+            "tree/style.rs",
+            "tree/movement.rs",
+        ],
+        source_home: "tree/model.rs",
     },
     ComponentContractEntry {
         name: "VirtualizedListState",
@@ -1162,7 +1175,7 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
     PublicSurfaceOwnerEntry {
         name: "TreeState",
         owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
-        home: "tree.rs",
+        home: "tree/model.rs",
     },
     PublicSurfaceOwnerEntry {
         name: "VirtualizedListState",

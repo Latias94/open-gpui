@@ -92,6 +92,37 @@ fn context_menu_component_source_mapping_tracks_split_owners() {
 }
 
 #[test]
+fn tree_component_source_mapping_tracks_split_owners() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let tree_sources = [
+        "tree/mod.rs",
+        "tree/descriptor.rs",
+        "tree/model.rs",
+        "tree/runtime.rs",
+        "tree/style.rs",
+        "tree/movement.rs",
+        "tree/render_plan.rs",
+    ];
+    let tree_state_sources = [
+        "tree/model.rs",
+        "tree/descriptor.rs",
+        "tree/style.rs",
+        "tree/movement.rs",
+    ];
+
+    assert!(!source_dir.join("tree.rs").exists());
+    assert_eq!(component_source_inputs("Tree"), tree_sources);
+    assert_eq!(component_source_inputs("TreeState"), tree_state_sources);
+
+    for owner in tree_sources {
+        assert!(
+            source_dir.join(owner).is_file(),
+            "split Tree owner `{owner}` should exist"
+        );
+    }
+}
+
+#[test]
 fn component_source_mapping_expands_split_component_directories() {
     let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let source_files = component_source_paths("TableRangeFilter")
