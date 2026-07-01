@@ -80,10 +80,10 @@ const CANVAS_WIDTH: f32 = 1140.0;
 const CANVAS_HEIGHT: f32 = 650.0;
 const NODE_SURFACE_CHROME_HEIGHT: f32 = 78.0;
 const NODE_SURFACE_SLOT_ROW_HEIGHT: f32 = 26.0;
-const GPUI_LAYOUT_PASS_MEASUREMENT_GAP: &str = "canvas-jellyflow can project Jellyflow \
-authoring controls, repeatables, and actions through open-gpui components, but it cannot claim \
-full layout-pass measurement until open-gpui exposes a stable element-bounds callback for \
-node-local slot/control/anchor regions during layout or prepaint.";
+const GPUI_LAYOUT_PASS_MEASUREMENT_STATUS: &str = "canvas-jellyflow consumes open-gpui \
+measured_element bounds for visible slots, controls, repeatable rows, and anchors. Projection \
+fallback now means initial, dirty, hidden, missing, duplicate, or partial coverage; the remaining \
+maturity gap is productized authoring interaction coverage and advanced widget stubs.";
 
 type GpuiNodeRenderer = Box<
     dyn Fn(
@@ -133,7 +133,7 @@ struct GpuiAuthoringCapabilitySummary {
     repeatables: &'static str,
     actions: &'static str,
     layout_measurement: NodeSurfaceMeasurementSource,
-    layout_gap: &'static str,
+    layout_status: &'static str,
 }
 
 #[derive(Clone)]
@@ -520,7 +520,7 @@ impl JellyflowCanvasView {
                             .text_xs()
                             .line_height(px(18.0))
                             .text_color(rgb(0x64748b))
-                            .child(self.projection.capability.layout_gap),
+                            .child(self.projection.capability.layout_status),
                     ),
             )
             .child(selection)
@@ -3538,11 +3538,11 @@ fn project_store(
         kit: "workflow.automation / erd.table / shader.blueprint / mind-map.knowledge-canvas"
             .to_string(),
         capability: GpuiAuthoringCapabilitySummary {
-            controls: "partial/local",
-            repeatables: "projection",
-            actions: "partial/local",
-            layout_measurement: NodeSurfaceMeasurementSource::ProjectionFallback,
-            layout_gap: GPUI_LAYOUT_PASS_MEASUREMENT_GAP,
+            controls: "live/partial",
+            repeatables: "live/partial",
+            actions: "live/partial",
+            layout_measurement: NodeSurfaceMeasurementSource::LayoutPass,
+            layout_status: GPUI_LAYOUT_PASS_MEASUREMENT_STATUS,
         },
     };
 
@@ -4839,14 +4839,20 @@ mod tests {
         }));
         assert_eq!(
             projection.capability.layout_measurement,
-            NodeSurfaceMeasurementSource::ProjectionFallback
+            NodeSurfaceMeasurementSource::LayoutPass
         );
-        assert_eq!(projection.capability.controls, "partial/local");
+        assert_eq!(projection.capability.controls, "live/partial");
         assert!(
             projection
                 .capability
-                .layout_gap
-                .contains("element-bounds callback")
+                .layout_status
+                .contains("measured_element bounds")
+        );
+        assert!(
+            !projection
+                .capability
+                .layout_status
+                .contains(&["element-bounds", "callback"].join(" "))
         );
     }
 
