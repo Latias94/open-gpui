@@ -2622,6 +2622,11 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     let catalog_source = include_str!("../src/pages/components/catalog.rs");
     let conformance_source = include_str!("../src/pages/components/conformance.rs");
     let render_source = include_str!("../src/pages/components/render.rs");
+    let render_families_source = include_str!("../src/pages/components/render/families.rs");
+    let render_focus_source = include_str!("../src/pages/components/render/focus.rs");
+    let render_readouts_source = include_str!("../src/pages/components/render/readouts.rs");
+    let render_sections_source = include_str!("../src/pages/components/render/sections.rs");
+    let render_support_source = include_str!("../src/pages/components/render/support.rs");
     let runtime_source = include_str!("../src/pages/components/runtime.rs");
     let samples_source = include_str!("../src/pages/components/samples.rs");
     let foundation_samples_source = include_str!("../src/pages/components/samples/foundation.rs");
@@ -2682,12 +2687,34 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(layout_samples_source.contains("pub struct ScrollAreaSample"));
     assert!(!samples_source.contains("pub struct ButtonSample"));
     assert!(!samples_source.contains("static TABLE_SAMPLES"));
+    for module_path in [
+        "#[path = \"render/families.rs\"]",
+        "#[path = \"render/focus.rs\"]",
+        "#[path = \"render/readouts.rs\"]",
+        "#[path = \"render/sections.rs\"]",
+        "#[path = \"render/support.rs\"]",
+    ] {
+        assert!(
+            render_source.contains(module_path),
+            "render facade should declare owner module `{module_path}`"
+        );
+    }
+    assert!(render_families_source.contains("fn component_tree_samples_section"));
+    assert!(render_focus_source.contains("fn render_component_focus_mode"));
+    assert!(render_readouts_source.contains("fn component_table_state_row"));
+    assert!(render_sections_source.contains("fn render_components_section"));
+    assert!(render_support_source.contains("fn component_gallery_card_shell"));
+    assert!(!render_source.contains("fn component_tree_samples_section"));
+    assert!(!render_source.contains("fn component_table_state_row"));
+    assert!(!render_source.contains("fn render_components_section"));
+    assert!(!render_source.contains("fn component_gallery_card_shell"));
     assert!(!components_source.contains("ComponentCatalogEntry::official("));
     assert!(!components_source.contains("pub struct ButtonSample"));
     assert!(!components_source.contains("pub struct TableSampleRuntimeLog"));
     assert!(!render_source.contains("pub const COMPONENT_CATALOG"));
+    assert!(!render_sections_source.contains("pub const COMPONENT_CATALOG"));
     assert!(
-        render_source.contains("pages::components::COMPONENT_CATALOG"),
+        render_sections_source.contains("pages::components::COMPONENT_CATALOG"),
         "rendering should consume catalog metadata instead of owning it"
     );
 }
@@ -2738,7 +2765,7 @@ fn verification_docs_list_current_ui_architecture_focused_gates() {
 fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
     let samples_source = include_str!("../src/pages/components/samples.rs");
     let layout_samples_source = include_str!("../src/pages/components/samples/layout.rs");
-    let render_source = include_str!("../src/pages/components/render.rs");
+    let render_sections_source = include_str!("../src/pages/components/render/sections.rs");
     let splitter_struct_start = layout_samples_source
         .find("pub struct SplitterSample {")
         .expect("expected SplitterSample struct to exist");
@@ -2747,7 +2774,7 @@ fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
         .map(|offset| splitter_struct_start + offset)
         .expect("expected SplitterSample sample builder to follow struct declarations");
     let splitter_struct = &layout_samples_source[splitter_struct_start..splitter_struct_end];
-    let splitter_section = render_source
+    let splitter_section = render_sections_source
         .split("component_page_section(\"splitter\")")
         .nth(1)
         .and_then(|section| {

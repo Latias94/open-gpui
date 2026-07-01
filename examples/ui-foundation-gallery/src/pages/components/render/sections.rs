@@ -1,0 +1,2048 @@
+use super::*;
+
+fn render_grouped_components_section(
+    shell: &mut GalleryShell,
+    parent_id: &'static str,
+    focused_id: &'static str,
+    snapshot: GalleryShellSnapshot,
+    cx: &mut Context<GalleryShell>,
+) -> AnyElement {
+    let mut snapshot = snapshot;
+    snapshot.components_focus = pages::components::ComponentFocusMode::Section(focused_id);
+    render_components_section(shell, component_page_jump_for_id(parent_id), snapshot, cx)
+}
+
+pub(super) fn render_components_section(
+    shell: &mut GalleryShell,
+    section: pages::components::ComponentPageJump,
+    snapshot: GalleryShellSnapshot,
+    cx: &mut Context<GalleryShell>,
+) -> AnyElement {
+    let focus_mode = snapshot.components_focus;
+
+    match section.id {
+        "tabs" | "table" | "virtualized-list" | "signals" => {
+            render_grouped_components_section(shell, "field", section.id, snapshot, cx)
+        }
+        "catalog" => {
+            let component_catalog_cards = pages::components::COMPONENT_CATALOG
+                .iter()
+                .map(|entry| {
+                    let catalog_selector = entry.catalog_selector();
+                    let focus = pages::components::focused_section_for_catalog_entry(entry);
+                    let focused = snapshot.components_focus.focused_section() == focus;
+                    let card = component_gallery_card_shell(
+                        catalog_selector.clone(),
+                        Some(catalog_selector),
+                    )
+                    .min_w(px(180.0))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .border_color(if focused {
+                        rgb(0x1f7a66)
+                    } else {
+                        rgb(0xd6d8ce)
+                    })
+                    .bg(if focused {
+                        rgb(0xe8f3ef)
+                    } else {
+                        rgb(0xffffff)
+                    })
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child(entry.name),
+                            )
+                            .child(component_catalog_status_pill(entry.status)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0x5a6472))
+                            .child(entry.family),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0x5a6472))
+                            .child(entry.display_state_label()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .line_height(px(18.0))
+                            .text_color(rgb(0x5a6472))
+                            .child(entry.coverage),
+                    );
+
+                    match focus {
+                        Some(section_id) => card
+                            .cursor_pointer()
+                            .hover(|style| style.bg(rgb(0xf1f5ee)))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.set_components_focus(
+                                    pages::components::ComponentFocusMode::Section(section_id),
+                                    cx,
+                                );
+                            })),
+                        None => card,
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            component_page_section("catalog")
+                .child(render_component_focus_mode(
+                    snapshot.components_focus,
+                    snapshot.tokens,
+                    cx,
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(open_gpui::FontWeight::BOLD)
+                                .child("Component catalog"),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .gap_3()
+                                .flex_wrap()
+                                .children(component_catalog_cards),
+                        ),
+                )
+                .into_any_element()
+        }
+        "primitives" => component_page_section("primitives")
+            .when(!show_component_section(focus_mode, "primitives"), |this| {
+                this.hidden()
+            })
+            .child(component_primitive_samples_section(
+                pages::components::separator_samples(snapshot.tokens),
+                pages::components::kbd_samples(snapshot.tokens),
+                pages::components::progress_samples(snapshot.tokens),
+                pages::components::skeleton_samples(snapshot.tokens),
+                pages::components::avatar_samples(snapshot.tokens),
+                pages::components::avatar_group_samples(snapshot.tokens),
+                snapshot.tokens,
+            ))
+            .into_any_element(),
+        "feedback" => component_page_section("feedback")
+            .when(!show_component_section(focus_mode, "feedback"), |this| {
+                this.hidden()
+            })
+            .child(component_feedback_samples_section(
+                pages::components::status_cue_samples(snapshot.tokens),
+                pages::components::empty_state_samples(snapshot.tokens),
+                snapshot.tokens,
+            ))
+            .into_any_element(),
+        "foundation-components" => component_page_section("foundation-components")
+            .when(
+                !show_component_section(focus_mode, "foundation-components"),
+                |this| this.hidden(),
+            )
+            .child(component_foundation_samples_section(
+                pages::components::foundation_component_samples(snapshot.tokens),
+                snapshot.tokens,
+            ))
+            .into_any_element(),
+        "state-contracts" => component_page_section("state-contracts")
+            .when(
+                !show_component_section(focus_mode, "state-contracts"),
+                |this| this.hidden(),
+            )
+            .child(component_state_contract_samples_section(
+                pages::components::tree_state_contract_samples(),
+                pages::components::virtualized_list_state_contract_samples(),
+            ))
+            .into_any_element(),
+        "gates" => {
+            let conformance_gate_cards =
+                pages::components::COMPONENT_CONFORMANCE_GATES
+                    .iter()
+                    .map(|gate| {
+                        let gate_selector = format!("component-gate:{}", gate.id);
+                        component_gallery_card_shell(gate_selector.clone(), Some(gate_selector))
+                            .min_w(px(220.0))
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child(gate.title),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .line_height(px(18.0))
+                                    .text_color(rgb(0x5a6472))
+                                    .child(gate.summary),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .line_height(px(18.0))
+                                    .text_color(rgb(0x5a6472))
+                                    .child(gate.evidence.join(" / ")),
+                            )
+                    });
+
+            component_page_section("gates")
+                .when(!show_component_section(focus_mode, "gates"), |this| {
+                    this.hidden()
+                })
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(open_gpui::FontWeight::BOLD)
+                                .child("Conformance gates"),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .gap_3()
+                                .flex_wrap()
+                                .children(conformance_gate_cards),
+                        ),
+                )
+                .into_any_element()
+        }
+        "sidebar" => component_page_section("sidebar")
+            .when(!show_component_section(focus_mode, "sidebar"), |this| {
+                this.hidden()
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Sidebar"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::sidebar_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let state = sample.state.clone();
+                                    let title = state.label().to_owned();
+                                    let mut sidebar = Sidebar::new(
+                                        format!("component-sidebar:{}", sample.id),
+                                        state.label(),
+                                    )
+                                    .side(state.side())
+                                    .variant(state.variant())
+                                    .collapse_mode(state.collapse_mode())
+                                    .collapsed(state.collapsed())
+                                    .with_size(state.size())
+                                    .tokens(snapshot.tokens);
+                                    if let Some(selected) = state.selected_value() {
+                                        sidebar = sidebar.selected(selected);
+                                    }
+                                    if let Some(focused) = state.focused_value() {
+                                        sidebar = sidebar.default_focused(focused);
+                                    }
+                                    for section in state.sections() {
+                                        let mut sidebar_section =
+                                            SidebarSection::new(section.value(), section.label());
+                                        for item in state
+                                            .items()
+                                            .iter()
+                                            .filter(|item| item.section_index() == section.index())
+                                        {
+                                            let mut sidebar_item =
+                                                SidebarItem::new(item.value(), item.label());
+                                            if let Some(icon) = item.icon_label() {
+                                                sidebar_item = sidebar_item.icon(icon);
+                                            }
+                                            if let Some(badge) = item.badge_label() {
+                                                sidebar_item = sidebar_item.badge(badge);
+                                            }
+                                            if let Some(action_label) = item.action_label_text() {
+                                                sidebar_item =
+                                                    sidebar_item.action_label(action_label);
+                                            }
+                                            sidebar_section = sidebar_section
+                                                .item(sidebar_item.disabled(item.disabled()));
+                                        }
+                                        sidebar = sidebar.section(sidebar_section);
+                                    }
+
+                                    div()
+                                        .id(format!("component-sidebar-sample:{}", sample.id))
+                                        .debug_selector({
+                                            let debug_selector = sample.debug_selector();
+                                            move || debug_selector
+                                        })
+                                        .w(px(360.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap_2()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                                        .child(title),
+                                                )
+                                                .child(label_pill(state.collapse_mode().as_str())),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0x5a6472))
+                                                .child(sample.summary),
+                                        )
+                                        .child(
+                                            div()
+                                                .h(px(214.0))
+                                                .min_h(px(0.0))
+                                                .flex()
+                                                .overflow_hidden()
+                                                .rounded_sm()
+                                                .border_1()
+                                                .border_color(rgb(0xe2e4dc))
+                                                .bg(rgb(0xfcfcf8))
+                                                .when(state.side() == SidebarSide::Right, |this| {
+                                                    this.justify_end()
+                                                })
+                                                .child(sidebar),
+                                        )
+                                        .child(component_sidebar_state_row(&state))
+                                }),
+                        ),
+                    ),
+            )
+            .into_any_element(),
+        "tree" => component_page_section("tree")
+            .when(!show_component_section(focus_mode, "tree"), |this| {
+                this.hidden()
+            })
+            .child(component_tree_samples_section(
+                pages::components::tree_samples(snapshot.tokens),
+                cx,
+            ))
+            .into_any_element(),
+        "toolbar" => component_page_section("toolbar")
+            .when(!show_component_section(focus_mode, "toolbar"), |this| {
+                this.hidden()
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Toolbar"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::toolbar_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let state = sample.state.clone();
+                                    let toolbar = sample.build_toolbar(snapshot.tokens);
+
+                                    div()
+                                        .id(format!("component-toolbar-sample:{}", sample.id))
+                                        .debug_selector({
+                                            let debug_selector = sample.debug_selector();
+                                            move || debug_selector
+                                        })
+                                        .w(px(420.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap_2()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                                        .child(state.label().to_owned()),
+                                                )
+                                                .child(label_pill(match state.orientation() {
+                                                    Orientation::Horizontal => "horizontal",
+                                                    Orientation::Vertical => "vertical",
+                                                })),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0x5a6472))
+                                                .child(sample.summary),
+                                        )
+                                        .child(toolbar)
+                                        .child(component_toolbar_state_row(&state))
+                                }),
+                        ),
+                    ),
+            )
+            .into_any_element(),
+        "listbox" => component_page_section("listbox")
+            .when(!show_component_section(focus_mode, "listbox"), |this| {
+                this.hidden()
+            })
+            .child(component_listbox_samples_section(
+                pages::components::listbox_samples(snapshot.tokens),
+                snapshot.tokens,
+            ))
+            .into_any_element(),
+        "select" => component_page_section("select")
+            .when(!show_component_section(focus_mode, "select"), |this| {
+                this.hidden()
+            })
+            .child(component_select_samples_section(
+                pages::components::select_samples(snapshot.tokens),
+                snapshot.tokens,
+            ))
+            .into_any_element(),
+        "combobox" => component_page_section("combobox")
+            .when(!show_component_section(focus_mode, "combobox"), |this| {
+                this.hidden()
+            })
+            .child(component_combobox_samples_section(
+                pages::components::combobox_samples(snapshot.tokens),
+                snapshot.tokens,
+            ))
+            .into_any_element(),
+        "command" => component_page_section("command")
+            .when(!show_component_section(focus_mode, "command"), |this| {
+                this.hidden()
+            })
+            .child(component_command_samples_section(
+                pages::components::command_samples(snapshot.tokens),
+                snapshot.tokens,
+            ))
+            .into_any_element(),
+        "button" => component_page_section("button")
+            .when(!show_component_section(focus_mode, "button"), |this| {
+                this.hidden()
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Button"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::button_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
+                                    let state = sample.state;
+                                    div()
+                                        .id(format!("component-button-sample:{sample_id}"))
+                                        .debug_selector(move || debug_selector)
+                                        .min_w(px(180.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(
+                                            Button::new(
+                                                format!("component-button:{}", sample.id),
+                                                sample.label,
+                                            )
+                                            .variant(state.variant())
+                                            .with_size(state.size())
+                                            .disabled(state.disabled())
+                                            .selected(state.selected())
+                                            .tokens(snapshot.tokens),
+                                        )
+                                        .child(component_button_state_row(state))
+                                }),
+                        ),
+                    ),
+            )
+            .into_any_element(),
+        "splitter" => component_page_section("splitter")
+            .when(!show_component_section(focus_mode, "splitter"), |this| {
+                this.hidden()
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Splitter"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::splitter_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let debug_selector = sample.debug_selector();
+                                    let state = sample.state.clone();
+                                    let splitter = sample.panels.into_iter().fold(
+                                        Splitter::new(format!("component-splitter:{}", sample.id))
+                                            .orientation(state.orientation())
+                                            .with_size(state.size()),
+                                        |splitter, panel| {
+                                            splitter.panel(SplitterPanel::new(
+                                                panel.descriptor,
+                                                div()
+                                                    .size_full()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_1()
+                                                    .bg(rgb(0xf8f9f3))
+                                                    .px_3()
+                                                    .py_2()
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .font_weight(
+                                                                open_gpui::FontWeight::BOLD,
+                                                            )
+                                                            .text_color(rgb(0x3f4a57))
+                                                            .child(panel.title),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(rgb(0x5a6472))
+                                                            .child(panel.body),
+                                                    ),
+                                            ))
+                                        },
+                                    );
+
+                                    div()
+                                        .id(format!("component-splitter-sample:{}", sample.id))
+                                        .debug_selector(move || debug_selector)
+                                        .w(px(520.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap_2()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                                        .child(sample.title),
+                                                )
+                                                .child(label_pill(match state.orientation() {
+                                                    Orientation::Horizontal => "horizontal",
+                                                    Orientation::Vertical => "vertical",
+                                                })),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0x5a6472))
+                                                .child(sample.summary),
+                                        )
+                                        .child(
+                                            div()
+                                                .h(px(164.0))
+                                                .rounded_sm()
+                                                .border_1()
+                                                .border_color(rgb(0xe2e4dc))
+                                                .bg(rgb(0xfcfcf8))
+                                                .child(splitter),
+                                        )
+                                        .child(component_splitter_state_row(&state))
+                                }),
+                        ),
+                    ),
+            )
+            .into_any_element(),
+        "scroll-area" => {
+            component_page_section("scroll-area")
+                            .when(!show_component_section(focus_mode, "scroll-area"), |this| {
+                                this.hidden()
+                            })
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(open_gpui::FontWeight::BOLD)
+                                            .child("ScrollArea"),
+                                    )
+                                    .child(div().flex().gap_3().flex_wrap().children(
+                                        pages::components::scroll_area_samples(snapshot.tokens)
+                                            .into_iter()
+                                            .map(|sample| {
+                                            let sample_id = sample.id;
+                                            let debug_selector = sample.debug_selector();
+                                            let title = sample.title;
+                                            let summary = sample.summary;
+                                            let items = sample.items;
+                                            let state = sample.state.clone();
+                                            let horizontal = state.axis() == ScrollAreaAxis::Horizontal;
+                                            let two_axis = state.axis() == ScrollAreaAxis::Both;
+                                            let content = div()
+                                                .when(horizontal, |this| this.flex().gap_2().min_w(px(860.0)))
+                                                .when(two_axis, |this| {
+                                                    this.flex().flex_col().gap_1().min_w(px(860.0))
+                                                })
+                                                .when(!horizontal && !two_axis, |this| {
+                                                    this.flex().flex_col().gap_1()
+                                                })
+                                                .children(items.into_iter().enumerate().map(
+                                                    move |(index, item)| {
+                                                        let vertical_only = !horizontal && !two_axis;
+                                                        div()
+                                                .id(format!(
+                                                    "component-scroll-area-item:{}:{}",
+                                                    sample_id, index
+                                                ))
+                                                .debug_selector(move || {
+                                                    format!(
+                                                        "gallery:component-scroll-area-item:{sample_id}:{index}"
+                                                    )
+                                                })
+                                                .when(horizontal, |this| this.w(px(132.0)).min_h(px(88.0)))
+                                                .when(two_axis, |this| this.w(px(1240.0)).min_h(px(88.0)))
+                                                .when(vertical_only, |this| this.min_h(px(28.0)))
+                                                .rounded_sm()
+                                                .border_1()
+                                                .border_color(rgb(0xd6d8ce))
+                                                .bg(rgb(0xf8f9f3))
+                                                .px_3()
+                                                .py_2()
+                                                .text_xs()
+                                                .text_color(rgb(0x3f4a57))
+                                                .child(item)
+                                                    },
+                                                ));
+                                            let scroll_area = ScrollArea::new(
+                                                format!("component-scroll-area:{}", sample_id),
+                                                content,
+                                            )
+                                            .axis(state.axis())
+                                            .with_size(state.size());
+                                            let scroll_area = if let Some(reset_key) = state.reset_key() {
+                                                scroll_area.reset_on_key(reset_key)
+                                            } else {
+                                                scroll_area
+                                            };
+
+                                            div()
+                                                .id(format!("component-scroll-area-sample:{}", sample_id))
+                                                .debug_selector(move || debug_selector)
+                                                .w(px(360.0))
+                                                .flex_none()
+                                                .flex()
+                                                .flex_col()
+                                                .gap_2()
+                                                .rounded_sm()
+                                                .border_1()
+                                                .border_color(rgb(0xd6d8ce))
+                                                .bg(rgb(0xffffff))
+                                                // Keep wheel gestures on scroll demos from leaking to the page shell.
+                                                .on_scroll_wheel(|_, window, cx| {
+                                                    window.prevent_default();
+                                                    cx.stop_propagation();
+                                                })
+                                                .p_3()
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_between()
+                                                        .gap_2()
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .font_weight(open_gpui::FontWeight::BOLD)
+                                                                .child(title),
+                                                        )
+                                                        .child(label_pill(state.axis().as_str())),
+                                                )
+                                                .child(div().text_xs().text_color(rgb(0x5a6472)).child(summary))
+                                                .child(
+                                                    div()
+                                                        .w(px(360.0))
+                                                        .h(px(154.0))
+                                                        .min_h(px(0.0))
+                                                        .overflow_hidden()
+                                                        .rounded_sm()
+                                                        .border_1()
+                                                        .border_color(rgb(0xe2e4dc))
+                                                        .bg(rgb(0xfcfcf8))
+                                                        .child(scroll_area),
+                                                )
+                                                .child(component_scroll_area_state_row(&state))
+                                        }),
+                                    )),
+                            ).into_any_element()
+        }
+        "badge" => component_page_section("badge")
+            .when(!show_component_section(focus_mode, "badge"), |this| {
+                this.hidden()
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Badge"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::badge_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
+                                    let state = sample.state;
+                                    div()
+                                        .id(format!("component-badge-sample:{sample_id}"))
+                                        .debug_selector(move || debug_selector)
+                                        .min_w(px(160.0))
+                                        .flex()
+                                        .flex_col()
+                                        .items_start()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(
+                                            Badge::new(
+                                                format!("component-badge:{}", sample.id),
+                                                sample.label,
+                                            )
+                                            .variant(state.variant())
+                                            .with_size(state.size())
+                                            .tokens(snapshot.tokens),
+                                        )
+                                        .child(component_badge_state_row(state))
+                                }),
+                        ),
+                    ),
+            )
+            .into_any_element(),
+        "switch" => {
+            let focus_mode = match snapshot.components_focus {
+                pages::components::ComponentFocusMode::All => {
+                    pages::components::ComponentFocusMode::Section("switch")
+                }
+                focus => focus,
+            };
+            component_page_section("switch")
+                .when(show_component_section(focus_mode, "switch"), |this| {
+                    this.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child("Switch"),
+                            )
+                            .child(
+                                div().flex().gap_3().flex_wrap().children(
+                                    pages::components::switch_samples(snapshot.tokens)
+                                        .into_iter()
+                                        .map(|sample| {
+                                            let sample_id = sample.id;
+                                            let debug_selector = sample.debug_selector();
+                                            let state = sample.state;
+                                            div()
+                                                .id(format!("component-switch-sample:{sample_id}"))
+                                                .debug_selector(move || debug_selector)
+                                                .min_w(px(200.0))
+                                                .flex()
+                                                .flex_col()
+                                                .gap_2()
+                                                .rounded_sm()
+                                                .border_1()
+                                                .border_color(rgb(0xd6d8ce))
+                                                .bg(rgb(0xffffff))
+                                                .p_3()
+                                                .child(
+                                                    Switch::new(format!(
+                                                        "component-switch:{}",
+                                                        sample.id
+                                                    ))
+                                                    .label(sample.label)
+                                                    .checked(state.checked())
+                                                    .disabled(state.disabled())
+                                                    .with_size(state.size())
+                                                    .tokens(snapshot.tokens),
+                                                )
+                                                .child(component_switch_state_row(state))
+                                        }),
+                                ),
+                            ),
+                    )
+                })
+                .when(show_component_section(focus_mode, "checkbox"), |this| {
+                    this.child(
+                        component_page_section("checkbox").child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                        .child("Checkbox"),
+                                )
+                                .child(
+                                    div().flex().gap_3().flex_wrap().children(
+                                        pages::components::checkbox_samples(snapshot.tokens)
+                                            .into_iter()
+                                            .map(|sample| {
+                                                let sample_id = sample.id;
+                                                let debug_selector = sample.debug_selector();
+                                                let state = sample.state;
+                                                div()
+                                                    .id(format!(
+                                                        "component-checkbox-sample:{sample_id}"
+                                                    ))
+                                                    .debug_selector(move || debug_selector)
+                                                    .min_w(px(220.0))
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_2()
+                                                    .rounded_sm()
+                                                    .border_1()
+                                                    .border_color(rgb(0xd6d8ce))
+                                                    .bg(rgb(0xffffff))
+                                                    .p_3()
+                                                    .child(component_checkbox(
+                                                        format!("component-checkbox:{}", sample.id),
+                                                        sample.label,
+                                                        state,
+                                                        snapshot.tokens,
+                                                    ))
+                                                    .child(component_checkbox_state_row(state))
+                                            }),
+                                    ),
+                                ),
+                        ),
+                    )
+                })
+                .when(show_component_section(focus_mode, "radio-group"), |this| {
+                    this.child(
+                        component_page_section("radio-group").child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                        .child("RadioGroup"),
+                                )
+                                .child(
+                                    div().flex().gap_3().flex_wrap().children(
+                                        pages::components::radio_group_samples(snapshot.tokens)
+                                            .into_iter()
+                                            .map(|sample| {
+                                                let sample_id = sample.id;
+                                                let debug_selector = sample.debug_selector();
+                                                let state = sample.state.clone();
+                                                let mut radio = RadioGroup::new(format!(
+                                                    "component-radio:{}",
+                                                    sample.id
+                                                ))
+                                                .label(sample.title)
+                                                .orientation(state.orientation())
+                                                .default_selected(
+                                                    state.selected_value().unwrap_or("none"),
+                                                )
+                                                .required(state.required())
+                                                .disabled(state.disabled())
+                                                .with_size(state.size())
+                                                .tokens(snapshot.tokens);
+                                                for item in state.items().iter() {
+                                                    radio = radio.item(
+                                                        RadioItem::new(item.value(), item.label())
+                                                            .disabled(item.disabled()),
+                                                    );
+                                                }
+
+                                                div()
+                                                    .id(format!(
+                                                        "component-radio-sample:{sample_id}"
+                                                    ))
+                                                    .debug_selector(move || debug_selector)
+                                                    .min_w(px(240.0))
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_2()
+                                                    .rounded_sm()
+                                                    .border_1()
+                                                    .border_color(rgb(0xd6d8ce))
+                                                    .bg(rgb(0xffffff))
+                                                    .p_3()
+                                                    .child(radio)
+                                                    .child(component_radio_state_row(&state))
+                                            }),
+                                    ),
+                                ),
+                        ),
+                    )
+                })
+                .when(show_component_section(focus_mode, "toggle"), |this| {
+                    this.child(
+                        component_page_section("toggle").child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                        .child("Toggle"),
+                                )
+                                .child(
+                                    div().flex().gap_3().flex_wrap().children(
+                                        pages::components::toggle_samples(snapshot.tokens)
+                                            .into_iter()
+                                            .map(|sample| {
+                                                let sample_id = sample.id;
+                                                let debug_selector = sample.debug_selector();
+                                                let state = sample.state;
+                                                div()
+                                                    .id(format!(
+                                                        "component-toggle-sample:{sample_id}"
+                                                    ))
+                                                    .debug_selector(move || debug_selector)
+                                                    .min_w(px(180.0))
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_2()
+                                                    .rounded_sm()
+                                                    .border_1()
+                                                    .border_color(rgb(0xd6d8ce))
+                                                    .bg(rgb(0xffffff))
+                                                    .p_3()
+                                                    .child(
+                                                        Toggle::new(
+                                                            format!(
+                                                                "component-toggle:{}",
+                                                                sample.id
+                                                            ),
+                                                            sample.label,
+                                                        )
+                                                        .variant(state.variant())
+                                                        .pressed(state.pressed())
+                                                        .disabled(state.disabled())
+                                                        .with_size(state.size())
+                                                        .tokens(snapshot.tokens),
+                                                    )
+                                                    .child(component_toggle_state_row(&state))
+                                            }),
+                                    ),
+                                ),
+                        ),
+                    )
+                })
+                .into_any_element()
+        }
+        "icon-button" => component_page_section("icon-button")
+            .when(!show_component_section(focus_mode, "icon-button"), |this| {
+                this.hidden()
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("IconButton"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::icon_button_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
+                                    let state = sample.state;
+                                    let accessible_label = state.accessible_label().to_owned();
+                                    div()
+                                        .id(format!("component-icon-button-sample:{sample_id}"))
+                                        .debug_selector(move || debug_selector)
+                                        .min_w(px(170.0))
+                                        .flex()
+                                        .flex_col()
+                                        .items_start()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(
+                                            IconButton::new(
+                                                format!("component-icon-button:{}", sample.id),
+                                                sample.icon,
+                                                accessible_label.clone(),
+                                            )
+                                            .variant(state.variant())
+                                            .disabled(state.disabled())
+                                            .with_size(state.size())
+                                            .tokens(snapshot.tokens),
+                                        )
+                                        .child(component_icon_button_state_row(
+                                            &accessible_label,
+                                            state,
+                                        ))
+                                }),
+                        ),
+                    ),
+            )
+            .into_any_element(),
+        "label" => component_page_section("label")
+            .when(!show_component_section(focus_mode, "label"), |this| {
+                this.hidden()
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Label"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::label_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
+                                    let state = sample.state.clone();
+                                    div()
+                                        .id(format!("component-label-sample:{sample_id}"))
+                                        .debug_selector(move || debug_selector)
+                                        .min_w(px(220.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(component_label(
+                                            format!("component-label:{}", sample.id),
+                                            &state,
+                                            snapshot.tokens,
+                                        ))
+                                        .child(component_label_state_row(&state))
+                                }),
+                        ),
+                    ),
+            )
+            .into_any_element(),
+        "text-input" => component_page_section("text-input")
+            .when(!show_component_section(focus_mode, "text-input"), |this| {
+                this.hidden()
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("TextInput"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::text_input_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
+                                    let state = sample.state.clone();
+                                    let controller = state
+                                        .controller_driven()
+                                        .then(|| shell.editable_text_input().clone());
+                                    div()
+                                        .id(format!("component-text-input-sample:{sample_id}"))
+                                        .debug_selector(move || debug_selector)
+                                        .min_w(px(240.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(open_gpui::FontWeight::BOLD)
+                                                .text_color(rgb(0x3f4a57))
+                                                .child(sample.label),
+                                        )
+                                        .child(component_text_input(
+                                            format!("component-text-input:{}", sample.id),
+                                            sample.label,
+                                            &state,
+                                            snapshot.tokens,
+                                            controller,
+                                        ))
+                                        .child(component_text_input_state_row(&state))
+                                }),
+                        ),
+                    ),
+            )
+            .into_any_element(),
+        "textarea" => component_page_section("textarea")
+            .when(!show_component_section(focus_mode, "textarea"), |this| {
+                this.hidden()
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Textarea"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::textarea_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
+                                    let state = sample.state.clone();
+                                    div()
+                                        .id(format!("component-textarea-sample:{sample_id}"))
+                                        .debug_selector(move || debug_selector)
+                                        .min_w(px(280.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(open_gpui::FontWeight::BOLD)
+                                                .text_color(rgb(0x3f4a57))
+                                                .child(sample.label),
+                                        )
+                                        .child(component_textarea(
+                                            format!("component-textarea:{}", sample.id),
+                                            sample.label,
+                                            &state,
+                                            snapshot.tokens,
+                                        ))
+                                        .child(component_textarea_state_row(&state))
+                                }),
+                        ),
+                    ),
+            )
+            .into_any_element(),
+        "field" => {
+            let focus_mode = match snapshot.components_focus {
+                pages::components::ComponentFocusMode::All => {
+                    pages::components::ComponentFocusMode::Section("field")
+                }
+                focus => focus,
+            };
+            component_page_section("field")
+                            .when(show_component_section(focus_mode, "field"), |this| {
+                                this.child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(open_gpui::FontWeight::BOLD)
+                                            .child("Field"),
+                                    )
+                                    .child(
+                                        div().flex().gap_3().flex_wrap().children(
+                                            pages::components::field_samples(snapshot.tokens)
+                                                .into_iter()
+                                                .map(|sample| {
+                                                    let sample_id = sample.id;
+                                                    let debug_selector = sample.debug_selector();
+                                                    let field_state = sample.state.clone();
+                                                    let input_state = sample.input_state.clone();
+                                                    div()
+                                                        .id(format!("component-field-sample:{sample_id}"))
+                                                        .debug_selector(move || debug_selector)
+                                                        .min_w(px(280.0))
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_2()
+                                                        .rounded_sm()
+                                                        .border_1()
+                                                        .border_color(rgb(0xd6d8ce))
+                                                        .bg(rgb(0xffffff))
+                                                        .p_3()
+                                                        .child(component_field(
+                                                            format!("component-field:{}", sample.id),
+                                                            &field_state,
+                                                            component_text_input(
+                                                                format!("component-field-input:{}", sample.id),
+                                                                field_state.label(),
+                                                                &input_state,
+                                                                snapshot.tokens,
+                                                                None,
+                                                            ),
+                                                            snapshot.tokens,
+                                                        ))
+                                                        .child(component_field_state_row(
+                                                            &field_state,
+                                                            &input_state,
+                                                        ))
+                                                }),
+                                        ),
+                                    )
+                                    .child(
+                                        div().flex().gap_3().flex_wrap().children(
+                                            pages::components::field_textarea_samples(snapshot.tokens)
+                                                .into_iter()
+                                                .map(|sample| {
+                                                    let sample_id = sample.id;
+                                                    let debug_selector = sample.debug_selector();
+                                                    let field_state = sample.state.clone();
+                                                    let textarea_state = sample.textarea_state.clone();
+                                                    div()
+                                                        .id(format!(
+                                                            "component-field-textarea-sample:{sample_id}"
+                                                        ))
+                                                        .debug_selector(move || debug_selector)
+                                                        .min_w(px(320.0))
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_2()
+                                                        .rounded_sm()
+                                                        .border_1()
+                                                        .border_color(rgb(0xd6d8ce))
+                                                        .bg(rgb(0xffffff))
+                                                        .p_3()
+                                                        .child(component_field(
+                                                            format!(
+                                                                "component-field-textarea:{}",
+                                                                sample.id
+                                                            ),
+                                                            &field_state,
+                                                            component_textarea(
+                                                                format!(
+                                                                    "component-field-textarea-control:{}",
+                                                                    sample.id
+                                                                ),
+                                                                field_state.label(),
+                                                                &textarea_state,
+                                                                snapshot.tokens,
+                                                            ),
+                                                            snapshot.tokens,
+                                                        ))
+                                                        .child(component_field_textarea_state_row(
+                                                            &field_state,
+                                                            &textarea_state,
+                                                        ))
+                                                }),
+                                        ),
+                                    )
+                                )
+                            })
+                            .when(show_component_section(focus_mode, "tabs"), |this| {
+                                this.child(
+                                component_page_section("tabs")
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                                    .child("Tabs"),
+                                            )
+                                            .child(div().flex().gap_3().flex_wrap().children(
+                                                pages::components::tabs_samples(snapshot.tokens)
+                                                    .into_iter()
+                                                    .map(|sample| {
+                                                    let debug_selector = sample.debug_selector();
+                                                    let state = sample.state.clone();
+                                                    let tabs = sample.build_tabs(snapshot.tokens);
+
+                                                    div()
+                                                        .id(format!("component-tabs-sample:{}", sample.id))
+                                                        .debug_selector(move || debug_selector)
+                                                        .min_w(px(360.0))
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_2()
+                                                        .rounded_sm()
+                                                        .border_1()
+                                                        .border_color(rgb(0xd6d8ce))
+                                                        .bg(rgb(0xffffff))
+                                                        .p_3()
+                                                        .child(
+                                                            div()
+                                                                .flex()
+                                                                .items_center()
+                                                                .justify_between()
+                                                                .gap_2()
+                                                                .child(
+                                                                    div()
+                                                                        .text_sm()
+                                                                        .font_weight(
+                                                                            open_gpui::FontWeight::BOLD,
+                                                                        )
+                                                                        .child(sample.title),
+                                                                )
+                                                                .child(label_pill(
+                                                                    state.activation_mode().as_str(),
+                                                                )),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(rgb(0x5a6472))
+                                                                .child(sample.summary),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .when(
+                                                                    state.orientation()
+                                                                        == Orientation::Vertical,
+                                                                    |this| this.h(px(240.0)).min_h(px(0.0)),
+                                                                )
+                                                                .overflow_hidden()
+                                                                .child(tabs),
+                                                        )
+                                                        .child(component_tabs_state_row(&state))
+                                                }),
+                                            )),
+                                    ),
+                                )
+                            })
+                            .when(show_component_section(focus_mode, "table"), |this| {
+                                this.child(
+                                component_page_section("table")
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                                    .child("Table"),
+                                            )
+                                            .child(div().flex().gap_3().flex_wrap().children(
+                                                pages::components::table_samples(snapshot.tokens)
+                                                    .into_iter()
+                                                    .map(|sample| {
+                                                    let sample_id = sample.id;
+                                                    let debug_selector = sample.debug_selector();
+                                                    let title = sample.title;
+                                                    let summary = sample.summary;
+                                                    let badge = sample.badge;
+                                                    let base_sizing = sample.state.column_sizing().clone();
+                                                    let current_sizing =
+                                                        pages::components::current_table_sample_sizing(
+                                                            sample_id,
+                                                            &base_sizing,
+                                                            cx,
+                                                        );
+                                                    let base_expansion = sample.state.expansion().clone();
+                                                    let current_expansion =
+                                                        pages::components::current_table_sample_expansion(
+                                                            sample_id,
+                                                            &base_expansion,
+                                                            cx,
+                                                        );
+                                                    let table_state =
+                                                        pages::components::table_sample_state_with_runtime(
+                                                            sample,
+                                                            current_sizing,
+                                                            current_expansion,
+                                                            cx,
+                                                    );
+                                                    let state_summary =
+                                                        sample.state_summary_for_state(&table_state);
+                                                    let mut table = sample.build_table_with_state(table_state);
+                                                    let table_behavior = table
+                                                        .behavior_snapshot(UiPx::ZERO, sample.viewport_extent);
+                                                    let global_filter_control: Option<AnyElement> =
+                                                        if sample_id == "filter-board" {
+                                                            let query = table
+                                                                .state()
+                                                                .global_filter()
+                                                                .unwrap_or("")
+                                                                .to_owned();
+                                                            let sample_id_for_global = sample_id.to_owned();
+                                                            let base_state = sample.state.clone();
+
+                                                            Some(
+                                                                div()
+                                                                    .w_full()
+                                                                    .child(
+                                                                        TableGlobalFilter::new(
+                                                                            format!(
+                                                                                "component-table-global-filter:{}",
+                                                                                sample_id
+                                                                            ),
+                                                                            "Search",
+                                                                        )
+                                                                        .query(query)
+                                                                        .placeholder("Search board rows")
+                                                                        .clear_label("Clear search")
+                                                                        .small()
+                                                                        .tokens(snapshot.tokens)
+                                                                        .on_change(move |change, _, cx| {
+                                                                            pages::components::record_table_global_filter_change(
+                                                                                sample_id_for_global.clone(),
+                                                                                &base_state,
+                                                                                &change,
+                                                                                cx,
+                                                                            );
+                                                                        }),
+                                                                    )
+                                                                    .into_any_element(),
+                                                            )
+                                                        } else {
+                                                            None
+                                                        };
+                                                    let predicate_filter_control: Option<AnyElement> =
+                                                        if sample_id == "filter-board" {
+                                                            let name_column = TableColumnId::new("name");
+                                                            let (selected_operator, selected_value) = table
+                                                                .state()
+                                                                .filters()
+                                                                .iter()
+                                                                .find(|filter| filter.column() == &name_column)
+                                                                .and_then(|filter| {
+                                                                    filter.text_predicate().map(
+                                                                        |(operator, query, _)| {
+                                                                            (
+                                                                                TablePredicateFilterOperator::text(
+                                                                                    operator,
+                                                                                ),
+                                                                                query.to_owned(),
+                                                                            )
+                                                                        },
+                                                                    )
+                                                                })
+                                                                .unwrap_or((
+                                                                    TablePredicateFilterOperator::text(
+                                                                        TableTextFilterOperator::Contains,
+                                                                    ),
+                                                                    String::new(),
+                                                                ));
+                                                            let sample_id_for_predicate = sample_id.to_owned();
+                                                            let base_state = sample.state.clone();
+
+                                                            Some(
+                                                                div()
+                                                                    .flex()
+                                                                    .flex_col()
+                                                                    .gap_1()
+                                                                    .child(
+                                                                        div()
+                                                                            .text_xs()
+                                                                            .font_weight(
+                                                                                open_gpui::FontWeight::BOLD,
+                                                                            )
+                                                                            .text_color(rgb(0x3f4a57))
+                                                                            .child("Name"),
+                                                                    )
+                                                                    .child(
+                                                                        TablePredicateFilter::new(
+                                                                            format!(
+                                                                                "component-table-predicate-filter:{}:name",
+                                                                                sample_id
+                                                                            ),
+                                                                            "Name",
+                                                                            "name",
+                                                                        )
+                                                                        .default_operator(
+                                                                            TablePredicateFilterOperator::text(
+                                                                                TableTextFilterOperator::Contains,
+                                                                            ),
+                                                                        )
+                                                                        .operator(selected_operator)
+                                                                        .value(selected_value)
+                                                                        .operators([
+                                                                            TablePredicateFilterOperator::text(
+                                                                                TableTextFilterOperator::Contains,
+                                                                            ),
+                                                                            TablePredicateFilterOperator::text(
+                                                                                TableTextFilterOperator::StartsWith,
+                                                                            ),
+                                                                            TablePredicateFilterOperator::text(
+                                                                                TableTextFilterOperator::EndsWith,
+                                                                            ),
+                                                                        ])
+                                                                        .placeholder("Filter names")
+                                                                        .clear_label("Clear name")
+                                                                        .small()
+                                                                        .tokens(snapshot.tokens)
+                                                                        .on_change(move |change, _, cx| {
+                                                                            pages::components::record_table_predicate_filter_change(
+                                                                                sample_id_for_predicate.clone(),
+                                                                                &base_state,
+                                                                                &change,
+                                                                                cx,
+                                                                            );
+                                                                        }),
+                                                                    )
+                                                                    .into_any_element(),
+                                                            )
+                                                        } else {
+                                                            None
+                                                        };
+                                                    let faceted_filter_control: Option<AnyElement> =
+                                                        if sample_id == "filter-board" {
+                                                            let status_column = TableColumnId::new("status");
+                                                            let selected_values = table
+                                                                .state()
+                                                                .filters()
+                                                                .iter()
+                                                                .find(|filter| filter.column() == &status_column)
+                                                                .and_then(|filter| filter.selected_values())
+                                                                .map(|values| {
+                                                                    values.iter().cloned().collect::<Vec<_>>()
+                                                                })
+                                                                .unwrap_or_default();
+                                                            table_behavior
+                                                                .column_facet(&status_column)
+                                                                .cloned()
+                                                                .map(|facets| {
+                                                                    let sample_id_for_filter =
+                                                                        sample_id.to_owned();
+                                                                    let base_state = sample.state.clone();
+                                                                    div()
+                                                                        .flex()
+                                                                        .flex_col()
+                                                                        .gap_1()
+                                                                        .child(
+                                                                            div()
+                                                                                .text_xs()
+                                                                                .font_weight(
+                                                                                    open_gpui::FontWeight::BOLD,
+                                                                                )
+                                                                                .text_color(rgb(0x3f4a57))
+                                                                                .child("Status"),
+                                                                        )
+                                                                        .child(
+                                                                            TableFacetedFilter::new(
+                                                                                format!(
+                                                                                    "component-table-faceted-filter:{}:status",
+                                                                                    sample_id
+                                                                                ),
+                                                                                "Status",
+                                                                                "status",
+                                                                            )
+                                                                            .facets(facets)
+                                                                            .selected_values(selected_values)
+                                                                            .default_query("")
+                                                                            .placeholder("Filter statuses")
+                                                                            .empty_label("No matching statuses")
+                                                                            .clear_label("Clear status")
+                                                                            .small()
+                                                                            .tokens(snapshot.tokens)
+                                                                            .on_change(move |change, _, cx| {
+                                                                                pages::components::record_table_faceted_filter_change(
+                                                                                    sample_id_for_filter.clone(),
+                                                                                    &base_state,
+                                                                                    &change,
+                                                                                    cx,
+                                                                                );
+                                                                            }),
+                                                                        )
+                                                                        .into_any_element()
+                                                                })
+                                                        } else {
+                                                            None
+                                                        };
+                                                    let range_filter_control: Option<AnyElement> =
+                                                        if sample_id == "filter-board" {
+                                                            let score_column = TableColumnId::new("score");
+                                                            let (selected_min, selected_max) = table
+                                                                .state()
+                                                                .filters()
+                                                                .iter()
+                                                                .find(|filter| filter.column() == &score_column)
+                                                                .and_then(|filter| {
+                                                                    filter.number_range_bounds()
+                                                                })
+                                                                .unwrap_or((None, None));
+                                                            table_behavior
+                                                                .column_facet(&score_column)
+                                                                .cloned()
+                                                                .map(|facets| {
+                                                                    let sample_id_for_range =
+                                                                        sample_id.to_owned();
+                                                                    let base_state = sample.state.clone();
+                                                                    div()
+                                                                        .flex()
+                                                                        .flex_col()
+                                                                        .gap_1()
+                                                                        .child(
+                                                                            div()
+                                                                                .text_xs()
+                                                                                .font_weight(
+                                                                                    open_gpui::FontWeight::BOLD,
+                                                                                )
+                                                                                .text_color(rgb(0x3f4a57))
+                                                                                .child("Score"),
+                                                                        )
+                                                                        .child(
+                                                                            TableRangeFilter::new(
+                                                                                format!(
+                                                                                    "component-table-range-filter:{}:score",
+                                                                                    sample_id
+                                                                                ),
+                                                                                "Score",
+                                                                                "score",
+                                                                            )
+                                                                            .facets(facets)
+                                                                            .range(selected_min, selected_max)
+                                                                            .clear_label("Clear score")
+                                                                            .small()
+                                                                            .tokens(snapshot.tokens)
+                                                                            .on_change(move |change, _, cx| {
+                                                                                pages::components::record_table_range_filter_change(
+                                                                                    sample_id_for_range.clone(),
+                                                                                    &base_state,
+                                                                                    &change,
+                                                                                    cx,
+                                                                                );
+                                                                            }),
+                                                                        )
+                                                                        .into_any_element()
+                                                                })
+                                                        } else {
+                                                            None
+                                                        };
+                                                    let column_visibility_control: Option<AnyElement> =
+                                                        if sample_id == "release-matrix" {
+                                                            let sample_id_for_visibility =
+                                                                sample_id.to_owned();
+                                                            let base_state = table.state().clone();
+
+                                                            Some(
+                                                                TableColumnVisibility::new(
+                                                                    format!(
+                                                                        "component-table-column-visibility:{}",
+                                                                        sample_id
+                                                                    ),
+                                                                    "Columns",
+                                                                )
+                                                                .columns(
+                                                                    table
+                                                                        .state()
+                                                                        .columns()
+                                                                        .iter()
+                                                                        .cloned(),
+                                                                )
+                                                                .visibility(
+                                                                    table
+                                                                        .state()
+                                                                        .column_visibility()
+                                                                        .clone(),
+                                                                )
+                                                                .default_visibility(
+                                                                    sample.state.column_visibility().clone(),
+                                                                )
+                                                                .show_all_label("Show all metrics")
+                                                                .reset_label("Reset columns")
+                                                                .viewport_item_count(7)
+                                                                .small()
+                                                                .tokens(snapshot.tokens)
+                                                                .on_change(move |change, _, cx| {
+                                                                    pages::components::record_table_column_visibility_change(
+                                                                        sample_id_for_visibility.clone(),
+                                                                        &base_state,
+                                                                        &change,
+                                                                        cx,
+                                                                    );
+                                                                })
+                                                                .into_any_element(),
+                                                            )
+                                                        } else {
+                                                            None
+                                                        };
+                                                    let table_toolbar: Option<AnyElement> =
+                                                        if sample_id == "filter-board"
+                                                            || sample_id == "release-matrix"
+                                                        {
+                                                            let mut has_toolbar_controls = false;
+                                                            let toolbar_summary = if sample_id == "filter-board"
+                                                            {
+                                                                format!(
+                                                                    "{} filtered / {} final rows",
+                                                                    state_summary.filtered_rows,
+                                                                    state_summary.final_rows
+                                                                )
+                                                            } else {
+                                                                format!(
+                                                                    "{} visible / {} total columns",
+                                                                    state_summary.aria_columns,
+                                                                    table.state().columns().len()
+                                                                )
+                                                            };
+                                                            let mut toolbar = TableToolbar::new(
+                                                                format!("component-table-toolbar:{sample_id}"),
+                                                                if sample_id == "filter-board" {
+                                                                    "Table filters"
+                                                                } else {
+                                                                    "Table columns"
+                                                                },
+                                                            )
+                                                            .small()
+                                                            .tokens(snapshot.tokens)
+                                                            .summary(toolbar_summary);
+
+                                                            if let Some(control) = global_filter_control {
+                                                                has_toolbar_controls = true;
+                                                                toolbar = toolbar.control(control);
+                                                            }
+                                                            if let Some(control) = predicate_filter_control {
+                                                                has_toolbar_controls = true;
+                                                                toolbar = toolbar.secondary_control(control);
+                                                            }
+                                                            if let Some(control) = faceted_filter_control {
+                                                                has_toolbar_controls = true;
+                                                                toolbar = toolbar.secondary_control(control);
+                                                            }
+                                                            if let Some(control) = range_filter_control {
+                                                                has_toolbar_controls = true;
+                                                                toolbar = toolbar.secondary_control(control);
+                                                            }
+                                                            if let Some(control) = column_visibility_control {
+                                                                has_toolbar_controls = true;
+                                                                toolbar = toolbar.control(control);
+                                                            }
+
+                                                            has_toolbar_controls
+                                                                .then(|| toolbar.into_any_element())
+                                                        } else {
+                                                            None
+                                                        };
+                                                    if sample_id == "release-resize" {
+                                                        let sample_id_for_resize = sample_id.to_owned();
+                                                        table = table.on_column_sizing_change(
+                                                            move |change, _, cx| {
+                                                                pages::components::record_table_sizing_change(
+                                                                    sample_id_for_resize.clone(),
+                                                                    &change,
+                                                                    cx,
+                                                                );
+                                                            },
+                                                        );
+                                                    }
+                                                    if sample_id == "release-rollup" {
+                                                        let sample_id_for_order = sample_id.to_owned();
+                                                        let base_state_for_order = sample.state.clone();
+                                                        table = table.on_column_order_change(
+                                                            move |change, _, cx| {
+                                                                pages::components::record_table_column_order_change(
+                                                                    sample_id_for_order.clone(),
+                                                                    &base_state_for_order,
+                                                                    &change,
+                                                                    cx,
+                                                                );
+                                                            },
+                                                        );
+                                                    }
+                                                    let sample_id_for_activation = sample_id.to_owned();
+                                                    table = table.on_row_activate(move |activation, _, cx| {
+                                                        pages::components::record_table_row_activation(
+                                                            sample_id_for_activation.clone(),
+                                                            &activation,
+                                                            cx,
+                                                        );
+                                                    });
+                                                    let sample_id_for_expansion = sample_id.to_owned();
+                                                    table =
+                                                        table.on_row_expansion_request(move |toggle, _, cx| {
+                                                            pages::components::record_table_expansion_request(
+                                                                sample_id_for_expansion.clone(),
+                                                                &base_expansion,
+                                                                &toggle,
+                                                                cx,
+                                                            );
+                                                        });
+                                                    let sample_id_for_edit = sample_id.to_owned();
+                                                    let base_state_for_edit = sample.state.clone();
+                                                    table =
+                                                        table.on_cell_edit_change(move |change, _, cx| {
+                                                            pages::components::record_table_cell_edit_change(
+                                                                sample_id_for_edit.clone(),
+                                                                &base_state_for_edit,
+                                                                &change,
+                                                                cx,
+                                                            );
+                                                        });
+
+                                                    div()
+                                                        .id(format!("component-table-sample:{sample_id}"))
+                                                        .debug_selector(move || debug_selector)
+                                                        .w(px(560.0))
+                                                        .flex_none()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_2()
+                                                        .rounded_sm()
+                                                        .border_1()
+                                                        .border_color(rgb(0xd6d8ce))
+                                                        .bg(rgb(0xffffff))
+                                                        .on_scroll_wheel(|_, window, cx| {
+                                                            window.prevent_default();
+                                                            cx.stop_propagation();
+                                                        })
+                                                        .p_3()
+                                                        .child(
+                                                            div()
+                                                                .flex()
+                                                                .items_center()
+                                                                .justify_between()
+                                                                .gap_2()
+                                                                .child(
+                                                                    div()
+                                                                        .text_sm()
+                                                                        .font_weight(
+                                                                            open_gpui::FontWeight::BOLD,
+                                                                        )
+                                                                        .child(title),
+                                                                )
+                                                                .child(label_pill(badge)),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(rgb(0x5a6472))
+                                                                .child(summary),
+                                                        )
+                                                        .when_some(table_toolbar, |this, toolbar| {
+                                                            this.child(toolbar)
+                                                        })
+                                                        .child(
+                                                            div()
+                                                                .h(px(228.0))
+                                                                .min_h(px(0.0))
+                                                                .overflow_hidden()
+                                                                .rounded_sm()
+                                                                .border_1()
+                                                                .border_color(rgb(0xe2e4dc))
+                                                                .bg(rgb(0xfcfcf8))
+                                                                .child(table),
+                                                        )
+                                                        .child(component_table_state_row(&state_summary))
+                                                }),
+                                            )),
+                                    ),
+                                )
+                            })
+                            .when(show_component_section(focus_mode, "virtualized-list"), |this| {
+                                this.child(
+                                component_page_section("virtualized-list")
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                                    .child("VirtualizedList"),
+                                            )
+                                            .child(div().flex().gap_3().flex_wrap().children(
+                                                pages::components::virtualized_list_samples(snapshot.tokens)
+                                                    .into_iter()
+                                                    .map(|sample| {
+                                                    let sample_id = sample.id;
+                                                    let debug_selector = sample.debug_selector();
+                                                    let title = sample.title;
+                                                    let summary = sample.summary;
+                                                    let badge = sample.badge;
+                                                    let state = sample.state.clone();
+                                                    let state_summary = sample.state_summary();
+                                                    let sample_id_for_activation = sample_id.to_owned();
+                                                    let list = sample.build_list().on_activate(
+                                                    move |activation, _, cx| {
+                                                        pages::components::record_virtualized_list_activation(
+                                                            sample_id_for_activation.clone(),
+                                                            activation.index(),
+                                                            cx,
+                                                        );
+                                                    },
+                                                );
+
+                                                    div()
+                                                        .id(format!(
+                                                            "component-virtualized-list-sample:{sample_id}"
+                                                        ))
+                                                        .debug_selector(move || debug_selector)
+                                                        .w(px(420.0))
+                                                        .flex_none()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_2()
+                                                        .rounded_sm()
+                                                        .border_1()
+                                                        .border_color(rgb(0xd6d8ce))
+                                                        .bg(rgb(0xffffff))
+                                                        .on_scroll_wheel(|_, window, cx| {
+                                                            window.prevent_default();
+                                                            cx.stop_propagation();
+                                                        })
+                                                        .p_3()
+                                                        .child(
+                                                            div()
+                                                                .flex()
+                                                                .items_center()
+                                                                .justify_between()
+                                                                .gap_2()
+                                                                .child(
+                                                                    div()
+                                                                        .text_sm()
+                                                                        .font_weight(
+                                                                            open_gpui::FontWeight::BOLD,
+                                                                        )
+                                                                        .child(title),
+                                                                )
+                                                                .child(label_pill(badge)),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(rgb(0x5a6472))
+                                                                .child(summary),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .h(px(224.0))
+                                                                .min_h(px(0.0))
+                                                                .overflow_hidden()
+                                                                .rounded_sm()
+                                                                .border_1()
+                                                                .border_color(rgb(0xe2e4dc))
+                                                                .bg(rgb(0xfcfcf8))
+                                                                .child(list),
+                                                        )
+                                                        .child(component_virtualized_list_state_row(
+                                                            &state_summary,
+                                                            &state,
+                                                        ))
+                                                }),
+                                            )),
+                                    ),
+                                )
+                            })
+                            .when(show_component_section(focus_mode, "signals"), |this| {
+                                this.child(
+                                component_page_section("signals")
+                                    .child(shell.render_signal_list(snapshot.selected_page)),
+                                )
+                            }).into_any_element()
+        }
+        _ => div().h_0().into_any_element(),
+    }
+}
