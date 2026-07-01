@@ -2638,13 +2638,22 @@ fn public_primitive_modules_from_mod() -> Vec<String> {
 }
 
 fn default_reexport_tokens(file_name: &str) -> std::collections::BTreeSet<String> {
-    let source = std::fs::read_to_string(format!("{}/src/{file_name}", env!("CARGO_MANIFEST_DIR")))
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source_path = manifest_dir.join("src").join(file_name);
+    let source = std::fs::read_to_string(&source_path)
         .unwrap_or_else(|error| panic!("failed to read {file_name}: {error}"));
     let source = if file_name == "lib.rs" {
         source_without_gpui_adapter_module(&source)
     } else {
         source
     };
+    reexport_tokens_from_source(&source, source_path.parent().expect("src directory should exist"))
+}
+
+fn reexport_tokens_from_source(
+    source: &str,
+    base_dir: &std::path::Path,
+) -> std::collections::BTreeSet<String> {
     let mut exports = std::collections::BTreeSet::new();
     let mut statement = String::new();
     let mut collecting = false;
@@ -2661,7 +2670,7 @@ fn default_reexport_tokens(file_name: &str) -> std::collections::BTreeSet<String
         }
 
         if collecting && trimmed.ends_with(';') {
-            collect_public_reexport_tokens(&statement, &mut exports);
+            collect_public_reexport_tokens(&statement, base_dir, &mut exports);
             statement.clear();
             collecting = false;
         }
@@ -2672,6 +2681,7 @@ fn default_reexport_tokens(file_name: &str) -> std::collections::BTreeSet<String
 
 fn collect_public_reexport_tokens(
     statement: &str,
+    base_dir: &std::path::Path,
     exports: &mut std::collections::BTreeSet<String>,
 ) {
     let statement = statement.trim().trim_end_matches(';');
@@ -2679,6 +2689,7 @@ fn collect_public_reexport_tokens(
         return;
     };
     if rest.contains("::*") {
+        collect_curated_wildcard_reexport_tokens(rest, base_dir, exports);
         return;
     }
 
@@ -2690,6 +2701,29 @@ fn collect_public_reexport_tokens(
     } else {
         collect_public_reexport_token(rest, exports);
     }
+}
+
+fn collect_curated_wildcard_reexport_tokens(
+    rest: &str,
+    base_dir: &std::path::Path,
+    exports: &mut std::collections::BTreeSet<String>,
+) {
+    let Some(module_path) = rest.strip_suffix("::*") else {
+        return;
+    };
+    let relative_module_path = module_path
+        .strip_prefix("public_api::")
+        .or_else(|| module_path.strip_prefix("crate::public_api::"));
+    let Some(relative_module_path) = relative_module_path else {
+        return;
+    };
+    let relative_module_path = relative_module_path.replace("::", "/");
+    let source_path = base_dir
+        .join("public_api")
+        .join(format!("{relative_module_path}.rs"));
+    let source = std::fs::read_to_string(&source_path)
+        .unwrap_or_else(|error| panic!("failed to read curated public API {source_path:?}: {error}"));
+    exports.extend(reexport_tokens_from_source(&source, base_dir));
 }
 
 fn collect_public_reexport_token(item: &str, exports: &mut std::collections::BTreeSet<String>) {

@@ -312,6 +312,13 @@ fn public_reexports_stay_explicit_without_wildcards() {
 
         for (line_number, line) in source.lines().enumerate() {
             if line.contains("pub use ") && line.contains("::*") {
+                let trimmed = line.trim();
+                if matches!(
+                    trimmed,
+                    "pub use public_api::default::*;" | "pub use crate::public_api::default::*;"
+                ) {
+                    continue;
+                }
                 wildcard_exports.push(format!("{file_name}:{}", line_number + 1));
             }
         }
