@@ -557,6 +557,27 @@ cargo nextest run -p open-gpui-ui-foundation-gallery tree --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery table --no-fail-fast
 ```
 
+For the registry/a11y/theme productization follow-up, do not start from broad component file
+splitting. Keep verification focused on the shared contract owners:
+
+```powershell
+cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --check
+cargo check -p open-gpui-ui-components --tests
+cargo check -p open-gpui-ui-foundation-gallery --tests
+cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
+cargo nextest run -p open-gpui-ui-components a11y --no-fail-fast
+cargo nextest run -p open-gpui-ui-components theme --no-fail-fast
+cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts --no-fail-fast
+```
+
+Run the full component and gallery package gates only after broad registry, theme, or gallery
+changes:
+
+```powershell
+cargo nextest run -p open-gpui-ui-components --no-fail-fast
+cargo nextest run -p open-gpui-ui-foundation-gallery --no-fail-fast
+```
+
 The Components gallery root keeps `runtime`, `samples`, and render ownership private. Stable
 gallery API names are re-exported explicitly from `components.rs`; sample families live under
 `examples/ui-foundation-gallery/src/pages/components/samples/`, runtime probes under

@@ -3,7 +3,8 @@
 Official Open GPUI components use an adapter-first, productized GPUI shape. A component may render
 with GPUI today, but its behavior and semantic state should stay renderer-neutral enough to test
 without rewriting the public API. ADR 0008 treats the current UI crates as the active product
-boundary; future headless extraction is a deferred option, not the current roadmap.
+boundary; future headless extraction is historical boundary evidence, not the current roadmap or
+the next implied refactor.
 
 ## Resolved State
 
@@ -311,7 +312,10 @@ A component is official only when it satisfies the current-crate completion cont
 - `docs/verification.md` names any manual or automated gate added by the component.
 
 `open_gpui_ui_components::component_contract` owns the current product registry for this contract;
-its source home is `crates/ui_components/src/component_contract/mod.rs`.
+its current source home is `crates/ui_components/src/component_contract/mod.rs`. The next registry
+refactor should split that module by product-contract responsibility: entry types, canonical rows,
+projection APIs, source mapping, public API inventory, docs/gallery status, and validation helpers.
+That split is a shared fact-source cleanup, not a broad component-file-size cleanup.
 That registry classifies official components, official recipes, renderer-neutral state contracts,
 GPUI adapter helpers, public anatomy, diagnostics, and removed compatibility targets. It also
 records API inventory rows, source homes, docs tokens, gallery status, and default-export intent.
@@ -778,6 +782,11 @@ ADR 0008 makes current-crate productization the active roadmap. The boundary rul
 useful hygiene for tests and future adapter work, but they are not a directive to create
 `open-gpui-ui-headless` in the current branch.
 
+The 2026-07-01 productization follow-up keeps both standalone headless extraction and broad
+remaining-1k-line component splitting out of scope. Split a large component file only when a
+specific contract, runtime, accessibility, or theme ownership problem requires it; file size alone
+is not the roadmap driver.
+
 The current component catalog has enough repeated behavior to keep a future extraction possible:
 overlay policy resolution, roving focus, listbox collection navigation, scroll viewport intent, and
 splitter resize constraints are all renderer-neutral candidates if that work is reopened.
@@ -806,10 +815,14 @@ Before extraction, keep these boundary rules explicit:
 
 ## Current Known Gaps
 
-The runtime theme table covers semantic component colors for light, dark, high-contrast, and
-registry-loaded snapshots. A JSON schema and file-loader facade are still follow-up work; UIs
-should construct `ThemeDefinition` values explicitly and register them before handing immutable
-snapshots to component adapters. Single-line editable text input now uses GPUI's `EntityInputHandler`/
+The active next UI productization slice is
+`docs/plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md`: split the component contract
+registry, add focused accessibility contract gates, and add a theme JSON schema plus file-loader
+facade. Broad remaining-1k-line component splitting and `open-gpui-ui-headless` extraction are not
+part of that slice. Until the theme loader lands, the runtime theme table covers semantic component
+colors for light, dark, high-contrast, and registry-loaded snapshots, but UIs should construct
+`ThemeDefinition` values explicitly and register them before handing immutable snapshots to
+component adapters. Single-line editable text input now uses GPUI's `EntityInputHandler`/
 `ElementInputHandler` path through `TextInputController`. Applications can either supply an
 adapter-owned controller directly or use the standard controlled shape
 `TextInput::value(...).on_change(...)`; the latter creates a keyed adapter controller internally,
@@ -826,8 +839,8 @@ Password reveal toggles, credential-manager affordances, textarea auto-grow/drag
 completion, validation engines, rich text, and code-editor behavior remain out of scope. `Field`
 still stays separate from the editing controller and remains composition-only. `focus_ring_shadow`
 is GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.
-ADR 0008 keeps current-crate productization as the active roadmap. ADR 0006 keeps
-`open-gpui-ui-headless` deferred after the strict boundary checkpoint, and ADR 0007 records the
+ADR 0008 keeps current-crate productization as the active roadmap. ADR 0006 keeps the strict
+boundary checkpoint as future extraction evidence, not active work, and ADR 0007 records the
 post-boundary extraction design without creating the behavior crate.
 The project now has repeated reusable behavior across overlay, roving focus, listbox navigation,
 scroll viewports, and splitter constraints, and component tests guard public resolved-state structs
@@ -951,6 +964,10 @@ drag/drop movement, and virtualized behavior snapshots.
 `menu/runtime.rs` owns submenu hover timing, branch switching, trigger-bound caches, and local
 submenu scroll handles for `Menu` and `ContextMenu`, keeping render assembly thin while preserving
 safe hover and local scroll ownership.
+After these family splits, the next shared UI framework work is contract productization:
+`component_contract` module ownership, a11y contract gates, and theme schema/loading. The remaining
+large component files should stay intact unless one of those product contracts exposes a concrete
+ownership problem.
 `Splitter` covers panel fraction normalization, min/max constraints, collapsed-panel metadata,
 stable handle anatomy, and local pointer dragging through keyed runtime state. Keyboard resizing,
 controlled resize callbacks, persisted layouts, RTL behavior, and nested splitter arbitration
