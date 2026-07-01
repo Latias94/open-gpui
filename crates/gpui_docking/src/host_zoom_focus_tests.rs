@@ -1,5 +1,5 @@
 use crate::{
-    DockViewportFocusRequest, SplitAxis,
+    DockSpatialDirection, DockViewportFocusRequest, SplitAxis,
     debug::DockDebugRegion,
     host_test_support::{item, open_host, selector_for, space, split_graph},
     presentation_scene::DockPresentationOverlayAnchorKind,
@@ -332,6 +332,38 @@ fn host_focus_command_targets_selected_item_for_pane(cx: &mut TestAppContext) {
         pending_matches || recorded_matches
     });
     assert!(focus_reached_target);
+}
+
+#[open_gpui::test]
+fn host_focus_neighbor_command_uses_spatial_navigation(cx: &mut TestAppContext) {
+    let (graph, _root, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(220.0)),
+    );
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(host_bounds(400.0, 220.0), cx)
+    });
+    host.update(cx, |host, _| host.set_last_presentation_scene(scene));
+
+    assert!(host.update(cx, |host, cx| {
+        host.focus_neighbor_pane(left_tabs, DockSpatialDirection::Right, cx)
+    }));
+    let focus_reached_neighbor = host.update(cx, |host, _| {
+        let pending_matches = host.pending_focus_command().is_some_and(|command| {
+            command.request() == &DockViewportFocusRequest::panel(item("b"))
+        });
+        let recorded_matches = host
+            .viewport_runtime()
+            .recorded_panel_focus_matches(&space(), &item("b"));
+        pending_matches || recorded_matches
+    });
+    assert!(focus_reached_neighbor);
+    assert!(!host.update(cx, |host, cx| {
+        host.focus_neighbor_pane(right_tabs, DockSpatialDirection::Right, cx)
+    }));
 }
 
 #[open_gpui::test]

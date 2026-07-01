@@ -6,6 +6,17 @@ status: active
 
 # Log
 
+- 2026-07-01: Completed U8 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. Corner splitter junctions now expose scene-derived affordance states, render visible grip
+  feedback, use resize cursors, and resize both axes through the rendered mouse-event path. The
+  interaction runtime has a clamp regression proving one constrained axis does not corrupt the
+  other axis. Splitter a11y tests cover horizontal increment and vertical decrement. Added
+  docking-private rectangle-neighbor pane navigation from presentation-scene bounds plus a public
+  `DockSpatialDirection` command input for `DockHost::focus_neighbor_pane`. Verification passed
+  with `cargo check -p open-gpui-docking --tests`, the focused 17-test U8 nextest command,
+  `cargo fmt --all -- --check`, and `git diff --check`. Next action is commit U8, then implement
+  U9 cross-window overlay animation and cleanup proof.
 - 2026-07-01: Completed U7 from
   `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
   tree. `open_gpui_ui_core::split` now owns generic split fraction normalization, one-fill-child

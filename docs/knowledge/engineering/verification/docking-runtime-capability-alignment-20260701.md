@@ -153,3 +153,35 @@ Implemented U7 shared split primitive cleanup:
 The U7 extraction deliberately did not export rectangle-neighbor navigation or docking policy
 objects. `resolve_split_fractions_with_fill_child` is a generic fill-child helper; docking decides
 which child, if any, is the central fill child before calling it.
+
+## U8 / Phase C Corner Drag And Spatial Navigation
+
+Implemented U8 visible corner drag and docking-private spatial navigation:
+
+- `DockDividerHitMap` now derives corner affordance records from the same scene-backed handle and
+  junction targets that drive splitter hit testing.
+- Corner affordances expose explicit states for idle, hover, active, focused, one-axis-clamped,
+  both-axes-rejected, and disabled feedback. Render paints corner grips from those descriptors and
+  sets resize cursors for both single-axis handles and corner junctions.
+- Real rendered diagonal corner dragging now begins a two-axis splitter drag and commits both resize
+  updates through the existing workspace transaction path.
+- Runtime resize tests lock the min-size clamp behavior where one axis can clamp without corrupting
+  the other axis update.
+- Splitter accessibility action tests now cover both horizontal increment and vertical decrement.
+- `DockSpatialDirection` is a public docking command input. The rectangle-neighbor resolver remains
+  private to docking and ranks candidates by direction, perpendicular overlap, then distance using
+  the current presentation scene.
+
+## U8 Commands
+
+- `cargo check -p open-gpui-docking --tests` - passed.
+- `cargo nextest run -p open-gpui-docking spatial_navigation_tests host_zoom_focus_tests::host_focus_neighbor_command_uses_spatial_navigation host_accessibility_tests::accessibility_splitter_actions_resize_through_transaction_path host_accessibility_tests::accessibility_vertical_splitter_actions_target_vertical_axis host_divider_hit_map_tests host_interaction_tests::horizontal_splitter_drag_updates_width_fractions host_interaction_tests::vertical_splitter_drag_updates_height_fractions host_interaction_tests::splitter_drag_clamps_to_minimum_pane_size host_interaction_tests::corner_splitter_drag_updates_both_axes_through_rendered_events interaction::tests::corner_splitter_drag_produces_two_axis_resize_request interaction::tests::corner_splitter_drag_clamps_one_axis_without_corrupting_other_axis render::tests::divider_affordance_states_have_distinct_feedback_colors --no-fail-fast` -
+  passed, 17 tests.
+- `cargo fmt --all -- --check` - passed.
+- `git diff --check` - passed.
+
+## U8 Verification Notes
+
+The spatial navigation algorithm intentionally stays in `gpui_docking` rather than
+`open_gpui_ui_core`: it depends on docking presentation panes, selected tab focus regions, and
+host focus commands. The split primitive boundary from U7 remains intact.

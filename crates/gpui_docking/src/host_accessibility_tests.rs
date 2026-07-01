@@ -460,6 +460,49 @@ fn accessibility_splitter_actions_resize_through_transaction_path(cx: &mut TestA
     });
 }
 
+#[open_gpui::test]
+fn accessibility_vertical_splitter_actions_target_vertical_axis(cx: &mut TestAppContext) {
+    let (graph, root, _top, _bottom) =
+        crate::host_test_support::split_graph(SplitAxis::Vertical, 0.5, 0.5);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(320.0), px(400.0)),
+    );
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(floating_bounds(0.0, 0.0, 320.0, 400.0), cx)
+    });
+    host.update(cx, |host, _| host.set_last_presentation_scene(scene));
+
+    let resized = host.update(cx, |host, cx| {
+        host.resize_splitter_from_accessibility(
+            root,
+            SplitAxis::Vertical,
+            0,
+            AccessibleAction::Decrement,
+            cx,
+        )
+    });
+    assert!(
+        resized,
+        "decrement should commit a vertical resize transaction"
+    );
+
+    host.update(cx, |host, cx| {
+        host.with_workspace(cx, |workspace| {
+            let Some(crate::DockNode::Split { fractions, .. }) = workspace.graph().node(root)
+            else {
+                panic!("root should remain a vertical split");
+            };
+            assert!(
+                fractions[0] < 0.5,
+                "vertical decrement should shrink the first adjacent pane"
+            );
+        });
+    });
+}
+
 fn gpui_accessibility_signature(
     scene: &crate::presentation_scene::DockPresentationScene,
 ) -> Vec<(

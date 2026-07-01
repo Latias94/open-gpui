@@ -96,6 +96,7 @@ Use narrower checks while iterating:
 cargo nextest run -p open-gpui-ui-core split --no-fail-fast
 cargo nextest run -p open-gpui-ui-components splitter gpui_adapter_maps_splitter_role --no-fail-fast
 cargo nextest run -p open-gpui-docking geometry host_accessibility_tests host_divider_hit_map_tests workspace_resize_policy_tests graph_split_tests interaction --no-fail-fast
+cargo nextest run -p open-gpui-docking spatial_navigation_tests host_zoom_focus_tests::host_focus_neighbor_command_uses_spatial_navigation host_accessibility_tests::accessibility_splitter_actions_resize_through_transaction_path host_accessibility_tests::accessibility_vertical_splitter_actions_target_vertical_axis host_divider_hit_map_tests host_interaction_tests::horizontal_splitter_drag_updates_width_fractions host_interaction_tests::vertical_splitter_drag_updates_height_fractions host_interaction_tests::splitter_drag_clamps_to_minimum_pane_size host_interaction_tests::corner_splitter_drag_updates_both_axes_through_rendered_events interaction::tests::corner_splitter_drag_produces_two_axis_resize_request interaction::tests::corner_splitter_drag_clamps_one_axis_without_corrupting_other_axis render::tests::divider_affordance_states_have_distinct_feedback_colors --no-fail-fast
 ```
 
 These checks prove capability alignment instead of pixel parity: tab insertion previews remain tab
@@ -109,6 +110,11 @@ resolution, and pixel-delta adjacent resize helpers in `open_gpui_ui_core`. Dock
 helpers for graph normalization, render flex shares, presentation-scene split layout, and splitter
 drag resize transactions. Docking-local geometry should remain limited to docking-specific
 drop-guide boxes, central-region target policy adapters, and GPUI `Bounds<Pixels>` conversion.
+Docking-private spatial navigation now resolves nearest pane focus targets from the current
+presentation scene using direction filtering, perpendicular overlap priority, and distance
+tie-breaking. The direction enum is a docking command input, while the rectangle-neighbor resolver
+remains private to docking because it depends on docking pane semantics and rendered presentation
+facts.
 
 Current docking accessibility output maps supported descriptor data into GPUI element state:
 stable IDs, roles, labels, selected/disabled state, orientation, numeric splitter values, tab

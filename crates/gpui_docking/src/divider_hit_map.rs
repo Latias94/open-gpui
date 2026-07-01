@@ -40,6 +40,23 @@ pub(crate) struct DockDividerCornerHitTarget {
     pub(crate) bounds: Bounds<Pixels>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockDividerAffordanceState {
+    Idle,
+    Hover,
+    Active,
+    Focused,
+    OneAxisClamped,
+    BothAxesRejected,
+    Disabled,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockDividerCornerAffordance {
+    pub(crate) corner: DockDividerCornerHitTarget,
+    pub(crate) state: DockDividerAffordanceState,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct DockCoreHandleTarget {
     core: SplitterHandleLayout,
@@ -86,6 +103,24 @@ impl DockDividerHitMap {
             DockDividerHitTarget::Corner(corner) => corner.bounds.contains(&position),
             DockDividerHitTarget::Single(handle) => handle.bounds.contains(&position),
         })
+    }
+
+    pub(crate) fn corner_affordances(
+        &self,
+        hover_position: Option<Point<Pixels>>,
+        dragging: bool,
+        enabled: bool,
+    ) -> Vec<DockDividerCornerAffordance> {
+        self.targets
+            .iter()
+            .filter_map(|target| match target {
+                DockDividerHitTarget::Corner(corner) => Some(DockDividerCornerAffordance {
+                    corner: *corner,
+                    state: corner_affordance_state(*corner, hover_position, dragging, enabled),
+                }),
+                DockDividerHitTarget::Single(_) => None,
+            })
+            .collect()
     }
 
     #[cfg(test)]
@@ -165,4 +200,22 @@ fn bounds_from_ui_rect(rect: UiRect) -> Bounds<Pixels> {
         point(px(rect.origin.x.as_f32()), px(rect.origin.y.as_f32())),
         size(px(rect.size.width.as_f32()), px(rect.size.height.as_f32())),
     )
+}
+
+fn corner_affordance_state(
+    corner: DockDividerCornerHitTarget,
+    hover_position: Option<Point<Pixels>>,
+    dragging: bool,
+    enabled: bool,
+) -> DockDividerAffordanceState {
+    if !enabled {
+        return DockDividerAffordanceState::Disabled;
+    }
+    if dragging {
+        return DockDividerAffordanceState::Active;
+    }
+    if hover_position.is_some_and(|position| corner.bounds.contains(&position)) {
+        return DockDividerAffordanceState::Hover;
+    }
+    DockDividerAffordanceState::Idle
 }

@@ -3,6 +3,7 @@ use crate::{
     DockPanelDescriptor, DockSpaceId, DockViewportRuntimeHandle, DockWorkspace, DropZone,
     SplitAxis,
     debug::DockDebugRegion,
+    divider_hit_map::{DockDividerHitMap, DockDividerHitTarget},
     drag::DockDragPayload,
     drop_scene_fact,
     drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
@@ -173,6 +174,93 @@ fn splitter_drag_clamps_to_minimum_pane_size(cx: &mut TestAppContext) {
 
     assert_close(width(debug_bounds(&mut visual, &left)), 96.0);
     assert_close(width(debug_bounds(&mut visual, &right)), 304.0);
+}
+
+#[open_gpui::test]
+fn corner_splitter_drag_updates_both_axes_through_rendered_events(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let top_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let bottom_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let vertical = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![top_right, bottom_right],
+        fractions: vec![0.5, 0.5],
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left, vertical],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root);
+    let workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, _host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(400.0), px(240.0)));
+    let scene = window
+        .root(cx)
+        .expect("window should expose host")
+        .update(cx, |host, cx| {
+            host.presentation_scene_for_test(floating_bounds(0.0, 0.0, 400.0, 240.0), cx)
+        });
+    let hit_map = DockDividerHitMap::from_scene(&scene);
+    let start = match hit_map
+        .hit(point(px(200.0), px(120.0)))
+        .expect("junction should resolve")
+    {
+        DockDividerHitTarget::Corner(corner) => corner.bounds.center(),
+        DockDividerHitTarget::Single(_) => panic!("junction should prefer corner"),
+    };
+    let end = point(start.x + px(80.0), start.y + px(48.0));
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Split {
+            fractions: root_fractions,
+            ..
+        } = controller
+            .graph()
+            .node(root)
+            .expect("root split should exist")
+        else {
+            panic!("root should be split");
+        };
+        let DockNode::Split {
+            fractions: vertical_fractions,
+            ..
+        } = controller
+            .graph()
+            .node(vertical)
+            .expect("vertical split should exist")
+        else {
+            panic!("right side should be vertical split");
+        };
+        assert_close(root_fractions[0], 0.7);
+        assert_close(root_fractions[1], 0.3);
+        assert_close(vertical_fractions[0], 0.7);
+        assert_close(vertical_fractions[1], 0.3);
+    });
 }
 
 #[open_gpui::test]

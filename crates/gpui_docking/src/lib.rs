@@ -131,6 +131,9 @@ mod render;
 mod render_floating;
 mod render_split;
 mod render_tabs;
+mod spatial_navigation;
+#[cfg(test)]
+mod spatial_navigation_tests;
 mod transition_executor;
 mod transition_geometry;
 mod viewport;
@@ -248,6 +251,7 @@ pub use panel::*;
 pub use panel_catalog::*;
 pub use panel_registry::*;
 pub use policy::*;
+pub use spatial_navigation::DockSpatialDirection;
 pub use transition_executor::DockTransitionExecutionState;
 pub use transition_geometry::DockTransitionPlan;
 pub(crate) use viewport::*;

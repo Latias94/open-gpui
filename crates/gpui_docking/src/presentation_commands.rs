@@ -1,6 +1,7 @@
 use crate::{
     DockHost, DockItemId, DockNode, DockNodeId, DockViewportFocusCommand, DockViewportFocusRequest,
     presentation_scene::DockPresentationScene,
+    spatial_navigation::{self, DockSpatialDirection},
     transition_executor::{DockTransitionExecutionState, DockTransitionSample},
     transition_geometry::{DockMotionPreference, DockTransitionPlan},
 };
@@ -124,6 +125,29 @@ impl DockHost {
             );
         }
         changed
+    }
+
+    /// Requests focus for the nearest pane in a direction from the current tabs pane.
+    pub fn focus_neighbor_pane(
+        &mut self,
+        current_tabs: DockNodeId,
+        direction: DockSpatialDirection,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(scene) = self.last_presentation_scene().cloned() else {
+            return false;
+        };
+        let Some(target) = spatial_navigation::resolve_neighbor(&scene, current_tabs, direction)
+        else {
+            return false;
+        };
+        self.focus_pane_with_scene(
+            target.tabs,
+            scene,
+            Self::focus_pulse_motion(DockMotionPreference::Animated),
+            None,
+            cx,
+        )
     }
 
     fn request_focus_pane_command(

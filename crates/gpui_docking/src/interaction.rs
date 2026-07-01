@@ -30,6 +30,12 @@ pub(crate) struct SplitterDrag {
     axes: Vec<SplitterDragAxis>,
 }
 
+impl SplitterDrag {
+    pub(crate) fn axis_count(&self) -> usize {
+        self.axes.len()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct SplitterDragAxis {
     pub(crate) axis: SplitAxis,
@@ -545,6 +551,12 @@ impl DockInteractionRuntime {
             .collect::<Option<Vec<_>>>()?;
 
         (!updates.is_empty()).then_some(DockSplitterResizeRequest { updates })
+    }
+
+    pub(crate) fn corner_splitter_drag_active(&self) -> bool {
+        self.splitter_drag
+            .as_ref()
+            .is_some_and(|drag| drag.axis_count() > 1)
     }
 
     pub(crate) fn finish_splitter_drag(&mut self) -> bool {
@@ -1414,6 +1426,38 @@ mod tests {
         assert_eq!(request.updates.len(), 2);
         assert_resize_update(&request.updates[0], horizontal, &[0.7, 0.3]);
         assert_resize_update(&request.updates[1], vertical, &[0.6, 0.4]);
+    }
+
+    #[test]
+    fn corner_splitter_drag_clamps_one_axis_without_corrupting_other_axis() {
+        let horizontal = DockNodeId::null();
+        let vertical = DockNodeId::null();
+        let mut runtime = DockInteractionRuntime::default();
+        runtime.start_corner_splitter_drag(
+            SplitterDragAxis::new(
+                SplitAxis::Horizontal,
+                horizontal,
+                0,
+                px(100.0),
+                px(400.0),
+                vec![0.5, 0.5],
+            ),
+            SplitterDragAxis::new(
+                SplitAxis::Vertical,
+                vertical,
+                0,
+                px(100.0),
+                px(400.0),
+                vec![0.5, 0.5],
+            ),
+        );
+
+        let request = runtime
+            .resize_split_request(point(px(-100.0), px(180.0)), px(96.0))
+            .expect("corner drag should keep valid resize updates");
+        assert_eq!(request.updates.len(), 2);
+        assert_resize_update(&request.updates[0], horizontal, &[0.24, 0.76]);
+        assert_resize_update(&request.updates[1], vertical, &[0.7, 0.3]);
     }
 
     #[test]

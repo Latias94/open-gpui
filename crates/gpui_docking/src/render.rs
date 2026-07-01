@@ -2,7 +2,7 @@ use crate::{
     DockHost, DockNode, DockNodeId, DropZone,
     accessibility_scene::DockAccessibilityScene,
     debug::DockDebugRegion,
-    divider_hit_map::DockDividerHitMap,
+    divider_hit_map::{DockDividerAffordanceState, DockDividerHitMap, DockDividerHitTarget},
     drag::DockDragPayload,
     drop_preview::{
         DockDropPreview, DockDropRoutePreview, DockPreviewDropBox, DockPreviewTabInsertionIndex,
@@ -24,9 +24,9 @@ use crate::{
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{
-    AnyElement, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render, Rgba,
-    SharedString, Styled, Window, black, canvas, div, point, px, rgb, rgba,
+    AnyElement, BorderStyle, Bounds, Context, CursorStyle, DragMoveEvent, InteractiveElement,
+    IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
+    Render, Rgba, SharedString, Styled, Window, black, canvas, div, point, px, quad, rgb, rgba,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -464,9 +464,27 @@ impl DockHost {
 
         canvas(
             |_, _, _| (),
-            move |bounds, _, window, _| {
+            move |bounds, _, window, app| {
                 let scene = DockPresentationScene::from_render_session(&session, bounds);
                 let hit_map = DockDividerHitMap::from_scene(&scene);
+                let hover_position = Some(window.mouse_position());
+                let corner_dragging = entity.read(app).interaction().corner_splitter_drag_active();
+                let corner_affordances =
+                    hit_map.corner_affordances(hover_position, corner_dragging, true);
+
+                if let Some(target) = hit_map.hit(window.mouse_position()) {
+                    window.set_window_cursor_style(cursor_for_divider_target(target));
+                }
+                for affordance in &corner_affordances {
+                    window.paint_quad(quad(
+                        affordance.corner.bounds,
+                        px(3.0),
+                        background_for_divider_affordance_state(affordance.state),
+                        px(1.0),
+                        rgba(0xffffffb3),
+                        BorderStyle::Solid,
+                    ));
+                }
 
                 window.on_mouse_event({
                     let entity = entity.clone();
@@ -1121,6 +1139,28 @@ fn payload_tab_from_overlay_layer(layer: &DockOverlayLayer) -> Option<DockDropPr
     })
 }
 
+fn cursor_for_divider_target(target: &DockDividerHitTarget) -> CursorStyle {
+    match target {
+        DockDividerHitTarget::Single(handle) => match handle.key.axis {
+            crate::SplitAxis::Horizontal => CursorStyle::ResizeColumn,
+            crate::SplitAxis::Vertical => CursorStyle::ResizeRow,
+        },
+        DockDividerHitTarget::Corner(_) => CursorStyle::ResizeUpRightDownLeft,
+    }
+}
+
+fn background_for_divider_affordance_state(state: DockDividerAffordanceState) -> Rgba {
+    match state {
+        DockDividerAffordanceState::Idle => rgba(0x64748b4d),
+        DockDividerAffordanceState::Hover => rgba(0x2563eb99),
+        DockDividerAffordanceState::Active => rgba(0x1d4ed8cc),
+        DockDividerAffordanceState::Focused => rgba(0x7c3aedb3),
+        DockDividerAffordanceState::OneAxisClamped => rgba(0xf59e0b99),
+        DockDividerAffordanceState::BothAxesRejected => rgba(0xdc2626a6),
+        DockDividerAffordanceState::Disabled => rgba(0x94a3b84d),
+    }
+}
+
 fn guide_directional_cue(
     zone: DropZone,
     box_size: open_gpui::Size<Pixels>,
@@ -1470,6 +1510,29 @@ mod tests {
         assert_ne!(known, tear_off);
         assert_ne!(known, rejected);
         assert_ne!(tear_off, rejected);
+    }
+
+    #[test]
+    fn divider_affordance_states_have_distinct_feedback_colors() {
+        let states = [
+            DockDividerAffordanceState::Idle,
+            DockDividerAffordanceState::Hover,
+            DockDividerAffordanceState::Active,
+            DockDividerAffordanceState::Focused,
+            DockDividerAffordanceState::OneAxisClamped,
+            DockDividerAffordanceState::BothAxesRejected,
+            DockDividerAffordanceState::Disabled,
+        ];
+
+        for (index, state) in states.iter().enumerate() {
+            for other in states.iter().skip(index + 1) {
+                assert_ne!(
+                    background_for_divider_affordance_state(*state),
+                    background_for_divider_affordance_state(*other),
+                    "{state:?} and {other:?} should be visually distinguishable"
+                );
+            }
+        }
     }
 
     #[test]

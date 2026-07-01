@@ -32,6 +32,7 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-core split --no-fail-fast
   - cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast
   - cargo nextest run -p open-gpui-docking geometry workspace_resize_policy_tests host_interaction_tests::horizontal_splitter_drag_updates_width_fractions host_interaction_tests::vertical_splitter_drag_updates_height_fractions host_interaction_tests::splitter_drag_clamps_to_minimum_pane_size host_render_tests::central_split_child_uses_remaining_render_space host_render_tests::horizontal_split_uses_normalized_flex_shares host_render_tests::vertical_split_uses_normalized_flex_shares host_render_tests::unnormalized_split_fractions_are_repaired_for_rendering --no-fail-fast
+  - cargo nextest run -p open-gpui-docking spatial_navigation_tests host_zoom_focus_tests::host_focus_neighbor_command_uses_spatial_navigation host_accessibility_tests::accessibility_splitter_actions_resize_through_transaction_path host_accessibility_tests::accessibility_vertical_splitter_actions_target_vertical_axis host_divider_hit_map_tests host_interaction_tests::horizontal_splitter_drag_updates_width_fractions host_interaction_tests::vertical_splitter_drag_updates_height_fractions host_interaction_tests::splitter_drag_clamps_to_minimum_pane_size host_interaction_tests::corner_splitter_drag_updates_both_axes_through_rendered_events interaction::tests::corner_splitter_drag_produces_two_axis_resize_request interaction::tests::corner_splitter_drag_clamps_one_axis_without_corrupting_other_axis render::tests::divider_affordance_states_have_distinct_feedback_colors --no-fail-fast
   - git diff --check
   - python $HOME/.codex/skills/engineering-wiki-memory/scripts/wiki_memory.py validate --root docs/knowledge/engineering
 ---
@@ -76,12 +77,17 @@ verified_by:
   and pixel-delta adjacent resize helpers. Docking consumes those helpers for graph normalization,
   render flex shares, presentation split layout, and splitter drag transactions; the docking-local
   `split_fraction.rs` module and `DockSplitLayout` wrapper were deleted.
-- In progress: Phase C continues with visible corner-drag proof, routed overlay cleanup proof,
-  dogfood evidence, and ADR/helper deletion from U8-U11.
-- Last verified: Phase A, Phase B, U5, U6, and U7 focused gates passed locally; see the runtime
+- Done: U8 visible corner drag and docking-private spatial navigation are implemented locally.
+  Corner divider affordances now have explicit visible states, render-time grip feedback and
+  resize cursors, real rendered diagonal corner drag updates both split axes, a11y splitter actions
+  target horizontal and vertical axes, and `DockSpatialDirection` drives a private
+  rectangle-neighbor resolver for pane focus commands.
+- In progress: Phase C continues with routed overlay cleanup proof, dogfood evidence, and
+  ADR/helper deletion from U9-U11.
+- Last verified: Phase A, Phase B, U5, U6, U7, and U8 focused gates passed locally; see the runtime
   capability verification evidence file.
 - Blocked: None.
-- Next action: commit U7, then continue with U8 corner drag and docking-private spatial navigation.
+- Next action: commit U8, then continue with U9 cross-window overlay animation and cleanup proof.
 
 # Citations
 

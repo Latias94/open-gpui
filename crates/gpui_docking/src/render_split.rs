@@ -6,7 +6,7 @@ use crate::{
     render::DockViewportHostSceneFrameSlot,
 };
 use open_gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement,
+    AnyElement, Context, CursorStyle, InteractiveElement, IntoElement, ParentElement,
     StatefulInteractiveElement, Styled, Window, div, px, relative, rgb,
 };
 use open_gpui_ui_core::{AccessibleAction, resolve_split_fractions_with_fill_child};
@@ -132,7 +132,7 @@ impl DockHost {
                     .absolute()
                     .bg(rgb(0xc8d0dc))
                     .hover(|this| this.bg(rgb(0x94a3b8)))
-                    .cursor_pointer()
+                    .cursor(cursor_for_split_axis(axis))
                     .on_a11y_action(
                         gpui_accessible_action_from_ui(AccessibleAction::Increment),
                         move |_, _, cx| {
@@ -183,5 +183,12 @@ impl DockHost {
         }
 
         split.into_any_element()
+    }
+}
+
+fn cursor_for_split_axis(axis: SplitAxis) -> CursorStyle {
+    match axis {
+        SplitAxis::Horizontal => CursorStyle::ResizeColumn,
+        SplitAxis::Vertical => CursorStyle::ResizeRow,
     }
 }
