@@ -1639,7 +1639,10 @@ fn render_decision_card_node_surface(
                 .overflow_hidden()
                 .child(
                     Badge::new(
-                        open_gpui_custom_renderer_badge_element_id(&context.renderer_key),
+                        open_gpui_custom_renderer_badge_element_id(
+                            context.node_id,
+                            &context.renderer_key,
+                        ),
                         "custom renderer",
                     )
                     .variant(BadgeVariant::Default)
