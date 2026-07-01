@@ -1,8 +1,7 @@
-#![allow(dead_code)]
-
+#[cfg(test)]
+use crate::overlay_scene::{DockOverlayLayerKind, DockOverlayScene};
 use crate::{
     DockNodeId, DropZone, SplitAxis,
-    overlay_scene::{DockOverlayLayerKind, DockOverlayScene},
     presentation_scene::{
         DockPresentationFocusRegion, DockPresentationPane, DockPresentationScene,
     },
@@ -89,10 +88,14 @@ pub(crate) struct DockOverlayTransition {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockOverlayTransitionKind {
+    #[cfg(test)]
     RouteMarker,
+    #[cfg(test)]
     TabInsertion,
+    #[cfg(test)]
     PayloadGhost,
     FocusRing,
+    #[cfg(test)]
     RejectedNoop,
 }
 
@@ -111,6 +114,7 @@ impl DockTransitionPlan {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn from_overlay_scene(
         final_scene: &DockPresentationScene,
         overlay_scene: &DockOverlayScene,
@@ -138,8 +142,7 @@ impl DockTransitionPlan {
                         }
                         DockOverlayLayerKind::TargetBody
                         | DockOverlayLayerKind::GuideBox
-                        | DockOverlayLayerKind::PayloadTab
-                        | DockOverlayLayerKind::FocusRing => return None,
+                        | DockOverlayLayerKind::PayloadTab => return None,
                     };
                     Some(DockOverlayTransition {
                         kind,

@@ -618,6 +618,9 @@ panes and splitters through core splitter scenes. Divider and corner hit maps co
 resolved splitter rectangles through `SplitterHitMap`, then commit graph changes through
 transactional resize actions. The remaining docking-local split layout helper exists only to derive
 graph child pane bounds; old handle-center and handle-hit geometry belongs in the core hit-map path.
+Docking-local corner affordance states should only represent states the runtime actually produces;
+clamp and rejected-resize behavior remains transaction/test evidence until a user-visible state is
+wired to the interaction model.
 
 Renderer-neutral accessibility also follows this boundary. `open_gpui_ui_core::Role::Splitter`,
 orientation, selected state, disabled state, and action descriptors are the stable vocabulary;

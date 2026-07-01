@@ -63,11 +63,12 @@ Implemented U5 zoom/unzoom/focus presentation capability:
 - `DockTransitionPlan::from_zoom_scene` consumes `DockZoomScene.egress` so non-target panes leave
   through deterministic touching-preferred edges, while the zoomed pane/focus region become the
   final semantic scene without mutating `DockGraph`.
-- `DockTransitionPlan::from_focus_region` emits a short-lived `FocusRing` overlay transition aligned
+- `DockTransitionPlan::from_focus_region` emits `FocusRing` overlay transition descriptors aligned
   with GPUI focus requests instead of replacing focus authority.
 - Motion review against `$emil-design-eng` / `$review-animations` kept zoom/unzoom on the existing
-  180ms ease-out layout spec and made focus pulse 120ms ease-out overlay-only motion because focus
-  can be high-frequency and keyboard reachable.
+  180ms ease-out layout spec and made public focus commands immediate because focus is high-frequency
+  and keyboard reachable. Explicit internal/test entry points can still pass an animated
+  `MotionSpec` for lower-frequency focus-ring transition proofs.
 - Render caches the latest presentation frame from the host-scene probe so public commands can use
   real rendered bounds without asking application callers to provide geometry.
 
@@ -160,9 +161,10 @@ Implemented U8 visible corner drag and docking-private spatial navigation:
 
 - `DockDividerHitMap` now derives corner affordance records from the same scene-backed handle and
   junction targets that drive splitter hit testing.
-- Corner affordances expose explicit states for idle, hover, active, focused, one-axis-clamped,
-  both-axes-rejected, and disabled feedback. Render paints corner grips from those descriptors and
-  sets resize cursors for both single-axis handles and corner junctions.
+- Corner affordances expose explicit rendered states for idle, hover, active, and disabled
+  feedback. Render paints corner grips from those descriptors and sets resize cursors for both
+  single-axis handles and corner junctions. Clamp and rejected-resize behavior is covered by resize
+  transaction tests rather than phantom visual states.
 - Real rendered diagonal corner dragging now begins a two-axis splitter drag and commits both resize
   updates through the existing workspace transaction path.
 - Runtime resize tests lock the min-size clamp behavior where one axis can clamp without corrupting
@@ -236,8 +238,8 @@ Recorded U10 phase closeout evidence:
 ## U10 Commands
 
 - `cargo check -p open-gpui-docking-native` - passed. Existing upstream/macOS warnings remain,
-  including `objc` macro `unexpected_cfgs`; U11 cleanup should decide whether to delete or connect
-  the two docking-local dead-code items reported during this check.
+  including `objc` macro `unexpected_cfgs`; U11 cleanup resolved the docking-local dead-code
+  warnings reported during this check.
 - `cargo nextest run -p open-gpui-docking-native runtime_status_panel_formats_platform_capabilities --no-fail-fast` -
   passed, 1 test.
 
@@ -247,3 +249,45 @@ The proof string is intentionally capability-oriented rather than pixel-oriented
 transparent drag windows, platform-native accessibility action callbacks, screenshot baselines, or
 every-frame-perfect animation; those remain outside the current shipped boundary unless a later plan
 adds them.
+
+## U11 / Phase Closeout ADR And Helper Cleanup
+
+Implemented U11 final ADR/helper cleanup:
+
+- Added ADR 0012 to record the runtime capability boundary after implementation: graph semantics,
+  presentation scenes, overlay descriptors, transition executor scope, current-facts route authority,
+  GPUI accessibility mapping limits, and native dogfood proof text.
+- Removed the unused overlay-scene `FocusRing` layer variant. Focus-ring feedback remains a
+  transition-plan overlay kind, which is the runtime path that actually constructs it.
+- Removed unconstructed corner affordance visual states. The renderer now only exposes the states
+  produced by `DockDividerHitMap`: idle, hover, active, and disabled.
+- Narrowed test-only descriptor helpers with `#[cfg(test)]`, including payload ghost inspection and
+  overlay-scene-to-transition conversion for route/tab/payload/rejected descriptor proof.
+- Wired stale zoom target cleanup into the render path so a zoom target removed from the graph is
+  cleared during the next presentation-scene refresh.
+
+## U11 Commands
+
+- `cargo check -p open-gpui-docking` - passed with no `open-gpui-docking` local warnings.
+- `cargo check -p open-gpui-docking --tests` - passed.
+- `cargo nextest run -p open-gpui-docking host_zoom_focus_tests host_transition_tests host_divider_hit_map_tests host_viewport_preview_visual_tests host_render_tests::transition_sample_overlay_renders_from_executor --no-fail-fast` -
+  passed, 32 tests.
+- `cargo fmt --all -- --check` - passed.
+- `cargo nextest run -p open-gpui-ui-core split motion --no-fail-fast` - passed, 21 tests.
+- `cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast` -
+  passed, 13 tests.
+- `cargo nextest run -p open-gpui-docking host_presentation_scene_tests host_viewport_preview_visual_tests host_transition_tests host_zoom_focus_tests host_divider_hit_map_tests host_accessibility_tests host_interaction_tests workspace_resize_policy_tests --no-fail-fast` -
+  passed, 97 tests.
+- `cargo check -p open-gpui-docking-native` - passed. Existing macOS `objc` macro warnings and the
+  workspace `block v0.1.6` future-incompat warning remain outside this docking cleanup.
+- `$emil-design-eng` / `$review-animations` follow-up review found and fixed one focus-motion issue:
+  public `focus_pane` and `focus_neighbor_pane` now expose immediate focus-ring feedback instead of a
+  120ms animation.
+- `cargo nextest run -p open-gpui-docking host_zoom_focus_tests --no-fail-fast` - passed, 12 tests
+  after the public focus command motion correction.
+
+## U11 Verification Notes
+
+The remaining accessibility `cfg_attr(not(test), allow(dead_code))` annotations are intentional
+descriptor retention, not obsolete scaffolding. GPUI render adapters consume the currently supported
+element subset, while tests and docs preserve descriptor fields that GPUI cannot yet expose.

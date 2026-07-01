@@ -45,9 +45,6 @@ pub(crate) enum DockDividerAffordanceState {
     Idle,
     Hover,
     Active,
-    Focused,
-    OneAxisClamped,
-    BothAxesRejected,
     Disabled,
 }
 

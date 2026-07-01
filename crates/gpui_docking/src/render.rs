@@ -1076,6 +1076,8 @@ impl DockHost {
             move |bounds, window, app| {
                 entity.update(app, |host, _| {
                     let base = DockPresentationScene::from_render_session(&session, bounds);
+                    let space = session.space().clone();
+                    host.zoom_state_mut().clear_missing_target(&space, &base);
                     let scene = host
                         .zoom_state()
                         .resolve(
@@ -1174,9 +1176,6 @@ fn background_for_divider_affordance_state(state: DockDividerAffordanceState) ->
         DockDividerAffordanceState::Idle => rgba(0x64748b4d),
         DockDividerAffordanceState::Hover => rgba(0x2563eb99),
         DockDividerAffordanceState::Active => rgba(0x1d4ed8cc),
-        DockDividerAffordanceState::Focused => rgba(0x7c3aedb3),
-        DockDividerAffordanceState::OneAxisClamped => rgba(0xf59e0b99),
-        DockDividerAffordanceState::BothAxesRejected => rgba(0xdc2626a6),
         DockDividerAffordanceState::Disabled => rgba(0x94a3b84d),
     }
 }
@@ -1538,9 +1537,6 @@ mod tests {
             DockDividerAffordanceState::Idle,
             DockDividerAffordanceState::Hover,
             DockDividerAffordanceState::Active,
-            DockDividerAffordanceState::Focused,
-            DockDividerAffordanceState::OneAxisClamped,
-            DockDividerAffordanceState::BothAxesRejected,
             DockDividerAffordanceState::Disabled,
         ];
 

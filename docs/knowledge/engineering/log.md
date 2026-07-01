@@ -6,6 +6,24 @@ status: active
 
 # Log
 
+- 2026-07-01: Completed U11 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. Added ADR 0012 for the docking runtime capability boundary, deleted the unused overlay
+  `FocusRing` layer variant, removed unconstructed corner affordance visual states, narrowed
+  descriptor-only helpers such as payload ghost inspection and overlay-to-transition conversion to
+  tests, and wired stale zoom-target cleanup into the render path. `open-gpui-docking` now checks
+  without the docking-local dead-code warnings that appeared during U10 native compile. Focused U11
+  tests passed 32/32, and final gates passed for `cargo fmt --all -- --check`,
+  `cargo nextest run -p open-gpui-ui-core split motion --no-fail-fast`,
+  `cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast`,
+  the 97-test docking runtime capability sweep, and `cargo check -p open-gpui-docking-native`.
+  `$emil-design-eng` / `$review-animations` review then found one behavior correction: public
+  `focus_pane` / `focus_neighbor_pane` commands are high-frequency and keyboard reachable, so they
+  now execute immediate focus-ring semantic feedback instead of scheduling a 120ms pulse. Explicit
+  test/internal `focus_pane_with_scene` still accepts a caller-provided `MotionSpec` for
+  low-frequency or future pointer-driven focus-ring transition proofs. The follow-up
+  `host_zoom_focus_tests` sweep passed 12/12 after the correction. Committed in the U11 cleanup
+  changeset.
 - 2026-07-01: Completed U10 from
   `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
   tree. The native runtime status panel proof string now includes
@@ -76,10 +94,10 @@ status: active
   tree. Public host zoom/unzoom/focus commands now consume the last rendered presentation scene when
   available, schedule transition executor plans, and preserve `DockGraph` authority. Zoom egress
   reuses `DockZoomScene.egress` so sibling panes leave through deterministic touching-preferred
-  edges, while focus presentation is a short overlay-only `FocusRing` pulse aligned with GPUI focus
+  edges, while focus presentation preserves `FocusRing` descriptors aligned with GPUI focus
   requests. Applied `$emil-design-eng` / `$review-animations` guidance by keeping zoom layout motion
-  at the existing 180ms ease-out budget and reducing high-frequency focus pulse motion to 120ms
-  ease-out without layout animation. Verification passed with focused `host_zoom_focus_tests`,
+  at the existing 180ms ease-out budget and making public high-frequency focus commands immediate
+  instead of animated. Verification passed with focused `host_zoom_focus_tests`,
   `host_transition_tests`, `host_render_tests::transition_sample_overlay_renders_from_executor`,
   `cargo check -p open-gpui-docking --tests`, `cargo fmt --all -- --check`, and `git diff --check`.
   During verification, stale background `cargo test -- --list` processes from prior interrupted

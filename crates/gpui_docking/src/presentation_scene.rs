@@ -1,11 +1,10 @@
-#![allow(dead_code)]
-
 use crate::{
     DockHost, DockItemId, DockNode, DockNodeId, DockSpaceId, SplitAxis,
-    host_render_session::DockHostRenderSession, transition_geometry::DockMotionPreference,
-    zoom_state::DockZoomScene,
+    host_render_session::DockHostRenderSession,
 };
-use open_gpui::{Bounds, Context, Pixels, point, px, size};
+#[cfg(test)]
+use open_gpui::Context;
+use open_gpui::{Bounds, Pixels, point, px, size};
 use open_gpui_ui_core::{
     Orientation, Size, SplitterHandlePlacement, SplitterLayoutScene, SplitterMetrics,
     SplitterPanelDescriptor, SplitterState, UiRect, resolve_split_fractions_with_fill_child,
@@ -163,6 +162,7 @@ impl DockPresentationScene {
         self.panes.iter().find(|pane| pane.node == Some(node))
     }
 
+    #[cfg(test)]
     pub(crate) fn tab_bar_for_node(&self, node: DockNodeId) -> Option<&DockPresentationTabBar> {
         self.tab_bars.iter().find(|tab_bar| tab_bar.tabs == node)
     }
@@ -438,6 +438,7 @@ pub(crate) fn dock_presentation_tab_label_bounds(
 }
 
 impl DockHost {
+    #[cfg(test)]
     pub(crate) fn presentation_scene(
         &self,
         bounds: Bounds<Pixels>,
@@ -445,21 +446,15 @@ impl DockHost {
     ) -> DockPresentationScene {
         let base = DockPresentationScene::from_render_session(&self.render_session(cx), bounds);
         self.zoom_state()
-            .resolve(&base, DockMotionPreference::Animated)
+            .resolve(
+                &base,
+                crate::transition_geometry::DockMotionPreference::Animated,
+            )
             .map(|zoom| zoom.scene)
             .unwrap_or(base)
     }
 
-    pub(crate) fn zoom_scene(
-        &self,
-        bounds: Bounds<Pixels>,
-        preference: DockMotionPreference,
-        cx: &Context<Self>,
-    ) -> Option<DockZoomScene> {
-        let base = DockPresentationScene::from_render_session(&self.render_session(cx), bounds);
-        self.zoom_state().resolve(&base, preference)
-    }
-
+    #[cfg(test)]
     pub(crate) fn presentation_scene_for_test(
         &self,
         bounds: Bounds<Pixels>,

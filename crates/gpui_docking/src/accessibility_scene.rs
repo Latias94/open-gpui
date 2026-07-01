@@ -292,9 +292,7 @@ impl DockAccessibilityScene {
                         actions: Vec::new(),
                     });
                 }
-                DockOverlayLayerKind::RouteMarker
-                | DockOverlayLayerKind::TargetBody
-                | DockOverlayLayerKind::FocusRing => {}
+                DockOverlayLayerKind::RouteMarker | DockOverlayLayerKind::TargetBody => {}
             }
         }
         self

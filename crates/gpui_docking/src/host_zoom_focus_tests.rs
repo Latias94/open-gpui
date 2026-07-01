@@ -1,12 +1,12 @@
 use crate::{
-    DockSpatialDirection, DockViewportFocusRequest, SplitAxis,
+    DockGraph, DockNode, DockSpatialDirection, DockViewportFocusRequest, SplitAxis,
     debug::DockDebugRegion,
     host_test_support::{item, open_host, selector_for, space, split_graph},
     presentation_scene::DockPresentationOverlayAnchorKind,
     transition_geometry::{DockMotionPreference, DockOverlayTransitionKind, DockTransitionEdge},
     zoom_state::{DockZoomScene, DockZoomState},
 };
-use open_gpui::{Bounds, TestAppContext, point, px, size};
+use open_gpui::{AppContext as _, Bounds, TestAppContext, point, px, size};
 use open_gpui_ui_core::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
 use slotmap::Key;
 use std::time::Duration;
@@ -135,6 +135,42 @@ fn zoom_state_clears_missing_target(cx: &mut TestAppContext) {
         .is_none()
     );
     assert!(DockZoomScene::from_scene(&scene, left_tabs, DockMotionPreference::Animated).is_some());
+}
+
+#[open_gpui::test]
+fn rendered_scene_clears_missing_zoom_target(cx: &mut TestAppContext) {
+    let (graph, _root, _left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(220.0)),
+    );
+
+    assert!(host.update(cx, |host, cx| host.zoom_pane(right_tabs, cx)));
+    assert_eq!(
+        host.update(cx, |host, _| host.zoom_target_for_test()),
+        Some(right_tabs)
+    );
+
+    let controller = host.update(cx, |host, _| host.controller().clone());
+    cx.update_entity(&controller, |controller, cx| {
+        let mut graph = DockGraph::new();
+        let remaining = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        graph.set_root(space(), remaining);
+        controller.workspace_mut().set_graph(graph);
+        cx.notify();
+    });
+    window
+        .update(cx, |_host, window, _| window.refresh())
+        .expect("host window should refresh after graph replacement");
+    cx.run_until_parked();
+    let _visual = open_gpui::VisualTestContext::from_window(window.into(), cx);
+
+    assert_eq!(host.update(cx, |host, _| host.zoom_target_for_test()), None);
 }
 
 #[open_gpui::test]
@@ -409,7 +445,7 @@ fn host_focus_command_samples_focus_ring_without_overriding_focus_authority(
 }
 
 #[open_gpui::test]
-fn public_focus_command_uses_short_overlay_only_motion(cx: &mut TestAppContext) {
+fn public_focus_command_uses_immediate_overlay_only_feedback(cx: &mut TestAppContext) {
     let (graph, _root, _left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let (_window, host, visual) = open_host(
         cx,
@@ -425,18 +461,22 @@ fn public_focus_command_uses_short_overlay_only_motion(cx: &mut TestAppContext) 
     let execution = host.update(cx, |host, cx| {
         assert!(host.focus_pane(right_tabs, cx));
         host.clear_transition_execution_for_test()
-            .expect("public focus command should schedule a focus pulse")
+            .expect("public focus command should expose immediate focus feedback")
     });
 
-    assert_eq!(execution.spec.duration(), MotionDuration::Short);
-    assert_eq!(execution.spec.easing(), MotionEasing::EaseOut);
+    assert!(execution.spec.is_immediate());
+    assert_eq!(
+        execution.state,
+        crate::DockTransitionExecutionState::Immediate
+    );
     assert!(
         execution.plan.pane_transitions.is_empty(),
-        "focus pulse should not animate layout for high-frequency focus commands"
+        "focus feedback should not animate layout for high-frequency focus commands"
     );
     assert_eq!(execution.plan.overlay_transitions.len(), 1);
     assert_eq!(
         execution.plan.overlay_transitions[0].kind,
         DockOverlayTransitionKind::FocusRing
     );
+    assert!(execution.plan.overlay_transitions[0].immediate);
 }

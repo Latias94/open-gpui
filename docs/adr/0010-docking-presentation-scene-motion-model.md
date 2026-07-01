@@ -35,7 +35,7 @@ Route markers, target preview bodies, active and inactive guide boxes, tab inser
 Render code decorates these layers; it does not recompute target availability or z-order.
 
 Motion is planned from presentation scenes.
-`DockTransitionPlan` compares previous and next presentation scenes and describes pane movement, entering/leaving geometry, divider expansion, occlusion masks, tab insertion motion, cross-window receive, tear-off, zoom/unzoom, focus pulse, and reduced-motion degradation.
+`DockTransitionPlan` compares previous and next presentation scenes and describes pane movement, entering/leaving geometry, divider expansion, occlusion masks, tab insertion motion, cross-window receive, tear-off, zoom/unzoom, focus feedback descriptors, and reduced-motion degradation.
 The first contract is deterministic descriptors and semantic proof; smooth per-frame animation can improve behind that model.
 
 Zoom and focus are presentation state.

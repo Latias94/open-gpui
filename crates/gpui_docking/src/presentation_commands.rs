@@ -6,7 +6,7 @@ use crate::{
     transition_geometry::{DockMotionPreference, DockTransitionPlan},
 };
 use open_gpui::{Context, Window};
-use open_gpui_ui_core::{MotionDuration, MotionEasing, MotionSpec};
+use open_gpui_ui_core::MotionSpec;
 
 impl DockHost {
     /// Presents one pane as a zoomed full-host pane without mutating the dock graph.
@@ -119,7 +119,7 @@ impl DockHost {
                 target,
                 &item,
                 scene,
-                Self::focus_pulse_motion(DockMotionPreference::Animated),
+                MotionSpec::immediate(),
                 None,
                 cx,
             );
@@ -141,13 +141,7 @@ impl DockHost {
         else {
             return false;
         };
-        self.focus_pane_with_scene(
-            target.tabs,
-            scene,
-            Self::focus_pulse_motion(DockMotionPreference::Animated),
-            None,
-            cx,
-        )
+        self.focus_pane_with_scene(target.tabs, scene, MotionSpec::immediate(), None, cx)
     }
 
     fn request_focus_pane_command(
@@ -168,10 +162,6 @@ impl DockHost {
             cx.notify();
         }
         Some((item, changed))
-    }
-
-    fn focus_pulse_motion(preference: DockMotionPreference) -> MotionSpec {
-        MotionSpec::new(preference, MotionDuration::Short, MotionEasing::EaseOut)
     }
 
     pub(crate) fn focus_pane_with_scene(

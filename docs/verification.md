@@ -868,6 +868,9 @@ Current docking multi-viewport capability states:
   dogfood checks. Presentation, overlay, transition, zoom/focus, divider hit map, and accessibility
   descriptors are covered by focused tests. The native runtime panel exposes this as
   `preview proof: presentation-scene+overlay-layers+tab-insertion+motion+zoom+divider-hit-map+corner-drag+a11y+route-cleanup+reduced-motion`.
+  The transition executor currently productizes sampled pane, divider, zoom, and focus motion.
+  Overlay-scene-to-transition conversion for tab insertion, payload ghosts, route markers, and
+  rejected state is descriptor proof, not an every-frame drag-preview animation guarantee.
   Automated owners: `host_presentation_scene_tests`, `host_viewport_preview_visual_tests`,
   `host_transition_tests`, `host_zoom_focus_tests`, `host_divider_hit_map_tests`, and
   `host_accessibility_tests`. Transparent payload-window rendering, platform accessibility mapping,

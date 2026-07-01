@@ -19,3 +19,4 @@ platform strategy, or ecosystem compatibility.
 - [ADR 0009: Open GPUI Table and Virtualizer Product Shape](0009-open-gpui-table-and-virtualizer-product-shape.md)
 - [ADR 0010: Docking Presentation Scene And Motion Model](0010-docking-presentation-scene-motion-model.md)
 - [ADR 0011: Docking Split Motion Primitive Boundary](0011-docking-split-motion-primitive-boundary.md)
+- [ADR 0012: Docking Runtime Capability Alignment](0012-docking-runtime-capability-alignment.md)

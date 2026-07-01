@@ -2,7 +2,7 @@
 type: Current State
 title: Docking runtime capability follow-up state
 status: active
-timestamp: 2026-07-01T13:10:08+08:00
+timestamp: 2026-07-01T15:32:49+08:00
 git_branch: main
 related_plan:
   - docs/plans/2026-06-30-003-refactor-docking-split-motion-primitives-plan.md
@@ -10,6 +10,7 @@ related_plan:
 related_adr:
   - docs/adr/0010-docking-presentation-scene-motion-model.md
   - docs/adr/0011-docking-split-motion-primitive-boundary.md
+  - docs/adr/0012-docking-runtime-capability-alignment.md
 verified_by:
   - cargo check -p open-gpui-docking --tests
   - cargo nextest run -p open-gpui-docking host_transition_tests host_render_tests --no-fail-fast
@@ -38,6 +39,12 @@ verified_by:
   - cargo nextest run -p open-gpui-docking host_viewport_preview_tests host_render_tests host_transition_tests --no-fail-fast
   - cargo check -p open-gpui-docking-native
   - cargo nextest run -p open-gpui-docking-native runtime_status_panel_formats_platform_capabilities --no-fail-fast
+  - cargo check -p open-gpui-docking
+  - cargo check -p open-gpui-docking --tests
+  - cargo nextest run -p open-gpui-docking host_zoom_focus_tests host_transition_tests host_divider_hit_map_tests host_viewport_preview_visual_tests host_render_tests::transition_sample_overlay_renders_from_executor --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-core split motion --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast
+  - cargo nextest run -p open-gpui-docking host_presentation_scene_tests host_viewport_preview_visual_tests host_transition_tests host_zoom_focus_tests host_divider_hit_map_tests host_accessibility_tests host_interaction_tests workspace_resize_policy_tests --no-fail-fast
   - git diff --check
   - python $HOME/.codex/skills/engineering-wiki-memory/scripts/wiki_memory.py validate --root docs/knowledge/engineering
 ---
@@ -68,9 +75,9 @@ verified_by:
   markers remain separate.
 - Done: U5 zoom/focus presentation is implemented locally. Public host zoom/focus commands now use
   the latest rendered presentation frame when available, emit transition executor plans, preserve
-  `DockGraph`, and expose short overlay-only focus pulse motion. Zoom egress uses deterministic
-  touching-preferred edges from `DockZoomScene.egress`; reduced-motion zoom/unzoom/focus samples
-  preserve final scene semantics.
+  `DockGraph`, and keep public focus feedback immediate because focus is high-frequency and keyboard
+  reachable. Zoom egress uses deterministic touching-preferred edges from `DockZoomScene.egress`;
+  reduced-motion zoom/unzoom/focus samples preserve final scene semantics.
 - Done: U6 GPUI accessibility mapping is implemented locally. Docking descriptors now map to
   GPUI-facing stable element IDs, roles, labels, selected/disabled/orientation/numeric state, tab
   focus/select actions, splitter increment/decrement callbacks through resize transactions, and
@@ -95,13 +102,20 @@ verified_by:
 - Done: U10 native dogfood closeout is implemented locally. The runtime status panel proof string
   now names corner-drag and route-cleanup alongside presentation, overlay, tab insertion, motion,
   zoom, divider-hit-map, a11y, and reduced-motion capability proofs.
-- In progress: Phase C continues with final U11 ADR/helper deletion.
-- Last verified: Phase A, Phase B, U5, U6, U7, U8, U9, and U10 focused gates passed locally; see
-  the runtime capability verification evidence file.
+- Done: U11 final ADR/helper cleanup is committed. ADR 0012 records the runtime
+  capability boundary, unused overlay `FocusRing` layer and phantom corner visual states were
+  deleted, test-only descriptor helpers were narrowed with `#[cfg(test)]`, stale zoom targets now
+  clear on render, and `open-gpui-docking` no longer emits the local dead-code warnings found by
+  native compile.
+- Done: Animation/UI interaction review found and fixed public focus-command motion. Public
+  `focus_pane` and `focus_neighbor_pane` now expose immediate focus-ring semantic feedback instead of
+  a 120ms high-frequency animation.
+- Last verified: Phase A, Phase B, U5, U6, U7, U8, U9, U10, and U11 focused/final gates passed
+  locally; see the runtime capability verification evidence file.
 - Blocked: None.
-- Next action: commit U10, then continue with final U11 ADR/helper cleanup. U11 should decide
-  whether to delete or connect the remaining docking-local dead-code warnings for corner affordance
-  states and `DockOverlayScene::payload_ghosts`.
+- Next action: no required work remains for the runtime capability alignment plan. Deferred follow-up
+  work remains limited to the explicitly deferred public animation executor, public rectangle-neighbor
+  extraction, broader platform accessibility automation, and optional absolute pane renderer.
 
 # Citations
 
@@ -109,6 +123,7 @@ verified_by:
 - [Runtime capability follow-up plan](../../plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md)
 - [ADR 0010](../../adr/0010-docking-presentation-scene-motion-model.md)
 - [ADR 0011](../../adr/0011-docking-split-motion-primitive-boundary.md)
+- [ADR 0012](../../adr/0012-docking-runtime-capability-alignment.md)
 - [Progress note](progress/2026-06-30-docking-split-motion-primitives.md)
 - [Verification evidence](verification/docking-split-motion-primitives-20260630.md)
 - [Runtime capability verification evidence](verification/docking-runtime-capability-alignment-20260701.md)

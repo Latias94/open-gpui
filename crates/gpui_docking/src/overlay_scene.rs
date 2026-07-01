@@ -47,8 +47,6 @@ pub(crate) enum DockOverlayLayerKind {
     TabInsertion,
     PayloadTab,
     PayloadGhost,
-    #[allow(dead_code)]
-    FocusRing,
     RejectedState,
 }
 
@@ -215,7 +213,6 @@ impl DockOverlayScene {
                 }
                 DockOverlayLayerKind::RouteMarker
                 | DockOverlayLayerKind::GuideBox
-                | DockOverlayLayerKind::FocusRing
                 | DockOverlayLayerKind::RejectedState => {}
             }
         }
@@ -240,6 +237,7 @@ impl DockOverlayScene {
             .filter(|layer| layer.kind == DockOverlayLayerKind::PayloadTab && layer.active)
     }
 
+    #[cfg(test)]
     pub(crate) fn payload_ghosts(&self) -> impl Iterator<Item = &DockOverlayLayer> + '_ {
         self.layers
             .iter()
