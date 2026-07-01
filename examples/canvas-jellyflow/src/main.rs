@@ -31,29 +31,26 @@ use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiAuthoringController,
     OpenGpuiAuthoringOutcome, OpenGpuiAuthoringSkipReason, OpenGpuiBlackboardPlan,
     OpenGpuiBoundsCollector, OpenGpuiControlEditPlan, OpenGpuiControlEventValue,
-    OpenGpuiControlPlan, OpenGpuiControlPrimitive, OpenGpuiDroppedWireInsertError,
-    OpenGpuiDynamicPortPolicy, OpenGpuiInspectorPlan, OpenGpuiInspectorSurface,
-    OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource, OpenGpuiMeasurementContext,
-    OpenGpuiMeasurementId, OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
-    OpenGpuiMenuPlan, OpenGpuiNodeRendererContext, OpenGpuiNodeRendererHostContext,
-    OpenGpuiNodeRendererOutputSource, OpenGpuiNodeRendererRegistry, OpenGpuiNodeRendererState,
-    OpenGpuiNodeRendererTable, OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
+    OpenGpuiControlPlan, OpenGpuiDroppedWireInsertError, OpenGpuiDynamicPortPolicy,
+    OpenGpuiInspectorPlan, OpenGpuiInspectorSurface, OpenGpuiInspectorTargetBounds,
+    OpenGpuiInspectorTargetSource, OpenGpuiMeasurementContext, OpenGpuiMeasurementId,
+    OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource, OpenGpuiMenuPlan,
+    OpenGpuiNodeRendererContext, OpenGpuiNodeRendererHostContext, OpenGpuiNodeRendererOutputSource,
+    OpenGpuiNodeRendererRegistry, OpenGpuiNodeRendererState, OpenGpuiNodeRendererTable,
+    OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout, OpenGpuiRepeatableActionPlan,
     OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
     OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
     OpenGpuiRepeatableSurfaceLayout as NodeRepeatableSurfaceLayout,
-    OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection, OpenGpuiViewBounds,
-    OpenGpuiViewPoint, OpenGpuiViewSize, apply_dropped_wire_insert, control_option_key,
-    control_selected_option_key, layout_pass_measurement_from_regions, measured_surface_anchors,
-    open_gpui_action_button_element_id, open_gpui_action_menu_element_id,
+    OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection, OpenGpuiViewPoint,
+    apply_dropped_wire_insert, layout_pass_measurement_from_regions, measured_surface_anchors,
     open_gpui_action_summary_element_id, open_gpui_blackboard_item_element_id,
     open_gpui_blackboard_status_element_id, open_gpui_chrome_fallback_button_element_id,
-    open_gpui_control_element_id, open_gpui_custom_action_missing_element_id,
-    open_gpui_custom_renderer_badge_element_id, open_gpui_custom_repeatables_badge_element_id,
-    open_gpui_custom_slots_badge_element_id, open_gpui_node_renderer_context,
-    open_gpui_repeatable_add_action_element_id, open_gpui_repeatable_collection_element_id,
-    open_gpui_repeatable_item_element_id, open_gpui_repeatable_remove_action_element_id,
-    open_gpui_repeatable_reorder_action_element_id, open_gpui_slot_action_button_element_id,
+    open_gpui_custom_action_missing_element_id, open_gpui_custom_renderer_badge_element_id,
+    open_gpui_custom_repeatables_badge_element_id, open_gpui_custom_slots_badge_element_id,
+    open_gpui_node_renderer_context, open_gpui_repeatable_add_action_element_id,
+    open_gpui_repeatable_collection_element_id, open_gpui_repeatable_item_element_id,
+    open_gpui_repeatable_remove_action_element_id, open_gpui_repeatable_reorder_action_element_id,
     open_gpui_slot_action_label_element_id, open_gpui_slot_badge_element_id,
     open_gpui_slot_preview_progress_element_id, open_gpui_slot_status_label_element_id,
     open_gpui_slot_value_element_id, project_actions_for_surface,
@@ -63,9 +60,8 @@ use jellyflow_open_gpui::{
     resolve_inspector_target_bounds,
 };
 use open_gpui::{
-    AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, MouseButton, MouseDownEvent,
-    Pixels, WeakEntity, Window, WindowBounds, WindowOptions, div, measured_element, point,
-    prelude::*, px, rgb, size,
+    AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Pixels, WeakEntity, Window,
+    WindowBounds, WindowOptions, div, point, prelude::*, px, rgb, size,
 };
 use open_gpui_canvas::{
     CanvasDocument, CanvasEditor, CanvasEditorInputHandler, CanvasEvent, CanvasHandle,
@@ -76,12 +72,11 @@ use open_gpui_canvas::{
 use open_gpui_platform::application;
 use open_gpui_ui_components::gpui_adapter::init_text_input;
 use open_gpui_ui_components::prelude::Sizable;
-use open_gpui_ui_components::{
-    Badge, BadgeVariant, Button, ButtonVariant, ListboxOption, Menu, MenuItem, NumberInput,
-    Progress, Select, Slider, Switch, TextInput, Textarea,
-};
+use open_gpui_ui_components::{Badge, BadgeVariant, Button, ButtonVariant, Progress};
 use open_gpui_ui_core::Size;
 use serde_json::Value;
+
+mod node_component_kit;
 
 const REPEATABLE_ITEM_SNAPSHOTS_FIELD: &str = "jellyflow_repeatable_items";
 const INITIAL_SELECTION: u128 = 2;
@@ -101,6 +96,37 @@ struct GpuiNodeRendererServices {
 }
 
 type GpuiNodeRendererTable = OpenGpuiNodeRendererTable<GpuiNodeRendererServices, AnyElement>;
+
+fn node_component_kit_actions(
+    view: WeakEntity<JellyflowCanvasView>,
+) -> node_component_kit::NodeComponentKitActions {
+    node_component_kit::NodeComponentKitActions::new(
+        {
+            let view = view.clone();
+            move |node_id, control, event, cx| {
+                view.update(cx, |this, cx| {
+                    this.dispatch_control_authoring_event(node_id, &control, event, cx);
+                })
+                .ok();
+            }
+        },
+        {
+            let view = view.clone();
+            move |menu, action_key, node_id, cx| {
+                view.update(cx, |this, cx| {
+                    this.dispatch_menu_action(&menu, &action_key, node_id, cx);
+                })
+                .ok();
+            }
+        },
+        move |node_id, action, cx| {
+            view.update(cx, |this, cx| {
+                this.dispatch_repeatable_action(node_id, action, cx);
+            })
+            .ok();
+        },
+    )
+}
 
 struct JellyflowCanvasView {
     editor: CanvasEditor,
@@ -2104,28 +2130,13 @@ fn render_dispatch_action_button(
     node_id: Option<JellyNodeId>,
     view: WeakEntity<JellyflowCanvasView>,
 ) -> AnyElement {
-    let action_key = action.key.clone();
-    let menu = menu.clone();
-    let mut button = Button::new(
-        open_gpui_action_button_element_id(node_id, &menu.key, &action.key, index),
-        action_button_label(action),
+    node_component_kit::render_dispatch_action_button(
+        menu,
+        action,
+        index,
+        node_id,
+        &node_component_kit_actions(view),
     )
-    .variant(action_button_variant(action, index))
-    .disabled(!action.dispatchable())
-    .with_size(Size::XSmall);
-
-    if action.dispatchable() {
-        button = button.on_click(move |event, _window, cx| {
-            cx.stop_propagation();
-            let _ = event;
-            view.update(cx, |this, cx| {
-                this.dispatch_menu_action(&menu, &action_key, node_id, cx);
-            })
-            .ok();
-        });
-    }
-
-    button.into_any_element()
 }
 
 fn render_action_menu(
@@ -2134,33 +2145,12 @@ fn render_action_menu(
     node_id: Option<JellyNodeId>,
     view: WeakEntity<JellyflowCanvasView>,
 ) -> AnyElement {
-    let items = menu
-        .actions
-        .iter()
-        .map(|action| {
-            MenuItem::action(action.key.clone(), action_menu_item_label(action))
-                .disabled(!action.dispatchable())
-        })
-        .collect::<Vec<_>>();
-
-    Menu::new(
-        open_gpui_action_menu_element_id(node_id, &menu.key, id_suffix),
-        format!("{} {}", menu.label, menu.actions.len()),
+    node_component_kit::render_action_menu(
+        menu,
+        id_suffix,
+        node_id,
+        &node_component_kit_actions(view),
     )
-    .items(items)
-    .disabled(menu.actions.is_empty())
-    .on_select({
-        let menu = menu.clone();
-        move |selection, _window, cx| {
-            let action_key = selection.value().to_owned();
-            view.update(cx, |this, cx| {
-                this.dispatch_menu_action(&menu, &action_key, node_id, cx);
-            })
-            .ok();
-        }
-    })
-    .with_size(Size::XSmall)
-    .into_any_element()
 }
 
 fn render_chrome_action_buttons(
@@ -2203,39 +2193,12 @@ fn render_chrome_action_buttons(
     actions
 }
 
-fn action_button_variant(action: &OpenGpuiActionPlan, index: usize) -> ButtonVariant {
-    if action.danger {
-        ButtonVariant::Destructive
-    } else if index == 0 {
-        ButtonVariant::Default
-    } else {
-        ButtonVariant::Secondary
-    }
-}
-
-fn action_button_label(action: &OpenGpuiActionPlan) -> String {
-    action
-        .icon_key
-        .as_ref()
-        .map(|icon| format!("{icon} {}", action.label))
-        .unwrap_or_else(|| action.label.clone())
-}
-
 fn action_summary_label(action: &OpenGpuiActionPlan) -> String {
     action
         .shortcut
         .as_ref()
         .map(|shortcut| format!("{} {}", action.label, shortcut))
         .unwrap_or_else(|| action.label.clone())
-}
-
-fn action_menu_item_label(action: &OpenGpuiActionPlan) -> String {
-    match (&action.shortcut, &action.disabled_reason) {
-        (Some(shortcut), Some(reason)) => format!("{} · {} · {}", action.label, shortcut, reason),
-        (Some(shortcut), None) => format!("{} · {}", action.label, shortcut),
-        (None, Some(reason)) => format!("{} · {}", action.label, reason),
-        (None, None) => action.label.clone(),
-    }
 }
 
 fn surface_slot_descriptor_for_projection(
@@ -2564,23 +2527,12 @@ fn slot_anchor_view_rect(
     slot_view_rect(rect, document_bounds, view_width, view_height)
 }
 
-fn gpui_view_bounds(bounds: Bounds<Pixels>) -> OpenGpuiViewBounds {
-    OpenGpuiViewBounds::new(
-        OpenGpuiViewPoint::new(bounds.origin.x.as_f32(), bounds.origin.y.as_f32()),
-        OpenGpuiViewSize::new(bounds.size.width.as_f32(), bounds.size.height.as_f32()),
-    )
-}
-
 fn render_measured_region(
     id: OpenGpuiMeasurementId,
     collector: OpenGpuiBoundsCollector,
     child: impl IntoElement,
 ) -> AnyElement {
-    let element_id = id.element_id();
-    measured_element(element_id, child, move |_, bounds, global_id, _, _| {
-        collector.record_id(id.clone(), gpui_view_bounds(bounds), global_id);
-    })
-    .into_any_element()
+    node_component_kit::render_measured_region(id, collector, child)
 }
 
 fn render_slot_anchor_measurement(
@@ -2755,207 +2707,13 @@ fn render_control_plan(
     index: usize,
     view: WeakEntity<JellyflowCanvasView>,
 ) -> AnyElement {
-    let id = open_gpui_control_element_id(node_id, control_scope, &control.key, index);
-    let read_only = control_component_read_only(control);
-    let disabled = control_component_disabled(control);
-    let interaction_disabled = control_component_interaction_disabled(control);
-    let label = control.label.clone();
-    let value = control_value_label(control);
-    let control_plan = control.clone();
-
-    let element = match control.primitive {
-        OpenGpuiControlPrimitive::TextInput => TextInput::new(id, label)
-            .value(value)
-            .placeholder(control.placeholder.clone().unwrap_or_default())
-            .disabled(disabled)
-            .read_only(read_only)
-            .on_change(control_text_change_handler(
-                node_id,
-                control_plan.clone(),
-                view.clone(),
-            ))
-            .with_size(Size::XSmall)
-            .into_any_element(),
-        OpenGpuiControlPrimitive::TextArea => Textarea::new(id, label)
-            .value(value)
-            .placeholder(control.placeholder.clone().unwrap_or_default())
-            .rows(2)
-            .disabled(disabled)
-            .read_only(read_only)
-            .on_change(control_text_change_handler(
-                node_id,
-                control_plan.clone(),
-                view.clone(),
-            ))
-            .with_size(Size::XSmall)
-            .into_any_element(),
-        OpenGpuiControlPrimitive::NumberInput => NumberInput::new(id, label)
-            .value(control_number_value(control))
-            .disabled(disabled)
-            .read_only(read_only)
-            .on_change(control_number_change_handler(
-                node_id,
-                control_plan.clone(),
-                view.clone(),
-            ))
-            .with_size(Size::XSmall)
-            .into_any_element(),
-        OpenGpuiControlPrimitive::Select | OpenGpuiControlPrimitive::MultiSelect => {
-            let selected = control_selected_option_key(control).unwrap_or_default();
-            let select = Select::new(id, label)
-                .options(control_options(control))
-                .placeholder(
-                    control
-                        .placeholder
-                        .clone()
-                        .unwrap_or_else(|| "Select".to_string()),
-                )
-                .selected(selected)
-                .disabled(interaction_disabled || control.options.is_empty())
-                .on_select(control_select_change_handler(
-                    node_id,
-                    control_plan.clone(),
-                    view.clone(),
-                ))
-                .with_size(Size::XSmall);
-            select.into_any_element()
-        }
-        OpenGpuiControlPrimitive::Switch => Switch::new(id)
-            .label(label)
-            .checked(control_bool_value(control))
-            .disabled(interaction_disabled)
-            .on_change(control_bool_change_handler(
-                node_id,
-                control_plan.clone(),
-                view.clone(),
-            ))
-            .with_size(Size::XSmall)
-            .into_any_element(),
-        OpenGpuiControlPrimitive::Slider => Slider::new(id, label)
-            .value(control_number_value(control))
-            .disabled(interaction_disabled)
-            .on_change(control_slider_change_handler(
-                node_id,
-                control_plan.clone(),
-                view.clone(),
-            ))
-            .with_size(Size::XSmall)
-            .into_any_element(),
-        OpenGpuiControlPrimitive::CodeEditor | OpenGpuiControlPrimitive::ColorSwatch => {
-            Badge::new(id, format!("{}: {}", control.label, value))
-                .variant(BadgeVariant::Default)
-                .with_size(Size::XSmall)
-                .into_any_element()
-        }
-        OpenGpuiControlPrimitive::AssetPickerStub
-        | OpenGpuiControlPrimitive::VariablePickerStub
-        | OpenGpuiControlPrimitive::PortBindingDisplay => {
-            Button::new(id, format!("{}*", control.label))
-                .variant(ButtonVariant::Secondary)
-                .disabled(true)
-                .with_size(Size::XSmall)
-                .into_any_element()
-        }
-    };
-
-    render_node_internal_interaction_region(element)
-}
-
-fn control_text_change_handler(
-    node_id: JellyNodeId,
-    control: OpenGpuiControlPlan,
-    view: WeakEntity<JellyflowCanvasView>,
-) -> impl Fn(String, &mut Window, &mut App) + 'static {
-    move |value, _window, cx| {
-        view.update(cx, |this, cx| {
-            this.dispatch_control_authoring_event(
-                node_id,
-                &control,
-                OpenGpuiControlEventValue::Text(value),
-                cx,
-            );
-        })
-        .ok();
-    }
-}
-
-fn control_number_change_handler(
-    node_id: JellyNodeId,
-    control: OpenGpuiControlPlan,
-    view: WeakEntity<JellyflowCanvasView>,
-) -> impl Fn(open_gpui_ui_components::NumberInputChange, &mut Window, &mut App) + 'static {
-    move |change, _window, cx| {
-        if !change.changed() {
-            return;
-        }
-        view.update(cx, |this, cx| {
-            this.dispatch_control_authoring_event(
-                node_id,
-                &control,
-                OpenGpuiControlEventValue::Number(change.value() as f64),
-                cx,
-            );
-        })
-        .ok();
-    }
-}
-
-fn control_slider_change_handler(
-    node_id: JellyNodeId,
-    control: OpenGpuiControlPlan,
-    view: WeakEntity<JellyflowCanvasView>,
-) -> impl Fn(open_gpui_ui_components::SliderChange, &mut Window, &mut App) + 'static {
-    move |change, _window, cx| {
-        if !change.changed() {
-            return;
-        }
-        view.update(cx, |this, cx| {
-            this.dispatch_control_authoring_event(
-                node_id,
-                &control,
-                OpenGpuiControlEventValue::Number(change.value() as f64),
-                cx,
-            );
-        })
-        .ok();
-    }
-}
-
-fn control_bool_change_handler(
-    node_id: JellyNodeId,
-    control: OpenGpuiControlPlan,
-    view: WeakEntity<JellyflowCanvasView>,
-) -> impl Fn(bool, &open_gpui::ClickEvent, &mut Window, &mut App) + 'static {
-    move |checked, _event, _window, cx| {
-        view.update(cx, |this, cx| {
-            this.dispatch_control_authoring_event(
-                node_id,
-                &control,
-                OpenGpuiControlEventValue::Bool(checked),
-                cx,
-            );
-        })
-        .ok();
-    }
-}
-
-fn control_select_change_handler(
-    node_id: JellyNodeId,
-    control: OpenGpuiControlPlan,
-    view: WeakEntity<JellyflowCanvasView>,
-) -> impl Fn(open_gpui_ui_components::SelectSelection, &mut Window, &mut App) + 'static {
-    move |selection, _window, cx| {
-        let option_key = selection.value().to_owned();
-        view.update(cx, |this, cx| {
-            this.dispatch_control_authoring_event(
-                node_id,
-                &control,
-                OpenGpuiControlEventValue::SelectOptionKey(option_key),
-                cx,
-            );
-        })
-        .ok();
-    }
+    node_component_kit::render_control_plan(
+        node_id,
+        control_scope,
+        control,
+        index,
+        &node_component_kit_actions(view),
+    )
 }
 
 #[cfg(test)]
@@ -2981,20 +2739,6 @@ fn authoring_node_from_control_data(data: Value) -> Node {
     }
 }
 
-fn render_node_internal_interaction_region(child: AnyElement) -> AnyElement {
-    div()
-        .block_mouse_except_scroll()
-        .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, _window, cx| {
-            cx.stop_propagation();
-            let _ = event;
-        })
-        .on_key_down(|_: &KeyDownEvent, _window, cx| {
-            cx.stop_propagation();
-        })
-        .child(child)
-        .into_any_element()
-}
-
 fn report_authoring_skip(reason: OpenGpuiAuthoringSkipReason) {
     match reason {
         OpenGpuiAuthoringSkipReason::UnchangedControl { .. } => {}
@@ -3006,114 +2750,12 @@ fn report_dropped_wire_insert_error(error: OpenGpuiDroppedWireInsertError) {
     eprintln!("dropped-wire insert failed: {error}");
 }
 
-fn control_options(control: &OpenGpuiControlPlan) -> Vec<ListboxOption> {
-    control
-        .options
-        .iter()
-        .map(|option| {
-            ListboxOption::new(control_option_key(option), option.label.clone())
-                .disabled(option.disabled)
-        })
-        .collect()
-}
-
-fn control_component_disabled(control: &OpenGpuiControlPlan) -> bool {
-    control.disabled_reason.is_some() || control.is_partial_stub()
-}
-
-fn control_component_read_only(control: &OpenGpuiControlPlan) -> bool {
-    control.read_only || !control.is_editable()
-}
-
-fn control_component_interaction_disabled(control: &OpenGpuiControlPlan) -> bool {
-    control_component_disabled(control) || control_component_read_only(control)
-}
-
-fn control_value_label(control: &OpenGpuiControlPlan) -> String {
-    control
-        .value
-        .as_ref()
-        .map(json_value_label)
-        .unwrap_or_default()
-}
-
-fn control_number_value(control: &OpenGpuiControlPlan) -> f32 {
-    control
-        .value
-        .as_ref()
-        .and_then(|value| match value {
-            Value::Number(number) => number.as_f64(),
-            Value::String(text) => text.parse::<f64>().ok(),
-            _ => None,
-        })
-        .unwrap_or_default() as f32
-}
-
-fn control_bool_value(control: &OpenGpuiControlPlan) -> bool {
-    control
-        .value
-        .as_ref()
-        .and_then(|value| match value {
-            Value::Bool(value) => Some(*value),
-            Value::String(text) => match text.as_str() {
-                "true" | "yes" | "on" | "1" => Some(true),
-                "false" | "no" | "off" | "0" => Some(false),
-                _ => None,
-            },
-            _ => None,
-        })
-        .unwrap_or_default()
-}
-
-fn json_value_label(value: &Value) -> String {
-    match value {
-        Value::Null => String::new(),
-        Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
-        Value::String(value) => value.clone(),
-        Value::Array(values) => values
-            .iter()
-            .map(json_value_label)
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>()
-            .join(", "),
-        Value::Object(_) => value.to_string(),
-    }
-}
-
 fn render_action_buttons(
     node_id: JellyNodeId,
     slot: &NodeSurfaceSlotProjection,
     value: &str,
 ) -> impl IntoElement {
-    let actions = value
-        .split(['·', ',', '[', ']'])
-        .filter(|action| !action.trim().is_empty() && *action != "-")
-        .take(2)
-        .enumerate()
-        .map(|(index, action)| {
-            Button::new(
-                open_gpui_slot_action_button_element_id(node_id, &slot.key, index),
-                action.trim().to_owned(),
-            )
-            .variant(if index == 0 {
-                ButtonVariant::Default
-            } else {
-                ButtonVariant::Secondary
-            })
-            .with_size(Size::XSmall)
-            .into_any_element()
-        })
-        .collect::<Vec<_>>();
-
-    div()
-        .flex()
-        .items_center()
-        .justify_end()
-        .gap_1()
-        .min_w(px(0.0))
-        .overflow_hidden()
-        .children(actions)
+    node_component_kit::render_action_buttons(node_id, slot, value)
 }
 
 fn demo_repeatable_add_item(collection_key: &str, item_count: usize) -> Value {
@@ -3154,24 +2796,15 @@ fn repeatable_action_button(
     action: OpenGpuiRepeatableActionPlan,
     view: WeakEntity<JellyflowCanvasView>,
 ) -> AnyElement {
-    let mut button = Button::new(id, label)
-        .variant(variant)
-        .disabled(disabled)
-        .with_size(Size::XSmall);
-
-    if !disabled {
-        button = button.on_click(move |event, _window, cx| {
-            cx.stop_propagation();
-            let _ = event;
-            let action = action.clone();
-            view.update(cx, |this, cx| {
-                this.dispatch_repeatable_action(node_id, action, cx);
-            })
-            .ok();
-        });
-    }
-
-    render_node_internal_interaction_region(button.into_any_element())
+    node_component_kit::repeatable_action_button(
+        node_id,
+        id,
+        label,
+        variant,
+        disabled,
+        action,
+        &node_component_kit_actions(view),
+    )
 }
 
 fn render_repeatable_row(
@@ -4241,6 +3874,10 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node_component_kit::{
+        control_component_disabled, control_component_interaction_disabled,
+        control_component_read_only,
+    };
     use jellyflow::runtime::{
         runtime::measurement::{
             MeasuredSurfaceAnchor, NodeInternalsInvalidation, NodeInternalsInvalidationReason,
@@ -4249,8 +3886,9 @@ mod tests {
         schema::NodeControlKind,
     };
     use jellyflow_open_gpui::{
-        plan_action_dispatch, plan_dropped_wire_insert, project_dropped_wire_menu,
-        projected_node_surface_component_layout,
+        control_option_key, open_gpui_action_button_element_id, open_gpui_action_menu_element_id,
+        open_gpui_control_element_id, plan_action_dispatch, plan_dropped_wire_insert,
+        project_dropped_wire_menu, projected_node_surface_component_layout,
         testing::{
             OpenGpuiHostCapabilityGap, OpenGpuiHostRendererSource, OpenGpuiHostSurfaceReport,
             OpenGpuiHostSurfaceReportRow, assert_authoring_interaction_regression_gates,
