@@ -1,4 +1,4 @@
-//! Component sample data and runtime state for the foundation gallery.
+//! Component sample descriptors and resolved-state builders for the foundation gallery.
 
 use open_gpui::{AppContext, ParentElement, Styled, div, rgb};
 use open_gpui_ui_components::{
