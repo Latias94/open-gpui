@@ -707,7 +707,13 @@ impl JellyflowCanvasView {
         event: OpenGpuiControlEventValue,
         cx: &mut Context<Self>,
     ) {
-        let outcome = plan_control_authoring_event_from_store(&self.store, node_id, control, event);
+        let outcome = OpenGpuiAuthoringController.plan_store_control_event(
+            &self.store,
+            &self.semantic_registry,
+            node_id,
+            control,
+            event,
+        );
         self.dispatch_control_authoring_plan(outcome, cx);
     }
 
@@ -3036,20 +3042,6 @@ fn control_select_change_handler(
     }
 }
 
-fn plan_control_authoring_event_from_store(
-    store: &NodeGraphStore,
-    node_id: JellyNodeId,
-    control: &OpenGpuiControlPlan,
-    event: OpenGpuiControlEventValue,
-) -> Result<OpenGpuiAuthoringOutcome<OpenGpuiControlEditPlan>, String> {
-    store
-        .graph()
-        .nodes()
-        .get(&node_id)
-        .map(|node| OpenGpuiAuthoringController.plan_control_event(node_id, node, control, event))
-        .unwrap_or_else(|| Err(format!("missing node {node_id:?}")))
-}
-
 #[cfg(test)]
 fn authoring_node_from_control_data(data: Value) -> Node {
     Node {
@@ -4844,15 +4836,17 @@ mod tests {
             .find(|control| control.key == "control.model")
             .expect("model control");
 
-        let prompt_plan = plan_control_authoring_event_from_store(
-            &store,
-            node_id,
-            &prompt,
-            OpenGpuiControlEventValue::Text("Keep this prompt".to_owned()),
-        )
-        .expect("prompt edit")
-        .into_plan()
-        .expect("prompt plan");
+        let prompt_plan = OpenGpuiAuthoringController
+            .plan_store_control_event(
+                &store,
+                &registry,
+                node_id,
+                &prompt,
+                OpenGpuiControlEventValue::Text("Keep this prompt".to_owned()),
+            )
+            .expect("prompt edit")
+            .into_plan()
+            .expect("prompt plan");
         store
             .dispatch_transaction(&prompt_plan.transaction)
             .expect("prompt transaction");
@@ -4862,15 +4856,17 @@ mod tests {
             .iter()
             .find(|option| option.label == "GPT 4.1")
             .expect("model option");
-        let model_plan = plan_control_authoring_event_from_store(
-            &store,
-            node_id,
-            &model,
-            OpenGpuiControlEventValue::SelectOptionKey(control_option_key(option)),
-        )
-        .expect("model edit")
-        .into_plan()
-        .expect("model plan");
+        let model_plan = OpenGpuiAuthoringController
+            .plan_store_control_event(
+                &store,
+                &registry,
+                node_id,
+                &model,
+                OpenGpuiControlEventValue::SelectOptionKey(control_option_key(option)),
+            )
+            .expect("model edit")
+            .into_plan()
+            .expect("model plan");
         store
             .dispatch_transaction(&model_plan.transaction)
             .expect("model transaction");
