@@ -149,4 +149,39 @@ mod tests {
     fn gpui_adapter_maps_splitter_role() {
         assert_eq!(gpui_role_from_ui(Role::Splitter), GpuiRole::Splitter);
     }
+
+    #[test]
+    fn gpui_adapter_maps_tab_roles() {
+        assert_eq!(gpui_role_from_ui(Role::TabList), GpuiRole::TabList);
+        assert_eq!(gpui_role_from_ui(Role::Tab), GpuiRole::Tab);
+        assert_eq!(gpui_role_from_ui(Role::TabPanel), GpuiRole::TabPanel);
+    }
+
+    #[test]
+    fn gpui_adapter_maps_accessibility_actions_used_by_docking() {
+        assert_eq!(
+            gpui_accessible_action_from_ui(AccessibleAction::Click),
+            GpuiAccessibleAction::Click
+        );
+        assert_eq!(
+            gpui_accessible_action_from_ui(AccessibleAction::Focus),
+            GpuiAccessibleAction::Focus
+        );
+        assert_eq!(
+            gpui_accessible_action_from_ui(AccessibleAction::Increment),
+            GpuiAccessibleAction::Increment
+        );
+        assert_eq!(
+            gpui_accessible_action_from_ui(AccessibleAction::Decrement),
+            GpuiAccessibleAction::Decrement
+        );
+    }
+
+    #[test]
+    fn gpui_adapter_maps_horizontal_orientation() {
+        assert_eq!(
+            gpui_orientation_from_ui(Orientation::Horizontal),
+            GpuiOrientation::Horizontal
+        );
+    }
 }

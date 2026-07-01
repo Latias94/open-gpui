@@ -104,6 +104,15 @@ markers stay separate from target previews, zoom/focus produce deterministic des
 and corner hits derive from the shared split hit map, and accessibility descriptors expose roles,
 bounds, orientation, selected state, disabled state, and actions.
 
+Current docking accessibility output maps supported descriptor data into GPUI element state:
+stable IDs, roles, labels, selected/disabled state, orientation, numeric splitter values, tab
+focus/select actions, and splitter increment/decrement actions. Docking keeps hint strings and
+drop affordance descriptors in its renderer-neutral scene, but GPUI currently has no generic
+element API for an accessibility hint/description field or a platform drop action callback. Active
+drop, drag-source, and rejected-target overlay nodes are therefore exposed as labeled group
+descriptors without inventing unsupported platform actions, and focused tests assert that those
+nodes disappear when the overlay scene is empty.
+
 Table gallery gates now follow the same split: `open-gpui-ui-core` tests prove row-model,
 manual row-model stages, manual expansion, child-load metadata, virtualizer, column sizing,
 column-window, row pinning, and resize-math contracts without rendering, including grouped row ids,

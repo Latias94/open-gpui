@@ -6,6 +6,25 @@ status: active
 
 # Log
 
+- 2026-07-01: Completed U6 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. Docking accessibility descriptors now map into GPUI-facing stable element IDs, roles,
+  labels, selected/disabled/orientation/numeric state, tab focus/select actions, splitter
+  increment/decrement actions, and short-lived overlay descriptors for active drop, drag-source,
+  and rejected-target feedback. Splitter accessibility actions route through the existing resize
+  transaction path instead of mutating graph state directly, while final-scene and overlay nodes
+  stay separated so cleanup removes stale active nodes. Added focused host/UI-core/UI-components
+  tests for tab roles/actions, splitter state/actions, reduced-vs-animated final semantics,
+  deterministic ID order, overlay cleanup, and GPUI adapter mappings. Verification passed with
+  `cargo check -p open-gpui-docking --tests`,
+  `cargo check -p open-gpui-ui-core --tests`,
+  `cargo check -p open-gpui-ui-components --tests`,
+  `cargo nextest run -p open-gpui-docking host_accessibility_tests --no-fail-fast`,
+  `cargo nextest run -p open-gpui-ui-core a11y --no-fail-fast`,
+  `cargo nextest run -p open-gpui-ui-components a11y --no-fail-fast`,
+  `cargo nextest run -p open-gpui-docking host_render_tests host_interaction_tests host_transition_tests host_zoom_focus_tests --no-fail-fast`,
+  `cargo fmt --all -- --check`, and `git diff --check`. Next action is commit U6, then continue U7
+  split primitive consumption and cleanup.
 - 2026-07-01: Completed U5 from
   `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
   tree. Public host zoom/unzoom/focus commands now consume the last rendered presentation scene when

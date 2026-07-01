@@ -7,6 +7,9 @@ use crate::{
     presentation_scene::DockPresentationScene,
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
+use open_gpui_ui_core::AccessibleAction;
+
+const ACCESSIBILITY_SPLITTER_STEP_PX: f32 = 24.0;
 
 impl DockHost {
     pub(crate) fn record_payload_drag_anchor_from_render(
@@ -270,6 +273,57 @@ impl DockHost {
 
     pub(crate) fn finish_splitter_drag_from_render(&mut self, cx: &mut Context<Self>) -> bool {
         self.finish_splitter_drag_interaction().finish(cx)
+    }
+
+    pub(crate) fn resize_splitter_from_accessibility(
+        &mut self,
+        split: DockNodeId,
+        axis: SplitAxis,
+        handle_index: usize,
+        action: AccessibleAction,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(scene) = self.last_presentation_scene().cloned() else {
+            return false;
+        };
+        let Some(splitter) = scene.splitters.iter().find(|splitter| {
+            splitter.split == split && splitter.axis == axis && splitter.index == handle_index
+        }) else {
+            return false;
+        };
+        let start_position = splitter.bounds.center();
+        let delta = match action {
+            AccessibleAction::Increment => open_gpui::px(ACCESSIBILITY_SPLITTER_STEP_PX),
+            AccessibleAction::Decrement => open_gpui::px(-ACCESSIBILITY_SPLITTER_STEP_PX),
+            _ => return false,
+        };
+        let target_position = match axis {
+            SplitAxis::Horizontal => Point {
+                x: start_position.x + delta,
+                y: start_position.y,
+            },
+            SplitAxis::Vertical => Point {
+                x: start_position.x,
+                y: start_position.y + delta,
+            },
+        };
+
+        self.begin_splitter_drag_axis_from_scene(
+            &scene,
+            &DockDividerHandleHitTarget {
+                key: crate::divider_hit_map::DockDividerHandleKey {
+                    split,
+                    index: handle_index,
+                    axis,
+                },
+                bounds: splitter.bounds,
+                extent: splitter.extent,
+            },
+            start_position,
+        )
+        .merge(self.update_splitter_drag_interaction(target_position, cx))
+        .merge(self.finish_splitter_drag_interaction())
+        .finish(cx)
     }
 
     fn record_payload_drag_hovered_viewport_from_render(

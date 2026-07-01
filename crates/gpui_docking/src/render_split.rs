@@ -1,11 +1,16 @@
 use crate::{
-    DockHost, DockNodeId, SplitAxis, debug::DockDebugRegion, geometry::DockSplitLayout,
-    host_render_session::DockHostRenderSession, render::DockViewportHostSceneFrameSlot,
+    DockHost, DockNodeId, SplitAxis,
+    accessibility_scene::{DockAccessibilityScene, gpui_accessible_action_from_ui},
+    debug::DockDebugRegion,
+    geometry::DockSplitLayout,
+    host_render_session::DockHostRenderSession,
+    render::DockViewportHostSceneFrameSlot,
 };
 use open_gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Styled, Window, div, px,
-    relative, rgb,
+    AnyElement, Context, InteractiveElement, IntoElement, ParentElement,
+    StatefulInteractiveElement, Styled, Window, div, px, relative, rgb,
 };
+use open_gpui_ui_core::AccessibleAction;
 
 pub(crate) struct DockRenderSplitInput {
     node: DockNodeId,
@@ -101,35 +106,74 @@ impl DockHost {
             let handle_size = session.splitter_handle_size();
             let handle_offset = -handle_size / 2.0;
             for handle_layout in &handles {
+                let handle_index = handle_layout.index;
+                let handle_center_share = handle_layout.center_share;
                 let selector = self.record_debug_selector(
                     DockDebugRegion::SplitterHandle {
                         split: node,
-                        index: handle_layout.index,
+                        index: handle_index,
                     },
                     format!(
                         "{}:split:{}:handle:{}",
                         session.selector_prefix(),
                         node.as_u64(),
-                        handle_layout.index
+                        handle_index
                     ),
                 );
+                let accessible = DockAccessibilityScene::splitter_element_for_render(
+                    node,
+                    axis,
+                    handle_index,
+                    handle_center_share,
+                );
+                let increment_entity = cx.entity();
+                let decrement_entity = cx.entity();
                 let mut handle = div()
-                    .id(selector.clone())
+                    .id(accessible.id_str().to_string())
                     .debug_selector(move || selector)
                     .absolute()
                     .bg(rgb(0xc8d0dc))
                     .hover(|this| this.bg(rgb(0x94a3b8)))
-                    .cursor_pointer();
+                    .cursor_pointer()
+                    .on_a11y_action(
+                        gpui_accessible_action_from_ui(AccessibleAction::Increment),
+                        move |_, _, cx| {
+                            increment_entity.update(cx, |host, cx| {
+                                host.resize_splitter_from_accessibility(
+                                    node,
+                                    axis,
+                                    handle_index,
+                                    AccessibleAction::Increment,
+                                    cx,
+                                );
+                            });
+                        },
+                    )
+                    .on_a11y_action(
+                        gpui_accessible_action_from_ui(AccessibleAction::Decrement),
+                        move |_, _, cx| {
+                            decrement_entity.update(cx, |host, cx| {
+                                host.resize_splitter_from_accessibility(
+                                    node,
+                                    axis,
+                                    handle_index,
+                                    AccessibleAction::Decrement,
+                                    cx,
+                                );
+                            });
+                        },
+                    );
+                handle = accessible.apply_to(handle);
 
                 handle = match axis {
                     SplitAxis::Horizontal => handle
-                        .left(relative(handle_layout.center_share))
+                        .left(relative(handle_center_share))
                         .top(px(0.0))
                         .ml(handle_offset)
                         .h_full()
                         .w(handle_size),
                     SplitAxis::Vertical => handle
-                        .top(relative(handle_layout.center_share))
+                        .top(relative(handle_center_share))
                         .left(px(0.0))
                         .mt(handle_offset)
                         .w_full()

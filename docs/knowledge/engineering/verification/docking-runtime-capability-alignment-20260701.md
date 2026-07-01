@@ -85,3 +85,41 @@ During U5 verification, stale background `cargo test -- --list` processes from p
 work caused temporary test-binary startup hangs sampled at macOS `dyld_start`. Killing the stale
 test-list processes restored nextest execution; no source change was required for that environment
 issue.
+
+## U6 / Phase C Accessibility Mapping
+
+Implemented U6 GPUI-facing accessibility output:
+
+- `DockAccessibilityScene` now maps docking descriptors into stable GPUI-facing element records with
+  deterministic IDs, renderer-neutral role, GPUI role, bounds, labels, hints, selected/disabled
+  state, orientation, numeric splitter values, and supported actions.
+- Render adapters consume the mapping for tab lists, tabs, selected tab panels, splitter handles,
+  and active overlay drop/drag/reject markers.
+- Tab accessibility focus actions select the addressed tab, while splitter increment/decrement
+  actions route through the existing resize transaction path by simulating a small splitter drag
+  from the last presentation scene.
+- Active overlay accessibility output remains separate from final-scene output. Drop/drag/reject
+  markers are labeled group nodes and do not invent unsupported platform drop actions.
+- `docs/verification.md` records the current GPUI platform limitation: generic hint/description and
+  drop action callbacks are retained in descriptor data but are not yet exposed through GPUI element
+  APIs.
+
+## U6 Commands
+
+- `cargo check -p open-gpui-docking --tests` - passed.
+- `cargo check -p open-gpui-ui-core --tests` - passed.
+- `cargo check -p open-gpui-ui-components --tests` - passed.
+- `cargo nextest run -p open-gpui-docking host_accessibility_tests --no-fail-fast` - passed, 9 tests.
+- `cargo nextest run -p open-gpui-ui-core a11y --no-fail-fast` - passed, 2 tests.
+- `cargo nextest run -p open-gpui-ui-components a11y --no-fail-fast` - passed, 4 tests.
+- `cargo nextest run -p open-gpui-docking host_render_tests host_interaction_tests host_transition_tests host_zoom_focus_tests --no-fail-fast` - passed, 105 tests.
+- `cargo fmt --all -- --check` - passed.
+- `git diff --check` - passed.
+
+## U6 Verification Notes
+
+`host_accessibility_tests::accessibility_final_semantics_match_reduced_and_animated_zoom` locks the
+U6 requirement that reduced motion changes timing only, not final accessibility semantics.
+`host_render_tests::viewport_failed_panel_focus_preserves_current_focus_and_history` passed in the
+broader regression run, which protects against accessibility metadata accidentally making tab/panel
+elements steal GPUI focus during render.

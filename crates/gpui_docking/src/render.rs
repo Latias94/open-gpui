@@ -1,5 +1,6 @@
 use crate::{
     DockHost, DockNode, DockNodeId, DropZone,
+    accessibility_scene::DockAccessibilityScene,
     debug::DockDebugRegion,
     divider_hit_map::DockDividerHitMap,
     drag::DockDragPayload,
@@ -924,6 +925,19 @@ impl DockHost {
 
         for drop_box in overlay_scene.guide_drop_boxes() {
             element = element.child(self.render_scene_drop_guide(session, bounds, drop_box));
+        }
+
+        for accessible in DockAccessibilityScene::overlay_elements_for_render(&overlay_scene) {
+            let local_bounds = localize_bounds(accessible.bounds, bounds.origin);
+            let marker = div()
+                .id(accessible.id_str().to_string())
+                .absolute()
+                .left(local_bounds.origin.x)
+                .top(local_bounds.origin.y)
+                .w(local_bounds.size.width)
+                .h(local_bounds.size.height)
+                .bg(rgba(0x00000000));
+            element = element.child(accessible.apply_to(marker));
         }
 
         element.into_any_element()

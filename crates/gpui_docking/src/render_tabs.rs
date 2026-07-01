@@ -1,5 +1,6 @@
 use crate::{
     DockHost, DockItemId, DockNodeId,
+    accessibility_scene::{DockAccessibilityScene, gpui_accessible_action_from_ui},
     debug::DockDebugRegion,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_scene_fact,
@@ -11,6 +12,7 @@ use open_gpui::{
     IntoElement, MouseButton, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window,
     black, div, px, rgb, white,
 };
+use open_gpui_ui_core::AccessibleAction;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct RenderedTabHitTarget {
@@ -132,12 +134,9 @@ impl DockHost {
             }
         }
         let tab_hit_targets_for_bar = tab_hit_targets.clone();
+        let tab_bar_a11y = DockAccessibilityScene::tab_list_element_for_render(node, tab_count);
         let mut tab_bar = div()
-            .id(format!(
-                "{}:tabs:{}:bar",
-                session.selector_prefix(),
-                node.as_u64()
-            ))
+            .id(tab_bar_a11y.id_str().to_string())
             .flex()
             .flex_row()
             .flex_none()
@@ -213,6 +212,7 @@ impl DockHost {
                     cx.new(|_| Empty)
                 },
             );
+        tab_bar = tab_bar_a11y.apply_to(tab_bar);
         tab_bar = tab_bar.child(
             self.render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
                 drop_scene_fact::tab_bar(node, tab_count, bounds, is_central)
@@ -240,11 +240,20 @@ impl DockHost {
                 title.clone(),
             );
             let drag_entity = entity.clone();
+            let focus_entity = entity.clone();
             let target_index = index;
             let tab_item = item.clone();
+            let focus_item = item.clone();
             let drag_item = item.clone();
+            let tab_a11y = DockAccessibilityScene::tab_element_for_render(
+                node,
+                item.clone(),
+                title.clone(),
+                index == selected,
+                index,
+            );
             let mut tab = div()
-                .id(selector.clone())
+                .id(tab_a11y.id_str().to_string())
                 .debug_selector(move || selector)
                 .relative()
                 .flex()
@@ -274,6 +283,14 @@ impl DockHost {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.select_tab_from_render(node, tab_item.clone(), cx);
                 }))
+                .on_a11y_action(
+                    gpui_accessible_action_from_ui(AccessibleAction::Focus),
+                    move |_, _, cx| {
+                        focus_entity.update(cx, |host, cx| {
+                            host.select_tab_from_render(node, focus_item.clone(), cx);
+                        });
+                    },
+                )
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                         if !event.bounds.contains(&event.event.position) {
@@ -329,6 +346,7 @@ impl DockHost {
                         cx.new(|_| Empty)
                     },
                 );
+            tab = tab_a11y.apply_to(tab);
             tab =
                 tab.child(self.render_viewport_drop_scene_fact_probe(
                     viewport_host_scene_frame,
@@ -336,7 +354,7 @@ impl DockHost {
                         drop_scene_fact::tab_label(node, target_index, bounds, is_central)
                     },
                 ));
-            tab = tab.child(title);
+            tab = tab.child(title.clone());
             if session.panel_is_closable(&item) {
                 let close_selector = self.record_debug_selector(
                     DockDebugRegion::TabClose {
@@ -352,7 +370,7 @@ impl DockHost {
                 );
                 let close_item = item.clone();
                 let close = div()
-                    .id(close_selector.clone())
+                    .id(format!("{}:a11y-close", close_selector))
                     .debug_selector(move || close_selector)
                     .flex()
                     .flex_none()
@@ -396,16 +414,20 @@ impl DockHost {
                     DockDebugRegion::Panel { item: item.clone() },
                     format!("{}:panel:{}", session.selector_prefix(), item),
                 );
-                div()
-                    .id(selector.clone())
+                let panel_a11y = DockAccessibilityScene::tab_panel_element_for_render(
+                    item.clone(),
+                    session.panel_title(item),
+                );
+                let panel = div()
+                    .id(panel_a11y.id_str().to_string())
                     .debug_selector(move || selector)
                     .track_focus(&focus_handle)
                     .flex()
                     .flex_col()
                     .flex_1()
                     .overflow_hidden()
-                    .child(panel_view)
-                    .into_any_element()
+                    .child(panel_view);
+                panel_a11y.apply_to(panel).into_any_element()
             }
             DockHostPanelRenderResolution::Missing { prefix, item } => {
                 let missing = item;

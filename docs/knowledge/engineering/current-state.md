@@ -2,7 +2,7 @@
 type: Current State
 title: Docking runtime capability follow-up state
 status: active
-timestamp: 2026-07-01T00:00:00+08:00
+timestamp: 2026-07-01T10:34:36+08:00
 git_branch: main
 related_plan:
   - docs/plans/2026-06-30-003-refactor-docking-split-motion-primitives-plan.md
@@ -20,6 +20,13 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast
   - cargo nextest run -p open-gpui-docking host_presentation_scene_tests host_viewport_preview_visual_tests host_transition_tests host_zoom_focus_tests host_divider_hit_map_tests host_accessibility_tests --no-fail-fast
   - cargo check -p open-gpui-docking-native
+  - cargo check -p open-gpui-docking --tests
+  - cargo check -p open-gpui-ui-core --tests
+  - cargo check -p open-gpui-ui-components --tests
+  - cargo nextest run -p open-gpui-docking host_accessibility_tests --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-core a11y --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components a11y --no-fail-fast
+  - cargo nextest run -p open-gpui-docking host_render_tests host_interaction_tests host_transition_tests host_zoom_focus_tests --no-fail-fast
   - git diff --check
   - python $HOME/.codex/skills/engineering-wiki-memory/scripts/wiki_memory.py validate --root docs/knowledge/engineering
 ---
@@ -53,12 +60,18 @@ verified_by:
   `DockGraph`, and expose short overlay-only focus pulse motion. Zoom egress uses deterministic
   touching-preferred edges from `DockZoomScene.egress`; reduced-motion zoom/unzoom/focus samples
   preserve final scene semantics.
-- In progress: Phase C continues with GPUI accessibility mapping, split primitive cleanup, and visible
-  corner-drag proof from U6-U8.
-- Last verified: Phase A, Phase B, and U5 focused gates passed locally; see the runtime capability
-  verification evidence file.
+- Done: U6 GPUI accessibility mapping is implemented locally. Docking descriptors now map to
+  GPUI-facing stable element IDs, roles, labels, selected/disabled/orientation/numeric state, tab
+  focus/select actions, splitter increment/decrement callbacks through resize transactions, and
+  short-lived overlay descriptors for active drop/drag/reject feedback. GPUI currently lacks a
+  generic hint/description field and platform drop action callback; the limitation is recorded in
+  `docs/verification.md`.
+- In progress: Phase C continues with split primitive cleanup, visible corner-drag proof, routed
+  overlay cleanup proof, dogfood evidence, and ADR/helper deletion from U7-U11.
+- Last verified: Phase A, Phase B, U5, and U6 focused gates passed locally; see the runtime
+  capability verification evidence file.
 - Blocked: None.
-- Next action: commit U5, then continue with U6 accessibility mapping.
+- Next action: commit U6, then continue with U7 split primitive consumption and cleanup.
 
 # Citations
 
