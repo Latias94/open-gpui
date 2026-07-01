@@ -55,6 +55,7 @@ impl Default for DockHostOptions {
 pub struct DockHost {
     controller: Entity<DockController>,
     space: DockSpaceId,
+    focus_handle: FocusHandle,
     viewport_runtime: DockViewportRuntimeHandle,
     viewport_activation_subscription: Option<Subscription>,
     viewport_bounds_subscription: Option<Subscription>,
@@ -80,6 +81,7 @@ impl DockHost {
         Self {
             controller,
             space: space.into(),
+            focus_handle: cx.focus_handle(),
             viewport_runtime,
             viewport_activation_subscription: None,
             viewport_bounds_subscription: None,
@@ -96,6 +98,10 @@ impl DockHost {
 
     pub(crate) fn space(&self) -> &DockSpaceId {
         &self.space
+    }
+
+    pub(crate) fn host_focus_handle(&self) -> FocusHandle {
+        self.focus_handle.clone()
     }
 
     #[cfg(test)]

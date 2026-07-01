@@ -6,6 +6,17 @@ status: active
 
 # Log
 
+- 2026-07-01: Completed U9 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. Routed cross-window feedback now has explicit source-marker versus target-preview ownership:
+  route markers enter transition descriptors, target previews own payload tab previews, replacing a
+  routed target clears stale target overlays, and Escape during a real GPUI docking drag clears the
+  source marker, target preview, runtime session, and active drag together. The drag-focused Escape
+  handler is scoped to active docking drags so ordinary failed panel focus still preserves current
+  GPUI focus. Verification passed with `cargo check -p open-gpui-docking --tests`, the focused
+  6-test U9 nextest command, the 2-test Escape/focus regression command, and the 78-test
+  `host_viewport_preview_tests host_render_tests host_transition_tests` sweep. Next action is
+  commit U9, then continue U10 native dogfood closeout.
 - 2026-07-01: Completed U8 from
   `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
   tree. Corner splitter junctions now expose scene-derived affordance states, render visible grip

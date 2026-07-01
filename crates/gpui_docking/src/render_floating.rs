@@ -176,6 +176,7 @@ impl DockHost {
                                 tear_off_geometry.with_display_work_area(display.visible_bounds());
                         }
                         drag_entity.update(cx, |host, cx| {
+                            host.focus_host_for_drag_from_render(window, cx);
                             host.begin_payload_drag_from_render(payload, cx);
                             host.update_payload_drag_tear_off_geometry_from_render(
                                 payload,

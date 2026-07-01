@@ -97,6 +97,7 @@ cargo nextest run -p open-gpui-ui-core split --no-fail-fast
 cargo nextest run -p open-gpui-ui-components splitter gpui_adapter_maps_splitter_role --no-fail-fast
 cargo nextest run -p open-gpui-docking geometry host_accessibility_tests host_divider_hit_map_tests workspace_resize_policy_tests graph_split_tests interaction --no-fail-fast
 cargo nextest run -p open-gpui-docking spatial_navigation_tests host_zoom_focus_tests::host_focus_neighbor_command_uses_spatial_navigation host_accessibility_tests::accessibility_splitter_actions_resize_through_transaction_path host_accessibility_tests::accessibility_vertical_splitter_actions_target_vertical_axis host_divider_hit_map_tests host_interaction_tests::horizontal_splitter_drag_updates_width_fractions host_interaction_tests::vertical_splitter_drag_updates_height_fractions host_interaction_tests::splitter_drag_clamps_to_minimum_pane_size host_interaction_tests::corner_splitter_drag_updates_both_axes_through_rendered_events interaction::tests::corner_splitter_drag_produces_two_axis_resize_request interaction::tests::corner_splitter_drag_clamps_one_axis_without_corrupting_other_axis render::tests::divider_affordance_states_have_distinct_feedback_colors --no-fail-fast
+cargo nextest run -p open-gpui-docking transition_plan_from_route_overlay_describes_source_marker source_hover_over_known_viewport_renders_target_drop_preview routed_preview_replacement_clears_old_target_overlay_without_stale_payload escape_clears_routed_marker_target_overlay_and_active_drag viewport_runtime_begin_payload_drag_clears_previous_routed_preview viewport_runtime_revalidates_routed_preview_release_against_current_policy --no-fail-fast
 ```
 
 These checks prove capability alignment instead of pixel parity: tab insertion previews remain tab
@@ -104,6 +105,14 @@ previews, nested edge targets stay scoped to the pane that owns the guide, cross
 markers stay separate from target previews, zoom/focus produce deterministic descriptors, divider
 and corner hits derive from the shared split hit map, and accessibility descriptors expose roles,
 bounds, orientation, selected state, disabled state, and actions.
+
+Cross-window preview cleanup is part of the same semantic contract. A routed hover may leave a
+source-window route marker and a target-window preview at the same time, but those are distinct
+overlay layers: source route markers become `RouteMarker` transition descriptors, target previews
+own payload tab previews, and replacing the route target must clear the old target overlay before a
+release can commit. Escape cancellation during a real GPUI docking drag clears the active drag,
+source marker, target preview, and runtime session together without making the docking host steal
+ordinary panel focus when no drag is active.
 
 Shared split primitive coverage now owns generic fraction normalization, one-fill-child share
 resolution, and pixel-delta adjacent resize helpers in `open_gpui_ui_core`. Docking consumes those
@@ -831,6 +840,11 @@ Manual native docking dogfood should use the same example after the automated ch
     inner split semantics.
 19. Hover rejected center and route targets. The target preview must use rejected tokens, suppress
     payload tab previews, and leave the graph unchanged on release.
+20. Start a routed cross-window hover, then hover a different compatible viewport before release.
+    The old target window must lose both its target preview and payload tab previews, while the new
+    target owns the current preview.
+21. Press Escape during a routed drag after a target preview appears. The source route marker,
+    target preview, runtime drag session, and GPUI active drag must all clear in one frame.
 
 Current docking multi-viewport capability states:
 
@@ -858,6 +872,12 @@ Current docking multi-viewport capability states:
   `host_transition_tests`, `host_zoom_focus_tests`, `host_divider_hit_map_tests`, and
   `host_accessibility_tests`. Transparent payload-window rendering, platform accessibility mapping,
   and screenshot or pixel-regression baselines remain explicitly deferred follow-up work.
+- Routed overlay cleanup is fail-closed. Source-window route markers and target-window previews are
+  separately renderable, but releases revalidate against current viewport facts instead of trusting
+  cached preview state. Starting a new routed drag clears the previous session's routed preview,
+  replacing a route target removes stale previews from the old target window, and Escape clears the
+  GPUI active drag plus all routed preview state. Automated owners:
+  `host_viewport_preview_tests`, `host_transition_tests`, and `host_render_tests`.
 - Test ownership is split by concern. Route, lifecycle, placement, close, preview, platform
   capability, and visual-proof assertions live in focused `host_viewport_*_tests` modules; the old
   monolithic runtime test files have been deleted. Rendered native dogfood tests remain

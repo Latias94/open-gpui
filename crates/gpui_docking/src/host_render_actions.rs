@@ -49,6 +49,14 @@ impl DockHost {
         begin.drag_session
     }
 
+    pub(crate) fn focus_host_for_drag_from_render(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus(&self.host_focus_handle(), cx);
+    }
+
     pub(crate) fn update_payload_drag_tear_off_geometry_from_render(
         &mut self,
         payload: &DockDragPayload,
@@ -86,6 +94,22 @@ impl DockHost {
             .finish_payload_drag_with_app(session, cx);
         let anchor_cleared = self.interaction_mut().clear_any_payload_drag_anchor();
         changed || anchor_cleared
+    }
+
+    pub(crate) fn cancel_payload_drag_from_render(
+        &mut self,
+        payload: &DockDragPayload,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let drag_session = self.active_payload_drag_session(payload);
+        let session_changed = drag_session
+            .as_ref()
+            .is_some_and(|session| self.finish_payload_drag_session(session, cx));
+        let local_preview_cleared = self.clear_drop_preview_interaction();
+        let routed_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
+        let active_drag_cleared = cx.stop_active_drag(window);
+        session_changed || local_preview_cleared || routed_preview_cleared || active_drag_cleared
     }
 
     pub(crate) fn select_tab_from_render(

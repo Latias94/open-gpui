@@ -2,7 +2,7 @@
 type: Current State
 title: Docking runtime capability follow-up state
 status: active
-timestamp: 2026-07-01T11:27:26+08:00
+timestamp: 2026-07-01T12:51:25+08:00
 git_branch: main
 related_plan:
   - docs/plans/2026-06-30-003-refactor-docking-split-motion-primitives-plan.md
@@ -33,6 +33,9 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast
   - cargo nextest run -p open-gpui-docking geometry workspace_resize_policy_tests host_interaction_tests::horizontal_splitter_drag_updates_width_fractions host_interaction_tests::vertical_splitter_drag_updates_height_fractions host_interaction_tests::splitter_drag_clamps_to_minimum_pane_size host_render_tests::central_split_child_uses_remaining_render_space host_render_tests::horizontal_split_uses_normalized_flex_shares host_render_tests::vertical_split_uses_normalized_flex_shares host_render_tests::unnormalized_split_fractions_are_repaired_for_rendering --no-fail-fast
   - cargo nextest run -p open-gpui-docking spatial_navigation_tests host_zoom_focus_tests::host_focus_neighbor_command_uses_spatial_navigation host_accessibility_tests::accessibility_splitter_actions_resize_through_transaction_path host_accessibility_tests::accessibility_vertical_splitter_actions_target_vertical_axis host_divider_hit_map_tests host_interaction_tests::horizontal_splitter_drag_updates_width_fractions host_interaction_tests::vertical_splitter_drag_updates_height_fractions host_interaction_tests::splitter_drag_clamps_to_minimum_pane_size host_interaction_tests::corner_splitter_drag_updates_both_axes_through_rendered_events interaction::tests::corner_splitter_drag_produces_two_axis_resize_request interaction::tests::corner_splitter_drag_clamps_one_axis_without_corrupting_other_axis render::tests::divider_affordance_states_have_distinct_feedback_colors --no-fail-fast
+  - cargo nextest run -p open-gpui-docking transition_plan_from_route_overlay_describes_source_marker source_hover_over_known_viewport_renders_target_drop_preview routed_preview_replacement_clears_old_target_overlay_without_stale_payload escape_clears_routed_marker_target_overlay_and_active_drag viewport_runtime_begin_payload_drag_clears_previous_routed_preview viewport_runtime_revalidates_routed_preview_release_against_current_policy --no-fail-fast
+  - cargo nextest run -p open-gpui-docking host_render_tests::viewport_failed_panel_focus_preserves_current_focus_and_history host_viewport_preview_tests::handle_suite::escape_clears_routed_marker_target_overlay_and_active_drag --no-fail-fast
+  - cargo nextest run -p open-gpui-docking host_viewport_preview_tests host_render_tests host_transition_tests --no-fail-fast
   - git diff --check
   - python $HOME/.codex/skills/engineering-wiki-memory/scripts/wiki_memory.py validate --root docs/knowledge/engineering
 ---
@@ -82,12 +85,17 @@ verified_by:
   resize cursors, real rendered diagonal corner drag updates both split axes, a11y splitter actions
   target horizontal and vertical axes, and `DockSpatialDirection` drives a private
   rectangle-neighbor resolver for pane focus commands.
-- In progress: Phase C continues with routed overlay cleanup proof, dogfood evidence, and
-  ADR/helper deletion from U9-U11.
-- Last verified: Phase A, Phase B, U5, U6, U7, and U8 focused gates passed locally; see the runtime
-  capability verification evidence file.
+- Done: U9 routed overlay cleanup proof is implemented locally. Source route markers and target
+  previews have separate overlay ownership, route markers enter transition descriptors, replacing a
+  routed target clears stale target overlays, and Escape during a real GPUI docking drag clears the
+  source marker, target preview, runtime session, and active drag without stealing normal panel
+  focus.
+- In progress: Phase C continues with native dogfood evidence and ADR/helper deletion from U10-U11.
+- Last verified: Phase A, Phase B, U5, U6, U7, U8, and U9 focused gates passed locally; see the
+  runtime capability verification evidence file.
 - Blocked: None.
-- Next action: commit U8, then continue with U9 cross-window overlay animation and cleanup proof.
+- Next action: commit U9, then continue with U10 native dogfood closeout and final U11 ADR/helper
+  cleanup.
 
 # Citations
 

@@ -1,5 +1,7 @@
 use crate::{
-    DockTransitionExecutionState, DropZone, SplitAxis,
+    DockTransitionExecutionState, DockViewportDropRoute, DockViewportRouteSelectionSource,
+    DockViewportTargetHit, DropZone, SplitAxis,
+    drop_preview::DockDropRoutePreview,
     host_test_support::{floating_bounds, open_host, space, split_graph},
     overlay_scene::{DockOverlayLayer, DockOverlayLayerKind, DockOverlayScene},
     presentation_scene::{
@@ -10,6 +12,7 @@ use crate::{
         DockDividerTransitionKind, DockMotionPreference, DockOverlayTransitionKind,
         DockPaneTransitionKind, DockTransitionEdge, DockTransitionPlan,
     },
+    viewport_test_support::handle,
 };
 use open_gpui::{Bounds, TestAppContext, point, px, size};
 use open_gpui_ui_core::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
@@ -435,6 +438,37 @@ fn transition_plan_from_overlay_scene_describes_tab_insertion_and_payload_ghosts
         DockOverlayTransitionKind::PayloadGhost
     );
     assert_eq!(plan.overlay_transitions[1].payload_index, Some(0));
+}
+
+#[test]
+fn transition_plan_from_route_overlay_describes_source_marker() {
+    let tabs = crate::DockNodeId::null();
+    let scene = single_pane_scene(tabs, host_bounds(320.0, 200.0));
+    let route_preview = DockDropRoutePreview::from_route(
+        &DockViewportDropRoute::KnownViewport {
+            target: DockViewportTargetHit::new(
+                crate::DockSpaceId::from("target"),
+                handle(171),
+                point(px(42.0), px(24.0)),
+            ),
+            source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
+        },
+        point(px(24.0), px(48.0)),
+    )
+    .expect("known cross-window route should produce a source marker");
+    let overlay = DockOverlayScene::from_route_preview(&route_preview);
+
+    let plan =
+        DockTransitionPlan::from_overlay_scene(&scene, &overlay, DockMotionPreference::Animated);
+
+    assert!(plan.pane_transitions.is_empty());
+    assert_eq!(plan.overlay_transitions.len(), 1);
+    assert_eq!(
+        plan.overlay_transitions[0].kind,
+        DockOverlayTransitionKind::RouteMarker
+    );
+    assert_eq!(plan.overlay_transitions[0].bounds, route_preview.bounds);
+    assert!(!plan.overlay_transitions[0].immediate);
 }
 
 #[test]

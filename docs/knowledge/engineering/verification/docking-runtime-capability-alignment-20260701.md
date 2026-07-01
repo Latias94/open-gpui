@@ -185,3 +185,38 @@ Implemented U8 visible corner drag and docking-private spatial navigation:
 The spatial navigation algorithm intentionally stays in `gpui_docking` rather than
 `open_gpui_ui_core`: it depends on docking presentation panes, selected tab focus regions, and
 host focus commands. The split primitive boundary from U7 remains intact.
+
+## U9 / Phase C Routed Overlay Cleanup
+
+Implemented U9 routed overlay cleanup proof:
+
+- Source-window route markers and target-window drop previews now have explicit test coverage as
+  separate overlay responsibilities. Source markers do not render target payload tab previews, and
+  target previews do not render source route marker regions.
+- `DockTransitionPlan::from_overlay_scene` now has focused coverage for route-marker transitions,
+  proving routed source feedback participates in the descriptor-based motion path instead of being a
+  render-only special case.
+- Replacing a routed target preview clears the previous target window's runtime preview and rendered
+  payload tab previews before release, so stale target facts cannot commit.
+- Escape during a real GPUI docking drag clears the source route marker, target preview, scoped
+  runtime drag session, and GPUI active drag together.
+- Docking drag focus handling is scoped to active drag frames. The host can receive Escape while a
+  docking drag is active, but ordinary failed panel focus still preserves the current GPUI focus and
+  history.
+
+## U9 Commands
+
+- `cargo check -p open-gpui-docking --tests` - passed.
+- `cargo nextest run -p open-gpui-docking transition_plan_from_route_overlay_describes_source_marker source_hover_over_known_viewport_renders_target_drop_preview routed_preview_replacement_clears_old_target_overlay_without_stale_payload escape_clears_routed_marker_target_overlay_and_active_drag viewport_runtime_begin_payload_drag_clears_previous_routed_preview viewport_runtime_revalidates_routed_preview_release_against_current_policy --no-fail-fast` -
+  passed, 6 tests.
+- `cargo nextest run -p open-gpui-docking host_render_tests::viewport_failed_panel_focus_preserves_current_focus_and_history host_viewport_preview_tests::handle_suite::escape_clears_routed_marker_target_overlay_and_active_drag --no-fail-fast` -
+  passed, 2 tests.
+- `cargo nextest run -p open-gpui-docking host_viewport_preview_tests host_render_tests host_transition_tests --no-fail-fast` -
+  passed, 78 tests.
+
+## U9 Verification Notes
+
+The routed overlay cleanup keeps current viewport facts authoritative. Cached route previews can
+drive visible feedback, but release still revalidates against current policy and current target
+facts. Escape cancellation intentionally uses render-scoped focus capture only while a
+`DockDragPayload` is active, avoiding a permanent focusable root around normal docking content.

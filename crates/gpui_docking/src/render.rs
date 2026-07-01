@@ -25,8 +25,9 @@ use crate::{
 };
 use open_gpui::{
     AnyElement, BorderStyle, Bounds, Context, CursorStyle, DragMoveEvent, InteractiveElement,
-    IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
-    Render, Rgba, SharedString, Styled, Window, black, canvas, div, point, px, quad, rgb, rgba,
+    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, Render, Rgba, SharedString, Styled, Window, black, canvas, div, point,
+    px, quad, rgb, rgba,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -63,6 +64,7 @@ impl Render for DockHost {
             DockDebugRegion::Host,
             format!("{}:host", session.selector_prefix()),
         );
+        let active_docking_drag = cx.active_drag_value::<DockDragPayload>().is_some();
 
         let mut host = div()
             .id(selector.clone())
@@ -141,6 +143,24 @@ impl Render for DockHost {
                     }
                 }),
             );
+
+        if active_docking_drag {
+            let host_focus = self.host_focus_handle();
+            host = host.track_focus(&host_focus).capture_key_down(cx.listener(
+                move |this, event: &KeyDownEvent, window, cx| {
+                    if event.keystroke.key != "escape" || event.keystroke.modifiers.modified() {
+                        return;
+                    }
+                    let Some(payload) = cx.active_drag_value::<DockDragPayload>().cloned() else {
+                        return;
+                    };
+                    if this.cancel_payload_drag_from_render(&payload, window, cx) {
+                        window.refresh();
+                    }
+                    cx.stop_propagation();
+                },
+            ));
+        }
 
         if session.empty_central_passthrough() {
             host = host.bg(rgba(0x00000000));

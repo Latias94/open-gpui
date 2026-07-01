@@ -188,6 +188,7 @@ impl DockHost {
                 stack_payload,
                 move |payload, position, source_bounds, window, cx| {
                     stack_drag_entity.update(cx, |host, cx| {
+                        host.focus_host_for_drag_from_render(window, cx);
                         host.begin_payload_drag_from_render(payload, cx);
                         let cursor_position = host
                             .payload_drag_anchor_position_from_render(payload)
@@ -317,6 +318,7 @@ impl DockHost {
                     payload,
                     move |payload, position, source_bounds, window, cx| {
                         drag_entity.update(cx, |host, cx| {
+                            host.focus_host_for_drag_from_render(window, cx);
                             host.begin_tab_item_drag_from_render(
                                 node,
                                 drag_item.clone(),
