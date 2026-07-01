@@ -359,6 +359,34 @@ drift, that render/controlled/default/policy vocabulary stays consistent, that r
 default exports match registry intent, and that renderer-neutral resolved state remains free of
 GPUI runtime types.
 
+Accessibility contract coverage now has its own semantic gate. `ComponentA11yContract` validates
+role/name/value/action facts without a live platform backend, while the existing GPUI adapter tests
+continue to prove role, orientation, toggled-state, and action mapping into GPUI. Run:
+
+```powershell
+cargo nextest run -p open-gpui-ui-components a11y --no-fail-fast
+```
+
+That gate covers `A11yLabelSource`, `A11yDescriptionSource`, `A11yValueMetadata`,
+`A11yValueKind`, `A11yContractError`, and `A11yContractViolation` across representative Button,
+IconButton, Checkbox, Slider, NumberInput, Progress, Dialog, Menu, Listbox, Tree, Table,
+VirtualizedList, and Splitter contracts. The Components gallery conformance gate also exposes
+`COMPONENT_A11Y_CLAIMS` / `ComponentA11yClaim`, so sample selector metadata stays aligned with
+roles, label sources, value metadata, orientation, and supported actions.
+
+Theme portability is guarded by the theme focused gate:
+
+```powershell
+cargo nextest run -p open-gpui-ui-components theme --no-fail-fast
+```
+
+That gate keeps code-built `ThemeDefinition` registration working while proving the JSON loader
+facade: `THEME_JSON_SCHEMA_VERSION`, `theme_json_schema`, `theme_definition_from_json_str`,
+`theme_definition_from_json_file`, `register_theme_json_str`, and `register_theme_json_file`.
+Loader failures are structured as `ThemeLoadError` / `ThemeFileField` for unsupported schema
+versions, missing identity fields, unsupported token or state names, duplicate token/state pairs,
+and invalid RGB values.
+
 The foundation component family gate covers the shipped disclosure, numeric, navigation, display,
 action, and feedback additions: Accordion, Collapsible, Slider, NumberInput, ToggleGroup, Link,
 Breadcrumb, Tag, and ToastStack. These tests keep one canonical API per family, explicit

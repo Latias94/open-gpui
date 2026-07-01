@@ -16,6 +16,9 @@ path = "src/lib.rs"
 [dependencies]
 open_gpui.workspace = true
 open_gpui_ui_core.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 unicode-segmentation.workspace = true
 
 [dev-dependencies]

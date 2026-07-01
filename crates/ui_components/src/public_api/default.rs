@@ -132,8 +132,10 @@ pub use crate::text_input::{
 };
 pub use crate::textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
 pub use crate::theme::{
-    ThemeColor, ThemeDefinition, ThemeMode, ThemeRegistrationDiagnostics, ThemeRegistry,
-    ThemeRegistryEntry, ThemeResolver, ThemeSnapshot, ThemeValidationError,
+    THEME_JSON_SCHEMA_VERSION, ThemeColor, ThemeDefinition, ThemeFileField, ThemeLoadError,
+    ThemeMode, ThemeRegistrationDiagnostics, ThemeRegistry, ThemeRegistryEntry, ThemeResolver,
+    ThemeSnapshot, ThemeValidationError, register_theme_json_file, register_theme_json_str,
+    theme_definition_from_json_file, theme_definition_from_json_str, theme_json_schema,
 };
 pub use crate::toast::{
     Toast, ToastAction, ToastColors, ToastDismiss, ToastDismissReason, ToastIntent, ToastMetrics,

@@ -4585,6 +4585,9 @@ version = "0.1.0"
 dependencies = [
  "open-gpui",
  "open-gpui-ui-core",
+ "schemars",
+ "serde",
+ "serde_json",
  "unicode-segmentation",
 ]
 

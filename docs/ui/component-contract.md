@@ -407,19 +407,36 @@ revision is the cache invalidation hook for future app-level theme providers. Co
 read global theme state directly; keep the resolved component state renderer-neutral and pass theme
 snapshots at the adapter edge.
 
+`ThemeColor` entries pair semantic tokens with `ColorState` values.
+
 `ThemeRegistry` is the app-level owner for built-in and user-loaded theme snapshots. The registry
 preloads light, dark, and high-contrast entries, validates `ThemeDefinition` identity fields,
 replaces entries by stable id, and stores owned color tables behind `ThemeRegistryEntry`.
-`ThemeRegistrationDiagnostics` records which built-in mode supplied fallback colors and how many
-entries were filled from that fallback. Missing optional token/state colors are completed from a
-built-in snapshot; missing id, label, mode, or revision fail validation. The registry intentionally
+`ThemeRegistrationDiagnostics`
+records which built-in mode supplied fallback colors and how many entries were filled from that
+fallback. Missing optional token/state colors are completed from a built-in snapshot; missing id,
+label, mode, or revision fail validation with `ThemeValidationError`. The registry intentionally
 does not expose or mutate a global active theme: consumers choose an entry, take its immutable
 `ThemeSnapshot`, and pass that snapshot to `ThemeResolver::resolve_with`.
 
+Portable theme files are JSON and versioned by `THEME_JSON_SCHEMA_VERSION`. The public loader
+surface is `theme_json_schema`, `theme_definition_from_json_str`,
+`theme_definition_from_json_file`, `register_theme_json_str`, and `register_theme_json_file`.
+Those facades validate schema version, identity fields, `ThemeMode`, duplicate token/state pairs,
+supported semantic token names, supported `ColorState` names, and six-digit RGB values before a
+definition reaches `ThemeRegistry::register`. Loader failures are structured as `ThemeLoadError`
+with `ThemeFileField` for missing top-level or per-color fields, so applications can show messages
+without parsing error strings. The schema covers the current resolver vocabulary: semantic surface,
+text, accent, destructive, overlay, modal overlay, and focus-ring tokens plus default, hover,
+selected, disabled, read-only, invalid, required, placeholder, message, focus-visible, overlay,
+and modal-overlay states. A pressed state is intentionally absent until the resolver grows a real
+`ColorState` for it.
+
 Theme module ownership is intentionally split: `theme/snapshot.rs` owns immutable snapshot data,
 `theme/registry.rs` owns explicit registration and fallback diagnostics, `theme/resolver.rs` owns
-intent-to-color resolution, `theme/palette.rs` owns the built-in token tables, and
-`theme/recipes.rs` owns component color recipes. Component files should call
+intent-to-color resolution, `theme/schema.rs` owns the JSON schema and loader facade,
+`theme/palette.rs` owns the built-in token tables, and `theme/recipes.rs` owns component color
+recipes. Component files should call
 `ThemeResolver::*_colors` but should not add local `impl ThemeResolver` blocks. The
 `scan-theme-drift` xtask gate checks recipe catalog coverage and built-in palette token/state
 shape, so missing recipe or token additions fail before visual drift reaches gallery tests.
@@ -714,9 +731,20 @@ wired to the interaction model.
 
 Renderer-neutral accessibility also follows this boundary. `open_gpui_ui_core::Role::Splitter`,
 orientation, selected state, disabled state, and action descriptors are the stable vocabulary;
-`ui_components::a11y` maps that vocabulary to GPUI roles and ARIA-style element state. Docking's
-accessibility scene should describe panes, tabs, tab bars, splitters, drop targets, drag sources,
-and overlay state from the same presentation scene rather than from render-local rectangles.
+the component crate maps that vocabulary to GPUI roles and ARIA-style element state through
+`open_gpui_ui_components::gpui_adapter`. Docking's accessibility scene should describe panes,
+tabs, tab bars, splitters, drop targets, drag sources, and overlay state from the same presentation
+scene rather than from render-local rectangles.
+
+Component accessibility assertions use `ComponentA11yContract` rather than a live platform
+accessibility backend. The contract records `A11yLabelSource`, `A11yDescriptionSource`, selected,
+checked, expanded, disabled, `A11yValueMetadata`, `A11yValueKind`, orientation, and supported
+`AccessibleAction` values for a component or component part. Validation returns
+`A11yContractViolation` with `A11yContractError` when a role that requires an accessible name,
+value metadata, or action omits that fact. Focused tests in `crates/ui_components/tests/a11y.rs`
+cover representative primitives, form controls, icon-only controls, overlays, listbox choices,
+Table, Tree, VirtualizedList, and Splitter handles. GPUI adapter mapping tests remain separate, so
+the contract does not claim full platform screen-reader coverage.
 
 ## Gallery Conformance Surface
 
@@ -770,7 +798,9 @@ these gates visible:
 - Table and virtualizer samples keep long table scrolling inside the table viewport;
 - Splitter runtime fractions continue to share one constraint solver;
 - Tabs keep overflow and roving-focus behavior visible in the page;
-- icon-only affordances and labels keep their accessible metadata explicit.
+- icon-only affordances and labels keep their accessible metadata explicit;
+- `COMPONENT_A11Y_CLAIMS` and `ComponentA11yClaim` keep representative sample selectors, roles,
+  label sources, value metadata, orientation, and actions aligned with `ComponentA11yContract`.
 
 Large or behavior-heavy sections must use the same lazy or virtualized rendering primitives that
 the component library exposes to applications. The Components page mounts sections through a
@@ -822,10 +852,10 @@ The active next UI productization slice is
 `docs/plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md`: split the component contract
 registry, add focused accessibility contract gates, and add a theme JSON schema plus file-loader
 facade. Broad remaining-1k-line component splitting and `open-gpui-ui-headless` extraction are not
-part of that slice. Until the theme loader lands, the runtime theme table covers semantic component
-colors for light, dark, high-contrast, and registry-loaded snapshots, but UIs should construct
-`ThemeDefinition` values explicitly and register them before handing immutable snapshots to
-component adapters. Single-line editable text input now uses GPUI's `EntityInputHandler`/
+part of that slice. The runtime theme table now covers semantic component colors for light, dark,
+high-contrast, registry-loaded snapshots, and JSON-loaded `ThemeDefinition` values; UIs should
+load or construct definitions, register them, and pass immutable snapshots to component adapters.
+Single-line editable text input now uses GPUI's `EntityInputHandler`/
 `ElementInputHandler` path through `TextInputController`. Applications can either supply an
 adapter-owned controller directly or use the standard controlled shape
 `TextInput::value(...).on_change(...)`; the latter creates a keyed adapter controller internally,
