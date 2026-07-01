@@ -40,15 +40,16 @@ use jellyflow_open_gpui::{
     OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource, OpenGpuiMenuPlan,
     OpenGpuiNodeRendererContext, OpenGpuiNodeRendererRegistry, OpenGpuiNodeRendererResolution,
     OpenGpuiNodeRendererState, OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
-    OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout,
+    OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout, OpenGpuiRepeatableActionPlan,
+    OpenGpuiRepeatableEditError, OpenGpuiRepeatableEditPlan,
     OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
     OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
     OpenGpuiRepeatableSurfaceLayout as NodeRepeatableSurfaceLayout,
     OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection, OpenGpuiViewBounds,
     OpenGpuiViewPoint, OpenGpuiViewSize, apply_dropped_wire_insert, control_option_key,
     control_selected_option_key, layout_pass_measurement_from_regions, measured_surface_anchors,
-    project_actions_for_surface, project_dropped_wire_menu, project_inspectors_for_surface,
-    project_menu, project_node_measurement, project_slot_controls,
+    plan_repeatable_action, project_actions_for_surface, project_dropped_wire_menu,
+    project_inspectors_for_surface, project_menu, project_node_measurement, project_slot_controls,
     projected_node_surface_graph_layout, repeatable_item_projection, repeatable_surface_projection,
     resolve_inspector_target_bounds,
 };
@@ -686,6 +687,29 @@ impl JellyflowCanvasView {
         }
     }
 
+    fn dispatch_repeatable_action(
+        &mut self,
+        node_id: JellyNodeId,
+        action: OpenGpuiRepeatableActionPlan,
+        cx: &mut Context<Self>,
+    ) {
+        match apply_repeatable_action_to_store(
+            &mut self.store,
+            &self.semantic_registry,
+            node_id,
+            action,
+        ) {
+            Ok(Some(_plan)) => {
+                self.refresh_editor_from_store();
+                cx.notify();
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("repeatable action dispatch failed: {error}");
+            }
+        }
+    }
+
     fn dispatch_menu_action(
         &mut self,
         menu: &OpenGpuiMenuPlan,
@@ -970,6 +994,38 @@ fn apply_demo_dropped_wire_insert(
         ),
     );
     Ok(outcome)
+}
+
+fn apply_repeatable_action_to_store(
+    store: &mut NodeGraphStore,
+    registry: &NodeRegistry,
+    node_id: JellyNodeId,
+    action: OpenGpuiRepeatableActionPlan,
+) -> Result<Option<OpenGpuiRepeatableEditPlan>, OpenGpuiRepeatableEditError> {
+    let node = store
+        .graph()
+        .nodes()
+        .get(&node_id)
+        .cloned()
+        .ok_or_else(|| {
+            OpenGpuiRepeatableEditError::InvalidEdit(format!("missing node {node_id:?}"))
+        })?;
+    let descriptor = registry.view_descriptor(&node.kind).ok_or_else(|| {
+        OpenGpuiRepeatableEditError::InvalidEdit(format!(
+            "missing descriptor for node kind `{}`",
+            node.kind.0
+        ))
+    })?;
+    let Some(plan) = plan_repeatable_action(&descriptor, store.graph(), node_id, &node, action)?
+    else {
+        return Ok(None);
+    };
+
+    store
+        .dispatch_transaction(&plan.transaction)
+        .map_err(|error| OpenGpuiRepeatableEditError::InvalidEdit(error.to_string()))?;
+    store.invalidate_node_internals(plan.invalidation.clone());
+    Ok(Some(plan))
 }
 
 fn render_selected_inspector_panel(summary: &SelectedNodeSummary) -> AnyElement {
@@ -2115,6 +2171,7 @@ fn render_surface_slots(
             view_width,
             view_height,
             collector.clone(),
+            view.clone(),
         )
         .into_any_element()
     }));
@@ -2126,6 +2183,7 @@ fn render_surface_slots(
             view_width,
             view_height,
             collector.clone(),
+            view.clone(),
         )
         .into_any_element()
     }));
@@ -2862,6 +2920,61 @@ fn render_action_buttons(slot: &NodeSurfaceSlotProjection, value: &str) -> impl 
         .children(actions)
 }
 
+fn demo_repeatable_add_item(collection_key: &str, item_count: usize) -> Value {
+    let next = item_count + 1;
+    match collection_key {
+        "shader.inputs" => serde_json::json!({
+            "name": format!("Input {next}"),
+            "ty": "vec4",
+            "port": format!("input_{next}")
+        }),
+        "table.columns" => serde_json::json!({
+            "name": format!("column_{next}"),
+            "ty": "text",
+            "port": format!("field_column_{next}")
+        }),
+        "llm.params" => {
+            let name = format!("param_{next}");
+            serde_json::json!({
+                "name": name,
+                "value": format!("{{{{ input.{name} }}}}")
+            })
+        }
+        _ => serde_json::json!({
+            "name": format!("item_{next}")
+        }),
+    }
+}
+
+fn repeatable_action_button(
+    node_id: JellyNodeId,
+    id: String,
+    label: &'static str,
+    variant: ButtonVariant,
+    disabled: bool,
+    action: OpenGpuiRepeatableActionPlan,
+    view: WeakEntity<JellyflowCanvasView>,
+) -> AnyElement {
+    let mut button = Button::new(id, label)
+        .variant(variant)
+        .disabled(disabled)
+        .with_size(Size::XSmall);
+
+    if !disabled {
+        button = button.on_click(move |event, _window, cx| {
+            cx.stop_propagation();
+            let _ = event;
+            let action = action.clone();
+            view.update(cx, |this, cx| {
+                this.dispatch_repeatable_action(node_id, action, cx);
+            })
+            .ok();
+        });
+    }
+
+    render_node_internal_interaction_region(button.into_any_element())
+}
+
 fn render_repeatable_row(
     node_id: JellyNodeId,
     repeatable: NodeRepeatableSurfaceLayout,
@@ -2869,9 +2982,16 @@ fn render_repeatable_row(
     view_width: Pixels,
     view_height: Pixels,
     collector: OpenGpuiBoundsCollector,
+    view: WeakEntity<JellyflowCanvasView>,
 ) -> impl IntoElement {
     let rect = slot_view_rect(repeatable.rect, document_bounds, view_width, view_height);
     let key = repeatable.projection.key.clone();
+    let collection_key = repeatable.projection.key.clone();
+    let add_item = demo_repeatable_add_item(&collection_key, repeatable.projection.item_count);
+    let add_action = OpenGpuiRepeatableActionPlan::Add {
+        collection_key: collection_key.clone(),
+        item: add_item,
+    };
     let row = div()
         .absolute()
         .left(rect.origin.x)
@@ -2902,12 +3022,27 @@ fn render_repeatable_row(
                 )),
         )
         .child(
-            Badge::new(
-                format!("jellyflow-repeatable:{}", repeatable.projection.key),
-                format!("{} controls", repeatable.projection.controls),
-            )
-            .variant(BadgeVariant::Outline)
-            .with_size(Size::XSmall),
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(
+                    Badge::new(
+                        format!("jellyflow-repeatable:{}", repeatable.projection.key),
+                        format!("{} controls", repeatable.projection.controls),
+                    )
+                    .variant(BadgeVariant::Outline)
+                    .with_size(Size::XSmall),
+                )
+                .child(repeatable_action_button(
+                    node_id,
+                    format!("jellyflow-repeatable-add:{collection_key}"),
+                    "Add",
+                    ButtonVariant::Secondary,
+                    false,
+                    add_action,
+                    view,
+                )),
         );
 
     render_measured_region(OpenGpuiMeasurementId::slot(node_id, key), collector, row)
@@ -2920,6 +3055,7 @@ fn render_repeatable_item_row(
     view_width: Pixels,
     view_height: Pixels,
     collector: OpenGpuiBoundsCollector,
+    view: WeakEntity<JellyflowCanvasView>,
 ) -> impl IntoElement {
     let rect = slot_view_rect(repeatable.rect, document_bounds, view_width, view_height);
     let anchor_rect = slot_anchor_view_rect(
@@ -2930,6 +3066,8 @@ fn render_repeatable_item_row(
     );
     let slot_key = repeatable.projection.slot_key.clone();
     let item_id = repeatable.projection.item_id.clone();
+    let collection_key = repeatable.projection.collection_key.clone();
+    let item_index = repeatable.projection.item_index;
     let anchor = repeatable.projection.anchor.clone();
     let fill = if repeatable.projection.has_graph_port() {
         rgb(0xecfeff)
@@ -2978,15 +3116,46 @@ fn render_repeatable_item_row(
                 )),
         )
         .child(
-            Badge::new(
-                format!(
-                    "jellyflow-repeatable-item:{}:{}",
-                    repeatable.projection.collection_key, repeatable.projection.item_id
-                ),
-                badge,
-            )
-            .variant(BadgeVariant::Outline)
-            .with_size(Size::XSmall),
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(
+                    Badge::new(
+                        format!(
+                            "jellyflow-repeatable-item:{}:{}",
+                            repeatable.projection.collection_key, repeatable.projection.item_id
+                        ),
+                        badge,
+                    )
+                    .variant(BadgeVariant::Outline)
+                    .with_size(Size::XSmall),
+                )
+                .child(repeatable_action_button(
+                    node_id,
+                    format!("jellyflow-repeatable-up:{collection_key}:{item_id}"),
+                    "Up",
+                    ButtonVariant::Secondary,
+                    item_index == 0,
+                    OpenGpuiRepeatableActionPlan::Reorder {
+                        collection_key: collection_key.clone(),
+                        item_id: item_id.clone(),
+                        to_index: item_index.saturating_sub(1),
+                    },
+                    view.clone(),
+                ))
+                .child(repeatable_action_button(
+                    node_id,
+                    format!("jellyflow-repeatable-remove:{collection_key}:{item_id}"),
+                    "Del",
+                    ButtonVariant::Destructive,
+                    false,
+                    OpenGpuiRepeatableActionPlan::Remove {
+                        collection_key,
+                        item_id: item_id.clone(),
+                    },
+                    view,
+                )),
         )
         .child(render_slot_anchor_measurement(
             node_id,
@@ -4541,6 +4710,111 @@ mod tests {
     }
 
     #[test]
+    fn gpui_repeatable_actions_commit_store_mutations_and_projection_updates() {
+        let (mut store, _document, _projection, node_id) =
+            project_schema_node("demo.shader.mix").expect("shader schema node projects");
+        let registry = NodeKitRegistry::builtin().node_registry();
+
+        let add = apply_repeatable_action_to_store(
+            &mut store,
+            &registry,
+            node_id,
+            OpenGpuiRepeatableActionPlan::Add {
+                collection_key: "shader.inputs".to_owned(),
+                item: serde_json::json!({
+                    "name": "Input 4",
+                    "ty": "vec4",
+                    "port": "input_4"
+                }),
+            },
+        )
+        .expect("add repeatable")
+        .expect("changed add");
+        assert!(add.diagnostics.iter().any(|diagnostic| {
+            diagnostic.collection_key == "shader.inputs"
+                && diagnostic.item_id == "input_4"
+                && diagnostic.port_key == PortKey::new("input_4")
+                && diagnostic.policy == OpenGpuiDynamicPortPolicy::MissingGraphPort
+        }));
+        let node = store.graph().nodes().get(&node_id).expect("node after add");
+        assert_eq!(
+            node.data["dynamic_inputs"][3]["id"],
+            serde_json::json!("input_4")
+        );
+
+        apply_repeatable_action_to_store(
+            &mut store,
+            &registry,
+            node_id,
+            OpenGpuiRepeatableActionPlan::Reorder {
+                collection_key: "shader.inputs".to_owned(),
+                item_id: "factor".to_owned(),
+                to_index: 0,
+            },
+        )
+        .expect("reorder repeatable")
+        .expect("changed reorder");
+        let node = store
+            .graph()
+            .nodes()
+            .get(&node_id)
+            .expect("node after reorder");
+        let ids = node.data["dynamic_inputs"]
+            .as_array()
+            .expect("dynamic inputs array")
+            .iter()
+            .map(|item| item["id"].as_str().expect("id"))
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["factor", "a", "b", "input_4"]);
+
+        let factor_port = graph_port_id_for_key(store.graph(), node_id, "factor");
+        let result_port = graph_port_id_for_key(store.graph(), node_id, "result");
+        let edge_id = JellyEdgeId::from_u128(0xbeef);
+        store
+            .dispatch_transaction(&GraphTransaction::from_ops([GraphOp::AddEdge {
+                id: edge_id,
+                edge: make_edge(result_port, factor_port),
+            }]))
+            .expect("seed incident edge");
+
+        apply_repeatable_action_to_store(
+            &mut store,
+            &registry,
+            node_id,
+            OpenGpuiRepeatableActionPlan::Remove {
+                collection_key: "shader.inputs".to_owned(),
+                item_id: "factor".to_owned(),
+            },
+        )
+        .expect("remove repeatable")
+        .expect("changed remove");
+        let node = store
+            .graph()
+            .nodes()
+            .get(&node_id)
+            .expect("node after remove");
+        assert!(
+            node.data["dynamic_inputs"]
+                .as_array()
+                .expect("dynamic inputs array")
+                .iter()
+                .all(|item| item["id"] != "factor")
+        );
+        assert!(!node.ports.contains(&factor_port));
+        assert!(!store.graph().ports().contains_key(&factor_port));
+        assert!(!store.graph().edges().contains_key(&edge_id));
+
+        let descriptor = registry.view_descriptor(&node.kind).expect("descriptor");
+        let repeatable_items =
+            repeatable_item_projection(&descriptor, node, store.graph(), &node_id);
+        assert!(repeatable_items.iter().all(|item| item.item_id != "factor"));
+        assert!(repeatable_items.iter().any(|item| {
+            item.item_id == "input_4"
+                && item.dynamic_port_policy == OpenGpuiDynamicPortPolicy::MissingGraphPort
+        }));
+    }
+
+    #[test]
     fn gpui_dropped_wire_insert_menu_dispatches_semantic_insert_plan() {
         let registry = NodeKitRegistry::builtin().node_registry();
         let source = ConnectionHandleRef::new(
@@ -4905,6 +5179,16 @@ mod tests {
             value = &value[segment];
         }
         assert_eq!(*value, expected);
+    }
+
+    fn graph_port_id_for_key(graph: &Graph, node_id: JellyNodeId, key: &str) -> JellyPortId {
+        graph
+            .ports()
+            .iter()
+            .find_map(|(port_id, port)| {
+                (port.node == node_id && port.key == PortKey::new(key)).then_some(*port_id)
+            })
+            .expect("graph port exists")
     }
 
     #[test]
