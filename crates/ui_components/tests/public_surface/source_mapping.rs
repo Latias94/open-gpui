@@ -123,6 +123,35 @@ fn tree_component_source_mapping_tracks_split_owners() {
 }
 
 #[test]
+fn table_behavior_source_mapping_tracks_split_owners() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let behavior_sources = [
+        "table/behavior/mod.rs",
+        "table/behavior/counts.rs",
+        "table/behavior/columns.rs",
+        "table/behavior/header.rs",
+        "table/behavior/rows.rs",
+        "table/behavior/tree.rs",
+    ];
+
+    assert!(
+        !source_dir.join("table/behavior.rs").exists(),
+        "TableBehaviorSnapshot should resolve through table/behavior/mod.rs instead of the old single-file owner"
+    );
+    assert_eq!(
+        component_source_inputs("TableBehaviorSnapshot"),
+        behavior_sources
+    );
+
+    for owner in behavior_sources {
+        assert!(
+            source_dir.join(owner).is_file(),
+            "split Table behavior owner `{owner}` should exist"
+        );
+    }
+}
+
+#[test]
 fn component_source_mapping_expands_split_component_directories() {
     let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let source_files = component_source_paths("TableRangeFilter")

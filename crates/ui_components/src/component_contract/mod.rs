@@ -911,8 +911,15 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
         docs_status: SurfaceDocsStatus::ComponentContract,
         docs_token: Some("TableBehaviorSnapshot"),
         default_export: true,
-        source_inputs: &["table/behavior.rs"],
-        source_home: "table/behavior.rs",
+        source_inputs: &[
+            "table/behavior/mod.rs",
+            "table/behavior/counts.rs",
+            "table/behavior/columns.rs",
+            "table/behavior/header.rs",
+            "table/behavior/rows.rs",
+            "table/behavior/tree.rs",
+        ],
+        source_home: "table/behavior/mod.rs",
     },
     ComponentContractEntry {
         name: "TableToolbarColors",
@@ -1225,7 +1232,7 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
     PublicSurfaceOwnerEntry {
         name: "TableBehaviorSnapshot",
         owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
-        home: "table/behavior.rs",
+        home: "table/behavior/mod.rs",
     },
     PublicSurfaceOwnerEntry {
         name: "TableToolbarColors",
