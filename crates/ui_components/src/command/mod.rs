@@ -3,7 +3,9 @@
 mod render_plan;
 mod runtime;
 
-use crate::choice;
+use crate::choice::{
+    self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection, ChoiceSelectionMode,
+};
 use crate::geometry::{gpui_px_from_ui, ui_px_from_gpui};
 use std::rc::Rc;
 
@@ -14,19 +16,24 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
-    OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
+    Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::color::{ColorIntent, ColorState};
+use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::listbox::{ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState};
-use crate::overlay::{GpuiOverlayAdapterConfig, OverlayResolvedState, gpui_overlay_state};
+use crate::overlay::{
+    OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
+    emit_overlay_open_change, gpui_overlay_state, resolve_overlay_open_state, set_overlay_open,
+};
 use crate::scroll_area::{ScrollAreaAxis, ScrollAreaState};
+use crate::text_editing::TextEditingPolicy;
 use crate::text_input::adapter::TextInputController;
 use crate::text_input::{TextInputDisplayMode, TextInputState};
 use crate::theme::ThemeResolver;
-pub use render_plan::{CommandRenderPlan, CommandRowRenderPlan};
+pub use render_plan::{CommandBehaviorSnapshot, CommandRowBehaviorSnapshot};
+pub(crate) use render_plan::{CommandRenderPlan, CommandRowRenderPlan};
 use runtime::{
     CommandOpenChangeHandler, CommandQueryChangeHandler, CommandRuntime,
     CommandSelectedValuesChangeHandler, CommandSelectionHandler, command_content_element,
@@ -41,6 +48,13 @@ pub enum CommandOpenMode {
     Uncontrolled,
     /// Open state is provided by the caller.
     Controlled,
+}
+
+const fn command_open_mode_from_disclosure(mode: OverlayDisclosureOpenMode) -> CommandOpenMode {
+    match mode {
+        OverlayDisclosureOpenMode::Uncontrolled => CommandOpenMode::Uncontrolled,
+        OverlayDisclosureOpenMode::Controlled => CommandOpenMode::Controlled,
+    }
 }
 
 /// Command query ownership.
@@ -324,6 +338,58 @@ impl CommandGroupDescriptor {
     }
 }
 
+fn command_choice_selection_mode(mode: CommandSelectionMode) -> ChoiceSelectionMode {
+    match mode {
+        CommandSelectionMode::Single => ChoiceSelectionMode::Single,
+        CommandSelectionMode::Multiple => ChoiceSelectionMode::Multiple,
+    }
+}
+
+fn command_choice_items(
+    groups: &[CommandGroupDescriptor],
+    standalone_items: &[CommandItemDescriptor],
+) -> Vec<ChoiceItemProjection<()>> {
+    let mut items = standalone_items
+        .iter()
+        .enumerate()
+        .map(|(source_index, item)| {
+            let label = item.label().to_owned();
+            ChoiceItemProjection::new(
+                source_index,
+                None,
+                item.value(),
+                label.clone(),
+                item.disabled_state(),
+                (),
+            )
+            .text_value(label)
+        })
+        .collect::<Vec<_>>();
+
+    for (group_index, group) in groups.iter().enumerate() {
+        items.extend(
+            group
+                .items_ref()
+                .iter()
+                .enumerate()
+                .map(|(source_index, item)| {
+                    let label = item.label().to_owned();
+                    ChoiceItemProjection::new(
+                        source_index,
+                        Some(group_index),
+                        item.value(),
+                        label.clone(),
+                        item.disabled_state(),
+                        (),
+                    )
+                    .text_value(label)
+                }),
+        );
+    }
+
+    items
+}
+
 /// Caller-owned indexed command snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandIndexSnapshot {
@@ -417,12 +483,12 @@ impl CommandIndexSnapshot {
 /// Resolved command color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandColors {
-    surface: ColorIntent,
-    foreground: ColorIntent,
-    muted_foreground: ColorIntent,
-    border: ColorIntent,
-    shortcut_foreground: ColorIntent,
-    focus_ring: ColorIntent,
+    pub(crate) surface: ColorIntent,
+    pub(crate) foreground: ColorIntent,
+    pub(crate) muted_foreground: ColorIntent,
+    pub(crate) border: ColorIntent,
+    pub(crate) shortcut_foreground: ColorIntent,
+    pub(crate) focus_ring: ColorIntent,
 }
 
 impl CommandColors {
@@ -1077,13 +1143,19 @@ impl CommandState {
         let label = label.into();
         let placeholder = placeholder.into();
         let query = query.into();
+        let query = TextEditingPolicy::single_line().normalize_text(query.as_str());
         let empty_label = empty_label.into();
-        let open_mode = if open.is_some() {
-            CommandOpenMode::Controlled
-        } else {
-            CommandOpenMode::Uncontrolled
-        };
-        let open = open.unwrap_or(default_open) && !disabled;
+        let disclosure = OverlayDisclosureConfig::new(OverlayLayerKind::NonModalDismissible)
+            .controlled_open(open)
+            .default_open(default_open)
+            .disabled(disabled)
+            .outside_press_policy(outside_press_policy)
+            .escape_key_policy(escape_key_policy)
+            .initial_focus_intent(initial_focus_intent.clone())
+            .focus_restore_intent(focus_restore_intent.clone())
+            .resolve();
+        let open = disclosure.open();
+        let open_mode = command_open_mode_from_disclosure(disclosure.open_mode());
         let normalized_query = choice::normalize_query(query.as_str());
         let query_is_empty = normalized_query.is_empty();
         let CommandDataSource {
@@ -1099,22 +1171,21 @@ impl CommandState {
                 .iter()
                 .map(|group| group.items_ref().len())
                 .sum::<usize>();
-        let selected_item = choice::resolve_enabled_value(
-            &raw_items,
-            raw_groups.iter().map(|group| group.items_ref()),
+        let raw_choice_items = command_choice_items(&raw_groups, &raw_items);
+        let selection_mode_policy = command_choice_selection_mode(selection_mode);
+        let raw_collection = ChoiceCollection::resolve(
+            false,
+            raw_choice_items.clone(),
             selected_value,
-            CommandItemDescriptor::value,
-            CommandItemDescriptor::disabled_state,
+            active_value,
+            ChoiceInteractionPolicy::listbox().with_selection_mode(selection_mode_policy),
         );
-        let selected_value = selected_item.map(|item| item.value().to_owned());
-        let selected_values = choice::resolve_selected_values(
-            selection_mode.is_multiple(),
-            &raw_items,
-            raw_groups.iter().map(|group| group.items_ref()),
+        let selected_value = raw_collection.selected_value().map(str::to_owned);
+        let selected_values = choice::resolve_projected_selected_values(
+            selection_mode_policy,
+            &raw_choice_items,
             selected_value.as_deref(),
             selected_values,
-            CommandItemDescriptor::value,
-            CommandItemDescriptor::disabled_state,
         );
         let listbox_selected_value = (!selection_mode.is_multiple())
             .then_some(selected_value.as_deref())
@@ -1248,7 +1319,7 @@ impl CommandState {
             label.clone(),
             listbox_selected_value,
             active_value,
-            (!query_is_empty).then_some(query.as_str()),
+            (!query_is_empty).then_some(normalized_query.as_str()),
             empty_label.clone(),
             filtered_group_descriptors,
             filtered_item_descriptors,
@@ -1310,24 +1381,26 @@ impl CommandState {
             true,
             tokens,
         );
-        let presence = if dialog_enabled && open {
-            OverlayPresence::open()
-        } else {
-            OverlayPresence::hidden()
-        };
-        let overlay =
-            GpuiOverlayAdapterConfig::new(OverlayLayerKind::NonModalDismissible, presence)
-                .outside_press_policy(outside_press_policy)
-                .escape_key_policy(escape_key_policy)
-                .initial_focus_intent(initial_focus_intent.clone())
-                .focus_restore_intent(focus_restore_intent.clone())
-                .resolved_state();
-        let dialog_overlay = GpuiOverlayAdapterConfig::new(OverlayLayerKind::Modal, presence)
+        let overlay = OverlayDisclosureConfig::new(OverlayLayerKind::NonModalDismissible)
+            .controlled_open(Some(open))
+            .openable(dialog_enabled)
+            .outside_press_policy(outside_press_policy)
+            .escape_key_policy(escape_key_policy)
+            .initial_focus_intent(initial_focus_intent.clone())
+            .focus_restore_intent(focus_restore_intent.clone())
+            .resolve()
+            .overlay()
+            .clone();
+        let dialog_overlay = OverlayDisclosureConfig::new(OverlayLayerKind::Modal)
+            .controlled_open(Some(open))
+            .openable(dialog_enabled)
             .outside_press_policy(outside_press_policy)
             .escape_key_policy(escape_key_policy)
             .initial_focus_intent(initial_focus_intent)
             .focus_restore_intent(focus_restore_intent.clone())
-            .resolved_state();
+            .resolve()
+            .overlay()
+            .clone();
         let dialog = dialog_enabled.then(|| CommandDialogState {
             enabled: true,
             open,
@@ -1778,13 +1851,15 @@ impl Command {
 
     /// Applies controlled search query text.
     pub fn query(mut self, query: impl Into<String>) -> Self {
-        self.query = Some(query.into());
+        let query = query.into();
+        self.query = Some(TextEditingPolicy::single_line().normalize_text(query.as_str()));
         self
     }
 
     /// Applies the default search query for adapter-owned input state.
     pub fn default_query(mut self, query: impl Into<String>) -> Self {
-        self.default_query = query.into();
+        let query = query.into();
+        self.default_query = TextEditingPolicy::single_line().normalize_text(query.as_str());
         self
     }
 
@@ -1945,16 +2020,25 @@ impl Command {
         )
     }
 
-    /// Returns the default virtualized result render plan at the viewport origin.
-    pub fn render_plan(&self) -> CommandRenderPlan {
-        self.render_plan_with_viewport(
+    /// Returns the default command behavior snapshot at the viewport origin.
+    pub fn behavior_snapshot(&self) -> CommandBehaviorSnapshot {
+        self.behavior_snapshot_with_viewport(
             UiPx::ZERO,
             self.metrics.row_height() * self.viewport_item_count as f32,
         )
     }
 
-    /// Resolves the renderer-neutral command result render plan for a viewport snapshot.
-    pub fn render_plan_with_viewport(
+    /// Resolves the command behavior snapshot for a viewport.
+    pub fn behavior_snapshot_with_viewport(
+        &self,
+        scroll_offset: UiPx,
+        viewport_extent: UiPx,
+    ) -> CommandBehaviorSnapshot {
+        let plan = self.render_plan_with_viewport(scroll_offset, viewport_extent);
+        CommandBehaviorSnapshot::from_render_plan(&plan)
+    }
+
+    fn render_plan_with_viewport(
         &self,
         scroll_offset: UiPx,
         viewport_extent: UiPx,
@@ -2074,8 +2158,9 @@ impl RenderOnce for Command {
         });
         let runtime_state = runtime.read(cx).clone();
         let scroll_handle = runtime_state.scroll_handle.clone();
-        let resolved_open = self.open.unwrap_or(runtime_state.open);
-        if self.open.is_some() && runtime_state.open != resolved_open {
+        let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
+        let resolved_open = open_state.open();
+        if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
             });
@@ -2204,11 +2289,14 @@ impl RenderOnce for Command {
                                 move |_event: &ClickEvent, window, cx| {
                                     cx.stop_propagation();
                                     runtime.update(cx, |runtime, _| {
-                                        runtime.open = true;
+                                        set_overlay_open(&mut runtime.open, true);
                                     });
-                                    if let Some(on_open_change) = on_open_change.as_ref() {
-                                        on_open_change(true, window, cx);
-                                    }
+                                    emit_overlay_open_change(
+                                        true,
+                                        on_open_change.as_deref(),
+                                        window,
+                                        cx,
+                                    );
                                 },
                             )
                         })
@@ -2407,27 +2495,6 @@ fn sort_ranked_command_items(items: &mut [FlattenedCommandItem]) {
             .cmp(&a.rank.score)
             .then_with(|| a.source_index.cmp(&b.source_index))
     });
-}
-
-impl ThemeResolver {
-    pub(crate) const fn command_colors(tokens: ThemeTokens) -> CommandColors {
-        CommandColors {
-            surface: ColorIntent::new(tokens.surface, 0xffffff),
-            foreground: ColorIntent::new(tokens.text, 0x18202a),
-            muted_foreground: ColorIntent::new(tokens.text_muted, 0x5a6472),
-            border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            shortcut_foreground: ColorIntent::with_state(
-                tokens.text_muted,
-                ColorState::Message,
-                0x5a6472,
-            ),
-            focus_ring: ColorIntent::with_state(
-                tokens.focus_ring,
-                ColorState::FocusVisible,
-                0x2f80ed,
-            ),
-        }
-    }
 }
 
 #[cfg(test)]

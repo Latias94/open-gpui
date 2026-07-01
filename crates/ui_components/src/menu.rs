@@ -13,19 +13,20 @@ use open_gpui::{
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
     OverlayAnchorInput, OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementInput,
-    OverlayPlacementSide, OverlayPresence, Rect, Role, Sizable, Size, ThemeTokens, Toggled, UiPx,
-    ui_point, ui_px, ui_size,
+    OverlayPlacementSide, Rect, Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_point, ui_px,
+    ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::color::{ColorIntent, ColorState};
+use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::menu_runtime::{
     MenuRuntime, handle_menu_submenu_surface_hover, update_menu_hover_target,
 };
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
-    focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
+    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
+    consume_overlay_event, emit_overlay_open_change, gpui_overlay_state, outside_press_open_change,
+    resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
 };
 use crate::roving_focus::{typeahead_target, vertical_roving_navigation_target};
 use crate::scroll_area::ScrollArea;
@@ -51,6 +52,13 @@ impl MenuOpenMode {
             Self::Uncontrolled => "uncontrolled",
             Self::Controlled => "controlled",
         }
+    }
+}
+
+const fn menu_open_mode_from_disclosure(mode: OverlayDisclosureOpenMode) -> MenuOpenMode {
+    match mode {
+        OverlayDisclosureOpenMode::Uncontrolled => MenuOpenMode::Uncontrolled,
+        OverlayDisclosureOpenMode::Controlled => MenuOpenMode::Controlled,
     }
 }
 
@@ -1053,14 +1061,19 @@ impl MenuState {
         focus_restore_intent: FocusRestoreIntent,
         tokens: ThemeTokens,
     ) -> Self {
-        let open_mode = if open.is_some() {
-            MenuOpenMode::Controlled
-        } else {
-            MenuOpenMode::Uncontrolled
-        };
         let descriptors: Vec<MenuItemDescriptor> = items.into_iter().collect();
-        let requested_open = open.unwrap_or(default_open);
-        let open = requested_open && !disabled && !descriptors.is_empty();
+        let disclosure = OverlayDisclosureConfig::new(OverlayLayerKind::Menu)
+            .controlled_open(open)
+            .default_open(default_open)
+            .disabled(disabled)
+            .openable(!descriptors.is_empty())
+            .outside_press_policy(outside_press_policy)
+            .escape_key_policy(escape_key_policy)
+            .initial_focus_intent(initial_focus_intent.clone())
+            .focus_restore_intent(focus_restore_intent.clone())
+            .resolve();
+        let open = disclosure.open();
+        let open_mode = menu_open_mode_from_disclosure(disclosure.open_mode());
         let mut open_path = if open { open_path.to_vec() } else { Vec::new() };
         let provisional_items = menu_item_states_from_descriptors(&descriptors, None, &open_path);
         if !menu_path_is_openable(&provisional_items, &open_path) {
@@ -1090,17 +1103,7 @@ impl MenuState {
                 .iter()
                 .position(|item| item.path() == focused_path.as_slice())
         });
-        let presence = if open {
-            OverlayPresence::open()
-        } else {
-            OverlayPresence::hidden()
-        };
-        let overlay = GpuiOverlayAdapterConfig::new(OverlayLayerKind::Menu, presence)
-            .outside_press_policy(outside_press_policy)
-            .escape_key_policy(escape_key_policy)
-            .initial_focus_intent(initial_focus_intent.clone())
-            .focus_restore_intent(focus_restore_intent.clone())
-            .resolved_state();
+        let overlay = disclosure.overlay().clone();
         let colors = ThemeResolver::menu_colors(tokens, open);
 
         Self {
@@ -1900,10 +1903,10 @@ impl RenderOnce for Menu {
             )
         });
         let runtime_state = runtime.read(cx).clone();
-        let controlled_open = self.open;
-        let resolved_open = controlled_open.unwrap_or(runtime_state.open);
+        let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
+        let resolved_open = open_state.open();
 
-        if controlled_open.is_some() && runtime_state.open != resolved_open {
+        if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
                 runtime.sync_controlled_open(resolved_open);
             });
@@ -2044,24 +2047,17 @@ impl RenderOnce for Menu {
                                 cx.stop_propagation();
                                 let next_open = !open;
                                 runtime.update(cx, |runtime, _| {
-                                    runtime.open = next_open;
+                                    set_overlay_open(&mut runtime.open, next_open);
                                     if !next_open {
-                                        runtime.did_initial_focus = false;
-                                        runtime.focused_value = None;
-                                        runtime.focused_path = None;
-                                        runtime.open_path.clear();
-                                        runtime.submenu_hovered_path = None;
-                                        runtime.submenu_hovering_surface = false;
-                                        runtime.submenu_hover_epoch =
-                                            runtime.submenu_hover_epoch.wrapping_add(1);
-                                        runtime.submenu_hover_task = None;
-                                        runtime.submenu_scroll_handles.clear();
-                                        runtime.submenu_trigger_bounds.clear();
+                                        runtime.reset_closed_state();
                                     }
                                 });
-                                if let Some(on_open_change) = on_open_change.as_ref() {
-                                    on_open_change(next_open, window, cx);
-                                }
+                                emit_overlay_open_change(
+                                    next_open,
+                                    on_open_change.as_deref(),
+                                    window,
+                                    cx,
+                                );
                             })
                     })
                     .child(trigger_label),
@@ -2550,15 +2546,11 @@ fn close_menu(
     cx: &mut App,
 ) {
     runtime.update(cx, |runtime, _| {
-        runtime.open = false;
+        set_overlay_open(&mut runtime.open, false);
         runtime.reset_closed_state();
     });
-    if let Some(on_open_change) = on_open_change.as_ref() {
-        on_open_change(false, window, cx);
-    }
-    if focus_restore_requests_trigger(&focus_restore) {
-        window.defer(cx, move |window, cx| trigger_focus.focus(window, cx));
-    }
+    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+    restore_overlay_focus(&focus_restore, Some(trigger_focus), true, window, cx);
 }
 
 fn menu_initial_focus_handle(
@@ -2572,56 +2564,6 @@ fn menu_initial_focus_handle(
         InitialFocusIntent::Target(_) => None,
         InitialFocusIntent::TargetOrFirstFocusable(_) => {
             Some(runtime.read(cx).content_focus.clone())
-        }
-    }
-}
-
-impl ThemeResolver {
-    pub(crate) const fn menu_colors(tokens: ThemeTokens, open: bool) -> MenuColors {
-        let trigger_state = if open {
-            ColorState::Selected
-        } else {
-            ColorState::Default
-        };
-
-        MenuColors {
-            surface: ColorIntent::new(tokens.surface, 0xffffff),
-            foreground: ColorIntent::new(tokens.text, 0x18202a),
-            border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            item_background: ColorIntent::new(tokens.surface, 0xffffff),
-            item_hover_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                ColorState::Hover,
-                0xf1f5ee,
-            ),
-            item_focus_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                ColorState::FocusVisible,
-                0xe8ede6,
-            ),
-            item_disabled_foreground: ColorIntent::with_state(
-                tokens.text_muted,
-                ColorState::Disabled,
-                0x7a8491,
-            ),
-            separator: ColorIntent::new(tokens.border, 0xcfd5cc),
-            trigger_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                trigger_state,
-                0xf6f7f2,
-            ),
-            trigger_hover_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                ColorState::Hover,
-                0xf1f5ee,
-            ),
-            trigger_foreground: ColorIntent::new(tokens.text, 0x18202a),
-            trigger_border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            focus_ring: ColorIntent::with_state(
-                tokens.focus_ring,
-                ColorState::FocusVisible,
-                0x2f80ed,
-            ),
         }
     }
 }

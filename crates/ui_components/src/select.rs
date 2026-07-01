@@ -1,6 +1,4 @@
 //! Select component built from a trigger, overlay, and listbox state.
-
-use crate::choice;
 use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
@@ -11,20 +9,21 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayAnchorInput,
-    OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
-    OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, rect, ui_point, ui_px, ui_size,
+    OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, Role,
+    Sizable, Size, ThemeTokens, UiPx, rect, ui_point, ui_px, ui_size,
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::color::{ColorIntent, ColorState};
+use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::listbox::{
     Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
     ListboxState,
 };
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, consume_overlay_event,
-    gpui_overlay_state, outside_press_open_change,
+    GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
+    consume_overlay_event, emit_overlay_open_change, gpui_overlay_state, outside_press_open_change,
+    resolve_overlay_open_state, set_overlay_open,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::theme::ThemeResolver;
@@ -42,18 +41,25 @@ pub enum SelectOpenMode {
     Controlled,
 }
 
+const fn select_open_mode_from_disclosure(mode: OverlayDisclosureOpenMode) -> SelectOpenMode {
+    match mode {
+        OverlayDisclosureOpenMode::Uncontrolled => SelectOpenMode::Uncontrolled,
+        OverlayDisclosureOpenMode::Controlled => SelectOpenMode::Controlled,
+    }
+}
+
 /// Resolved select color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectColors {
-    trigger_background: ColorIntent,
-    trigger_hover_background: ColorIntent,
-    trigger_foreground: ColorIntent,
-    trigger_placeholder_foreground: ColorIntent,
-    trigger_border: ColorIntent,
-    content_background: ColorIntent,
-    content_foreground: ColorIntent,
-    content_border: ColorIntent,
-    focus_ring: ColorIntent,
+    pub(crate) trigger_background: ColorIntent,
+    pub(crate) trigger_hover_background: ColorIntent,
+    pub(crate) trigger_foreground: ColorIntent,
+    pub(crate) trigger_placeholder_foreground: ColorIntent,
+    pub(crate) trigger_border: ColorIntent,
+    pub(crate) content_background: ColorIntent,
+    pub(crate) content_foreground: ColorIntent,
+    pub(crate) content_border: ColorIntent,
+    pub(crate) focus_ring: ColorIntent,
 }
 
 impl SelectColors {
@@ -274,12 +280,16 @@ impl SelectState {
     ) -> Self {
         let label = label.into();
         let placeholder = placeholder.into();
-        let open_mode = if open.is_some() {
-            SelectOpenMode::Controlled
-        } else {
-            SelectOpenMode::Uncontrolled
-        };
-        let open = open.unwrap_or(default_open) && !disabled;
+        let disclosure = OverlayDisclosureConfig::new(OverlayLayerKind::NonModalDismissible)
+            .controlled_open(open)
+            .default_open(default_open)
+            .disabled(disabled)
+            .outside_press_policy(outside_press_policy)
+            .initial_focus_intent(initial_focus_intent.clone())
+            .focus_restore_intent(focus_restore_intent.clone())
+            .resolve();
+        let open = disclosure.open();
+        let open_mode = select_open_mode_from_disclosure(disclosure.open_mode());
         let group_descriptors = groups.into_iter().collect::<Vec<_>>();
         let option_descriptors = options.into_iter().collect::<Vec<_>>();
         let listbox = ListboxState::resolve(
@@ -294,17 +304,7 @@ impl SelectState {
             option_descriptors.clone(),
             tokens,
         );
-        let presence = if open {
-            OverlayPresence::open()
-        } else {
-            OverlayPresence::hidden()
-        };
-        let overlay =
-            GpuiOverlayAdapterConfig::new(OverlayLayerKind::NonModalDismissible, presence)
-                .outside_press_policy(outside_press_policy)
-                .initial_focus_intent(initial_focus_intent.clone())
-                .focus_restore_intent(focus_restore_intent.clone())
-                .resolved_state();
+        let overlay = disclosure.overlay().clone();
         let scroll_area = ScrollAreaState::resolve(
             format!("{label}:select-content-scroll"),
             ScrollAreaAxis::Vertical,
@@ -374,12 +374,9 @@ impl SelectState {
     /// Returns visible trigger label.
     pub fn trigger_label(&self) -> &str {
         self.listbox
-            .selected_value()
-            .and_then(|value| {
-                choice::find_value(self.listbox.options(), value, |option| option.value())
-                    .filter(|option| option.focusable())
-                    .map(|option| option.label())
-            })
+            .selected_option()
+            .filter(|option| option.focusable())
+            .map(|option| option.label())
             .unwrap_or(self.placeholder.as_str())
     }
 
@@ -685,10 +682,10 @@ impl RenderOnce for Select {
             selected_value: self.selected_value.clone(),
         });
         let runtime_state = runtime.read(cx).clone();
-        let controlled_open = self.open;
-        let resolved_open = controlled_open.unwrap_or(runtime_state.open);
+        let open_state = resolve_overlay_open_state(self.open, runtime_state.open);
+        let resolved_open = open_state.open();
 
-        if controlled_open.is_some() && runtime_state.open != resolved_open {
+        if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
             });
@@ -807,11 +804,14 @@ impl RenderOnce for Select {
                             if matches!(key, "enter" | "space" | "down" | "up") {
                                 consume_overlay_event(window, cx);
                                 runtime.update(cx, |runtime, _| {
-                                    runtime.open = true;
+                                    set_overlay_open(&mut runtime.open, true);
                                 });
-                                if let Some(on_open_change) = on_open_change.as_ref() {
-                                    on_open_change(true, window, cx);
-                                }
+                                emit_overlay_open_change(
+                                    true,
+                                    on_open_change.as_deref(),
+                                    window,
+                                    cx,
+                                );
                             } else if key == "escape" {
                                 consume_overlay_event(window, cx);
                                 close_select(runtime.clone(), on_open_change.clone(), window, cx);
@@ -830,11 +830,14 @@ impl RenderOnce for Select {
                                 consume_overlay_event(window, cx);
                                 let next_open = !open;
                                 runtime.update(cx, |runtime, _| {
-                                    runtime.open = next_open;
+                                    set_overlay_open(&mut runtime.open, next_open);
                                 });
-                                if let Some(on_open_change) = on_open_change.as_ref() {
-                                    on_open_change(next_open, window, cx);
-                                }
+                                emit_overlay_open_change(
+                                    next_open,
+                                    on_open_change.as_deref(),
+                                    window,
+                                    cx,
+                                );
                             })
                     })
                     .child(
@@ -910,14 +913,12 @@ fn select_content_element(
             listbox_runtime.update(cx, |runtime, _| {
                 runtime.selected_value = Some(selection.value().to_owned());
                 runtime.active_value = Some(selection.value().to_owned());
-                runtime.open = false;
+                set_overlay_open(&mut runtime.open, false);
             });
             if let Some(on_select) = listbox_select.as_ref() {
                 on_select(selection, window, cx);
             }
-            if let Some(on_open_change) = listbox_open_change.as_ref() {
-                on_open_change(false, window, cx);
-            }
+            emit_overlay_open_change(false, listbox_open_change.as_deref(), window, cx);
         });
     let mut listbox = listbox;
     if let Some(selected_value) = selected_value {
@@ -983,43 +984,7 @@ fn close_select(
     cx: &mut App,
 ) {
     runtime.update(cx, |runtime, _| {
-        runtime.open = false;
+        set_overlay_open(&mut runtime.open, false);
     });
-    if let Some(on_open_change) = on_open_change.as_ref() {
-        on_open_change(false, window, cx);
-    }
-}
-
-impl ThemeResolver {
-    pub(crate) const fn select_colors(tokens: ThemeTokens, open: bool) -> SelectColors {
-        let trigger_state = if open {
-            ColorState::Selected
-        } else {
-            ColorState::Default
-        };
-
-        SelectColors {
-            trigger_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                trigger_state,
-                0xf6f7f2,
-            ),
-            trigger_hover_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                ColorState::Hover,
-                0xf1f5ee,
-            ),
-            trigger_foreground: ColorIntent::new(tokens.text, 0x18202a),
-            trigger_placeholder_foreground: ColorIntent::new(tokens.text_muted, 0x5a6472),
-            trigger_border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            content_background: ColorIntent::new(tokens.surface, 0xffffff),
-            content_foreground: ColorIntent::new(tokens.text, 0x18202a),
-            content_border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            focus_ring: ColorIntent::with_state(
-                tokens.focus_ring,
-                ColorState::FocusVisible,
-                0x2f80ed,
-            ),
-        }
-    }
+    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
 }

@@ -296,6 +296,152 @@ impl OverlayOpenChange {
     }
 }
 
+/// Shared open-state ownership for overlay-like component adapters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum OverlayDisclosureOpenMode {
+    /// Open state is owned by the component adapter after initialization.
+    #[default]
+    Uncontrolled,
+    /// Open state is provided by the caller.
+    Controlled,
+}
+
+/// Input used to resolve renderer-neutral disclosure state.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct OverlayDisclosureConfig {
+    controlled_open: Option<bool>,
+    default_open: bool,
+    disabled: bool,
+    openable: bool,
+    layer_kind: OverlayLayerKind,
+    outside_press_policy: Option<OutsidePressPolicy>,
+    escape_key_policy: Option<EscapeKeyPolicy>,
+    initial_focus_intent: Option<InitialFocusIntent>,
+    focus_restore_intent: Option<FocusRestoreIntent>,
+}
+
+impl OverlayDisclosureConfig {
+    /// Creates a disclosure config for an overlay layer kind.
+    pub(crate) fn new(layer_kind: OverlayLayerKind) -> Self {
+        Self {
+            controlled_open: None,
+            default_open: false,
+            disabled: false,
+            openable: true,
+            layer_kind,
+            outside_press_policy: None,
+            escape_key_policy: None,
+            initial_focus_intent: None,
+            focus_restore_intent: None,
+        }
+    }
+
+    /// Applies caller-owned open state.
+    pub(crate) const fn controlled_open(mut self, open: Option<bool>) -> Self {
+        self.controlled_open = open;
+        self
+    }
+
+    /// Applies uncontrolled initial open state.
+    pub(crate) const fn default_open(mut self, open: bool) -> Self {
+        self.default_open = open;
+        self
+    }
+
+    /// Applies disabled state.
+    pub(crate) const fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// Applies whether this disclosure has content that can be opened.
+    pub(crate) const fn openable(mut self, openable: bool) -> Self {
+        self.openable = openable;
+        self
+    }
+
+    /// Applies outside-press dismissal policy.
+    pub(crate) fn outside_press_policy(mut self, policy: OutsidePressPolicy) -> Self {
+        self.outside_press_policy = Some(policy);
+        self
+    }
+
+    /// Applies Escape-key dismissal policy.
+    pub(crate) fn escape_key_policy(mut self, policy: EscapeKeyPolicy) -> Self {
+        self.escape_key_policy = Some(policy);
+        self
+    }
+
+    /// Applies initial-focus intent.
+    pub(crate) fn initial_focus_intent(mut self, intent: InitialFocusIntent) -> Self {
+        self.initial_focus_intent = Some(intent);
+        self
+    }
+
+    /// Applies focus-restore intent.
+    pub(crate) fn focus_restore_intent(mut self, intent: FocusRestoreIntent) -> Self {
+        self.focus_restore_intent = Some(intent);
+        self
+    }
+
+    /// Resolves disclosure state.
+    pub(crate) fn resolve(self) -> OverlayDisclosureState {
+        let open_mode = if self.controlled_open.is_some() {
+            OverlayDisclosureOpenMode::Controlled
+        } else {
+            OverlayDisclosureOpenMode::Uncontrolled
+        };
+        let requested_open = self.controlled_open.unwrap_or(self.default_open);
+        let open = requested_open && !self.disabled && self.openable;
+        let presence = OverlayPresence::from_open(open);
+        let mut config = GpuiOverlayAdapterConfig::new(self.layer_kind, presence);
+        if let Some(outside_press_policy) = self.outside_press_policy {
+            config = config.outside_press_policy(outside_press_policy);
+        }
+        if let Some(escape_key_policy) = self.escape_key_policy {
+            config = config.escape_key_policy(escape_key_policy);
+        }
+        if let Some(initial_focus_intent) = self.initial_focus_intent {
+            config = config.initial_focus_intent(initial_focus_intent);
+        }
+        if let Some(focus_restore_intent) = self.focus_restore_intent {
+            config = config.focus_restore_intent(focus_restore_intent);
+        }
+        let overlay = config.resolved_state();
+
+        OverlayDisclosureState {
+            open,
+            open_mode,
+            overlay,
+        }
+    }
+}
+
+/// Resolved shared disclosure state for overlay-like adapters.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct OverlayDisclosureState {
+    open: bool,
+    open_mode: OverlayDisclosureOpenMode,
+    overlay: OverlayResolvedState,
+}
+
+impl OverlayDisclosureState {
+    /// Returns the gated open value adapters should render.
+    pub(crate) const fn open(&self) -> bool {
+        self.open
+    }
+
+    /// Returns open-state ownership.
+    pub(crate) const fn open_mode(&self) -> OverlayDisclosureOpenMode {
+        self.open_mode
+    }
+
+    /// Returns renderer-neutral overlay state.
+    pub(crate) const fn overlay(&self) -> &OverlayResolvedState {
+        &self.overlay
+    }
+}
+
 /// Resolves an Escape-key open-change request.
 pub const fn escape_open_change(policy: &OverlayLayerPolicy) -> Option<OverlayOpenChange> {
     match policy.escape_key_policy() {
@@ -341,6 +487,86 @@ pub const fn focus_restore_requests_trigger(intent: &FocusRestoreIntent) -> bool
         intent,
         FocusRestoreIntent::Trigger | FocusRestoreIntent::TriggerOrFallback(_)
     )
+}
+
+/// Resolved adapter-owned open state for controlled and uncontrolled overlays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OverlayRuntimeState {
+    open: bool,
+    controlled: bool,
+    runtime_changed: bool,
+}
+
+impl OverlayRuntimeState {
+    /// Returns the resolved open value the adapter should render.
+    pub(crate) const fn open(self) -> bool {
+        self.open
+    }
+
+    /// Returns whether the open value was provided by the caller.
+    pub(crate) const fn controlled(self) -> bool {
+        self.controlled
+    }
+
+    /// Returns whether the stored runtime value should be synchronized to the resolved value.
+    pub(crate) const fn runtime_changed(self) -> bool {
+        self.runtime_changed
+    }
+}
+
+/// Resolves controlled/uncontrolled open state without emitting callbacks.
+pub(crate) const fn resolve_overlay_open_state(
+    controlled_open: Option<bool>,
+    runtime_open: bool,
+) -> OverlayRuntimeState {
+    match controlled_open {
+        Some(open) => OverlayRuntimeState {
+            open,
+            controlled: true,
+            runtime_changed: runtime_open != open,
+        },
+        None => OverlayRuntimeState {
+            open: runtime_open,
+            controlled: false,
+            runtime_changed: false,
+        },
+    }
+}
+
+/// Updates runtime open state without invoking component callbacks.
+pub(crate) fn set_overlay_open(runtime_open: &mut bool, open: bool) {
+    *runtime_open = open;
+}
+
+/// Emits the bool open-change callback after runtime state has been updated.
+pub(crate) fn emit_overlay_open_change(
+    open: bool,
+    on_open_change: Option<&dyn Fn(bool, &mut Window, &mut App)>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if let Some(on_open_change) = on_open_change {
+        on_open_change(open, window, cx);
+    }
+}
+
+/// Restores focus to a trigger handle when the focus-restore policy requests it.
+pub(crate) fn restore_overlay_focus(
+    focus_restore: &FocusRestoreIntent,
+    trigger_focus: Option<open_gpui::FocusHandle>,
+    defer_focus_restore: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if focus_restore_requests_trigger(focus_restore)
+        && let Some(trigger_focus) = trigger_focus
+    {
+        if defer_focus_restore {
+            window.defer(cx, move |window, cx| trigger_focus.focus(window, cx));
+        } else {
+            trigger_focus.focus(window, cx);
+        }
+    }
 }
 
 /// Returns the default GPUI deferred priority for an overlay kind.
@@ -407,4 +633,82 @@ pub fn point_anchor_placement(
         OverlayAnchorInput::from_point(ui_point_from_gpui(point)),
         content_size,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overlay_runtime_state_resolves_controlled_without_emitting() {
+        let uncontrolled = resolve_overlay_open_state(None, true);
+        assert!(uncontrolled.open());
+        assert!(!uncontrolled.controlled());
+        assert!(!uncontrolled.runtime_changed());
+
+        let controlled_same = resolve_overlay_open_state(Some(true), true);
+        assert!(controlled_same.open());
+        assert!(controlled_same.controlled());
+        assert!(!controlled_same.runtime_changed());
+
+        let controlled_changed = resolve_overlay_open_state(Some(false), true);
+        assert!(!controlled_changed.open());
+        assert!(controlled_changed.controlled());
+        assert!(controlled_changed.runtime_changed());
+    }
+
+    #[test]
+    fn overlay_disclosure_state_resolves_open_mode_and_policy() {
+        let state = OverlayDisclosureConfig::new(OverlayLayerKind::Modal)
+            .controlled_open(Some(true))
+            .default_open(false)
+            .outside_press_policy(OutsidePressPolicy::Ignore)
+            .escape_key_policy(EscapeKeyPolicy::Dismiss)
+            .initial_focus_intent(InitialFocusIntent::FirstFocusable)
+            .focus_restore_intent(FocusRestoreIntent::Trigger)
+            .resolve();
+
+        assert!(state.open());
+        assert_eq!(state.open_mode(), OverlayDisclosureOpenMode::Controlled);
+        assert_eq!(state.overlay().policy().kind(), OverlayLayerKind::Modal);
+        assert_eq!(
+            state.overlay().policy().outside_press_policy(),
+            OutsidePressPolicy::Ignore
+        );
+        assert_eq!(
+            state.overlay().policy().escape_key_policy(),
+            EscapeKeyPolicy::Dismiss
+        );
+        assert_eq!(
+            state.overlay().policy().initial_focus_intent(),
+            &InitialFocusIntent::FirstFocusable
+        );
+        assert_eq!(
+            state.overlay().policy().focus_restore_intent(),
+            &FocusRestoreIntent::Trigger
+        );
+    }
+
+    #[test]
+    fn overlay_disclosure_state_gates_disabled_and_unopenable_surfaces() {
+        let disabled = OverlayDisclosureConfig::new(OverlayLayerKind::NonModalDismissible)
+            .default_open(true)
+            .disabled(true)
+            .resolve();
+        let unopenable = OverlayDisclosureConfig::new(OverlayLayerKind::Menu)
+            .default_open(true)
+            .openable(false)
+            .resolve();
+
+        assert!(!disabled.open());
+        assert_eq!(
+            disabled.open_mode(),
+            OverlayDisclosureOpenMode::Uncontrolled
+        );
+        assert!(!disabled.overlay().policy().presence().interactive());
+
+        assert!(!unopenable.open());
+        assert_eq!(unopenable.overlay().policy().kind(), OverlayLayerKind::Menu);
+        assert!(!unopenable.overlay().policy().presence().interactive());
+    }
 }

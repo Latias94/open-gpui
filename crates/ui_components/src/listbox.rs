@@ -11,9 +11,9 @@ use open_gpui::{
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
-use crate::color::{ColorIntent, ColorState};
+use crate::choice::{self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
+use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::roving_focus::{first_enabled, typeahead_target, vertical_roving_navigation_target};
 use crate::theme::ThemeResolver;
 
 type ListboxSelectHandler = Rc<dyn Fn(ListboxSelection, &mut Window, &mut App)>;
@@ -458,12 +458,6 @@ impl ListboxSelection {
     }
 }
 
-#[derive(Debug, Clone)]
-struct FlattenedOption {
-    group_index: Option<usize>,
-    descriptor: ListboxOptionDescriptor,
-}
-
 /// Resolved listbox state used by tests, demos, and rendering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListboxState {
@@ -502,6 +496,9 @@ impl ListboxState {
     ) -> Self {
         let label = label.into();
         let empty_label = empty_label.into();
+        let typeahead_query = typeahead_query
+            .map(choice::normalize_query)
+            .filter(|query| !query.is_empty());
         let group_descriptors: Vec<ListboxGroupDescriptor> = groups.into_iter().collect();
         let standalone_options: Vec<ListboxOptionDescriptor> = options.into_iter().collect();
         let groups = group_descriptors
@@ -518,42 +515,31 @@ impl ListboxState {
                     .count(),
             })
             .collect::<Vec<_>>();
-        let flattened = flatten_listbox_options(&group_descriptors, standalone_options);
-        let disabled_map = flattened
+        let collection = ChoiceCollection::resolve(
+            disabled,
+            flatten_listbox_options(&group_descriptors, standalone_options),
+            selected_value,
+            active_value,
+            ChoiceInteractionPolicy::listbox(),
+        );
+        let selected_index = collection.selected_index();
+        let active_index = collection.active_index();
+        let selected_value = collection.selected_value().map(str::to_owned);
+        let active_value = collection.active_value().map(str::to_owned);
+        let selectable_count = collection
+            .items()
             .iter()
-            .map(|option| !option.descriptor.focusable())
-            .collect::<Vec<_>>();
-        let selected_index = if disabled {
-            None
-        } else {
-            selected_value.and_then(|value| {
-                flattened.iter().position(|option| {
-                    option.descriptor.value() == value && option.descriptor.focusable()
-                })
-            })
-        };
-        let active_index = if disabled || flattened.is_empty() {
-            None
-        } else {
-            active_value
-                .and_then(|value| {
-                    flattened.iter().position(|option| {
-                        option.descriptor.value() == value && option.descriptor.focusable()
-                    })
-                })
-                .or(selected_index)
-                .or_else(|| first_enabled(&disabled_map))
-        };
-        let selectable_count = flattened
-            .iter()
-            .filter(|option| option.descriptor.kind() == ListboxOptionKind::Option)
+            .filter(|option| option.item().kind() == ListboxOptionKind::Option)
             .count();
         let mut position = 0usize;
-        let options = flattened
+        let options = collection
+            .into_items()
             .into_iter()
             .enumerate()
             .map(|(index, option)| {
-                let kind = option.descriptor.kind();
+                let group_index = option.group_index();
+                let descriptor = option.into_item();
+                let kind = descriptor.kind();
                 let position_in_set = if kind == ListboxOptionKind::Option {
                     position += 1;
                     Some(position)
@@ -565,11 +551,11 @@ impl ListboxState {
 
                 ListboxOptionState {
                     index,
-                    group_index: option.group_index,
-                    value: option.descriptor.value,
-                    label: option.descriptor.label,
+                    group_index,
+                    value: descriptor.value,
+                    label: descriptor.label,
                     kind,
-                    disabled: option.descriptor.disabled,
+                    disabled: descriptor.disabled,
                     selected,
                     active,
                     position_in_set,
@@ -577,10 +563,6 @@ impl ListboxState {
                 }
             })
             .collect::<Vec<_>>();
-        let selected_value = selected_index
-            .and_then(|index| options.get(index).map(|option| option.value().to_owned()));
-        let active_value = active_index
-            .and_then(|index| options.get(index).map(|option| option.value().to_owned()));
         let colors = ThemeResolver::listbox_colors(tokens);
 
         Self {
@@ -589,7 +571,7 @@ impl ListboxState {
             label,
             selected_value,
             active_value,
-            typeahead_query: typeahead_query.map(str::to_owned),
+            typeahead_query,
             empty_label,
             groups,
             options,
@@ -687,20 +669,16 @@ impl ListboxState {
 
     /// Resolves a navigation target for an APG-style listbox key.
     pub fn navigation_target(&self, key: &str) -> Option<&ListboxOptionState> {
-        let current = self.active_index?;
-        let disabled = self.disabled_map();
-        listbox_navigation_target(key, current, &disabled).and_then(|index| self.options.get(index))
+        self.choice_collection()
+            .navigation_target(key)
+            .and_then(|target| self.options.get(target.source_index()))
     }
 
     /// Resolves a typeahead target for a query.
     pub fn typeahead_target(&self, query: &str) -> Option<&ListboxOptionState> {
-        typeahead_target(
-            self.options.as_slice(),
-            self.active_index,
-            query,
-            ListboxOptionState::focusable,
-            ListboxOptionState::label,
-        )
+        self.choice_collection()
+            .typeahead_target(query)
+            .and_then(|target| self.options.get(target.source_index()))
     }
 
     /// Resolves an activation payload for an APG-style activation key.
@@ -734,17 +712,44 @@ impl ListboxState {
         self.focus_ring
     }
 
-    fn disabled_map(&self) -> Vec<bool> {
-        self.options
-            .iter()
-            .map(|option| !option.focusable())
-            .collect()
+    /// Returns the selected option state.
+    pub fn selected_option(&self) -> Option<&ListboxOptionState> {
+        self.selected_index
+            .and_then(|index| self.options.get(index))
+    }
+
+    /// Returns the active option state.
+    pub fn active_option(&self) -> Option<&ListboxOptionState> {
+        self.active_index.and_then(|index| self.options.get(index))
+    }
+
+    fn choice_collection(&self) -> ChoiceCollection<()> {
+        ChoiceCollection::from_resolved(
+            self.disabled,
+            self.options
+                .iter()
+                .map(|option| {
+                    let text_value = option.label().to_owned();
+                    ChoiceItemProjection::new(
+                        option.index(),
+                        option.group_index(),
+                        option.value(),
+                        text_value.clone(),
+                        !option.focusable(),
+                        (),
+                    )
+                    .text_value(text_value)
+                })
+                .collect(),
+            choice::ChoiceSelectionResolution::new(self.selected_index, self.active_index),
+            ChoiceInteractionPolicy::listbox(),
+        )
     }
 }
 
 /// Resolves a listbox active descendant target from an APG-style key name.
 pub fn listbox_navigation_target(key: &str, current: usize, disabled: &[bool]) -> Option<usize> {
-    vertical_roving_navigation_target(key, current, disabled)
+    ChoiceInteractionPolicy::listbox().navigation_target_index(key, current, disabled)
 }
 
 /// A concrete GPUI listbox option.
@@ -1314,65 +1319,40 @@ fn option_background(state: ListboxOptionState, colors: ListboxColors) -> ColorI
 fn flatten_listbox_options(
     groups: &[ListboxGroupDescriptor],
     standalone_options: Vec<ListboxOptionDescriptor>,
-) -> Vec<FlattenedOption> {
+) -> Vec<ChoiceItemProjection<ListboxOptionDescriptor>> {
     let mut flattened = standalone_options
         .into_iter()
-        .map(|descriptor| FlattenedOption {
-            group_index: None,
-            descriptor,
+        .enumerate()
+        .map(|(source_index, descriptor)| {
+            let text_value = descriptor.label.clone();
+            ChoiceItemProjection::new(
+                source_index,
+                None,
+                descriptor.value.clone(),
+                text_value.clone(),
+                !descriptor.focusable(),
+                descriptor,
+            )
+            .text_value(text_value)
         })
         .collect::<Vec<_>>();
 
     for (group_index, group) in groups.iter().enumerate() {
-        flattened.extend(
-            group
-                .options
-                .iter()
-                .cloned()
-                .map(|descriptor| FlattenedOption {
-                    group_index: Some(group_index),
+        flattened.extend(group.options.iter().cloned().enumerate().map(
+            |(source_index, descriptor)| {
+                let text_value = descriptor.label.clone();
+                ChoiceItemProjection::new(
+                    source_index,
+                    Some(group_index),
+                    descriptor.value.clone(),
+                    text_value.clone(),
+                    !descriptor.focusable(),
                     descriptor,
-                }),
-        );
+                )
+                .text_value(text_value)
+            },
+        ));
     }
 
     flattened
-}
-
-impl ThemeResolver {
-    pub(crate) const fn listbox_colors(tokens: ThemeTokens) -> ListboxColors {
-        ListboxColors {
-            surface: ColorIntent::new(tokens.surface, 0xffffff),
-            foreground: ColorIntent::new(tokens.text, 0x18202a),
-            muted_foreground: ColorIntent::new(tokens.text_muted, 0x5a6472),
-            border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            option_background: ColorIntent::new(tokens.surface, 0xffffff),
-            option_hover_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                ColorState::Hover,
-                0xf1f5ee,
-            ),
-            option_active_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                ColorState::FocusVisible,
-                0xe8ede6,
-            ),
-            option_selected_background: ColorIntent::with_state(
-                tokens.surface_muted,
-                ColorState::Selected,
-                0xe8ede6,
-            ),
-            option_disabled_foreground: ColorIntent::with_state(
-                tokens.text_muted,
-                ColorState::Disabled,
-                0x7a8491,
-            ),
-            separator: ColorIntent::new(tokens.border, 0xcfd5cc),
-            focus_ring: ColorIntent::with_state(
-                tokens.focus_ring,
-                ColorState::FocusVisible,
-                0x2f80ed,
-            ),
-        }
-    }
 }

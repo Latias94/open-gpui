@@ -167,10 +167,13 @@ intents, and the listbox content role. The GPUI `Select` adapter owns trigger/co
 keyed runtime open/selected/active state, callbacks, outside-press and Escape wiring, deferred
 anchored rendering, and concrete focus handles.
 
-`choice.rs` keeps the stable-value projection helpers for the choice family in one place. It
-normalizes query text, resolves selected values by stable item identity, deduplicates multi-select
-chips, and keeps `Command`, `Combobox`, and `Select` aligned on the same value-seam behavior
-without giving `Select` or `Combobox` command-specific ranking semantics.
+`choice.rs` owns the shared stable-value seam for the choice family. It projects flat item
+identity, normalizes query text, filters disabled or missing selected values, deduplicates
+multi-select chips, resolves active descendants by active value, selected value, then first enabled
+item, and provides the typeahead hook used by listbox-backed surfaces. `Listbox`, `Select`,
+`Combobox`, and `Command` should agree on those base rules. Command ranking and match scoring are
+an extension layered over the shared choice model; they must not become the base semantics for
+`Select` or `Combobox`.
 
 `ComboboxState` composes an editable text input, non-modal dismissible popup, scroll viewport
 metadata, and nested `ListboxState`. It records controlled versus uncontrolled open mode,
@@ -304,17 +307,55 @@ A component is official only when it satisfies the current-crate completion cont
   cannot prove;
 - `docs/verification.md` names any manual or automated gate added by the component.
 
-`examples/ui-foundation-gallery::pages::components::COMPONENT_CATALOG` is the current visible
-catalog for this contract. Entries marked `official` satisfy the checklist above. Entries marked
-`adapter-only` are public GPUI helper surfaces such as `TextInputController`, not standalone
-components. Entries marked `internal-anatomy` are public parts of a component family, such as
-toolbar or listbox item descriptors, and should not be promoted to standalone components without a
-new resolved-state contract. Entries marked `state-contract` are public renderer-neutral contracts
-with gallery readouts and signal coverage, but they are not themselves rendered GPUI components.
-They may sit beside an official adapter, as `TreeState` does for `Tree`. They must use
+`examples/ui-foundation-gallery::pages::components::catalog::COMPONENT_CATALOG` owns the current
+metadata for this contract. The Components page re-exports that catalog through
+`examples/ui-foundation-gallery::pages::components::COMPONENT_CATALOG` so tests and rendering can
+keep their stable consumer path, but rendering code must consume catalog metadata instead of
+owning it. Entries marked `official` satisfy the checklist above. Entries marked `adapter-only`
+are public GPUI helper surfaces such as `TextInputController`, not standalone components. Entries
+marked `internal-anatomy` are public parts of a component family, such as `ToolbarItem`,
+`SidebarItem`, and `ListboxOption`, and should not be promoted to standalone components without a
+new resolved-state contract. Entries marked `state-contract` are public renderer-neutral contracts with gallery
+readouts and signal coverage, but they are not themselves rendered GPUI components. They may sit
+beside an official adapter, as `TreeState` does for `Tree`. They must use
 `state_contract_selector`, not the official `sample_selector`, and they must not satisfy the
 official rendered-component gate by accident. Entries marked `deferred` are planned components
 that must not be treated as shipped API until they satisfy the checklist.
+
+Public surface ownership uses a stricter source-facing vocabulary than the visible gallery status.
+`official component` names are rendered GPUI components with inventory rows and sample selectors.
+`renderer-neutral state contract` names are public state/resolution models that can be consumed
+without GPUI runtime types. `gpui adapter helper` names are public only through
+`open_gpui_ui_components::gpui_adapter` or narrowly scoped adapter modules. `TableBehaviorSnapshot`
+is the public Table behavior readout: it exposes user-observable state without leaking render-plan
+geometry, virtualizer internals, or adapter row layout. Crate-private render plans still explain
+resolved geometry and row/window projection for the adapter, but they are not component facades or
+the default application state API. `internal implementation detail` names are public anatomy owned by one official family.
+`deprecated removal target` names are shallow compatibility surfaces scheduled for deletion or
+already deleted. The removed targets are the former pass-through
+`ui_components::primitives` modules for active-descendant, collection metadata, controllable state,
+and overlay policy aliases. Import those neutral contracts from `open_gpui_ui_core`; remaining
+`ui_components::primitives` modules must own GPUI adapter behavior or component-family anatomy.
+
+Breaking migration notes for the 0.3 UI deepening pass:
+
+- Replace old table render-plan probes with
+  `Table::behavior_snapshot(scroll_offset, viewport_extent)`. Application tests, gallery readouts,
+  and integration probes should consume `TableBehaviorSnapshot`, `TableRowBehaviorSnapshot`,
+  `TableColumnBehaviorSnapshot`, `TableColumnRegionSnapshot`, `TableHeaderSummarySnapshot`,
+  `TableTreeSummarySnapshot`, and `TableVisibleRowsSnapshot`.
+- Remove imports of table render-plan internals from application code, including
+  the internal `TableRenderPlan`, `TableColumnRenderPlan`, `TableCellRenderPlan`,
+  `TableCenterColumnWindowPlan`, `TableColumnRegionRenderPlan`, header render-plan types,
+  `TablePinnedLayoutPlan`, and `TableRowRenderPlan`. Those structures are private to the table
+  adapter implementation; algorithm coverage belongs in `crates/ui_components/src/table` module
+  tests.
+- Replace removed primitive pass-through imports under `open_gpui_ui_components::primitives` with
+  their renderer-neutral owners in `open_gpui_ui_core` or with the official component/adapter API
+  that owns the GPUI runtime behavior.
+- Keep reference repositories as references only. This pass does not add dependencies on
+  `repo-ref/fret` or `repo-ref/gpui-component`, and it does not preserve compatibility shims around
+  APIs that were only exposing old implementation structure.
 
 The foundation component families above are official rendered components. Their resolved states
 must stay aligned with the same ownership vocabulary as the older components:
@@ -349,6 +390,25 @@ runtime theme table before falling back to the intent RGB.
 revision is the cache invalidation hook for future app-level theme providers. Components should not
 read global theme state directly; keep the resolved component state renderer-neutral and pass theme
 snapshots at the adapter edge.
+
+`ThemeRegistry` is the app-level owner for built-in and user-loaded theme snapshots. The registry
+preloads light, dark, and high-contrast entries, validates `ThemeDefinition` identity fields,
+replaces entries by stable id, and stores owned color tables behind `ThemeRegistryEntry`.
+`ThemeRegistrationDiagnostics` records which built-in mode supplied fallback colors and how many
+entries were filled from that fallback. Missing optional token/state colors are completed from a
+built-in snapshot; missing id, label, mode, or revision fail validation. The registry intentionally
+does not expose or mutate a global active theme: consumers choose an entry, take its immutable
+`ThemeSnapshot`, and pass that snapshot to `ThemeResolver::resolve_with`.
+
+Theme module ownership is intentionally split: `theme/snapshot.rs` owns immutable snapshot data,
+`theme/registry.rs` owns explicit registration and fallback diagnostics, `theme/resolver.rs` owns
+intent-to-color resolution, `theme/palette.rs` owns the built-in token tables, and
+`theme/recipes.rs` owns component color recipes. Component files should call
+`ThemeResolver::*_colors` but should not add local `impl ThemeResolver` blocks. The
+`scan-theme-drift` xtask gate checks recipe catalog coverage and built-in palette token/state
+shape, so missing recipe or token additions fail before visual drift reaches gallery tests.
+Table composition recipes follow the same rule: `TableToolbarState` exposes `TableToolbarColors`
+from the shared theme recipe rather than hand-assembling toolbar text intents in the table module.
 
 ## Accessibility References
 
@@ -455,9 +515,9 @@ until a later policy slice defines mixed filtering, sorting, and expansion seman
 Custom aggregation rows stay renderer-neutral and are surfaced in the Components gallery through
 the focused `grouped-custom-aggregation` sample.
 Content-fit width growth is also renderer-neutral: `TableColumn::with_content_fit` marks a column
-as adapter-measured, `TableRenderPlan` exposes the measured widths, and the GPUI table adapter
-keeps header/body alignment stable while visible content changes. The Components gallery surfaces
-this behavior through the focused `content-fit-release` sample.
+as adapter-measured, `TableBehaviorSnapshot` exposes the resulting column widths as behavior metadata, and the
+GPUI table adapter keeps header/body alignment stable while visible content changes. The Components
+gallery surfaces this behavior through the focused `content-fit-release` sample.
 `Table::row_measure_mode(TableRowMeasureMode::Measured)` is the sibling body-row height recipe:
 the adapter measures rendered row heights, feeds them back into the row virtualizer cache, and
 keeps wrapped body content from overlapping the following row. `Fixed` remains the default
@@ -487,6 +547,13 @@ mutation. The first `Table` adapter consumes virtualizer snapshots as measuremen
 scroll offset from the adapter runtime wins during render, and one-shot scroll-position restoration
 remains a future adapter-runtime policy.
 
+Virtualized adapters share a crate-private row-window projection around `VirtualizerResolvedState`.
+That seam maps the virtualizer's rendered measurements into component row payloads, stable render
+keys, visible-row counts, overscan budget, and scroll geometry without owning a concrete
+`ScrollHandle`. `VirtualizedList`, `Tree`, and the `Table` center-row body use this shared
+projection for their visible/overscan windows, while duplicate-key disambiguation, tree hierarchy,
+activation payloads, and pinned Table row bands remain component-specific contracts.
+
 The GPUI `Table` adapter resolves table state and virtualizer ranges before rendering. The adapter
 owns the element tree, concrete scroll viewport, wheel containment, sticky header overlay,
 body drawing, sortable header activation callbacks, row focus handles, source-tree disclosure
@@ -496,9 +563,13 @@ accessibility metadata includes table, row, column-header, and cell roles, row a
 column position metadata, sort metadata for sortable headers, grouped-row and source-tree depth /
 parent metadata, selected state, and branch `aria-expanded` state keyed by stable row id. The
 adapter keeps row activation independent from selection and expansion; callers decide whether a
-click, double-click, Enter, Space, Left, or Right payload changes app-owned `TableState`. The
-render plan exposes `TableColumnRegionRenderPlan` entries and every rendered header/body row has
-stable `left`, `center`, and `right` region debug selectors.
+click, double-click, Enter, Space, Left, or Right payload changes app-owned `TableState`.
+`Table::state()` returns the renderer-neutral `TableState` input as the default application-facing
+readout. `Table::behavior_snapshot(scroll_offset, viewport_extent)` is the explicit public behavior
+surface for tests, gallery readouts, and adapter debugging; it is not a layout API. The snapshot
+exposes row counts, visible and overscan row summaries, column-region counts and widths, header
+summaries, row/cell behavior, selection, sorting, filtering, pagination, faceting, and accessibility
+roles without exposing render-plan structures.
 Table module ownership is deliberately split by responsibility rather than by product feature:
 `open-gpui-ui-core::table` keeps renderer-neutral identity, rows, columns, headers, filtering,
 faceting, aggregation, sizing, selection, and row-model resolution behind `table/mod.rs` re-exports.
@@ -507,19 +578,18 @@ builder, while `resolve.rs`, `runtime.rs`, `render_plan.rs`, `layout.rs`, `virtu
 `content_fit.rs`, `header.rs`, `body.rs`, `cell.rs`, `editors.rs`, `resize.rs`, `interaction.rs`,
 filter recipes, `column_visibility.rs`, `toolbar.rs`, and `metrics.rs` own the concrete maintenance
 surfaces. This ownership note is about review locality only; it does not add a second public Table
-contract or promise behavior beyond the exported `TableState`, `TableRenderPlan`, `Table`, filter
-recipes, callback payloads, and stable gallery/debug-selector proofs.
-Region render plans expose summed widths, and header/body cells read the same resolved column
-widths. For pinned tables, `TableCenterColumnWindowPlan` virtualizes the shared horizontal center
-lane from adapter-owned horizontal scroll input: it exposes visible and overscan ranges, rendered
-center columns, total center width, and leading/trailing spacer widths. The adapter keeps left/right
-pinned lanes fully mounted while mounting only the rendered center-column window, so the center can
-scroll without moving pinned columns or the outer page. The header band is rendered as an absolute
-overlay at the top of the table root, and the body receives matching top padding so vertical scroll
-does not move the header. `TableRenderPlan` also exposes the current filtering, sorting, pagination,
-and faceting ownership modes plus pagination row/page totals and
-per-column facet metadata so gallery readouts and consumers can distinguish local row-model
-transforms from app-owned server snapshots. Facet metadata covers deterministic unique value/count
+contract or promise behavior beyond the exported `TableState`, `TableBehaviorSnapshot`, `Table`,
+filter recipes, callback payloads, and stable gallery/debug-selector proofs.
+Crate-private region render plans expose summed widths to the adapter, and header/body cells read
+the same resolved column widths. For pinned tables, a crate-private center-column window virtualizes
+the shared horizontal center lane from adapter-owned horizontal scroll input. The adapter keeps
+left/right pinned lanes fully mounted while mounting only the rendered center-column window, so the
+center can scroll without moving pinned columns or the outer page. The header band is rendered as an
+absolute overlay at the top of the table root, and the body receives matching top padding so vertical
+scroll does not move the header. `TableBehaviorSnapshot` exposes the public behavior counterpart:
+current filtering, sorting, pagination, and faceting ownership modes, pagination row/page totals,
+column-region summaries, visible row windows, and per-column facet metadata so gallery readouts and
+consumers can distinguish local row-model transforms from app-owned server snapshots. Facet metadata covers deterministic unique value/count
 entries, numeric min/max ranges, and explicit manual/server payloads keyed by column id; concrete
 `TableFacetedFilter` is the official single-column categorical filter recipe over that metadata:
 it reads `TableColumnFacets`, renders a searchable `Popover` with checkbox facet rows, keeps query
@@ -549,11 +619,11 @@ owned column-order slice, and keeps sorting, filtering, pinning, sizing, and row
 untouched. The Components gallery uses `release-rollup` as the proof sample for that controlled
 reorder path.
 Nested header groups are resolved as renderer-neutral row families rather than data columns.
-`TableRenderPlan` exposes nested header-group rows for the left, center, and right regions, with
-stable row counts, summed widths, and depth-specific group metadata. Pinned regions split group
-families when visibility or pinning crosses region boundaries, while group headers continue to stay
-leaf-column-driven for sort, resize, visibility, and selection behavior. Flat tables still resolve
-to a single header row.
+`TableBehaviorSnapshot` exposes nested-header behavior as a header-row count and visible group-header
+summary, while crate-private render plans keep the left, center, and right header-row layout details
+internal. Pinned regions split group families when visibility or pinning crosses region boundaries,
+while group headers continue to stay leaf-column-driven for sort, resize, visibility, and selection
+behavior. Flat tables still resolve to a single header row.
 Value cell editing is the official inline-edit recipe over table column metadata:
 `TableCellEditor::Text`, `TableCellEditor::MultilineText { rows }`,
 `TableCellEditor::Checkbox`, and `TableCellEditor::Select` opt columns into editable leaf cells,
@@ -568,15 +638,14 @@ editing, and server persistence remain application-owned or follow-up work.
 The fixed-option select path uses the same leaf-cell contract as text and checkbox editing: it is
 adapter-owned, keeps row activation suppressed when the editor consumes the click, and preserves
 the stable `(row_id, column_id)` edit payload shape.
-For row-pinned tables, `TableRenderPlan` exposes top, center, and bottom `TableRowRenderPlan`
-regions with neutral `TableRowRegion` metadata, while the vertical virtualizer consumes only the
-center region. The GPUI adapter renders top and bottom row bands outside the center body
+For row-pinned tables, `TableBehaviorSnapshot` exposes top, center, and bottom row counts plus
+rendered rows with neutral `TableRowRegion` metadata, while the vertical virtualizer consumes only
+the center region. The GPUI adapter renders top and bottom row bands outside the center body
 `ScrollArea`, keeps `table:{id}:body:{top|center|bottom}` debug selectors stable, and reuses the
 normal row renderer so focus, activation, expansion, pinned-column lanes, and accessibility row
-indexes keep the same payload shape across pinned and center rows. `TableRenderPlan` also exposes
-`GridViewport2D` when both a vertical row window and a horizontal center-column window are
-available, so the adapter can report the combined two-axis viewport without merging the row and
-column virtualizer contracts into a new standalone grid engine.
+indexes keep the same payload shape across pinned and center rows. Combined two-axis viewport
+details remain adapter-internal; public tests assert the resulting row/column behavior through
+`TableBehaviorSnapshot` and gallery runtime probes instead of inspecting the render plan.
 
 An official Table entry must satisfy the normal component completion gate: `Table` and `TableState`
 exports at the crate root and prelude, matching `SIGNALS` entries, a `COMPONENT_CATALOG` official
@@ -635,13 +704,18 @@ should expose stable sample ids, real resolved state, and a short gate list that
 regression-prone behaviors each slice must keep covered.
 
 The Components page should keep the official component catalog visible and distinguish shipped
-components from adapter-only helpers, internal anatomy, and deferred primitives. It has two
-supported inspection modes: the full all-components conformance page, and a focused
-component-family view entered from official catalog cards. Focused mode may hide unrelated
-sections, but it must keep the section directory available, expose an explicit `All components`
-control, reset the page viewport when the family changes, and keep nested sample scrolling local to
-the sample viewport. Directory chips remain anchor jumps inside the current page mode; they must
-not implicitly change the focused family. The page should also keep these gates visible:
+components from adapter-only helpers, internal anatomy, state contracts, and deferred entries. Its
+root module is a small facade: catalog metadata lives in `components/catalog.rs`; the visible
+conformance gate list lives in `components/conformance.rs`; sample descriptors, resolved-state
+builders, and static sample data live in `components/samples.rs`; callback logs and mutable sample
+runtime state live in `components/runtime.rs`; `components/render.rs` consumes those modules and
+owns only GPUI rendering. The page has two supported inspection modes: the full all-components
+conformance page, and a focused component-family view entered from official catalog cards. Focused
+mode may hide unrelated sections, but it must keep the section directory available, expose an
+explicit `All components` control, reset the page viewport when the family changes, and keep nested
+sample scrolling local to the sample viewport. Directory chips remain anchor jumps inside the
+current page mode; they must not implicitly change the focused family. The page should also keep
+these gates visible:
 
 - crate-root and prelude exports stay explicit;
 - adapter-only helper exports stay grouped under `open_gpui_ui_components::gpui_adapter`;
@@ -649,6 +723,9 @@ not implicitly change the focused family. The page should also keep these gates 
   selector;
 - every official overlay entry keeps matching catalog metadata, component/state signals, rendered
   sample selectors, and visible catalog cards on the Overlay page;
+- every official component, state readout, and overlay sample has a `StoryContract` that declares
+  the selectors and runtime probes tests may use for open, dismiss, select, edit, scroll, focus,
+  activate, and public-payload assertions;
 - gallery samples continue to show real resolved state for each shipped component;
 - all-components and focused component-family modes preserve the catalog, section directory, page
   scroll reset, and nested scroll containment contracts;
@@ -700,9 +777,10 @@ Before extraction, keep these boundary rules explicit:
 
 ## Current Known Gaps
 
-The runtime theme table currently covers semantic component colors for light, dark, and
-high-contrast snapshots, but there is not yet an app-level theme registry, user theme loading, or
-JSON schema. Single-line editable text input now uses GPUI's `EntityInputHandler`/
+The runtime theme table covers semantic component colors for light, dark, high-contrast, and
+registry-loaded snapshots. A JSON schema and file-loader facade are still follow-up work; UIs
+should construct `ThemeDefinition` values explicitly and register them before handing immutable
+snapshots to component adapters. Single-line editable text input now uses GPUI's `EntityInputHandler`/
 `ElementInputHandler` path through `TextInputController`. Applications can either supply an
 adapter-owned controller directly or use the standard controlled shape
 `TextInput::value(...).on_change(...)`; the latter creates a keyed adapter controller internally,
@@ -735,8 +813,9 @@ impls; the remaining non-headless surfaces are GPUI-owned adapter APIs such as
 conversion helpers, and GPUI overlay scheduling helpers. These public adapter APIs are now grouped
 under `open_gpui_ui_components::gpui_adapter`. Shared roving-focus helpers now live in
 `open_gpui_ui_components::roving_focus`, with `Tabs` preserving compatibility re-exports.
-The choice family now also has a shared internal seam in `open_gpui_ui_components::choice` for
-stable-value resolution and normalized query handling across `Command`, `Combobox`, and `Select`.
+The choice family now also has a shared internal seam in `open_gpui_ui_components::choice` for flat
+stable-value projection, enabled-item selected/active fallback, typeahead matching, multi-select
+dedupe, and normalized query handling across `Listbox`, `Command`, `Combobox`, and `Select`.
 `open_gpui_ui_core` now owns `UiPx`, `UiPoint`, `UiSize`, `UiRect`, and `UiEdges`, and
 `ContextMenuState` stores a neutral point anchor plus renderer-neutral `OverlayPlacementInput`.
 GPUI placement is resolved only inside the adapter/render boundary. Overlay stack Escape,
@@ -776,11 +855,15 @@ sortable header action payloads, crate-root/prelude
 exports, table/cell roles, and a vertically virtualized GPUI recipe whose body scroll stays inside
 the table viewport.
 For pinned samples, the adapter renders fixed left/right lanes plus a shared horizontal center lane
-backed by `TableCenterColumnWindowPlan`, so off-window center headers and cells are unmounted while
+backed by crate-private center-column windowing, so off-window center headers and cells are unmounted while
 spacer geometry preserves the full scrollable width. It also ships GPUI resize handles with
 controlled commit callbacks and on-end/on-change resize mode support.
 For row-pinned samples, top and bottom row bands render outside the center vertical scroll area,
 and the center virtualizer counts only center rows.
+`VirtualizedList`, `Tree`, and the Table center row body share the internal row-window projection
+for stable keys, measurements, visible counts, overscan counts, and scroll offsets. The projection
+intentionally stops at the row-window boundary: Table row regions, Tree selection/focus metadata,
+and VirtualizedList activation/selection payloads stay owned by their components.
 Table faceting is a metadata sidecar over configured columns: client facets derive unique
 value/count entries and numeric ranges from the source snapshot while excluding the target column's
 own local filter, and manual facet payloads can replace client-derived summaries for server-owned
@@ -819,13 +902,14 @@ unloaded, or virtualized descendants.
 `roving_focus.rs` now owns the shared vertical, paged, and typeahead target helpers used by
 `Listbox`, `Tabs`, `RadioGroup`, `Menu`, `Sidebar`, `Toolbar`, `Tree`, and `VirtualizedList`, so
 the component-specific adapters keep only their own branch and activation rules.
-`VirtualizedList` is now an official rendered component. Its adapter resolves a
-`VirtualizedListRenderPlan` from stable descriptors, owns a keyed GPUI runtime plus persistent
-`ScrollHandle`, and keeps row rendering inside its viewport. `VirtualizedListState` remains the
-renderer-neutral keyboard/navigation contract: active/selected indices, page navigation,
-activation payloads, viewport item count, fixed row metrics, overscan, and semantic scroll
-strategy labels. Rendered range calculation remains owned by
-`open_gpui_ui_core::VirtualizerState`.
+`VirtualizedList` is now an official rendered component. Its adapter keeps the render plan
+crate-private, exposes `VirtualizedListBehaviorSnapshot` for diagnostics, owns a keyed GPUI
+runtime plus persistent `ScrollHandle`, and keeps row rendering inside its viewport.
+`VirtualizedListState` remains the renderer-neutral keyboard/navigation contract:
+active/selected indices, page navigation, activation payloads, viewport item count, fixed row
+metrics, overscan, and semantic scroll strategy labels. Rendered range calculation remains owned
+by `open_gpui_ui_core::VirtualizerState`. `TreeBehaviorSnapshot` and `CommandBehaviorSnapshot`
+follow the same public boundary: behavior probes are stable, renderer assembly plans are internal.
 `menu_runtime.rs` owns submenu hover timing, branch switching, trigger-bound caches, and local
 submenu scroll handles for `Menu` and `ContextMenu`, keeping render assembly thin while preserving
 safe hover and local scroll ownership.

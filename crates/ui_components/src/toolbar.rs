@@ -14,9 +14,9 @@ use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, Toggled, 
 
 use crate::a11y::UiA11yElementExt;
 use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
+use crate::choice::{ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::roving_focus::{active_index_from_str_keys, roving_navigation_target};
 use crate::theme::ThemeResolver;
 
 /// Item kind for a toolbar.
@@ -340,16 +340,14 @@ impl ToolbarState {
         tokens: ThemeTokens,
     ) -> Self {
         let descriptors: Vec<ToolbarItemDescriptor> = items.into_iter().collect();
-        let values: Vec<String> = descriptors.iter().map(|item| item.value.clone()).collect();
-        let disabled_map: Vec<bool> = descriptors
-            .iter()
-            .map(|item| disabled || !item.focusable())
-            .collect();
-        let focused_index = if disabled {
-            None
-        } else {
-            active_index_from_str_keys(&values, focused_value, &disabled_map)
-        };
+        let collection = ChoiceCollection::resolve(
+            disabled,
+            toolbar_choice_items(disabled, &descriptors),
+            None,
+            focused_value,
+            ChoiceInteractionPolicy::roving(orientation),
+        );
+        let focused_index = collection.active_index();
         let colors = ThemeResolver::button_colors(tokens, ButtonVariant::Outline, false);
 
         let items = descriptors
@@ -482,7 +480,29 @@ pub fn toolbar_navigation_target(
     current: usize,
     disabled: &[bool],
 ) -> Option<usize> {
-    roving_navigation_target(orientation, key, current, disabled)
+    ChoiceInteractionPolicy::roving(orientation).navigation_target_index(key, current, disabled)
+}
+
+fn toolbar_choice_items(
+    disabled: bool,
+    items: &[ToolbarItemDescriptor],
+) -> Vec<ChoiceItemProjection<()>> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let label = item.label().to_owned();
+            ChoiceItemProjection::new(
+                index,
+                None,
+                item.value(),
+                label.clone(),
+                disabled || !item.focusable(),
+                (),
+            )
+            .text_value(label)
+        })
+        .collect()
 }
 
 /// A concrete GPUI toolbar item.

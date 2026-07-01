@@ -11,8 +11,7 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    OverlayFocusTarget, OverlayLayerKind, OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx,
-    ui_px,
+    OverlayFocusTarget, OverlayLayerKind, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -20,8 +19,9 @@ use crate::button::ButtonVariant;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, OverlayResolvedState, consume_overlay_event, escape_open_change,
-    focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
+    OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
+    consume_overlay_event, emit_overlay_open_change, escape_open_change, gpui_overlay_state,
+    outside_press_open_change, resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
 };
 use crate::theme::ThemeResolver;
 
@@ -48,6 +48,15 @@ impl AlertDialogOpenMode {
             Self::Uncontrolled => "uncontrolled",
             Self::Controlled => "controlled",
         }
+    }
+}
+
+const fn alert_dialog_open_mode_from_disclosure(
+    mode: OverlayDisclosureOpenMode,
+) -> AlertDialogOpenMode {
+    match mode {
+        OverlayDisclosureOpenMode::Uncontrolled => AlertDialogOpenMode::Uncontrolled,
+        OverlayDisclosureOpenMode::Controlled => AlertDialogOpenMode::Controlled,
     }
 }
 
@@ -416,11 +425,12 @@ impl AlertDialogState {
         focus_restore_intent: FocusRestoreIntent,
         tokens: ThemeTokens,
     ) -> Self {
-        let open_mode = if open.is_some() {
-            AlertDialogOpenMode::Controlled
-        } else {
-            AlertDialogOpenMode::Uncontrolled
-        };
+        let open_mode = alert_dialog_open_mode_from_disclosure(
+            OverlayDisclosureConfig::new(OverlayLayerKind::Modal)
+                .controlled_open(open)
+                .resolve()
+                .open_mode(),
+        );
         Self::resolve_with_open_mode(
             size,
             disabled,
@@ -462,14 +472,17 @@ impl AlertDialogState {
         focus_restore_intent: FocusRestoreIntent,
         tokens: ThemeTokens,
     ) -> Self {
-        let open = open && !disabled;
-        let presence = OverlayPresence::from_open(open);
-        let overlay = GpuiOverlayAdapterConfig::new(OverlayLayerKind::Modal, presence)
+        let disclosure = OverlayDisclosureConfig::new(OverlayLayerKind::Modal)
+            .controlled_open(Some(open))
+            .default_open(default_open)
+            .disabled(disabled)
             .outside_press_policy(outside_press_policy)
             .escape_key_policy(escape_key_policy)
             .initial_focus_intent(initial_focus_intent.clone())
             .focus_restore_intent(focus_restore_intent.clone())
-            .resolved_state();
+            .resolve();
+        let open = disclosure.open();
+        let overlay = disclosure.overlay().clone();
         let colors = ThemeResolver::alert_dialog_colors(tokens, intent, open);
         let cancel_disabled = cancel_disabled || disabled;
         let action_disabled = action_disabled || disabled;
@@ -826,11 +839,10 @@ impl RenderOnce for AlertDialog {
             cancel_focus: cx.focus_handle(),
             action_focus: cx.focus_handle(),
         });
-        let runtime_open = runtime.read(cx).open;
-        let controlled_open = self.open;
-        let resolved_open = controlled_open.unwrap_or(runtime_open);
+        let open_state = resolve_overlay_open_state(self.open, runtime.read(cx).open);
+        let resolved_open = open_state.open();
 
-        if controlled_open.is_some() && runtime_open != resolved_open {
+        if open_state.runtime_changed() {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
             });
@@ -969,7 +981,7 @@ impl RenderOnce for AlertDialog {
                                 cx.stop_propagation();
                                 let next_open = !open;
                                 runtime.update(cx, |runtime, _| {
-                                    runtime.open = next_open;
+                                    set_overlay_open(&mut runtime.open, next_open);
                                 });
                                 if next_open
                                     && let Some(focus) = alert_dialog_initial_focus_handle(
@@ -981,9 +993,12 @@ impl RenderOnce for AlertDialog {
                                 {
                                     window.defer(cx, move |window, cx| focus.focus(window, cx));
                                 }
-                                if let Some(on_open_change) = on_open_change.as_ref() {
-                                    on_open_change(next_open, window, cx);
-                                }
+                                emit_overlay_open_change(
+                                    next_open,
+                                    on_open_change.as_deref(),
+                                    window,
+                                    cx,
+                                );
                             })
                     })
                     .child(trigger_label),
@@ -1289,14 +1304,10 @@ fn close_alert_dialog(
 ) {
     let trigger_focus = runtime.read(cx).trigger_focus.clone();
     runtime.update(cx, |runtime, _| {
-        runtime.open = false;
+        set_overlay_open(&mut runtime.open, false);
     });
-    if let Some(on_open_change) = on_open_change.as_ref() {
-        on_open_change(false, window, cx);
-    }
-    if focus_restore_requests_trigger(&focus_restore) {
-        trigger_focus.focus(window, cx);
-    }
+    emit_overlay_open_change(false, on_open_change.as_deref(), window, cx);
+    restore_overlay_focus(&focus_restore, Some(trigger_focus), false, window, cx);
 }
 
 fn alert_dialog_default_focus_kind(

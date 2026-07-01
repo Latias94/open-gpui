@@ -40,6 +40,7 @@ pub mod primitives;
 pub mod progress;
 pub mod radio;
 pub mod roving_focus;
+mod row_window;
 pub mod scroll_area;
 pub mod select;
 pub mod separator;
@@ -109,11 +110,12 @@ pub use combobox::{
     ComboboxOpenMode, ComboboxOption, ComboboxOptionDescriptor, ComboboxSelection, ComboboxState,
 };
 pub use command::{
-    Command, CommandColors, CommandDialogState, CommandGroup, CommandGroupDescriptor,
-    CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItem, CommandItemDescriptor,
-    CommandItemState, CommandLoadingState, CommandMatchSource, CommandMetrics, CommandOpenMode,
-    CommandQueryMode, CommandRenderPlan, CommandRowRenderPlan, CommandSelectedChipState,
-    CommandSelection, CommandSelectionChange, CommandSelectionMode, CommandState,
+    Command, CommandBehaviorSnapshot, CommandColors, CommandDialogState, CommandGroup,
+    CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItem,
+    CommandItemDescriptor, CommandItemState, CommandLoadingState, CommandMatchSource,
+    CommandMetrics, CommandOpenMode, CommandQueryMode, CommandRowBehaviorSnapshot,
+    CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandSelectionMode,
+    CommandState,
 };
 pub use context_menu::{ContextMenu, ContextMenuState};
 pub use dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
@@ -202,21 +204,21 @@ pub use splitter::{
 };
 pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use table::{
-    Table, TableCellEditApplyOutcome, TableCellEditChange, TableCellRenderPlan,
-    TableCenterColumnWindowPlan, TableColumnOrderChange, TableColumnOrderPlacement,
-    TableColumnRegionRenderPlan, TableColumnRenderPlan, TableColumnSizingChange,
+    Table, TableBehaviorSnapshot, TableCellBehaviorSnapshot, TableCellEditApplyOutcome,
+    TableCellEditChange, TableColumnBehaviorSnapshot, TableColumnOrderChange,
+    TableColumnOrderPlacement, TableColumnRegionSnapshot, TableColumnSizingChange,
     TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
     TableColumnVisibilityItemState, TableColumnVisibilityState, TableFacetedFilter,
     TableFacetedFilterChange, TableFacetedFilterOptionState, TableFacetedFilterState,
     TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction,
-    TableHeaderCellRenderPlan, TableHeaderGroupRegionRenderPlan, TableHeaderGroupRegionsRenderPlan,
-    TableHeaderGroupRenderPlan, TableInputModifiers, TableMetrics, TablePinnedLayoutPlan,
-    TablePredicateFilter, TablePredicateFilterChange, TablePredicateFilterOperator,
+    TableHeaderSummarySnapshot, TableInputModifiers, TableMetrics, TablePredicateFilter,
+    TablePredicateFilterChange, TablePredicateFilterOperator,
     TablePredicateFilterOperatorOptionState, TablePredicateFilterState, TableRangeFilter,
-    TableRangeFilterChange, TableRangeFilterState, TableRenderPlan, TableRowAction,
-    TableRowActivation, TableRowActivationKind, TableRowExpansionToggle, TableRowMeasureMode,
-    TableRowRenderPlan, TableRowSelectionChange, TableSelectionScope, TableToolbar,
-    TableToolbarState,
+    TableRangeFilterChange, TableRangeFilterState, TableRowAction, TableRowActivation,
+    TableRowActivationKind, TableRowBehaviorSnapshot, TableRowCountSnapshot,
+    TableRowExpansionToggle, TableRowMeasureMode, TableRowSelectionChange, TableSelectionScope,
+    TableToolbar, TableToolbarColors, TableToolbarState, TableTreeSummarySnapshot,
+    TableVisibleRowsSnapshot,
 };
 pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
@@ -227,7 +229,10 @@ pub use text_input::{
     TextInput, TextInputColors, TextInputDisplayMode, TextInputMetrics, TextInputState,
 };
 pub use textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
-pub use theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
+pub use theme::{
+    ThemeColor, ThemeDefinition, ThemeMode, ThemeRegistrationDiagnostics, ThemeRegistry,
+    ThemeRegistryEntry, ThemeResolver, ThemeSnapshot, ThemeValidationError,
+};
 pub use toast::{
     Toast, ToastAction, ToastColors, ToastDismiss, ToastDismissReason, ToastIntent, ToastMetrics,
     ToastStack, ToastStackState, ToastState,
@@ -247,14 +252,14 @@ pub use tooltip::{
     TooltipOpenIntent, TooltipState,
 };
 pub use tree::{
-    Tree, TreeChildrenLoadState, TreeDropPosition, TreeFocusTarget, TreeItemDescriptor,
-    TreeItemState, TreeKeyboardAction, TreeMetrics, TreeMove, TreeMoveTarget, TreeRenderPlan,
-    TreeRowRenderPlan, TreeSelection, TreeState, TreeToggle, apply_tree_move,
+    Tree, TreeBehaviorSnapshot, TreeChildrenLoadState, TreeDropPosition, TreeFocusTarget,
+    TreeItemDescriptor, TreeItemState, TreeKeyboardAction, TreeMetrics, TreeMove, TreeMoveTarget,
+    TreeRowBehaviorSnapshot, TreeSelection, TreeState, TreeToggle, apply_tree_move,
     tree_navigation_target,
 };
 pub use virtualized_list::{
-    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
+    VirtualizedList, VirtualizedListActivation, VirtualizedListBehaviorSnapshot,
+    VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRowBehaviorSnapshot,
     VirtualizedListScrollStrategy, VirtualizedListState, virtualized_list_navigation_target,
     virtualized_list_scroll_target,
 };

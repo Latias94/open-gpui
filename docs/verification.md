@@ -225,14 +225,15 @@ proof: it enters the Table family view, targets the `select-release` sample, ope
 `TableState`, and proves the select cell does not activate or select the row.
 
 `open-gpui-ui-components` table tests also cover the select editor adapter path directly:
-`table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only`,
+`table_behavior_snapshot_exposes_editable_leaf_cell_kinds_for_leaf_cells_only`,
 `table_runtime_select_cell_edit_emits_change_without_row_interaction`, and the other table cell
 edit gates prove the fixed-option `Select` editor stays a leaf-cell recipe rather than a new row
 interaction path.
 The Table modules are now verified by ownership layer. `open-gpui-ui-core` owns renderer-neutral
 row-model, column, header, filtering, faceting, aggregation, sizing, selection, and virtualizer
-contracts. `open-gpui-ui-components` owns the `Table` facade, render-plan resolution, keyed runtime,
-header/body/cell/editor/resize element assembly, callback payloads, and public export inventory.
+contracts. `open-gpui-ui-components` owns the `Table` facade, behavior snapshots, crate-private
+render-plan resolution, keyed runtime, header/body/cell/editor/resize element assembly, callback
+payloads, and public export inventory.
 `open-gpui-ui-foundation-gallery` owns the end-to-end samples and scroll containment proofs. For a
 Table-only change, prefer the focused commands below before the full `xtask` gate; keep the public
 surface and gallery-conformance commands when moving code between modules so source-owner drift is
@@ -243,17 +244,28 @@ cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-founda
 cargo check -p open-gpui-ui-core --tests
 cargo check -p open-gpui-ui-components --tests
 cargo nextest run -p open-gpui-ui-core table
-cargo nextest run -p open-gpui-ui-components table
+cargo nextest run -p open-gpui-ui-components --test table --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery table
-cargo nextest run -p open-gpui-ui-components public_reexports_stay_explicit_without_wildcards crate_root_and_prelude_exports_remain_explicit table_public_exports_include_core_table_and_virtualizer_contracts component_api_inventory_uses_stable_ownership_vocabulary table_component_source_mapping_tracks_split_render_owners
+cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_focused_table_scroll_stays_inside_sample components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample
 cargo nextest run -p open-gpui-ui-foundation-gallery components_gallery_smoke_faceted_filter_updates_table_rows components_gallery_smoke_range_filter_updates_table_rows components_gallery_smoke_predicate_filter_updates_table_rows components_gallery_smoke_column_visibility_updates_release_matrix components_gallery_smoke_resizable_table_resize_updates_sample components_gallery_smoke_grouped_table_column_reorder_updates_sample
 cargo nextest run -p open-gpui-ui-core numeric_range_filters_match_finite_number_cells_inclusively numeric_range_filters_normalize_open_and_reversed_bounds categorical_filters_match_exact_tokens_and_multiple_values
-cargo nextest run -p open-gpui-ui-components table_range_filter_state_resolves_bounds_and_popover_contract table_range_filter_change_updates_filters_and_resets_pagination table_render_plan_exposes_faceting_metadata table_public_exports_include_core_table_and_virtualizer_contracts component_api_inventory_uses_stable_ownership_vocabulary
-cargo nextest run -p open-gpui-ui-components table_predicate_filter
-cargo nextest run -p open-gpui-ui-components table_render_plan_exposes_editable_leaf_cell_kinds_for_leaf_cells_only table_cell_edit_change_updates_source_row_and_preserves_table_state table_cell_edit_change_updates_boolean_source_row_and_preserves_table_state table_runtime_text_cell_edit_emits_change_without_row_interaction table_runtime_boolean_cell_edit_emits_toggle_change_without_row_interaction table_runtime_multiline_cell_edit_emits_newline_change_without_row_interaction controlled_text_input_on_change_accepts_input_without_supplied_controller component_api_inventory_uses_stable_ownership_vocabulary table_public_exports_include_core_table_and_virtualizer_contracts
+cargo nextest run -p open-gpui-ui-components --test table --no-fail-fast
+cargo nextest run -p open-gpui-ui-components --test text_input --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_editable_table_cell_updates_sample_rows components_gallery_smoke_checkbox_table_cell_updates_sample_rows components_gallery_smoke_select_table_cell_updates_sample_rows components_gallery_smoke_multiline_table_cell_updates_sample_rows
 ```
+
+Key sentinels inside those binaries include
+`public_reexports_stay_explicit_without_wildcards`,
+`crate_root_and_prelude_exports_remain_explicit`,
+`table_public_exports_include_core_table_and_virtualizer_contracts`,
+`component_api_inventory_uses_stable_ownership_vocabulary`,
+`table_component_source_mapping_tracks_split_render_owners`,
+`table_range_filter_state_resolves_bounds_and_popover_contract`,
+`table_range_filter_change_updates_filters_and_resets_pagination`,
+`table_behavior_snapshot_exposes_faceting_metadata`,
+`table_behavior_snapshot_exposes_editable_leaf_cell_kinds_for_leaf_cells_only`, and
+`controlled_text_input_on_change_accepts_input_without_supplied_controller`.
 
 `VirtualizedList` follows the same split at component scale: `open-gpui-ui-components` tests prove
 render-plan rows, scroll-target math, PageDown reveal, and Enter/Space activation payloads, while
@@ -315,12 +327,13 @@ explicit accessible labels, size metrics, `Role::Image`, group visible/hidden co
 label state, and source metadata staying outside image-loading ownership. The gallery metadata and
 short-viewport smoke tests also verify those primitives are listed as official catalog entries and
 render visible samples with stable debug selectors.
-The public API inventory gate lives in `crates/ui_components/tests/components.rs` as
-`component_api_inventory_covers_official_gallery_catalog` and
+The public API inventory gate lives in `crates/ui_components/tests/public_surface.rs`, with the
+long manifest helpers in `crates/ui_components/tests/support/public_surface.rs`. Its key
+sentinels include `component_api_inventory_covers_official_gallery_catalog` and
 `component_api_inventory_uses_stable_ownership_vocabulary`. Run the focused proof with:
 
 ```sh
-cargo nextest run -p open-gpui-ui-components component_api_inventory
+cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
 ```
 
 That gate checks that every official Components catalog entry has a matching API inventory row,
@@ -335,7 +348,7 @@ root/prelude exports, ownership vocabulary, resolved-state purity, official cata
 focused Components-page rendering aligned:
 
 ```powershell
-cargo nextest run -p open-gpui-ui-components accordion collapsible slider number_input link tag breadcrumb toggle_group toast component_api_inventory_uses_stable_ownership_vocabulary crate_root_and_prelude_exports_remain_explicit public_resolved_state_contracts_avoid_gpui_runtime_types
+cargo nextest run -p open-gpui-ui-components --test public_surface --test form --test navigation --test primitives --test theme --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery official_component_catalog_entries_have_signals_and_sample_selectors components_gallery_smoke_focuses_every_focusable_catalog_entry components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
 ```
 
@@ -353,6 +366,11 @@ real `status-cue:*:root` and `empty-state:*:root` debug selectors render.
 gate for catalog drift: every official `COMPONENT_CATALOG` entry must have matching component and
 resolved-state `SIGNALS` entries plus one rendered `gallery:component-*-sample:{id}` selector in
 the Components page.
+`gallery_story_contracts_cover_components_state_readouts_and_overlays` is the story-probe contract
+gate. It requires official component samples, renderer-neutral state readouts, and overlay samples
+to expose a reusable `StoryContract` with public selectors and user-observable probe operations:
+open, dismiss, select, edit, scroll, focus, activate, and read-public-payload. Gallery smokes should
+prefer these contracts before falling back to raw debug selectors for adapter-internal details.
 `state_contract_catalog_entries_have_signals_and_readout_selectors` is the companion pre-renderer
 contract gate. Entries marked `state-contract` must declare `state_contract_selector`, must not
 declare official `sample_selector`, and must stay disjoint from `official_sample_selector_pairs`.
@@ -383,7 +401,7 @@ exposes aggregate count and score cells, pins the identifier and status columns,
 sticky-header plus inner-scroll smoke. It also carries
 `server-paged`, a manual filtering/sorting/pagination sample that renders only the current
 app-supplied page snapshot while exposing server-known total row and page counts through the
-gallery summary and `TableRenderPlan`. It also carries `release-resize`, a controlled
+gallery summary and `TableBehaviorSnapshot`. It also carries `release-resize`, a controlled
 column-sizing sample whose resize smoke drags the `name` handle, records the app-owned committed
 width, and verifies header and first-row cell widths stay aligned. `filter-board` is also the
 faceted-filter proof: it renders a `status` `TableFacetedFilter`, records
@@ -415,9 +433,9 @@ has focused smokes that prove off-window center columns unmount/remount, hide/sh
 changes update rendered headers/cells, and horizontal / popup wheel input remains inside the
 sample. `row-pinning` is the row-region sample: it pins top and bottom review rows around a paged center body, exposes
 top/center/bottom readouts, and proves center-body wheel input changes the center row window
-without moving the fixed row bands or outer sample. The Table adapter also exposes a combined
-`GridViewport2D` contract for the current row window and center-column window, keeping the row and
-column virtualizers separate while still making the two-axis viewport inspectable. `dependency-tree`
+without moving the fixed row bands or outer sample. The Table adapter keeps the row and column
+virtualizers separate internally; public tests assert the resulting two-axis behavior through
+`TableBehaviorSnapshot` plus gallery runtime probes. `dependency-tree`
 is the source-hierarchy
 sample: it proves nested `TableRow` children resolve to visible tree rows,
 keeps collapsed descendants addressable by stable id, exposes tree-depth and tree-branch summary
@@ -497,6 +515,59 @@ open-change without introducing a global overlay runtime.
 For GPUI runtime focus assertions, `VisualTestContext::debug_selector_is_focused` and
 `VisualTestContext::focused_debug_selector` are the preferred test hooks. They use test-only
 debug-selector-to-focus-handle data and keep focus checks independent from component internals.
+The public surface manifest keeps adapter-only, renderer-neutral state, primitive, gallery, and
+docs ownership explicit while the UI component architecture is being deepened. Table, Tree,
+VirtualizedList, and Command expose behavior snapshots or state readouts; renderer assembly plans
+stay crate-private unless a future component deliberately promotes a narrower state contract.
+For the UI architecture deepening refactor, keep the focused gates below close to the code that
+changes them. They cover the public export map, removed primitive aliases, overlay runtime policy,
+choice/search behavior, the Table behavior-snapshot and internal render-plan boundary, shared
+row-window projection, theme registry, and gallery catalog/conformance/runtime/sample/render
+module split:
+
+```powershell
+cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
+cargo nextest run -p open-gpui-ui-core overlay
+cargo nextest run -p open-gpui-ui-components --test overlay --no-fail-fast
+cargo nextest run -p open-gpui-ui-components --test choice --no-fail-fast
+cargo nextest run -p open-gpui-ui-components --test table --no-fail-fast
+cargo nextest run -p open-gpui-ui-core virtualizer
+cargo nextest run -p open-gpui-ui-components --test layout --no-fail-fast
+cargo nextest run -p open-gpui-ui-components --test theme --no-fail-fast
+cargo run -p xtask -- scan-theme-drift
+cargo nextest run -p open-gpui-ui-foundation-gallery --no-fail-fast
+```
+
+The binary-level gates above include these focused sentinels:
+`primitive_deletion_target_inventory_blocks_removed_shallow_reexports`,
+`primitive_modules_do_not_reexport_ui_core_as_pass_through_aliases`,
+`surface_manifest_classifies_public_surface_once`,
+`surface_manifest_aligns_adjacent_gallery_statuses`,
+`surface_manifest_tracks_exports_gallery_and_docs_contracts`,
+`adapter_only_public_surfaces_match_allowlist`,
+`gpui_adapter_exports_group_runtime_specific_surfaces`,
+`overlay_open_change_helpers_match_core_policies`,
+`dialog_runtime_respects_escape_policy_and_restores_trigger_focus`,
+`choice_surfaces_share_stable_value_resolution_and_query_normalization`,
+`table_component_source_mapping_tracks_split_render_owners`, `row_window`,
+`virtualized_list_behavior_snapshot_uses_item_descriptors_and_virtualizer_contracts`,
+`virtualized_list_behavior_snapshot_applies_builder_metrics`,
+`table_behavior_snapshot_exposes_center_column_summary_without_window_internals`,
+`table_behavior_snapshot_exposes_pinned_column_regions`, `theme_registry`, `theme_resolver`,
+`theme_snapshots`, `components_catalog_metadata_is_separate_from_rendering`,
+`official_component_catalog_entries_have_signals_and_sample_selectors`,
+`state_contract_catalog_entries_have_signals_and_readout_selectors`,
+`gallery_story_contracts_cover_components_state_readouts_and_overlays`,
+`components_gallery_smoke_focuses_catalog_family_and_restores_all_mode`, and
+`components_gallery_smoke_focuses_every_focusable_catalog_entry`.
+
+The theme drift scan is the focused gate for component color recipes and built-in theme token
+coverage. It requires all `ThemeResolver::*_colors` component calls to be implemented and listed
+in `crates/ui_components/src/theme/recipes.rs`, rejects component-local `impl ThemeResolver`
+extensions, and checks that light, dark, and high-contrast palettes expose the same token/state
+shape. Add or move recipes in the theme module first, then update the catalog entry in the same
+patch.
+
 The `open-gpui-ui-components` public contract tests should also keep
 `public_resolved_state_contracts_avoid_gpui_runtime_types` passing. That test is the hard
 headless-readiness guard for public resolved-state structs: it prevents `Window`, `App`,

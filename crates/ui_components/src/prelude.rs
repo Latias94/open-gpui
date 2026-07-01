@@ -28,11 +28,12 @@ pub use crate::combobox::{
     ComboboxOpenMode, ComboboxOption, ComboboxOptionDescriptor, ComboboxSelection, ComboboxState,
 };
 pub use crate::command::{
-    Command, CommandColors, CommandDialogState, CommandGroup, CommandGroupDescriptor,
-    CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItem, CommandItemDescriptor,
-    CommandItemState, CommandLoadingState, CommandMatchSource, CommandMetrics, CommandOpenMode,
-    CommandQueryMode, CommandRenderPlan, CommandRowRenderPlan, CommandSelectedChipState,
-    CommandSelection, CommandSelectionChange, CommandSelectionMode, CommandState,
+    Command, CommandBehaviorSnapshot, CommandColors, CommandDialogState, CommandGroup,
+    CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItem,
+    CommandItemDescriptor, CommandItemState, CommandLoadingState, CommandMatchSource,
+    CommandMetrics, CommandOpenMode, CommandQueryMode, CommandRowBehaviorSnapshot,
+    CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandSelectionMode,
+    CommandState,
 };
 pub use crate::context_menu::{ContextMenu, ContextMenuState};
 pub use crate::dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
@@ -66,9 +67,7 @@ pub use crate::number_input::{
 };
 pub use crate::overlay::OverlayResolvedState;
 pub use crate::popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
-pub use crate::primitives::{
-    ActiveDescendant, CollectionPosition, ControllableState, UiA11yElementExt,
-};
+pub use crate::primitives::UiA11yElementExt;
 pub use crate::progress::{
     Progress, ProgressColors, ProgressMetrics, ProgressState, ProgressVisualMode,
 };
@@ -104,22 +103,22 @@ pub use crate::splitter::{
 };
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use crate::table::{
-    Table, TableCellEditApplyOutcome, TableCellEditChange, TableCellRenderPlan,
-    TableCenterColumnWindowPlan, TableColumnOrderChange, TableColumnOrderPlacement,
-    TableColumnRegionRenderPlan, TableColumnRenderPlan, TableColumnSizingChange,
+    Table, TableBehaviorSnapshot, TableCellBehaviorSnapshot, TableCellEditApplyOutcome,
+    TableCellEditChange, TableColumnBehaviorSnapshot, TableColumnOrderChange,
+    TableColumnOrderPlacement, TableColumnRegionSnapshot, TableColumnSizingChange,
     TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
     TableColumnVisibilityItemState, TableColumnVisibilityState, TableFacetedFilter,
     TableFacetedFilterChange, TableFacetedFilterOptionState, TableFacetedFilterState,
     TableGlobalFilter, TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction,
-    TableHeaderCellRenderPlan, TableHeaderGroupRegionRenderPlan, TableHeaderGroupRegionsRenderPlan,
-    TableHeaderGroupRenderPlan, TableInputModifiers, TableMetrics, TablePinnedLayoutPlan,
-    TablePredicateFilter, TablePredicateFilterChange, TablePredicateFilterOperator,
+    TableHeaderSummarySnapshot, TableInputModifiers, TableMetrics, TablePredicateFilter,
+    TablePredicateFilterChange, TablePredicateFilterOperator,
     TablePredicateFilterOperatorOptionState, TablePredicateFilterState, TableRangeFilter,
-    TableRangeFilterChange, TableRangeFilterState, TableRenderPlan, TableResolvedHeaderCell,
+    TableRangeFilterChange, TableRangeFilterState, TableResolvedHeaderCell,
     TableResolvedHeaderGroup, TableResolvedHeaderGroupRegions, TableResolvedHeaderKind,
-    TableRowAction, TableRowActivation, TableRowActivationKind, TableRowExpansionToggle,
-    TableRowMeasureMode, TableRowRenderPlan, TableRowSelectionChange, TableSelectionScope,
-    TableToolbar, TableToolbarState,
+    TableRowAction, TableRowActivation, TableRowActivationKind, TableRowBehaviorSnapshot,
+    TableRowCountSnapshot, TableRowExpansionToggle, TableRowMeasureMode, TableRowSelectionChange,
+    TableSelectionScope, TableToolbar, TableToolbarColors, TableToolbarState,
+    TableTreeSummarySnapshot, TableVisibleRowsSnapshot,
 };
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
@@ -130,7 +129,10 @@ pub use crate::text_input::{
     TextInput, TextInputColors, TextInputDisplayMode, TextInputMetrics, TextInputState,
 };
 pub use crate::textarea::{Textarea, TextareaColors, TextareaMetrics, TextareaState};
-pub use crate::theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
+pub use crate::theme::{
+    ThemeColor, ThemeDefinition, ThemeMode, ThemeRegistrationDiagnostics, ThemeRegistry,
+    ThemeRegistryEntry, ThemeResolver, ThemeSnapshot, ThemeValidationError,
+};
 pub use crate::toast::{
     Toast, ToastAction, ToastColors, ToastDismiss, ToastDismissReason, ToastIntent, ToastMetrics,
     ToastStack, ToastStackState, ToastState,
@@ -150,28 +152,29 @@ pub use crate::tooltip::{
     TooltipOpenIntent, TooltipState,
 };
 pub use crate::tree::{
-    Tree, TreeChildrenLoadState, TreeDropPosition, TreeFocusTarget, TreeItemDescriptor,
-    TreeItemState, TreeKeyboardAction, TreeMetrics, TreeMove, TreeMoveTarget, TreeRenderPlan,
-    TreeRowRenderPlan, TreeSelection, TreeState, TreeToggle, apply_tree_move,
+    Tree, TreeBehaviorSnapshot, TreeChildrenLoadState, TreeDropPosition, TreeFocusTarget,
+    TreeItemDescriptor, TreeItemState, TreeKeyboardAction, TreeMetrics, TreeMove, TreeMoveTarget,
+    TreeRowBehaviorSnapshot, TreeSelection, TreeState, TreeToggle, apply_tree_move,
     tree_navigation_target,
 };
 pub use crate::virtualized_list::{
-    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
+    VirtualizedList, VirtualizedListActivation, VirtualizedListBehaviorSnapshot,
+    VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRowBehaviorSnapshot,
     VirtualizedListScrollStrategy, VirtualizedListState, virtualized_list_navigation_target,
     virtualized_list_scroll_target,
 };
 pub use open_gpui_ui_core::{
-    GridViewport2D, Sizable, Size, TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH,
-    TABLE_MIN_COLUMN_WIDTH, TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE,
-    TableAggregateKind, TableAggregation, TableCellEditor, TableCellValue, TableColumn,
-    TableColumnFacets, TableColumnGroup, TableColumnGroupId, TableColumnId, TableColumnNode,
-    TableColumnPinning, TableColumnRegion, TableColumnRegions, TableColumnResizeDirection,
-    TableColumnResizeMode, TableColumnResizeState, TableColumnResizeUpdate, TableColumnSizing,
-    TableColumnVisibilityOverrides, TableColumnWidthPolicy, TableExpansionMode,
-    TableExpansionState, TableFacetRange, TableFacetValueCount, TableFilter, TableFilterKind,
-    TableGlobalFacetSummary, TableGroupRow, TableNumericFilterBound, TableNumericFilterOperator,
-    TablePagination, TableResolvedColumnSizing, TableResolvedColumnSizingRegions, TableResolvedRow,
+    ActiveDescendant, CollectionPosition, ControllableState, GridViewport2D, Sizable, Size,
+    TABLE_DEFAULT_COLUMN_WIDTH, TABLE_MAX_COLUMN_WIDTH, TABLE_MIN_COLUMN_WIDTH,
+    TABLE_ROW_MODEL_PIPELINE, TABLE_ROW_MODEL_V0_PIPELINE, TableAggregateKind, TableAggregation,
+    TableCellEditor, TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup,
+    TableColumnGroupId, TableColumnId, TableColumnNode, TableColumnPinning, TableColumnRegion,
+    TableColumnRegions, TableColumnResizeDirection, TableColumnResizeMode, TableColumnResizeState,
+    TableColumnResizeUpdate, TableColumnSizing, TableColumnVisibilityOverrides,
+    TableColumnWidthPolicy, TableExpansionMode, TableExpansionState, TableFacetRange,
+    TableFacetValueCount, TableFilter, TableFilterKind, TableGlobalFacetSummary, TableGroupRow,
+    TableNumericFilterBound, TableNumericFilterOperator, TablePagination,
+    TableResolvedColumnSizing, TableResolvedColumnSizingRegions, TableResolvedRow,
     TableResolvedRowKind, TableResolvedState, TableRow, TableRowChildrenLoadState, TableRowId,
     TableRowModel, TableRowModelStage, TableRowPinning, TableRowPinningPolicy, TableRowRegion,
     TableRowRegions, TableSelectOption, TableSelectionActivationMode, TableSelectionMode,

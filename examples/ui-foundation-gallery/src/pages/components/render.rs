@@ -5,7 +5,7 @@ use crate::shell::*;
 use open_gpui::prelude::*;
 use open_gpui::{AnyElement, Context, IntoElement, ListSizingBehavior, div, list, px, rgb};
 use open_gpui_ui_components::*;
-use open_gpui_ui_core::{Orientation, Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{Orientation, Sizable, Size, ThemeTokens, UiPx};
 
 const SWITCH_SECTION_IDS: &[&str] = &["switch", "checkbox", "radio-group", "toggle"];
 
@@ -331,34 +331,37 @@ fn render_components_section(
             ))
             .into_any_element(),
         "gates" => {
-            let conformance_gate_cards = pages::components::CONFORMANCE_GATES.iter().map(|gate| {
-                let gate_selector = format!("component-gate:{}", gate.id);
-                gallery_card_shell(gate_selector.clone(), Some(gate_selector))
-                    .min_w(px(220.0))
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(open_gpui::FontWeight::BOLD)
-                            .child(gate.title),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .line_height(px(18.0))
-                            .text_color(rgb(0x5a6472))
-                            .child(gate.summary),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .line_height(px(18.0))
-                            .text_color(rgb(0x5a6472))
-                            .child(gate.evidence.join(" / ")),
-                    )
-            });
+            let conformance_gate_cards =
+                pages::components::COMPONENT_CONFORMANCE_GATES
+                    .iter()
+                    .map(|gate| {
+                        let gate_selector = format!("component-gate:{}", gate.id);
+                        gallery_card_shell(gate_selector.clone(), Some(gate_selector))
+                            .min_w(px(220.0))
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child(gate.title),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .line_height(px(18.0))
+                                    .text_color(rgb(0x5a6472))
+                                    .child(gate.summary),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .line_height(px(18.0))
+                                    .text_color(rgb(0x5a6472))
+                                    .child(gate.evidence.join(" / ")),
+                            )
+                    });
 
             component_page_section("gates")
                 .when(!show_component_section(focus_mode, "gates"), |this| {
@@ -1623,11 +1626,12 @@ fn render_components_section(
                                                     let state_summary =
                                                         sample.state_summary_for_state(&table_state);
                                                     let mut table = sample.build_table_with_state(table_state);
-                                                    let table_plan = table.state();
+                                                    let table_behavior = table
+                                                        .behavior_snapshot(UiPx::ZERO, sample.viewport_extent);
                                                     let global_filter_control: Option<AnyElement> =
                                                         if sample_id == "filter-board" {
                                                             let query = table
-                                                                .table_state()
+                                                                .state()
                                                                 .global_filter()
                                                                 .unwrap_or("")
                                                                 .to_owned();
@@ -1668,7 +1672,7 @@ fn render_components_section(
                                                         if sample_id == "filter-board" {
                                                             let name_column = TableColumnId::new("name");
                                                             let (selected_operator, selected_value) = table
-                                                                .table_state()
+                                                                .state()
                                                                 .filters()
                                                                 .iter()
                                                                 .find(|filter| filter.column() == &name_column)
@@ -1756,7 +1760,7 @@ fn render_components_section(
                                                         if sample_id == "filter-board" {
                                                             let status_column = TableColumnId::new("status");
                                                             let selected_values = table
-                                                                .table_state()
+                                                                .state()
                                                                 .filters()
                                                                 .iter()
                                                                 .find(|filter| filter.column() == &status_column)
@@ -1765,7 +1769,7 @@ fn render_components_section(
                                                                     values.iter().cloned().collect::<Vec<_>>()
                                                                 })
                                                                 .unwrap_or_default();
-                                                            table_plan
+                                                            table_behavior
                                                                 .column_facet(&status_column)
                                                                 .cloned()
                                                                 .map(|facets| {
@@ -1820,7 +1824,7 @@ fn render_components_section(
                                                         if sample_id == "filter-board" {
                                                             let score_column = TableColumnId::new("score");
                                                             let (selected_min, selected_max) = table
-                                                                .table_state()
+                                                                .state()
                                                                 .filters()
                                                                 .iter()
                                                                 .find(|filter| filter.column() == &score_column)
@@ -1828,7 +1832,7 @@ fn render_components_section(
                                                                     filter.number_range_bounds()
                                                                 })
                                                                 .unwrap_or((None, None));
-                                                            table_plan
+                                                            table_behavior
                                                                 .column_facet(&score_column)
                                                                 .cloned()
                                                                 .map(|facets| {
@@ -1880,7 +1884,7 @@ fn render_components_section(
                                                         if sample_id == "release-matrix" {
                                                             let sample_id_for_visibility =
                                                                 sample_id.to_owned();
-                                                            let base_state = table.table_state().clone();
+                                                            let base_state = table.state().clone();
 
                                                             Some(
                                                                 TableColumnVisibility::new(
@@ -1892,14 +1896,14 @@ fn render_components_section(
                                                                 )
                                                                 .columns(
                                                                     table
-                                                                        .table_state()
+                                                                        .state()
                                                                         .columns()
                                                                         .iter()
                                                                         .cloned(),
                                                                 )
                                                                 .visibility(
                                                                     table
-                                                                        .table_state()
+                                                                        .state()
                                                                         .column_visibility()
                                                                         .clone(),
                                                                 )
@@ -1940,7 +1944,7 @@ fn render_components_section(
                                                                 format!(
                                                                     "{} visible / {} total columns",
                                                                     state_summary.aria_columns,
-                                                                    table.table_state().columns().len()
+                                                                    table.state().columns().len()
                                                                 )
                                                             };
                                                             let mut toolbar = TableToolbar::new(

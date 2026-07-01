@@ -10,12 +10,19 @@ use open_gpui_ui_core::{
 use super::content_fit::{content_fit_measure_key, table_content_fit_rendered_rows};
 use super::runtime::{TableResolvedCache, TableRuntime};
 use super::virtualization::{measured_virtualizer_state, row_render_key};
-use super::{Table, TableColumnRenderPlan, TableMetrics, TableRenderPlan, nonnegative_px};
+use super::{
+    Table, TableBehaviorSnapshot, TableColumnRenderPlan, TableMetrics, TableRenderPlan,
+    nonnegative_px,
+};
 use crate::geometry::ui_px_from_gpui;
 
 impl Table {
-    /// Resolves table row models and the virtual render window for a viewport.
-    pub fn render_plan(&self, scroll_offset: UiPx, viewport_extent: UiPx) -> TableRenderPlan {
+    /// Resolves table row models and virtual render windows for internal rendering.
+    pub(in crate::table) fn render_plan(
+        &self,
+        scroll_offset: UiPx,
+        viewport_extent: UiPx,
+    ) -> TableRenderPlan {
         let metrics = self.metrics_for_viewport(viewport_extent);
         let table = Rc::new(self.state.resolve());
         let columns = self.resolve_columns(&table);
@@ -53,6 +60,16 @@ impl Table {
             None,
             &BTreeMap::new(),
         )
+    }
+
+    /// Resolves a public, user-observable behavior snapshot for a viewport.
+    pub fn behavior_snapshot(
+        &self,
+        scroll_offset: UiPx,
+        viewport_extent: UiPx,
+    ) -> TableBehaviorSnapshot {
+        let plan = self.render_plan(scroll_offset, viewport_extent);
+        TableBehaviorSnapshot::from_render_plan(&plan, &self.state)
     }
 
     pub(super) fn render_plan_with_runtime(

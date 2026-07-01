@@ -16,7 +16,9 @@ use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::text_editing;
+use crate::text_editing::{
+    self, EditableTextDocument, TextEditingPolicy, TextEditingProjection, TextSelection,
+};
 use crate::theme::ThemeResolver;
 
 type TextareaChangeHandler = Rc<dyn Fn(String, &mut Window, &mut App)>;
@@ -169,8 +171,10 @@ impl TextareaState {
     ) -> Self {
         let colors = ThemeResolver::textarea_colors(tokens, disabled, read_only, invalid);
 
+        let value = value.into();
+
         Self {
-            value: normalize_textarea_value(value.into()),
+            value: TextEditingPolicy::multiline().normalize_text(value.as_str()),
             placeholder: placeholder.map(Into::into),
             size,
             rows: rows.max(1),
@@ -367,8 +371,10 @@ impl TextareaController {
 
     fn with_value(value: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         let mut this = Self::new(cx);
-        this.content = normalize_textarea_value(value.into().to_string()).into();
-        this.selected_range = this.content.len()..this.content.len();
+        let value = value.into();
+        let projection = EditableTextDocument::new(value.as_ref(), TextEditingPolicy::multiline())
+            .into_projection();
+        this.apply_editing_projection(projection);
         this
     }
 
@@ -413,7 +419,7 @@ impl TextareaController {
         }
 
         if let Some(value) = controlled_value {
-            let value = normalize_textarea_value(value);
+            let value = text_editing::normalize_multiline(value);
             if self.content.as_ref() != value {
                 self.content = value.into();
                 let cursor =
@@ -435,6 +441,35 @@ impl TextareaController {
 
     fn range_to_utf16(&self, range: &Range<usize>) -> Range<usize> {
         text_editing::range_to_utf16(self.value(), range)
+    }
+
+    fn editing_policy(&self) -> TextEditingPolicy {
+        TextEditingPolicy::multiline()
+    }
+
+    fn selection(&self) -> TextSelection {
+        let anchor = if self.selection_reversed {
+            self.selected_range.end
+        } else {
+            self.selected_range.start
+        };
+        TextSelection::from_offsets(anchor, self.cursor_offset())
+    }
+
+    fn document(&self) -> EditableTextDocument {
+        EditableTextDocument::from_parts(
+            self.value(),
+            self.selection(),
+            self.marked_range.clone(),
+            self.editing_policy(),
+        )
+    }
+
+    fn apply_editing_projection(&mut self, projection: TextEditingProjection) {
+        self.content = projection.text().into();
+        self.selected_range = projection.selection().range();
+        self.selection_reversed = projection.selection().reversed();
+        self.marked_range = projection.marked_range();
     }
 
     fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
@@ -465,41 +500,20 @@ impl TextareaController {
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
-        let offset = text_editing::clamp_to_char_boundary(self.value(), offset);
-        self.selected_range = offset..offset;
-        self.selection_reversed = false;
+        let projection = self.document().move_to(offset);
+        self.apply_editing_projection(projection);
         cx.notify();
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
-        let offset = text_editing::clamp_to_char_boundary(self.value(), offset);
-        if self.selection_reversed {
-            self.selected_range.start = offset;
-        } else {
-            self.selected_range.end = offset;
-        }
-        if self.selected_range.end < self.selected_range.start {
-            self.selection_reversed = !self.selection_reversed;
-            self.selected_range = self.selected_range.end..self.selected_range.start;
-        }
+        let projection = self.document().select_to(offset);
+        self.apply_editing_projection(projection);
         cx.notify();
     }
 
     fn replace_text_in_range_inner(&mut self, range_utf16: Option<Range<usize>>, new_text: &str) {
-        let range = range_utf16
-            .as_ref()
-            .map(|range| self.range_from_utf16(range))
-            .or(self.marked_range.clone())
-            .unwrap_or_else(|| self.selected_range.clone());
-        let new_text = normalize_textarea_value(new_text);
-        let new_end = range.start + new_text.len();
-
-        self.content =
-            (self.content[0..range.start].to_owned() + &new_text + &self.content[range.end..])
-                .into();
-        self.selected_range = new_end..new_end;
-        self.selection_reversed = false;
-        self.marked_range = None;
+        let projection = self.document().replace_text_in_range(range_utf16, new_text);
+        self.apply_editing_projection(projection);
     }
 
     fn replace_and_mark_text_in_range_inner(
@@ -508,26 +522,10 @@ impl TextareaController {
         new_text: &str,
         selected_utf16: Option<Range<usize>>,
     ) {
-        let range = range_utf16
-            .as_ref()
-            .map(|range| self.range_from_utf16(range))
-            .or(self.marked_range.clone())
-            .unwrap_or_else(|| self.selected_range.clone());
-        let new_text = normalize_textarea_value(new_text);
-        let new_end = range.start + new_text.len();
-
-        self.content =
-            (self.content[0..range.start].to_owned() + &new_text + &self.content[range.end..])
-                .into();
-        self.marked_range = (!new_text.is_empty()).then_some(range.start..new_end);
-        self.selected_range = selected_utf16
-            .as_ref()
-            .map(|selected| {
-                range.start + text_editing::offset_from_utf16(&new_text, selected.start)
-                    ..range.start + text_editing::offset_from_utf16(&new_text, selected.end)
-            })
-            .unwrap_or(new_end..new_end);
-        self.selection_reversed = false;
+        let projection =
+            self.document()
+                .replace_and_mark_text_in_range(range_utf16, new_text, selected_utf16);
+        self.apply_editing_projection(projection);
     }
 
     fn dispatch_change(&self, window: &mut Window, cx: &mut App) {
@@ -724,7 +722,11 @@ impl Textarea {
 
     /// Sets the displayed value.
     pub fn value(mut self, value: impl Into<SharedString>) -> Self {
-        self.value = normalize_textarea_value(value.into().to_string()).into();
+        let value = value.into();
+        self.value = EditableTextDocument::new(value.as_ref(), TextEditingPolicy::multiline())
+            .into_projection()
+            .text()
+            .into();
         self
     }
 
@@ -1230,10 +1232,6 @@ fn textarea_line_height(size: Size) -> UiPx {
     }
 }
 
-fn normalize_textarea_value(text: impl AsRef<str>) -> String {
-    text.as_ref().replace("\r\n", "\n").replace('\r', "\n")
-}
-
 fn text_line_count(text: &str) -> usize {
     textarea_line_slices(text).len()
 }
@@ -1348,7 +1346,7 @@ mod tests {
 
     #[test]
     fn textarea_normalizes_crlf_to_lf() {
-        assert_eq!(normalize_textarea_value("a\r\nb\rc"), "a\nb\nc");
+        assert_eq!(text_editing::normalize_multiline("a\r\nb\rc"), "a\nb\nc");
     }
 
     #[test]
