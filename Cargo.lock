@@ -4337,6 +4337,7 @@ dependencies = [
 name = "open-gpui-canvas-jellyflow"
 version = "0.1.0"
 dependencies = [
+ "image",
  "jellyflow",
  "jellyflow-open-gpui",
  "open-gpui",

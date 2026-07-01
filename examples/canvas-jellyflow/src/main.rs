@@ -77,6 +77,8 @@ use open_gpui_ui_components::{Badge, BadgeVariant, Button, ButtonVariant, Progre
 use open_gpui_ui_core::Size;
 use serde_json::Value;
 
+#[cfg(test)]
+mod gallery_screenshot;
 mod node_component_kit;
 mod product_gallery;
 mod product_renderers;

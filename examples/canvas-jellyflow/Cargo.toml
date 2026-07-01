@@ -25,5 +25,10 @@ open_gpui_ui_components.workspace = true
 open_gpui_ui_core.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+image.workspace = true
+open_gpui = { workspace = true, features = ["test-support"] }
+open_gpui_platform = { workspace = true, features = ["test-support"] }
+
 [lints]
 workspace = true
