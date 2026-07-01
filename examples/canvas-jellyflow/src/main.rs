@@ -35,8 +35,8 @@ use jellyflow_open_gpui::{
     OpenGpuiInspectorPlan, OpenGpuiInspectorSurface, OpenGpuiInspectorTargetBounds,
     OpenGpuiInspectorTargetSource, OpenGpuiMeasurementContext, OpenGpuiMeasurementId,
     OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource, OpenGpuiMenuPlan,
-    OpenGpuiNodeRendererContext, OpenGpuiNodeRendererHostContext, OpenGpuiNodeRendererOutputSource,
-    OpenGpuiNodeRendererRegistry, OpenGpuiNodeRendererState, OpenGpuiNodeRendererTable,
+    OpenGpuiNodeRendererContext, OpenGpuiNodeRendererOutputSource, OpenGpuiNodeRendererRegistry,
+    OpenGpuiNodeRendererState, OpenGpuiNodeRendererTable,
     OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout, OpenGpuiRepeatableActionPlan,
     OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
@@ -46,8 +46,6 @@ use jellyflow_open_gpui::{
     apply_dropped_wire_insert, layout_pass_measurement_from_regions, measured_surface_anchors,
     open_gpui_action_summary_element_id, open_gpui_blackboard_item_element_id,
     open_gpui_blackboard_status_element_id, open_gpui_chrome_fallback_button_element_id,
-    open_gpui_custom_action_missing_element_id, open_gpui_custom_renderer_badge_element_id,
-    open_gpui_custom_repeatables_badge_element_id, open_gpui_custom_slots_badge_element_id,
     open_gpui_node_renderer_context, open_gpui_repeatable_add_action_element_id,
     open_gpui_repeatable_collection_element_id, open_gpui_repeatable_item_element_id,
     open_gpui_repeatable_remove_action_element_id, open_gpui_repeatable_reorder_action_element_id,
@@ -77,6 +75,7 @@ use open_gpui_ui_core::Size;
 use serde_json::Value;
 
 mod node_component_kit;
+mod product_renderers;
 
 const REPEATABLE_ITEM_SNAPSHOTS_FIELD: &str = "jellyflow_repeatable_items";
 const INITIAL_SELECTION: u128 = 2;
@@ -90,14 +89,15 @@ fallback now means initial, dirty, hidden, missing, duplicate, or partial covera
 maturity gap is productized authoring interaction coverage and advanced widget stubs.";
 
 #[derive(Clone)]
-struct GpuiNodeRendererServices {
-    collector: OpenGpuiBoundsCollector,
-    view: WeakEntity<JellyflowCanvasView>,
+pub(crate) struct GpuiNodeRendererServices {
+    pub(crate) collector: OpenGpuiBoundsCollector,
+    pub(crate) view: WeakEntity<JellyflowCanvasView>,
 }
 
-type GpuiNodeRendererTable = OpenGpuiNodeRendererTable<GpuiNodeRendererServices, AnyElement>;
+pub(crate) type GpuiNodeRendererTable =
+    OpenGpuiNodeRendererTable<GpuiNodeRendererServices, AnyElement>;
 
-fn node_component_kit_actions(
+pub(crate) fn node_component_kit_actions(
     view: WeakEntity<JellyflowCanvasView>,
 ) -> node_component_kit::NodeComponentKitActions {
     node_component_kit::NodeComponentKitActions::new(
@@ -1609,315 +1609,11 @@ fn render_descriptor_fallback_node_surface(
 }
 
 fn demo_node_renderer_registry() -> OpenGpuiNodeRendererRegistry {
-    OpenGpuiNodeRendererRegistry::new().with_renderer("decision-card", "Dify LLM decision card")
+    product_renderers::demo_node_renderer_registry()
 }
 
 fn demo_custom_node_renderers() -> GpuiNodeRendererTable {
-    let mut renderers = GpuiNodeRendererTable::new();
-    renderers.insert(
-        "decision-card".to_owned(),
-        Box::new(|context| render_decision_card_node_surface(context)),
-    );
-    renderers
-}
-
-fn render_decision_card_node_surface(
-    host: &OpenGpuiNodeRendererHostContext<'_, GpuiNodeRendererServices>,
-) -> AnyElement {
-    let context = host.semantic();
-    let collector = host.services().collector.clone();
-    let view = host.services().view.clone();
-    let prompt_control = context.control("control.prompt");
-    let model_control = context.control("control.model");
-    let temperature_control = context.control("control.temperature");
-    let stream_control = context.control("control.stream");
-    let primary_action = context
-        .toolbar_menu
-        .actions
-        .iter()
-        .find(|action| action.key == "action.llm.run")
-        .or_else(|| context.toolbar_menu.actions.first());
-
-    div()
-        .size_full()
-        .relative()
-        .rounded_sm()
-        .border_1()
-        .border_color(if context.state.selected {
-            rgb(0x2563eb)
-        } else {
-            rgb(0x0f766e)
-        })
-        .bg(rgb(0xf8fafc))
-        .overflow_hidden()
-        .shadow_sm()
-        .child(
-            div()
-                .absolute()
-                .left(px(8.0))
-                .top(px(8.0))
-                .right(px(8.0))
-                .h(px(24.0))
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap_2()
-                .overflow_hidden()
-                .child(
-                    Badge::new(
-                        open_gpui_custom_renderer_badge_element_id(
-                            context.node_id,
-                            &context.renderer_key,
-                        ),
-                        "custom renderer",
-                    )
-                    .variant(BadgeVariant::Default)
-                    .with_size(Size::XSmall),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .truncate()
-                        .min_w(px(0.0))
-                        .text_color(rgb(0x64748b))
-                        .child(context.renderer_key.clone()),
-                ),
-        )
-        .child(render_measured_region(
-            context.slot_measurement_id("field.prompt"),
-            collector.clone(),
-            div()
-                .absolute()
-                .left(px(8.0))
-                .top(px(38.0))
-                .right(px(8.0))
-                .h(px(34.0))
-                .rounded_sm()
-                .bg(rgb(0xecfeff))
-                .px_2()
-                .py_1()
-                .overflow_hidden()
-                .child(
-                    div()
-                        .text_sm()
-                        .line_height(px(18.0))
-                        .truncate()
-                        .text_color(rgb(0x0f172a))
-                        .child(context.title.clone()),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .line_height(px(14.0))
-                        .truncate()
-                        .text_color(rgb(0x475569))
-                        .child(context.summary.clone().unwrap_or_default()),
-                ),
-        ))
-        .child(render_measured_region(
-            context.anchor_measurement_id("field.prompt"),
-            collector.clone(),
-            div()
-                .absolute()
-                .left(px(0.0))
-                .top(px(46.0))
-                .w(px(8.0))
-                .h(px(20.0)),
-        ))
-        .child(render_measured_region(
-            context.anchor_measurement_id("field.completion"),
-            collector.clone(),
-            div()
-                .absolute()
-                .right(px(0.0))
-                .bottom(px(46.0))
-                .w(px(8.0))
-                .h(px(20.0)),
-        ))
-        .child(
-            div()
-                .absolute()
-                .left(px(8.0))
-                .top(px(78.0))
-                .right(px(8.0))
-                .h(px(58.0))
-                .flex()
-                .flex_col()
-                .gap_1()
-                .overflow_hidden()
-                .child(render_custom_control_row(
-                    context,
-                    "field.prompt",
-                    prompt_control.as_ref(),
-                    0,
-                    collector.clone(),
-                    view.clone(),
-                ))
-                .child(render_custom_control_row(
-                    context,
-                    "badge.model",
-                    model_control.as_ref(),
-                    1,
-                    collector.clone(),
-                    view.clone(),
-                )),
-        )
-        .child(
-            div()
-                .absolute()
-                .left(px(8.0))
-                .top(px(142.0))
-                .right(px(8.0))
-                .h(px(28.0))
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap_1()
-                .overflow_hidden()
-                .child(render_custom_control_chip(
-                    context,
-                    "config.model",
-                    temperature_control.as_ref(),
-                    2,
-                    collector.clone(),
-                    view.clone(),
-                ))
-                .child(render_custom_control_chip(
-                    context,
-                    "config.model",
-                    stream_control.as_ref(),
-                    3,
-                    collector,
-                    view.clone(),
-                ))
-                .child(
-                    primary_action
-                        .map(|action| {
-                            render_dispatch_action_button(
-                                &context.toolbar_menu,
-                                action,
-                                0,
-                                Some(context.node_id),
-                                view.clone(),
-                            )
-                        })
-                        .unwrap_or_else(|| {
-                            Badge::new(
-                                open_gpui_custom_action_missing_element_id(context.node_id),
-                                "no action",
-                            )
-                            .variant(BadgeVariant::Outline)
-                            .with_size(Size::XSmall)
-                            .into_any_element()
-                        }),
-                ),
-        )
-        .child(
-            div()
-                .absolute()
-                .left(px(8.0))
-                .bottom(px(8.0))
-                .right(px(8.0))
-                .h(px(18.0))
-                .flex()
-                .items_center()
-                .gap_1()
-                .overflow_hidden()
-                .child(
-                    Badge::new(
-                        open_gpui_custom_slots_badge_element_id(context.node_id),
-                        format!("{} slots", context.surface_layout.slots.len()),
-                    )
-                    .variant(BadgeVariant::Secondary)
-                    .with_size(Size::XSmall),
-                )
-                .child(
-                    Badge::new(
-                        open_gpui_custom_repeatables_badge_element_id(context.node_id),
-                        format!("{} repeatables", context.repeatable_items.len()),
-                    )
-                    .variant(BadgeVariant::Outline)
-                    .with_size(Size::XSmall),
-                ),
-        )
-        .into_any_element()
-}
-
-fn render_custom_control_row(
-    context: &OpenGpuiNodeRendererContext,
-    slot_key: &str,
-    control: Option<&OpenGpuiControlPlan>,
-    index: usize,
-    collector: OpenGpuiBoundsCollector,
-    view: WeakEntity<JellyflowCanvasView>,
-) -> AnyElement {
-    let Some(control) = control else {
-        return div().into_any_element();
-    };
-    render_measured_region(
-        context.control_measurement_id(slot_key, control.key.clone()),
-        collector,
-        div()
-            .h(px(26.0))
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_2()
-            .rounded_sm()
-            .bg(rgb(0xffffff))
-            .border_1()
-            .border_color(rgb(0xcbd5e1))
-            .px_2()
-            .overflow_hidden()
-            .child(
-                div()
-                    .text_xs()
-                    .truncate()
-                    .min_w(px(0.0))
-                    .text_color(rgb(0x334155))
-                    .child(control.label.clone()),
-            )
-            .child(
-                div()
-                    .max_w(px(132.0))
-                    .overflow_hidden()
-                    .child(render_control_plan(
-                        context.node_id,
-                        "custom-row",
-                        control,
-                        index,
-                        view,
-                    )),
-            ),
-    )
-}
-
-fn render_custom_control_chip(
-    context: &OpenGpuiNodeRendererContext,
-    slot_key: &str,
-    control: Option<&OpenGpuiControlPlan>,
-    index: usize,
-    collector: OpenGpuiBoundsCollector,
-    view: WeakEntity<JellyflowCanvasView>,
-) -> AnyElement {
-    let Some(control) = control else {
-        return div().into_any_element();
-    };
-    render_measured_region(
-        context.control_measurement_id(slot_key, control.key.clone()),
-        collector,
-        div()
-            .h(px(24.0))
-            .max_w(px(112.0))
-            .overflow_hidden()
-            .child(render_control_plan(
-                context.node_id,
-                slot_key,
-                control,
-                index,
-                view,
-            )),
-    )
+    product_renderers::demo_custom_node_renderers()
 }
 
 fn render_inspector_target_highlight(
@@ -2758,7 +2454,7 @@ fn render_action_buttons(
     node_component_kit::render_action_buttons(node_id, slot, value)
 }
 
-fn demo_repeatable_add_item(collection_key: &str, item_count: usize) -> Value {
+pub(crate) fn demo_repeatable_add_item(collection_key: &str, item_count: usize) -> Value {
     let next = item_count + 1;
     match collection_key {
         "shader.inputs" => serde_json::json!({
@@ -3893,7 +3589,7 @@ mod tests {
             OpenGpuiHostCapabilityGap, OpenGpuiHostRendererSource, OpenGpuiHostSurfaceReport,
             OpenGpuiHostSurfaceReportRow, assert_authoring_interaction_regression_gates,
             assert_host_surface_report_contract, assert_product_fixture_regression_gates,
-            product_fixture_catalog,
+            assert_product_gallery_host_report_gates, product_fixture_catalog,
         },
     };
     use open_gpui_canvas::{
@@ -4272,8 +3968,12 @@ mod tests {
         assert_eq!(source_surface.renderer_context.renderer_key, "source-card");
         assert!(matches!(
             registry.resolve(&source_surface.renderer_context),
-            OpenGpuiNodeRendererResolution::Fallback(_)
+            OpenGpuiNodeRendererResolution::Custom(_)
         ));
+        assert!(
+            demo_custom_node_renderers()
+                .contains_key(&source_surface.renderer_context.renderer_key)
+        );
     }
 
     #[test]
@@ -4976,13 +4676,26 @@ mod tests {
     fn canvas_example_collects_host_product_surface_report() {
         let report = canvas_host_surface_report();
         assert_host_surface_report_contract(&report);
+        assert_product_gallery_host_report_gates(&report);
         assert!(report.rows.iter().any(|row| {
             row.fixture_id == "workflow.review"
                 && row.renderer_key == "decision-card"
                 && row.source == OpenGpuiHostRendererSource::ProductRenderer
         }));
-        assert!(report.fallback_rows().any(|row| {
-            row.fixture_id == "shader.material_mix" && row.renderer_key == "shader-card"
+        assert!(report.rows.iter().any(|row| {
+            row.fixture_id == "shader.material_mix"
+                && row.renderer_key == "shader-card"
+                && row.source == OpenGpuiHostRendererSource::ProductRenderer
+        }));
+        assert!(report.rows.iter().any(|row| {
+            row.fixture_id == "erd.customer_orders"
+                && row.renderer_key == "table-card"
+                && row.source == OpenGpuiHostRendererSource::ProductRenderer
+        }));
+        assert!(report.rows.iter().any(|row| {
+            row.fixture_id == "mind-map.strategy"
+                && matches!(row.renderer_key.as_str(), "topic-card" | "source-card")
+                && row.source == OpenGpuiHostRendererSource::ProductRenderer
         }));
         assert!(report.rows.iter().any(|row| {
             row.capability_gaps
