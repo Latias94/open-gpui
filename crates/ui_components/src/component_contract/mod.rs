@@ -1719,7 +1719,14 @@ pub fn component_source_inputs(component: &str) -> &'static [&'static str] {
         "Listbox" => &["listbox.rs"],
         "Select" => &["select.rs"],
         "Combobox" => &["combobox.rs"],
-        "Command" => &["command.rs"],
+        "Command" => &[
+            "command/mod.rs",
+            "command/descriptor.rs",
+            "command/model.rs",
+            "command/render_plan.rs",
+            "command/runtime.rs",
+            "command/style.rs",
+        ],
         "Label" => &["label.rs"],
         "TextInput" => &["text_input.rs"],
         "Textarea" => &["textarea.rs"],
@@ -2462,8 +2469,5 @@ pub fn public_owner_for_component_inventory(component: &str) -> PublicSurfaceOwn
 
 /// Normalizes a source mapping entry into the manifest home path.
 pub fn component_source_home(source_entry: &'static str) -> &'static str {
-    match source_entry {
-        "command.rs" => "command/mod.rs",
-        source => source,
-    }
+    source_entry
 }

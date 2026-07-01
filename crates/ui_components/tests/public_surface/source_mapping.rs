@@ -22,6 +22,29 @@ fn table_component_source_mapping_tracks_split_render_owners() {
 }
 
 #[test]
+fn command_component_source_mapping_tracks_split_owners() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let command_sources = [
+        "command/mod.rs",
+        "command/descriptor.rs",
+        "command/model.rs",
+        "command/render_plan.rs",
+        "command/runtime.rs",
+        "command/style.rs",
+    ];
+
+    assert!(!source_dir.join("command.rs").exists());
+    assert_eq!(component_source_inputs("Command"), command_sources);
+
+    for owner in command_sources {
+        assert!(
+            source_dir.join(owner).is_file(),
+            "split Command owner `{owner}` should exist"
+        );
+    }
+}
+
+#[test]
 fn component_source_mapping_expands_split_component_directories() {
     let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let source_files = component_source_paths("TableRangeFilter")
