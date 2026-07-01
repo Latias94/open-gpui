@@ -4252,7 +4252,10 @@ mod tests {
         plan_action_dispatch, plan_dropped_wire_insert, project_dropped_wire_menu,
         projected_node_surface_component_layout,
         testing::{
-            assert_authoring_interaction_regression_gates, assert_product_fixture_regression_gates,
+            OpenGpuiHostCapabilityGap, OpenGpuiHostRendererSource, OpenGpuiHostSurfaceReport,
+            OpenGpuiHostSurfaceReportRow, assert_authoring_interaction_regression_gates,
+            assert_host_surface_report_contract, assert_product_fixture_regression_gates,
+            product_fixture_catalog,
         },
     };
     use open_gpui_canvas::{
@@ -5329,6 +5332,144 @@ mod tests {
     fn canvas_example_consumes_adapter_product_fixture_gates() {
         assert_product_fixture_regression_gates();
         assert_authoring_interaction_regression_gates();
+    }
+
+    #[test]
+    fn canvas_example_collects_host_product_surface_report() {
+        let report = canvas_host_surface_report();
+        assert_host_surface_report_contract(&report);
+        assert!(report.rows.iter().any(|row| {
+            row.fixture_id == "workflow.review"
+                && row.renderer_key == "decision-card"
+                && row.source == OpenGpuiHostRendererSource::ProductRenderer
+        }));
+        assert!(report.fallback_rows().any(|row| {
+            row.fixture_id == "shader.material_mix" && row.renderer_key == "shader-card"
+        }));
+        assert!(report.rows.iter().any(|row| {
+            row.capability_gaps
+                .contains(&OpenGpuiHostCapabilityGap::AdvancedControlStub)
+        }));
+    }
+
+    fn canvas_host_surface_report() -> OpenGpuiHostSurfaceReport {
+        let catalog = product_fixture_catalog();
+        let renderer_registry = demo_node_renderer_registry();
+        let renderers = demo_custom_node_renderers();
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let mut report = OpenGpuiHostSurfaceReport::default();
+
+        for fixture in catalog {
+            let (store, document, _projection) =
+                project_kit_fixture(&fixture.kit_key, &fixture.fixture_key)
+                    .expect("product fixture projects into canvas document");
+            let measured_store =
+                measurement_store_with_projection_fallback(&store, &semantic_registry);
+
+            for canvas_node in document.nodes() {
+                let Some(node_id) = jelly_node_id_from_node(canvas_node) else {
+                    continue;
+                };
+                let Some(graph_node) = store.graph().nodes().get(&node_id) else {
+                    continue;
+                };
+                let Some(surface) = node_surface_summary_for_node(
+                    canvas_node,
+                    node_id,
+                    graph_node,
+                    store.graph(),
+                    1.0,
+                    false,
+                    &semantic_registry,
+                    &node_kit_registry,
+                    measured_store.node_measurement(node_id),
+                ) else {
+                    continue;
+                };
+
+                report.push(host_surface_report_row(
+                    &fixture,
+                    &renderer_registry,
+                    &renderers,
+                    &surface,
+                ));
+            }
+        }
+
+        report
+    }
+
+    fn host_surface_report_row(
+        fixture: &jellyflow_open_gpui::testing::OpenGpuiProductFixtureCase,
+        registry: &OpenGpuiNodeRendererRegistry,
+        renderers: &GpuiNodeRendererTable,
+        surface: &NodeSurfaceSummary,
+    ) -> OpenGpuiHostSurfaceReportRow {
+        let measurement = surface.measurement.as_ref();
+        let mut row = OpenGpuiHostSurfaceReportRow::new(
+            fixture,
+            surface.node_kind.clone(),
+            surface.renderer_key.clone(),
+            host_renderer_source(registry, renderers, &surface.renderer_context),
+        )
+        .with_measurement(
+            measurement
+                .map(|measurement| measurement.slots.len())
+                .unwrap_or(0),
+            measurement
+                .map(|measurement| measurement.anchors.len())
+                .unwrap_or(0),
+        );
+
+        for slot in &surface.slot_descriptors {
+            for control in project_slot_controls(&surface.node_data, slot) {
+                if control.is_partial_stub() {
+                    row.capability_gaps
+                        .insert(OpenGpuiHostCapabilityGap::AdvancedControlStub);
+                }
+            }
+        }
+        if surface
+            .repeatable_items
+            .iter()
+            .any(|item| item.dynamic_port_policy == OpenGpuiDynamicPortPolicy::MissingGraphPort)
+        {
+            row.capability_gaps
+                .insert(OpenGpuiHostCapabilityGap::MissingDynamicPort);
+        }
+        if surface.slots.iter().any(|slot| !slot.visible)
+            || surface.projection.slot_limit < surface.slots.len()
+        {
+            row.capability_gaps
+                .insert(OpenGpuiHostCapabilityGap::PartialOrHiddenRegion);
+        }
+
+        row
+    }
+
+    fn host_renderer_source(
+        registry: &OpenGpuiNodeRendererRegistry,
+        renderers: &GpuiNodeRendererTable,
+        context: &OpenGpuiNodeRendererContext,
+    ) -> OpenGpuiHostRendererSource {
+        match registry.resolve(context) {
+            OpenGpuiNodeRendererResolution::Custom(registration) => {
+                if renderers.contains_key(&registration.renderer_key) {
+                    OpenGpuiHostRendererSource::ProductRenderer
+                } else {
+                    OpenGpuiHostRendererSource::MissingHostRenderer
+                }
+            }
+            OpenGpuiNodeRendererResolution::Fallback(fallback) => match fallback.reason {
+                jellyflow_open_gpui::OpenGpuiNodeRendererFallbackReason::MissingHostRenderer => {
+                    OpenGpuiHostRendererSource::MissingHostRenderer
+                }
+                jellyflow_open_gpui::OpenGpuiNodeRendererFallbackReason::UnregisteredRenderer => {
+                    OpenGpuiHostRendererSource::UnregisteredRenderer
+                }
+            },
+        }
     }
 
     #[test]
