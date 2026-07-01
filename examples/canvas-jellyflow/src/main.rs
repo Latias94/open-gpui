@@ -34,20 +34,21 @@ use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiAuthoringController,
     OpenGpuiAuthoringOutcome, OpenGpuiAuthoringSkipReason, OpenGpuiBoundsCollector,
     OpenGpuiControlEditPlan, OpenGpuiControlPlan, OpenGpuiControlPrimitive,
-    OpenGpuiDynamicPortPolicy, OpenGpuiInspectorPlan, OpenGpuiInspectorSurface,
-    OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource, OpenGpuiMeasurementContext,
-    OpenGpuiMeasurementId, OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
-    OpenGpuiMenuPlan, OpenGpuiNodeRendererContext, OpenGpuiNodeRendererRegistry,
-    OpenGpuiNodeRendererResolution, OpenGpuiNodeRendererState,
-    OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
+    OpenGpuiDroppedWireInsertError, OpenGpuiDynamicPortPolicy, OpenGpuiInspectorPlan,
+    OpenGpuiInspectorSurface, OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource,
+    OpenGpuiMeasurementContext, OpenGpuiMeasurementId,
+    OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource, OpenGpuiMenuPlan,
+    OpenGpuiNodeRendererContext, OpenGpuiNodeRendererRegistry, OpenGpuiNodeRendererResolution,
+    OpenGpuiNodeRendererState, OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout,
     OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
     OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
     OpenGpuiRepeatableSurfaceLayout as NodeRepeatableSurfaceLayout,
     OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection, OpenGpuiViewBounds,
-    OpenGpuiViewPoint, OpenGpuiViewSize, control_option_key, control_selected_option_key,
-    layout_pass_measurement_from_regions, measured_surface_anchors, project_actions_for_surface,
-    project_inspectors_for_surface, project_menu, project_node_measurement, project_slot_controls,
+    OpenGpuiViewPoint, OpenGpuiViewSize, apply_dropped_wire_insert, control_option_key,
+    control_selected_option_key, layout_pass_measurement_from_regions, measured_surface_anchors,
+    project_actions_for_surface, project_dropped_wire_menu, project_inspectors_for_surface,
+    project_menu, project_node_measurement, project_slot_controls,
     projected_node_surface_graph_layout, repeatable_item_projection, repeatable_surface_projection,
     resolve_inspector_target_bounds,
 };
@@ -264,7 +265,7 @@ impl Render for JellyflowCanvasView {
                     .flex_1()
                     .flex()
                     .flex_col()
-                    .child(self.render_toolbar(selection_count))
+                    .child(self.render_toolbar(selection_count, cx.weak_entity()))
                     .child(
                         div()
                             .relative()
@@ -289,7 +290,19 @@ impl Render for JellyflowCanvasView {
 }
 
 impl JellyflowCanvasView {
-    fn render_toolbar(&self, selection_count: usize) -> impl IntoElement {
+    fn render_toolbar(
+        &self,
+        selection_count: usize,
+        view: WeakEntity<JellyflowCanvasView>,
+    ) -> impl IntoElement {
+        let dropped_wire_action =
+            self.demo_dropped_wire_insert_menu()
+                .and_then(|(menu, source, pointer)| {
+                    menu.enabled_actions()
+                        .next()
+                        .map(|action| (menu.clone(), action.key.clone(), source, pointer))
+                });
+
         div()
             .h(px(46.0))
             .flex()
@@ -317,13 +330,45 @@ impl JellyflowCanvasView {
                             .child(self.projection.last_commit.clone()),
                     ),
             )
-            .child(div().text_xs().text_color(rgb(0x475569)).child(format!(
-                "{} graph nodes / {} ports / {} edges / {} selected records",
-                self.projection.graph_nodes,
-                self.projection.graph_ports,
-                self.projection.graph_edges,
-                selection_count
-            )))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().text_xs().text_color(rgb(0x475569)).child(format!(
+                        "{} graph nodes / {} ports / {} edges / {} selected records",
+                        self.projection.graph_nodes,
+                        self.projection.graph_ports,
+                        self.projection.graph_edges,
+                        selection_count
+                    )))
+                    .when_some(
+                        dropped_wire_action,
+                        move |this, (menu, action_key, source, pointer)| {
+                            this.child(
+                                Button::new("jellyflow-toolbar-dropped-wire-insert", "Insert LLM")
+                                    .variant(ButtonVariant::Secondary)
+                                    .with_size(Size::XSmall)
+                                    .on_click(move |event, _window, cx| {
+                                        cx.stop_propagation();
+                                        let _ = event;
+                                        let menu = menu.clone();
+                                        let action_key = action_key.clone();
+                                        view.update(cx, |this, cx| {
+                                            this.dispatch_dropped_wire_insert(
+                                                &menu,
+                                                &action_key,
+                                                source,
+                                                pointer,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                    }),
+                            )
+                        },
+                    ),
+            )
     }
 
     fn render_sidebar(&self, selected: Option<SelectedNodeSummary>) -> impl IntoElement {
@@ -641,6 +686,71 @@ impl JellyflowCanvasView {
         }
     }
 
+    fn dispatch_menu_action(
+        &mut self,
+        menu: &OpenGpuiMenuPlan,
+        action_key: &str,
+        cx: &mut Context<Self>,
+    ) {
+        match OpenGpuiAuthoringController.plan_menu_action_dispatch(menu, action_key) {
+            OpenGpuiAuthoringOutcome::Planned(plan) => {
+                if menu.surface == MenuSurface::DroppedWire {
+                    let Some((source, pointer)) =
+                        dropped_wire_source_for_menu(self.store.graph(), menu)
+                    else {
+                        eprintln!("dropped-wire insert skipped: no compatible source handle");
+                        return;
+                    };
+                    self.dispatch_dropped_wire_insert(menu, &plan.action_key, source, pointer, cx);
+                    return;
+                }
+                eprintln!(
+                    "semantic action dispatched: {} {:?} {:?}",
+                    plan.action_key, plan.intent, plan.target
+                );
+                cx.notify();
+            }
+            OpenGpuiAuthoringOutcome::Skipped(reason) => {
+                report_authoring_skip(reason);
+            }
+        }
+    }
+
+    fn demo_dropped_wire_insert_menu(
+        &self,
+    ) -> Option<(OpenGpuiMenuPlan, ConnectionHandleRef, JellyPoint)> {
+        let source_key = PortKey::new("completion");
+        let source = dropped_wire_source_for_port_key(self.store.graph(), &source_key)?;
+        let pointer = dropped_wire_insert_pointer(self.store.graph(), source);
+        let menu =
+            project_dropped_wire_menu(&self.semantic_registry, source, Some(&source_key), pointer);
+        Some((menu, source, pointer))
+    }
+
+    fn dispatch_dropped_wire_insert(
+        &mut self,
+        menu: &OpenGpuiMenuPlan,
+        action_key: &str,
+        source: ConnectionHandleRef,
+        pointer: JellyPoint,
+        cx: &mut Context<Self>,
+    ) {
+        match apply_demo_dropped_wire_insert(
+            &mut self.store,
+            &self.semantic_registry,
+            menu,
+            action_key,
+            source,
+            pointer,
+        ) {
+            Ok(_outcome) => {
+                self.refresh_editor_from_store();
+                cx.notify();
+            }
+            Err(error) => report_dropped_wire_insert_error(error),
+        }
+    }
+
     fn is_pointer_interacting(&self) -> bool {
         !self.editor.is_tool_state_idle()
     }
@@ -790,6 +900,76 @@ fn node_measurement_regions_match(left: &NodeMeasurement, right: &NodeMeasuremen
         && left.handles == right.handles
         && left.slots == right.slots
         && left.anchors == right.anchors
+}
+
+fn dropped_wire_source_for_menu(
+    graph: &Graph,
+    menu: &OpenGpuiMenuPlan,
+) -> Option<(ConnectionHandleRef, JellyPoint)> {
+    let source_key = menu
+        .actions
+        .iter()
+        .find_map(|action| match &action.target {
+            jellyflow::runtime::schema::ActionTarget::DroppedWire { source_port_key } => {
+                source_port_key.as_deref()
+            }
+            _ => None,
+        })?;
+    let source = dropped_wire_source_for_port_key(graph, &PortKey::new(source_key))?;
+    Some((source, dropped_wire_insert_pointer(graph, source)))
+}
+
+fn dropped_wire_source_for_port_key(
+    graph: &Graph,
+    source_key: &PortKey,
+) -> Option<ConnectionHandleRef> {
+    graph.ports().iter().find_map(|(port_id, port)| {
+        (port.key == *source_key && port.dir == PortDirection::Out)
+            .then_some(ConnectionHandleRef::new(port.node, *port_id, port.dir))
+    })
+}
+
+fn dropped_wire_insert_pointer(graph: &Graph, source: ConnectionHandleRef) -> JellyPoint {
+    graph
+        .nodes()
+        .get(&source.node)
+        .map(|node| {
+            let size = node.size.unwrap_or(JellySize {
+                width: 260.0,
+                height: 170.0,
+            });
+            JellyPoint {
+                x: node.pos.x + size.width + 80.0,
+                y: node.pos.y + size.height * 0.35,
+            }
+        })
+        .unwrap_or(JellyPoint { x: 420.0, y: 180.0 })
+}
+
+fn apply_demo_dropped_wire_insert(
+    store: &mut NodeGraphStore,
+    registry: &NodeRegistry,
+    menu: &OpenGpuiMenuPlan,
+    action_key: &str,
+    source: ConnectionHandleRef,
+    pointer: JellyPoint,
+) -> Result<jellyflow_open_gpui::OpenGpuiDroppedWireInsertOutcome, OpenGpuiDroppedWireInsertError> {
+    let outcome = apply_dropped_wire_insert(
+        store,
+        registry,
+        menu,
+        action_key,
+        source,
+        pointer,
+        jellyflow::core::NodeGraphConnectionMode::Strict,
+    )?;
+    store.invalidate_node_internals(
+        jellyflow::runtime::runtime::measurement::NodeInternalsInvalidation::one(
+            outcome.plan.node_id,
+            jellyflow::runtime::runtime::measurement::NodeInternalsInvalidationReason::DataChanged,
+        ),
+    );
+    Ok(outcome)
 }
 
 fn render_selected_inspector_panel(summary: &SelectedNodeSummary) -> AnyElement {
@@ -1081,7 +1261,7 @@ fn render_descriptor_fallback_node_surface(
                     surface_measurement_summary(&surface)
                 )),
         )
-        .children(render_surface_chrome(&surface, bounds))
+        .children(render_surface_chrome(&surface, bounds, view.clone()))
         .child(render_inspector_target_highlight(
             &surface,
             inner_width,
@@ -1278,11 +1458,18 @@ fn render_decision_card_node_surface(
                     stream_control.as_ref(),
                     3,
                     collector,
-                    view,
+                    view.clone(),
                 ))
                 .child(
                     primary_action
-                        .map(|action| render_action_button(action, 0))
+                        .map(|action| {
+                            render_dispatch_action_button(
+                                &context.toolbar_menu,
+                                action,
+                                0,
+                                view.clone(),
+                            )
+                        })
                         .unwrap_or_else(|| {
                             Badge::new(
                                 format!("jellyflow-custom-action-missing:{}", context.node_id.0),
@@ -1529,11 +1716,12 @@ fn node_surface_summary_for_node(
 fn render_surface_chrome(
     surface: &NodeSurfaceSummary,
     view_bounds: Bounds<Pixels>,
+    view: WeakEntity<JellyflowCanvasView>,
 ) -> Vec<AnyElement> {
     surface
         .chrome
         .iter()
-        .filter_map(|chrome| render_node_chrome(chrome, surface, view_bounds))
+        .filter_map(|chrome| render_node_chrome(chrome, surface, view_bounds, view.clone()))
         .collect()
 }
 
@@ -1615,7 +1803,41 @@ fn render_action_button(action: &OpenGpuiActionPlan, index: usize) -> AnyElement
     .into_any_element()
 }
 
-fn render_action_menu(menu: &OpenGpuiMenuPlan, id_suffix: &str) -> AnyElement {
+fn render_dispatch_action_button(
+    menu: &OpenGpuiMenuPlan,
+    action: &OpenGpuiActionPlan,
+    index: usize,
+    view: WeakEntity<JellyflowCanvasView>,
+) -> AnyElement {
+    let action_key = action.key.clone();
+    let menu = menu.clone();
+    let mut button = Button::new(
+        format!("jellyflow-action-button:{}:{index}", action.key),
+        action_button_label(action),
+    )
+    .variant(action_button_variant(action, index))
+    .disabled(!action.dispatchable())
+    .with_size(Size::XSmall);
+
+    if action.dispatchable() {
+        button = button.on_click(move |event, _window, cx| {
+            cx.stop_propagation();
+            let _ = event;
+            view.update(cx, |this, cx| {
+                this.dispatch_menu_action(&menu, &action_key, cx);
+            })
+            .ok();
+        });
+    }
+
+    button.into_any_element()
+}
+
+fn render_action_menu(
+    menu: &OpenGpuiMenuPlan,
+    id_suffix: &str,
+    view: WeakEntity<JellyflowCanvasView>,
+) -> AnyElement {
     let items = menu
         .actions
         .iter()
@@ -1631,6 +1853,16 @@ fn render_action_menu(menu: &OpenGpuiMenuPlan, id_suffix: &str) -> AnyElement {
     )
     .items(items)
     .disabled(menu.actions.is_empty())
+    .on_select({
+        let menu = menu.clone();
+        move |selection, _window, cx| {
+            let action_key = selection.value().to_owned();
+            view.update(cx, |this, cx| {
+                this.dispatch_menu_action(&menu, &action_key, cx);
+            })
+            .ok();
+        }
+    })
     .with_size(Size::XSmall)
     .into_any_element()
 }
@@ -1638,14 +1870,17 @@ fn render_action_menu(menu: &OpenGpuiMenuPlan, id_suffix: &str) -> AnyElement {
 fn render_chrome_action_buttons(
     surface: &NodeSurfaceSummary,
     fallback_label: &str,
+    view: WeakEntity<JellyflowCanvasView>,
 ) -> Vec<AnyElement> {
     let actions = surface
         .action_menus
         .iter()
-        .flat_map(|menu| menu.actions.iter())
+        .flat_map(|menu| menu.actions.iter().map(move |action| (menu, action)))
         .take(2)
         .enumerate()
-        .map(|(index, action)| render_action_button(action, index))
+        .map(|(index, (menu, action))| {
+            render_dispatch_action_button(menu, action, index, view.clone())
+        })
         .collect::<Vec<_>>();
 
     if actions.is_empty() {
@@ -1752,6 +1987,7 @@ fn render_node_chrome(
     chrome: &ResolvedNodeChrome,
     surface: &NodeSurfaceSummary,
     view_bounds: Bounds<Pixels>,
+    view: WeakEntity<JellyflowCanvasView>,
 ) -> Option<AnyElement> {
     let bounds = chrome_view_bounds(chrome, surface, view_bounds)?;
     let base = div()
@@ -1784,12 +2020,12 @@ fn render_node_chrome(
         NodeChromeKind::RunActionStrip => base
             .justify_start()
             .gap_1()
-            .children(render_chrome_action_buttons(surface, &label))
+            .children(render_chrome_action_buttons(surface, &label, view))
             .into_any_element(),
         NodeChromeKind::Toolbar => base
             .justify_end()
             .gap_1()
-            .child(render_action_menu(&surface.toolbar_menu, &chrome.key))
+            .child(render_action_menu(&surface.toolbar_menu, &chrome.key, view))
             .into_any_element(),
         NodeChromeKind::Resizer => base
             .rounded_sm()
@@ -2526,6 +2762,10 @@ fn report_authoring_skip(reason: OpenGpuiAuthoringSkipReason) {
         OpenGpuiAuthoringSkipReason::UnchangedControl { .. } => {}
         other => eprintln!("control authoring skipped: {other:?}"),
     }
+}
+
+fn report_dropped_wire_insert_error(error: OpenGpuiDroppedWireInsertError) {
+    eprintln!("dropped-wire insert failed: {error}");
 }
 
 fn control_options(control: &OpenGpuiControlPlan) -> Vec<ListboxOption> {
@@ -4328,6 +4568,49 @@ mod tests {
         assert_eq!(insert.node_kind, "demo.llm");
         assert_eq!(insert.source, source);
         assert_eq!(insert.pointer, pointer);
+    }
+
+    #[test]
+    fn gpui_dropped_wire_insert_action_commits_graph_mutation() {
+        let mut store = make_demo_store();
+        let registry = NodeKitRegistry::builtin().node_registry();
+        let source_key = PortKey::new("completion");
+        let source = dropped_wire_source_for_port_key(store.graph(), &source_key)
+            .expect("demo graph should expose a completion output");
+        let pointer = dropped_wire_insert_pointer(store.graph(), source);
+        let menu = project_dropped_wire_menu(&registry, source, Some(&source_key), pointer);
+        let (resolved_source, resolved_pointer) =
+            dropped_wire_source_for_menu(store.graph(), &menu)
+                .expect("dropped-wire menu should resolve its source handle");
+        let before_nodes = store.graph().nodes().len();
+        let before_edges = store.graph().edges().len();
+
+        let outcome = apply_demo_dropped_wire_insert(
+            &mut store,
+            &registry,
+            &menu,
+            "action.insert.llm",
+            resolved_source,
+            resolved_pointer,
+        )
+        .expect("enabled insert action should mutate graph");
+
+        assert_eq!(resolved_source, source);
+        assert_eq!(resolved_pointer, pointer);
+        assert_eq!(store.graph().nodes().len(), before_nodes + 1);
+        assert_eq!(store.graph().edges().len(), before_edges + 1);
+        assert!(store.graph().nodes().contains_key(&outcome.plan.node_id));
+        assert!(
+            store
+                .graph()
+                .ports()
+                .contains_key(&outcome.plan.target_port)
+        );
+        assert!(
+            store
+                .node_measurement_status(outcome.plan.node_id)
+                .is_dirty()
+        );
     }
 
     #[test]
