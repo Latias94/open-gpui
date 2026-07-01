@@ -9,16 +9,48 @@ use jellyflow_open_gpui::{
     open_gpui_repeatable_item_element_id, open_gpui_repeatable_remove_action_element_id,
     open_gpui_repeatable_reorder_action_element_id,
 };
-use open_gpui::{AnyElement, Pixels, div, prelude::*, px, rgb};
+use open_gpui::{AnyElement, MouseButton, Pixels, WeakEntity, div, prelude::*, px, rgb};
 use open_gpui_ui_components::prelude::Sizable;
 use open_gpui_ui_components::{Badge, BadgeVariant, ButtonVariant};
 use open_gpui_ui_core::Size;
 use serde_json::Value;
 
 use crate::{
-    GpuiNodeRendererServices, GpuiNodeRendererTable, demo_repeatable_add_item, node_component_kit,
+    GpuiNodeRendererServices, GpuiNodeRendererTable, JellyflowCanvasView, demo_repeatable_add_item,
+    dispatch_node_drag_surface_mouse_down, node_component_kit,
     node_component_kit::NodeComponentKitActions, node_component_kit_actions,
 };
+
+const CARD_PAD: f32 = 10.0;
+const HEADER_HEIGHT: f32 = 24.0;
+const TITLE_ROW_HEIGHT: f32 = 34.0;
+const PREVIEW_ROW_HEIGHT: f32 = 46.0;
+const PORT_RAIL_HEIGHT: f32 = 24.0;
+const CONTROL_ROW_HEIGHT: f32 = 34.0;
+const CONTROL_CHIP_HEIGHT: f32 = 30.0;
+const REPEATABLE_CHIP_HEIGHT: f32 = 34.0;
+const REPEATABLE_ROW_HEIGHT: f32 = 34.0;
+const REPEATABLE_ADD_WIDTH: f32 = 96.0;
+const SECTION_GAP: f32 = 6.0;
+const CONTROL_GROUP_GAP: f32 = 8.0;
+const BODY_TOP: f32 = CARD_PAD + HEADER_HEIGHT + SECTION_GAP;
+const TITLE_NEXT_TOP: f32 = BODY_TOP + TITLE_ROW_HEIGHT + SECTION_GAP;
+const PREVIEW_NEXT_TOP: f32 = BODY_TOP + PREVIEW_ROW_HEIGHT + CONTROL_GROUP_GAP;
+const SECOND_CONTROL_ROW_TOP: f32 = PREVIEW_NEXT_TOP + CONTROL_ROW_HEIGHT + SECTION_GAP;
+const DECISION_CHIP_ROW_TOP: f32 = SECOND_CONTROL_ROW_TOP + CONTROL_ROW_HEIGHT + CARD_PAD;
+const SHADER_INPUT_RAIL_TOP: f32 = TITLE_NEXT_TOP;
+const SHADER_INPUT_CHIPS_TOP: f32 = SHADER_INPUT_RAIL_TOP + PORT_RAIL_HEIGHT + CONTROL_GROUP_GAP;
+const SHADER_CONTROL_ROW_TOP: f32 =
+    SHADER_INPUT_CHIPS_TOP + REPEATABLE_CHIP_HEIGHT + CONTROL_GROUP_GAP;
+const SHADER_OUTPUT_RAIL_TOP: f32 = SHADER_CONTROL_ROW_TOP + CONTROL_CHIP_HEIGHT + 14.0;
+const ERD_PRIMARY_ROW_TOP: f32 = TITLE_NEXT_TOP;
+const ERD_CONTROL_CHIPS_TOP: f32 = ERD_PRIMARY_ROW_TOP + CONTROL_ROW_HEIGHT + CONTROL_GROUP_GAP;
+const ERD_COLUMNS_TOP: f32 = ERD_CONTROL_CHIPS_TOP + CONTROL_CHIP_HEIGHT + 12.0;
+const TOPIC_TITLE_CONTROL_TOP: f32 = BODY_TOP + TITLE_ROW_HEIGHT + CONTROL_GROUP_GAP;
+const TOPIC_SUMMARY_CONTROL_TOP: f32 = TOPIC_TITLE_CONTROL_TOP + CONTROL_ROW_HEIGHT + SECTION_GAP;
+const SOURCE_TITLE_CONTROL_TOP: f32 = PREVIEW_NEXT_TOP;
+const SOURCE_ASSET_CONTROL_TOP: f32 = SOURCE_TITLE_CONTROL_TOP + CONTROL_ROW_HEIGHT + SECTION_GAP;
+const ANCHOR_TOP: f32 = BODY_TOP + SECTION_GAP;
 
 const PRODUCT_RENDERERS: [(&str, &str); 5] = [
     ("decision-card", "Dify workflow decision card"),
@@ -59,114 +91,110 @@ fn render_decision_card(
         .find(|action| action.key == "action.llm.run")
         .or_else(|| context.toolbar_menu.actions.first());
 
-    product_card(context, rgb(0x0f766e), rgb(0xf8fafc))
-        .child(product_header(
-            context,
-            "Dify node",
-            "workflow",
-            rgb(0x0f766e),
-        ))
-        .child(node_component_kit::render_measured_region(
-            context.slot_measurement_id("field.prompt"),
-            collector.clone(),
-            div()
-                .absolute()
-                .left(px(8.0))
-                .top(px(38.0))
-                .right(px(8.0))
-                .h(px(34.0))
-                .rounded_sm()
-                .bg(rgb(0xecfeff))
-                .px_2()
-                .py_1()
-                .overflow_hidden()
-                .child(text_line(context.title.clone(), rgb(0x0f172a), true))
-                .child(
-                    div()
-                        .text_xs()
-                        .line_height(px(14.0))
-                        .truncate()
-                        .text_color(rgb(0x475569))
-                        .child(context.summary.clone().unwrap_or_default()),
-                ),
-        ))
-        .child(measured_anchor(
-            context,
-            "field.prompt",
-            collector.clone(),
-            true,
-        ))
-        .child(measured_anchor(
-            context,
-            "field.completion",
-            collector.clone(),
-            false,
-        ))
-        .child(
-            div()
-                .absolute()
-                .left(px(8.0))
-                .top(px(78.0))
-                .right(px(8.0))
-                .h(px(58.0))
-                .flex()
-                .flex_col()
-                .gap_1()
-                .overflow_hidden()
-                .child(render_control_row(
-                    context,
-                    "field.prompt",
-                    prompt_control.as_ref(),
-                    0,
-                    collector.clone(),
-                    &actions,
-                ))
-                .child(render_control_row(
-                    context,
-                    "badge.model",
-                    model_control.as_ref(),
-                    1,
-                    collector.clone(),
-                    &actions,
-                )),
-        )
-        .child(
-            div()
-                .absolute()
-                .left(px(8.0))
-                .top(px(142.0))
-                .right(px(8.0))
-                .h(px(28.0))
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap_1()
-                .overflow_hidden()
-                .child(render_control_chip(
-                    context,
-                    "config.model",
-                    temperature_control.as_ref(),
-                    2,
-                    collector.clone(),
-                    &actions,
-                ))
-                .child(render_control_chip(
-                    context,
-                    "config.model",
-                    stream_control.as_ref(),
-                    3,
-                    collector,
-                    &actions,
-                ))
-                .child(render_primary_action(
-                    context.node_id,
-                    &context.toolbar_menu,
-                    primary_action,
-                    &actions,
-                )),
-        )
-        .child(product_footer(context))
-        .into_any_element()
+    product_card(
+        context,
+        rgb(0x0f766e),
+        rgb(0xf8fafc),
+        host.services().view.clone(),
+    )
+    .child(product_header(
+        context,
+        "Dify node",
+        "workflow",
+        rgb(0x0f766e),
+        host.services().view.clone(),
+    ))
+    .child(node_component_kit::render_measured_region(
+        context.slot_measurement_id("field.prompt"),
+        collector.clone(),
+        div()
+            .absolute()
+            .left(px(CARD_PAD))
+            .top(px(BODY_TOP))
+            .right(px(CARD_PAD))
+            .h(px(PREVIEW_ROW_HEIGHT))
+            .rounded_sm()
+            .bg(rgb(0xecfeff))
+            .px_2()
+            .py_1()
+            .overflow_hidden()
+            .child(text_line(context.title.clone(), rgb(0x0f172a), true))
+            .child(
+                div()
+                    .text_xs()
+                    .line_height(px(14.0))
+                    .truncate()
+                    .text_color(rgb(0x475569))
+                    .child(context.summary.clone().unwrap_or_default()),
+            ),
+    ))
+    .child(measured_anchor(
+        context,
+        "field.prompt",
+        collector.clone(),
+        true,
+    ))
+    .child(measured_anchor(
+        context,
+        "field.completion",
+        collector.clone(),
+        false,
+    ))
+    .child(render_control_row_at(
+        context,
+        "field.prompt",
+        prompt_control.as_ref(),
+        0,
+        px(PREVIEW_NEXT_TOP),
+        collector.clone(),
+        &actions,
+    ))
+    .child(render_control_row_at(
+        context,
+        "badge.model",
+        model_control.as_ref(),
+        1,
+        px(SECOND_CONTROL_ROW_TOP),
+        collector.clone(),
+        &actions,
+    ))
+    .child(
+        div()
+            .absolute()
+            .left(px(CARD_PAD))
+            .top(px(DECISION_CHIP_ROW_TOP))
+            .right(px(CARD_PAD))
+            .h(px(CONTROL_CHIP_HEIGHT))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_1()
+            .overflow_hidden()
+            .child(render_control_chip(
+                context,
+                "config.model",
+                temperature_control.as_ref(),
+                2,
+                collector.clone(),
+                &actions,
+            ))
+            .child(render_control_chip(
+                context,
+                "config.model",
+                stream_control.as_ref(),
+                3,
+                collector,
+                &actions,
+            ))
+            .child(render_primary_action(
+                context.node_id,
+                &context.toolbar_menu,
+                primary_action,
+                &actions,
+            )),
+    )
+    .child(product_footer(context))
+    .into_any_element()
 }
 
 fn render_shader_card(
@@ -186,99 +214,105 @@ fn render_shader_card(
         })
         .count();
 
-    product_card(context, rgb(0x7c3aed), rgb(0x111827))
-        .child(product_header(
-            context,
-            "Shader graph",
-            if missing_ports == 0 {
-                "ports bound"
-            } else {
-                "missing ports"
-            },
-            rgb(0xa78bfa),
-        ))
-        .child(
-            div()
-                .absolute()
-                .left(px(8.0))
-                .top(px(36.0))
-                .right(px(8.0))
-                .h(px(28.0))
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap_2()
-                .overflow_hidden()
-                .child(text_line(context.title.clone(), rgb(0xf8fafc), true))
-                .child(
-                    Badge::new(
-                        open_gpui_custom_slots_badge_element_id(context.node_id),
-                        format!("{} dyn", shader_inputs.len()),
-                    )
-                    .variant(BadgeVariant::Default)
-                    .with_size(Size::XSmall),
-                ),
-        )
-        .child(render_port_rail(
-            context,
-            "rail.inputs",
-            "inputs",
-            px(68.0),
-            collector.clone(),
-            rgb(0x312e81),
-        ))
-        .child(render_shader_inputs(
-            context,
-            &shader_inputs,
-            px(92.0),
-            collector.clone(),
-            &actions,
-        ))
-        .child(
-            div()
-                .absolute()
-                .left(px(8.0))
-                .top(px(128.0))
-                .right(px(8.0))
-                .h(px(28.0))
-                .flex()
-                .items_center()
-                .gap_1()
-                .overflow_hidden()
-                .child(render_control_chip(
-                    context,
-                    "config.factor",
-                    factor_control.as_ref().or(texture_control.as_ref()),
-                    0,
-                    collector.clone(),
-                    &actions,
-                ))
-                .child(render_control_chip(
-                    context,
-                    "property",
-                    property_control.as_ref(),
-                    1,
-                    collector.clone(),
-                    &actions,
-                ))
-                .child(render_repeatable_add(
-                    context,
-                    context
-                        .repeatables
-                        .iter()
-                        .find(|repeatable| repeatable.projection.key == "shader.inputs"),
-                    &actions,
-                )),
-        )
-        .child(render_port_rail(
-            context,
-            "rail.outputs",
-            "outputs",
-            px(156.0),
-            collector,
-            rgb(0x1e293b),
-        ))
-        .into_any_element()
+    product_card(
+        context,
+        rgb(0x7c3aed),
+        rgb(0x111827),
+        host.services().view.clone(),
+    )
+    .child(product_header(
+        context,
+        "Shader graph",
+        if missing_ports == 0 {
+            "ports bound"
+        } else {
+            "missing ports"
+        },
+        rgb(0xa78bfa),
+        host.services().view.clone(),
+    ))
+    .child(
+        div()
+            .absolute()
+            .left(px(CARD_PAD))
+            .top(px(BODY_TOP))
+            .right(px(CARD_PAD))
+            .h(px(TITLE_ROW_HEIGHT))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .overflow_hidden()
+            .child(text_line(context.title.clone(), rgb(0xf8fafc), true))
+            .child(
+                Badge::new(
+                    open_gpui_custom_slots_badge_element_id(context.node_id),
+                    format!("{} dyn", shader_inputs.len()),
+                )
+                .variant(BadgeVariant::Default)
+                .with_size(Size::XSmall),
+            ),
+    )
+    .child(render_port_rail(
+        context,
+        "rail.inputs",
+        "inputs",
+        px(SHADER_INPUT_RAIL_TOP),
+        collector.clone(),
+        rgb(0x312e81),
+    ))
+    .child(render_shader_inputs(
+        context,
+        &shader_inputs,
+        px(SHADER_INPUT_CHIPS_TOP),
+        collector.clone(),
+        &actions,
+    ))
+    .child(
+        div()
+            .absolute()
+            .left(px(CARD_PAD))
+            .top(px(SHADER_CONTROL_ROW_TOP))
+            .right(px(CARD_PAD))
+            .h(px(CONTROL_CHIP_HEIGHT))
+            .flex()
+            .items_center()
+            .gap_1()
+            .overflow_hidden()
+            .child(render_control_chip(
+                context,
+                "config.factor",
+                factor_control.as_ref().or(texture_control.as_ref()),
+                0,
+                collector.clone(),
+                &actions,
+            ))
+            .child(render_control_chip(
+                context,
+                "property",
+                property_control.as_ref(),
+                1,
+                collector.clone(),
+                &actions,
+            ))
+            .child(render_repeatable_add(
+                context,
+                context
+                    .repeatables
+                    .iter()
+                    .find(|repeatable| repeatable.projection.key == "shader.inputs"),
+                &actions,
+            )),
+    )
+    .child(render_port_rail(
+        context,
+        "rail.outputs",
+        "outputs",
+        px(SHADER_OUTPUT_RAIL_TOP),
+        collector,
+        rgb(0x1e293b),
+    ))
+    .into_any_element()
 }
 
 fn render_table_card(
@@ -293,95 +327,102 @@ fn render_table_card(
     let field_type = context.control("control.field.type");
     let foreign_key = context.control("control.foreign_key.binding");
 
-    product_card(context, rgb(0x2563eb), rgb(0xf8fafc))
-        .child(product_header(
-            context,
-            "ERD table",
-            "schema",
-            rgb(0x2563eb),
-        ))
-        .child(
-            div()
-                .absolute()
-                .left(px(8.0))
-                .top(px(36.0))
-                .right(px(8.0))
-                .h(px(24.0))
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap_2()
-                .overflow_hidden()
-                .child(text_line(context.title.clone(), rgb(0x111827), true))
-                .child(
-                    Badge::new(
-                        open_gpui_custom_repeatables_badge_element_id(context.node_id),
-                        format!("{} columns", columns.len()),
-                    )
-                    .variant(BadgeVariant::Secondary)
-                    .with_size(Size::XSmall),
-                ),
-        )
-        .child(render_control_row(
-            context,
-            "field.primary_key",
-            primary_key.as_ref(),
-            0,
-            collector.clone(),
-            &actions,
-        ))
-        .child(
-            div()
-                .absolute()
-                .left(px(8.0))
-                .top(px(90.0))
-                .right(px(8.0))
-                .h(px(28.0))
-                .flex()
-                .items_center()
-                .gap_1()
-                .overflow_hidden()
-                .child(render_control_chip(
-                    context,
-                    "field.field",
-                    field_name.as_ref(),
-                    1,
-                    collector.clone(),
-                    &actions,
-                ))
-                .child(render_control_chip(
-                    context,
-                    "field.field",
-                    field_type.as_ref(),
-                    2,
-                    collector.clone(),
-                    &actions,
-                ))
-                .child(render_control_chip(
-                    context,
-                    "field.foreign_key",
-                    foreign_key.as_ref(),
-                    3,
-                    collector.clone(),
-                    &actions,
-                )),
-        )
-        .child(render_table_columns(
-            context,
-            &columns,
-            px(122.0),
-            collector,
-            &actions,
-        ))
-        .child(render_repeatable_add(
-            context,
-            context
-                .repeatables
-                .iter()
-                .find(|repeatable| repeatable.projection.key == "table.columns"),
-            &actions,
-        ))
-        .into_any_element()
+    product_card(
+        context,
+        rgb(0x2563eb),
+        rgb(0xf8fafc),
+        host.services().view.clone(),
+    )
+    .child(product_header(
+        context,
+        "ERD table",
+        "schema",
+        rgb(0x2563eb),
+        host.services().view.clone(),
+    ))
+    .child(
+        div()
+            .absolute()
+            .left(px(CARD_PAD))
+            .top(px(BODY_TOP))
+            .right(px(CARD_PAD))
+            .h(px(TITLE_ROW_HEIGHT))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .overflow_hidden()
+            .child(text_line(context.title.clone(), rgb(0x111827), true))
+            .child(
+                Badge::new(
+                    open_gpui_custom_repeatables_badge_element_id(context.node_id),
+                    format!("{} columns", columns.len()),
+                )
+                .variant(BadgeVariant::Secondary)
+                .with_size(Size::XSmall),
+            ),
+    )
+    .child(render_control_row_at(
+        context,
+        "field.primary_key",
+        primary_key.as_ref(),
+        0,
+        px(ERD_PRIMARY_ROW_TOP),
+        collector.clone(),
+        &actions,
+    ))
+    .child(
+        div()
+            .absolute()
+            .left(px(CARD_PAD))
+            .top(px(ERD_CONTROL_CHIPS_TOP))
+            .right(px(CARD_PAD))
+            .h(px(CONTROL_CHIP_HEIGHT))
+            .flex()
+            .items_center()
+            .gap_1()
+            .overflow_hidden()
+            .child(render_control_chip(
+                context,
+                "field.field",
+                field_name.as_ref(),
+                1,
+                collector.clone(),
+                &actions,
+            ))
+            .child(render_control_chip(
+                context,
+                "field.field",
+                field_type.as_ref(),
+                2,
+                collector.clone(),
+                &actions,
+            ))
+            .child(render_control_chip(
+                context,
+                "field.foreign_key",
+                foreign_key.as_ref(),
+                3,
+                collector.clone(),
+                &actions,
+            )),
+    )
+    .child(render_table_columns(
+        context,
+        &columns,
+        px(ERD_COLUMNS_TOP),
+        collector,
+        &actions,
+    ))
+    .child(render_repeatable_add(
+        context,
+        context
+            .repeatables
+            .iter()
+            .find(|repeatable| repeatable.projection.key == "table.columns"),
+        &actions,
+    ))
+    .into_any_element()
 }
 
 fn render_topic_card(
@@ -393,44 +434,56 @@ fn render_topic_card(
     let title_control = context.control("control.topic.title");
     let summary_control = context.control("control.topic.summary");
 
-    product_card(context, rgb(0x8b5cf6), rgb(0xf5f3ff))
-        .child(product_header(context, "Mind map", "topic", rgb(0x7c3aed)))
-        .child(node_component_kit::render_measured_region(
-            context.slot_measurement_id("header.main"),
-            collector.clone(),
-            div()
-                .absolute()
-                .left(px(8.0))
-                .top(px(36.0))
-                .right(px(8.0))
-                .h(px(24.0))
-                .rounded_sm()
-                .bg(rgb(0xffffff))
-                .px_2()
-                .flex()
-                .items_center()
-                .overflow_hidden()
-                .child(text_line(context.title.clone(), rgb(0x111827), true)),
-        ))
-        .child(render_control_row(
-            context,
-            "header.main",
-            title_control.as_ref(),
-            0,
-            collector.clone(),
-            &actions,
-        ))
-        .child(render_control_row_at(
-            context,
-            "body.summary",
-            summary_control.as_ref(),
-            1,
-            px(90.0),
-            collector.clone(),
-            &actions,
-        ))
-        .child(measured_anchor(context, "body.summary", collector, false))
-        .into_any_element()
+    product_card(
+        context,
+        rgb(0x8b5cf6),
+        rgb(0xf5f3ff),
+        host.services().view.clone(),
+    )
+    .child(product_header(
+        context,
+        "Mind map",
+        "topic",
+        rgb(0x7c3aed),
+        host.services().view.clone(),
+    ))
+    .child(node_component_kit::render_measured_region(
+        context.slot_measurement_id("header.main"),
+        collector.clone(),
+        div()
+            .absolute()
+            .left(px(CARD_PAD))
+            .top(px(BODY_TOP))
+            .right(px(CARD_PAD))
+            .h(px(TITLE_ROW_HEIGHT))
+            .rounded_sm()
+            .bg(rgb(0xffffff))
+            .px_2()
+            .flex()
+            .items_center()
+            .overflow_hidden()
+            .child(text_line(context.title.clone(), rgb(0x111827), true)),
+    ))
+    .child(render_control_row_at(
+        context,
+        "header.main",
+        title_control.as_ref(),
+        0,
+        px(TOPIC_TITLE_CONTROL_TOP),
+        collector.clone(),
+        &actions,
+    ))
+    .child(render_control_row_at(
+        context,
+        "body.summary",
+        summary_control.as_ref(),
+        1,
+        px(TOPIC_SUMMARY_CONTROL_TOP),
+        collector.clone(),
+        &actions,
+    ))
+    .child(measured_anchor(context, "body.summary", collector, false))
+    .into_any_element()
 }
 
 fn render_source_card(
@@ -442,60 +495,66 @@ fn render_source_card(
     let title_control = context.control("control.source.title");
     let asset_control = context.control("control.source.asset");
 
-    product_card(context, rgb(0x0891b2), rgb(0xecfeff))
-        .child(product_header(
-            context,
-            "Knowledge",
-            "source",
-            rgb(0x0e7490),
-        ))
-        .child(node_component_kit::render_measured_region(
-            context.slot_measurement_id("preview.main"),
-            collector.clone(),
-            div()
-                .absolute()
-                .left(px(8.0))
-                .top(px(36.0))
-                .right(px(8.0))
-                .h(px(34.0))
-                .rounded_sm()
-                .bg(rgb(0xffffff))
-                .px_2()
-                .py_1()
-                .overflow_hidden()
-                .child(text_line(context.title.clone(), rgb(0x0f172a), true))
-                .child(
-                    div()
-                        .text_xs()
-                        .line_height(px(14.0))
-                        .truncate()
-                        .text_color(rgb(0x475569))
-                        .child(
-                            json_path_label(&context.node_data, &["preview"])
-                                .unwrap_or_else(|| "No preview".to_owned()),
-                        ),
-                ),
-        ))
-        .child(render_control_row_at(
-            context,
-            "header.main",
-            title_control.as_ref(),
-            0,
-            px(76.0),
-            collector.clone(),
-            &actions,
-        ))
-        .child(render_control_row_at(
-            context,
-            "preview.main",
-            asset_control.as_ref(),
-            1,
-            px(106.0),
-            collector.clone(),
-            &actions,
-        ))
-        .child(measured_anchor(context, "preview.main", collector, false))
-        .into_any_element()
+    product_card(
+        context,
+        rgb(0x0891b2),
+        rgb(0xecfeff),
+        host.services().view.clone(),
+    )
+    .child(product_header(
+        context,
+        "Knowledge",
+        "source",
+        rgb(0x0e7490),
+        host.services().view.clone(),
+    ))
+    .child(node_component_kit::render_measured_region(
+        context.slot_measurement_id("preview.main"),
+        collector.clone(),
+        div()
+            .absolute()
+            .left(px(CARD_PAD))
+            .top(px(BODY_TOP))
+            .right(px(CARD_PAD))
+            .h(px(PREVIEW_ROW_HEIGHT))
+            .rounded_sm()
+            .bg(rgb(0xffffff))
+            .px_2()
+            .py_1()
+            .overflow_hidden()
+            .child(text_line(context.title.clone(), rgb(0x0f172a), true))
+            .child(
+                div()
+                    .text_xs()
+                    .line_height(px(14.0))
+                    .truncate()
+                    .text_color(rgb(0x475569))
+                    .child(
+                        json_path_label(&context.node_data, &["preview"])
+                            .unwrap_or_else(|| "No preview".to_owned()),
+                    ),
+            ),
+    ))
+    .child(render_control_row_at(
+        context,
+        "header.main",
+        title_control.as_ref(),
+        0,
+        px(SOURCE_TITLE_CONTROL_TOP),
+        collector.clone(),
+        &actions,
+    ))
+    .child(render_control_row_at(
+        context,
+        "preview.main",
+        asset_control.as_ref(),
+        1,
+        px(SOURCE_ASSET_CONTROL_TOP),
+        collector.clone(),
+        &actions,
+    ))
+    .child(measured_anchor(context, "preview.main", collector, false))
+    .into_any_element()
 }
 
 fn actions_for_host(
@@ -508,6 +567,7 @@ fn product_card(
     context: &OpenGpuiNodeRendererContext,
     accent: open_gpui::Rgba,
     fill: open_gpui::Rgba,
+    view: WeakEntity<JellyflowCanvasView>,
 ) -> open_gpui::Div {
     div()
         .size_full()
@@ -522,6 +582,11 @@ fn product_card(
         .bg(fill)
         .overflow_hidden()
         .shadow_sm()
+        .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+            if dispatch_node_drag_surface_mouse_down(view.clone(), event, cx) {
+                cx.stop_propagation();
+            }
+        })
 }
 
 fn product_header(
@@ -529,18 +594,24 @@ fn product_header(
     family: &'static str,
     status: &'static str,
     accent: open_gpui::Rgba,
+    view: WeakEntity<JellyflowCanvasView>,
 ) -> AnyElement {
     div()
         .absolute()
-        .left(px(8.0))
-        .top(px(8.0))
-        .right(px(8.0))
-        .h(px(22.0))
+        .left(px(CARD_PAD))
+        .top(px(CARD_PAD))
+        .right(px(CARD_PAD))
+        .h(px(HEADER_HEIGHT))
         .flex()
         .items_center()
         .justify_between()
         .gap_2()
         .overflow_hidden()
+        .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+            if dispatch_node_drag_surface_mouse_down(view.clone(), event, cx) {
+                cx.stop_propagation();
+            }
+        })
         .child(
             Badge::new(
                 open_gpui_custom_renderer_badge_element_id(context.node_id, &context.renderer_key),
@@ -563,10 +634,10 @@ fn product_header(
 fn product_footer(context: &OpenGpuiNodeRendererContext) -> AnyElement {
     div()
         .absolute()
-        .left(px(8.0))
-        .bottom(px(8.0))
-        .right(px(8.0))
-        .h(px(18.0))
+        .left(px(CARD_PAD))
+        .bottom(px(CARD_PAD))
+        .right(px(CARD_PAD))
+        .h(px(PORT_RAIL_HEIGHT))
         .flex()
         .items_center()
         .gap_1()
@@ -617,25 +688,6 @@ fn render_primary_action(
         })
 }
 
-fn render_control_row(
-    context: &OpenGpuiNodeRendererContext,
-    slot_key: &str,
-    control: Option<&OpenGpuiControlPlan>,
-    index: usize,
-    collector: OpenGpuiBoundsCollector,
-    actions: &NodeComponentKitActions,
-) -> AnyElement {
-    render_control_row_at(
-        context,
-        slot_key,
-        control,
-        index,
-        px(62.0),
-        collector,
-        actions,
-    )
-}
-
 fn render_control_row_at(
     context: &OpenGpuiNodeRendererContext,
     slot_key: &str,
@@ -653,10 +705,10 @@ fn render_control_row_at(
         collector,
         div()
             .absolute()
-            .left(px(8.0))
+            .left(px(CARD_PAD))
             .top(top)
-            .right(px(8.0))
-            .h(px(26.0))
+            .right(px(CARD_PAD))
+            .h(px(CONTROL_ROW_HEIGHT))
             .flex()
             .items_center()
             .justify_between()
@@ -675,7 +727,7 @@ fn render_control_row_at(
                     .text_color(rgb(0x334155))
                     .child(control.label.clone()),
             )
-            .child(div().max_w(px(132.0)).overflow_hidden().child(
+            .child(div().max_w(px(176.0)).overflow_hidden().child(
                 node_component_kit::render_control_plan(
                     context.node_id,
                     "product-row",
@@ -701,15 +753,17 @@ fn render_control_chip(
     node_component_kit::render_measured_region(
         context.control_measurement_id(slot_key, control.key.clone()),
         collector,
-        div().h(px(24.0)).max_w(px(116.0)).overflow_hidden().child(
-            node_component_kit::render_control_plan(
+        div()
+            .h(px(CONTROL_CHIP_HEIGHT))
+            .max_w(px(144.0))
+            .overflow_hidden()
+            .child(node_component_kit::render_control_plan(
                 context.node_id,
                 slot_key,
                 control,
                 index,
                 actions,
-            ),
-        ),
+            )),
     )
 }
 
@@ -733,10 +787,10 @@ fn render_port_rail(
         collector,
         div()
             .absolute()
-            .left(px(8.0))
+            .left(px(CARD_PAD))
             .top(top)
-            .right(px(8.0))
-            .h(px(20.0))
+            .right(px(CARD_PAD))
+            .h(px(PORT_RAIL_HEIGHT))
             .rounded_sm()
             .bg(fill)
             .px_2()
@@ -759,10 +813,10 @@ fn render_shader_inputs(
 ) -> AnyElement {
     div()
         .absolute()
-        .left(px(8.0))
+        .left(px(CARD_PAD))
         .top(top)
-        .right(px(8.0))
-        .h(px(32.0))
+        .right(px(CARD_PAD))
+        .h(px(REPEATABLE_CHIP_HEIGHT))
         .flex()
         .items_center()
         .gap_1()
@@ -785,10 +839,10 @@ fn render_table_columns(
 ) -> AnyElement {
     div()
         .absolute()
-        .left(px(8.0))
+        .left(px(CARD_PAD))
         .top(top)
-        .right(px(8.0))
-        .bottom(px(8.0))
+        .right(px(CARD_PAD))
+        .bottom(px(CARD_PAD))
         .flex()
         .flex_col()
         .gap_1()
@@ -826,9 +880,9 @@ fn render_repeatable_item_chip(
         context.repeatable_item_measurement_id(projection.slot_key.clone(), item_id.clone()),
         collector.clone(),
         div()
-            .h(px(30.0))
-            .min_w(px(58.0))
-            .max_w(px(72.0))
+            .h(px(REPEATABLE_CHIP_HEIGHT))
+            .min_w(px(84.0))
+            .max_w(px(118.0))
             .flex()
             .items_center()
             .gap_1()
@@ -887,7 +941,7 @@ fn render_repeatable_item_row(
         context.repeatable_item_measurement_id(projection.slot_key.clone(), item_id.clone()),
         collector.clone(),
         div()
-            .h(px(24.0))
+            .h(px(REPEATABLE_ROW_HEIGHT))
             .flex()
             .items_center()
             .justify_between()
@@ -1002,7 +1056,7 @@ fn render_repeatable_add(
     let item = demo_repeatable_add_item(&collection_key, repeatable.projection.item_count);
 
     div()
-        .max_w(px(82.0))
+        .max_w(px(REPEATABLE_ADD_WIDTH))
         .overflow_hidden()
         .child(node_component_kit::repeatable_action_button(
             context.node_id,
@@ -1032,7 +1086,7 @@ fn measured_anchor(
             .absolute()
             .left(if left { px(0.0) } else { px(9999.0) })
             .right(if left { px(9999.0) } else { px(0.0) })
-            .top(px(46.0))
+            .top(px(ANCHOR_TOP))
             .w(px(8.0))
             .h(px(20.0)),
     )

@@ -97,7 +97,7 @@ pub fn gpui_view_bounds(bounds: Bounds<Pixels>) -> OpenGpuiViewBounds {
     )
 }
 
-pub fn render_node_internal_interaction_region(child: AnyElement) -> AnyElement {
+pub fn render_interactive_control_region(child: AnyElement) -> AnyElement {
     div()
         .block_mouse_except_scroll()
         .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, _window, cx| {
@@ -221,7 +221,7 @@ pub fn render_control_plan(
         }
     };
 
-    render_node_internal_interaction_region(element)
+    render_interactive_control_region(element)
 }
 
 pub fn render_dispatch_action_button(
@@ -250,7 +250,7 @@ pub fn render_dispatch_action_button(
         });
     }
 
-    button.into_any_element()
+    render_interactive_control_region(button.into_any_element())
 }
 
 pub fn render_action_menu(
@@ -268,7 +268,7 @@ pub fn render_action_menu(
         })
         .collect::<Vec<_>>();
 
-    Menu::new(
+    let menu = Menu::new(
         open_gpui_action_menu_element_id(node_id, &menu.key, id_suffix),
         format!("{} {}", menu.label, menu.actions.len()),
     )
@@ -282,7 +282,9 @@ pub fn render_action_menu(
         }
     })
     .with_size(Size::XSmall)
-    .into_any_element()
+    .into_any_element();
+
+    render_interactive_control_region(menu)
 }
 
 pub fn repeatable_action_button(
@@ -308,7 +310,7 @@ pub fn repeatable_action_button(
         });
     }
 
-    render_node_internal_interaction_region(button.into_any_element())
+    render_interactive_control_region(button.into_any_element())
 }
 
 pub fn render_action_buttons(

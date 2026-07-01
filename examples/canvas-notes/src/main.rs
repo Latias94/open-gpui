@@ -155,7 +155,7 @@ impl Render for NotesView {
                                     Self::canvas_input_handler(),
                                     options,
                                     theme,
-                                    |this, frame, cx| {
+                                    |this, _bounds, frame, cx| {
                                         let overlay_frame = frame.widget_overlay_frame(
                                             CanvasWidgetOverlayOptions::selected_nodes()
                                                 .with_hit_priority(

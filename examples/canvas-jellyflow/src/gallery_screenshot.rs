@@ -72,7 +72,7 @@ pub(super) fn export_gallery_screenshot_smoke(
         Arc::new(()),
         open_gpui_platform::current_headless_renderer,
     );
-    cx.update(init_text_input);
+    cx.update(init_canvas_jellyflow_app);
     let mut files = Vec::new();
 
     for case in product_gallery::product_gallery_cases() {
@@ -144,6 +144,9 @@ fn open_gallery_case_window(
                 measured_regions: OpenGpuiBoundsCollector::new(),
                 measurement_revision: 1,
                 measurement_frame_pending: false,
+                auto_fit_viewport: true,
+                last_canvas_view_size: None,
+                last_canvas_bounds: None,
             })
         })
         .map_err(|error| error.to_string())?;

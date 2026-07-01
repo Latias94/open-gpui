@@ -2,8 +2,8 @@ use jellyflow::{
     NodeGraphStore,
     core::{
         CanvasPoint as JellyPoint, CanvasRect as JellyRect, CanvasSize as JellySize, Edge,
-        EdgeId as JellyEdgeId, Graph, Node, NodeId as JellyNodeId, NodeKindKey, PortDirection,
-        PortId as JellyPortId, PortKey,
+        EdgeId as JellyEdgeId, Graph, GraphOp, GraphTransaction, Node, NodeId as JellyNodeId,
+        NodeKindKey, PortDirection, PortId as JellyPortId, PortKey,
     },
     runtime::{
         io::{NodeGraphEditorConfig, NodeGraphViewState},
@@ -25,7 +25,7 @@ use jellyflow::{
 };
 #[cfg(test)]
 use jellyflow::{
-    core::{EdgeKind, GraphId, GraphOp, GraphTransaction, Port, PortCapacity, PortKind},
+    core::{EdgeKind, GraphId, Port, PortCapacity, PortKind},
     layout::{LayoutPresetBuilder, builtin_layout_engine_registry},
 };
 #[cfg(test)]
@@ -61,15 +61,19 @@ use jellyflow_open_gpui::{
     resolve_inspector_target_bounds,
 };
 use open_gpui::{
-    AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Pixels, WeakEntity, Window,
-    WindowBounds, WindowOptions, div, point, prelude::*, px, rgb, size,
+    AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Modifiers, MouseButton,
+    MouseDownEvent, Pixels, WeakEntity, Window, WindowBounds, WindowOptions, div, point,
+    prelude::*, px, rgb, size,
 };
 use open_gpui_canvas::{
     CanvasDocument, CanvasEditor, CanvasEditorInputHandler, CanvasEvent, CanvasHandle,
-    CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
-    CanvasNodeRenderPolicy, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
-    CanvasToolIntent, DocumentError, HandleRole, HitTarget, NodeId, canvas_editor_view,
+    CanvasKeyModifiers, CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode,
+    CanvasNodeKind, CanvasNodeRenderPolicy, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
+    CanvasToolIntent, CanvasViewport, DocumentError, HandleRole, HitTarget, NodeId, PointerButton,
+    canvas_editor_view_with_frame,
 };
+#[cfg(test)]
+use open_gpui_canvas::{CanvasTransaction, DocumentCommand};
 use open_gpui_platform::application;
 use open_gpui_ui_components::gpui_adapter::init_text_input;
 use open_gpui_ui_components::prelude::Sizable;
@@ -90,6 +94,11 @@ const REPEATABLE_ITEM_SNAPSHOTS_FIELD: &str = "jellyflow_repeatable_items";
 const INITIAL_SELECTION: u128 = 2;
 const CANVAS_WIDTH: f32 = 1140.0;
 const CANVAS_HEIGHT: f32 = 650.0;
+const SIDEBAR_WIDTH: f32 = 320.0;
+const TOOLBAR_HEIGHT: f32 = 46.0;
+const INITIAL_VIEWPORT_PADDING: f32 = 36.0;
+const INITIAL_VIEWPORT_MIN_ZOOM: f32 = 0.25;
+const INITIAL_VIEWPORT_MAX_ZOOM: f32 = 1.0;
 const NODE_SURFACE_CHROME_HEIGHT: f32 = 78.0;
 const NODE_SURFACE_SLOT_ROW_HEIGHT: f32 = 26.0;
 const GPUI_LAYOUT_PASS_MEASUREMENT_STATUS: &str = "canvas-jellyflow consumes open-gpui \
@@ -105,6 +114,11 @@ pub(crate) struct GpuiNodeRendererServices {
 
 pub(crate) type GpuiNodeRendererTable =
     OpenGpuiNodeRendererTable<GpuiNodeRendererServices, AnyElement>;
+
+fn init_canvas_jellyflow_app(cx: &mut App) {
+    init_text_input(cx);
+    cx.init_colors();
+}
 
 pub(crate) fn node_component_kit_actions(
     view: WeakEntity<JellyflowCanvasView>,
@@ -137,6 +151,17 @@ pub(crate) fn node_component_kit_actions(
     )
 }
 
+pub(crate) fn dispatch_node_drag_surface_mouse_down(
+    view: WeakEntity<JellyflowCanvasView>,
+    event: &MouseDownEvent,
+    cx: &mut App,
+) -> bool {
+    view.update(cx, |this, cx| {
+        this.handle_node_surface_drag_start(event, cx)
+    })
+    .unwrap_or(false)
+}
+
 struct JellyflowCanvasView {
     editor: CanvasEditor,
     store: NodeGraphStore,
@@ -148,6 +173,9 @@ struct JellyflowCanvasView {
     measured_regions: OpenGpuiBoundsCollector,
     measurement_revision: u64,
     measurement_frame_pending: bool,
+    auto_fit_viewport: bool,
+    last_canvas_view_size: Option<open_gpui::Size<Pixels>>,
+    last_canvas_bounds: Option<Bounds<Pixels>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -321,13 +349,16 @@ impl Render for JellyflowCanvasView {
                             .flex_1()
                             .overflow_hidden()
                             .child(
-                                canvas_editor_view(
+                                canvas_editor_view_with_frame(
                                     model,
                                     cx.entity(),
                                     self.focus_handle.clone(),
                                     Self::canvas_input_handler(),
                                     options,
                                     theme,
+                                    |this, bounds, _frame, cx| {
+                                        this.update_canvas_viewport_from_bounds(bounds, cx);
+                                    },
                                 )
                                 .size_full(),
                             )
@@ -722,9 +753,12 @@ impl JellyflowCanvasView {
     fn handle_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         match self.handle_canvas_shortcut(event) {
             Ok(true) => {
+                self.auto_fit_viewport = false;
+                self.sync_store_from_canvas_document();
                 cx.notify();
             }
             Ok(false) => {
+                self.auto_fit_viewport = false;
                 Self::canvas_input_handler().dispatch_key_down(self, event, cx);
             }
             Err(error) => {
@@ -772,8 +806,14 @@ impl JellyflowCanvasView {
             return;
         };
 
-        if let Err(error) = self.editor.handle_event(event) {
-            eprintln!("canvas event failed: {error}");
+        self.auto_fit_viewport = false;
+        match self.editor.handle_event(event) {
+            Ok(()) => {
+                self.sync_store_from_canvas_document();
+            }
+            Err(error) => {
+                eprintln!("canvas event failed: {error}");
+            }
         }
         cx.notify();
     }
@@ -806,6 +846,9 @@ impl JellyflowCanvasView {
                 self.measured_regions.clear();
                 self.measurement_revision = 1;
                 self.measurement_frame_pending = false;
+                self.auto_fit_viewport = true;
+                self.last_canvas_view_size = None;
+                self.last_canvas_bounds = None;
                 cx.notify();
             }
             Err(error) => {
@@ -1084,6 +1127,72 @@ impl JellyflowCanvasView {
         }
     }
 
+    fn sync_store_from_canvas_document(&mut self) -> bool {
+        let transaction =
+            canvas_document_transform_transaction(&self.store, self.editor.document());
+        if transaction.is_empty() {
+            return false;
+        }
+
+        match self.store.dispatch_transaction(&transaction) {
+            Ok(_) => true,
+            Err(error) => {
+                eprintln!("canvas transform sync failed: {error}");
+                false
+            }
+        }
+    }
+
+    fn update_canvas_viewport_from_bounds(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let view_size = bounds.size;
+        if view_size.width <= px(0.0) || view_size.height <= px(0.0) {
+            return;
+        }
+
+        self.last_canvas_bounds = Some(bounds);
+        if self.update_canvas_viewport_for_view_size(view_size) {
+            cx.notify();
+        }
+    }
+
+    fn handle_node_surface_drag_start(
+        &mut self,
+        event: &MouseDownEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(bounds) = self.last_canvas_bounds else {
+            return false;
+        };
+        if let Some(event) = canvas_drag_start_event_from_bounds(bounds, event) {
+            self.handle_canvas_event(Some(event), cx);
+            return true;
+        }
+        false
+    }
+
+    fn update_canvas_viewport_for_view_size(&mut self, view_size: open_gpui::Size<Pixels>) -> bool {
+        let viewport = self.editor.viewport();
+        let update = canvas_viewport_size_update(
+            self.editor.document(),
+            viewport,
+            self.auto_fit_viewport,
+            self.last_canvas_view_size,
+            view_size,
+        );
+
+        self.auto_fit_viewport = update.auto_fit_viewport;
+        self.last_canvas_view_size = update.last_canvas_view_size;
+        if update.viewport != viewport {
+            self.editor.set_viewport(update.viewport);
+            return true;
+        }
+        false
+    }
+
     fn refresh_editor_from_store(&mut self) {
         let selection = self
             .editor
@@ -1091,6 +1200,7 @@ impl JellyflowCanvasView {
             .selected_nodes()
             .next()
             .map(|id| id.clone());
+        let viewport = self.editor.viewport();
         let Ok((document, projection)) = project_store(&self.store) else {
             return;
         };
@@ -1099,6 +1209,7 @@ impl JellyflowCanvasView {
         else {
             return;
         };
+        editor.set_viewport(viewport);
         if let Some(id) = selection {
             let _ = editor.apply_tool_intent(CanvasToolIntent::ReplaceSelection(HitTarget::Node(
                 id.clone(),
@@ -1564,7 +1675,6 @@ fn render_node_surface_shell(
         .top(top)
         .w(inner_width)
         .h(inner_height)
-        .relative()
         .flex_shrink_0()
         .min_w(px(0.0))
         .min_h(px(0.0))
@@ -3168,18 +3278,18 @@ fn project_node(
     measurement_store: &NodeGraphStore,
     semantic_registry: &NodeRegistry,
 ) -> CanvasNode {
-    let node_size = node.size.unwrap_or(JellySize {
-        width: 228.0,
-        height: 168.0,
-    });
+    let descriptor = semantic_registry
+        .view_descriptor(&node.kind)
+        .expect("demo graph should resolve a builtin node descriptor");
+    let requested_size = node
+        .size
+        .unwrap_or_else(|| default_node_size_for_renderer(&descriptor.renderer_key));
+    let node_size = readable_node_size(&node.kind, &descriptor.renderer_key, requested_size);
     let mut canvas_node = CanvasNode::new(
         canvas_node_id(id),
         point(px(node.pos.x), px(node.pos.y)),
         size(px(node_size.width), px(node_size.height)),
     );
-    let descriptor = semantic_registry
-        .view_descriptor(&node.kind)
-        .expect("demo graph should resolve a builtin node descriptor");
     canvas_node.kind = descriptor.renderer_key.clone();
     canvas_node.hidden = node.hidden;
     canvas_node.data = canvas_value_from_json(node.data.clone());
@@ -3287,6 +3397,80 @@ fn project_node(
     canvas_node
 }
 
+fn default_node_size_for_renderer(renderer_key: &str) -> JellySize {
+    match renderer_key {
+        "decision-card" => JellySize {
+            width: 292.0,
+            height: 246.0,
+        },
+        "shader-card" => JellySize {
+            width: 324.0,
+            height: 244.0,
+        },
+        "table-card" => JellySize {
+            width: 372.0,
+            height: 292.0,
+        },
+        "topic-card" => JellySize {
+            width: 278.0,
+            height: 190.0,
+        },
+        "source-card" => JellySize {
+            width: 286.0,
+            height: 190.0,
+        },
+        _ => JellySize {
+            width: 236.0,
+            height: 188.0,
+        },
+    }
+}
+
+fn readable_node_size(
+    kind: &NodeKindKey,
+    renderer_key: &str,
+    requested_size: JellySize,
+) -> JellySize {
+    let minimum = minimum_readable_node_size(kind, renderer_key);
+    JellySize {
+        width: requested_size.width.max(minimum.width),
+        height: requested_size.height.max(minimum.height),
+    }
+}
+
+fn minimum_readable_node_size(kind: &NodeKindKey, renderer_key: &str) -> JellySize {
+    match (kind.0.as_str(), renderer_key) {
+        ("demo.llm", "decision-card") => JellySize {
+            width: 292.0,
+            height: 246.0,
+        },
+        (_, "decision-card") => JellySize {
+            width: 240.0,
+            height: 150.0,
+        },
+        (_, "shader-card") => JellySize {
+            width: 324.0,
+            height: 244.0,
+        },
+        (_, "table-card") => JellySize {
+            width: 372.0,
+            height: 292.0,
+        },
+        (_, "topic-card") => JellySize {
+            width: 278.0,
+            height: 190.0,
+        },
+        (_, "source-card") => JellySize {
+            width: 286.0,
+            height: 190.0,
+        },
+        _ => JellySize {
+            width: 0.0,
+            height: 0.0,
+        },
+    }
+}
+
 fn measurement_store_with_projection_fallback(
     store: &NodeGraphStore,
     semantic_registry: &NodeRegistry,
@@ -3353,9 +3537,9 @@ fn measured_handle_position(
         store.resolve_node_handle_measurement(ConnectionHandleRef::new(node, port, direction));
     match resolution.source {
         NodeHandleMeasurementSource::MeasuredHandle
-        | NodeHandleMeasurementSource::MeasuredAnchor { .. } => {
-            resolution.bounds.map(handle_position_from_bounds)
-        }
+        | NodeHandleMeasurementSource::MeasuredAnchor { .. } => resolution
+            .bounds
+            .map(|bounds| handle_position_from_bounds(bounds, node_size)),
         NodeHandleMeasurementSource::Fallback { .. } => Some(JellyPoint {
             x: match direction {
                 PortDirection::In => 0.0,
@@ -3366,23 +3550,23 @@ fn measured_handle_position(
     }
 }
 
-fn handle_position_from_bounds(bounds: HandleBounds) -> JellyPoint {
+fn handle_position_from_bounds(bounds: HandleBounds, node_size: JellySize) -> JellyPoint {
     match bounds.position {
         HandlePosition::Left => JellyPoint {
-            x: bounds.rect.origin.x,
+            x: 0.0,
             y: bounds.rect.origin.y + bounds.rect.size.height * 0.5,
         },
         HandlePosition::Right => JellyPoint {
-            x: bounds.rect.origin.x + bounds.rect.size.width,
+            x: node_size.width,
             y: bounds.rect.origin.y + bounds.rect.size.height * 0.5,
         },
         HandlePosition::Top => JellyPoint {
             x: bounds.rect.origin.x + bounds.rect.size.width * 0.5,
-            y: bounds.rect.origin.y,
+            y: 0.0,
         },
         HandlePosition::Bottom => JellyPoint {
             x: bounds.rect.origin.x + bounds.rect.size.width * 0.5,
-            y: bounds.rect.origin.y + bounds.rect.size.height,
+            y: node_size.height,
         },
     }
 }
@@ -3442,10 +3626,207 @@ fn editor_for_document(document: CanvasDocument) -> Result<CanvasEditor, Documen
         .next()
         .map(|node| NodeId::from(node.id.as_str()));
     let mut editor = CanvasEditor::try_new_with_kind_registry(document, jellyflow_kind_registry())?;
+    editor.set_viewport(initial_viewport_for_document(editor.document()));
     if let Some(id) = initial_selection {
         editor.apply_tool_intent(CanvasToolIntent::ReplaceSelection(HitTarget::Node(id)))?;
     }
     Ok(editor)
+}
+
+fn initial_viewport_for_document(document: &CanvasDocument) -> CanvasViewport {
+    fit_viewport_for_document(document, default_canvas_view_size())
+}
+
+fn default_canvas_view_size() -> open_gpui::Size<Pixels> {
+    canvas_view_size_from_window_size(size(px(CANVAS_WIDTH), px(CANVAS_HEIGHT)))
+}
+
+fn canvas_view_size_from_window_size(
+    window_size: open_gpui::Size<Pixels>,
+) -> open_gpui::Size<Pixels> {
+    size(
+        (window_size.width - px(SIDEBAR_WIDTH)).max(px(320.0)),
+        (window_size.height - px(TOOLBAR_HEIGHT)).max(px(240.0)),
+    )
+}
+
+fn fit_viewport_for_document(
+    document: &CanvasDocument,
+    view_size: open_gpui::Size<Pixels>,
+) -> CanvasViewport {
+    let Some(bounds) = document_content_bounds(document) else {
+        return CanvasViewport::default();
+    };
+    let content_width = bounds.size.width.as_f32().max(1.0);
+    let content_height = bounds.size.height.as_f32().max(1.0);
+    let view_width = view_size.width.as_f32().max(1.0);
+    let view_height = view_size.height.as_f32().max(1.0);
+    let available_width = (view_width - INITIAL_VIEWPORT_PADDING * 2.0).max(1.0);
+    let available_height = (view_height - INITIAL_VIEWPORT_PADDING * 2.0).max(1.0);
+    let zoom = (available_width / content_width)
+        .min(available_height / content_height)
+        .clamp(INITIAL_VIEWPORT_MIN_ZOOM, INITIAL_VIEWPORT_MAX_ZOOM);
+    let visible_width = view_width / zoom;
+    let visible_height = view_height / zoom;
+    let content_center_x = bounds.origin.x.as_f32() + content_width / 2.0;
+    let content_center_y = bounds.origin.y.as_f32() + content_height / 2.0;
+
+    CanvasViewport::new(
+        point(
+            px(content_center_x - visible_width / 2.0),
+            px(content_center_y - visible_height / 2.0),
+        ),
+        zoom,
+    )
+    .unwrap_or_default()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CanvasViewportSizeUpdate {
+    viewport: CanvasViewport,
+    auto_fit_viewport: bool,
+    last_canvas_view_size: Option<open_gpui::Size<Pixels>>,
+}
+
+fn canvas_viewport_size_update(
+    document: &CanvasDocument,
+    viewport: CanvasViewport,
+    auto_fit_viewport: bool,
+    previous_size: Option<open_gpui::Size<Pixels>>,
+    view_size: open_gpui::Size<Pixels>,
+) -> CanvasViewportSizeUpdate {
+    let viewport = if auto_fit_viewport {
+        fit_viewport_for_document(document, view_size)
+    } else if let Some(previous_size) = previous_size {
+        if previous_size == view_size {
+            viewport
+        } else {
+            preserve_viewport_center_for_resize(viewport, previous_size, view_size)
+        }
+    } else {
+        viewport
+    };
+
+    CanvasViewportSizeUpdate {
+        viewport,
+        auto_fit_viewport: false,
+        last_canvas_view_size: Some(view_size),
+    }
+}
+
+fn canvas_drag_start_event_from_bounds(
+    bounds: Bounds<Pixels>,
+    event: &MouseDownEvent,
+) -> Option<CanvasEvent> {
+    if event.button != MouseButton::Left {
+        return None;
+    }
+
+    bounds
+        .contains(&event.position)
+        .then(|| CanvasEvent::PointerDown {
+            position: event.position - bounds.origin,
+            button: PointerButton::Primary,
+            modifiers: canvas_key_modifiers(event.modifiers),
+        })
+}
+
+fn canvas_key_modifiers(modifiers: Modifiers) -> CanvasKeyModifiers {
+    CanvasKeyModifiers {
+        shift: modifiers.shift,
+        alt: modifiers.alt,
+        control: modifiers.control,
+        platform: modifiers.platform,
+        function: modifiers.function,
+    }
+}
+
+fn preserve_viewport_center_for_resize(
+    viewport: CanvasViewport,
+    previous_size: open_gpui::Size<Pixels>,
+    next_size: open_gpui::Size<Pixels>,
+) -> CanvasViewport {
+    let previous_center = point(
+        previous_size.width * (0.5 / viewport.zoom),
+        previous_size.height * (0.5 / viewport.zoom),
+    );
+    let next_center = point(
+        next_size.width * (0.5 / viewport.zoom),
+        next_size.height * (0.5 / viewport.zoom),
+    );
+
+    CanvasViewport::new(
+        viewport.origin + previous_center - next_center,
+        viewport.zoom,
+    )
+    .unwrap_or(viewport)
+}
+
+fn document_content_bounds(document: &CanvasDocument) -> Option<Bounds<Pixels>> {
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+
+    for node in document.nodes().filter(|node| !node.hidden) {
+        let bounds = node.bounds();
+        min_x = min_x.min(bounds.origin.x.as_f32());
+        min_y = min_y.min(bounds.origin.y.as_f32());
+        max_x = max_x.max(bounds.origin.x.as_f32() + bounds.size.width.as_f32());
+        max_y = max_y.max(bounds.origin.y.as_f32() + bounds.size.height.as_f32());
+    }
+
+    if min_x.is_finite() && min_y.is_finite() && max_x.is_finite() && max_y.is_finite() {
+        Some(Bounds::new(
+            point(px(min_x), px(min_y)),
+            size(px((max_x - min_x).max(1.0)), px((max_y - min_y).max(1.0))),
+        ))
+    } else {
+        None
+    }
+}
+
+fn canvas_document_transform_transaction(
+    store: &NodeGraphStore,
+    document: &CanvasDocument,
+) -> GraphTransaction {
+    let mut transaction =
+        GraphTransaction::new().with_label("sync open-gpui canvas node transforms");
+
+    for canvas_node in document.nodes() {
+        let Some(node_id) = jelly_node_id_from_node(canvas_node) else {
+            continue;
+        };
+        let Some(node) = store.graph().nodes().get(&node_id) else {
+            continue;
+        };
+
+        let canvas_pos = JellyPoint {
+            x: canvas_node.position.x.as_f32(),
+            y: canvas_node.position.y.as_f32(),
+        };
+        if canvas_pos.is_finite() && node.pos != canvas_pos {
+            transaction.push(GraphOp::SetNodePos {
+                id: node_id,
+                from: node.pos,
+                to: canvas_pos,
+            });
+        }
+
+        let canvas_size = JellySize {
+            width: canvas_node.size.width.as_f32(),
+            height: canvas_node.size.height.as_f32(),
+        };
+        if canvas_size.is_positive_finite() && node.size != Some(canvas_size) {
+            transaction.push(GraphOp::SetNodeSize {
+                id: node_id,
+                from: node.size,
+                to: Some(canvas_size),
+            });
+        }
+    }
+
+    transaction
 }
 
 fn canvas_value_from_json(value: Value) -> open_gpui_canvas::CanvasValue {
@@ -3674,7 +4055,7 @@ fn port_y(index: usize, count: usize, height: f32) -> f32 {
 
 fn main() {
     application().run(|cx: &mut App| {
-        init_text_input(cx);
+        init_canvas_jellyflow_app(cx);
 
         let bounds = Bounds::centered(None, size(px(CANVAS_WIDTH), px(CANVAS_HEIGHT)), cx);
         let (gallery, store, editor, projection) = product_gallery_state();
@@ -3698,6 +4079,9 @@ fn main() {
                     measured_regions: OpenGpuiBoundsCollector::new(),
                     measurement_revision: 1,
                     measurement_frame_pending: false,
+                    auto_fit_viewport: true,
+                    last_canvas_view_size: None,
+                    last_canvas_bounds: None,
                 })
             },
         )
@@ -3777,6 +4161,174 @@ mod tests {
             edge.target.handle_id.as_ref().unwrap().as_str(),
             canvas_port_id(&JellyPortId::from_u128(30))
         );
+    }
+
+    #[test]
+    fn initial_viewport_centers_canvas_document_content() {
+        let mut builder = CanvasDocument::builder();
+        builder
+            .add_node(CanvasNode::new(
+                "node-a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        let document = builder.build().unwrap();
+        let viewport = initial_viewport_for_document(&document);
+        let node = document.node(&NodeId::from("node-a")).unwrap();
+        let view_bounds = viewport.document_bounds_to_view(node.bounds());
+
+        assert!(
+            view_bounds.left().as_f32() > INITIAL_VIEWPORT_PADDING,
+            "initial viewport should leave horizontal breathing room, got {view_bounds:?}"
+        );
+        assert!(
+            view_bounds.top().as_f32() > INITIAL_VIEWPORT_PADDING,
+            "initial viewport should leave vertical breathing room, got {view_bounds:?}"
+        );
+    }
+
+    #[test]
+    fn product_gallery_initial_viewport_fits_default_canvas_area() {
+        let (_, document, _) = project_product_gallery_case(
+            product_gallery::ProductGalleryState::default().active_case(),
+        )
+        .unwrap();
+        let viewport = initial_viewport_for_document(&document);
+        let view_size = default_canvas_view_size();
+        let content_bounds = document_content_bounds(&document).unwrap();
+        let view_bounds = viewport.document_bounds_to_view(content_bounds);
+        let tolerance = px(0.5);
+
+        assert!(
+            view_bounds.left() >= px(INITIAL_VIEWPORT_PADDING) - tolerance,
+            "initial viewport should keep product graph away from the left edge: {view_bounds:?}"
+        );
+        assert!(
+            view_bounds.right() <= view_size.width - px(INITIAL_VIEWPORT_PADDING) + tolerance,
+            "initial viewport should keep product graph inside the right edge: {view_bounds:?} in {view_size:?}"
+        );
+        assert!(
+            view_bounds.top() >= px(INITIAL_VIEWPORT_PADDING) - tolerance,
+            "initial viewport should keep product graph away from the top edge: {view_bounds:?}"
+        );
+        assert!(
+            view_bounds.bottom() <= view_size.height - px(INITIAL_VIEWPORT_PADDING) + tolerance,
+            "initial viewport should keep product graph inside the bottom edge: {view_bounds:?} in {view_size:?}"
+        );
+    }
+
+    #[test]
+    fn viewport_resize_preserves_document_center_after_user_interaction() {
+        let viewport = CanvasViewport::new(point(px(100.0), px(50.0)), 2.0).unwrap();
+        let previous_size = size(px(400.0), px(200.0));
+        let next_size = size(px(400.0), px(400.0));
+        let previous_center =
+            viewport.view_to_document(point(previous_size.width / 2.0, previous_size.height / 2.0));
+
+        let resized = preserve_viewport_center_for_resize(viewport, previous_size, next_size);
+        let next_center =
+            resized.view_to_document(point(next_size.width / 2.0, next_size.height / 2.0));
+
+        assert_eq!(next_center, previous_center);
+    }
+
+    #[test]
+    fn canvas_viewport_size_update_consumes_auto_fit_once_then_preserves_center() {
+        let (_, document, _) = project_product_gallery_case(
+            product_gallery::ProductGalleryState::default().active_case(),
+        )
+        .unwrap();
+        let initial_viewport = CanvasViewport::new(point(px(100.0), px(50.0)), 1.0).unwrap();
+        let first_size = size(px(640.0), px(420.0));
+
+        let first =
+            canvas_viewport_size_update(&document, initial_viewport, true, None, first_size);
+
+        assert!(!first.auto_fit_viewport);
+        assert_eq!(first.last_canvas_view_size, Some(first_size));
+        assert_ne!(first.viewport, initial_viewport);
+
+        let first_center = first
+            .viewport
+            .view_to_document(point(first_size.width / 2.0, first_size.height / 2.0));
+        let resized_size = size(px(640.0), px(520.0));
+
+        let resized = canvas_viewport_size_update(
+            &document,
+            first.viewport,
+            first.auto_fit_viewport,
+            first.last_canvas_view_size,
+            resized_size,
+        );
+
+        let resized_center = resized
+            .viewport
+            .view_to_document(point(resized_size.width / 2.0, resized_size.height / 2.0));
+        assert_eq!(resized_center, first_center);
+        assert!(!resized.auto_fit_viewport);
+        assert_eq!(resized.last_canvas_view_size, Some(resized_size));
+    }
+
+    #[test]
+    fn product_surface_drag_start_uses_actual_canvas_bounds_origin() {
+        let bounds = Bounds::new(point(px(24.0), px(46.0)), size(px(640.0), px(420.0)));
+        let event = MouseDownEvent {
+            button: MouseButton::Left,
+            position: point(px(124.0), px(146.0)),
+            modifiers: Modifiers {
+                shift: true,
+                ..Modifiers::default()
+            },
+            ..MouseDownEvent::default()
+        };
+
+        assert_eq!(
+            canvas_drag_start_event_from_bounds(bounds, &event),
+            Some(CanvasEvent::PointerDown {
+                position: point(px(100.0), px(100.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers {
+                    shift: true,
+                    ..CanvasKeyModifiers::default()
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn canvas_node_transform_sync_survives_store_reprojection() {
+        let (mut store, document, _) = project_product_gallery_case(
+            product_gallery::ProductGalleryState::default().active_case(),
+        )
+        .unwrap();
+        let mut editor = editor_for_document(document).unwrap();
+        let node_id = editor.document().nodes().next().unwrap().id.clone();
+        let before = editor.document().node(&node_id).unwrap().clone();
+        let mut moved = before.clone();
+        moved.position += point(px(47.0), px(23.0));
+        moved.size.width += px(31.0);
+
+        editor
+            .apply_transaction(CanvasTransaction::single(DocumentCommand::UpdateNode(
+                moved.clone(),
+            )))
+            .unwrap();
+        let transaction = canvas_document_transform_transaction(&store, editor.document());
+        assert!(
+            !transaction.is_empty(),
+            "moved canvas node should produce a Jellyflow graph transaction"
+        );
+
+        store
+            .dispatch_transaction(&transaction)
+            .expect("canvas transform sync should dispatch");
+        let (projected, _) = project_store(&store).unwrap();
+        let projected_node = projected.node(&node_id).unwrap();
+
+        assert_eq!(projected_node.position, moved.position);
+        assert_eq!(projected_node.size, moved.size);
+        assert_ne!(projected_node.position, before.position);
     }
 
     #[test]
@@ -4468,6 +5020,16 @@ mod tests {
     }
 
     #[test]
+    fn product_gallery_fixtures_project_non_overlapping_node_bounds() {
+        for case in product_gallery::product_gallery_cases() {
+            let (_, document, _) =
+                project_product_gallery_case(&case).expect("product fixture projects");
+
+            assert_canvas_nodes_do_not_overlap(case.id(), &document);
+        }
+    }
+
+    #[test]
     fn projected_handles_follow_semantic_slot_anchors_after_node_resize() {
         let mut store = make_demo_store();
         let transform = JellyNodeId::from_u128(3);
@@ -4986,6 +5548,34 @@ mod tests {
         }
     }
 
+    fn assert_canvas_nodes_do_not_overlap(fixture_id: &str, document: &CanvasDocument) {
+        let nodes = document.nodes().collect::<Vec<_>>();
+        for (index, left) in nodes.iter().enumerate() {
+            for right in nodes.iter().skip(index + 1) {
+                assert!(
+                    !canvas_bounds_overlap(left.bounds(), right.bounds()),
+                    "fixture `{fixture_id}` nodes `{}` and `{}` overlap: {:?} vs {:?}",
+                    left.id.as_str(),
+                    right.id.as_str(),
+                    left.bounds(),
+                    right.bounds()
+                );
+            }
+        }
+    }
+
+    fn canvas_bounds_overlap(left: Bounds<Pixels>, right: Bounds<Pixels>) -> bool {
+        let left_max_x = left.origin.x + left.size.width;
+        let left_max_y = left.origin.y + left.size.height;
+        let right_max_x = right.origin.x + right.size.width;
+        let right_max_y = right.origin.y + right.size.height;
+
+        left.origin.x < right_max_x
+            && left_max_x > right.origin.x
+            && left.origin.y < right_max_y
+            && left_max_y > right.origin.y
+    }
+
     #[test]
     fn projects_jellyflow_edge_route_hints_into_canvas_routes() {
         let mut edge = Edge::new(
@@ -5088,6 +5678,15 @@ mod tests {
         let semantic_registry = NodeKitRegistry::builtin().node_registry();
         let projection_store =
             measurement_store_with_projection_fallback(&make_demo_store(), &semantic_registry);
+        let (projection_document, _) =
+            project_store(&projection_store).expect("projection fallback graph projects");
+        let projection_node = projection_document
+            .node(&NodeId::from(canvas_node_id(&transform)))
+            .expect("projection fallback transform canvas node");
+        let projection_node_size = JellySize {
+            width: projection_node.size.width.as_f32(),
+            height: projection_node.size.height.as_f32(),
+        };
         let expected = projection_store
             .resolve_node_handle_measurement(ConnectionHandleRef::new(
                 transform,
@@ -5095,7 +5694,7 @@ mod tests {
                 PortDirection::In,
             ))
             .bounds
-            .map(handle_position_from_bounds)
+            .map(|bounds| handle_position_from_bounds(bounds, projection_node_size))
             .expect("projection fallback prompt handle");
         assert_eq!(
             measured_store.invalidate_node_internals(NodeInternalsInvalidation::one(

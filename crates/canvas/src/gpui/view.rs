@@ -2,7 +2,7 @@ use super::frame::{CanvasPreparedPaintFrame, prepaint_canvas_frame};
 use super::input::{CanvasEditorInputHandler, register_canvas_editor_input};
 use super::model::{CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme};
 use super::painter::paint_canvas_frame;
-use open_gpui::{Canvas, Context, Entity, FocusHandle, canvas};
+use open_gpui::{Bounds, Canvas, Context, Entity, FocusHandle, Pixels, canvas};
 
 pub fn canvas_view(
     model: CanvasPaintModel,
@@ -50,7 +50,7 @@ pub fn canvas_editor_view_with_frame<T>(
     handler: CanvasEditorInputHandler<T>,
     options: CanvasPaintOptions,
     theme: CanvasPaintTheme,
-    on_frame: impl Fn(&mut T, &CanvasPreparedPaintFrame, &mut Context<T>) + 'static,
+    on_frame: impl Fn(&mut T, Bounds<Pixels>, &CanvasPreparedPaintFrame, &mut Context<T>) + 'static,
 ) -> Canvas<CanvasPreparedPaintFrame>
 where
     T: 'static,
@@ -62,7 +62,7 @@ where
         },
         move |bounds, frame, window, cx| {
             register_canvas_editor_input(entity.clone(), focus_handle, bounds, handler, window);
-            entity.update(cx, |target, cx| on_frame(target, &frame, cx));
+            entity.update(cx, |target, cx| on_frame(target, bounds, &frame, cx));
             paint_canvas_frame(bounds, &model, &frame, theme, window, cx);
         },
     )

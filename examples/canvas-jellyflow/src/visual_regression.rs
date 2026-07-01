@@ -20,6 +20,7 @@ pub(super) fn canvas_host_visual_interaction_report() -> OpenGpuiHostVisualInter
         let (store, document, _projection) =
             project_kit_fixture(&fixture.kit_key, &fixture.fixture_key)
                 .expect("product fixture projects into canvas document");
+        report.add_node_bounds_overlap_count(node_bounds_overlap_count(&document));
         let measured_store = measurement_store_with_projection_fallback(&store, &semantic_registry);
 
         for canvas_node in document.nodes() {
@@ -81,6 +82,11 @@ fn visual_surface_report_row(
         && surface.document_bounds.size.height <= canvas_node.size.height.as_f32()
         && surface.document_bounds.size.width > 0.0
         && surface.document_bounds.size.height > 0.0;
+    let content_readable = renderer_min_readable_size(&surface.node_kind, &surface.renderer_key)
+        .is_none_or(|(min_width, min_height)| {
+            canvas_node.size.width.as_f32() >= min_width
+                && canvas_node.size.height.as_f32() >= min_height
+        });
     let stale_regions = if measured_store.node_measurement_status(node_id).is_fresh() {
         0
     } else {
@@ -100,10 +106,22 @@ fn visual_surface_report_row(
         source,
     )
     .with_selection(surface.selected)
-    .with_content_bounds(content_visible, true, within_node_bounds)
+    .with_content_bounds(content_visible, content_readable, within_node_bounds)
     .with_handle_overlap_count(handle_overlap_count(canvas_node))
     .with_stale_measured_regions(stale_regions)
     .with_repeatable_anchor_coverage(repeatable_rows, repeatable_rows_with_anchors)
+}
+
+fn renderer_min_readable_size(node_kind: &str, renderer_key: &str) -> Option<(f32, f32)> {
+    match (node_kind, renderer_key) {
+        ("demo.llm", "decision-card") => Some((292.0, 246.0)),
+        (_, "decision-card") => Some((240.0, 150.0)),
+        (_, "shader-card") => Some((324.0, 244.0)),
+        (_, "table-card") => Some((372.0, 292.0)),
+        (_, "topic-card") => Some((278.0, 190.0)),
+        (_, "source-card") => Some((286.0, 190.0)),
+        _ => None,
+    }
 }
 
 fn host_renderer_source(
@@ -145,6 +163,41 @@ fn handle_overlap_count(node: &CanvasNode) -> usize {
                 && y < height - rail_padding
         })
         .count()
+}
+
+fn node_bounds_overlap_count(document: &CanvasDocument) -> usize {
+    let bounds = document
+        .nodes()
+        .filter(|node| !node.hidden)
+        .map(CanvasNode::bounds)
+        .collect::<Vec<_>>();
+    let mut overlaps = 0;
+
+    for (index, left) in bounds.iter().enumerate() {
+        for right in bounds.iter().skip(index + 1) {
+            if bounds_overlap(*left, *right) {
+                overlaps += 1;
+            }
+        }
+    }
+
+    overlaps
+}
+
+fn bounds_overlap(left: Bounds<Pixels>, right: Bounds<Pixels>) -> bool {
+    let left_min_x = left.origin.x.as_f32();
+    let left_min_y = left.origin.y.as_f32();
+    let left_max_x = left_min_x + left.size.width.as_f32();
+    let left_max_y = left_min_y + left.size.height.as_f32();
+    let right_min_x = right.origin.x.as_f32();
+    let right_min_y = right.origin.y.as_f32();
+    let right_max_x = right_min_x + right.size.width.as_f32();
+    let right_max_y = right_min_y + right.size.height.as_f32();
+
+    left_min_x < right_max_x
+        && left_max_x > right_min_x
+        && left_min_y < right_max_y
+        && left_max_y > right_min_y
 }
 
 fn invalid_hover_feedback_stays_inside_bounds() -> bool {
