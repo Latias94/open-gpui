@@ -1,0 +1,236 @@
+use super::*;
+
+#[test]
+fn component_api_inventory_covers_official_gallery_catalog() {
+    use std::collections::BTreeSet;
+
+    let inventory_names = COMPONENT_API_INVENTORY
+        .iter()
+        .map(|entry| entry.component.to_string())
+        .collect::<BTreeSet<_>>();
+    let catalog_names = official_component_catalog_names_from_gallery_source()
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+
+    let missing = catalog_names
+        .difference(&inventory_names)
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        missing.is_empty(),
+        "official Components catalog entries need public API inventory rows: {missing:?}"
+    );
+
+    for overlay in [
+        "Tooltip",
+        "HoverCard",
+        "Popover",
+        "Dialog",
+        "AlertDialog",
+        "Sheet",
+        "Menu",
+        "ContextMenu",
+    ] {
+        assert!(
+            inventory_names.contains(overlay),
+            "overlay component `{overlay}` needs a public API inventory row"
+        );
+    }
+}
+
+#[test]
+fn component_api_inventory_rows_are_unique_and_classified() {
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in COMPONENT_API_INVENTORY {
+        assert!(
+            seen.insert(entry.component),
+            "component API inventory contains duplicate row for `{}`",
+            entry.component
+        );
+        assert!(
+            entry.has_classification(),
+            "{} must document at least one API ownership bucket or no-interaction note",
+            entry.component
+        );
+        assert!(
+            entry.renderer_neutral_state,
+            "{} resolved state must remain renderer-neutral",
+            entry.component
+        );
+    }
+}
+
+#[test]
+fn component_api_inventory_tracks_public_method_surface() {
+    for entry in COMPONENT_API_INVENTORY {
+        let source_methods = component_public_methods_from_source(entry.component);
+        let expected_methods = component_public_methods(entry.component)
+            .iter()
+            .map(|method| method.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            source_methods, expected_methods,
+            "{} public method surface drifted; update COMPONENT_API_INVENTORY and the method baseline together",
+            entry.component
+        );
+    }
+}
+
+#[test]
+fn component_api_inventory_uses_stable_ownership_vocabulary() {
+    const CURRENT_CALLBACK_NAMES: &[&str] = &[
+        "on_activate",
+        "on_action",
+        "on_cancel",
+        "on_change",
+        "on_click",
+        "on_close",
+        "on_cell_edit_change",
+        "on_column_order_change",
+        "on_column_sizing_change",
+        "on_dismiss",
+        "on_move",
+        "on_open_change",
+        "on_query_change",
+        "on_remove",
+        "on_row_activate",
+        "on_row_selection_change",
+        "on_row_expansion_request",
+        "on_select",
+        "on_selected_values_change",
+        "on_selection_change",
+        "on_sort_requested",
+        "on_toggle",
+    ];
+    const CURRENT_LEGACY_SEED_INPUTS: &[(&str, &str)] = &[];
+
+    for entry in COMPONENT_API_INVENTORY {
+        for seed in entry.default_seeds {
+            assert!(
+                seed.builder.starts_with("default_"),
+                "{} default seed `{}` must use default_* naming",
+                entry.component,
+                seed.builder
+            );
+            assert!(
+                !seed.runtime_value.is_empty(),
+                "{} default seed `{}` must name the adapter-owned runtime value it seeds",
+                entry.component,
+                seed.builder
+            );
+        }
+
+        for callback in entry.callbacks {
+            assert!(
+                CURRENT_CALLBACK_NAMES.contains(&callback.name),
+                "{} callback `{}` is not part of the current inventory vocabulary",
+                entry.component,
+                callback.name
+            );
+            assert!(
+                !callback.payload.is_empty(),
+                "{} callback `{}` must document its payload type",
+                entry.component,
+                callback.name
+            );
+        }
+
+        for legacy_seed in entry.legacy_seed_inputs {
+            assert!(
+                CURRENT_LEGACY_SEED_INPUTS.contains(&(entry.component, *legacy_seed)),
+                "{} legacy seed `{}` needs an explicit migration decision before U2",
+                entry.component,
+                legacy_seed
+            );
+        }
+    }
+}
+
+#[test]
+fn component_api_inventory_keeps_regression_sentinels_for_stateful_components() {
+    assert_inventory_contains_controlled_input("TextInput", "value");
+    assert_inventory_contains_callback("TextInput", "on_change", "String");
+    assert_inventory_contains_controlled_input("Textarea", "value");
+    assert_inventory_contains_callback("Textarea", "on_change", "String");
+    assert_inventory_contains_controlled_input("Switch", "checked");
+    assert_inventory_contains_callback("Switch", "on_change", "bool");
+    assert_inventory_contains_default_seed("Popover", "default_open", "open");
+    assert_inventory_contains_callback("Popover", "on_open_change", "bool");
+    assert_inventory_contains_controlled_input("Select", "selected");
+    assert_inventory_contains_controlled_input("Select", "active");
+    assert_inventory_contains_callback("Select", "on_select", "SelectSelection");
+    assert_inventory_contains_default_seed("Combobox", "default_query", "query");
+    assert_inventory_contains_controlled_input("Command", "query");
+    assert_inventory_contains_controlled_input("Command", "selected_values");
+    assert_inventory_contains_controlled_input("Command", "index_snapshot");
+    assert_inventory_contains_default_seed("Command", "default_query", "query");
+    assert_inventory_contains_callback("Command", "on_query_change", "String");
+    assert_inventory_contains_callback(
+        "Command",
+        "on_selected_values_change",
+        "CommandSelectionChange",
+    );
+    assert_inventory_contains_default_seed("Tabs", "default_selected", "selected");
+    assert_inventory_contains_default_seed("RadioGroup", "default_selected", "selected");
+    assert_inventory_contains_default_seed("Toolbar", "default_focused", "focused");
+    assert_inventory_contains_default_seed("Sidebar", "default_focused", "focused");
+    assert_inventory_contains_default_seed("Tree", "default_selected", "selected");
+    assert_inventory_contains_default_seed("Tree", "default_focused", "focused");
+    assert_inventory_contains_callback("Tree", "on_toggle", "TreeToggle");
+    assert_inventory_contains_callback("Tree", "on_move", "TreeMove");
+    assert_inventory_contains_default_seed(
+        "VirtualizedList",
+        "default_active_index",
+        "active_index",
+    );
+    assert_inventory_contains_default_seed(
+        "VirtualizedList",
+        "default_selected_index",
+        "selected_index",
+    );
+    assert_inventory_contains_callback(
+        "VirtualizedList",
+        "on_activate",
+        "VirtualizedListActivation",
+    );
+    assert_inventory_contains_default_seed("Menu", "default_focused_value", "focused_value");
+    assert_inventory_contains_default_seed("ContextMenu", "default_focused_value", "focused_value");
+    assert_inventory_contains_default_seed("Table", "default_focused_row", "focused_row");
+    assert_inventory_contains_controlled_input("TableGlobalFilter", "query");
+    assert_inventory_contains_default_seed("TableGlobalFilter", "default_query", "query");
+    assert_inventory_contains_callback("TableGlobalFilter", "on_change", "TableGlobalFilterChange");
+    assert_inventory_contains_controlled_input("TablePredicateFilter", "operator");
+    assert_inventory_contains_controlled_input("TablePredicateFilter", "value");
+    assert_inventory_contains_default_seed("TablePredicateFilter", "default_operator", "operator");
+    assert_inventory_contains_default_seed("TablePredicateFilter", "default_value", "value");
+    assert_inventory_contains_callback(
+        "TablePredicateFilter",
+        "on_change",
+        "TablePredicateFilterChange",
+    );
+    assert_inventory_contains_controlled_input("TableColumnVisibility", "visibility");
+    assert_inventory_contains_controlled_input("TableColumnVisibility", "open");
+    assert_inventory_contains_default_seed(
+        "TableColumnVisibility",
+        "default_visibility",
+        "visibility",
+    );
+    assert_inventory_contains_default_seed("TableColumnVisibility", "default_open", "open");
+    assert_inventory_contains_callback(
+        "TableColumnVisibility",
+        "on_change",
+        "TableColumnVisibilityChange",
+    );
+    assert_inventory_contains_callback("Table", "on_row_activate", "TableRowActivation");
+    assert_inventory_contains_callback(
+        "Table",
+        "on_row_selection_change",
+        "TableRowSelectionChange",
+    );
+    assert_inventory_contains_callback(
+        "Table",
+        "on_row_expansion_request",
+        "TableRowExpansionToggle",
+    );
+    assert_inventory_contains_callback("Table", "on_column_order_change", "TableColumnOrderChange");
+}
