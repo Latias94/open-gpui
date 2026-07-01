@@ -21,36 +21,35 @@ use jellyflow::{
             measurement::{NodeHandleMeasurementSource, NodeMeasurement, NodeMeasurementStatus},
         },
         schema::{
-            ActionIntent, MenuSurface, NodeChromeKind, NodeKindViewDescriptor, NodeKitRegistry,
-            NodeRegistry, NodeSurfaceProjection, NodeSurfaceSlotDescriptor, NodeSurfaceSlotKind,
+            MenuSurface, NodeChromeKind, NodeKindViewDescriptor, NodeKitRegistry, NodeRegistry,
+            NodeSurfaceProjection, NodeSurfaceSlotDescriptor, NodeSurfaceSlotKind,
             NodeSurfaceSlotProjection,
         },
     },
 };
 use jellyflow_open_gpui::open_gpui_node_renderer_context;
 use jellyflow_open_gpui::{
-    OpenGpuiActionDispatchPlan, OpenGpuiActionPlan, OpenGpuiActionSurface,
-    OpenGpuiAuthoringController, OpenGpuiAuthoringOutcome, OpenGpuiAuthoringSkipReason,
-    OpenGpuiBlackboardPlan, OpenGpuiBoundsCollector, OpenGpuiControlEditPlan,
-    OpenGpuiControlEventValue, OpenGpuiControlPlan, OpenGpuiControlPrimitive,
-    OpenGpuiDroppedWireInsertError, OpenGpuiDynamicPortPolicy, OpenGpuiInspectorPlan,
-    OpenGpuiInspectorSurface, OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource,
-    OpenGpuiMeasurementContext, OpenGpuiMeasurementId,
-    OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource, OpenGpuiMenuPlan,
-    OpenGpuiNodeRendererContext, OpenGpuiNodeRendererRegistry, OpenGpuiNodeRendererResolution,
-    OpenGpuiNodeRendererState, OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
+    OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiAuthoringController,
+    OpenGpuiAuthoringOutcome, OpenGpuiAuthoringSkipReason, OpenGpuiBlackboardPlan,
+    OpenGpuiBoundsCollector, OpenGpuiControlEditPlan, OpenGpuiControlEventValue,
+    OpenGpuiControlPlan, OpenGpuiControlPrimitive, OpenGpuiDroppedWireInsertError,
+    OpenGpuiDynamicPortPolicy, OpenGpuiInspectorPlan, OpenGpuiInspectorSurface,
+    OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource, OpenGpuiMeasurementContext,
+    OpenGpuiMeasurementId, OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
+    OpenGpuiMenuPlan, OpenGpuiNodeRendererContext, OpenGpuiNodeRendererRegistry,
+    OpenGpuiNodeRendererResolution, OpenGpuiNodeRendererState,
+    OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout, OpenGpuiRepeatableActionPlan,
-    OpenGpuiRepeatableEditError, OpenGpuiRepeatableEditPlan,
     OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
     OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
     OpenGpuiRepeatableSurfaceLayout as NodeRepeatableSurfaceLayout,
     OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection, OpenGpuiViewBounds,
     OpenGpuiViewPoint, OpenGpuiViewSize, apply_dropped_wire_insert, control_option_key,
     control_selected_option_key, layout_pass_measurement_from_regions, measured_surface_anchors,
-    plan_repeatable_action, project_actions_for_surface, project_blackboards_for_descriptor,
-    project_dropped_wire_menu, project_inspectors_for_surface, project_menu,
-    project_node_measurement, project_slot_controls, projected_node_surface_graph_layout,
-    repeatable_item_projection, repeatable_surface_projection, resolve_inspector_target_bounds,
+    project_actions_for_surface, project_blackboards_for_descriptor, project_dropped_wire_menu,
+    project_inspectors_for_surface, project_menu, project_node_measurement, project_slot_controls,
+    projected_node_surface_graph_layout, repeatable_item_projection, repeatable_surface_projection,
+    resolve_inspector_target_bounds,
 };
 use open_gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, MouseButton, MouseDownEvent,
@@ -723,7 +722,7 @@ impl JellyflowCanvasView {
         action: OpenGpuiRepeatableActionPlan,
         cx: &mut Context<Self>,
     ) {
-        match apply_repeatable_action_to_store(
+        match OpenGpuiAuthoringController.apply_repeatable_action_to_store(
             &mut self.store,
             &self.semantic_registry,
             node_id,
@@ -760,21 +759,49 @@ impl JellyflowCanvasView {
                     return;
                 }
                 if let Some(node_id) = node_id {
-                    if let Some(repeatable) = repeatable_action_plan_from_dispatch(
+                    match OpenGpuiAuthoringController.plan_repeatable_action_dispatch(
                         &self.store,
                         &self.semantic_registry,
-                        node_id,
+                        Some(node_id),
                         &plan,
+                        |context| {
+                            Some(demo_repeatable_add_item(
+                                &context.collection_key,
+                                context.item_count,
+                            ))
+                        },
                     ) {
-                        self.dispatch_repeatable_action(node_id, repeatable, cx);
+                        Ok(OpenGpuiAuthoringOutcome::Planned(repeatable)) => {
+                            self.dispatch_repeatable_action(node_id, repeatable, cx);
+                            return;
+                        }
+                        Ok(OpenGpuiAuthoringOutcome::Skipped(reason)) => {
+                            report_authoring_skip(reason);
+                            return;
+                        }
+                        Err(error) => {
+                            eprintln!("semantic action planning failed: {error}");
+                            return;
+                        }
+                    }
+                } else if let Ok(OpenGpuiAuthoringOutcome::Skipped(reason)) =
+                    OpenGpuiAuthoringController.plan_repeatable_action_dispatch(
+                        &self.store,
+                        &self.semantic_registry,
+                        None,
+                        &plan,
+                        |_| None,
+                    )
+                {
+                    if matches!(
+                        reason,
+                        OpenGpuiAuthoringSkipReason::MissingActionNodeTarget { .. }
+                            | OpenGpuiAuthoringSkipReason::MissingRepeatableCollection { .. }
+                            | OpenGpuiAuthoringSkipReason::MissingRepeatableReorderTarget { .. }
+                    ) {
+                        report_authoring_skip(reason);
                         return;
                     }
-                } else if is_repeatable_action_intent(&plan.intent) {
-                    eprintln!(
-                        "semantic action skipped: repeatable action `{}` has no node target",
-                        plan.action_key
-                    );
-                    return;
                 }
                 eprintln!(
                     "semantic action skipped: unsupported action executor for {} {:?} {:?}",
@@ -1041,85 +1068,6 @@ fn apply_demo_dropped_wire_insert(
         ),
     );
     Ok(outcome)
-}
-
-fn apply_repeatable_action_to_store(
-    store: &mut NodeGraphStore,
-    registry: &NodeRegistry,
-    node_id: JellyNodeId,
-    action: OpenGpuiRepeatableActionPlan,
-) -> Result<Option<OpenGpuiRepeatableEditPlan>, OpenGpuiRepeatableEditError> {
-    let node = store
-        .graph()
-        .nodes()
-        .get(&node_id)
-        .cloned()
-        .ok_or_else(|| {
-            OpenGpuiRepeatableEditError::InvalidEdit(format!("missing node {node_id:?}"))
-        })?;
-    let descriptor = registry.view_descriptor(&node.kind).ok_or_else(|| {
-        OpenGpuiRepeatableEditError::InvalidEdit(format!(
-            "missing descriptor for node kind `{}`",
-            node.kind.0
-        ))
-    })?;
-    let Some(plan) = plan_repeatable_action(&descriptor, store.graph(), node_id, &node, action)?
-    else {
-        return Ok(None);
-    };
-
-    store
-        .dispatch_transaction(&plan.transaction)
-        .map_err(|error| OpenGpuiRepeatableEditError::InvalidEdit(error.to_string()))?;
-    store.invalidate_node_internals(plan.invalidation.clone());
-    Ok(Some(plan))
-}
-
-fn repeatable_action_plan_from_dispatch(
-    store: &NodeGraphStore,
-    registry: &NodeRegistry,
-    node_id: JellyNodeId,
-    plan: &OpenGpuiActionDispatchPlan,
-) -> Option<OpenGpuiRepeatableActionPlan> {
-    match &plan.intent {
-        ActionIntent::AddRepeatableItem { collection_key } => {
-            let item_count =
-                repeatable_item_count_for_node(store, registry, node_id, collection_key)
-                    .unwrap_or_default();
-            Some(OpenGpuiRepeatableActionPlan::Add {
-                collection_key: collection_key.clone(),
-                item: demo_repeatable_add_item(collection_key, item_count),
-            })
-        }
-        ActionIntent::RemoveRepeatableItem {
-            collection_key,
-            item_id,
-        } => Some(OpenGpuiRepeatableActionPlan::Remove {
-            collection_key: collection_key.clone(),
-            item_id: item_id.clone(),
-        }),
-        ActionIntent::ReorderRepeatableItem { .. } => {
-            eprintln!(
-                "semantic action skipped: `{}` does not include a target reorder index",
-                plan.action_key
-            );
-            None
-        }
-        _ => None,
-    }
-}
-
-fn repeatable_item_count_for_node(
-    store: &NodeGraphStore,
-    registry: &NodeRegistry,
-    node_id: JellyNodeId,
-    collection_key: &str,
-) -> Option<usize> {
-    let node = store.graph().nodes().get(&node_id)?;
-    let descriptor = registry.view_descriptor(&node.kind)?;
-    descriptor
-        .repeatable_collection(collection_key)
-        .map(|collection| collection.item_projections(&node.data).len())
 }
 
 fn render_selected_inspector_panel(
@@ -2292,15 +2240,6 @@ fn action_button_label(action: &OpenGpuiActionPlan) -> String {
         .as_ref()
         .map(|icon| format!("{icon} {}", action.label))
         .unwrap_or_else(|| action.label.clone())
-}
-
-fn is_repeatable_action_intent(intent: &ActionIntent) -> bool {
-    matches!(
-        intent,
-        ActionIntent::AddRepeatableItem { .. }
-            | ActionIntent::RemoveRepeatableItem { .. }
-            | ActionIntent::ReorderRepeatableItem { .. }
-    )
 }
 
 fn action_summary_label(action: &OpenGpuiActionPlan) -> String {
@@ -4572,10 +4511,24 @@ mod tests {
                 blackboard_key: "blackboard.shader.properties".to_owned(),
             }
         );
-        let repeatable =
-            repeatable_action_plan_from_dispatch(&store, &semantic_registry, node_id, &dispatch)
-                .expect("blackboard add action should map to repeatable add");
-        apply_repeatable_action_to_store(&mut store, &semantic_registry, node_id, repeatable)
+        let repeatable = OpenGpuiAuthoringController
+            .plan_repeatable_action_dispatch(
+                &store,
+                &semantic_registry,
+                Some(node_id),
+                &dispatch,
+                |context| {
+                    Some(demo_repeatable_add_item(
+                        &context.collection_key,
+                        context.item_count,
+                    ))
+                },
+            )
+            .expect("blackboard add action should map")
+            .into_plan()
+            .expect("blackboard add action should map to repeatable add");
+        OpenGpuiAuthoringController
+            .apply_repeatable_action_to_store(&mut store, &semantic_registry, node_id, repeatable)
             .expect("blackboard add repeatable mutation")
             .expect("blackboard add edit plan");
         let updated_shader = store
@@ -5219,21 +5172,22 @@ mod tests {
             project_schema_node("demo.shader.mix").expect("shader schema node projects");
         let registry = NodeKitRegistry::builtin().node_registry();
 
-        let add = apply_repeatable_action_to_store(
-            &mut store,
-            &registry,
-            node_id,
-            OpenGpuiRepeatableActionPlan::Add {
-                collection_key: "shader.inputs".to_owned(),
-                item: serde_json::json!({
-                    "name": "Input 4",
-                    "ty": "vec4",
-                    "port": "input_4"
-                }),
-            },
-        )
-        .expect("add repeatable")
-        .expect("changed add");
+        let add = OpenGpuiAuthoringController
+            .apply_repeatable_action_to_store(
+                &mut store,
+                &registry,
+                node_id,
+                OpenGpuiRepeatableActionPlan::Add {
+                    collection_key: "shader.inputs".to_owned(),
+                    item: serde_json::json!({
+                        "name": "Input 4",
+                        "ty": "vec4",
+                        "port": "input_4"
+                    }),
+                },
+            )
+            .expect("add repeatable")
+            .expect("changed add");
         assert!(add.diagnostics.iter().any(|diagnostic| {
             diagnostic.collection_key == "shader.inputs"
                 && diagnostic.item_id == "input_4"
@@ -5246,18 +5200,19 @@ mod tests {
             serde_json::json!("input_4")
         );
 
-        apply_repeatable_action_to_store(
-            &mut store,
-            &registry,
-            node_id,
-            OpenGpuiRepeatableActionPlan::Reorder {
-                collection_key: "shader.inputs".to_owned(),
-                item_id: "factor".to_owned(),
-                to_index: 0,
-            },
-        )
-        .expect("reorder repeatable")
-        .expect("changed reorder");
+        OpenGpuiAuthoringController
+            .apply_repeatable_action_to_store(
+                &mut store,
+                &registry,
+                node_id,
+                OpenGpuiRepeatableActionPlan::Reorder {
+                    collection_key: "shader.inputs".to_owned(),
+                    item_id: "factor".to_owned(),
+                    to_index: 0,
+                },
+            )
+            .expect("reorder repeatable")
+            .expect("changed reorder");
         let node = store
             .graph()
             .nodes()
@@ -5281,17 +5236,18 @@ mod tests {
             }]))
             .expect("seed incident edge");
 
-        apply_repeatable_action_to_store(
-            &mut store,
-            &registry,
-            node_id,
-            OpenGpuiRepeatableActionPlan::Remove {
-                collection_key: "shader.inputs".to_owned(),
-                item_id: "factor".to_owned(),
-            },
-        )
-        .expect("remove repeatable")
-        .expect("changed remove");
+        OpenGpuiAuthoringController
+            .apply_repeatable_action_to_store(
+                &mut store,
+                &registry,
+                node_id,
+                OpenGpuiRepeatableActionPlan::Remove {
+                    collection_key: "shader.inputs".to_owned(),
+                    item_id: "factor".to_owned(),
+                },
+            )
+            .expect("remove repeatable")
+            .expect("changed remove");
         let node = store
             .graph()
             .nodes()
