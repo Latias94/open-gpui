@@ -21,6 +21,9 @@ pub const COMPONENT_CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
         summary: "The component contract registry, crate root, and prelude exports stay aligned for every shipped component type.",
         evidence: &[
             "crates/ui_components/src/component_contract/mod.rs",
+            "crates/ui_components/src/component_contract/rows.rs",
+            "crates/ui_components/src/component_contract/projections.rs",
+            "crates/ui_components/src/component_contract/api_inventory.rs",
             "crates/ui_components/src/lib.rs",
             "crates/ui_components/src/prelude.rs",
             "crates/ui_components/tests/public_surface.rs",

@@ -336,13 +336,17 @@ render visible samples with stable debug selectors.
 The public API inventory gate lives in `crates/ui_components/tests/public_surface.rs`. Its focused
 contract modules live under `crates/ui_components/tests/public_surface/`, while shared manifest
 projectors live in `crates/ui_components/tests/support/public_surface/mod.rs`. The product source
-of truth lives in `crates/ui_components/src/component_contract/mod.rs`; tests and gallery consume
-that typed registry instead of reading gallery source strings for shipped status. The component
-crate root and prelude both re-export the curated default surface from
+of truth lives under `crates/ui_components/src/component_contract/`: `rows.rs` owns canonical
+registry rows, `projections.rs` owns query APIs, `api_inventory.rs` owns public API inventory and
+method baselines, `surfaces.rs` owns adjacent public-surface rows, and `source_mapping.rs` owns
+source-owner projections. Tests and gallery consume that typed registry instead of reading gallery
+source strings for shipped status. The component crate root and prelude both re-export the curated default surface from
 `crates/ui_components/src/public_api/default.rs`; GPUI runtime adapter helpers remain explicitly
 namespaced under `open_gpui_ui_components::gpui_adapter`. Key sentinels include
 `component_api_inventory_covers_official_gallery_catalog`,
 `component_api_inventory_uses_stable_ownership_vocabulary`, and
+`component_contract_projection_functions_delegate_to_registry_rows`,
+`component_contract_registry_is_split_by_responsibility`, and
 `root_and_prelude_exports_match_registry_default_surface_intent`. Run the focused proof with:
 
 ```sh

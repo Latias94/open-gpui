@@ -5,7 +5,9 @@ fn component_contract_docs_match_current_public_surface_vocabulary() {
     for required in [
         "components::catalog::COMPONENT_CATALOG",
         "open_gpui_ui_components::component_contract",
-        "component_contract/mod.rs",
+        "component_contract/rows.rs",
+        "component_contract/projections.rs",
+        "component_contract/api_inventory.rs",
         "components/catalog.rs",
         "components/render.rs",
         "components/samples/",

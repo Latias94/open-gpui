@@ -312,10 +312,13 @@ A component is official only when it satisfies the current-crate completion cont
 - `docs/verification.md` names any manual or automated gate added by the component.
 
 `open_gpui_ui_components::component_contract` owns the current product registry for this contract;
-its current source home is `crates/ui_components/src/component_contract/mod.rs`. The next registry
-refactor should split that module by product-contract responsibility: entry types, canonical rows,
-projection APIs, source mapping, public API inventory, docs/gallery status, and validation helpers.
-That split is a shared fact-source cleanup, not a broad component-file-size cleanup.
+its source home is the `crates/ui_components/src/component_contract/` module family.
+`component_contract/mod.rs` is only the facade; `component_contract/types.rs` owns row types,
+`component_contract/rows.rs` owns canonical registry rows, `component_contract/projections.rs`
+owns query APIs, `component_contract/source_mapping.rs` owns source-owner projections,
+`component_contract/surfaces.rs` owns adjacent public-surface rows, and
+`component_contract/api_inventory.rs` owns public API inventory and method baselines. That split is
+a shared fact-source cleanup, not a broad component-file-size cleanup.
 That registry classifies official components, official recipes, renderer-neutral state contracts,
 GPUI adapter helpers, public anatomy, diagnostics, and removed compatibility targets. It also
 records API inventory rows, source homes, docs tokens, gallery status, and default-export intent.

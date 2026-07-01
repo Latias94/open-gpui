@@ -1578,7 +1578,17 @@ fn components_page_samples_expose_component_metadata() {
     assert!(
         gates[0]
             .evidence
-            .contains(&"crates/ui_components/src/component_contract/mod.rs")
+            .contains(&"crates/ui_components/src/component_contract/rows.rs")
+    );
+    assert!(
+        gates[0]
+            .evidence
+            .contains(&"crates/ui_components/src/component_contract/projections.rs")
+    );
+    assert!(
+        gates[0]
+            .evidence
+            .contains(&"crates/ui_components/src/component_contract/api_inventory.rs")
     );
     assert!(
         gates[0]

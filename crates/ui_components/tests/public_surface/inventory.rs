@@ -75,6 +75,84 @@ fn component_contract_registry_covers_inventory_and_adjacent_surfaces() {
 }
 
 #[test]
+fn component_contract_projection_functions_delegate_to_registry_rows() {
+    for entry in COMPONENT_CONTRACT_REGISTRY {
+        let projected = component_contract_entry(entry.name)
+            .unwrap_or_else(|| panic!("missing canonical registry row for `{}`", entry.name));
+        assert_eq!(
+            projected, entry,
+            "{} projection should return the canonical registry row",
+            entry.name
+        );
+        assert_eq!(component_contract_family(entry.name), entry.family);
+        assert_eq!(
+            component_contract_gallery_status(entry.name),
+            entry.gallery_status
+        );
+        assert_eq!(
+            component_contract_default_export(entry.name),
+            entry.default_export
+        );
+        assert_eq!(
+            component_contract_docs_status(entry.name),
+            Some(entry.docs_status)
+        );
+        assert_eq!(component_contract_docs_token(entry.name), entry.docs_token);
+        assert_eq!(
+            component_contract_source_home(entry.name),
+            Some(entry.source_home)
+        );
+        assert_eq!(component_source_inputs(entry.name), entry.source_inputs);
+    }
+}
+
+#[test]
+fn component_contract_registry_is_split_by_responsibility() {
+    let contract_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("component_contract");
+    let expected_owners = [
+        "types.rs",
+        "rows.rs",
+        "projections.rs",
+        "surfaces.rs",
+        "api_inventory.rs",
+        "source_mapping.rs",
+    ];
+
+    for owner in expected_owners {
+        assert!(
+            contract_dir.join(owner).is_file(),
+            "component contract owner `{owner}` should exist"
+        );
+    }
+
+    let facade = read_source_file(&contract_dir.join("mod.rs"));
+    for stale_single_file_fact in [
+        "ComponentContractEntry {",
+        "ComponentApiInventoryEntry {",
+        "PublicSurfaceOwnerEntry {",
+        "pub fn component_public_methods",
+        "pub fn component_source_inputs",
+    ] {
+        assert!(
+            !facade.contains(stale_single_file_fact),
+            "component_contract/mod.rs should stay a facade, not own `{stale_single_file_fact}`"
+        );
+    }
+
+    let rows = read_source_file(&contract_dir.join("rows.rs"));
+    assert!(rows.contains("COMPONENT_CONTRACT_REGISTRY"));
+    let inventory = read_source_file(&contract_dir.join("api_inventory.rs"));
+    assert!(inventory.contains("COMPONENT_API_INVENTORY"));
+    assert!(inventory.contains("component_public_methods"));
+    let projections = read_source_file(&contract_dir.join("projections.rs"));
+    assert!(projections.contains("component_contract_gallery_status"));
+    let source_mapping = read_source_file(&contract_dir.join("source_mapping.rs"));
+    assert!(source_mapping.contains("component_source_inputs"));
+}
+
+#[test]
 fn component_contract_registry_aligns_compatibility_lists() {
     let overlays = OFFICIAL_OVERLAY_COMPONENTS
         .iter()
