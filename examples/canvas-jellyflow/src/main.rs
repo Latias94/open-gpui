@@ -26,26 +26,28 @@ use jellyflow::{
     },
 };
 use jellyflow_open_gpui::{
-    OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiBoundsCollector, OpenGpuiControlPlan,
-    OpenGpuiControlPrimitive, OpenGpuiDynamicPortPolicy, OpenGpuiInspectorPlan,
-    OpenGpuiInspectorSurface, OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource,
-    OpenGpuiMeasurementContext, OpenGpuiMeasurementId,
-    OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource, OpenGpuiMenuPlan,
-    OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
+    OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiAuthoringController,
+    OpenGpuiAuthoringOutcome, OpenGpuiAuthoringSkipReason, OpenGpuiBoundsCollector,
+    OpenGpuiControlEditPlan, OpenGpuiControlPlan, OpenGpuiControlPrimitive,
+    OpenGpuiDynamicPortPolicy, OpenGpuiInspectorPlan, OpenGpuiInspectorSurface,
+    OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource, OpenGpuiMeasurementContext,
+    OpenGpuiMeasurementId, OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
+    OpenGpuiMenuPlan, OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout,
     OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
     OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
     OpenGpuiRepeatableSurfaceLayout as NodeRepeatableSurfaceLayout,
     OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection, OpenGpuiViewBounds,
-    OpenGpuiViewPoint, OpenGpuiViewSize, layout_pass_measurement_from_regions,
-    measured_surface_anchors, project_actions_for_surface, project_inspectors_for_surface,
-    project_menu, project_node_measurement, project_slot_controls,
+    OpenGpuiViewPoint, OpenGpuiViewSize, control_option_key, control_selected_option_key,
+    layout_pass_measurement_from_regions, measured_surface_anchors, project_actions_for_surface,
+    project_inspectors_for_surface, project_menu, project_node_measurement, project_slot_controls,
     projected_node_surface_graph_layout, repeatable_item_projection, repeatable_surface_projection,
     resolve_inspector_target_bounds,
 };
 use open_gpui::{
-    AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Pixels, Window,
-    WindowBounds, WindowOptions, div, measured_element, point, prelude::*, px, rgb, size,
+    AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, MouseButton, MouseDownEvent,
+    Pixels, WeakEntity, Window, WindowBounds, WindowOptions, div, measured_element, point,
+    prelude::*, px, rgb, size,
 };
 use open_gpui_canvas::{
     CanvasDocument, CanvasEditor, CanvasEditorInputHandler, CanvasEvent, CanvasHandle,
@@ -54,6 +56,7 @@ use open_gpui_canvas::{
     CanvasToolIntent, DocumentError, HandleRole, HitTarget, NodeId, canvas_editor_view,
 };
 use open_gpui_platform::application;
+use open_gpui_ui_components::gpui_adapter::init_text_input;
 use open_gpui_ui_components::prelude::Sizable;
 use open_gpui_ui_components::{
     Badge, BadgeVariant, Button, ButtonVariant, ListboxOption, Menu, MenuItem, NumberInput,
@@ -262,7 +265,7 @@ impl Render for JellyflowCanvasView {
                                 )
                                 .size_full(),
                             )
-                            .children(self.render_node_surfaces(&render_model)),
+                            .children(self.render_node_surfaces(&render_model, cx)),
                     ),
             )
             .child(self.render_sidebar(selected))
@@ -453,7 +456,11 @@ impl JellyflowCanvasView {
             .child(selection)
     }
 
-    fn render_node_surfaces(&self, model: &CanvasPaintModel) -> Vec<AnyElement> {
+    fn render_node_surfaces(
+        &self,
+        model: &CanvasPaintModel,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         let zoom = model.viewport().zoom;
         let collector = self.measured_regions.clone();
         self.editor
@@ -462,12 +469,14 @@ impl JellyflowCanvasView {
             .filter_map(|node| {
                 let surface = self.node_surface_summary(node, zoom)?;
                 let jelly_node = jelly_node_id_from_node(node)?;
+                let view = cx.weak_entity();
                 Some(
                     render_node_surface(
                         model.viewport().document_bounds_to_view(node.bounds()),
                         jelly_node,
                         surface,
                         collector.clone(),
+                        view,
                     )
                     .into_any_element(),
                 )
@@ -587,6 +596,30 @@ impl JellyflowCanvasView {
             eprintln!("canvas event failed: {error}");
         }
         cx.notify();
+    }
+
+    fn dispatch_control_authoring_plan(
+        &mut self,
+        outcome: Result<OpenGpuiAuthoringOutcome<OpenGpuiControlEditPlan>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        match outcome {
+            Ok(OpenGpuiAuthoringOutcome::Planned(plan)) => {
+                if let Err(error) = self.store.dispatch_transaction(&plan.transaction) {
+                    eprintln!("control edit dispatch failed: {error}");
+                    return;
+                }
+                self.store.invalidate_node_internals(plan.invalidation);
+                self.refresh_editor_from_store();
+                cx.notify();
+            }
+            Ok(OpenGpuiAuthoringOutcome::Skipped(reason)) => {
+                report_authoring_skip(reason);
+            }
+            Err(error) => {
+                eprintln!("control edit planning failed: {error}");
+            }
+        }
     }
 
     fn is_pointer_interacting(&self) -> bool {
@@ -781,7 +814,7 @@ fn render_inspector_card(inspector: &OpenGpuiInspectorPlan) -> AnyElement {
         .iter()
         .take(2)
         .enumerate()
-        .map(|(index, control)| render_control_plan(control, index))
+        .map(|(index, control)| render_control_preview(control, index))
         .collect::<Vec<_>>();
     let actions = inspector
         .action_menu
@@ -866,6 +899,7 @@ fn render_node_surface(
     node_id: JellyNodeId,
     surface: NodeSurfaceSummary,
     collector: OpenGpuiBoundsCollector,
+    view: WeakEntity<JellyflowCanvasView>,
 ) -> impl IntoElement {
     let zoom = surface.zoom;
     let pad = if zoom >= 1.0 { px(10.0) } else { px(8.0) };
@@ -1005,6 +1039,7 @@ fn render_node_surface(
             inner_width,
             inner_height,
             collector,
+            view,
         ))
 }
 
@@ -1442,6 +1477,7 @@ fn render_surface_slots(
     view_width: Pixels,
     view_height: Pixels,
     collector: OpenGpuiBoundsCollector,
+    view: WeakEntity<JellyflowCanvasView>,
 ) -> Vec<AnyElement> {
     let mut elements = layout
         .slots
@@ -1455,6 +1491,7 @@ fn render_surface_slots(
                 view_width,
                 view_height,
                 collector.clone(),
+                view.clone(),
             )
         })
         .map(|slot| slot.into_any_element())
@@ -1492,6 +1529,7 @@ fn render_node_slot(
     view_width: Pixels,
     view_height: Pixels,
     collector: OpenGpuiBoundsCollector,
+    view: WeakEntity<JellyflowCanvasView>,
 ) -> impl IntoElement {
     let slot = slot_layout.slot;
     let rect = slot_view_rect(slot_layout.rect, document_bounds, view_width, view_height);
@@ -1553,6 +1591,7 @@ fn render_node_slot(
             node_data,
             value,
             collector.clone(),
+            view,
         ))
         .child(render_slot_anchor_measurement(
             node_id,
@@ -1681,11 +1720,12 @@ fn render_slot_value(
     node_data: &Value,
     value: String,
     collector: OpenGpuiBoundsCollector,
+    view: WeakEntity<JellyflowCanvasView>,
 ) -> AnyElement {
     if let Some(descriptor) = descriptor
         && !descriptor.controls.is_empty()
     {
-        return render_slot_controls(node_id, descriptor, node_data, &value, collector)
+        return render_slot_controls(node_id, descriptor, node_data, &value, collector, view)
             .into_any_element();
     }
 
@@ -1725,6 +1765,7 @@ fn render_slot_controls(
     node_data: &Value,
     value: &str,
     collector: OpenGpuiBoundsCollector,
+    view: WeakEntity<JellyflowCanvasView>,
 ) -> impl IntoElement {
     let plans = project_slot_controls(node_data, descriptor);
     let controls = plans
@@ -1738,6 +1779,8 @@ fn render_slot_controls(
                 control,
                 index,
                 collector.clone(),
+                node_data.clone(),
+                view.clone(),
             )
         })
         .collect::<Vec<_>>();
@@ -1766,16 +1809,135 @@ fn render_node_control_plan(
     control: &OpenGpuiControlPlan,
     index: usize,
     collector: OpenGpuiBoundsCollector,
+    node_data: Value,
+    view: WeakEntity<JellyflowCanvasView>,
 ) -> AnyElement {
     render_measured_region(
         OpenGpuiMeasurementId::control_in_slot(node_id, slot_key, control.key.clone()),
         collector,
-        render_control_plan(control, index),
+        render_control_plan(node_id, node_data, control, index, view),
     )
 }
 
-fn render_control_plan(control: &OpenGpuiControlPlan, index: usize) -> AnyElement {
+fn render_control_plan(
+    node_id: JellyNodeId,
+    node_data: Value,
+    control: &OpenGpuiControlPlan,
+    index: usize,
+    view: WeakEntity<JellyflowCanvasView>,
+) -> AnyElement {
     let id = format!("jellyflow-control:{}:{index}", control.key);
+    let disabled = control.disabled_reason.is_some();
+    let read_only = control.read_only || !control.is_editable();
+    let label = control.label.clone();
+    let value = control_value_label(control);
+    let control_plan = control.clone();
+
+    let element = match control.primitive {
+        OpenGpuiControlPrimitive::TextInput => TextInput::new(id, label)
+            .value(value)
+            .placeholder(control.placeholder.clone().unwrap_or_default())
+            .disabled(disabled)
+            .read_only(read_only)
+            .on_change(control_text_change_handler(
+                node_id,
+                node_data.clone(),
+                control_plan.clone(),
+                view.clone(),
+            ))
+            .with_size(Size::XSmall)
+            .into_any_element(),
+        OpenGpuiControlPrimitive::TextArea => Textarea::new(id, label)
+            .value(value)
+            .placeholder(control.placeholder.clone().unwrap_or_default())
+            .rows(2)
+            .disabled(disabled)
+            .read_only(read_only)
+            .on_change(control_text_change_handler(
+                node_id,
+                node_data.clone(),
+                control_plan.clone(),
+                view.clone(),
+            ))
+            .with_size(Size::XSmall)
+            .into_any_element(),
+        OpenGpuiControlPrimitive::NumberInput => NumberInput::new(id, label)
+            .value(control_number_value(control))
+            .disabled(disabled)
+            .read_only(read_only)
+            .on_change(control_number_change_handler(
+                node_id,
+                node_data.clone(),
+                control_plan.clone(),
+                view.clone(),
+            ))
+            .with_size(Size::XSmall)
+            .into_any_element(),
+        OpenGpuiControlPrimitive::Select | OpenGpuiControlPrimitive::MultiSelect => {
+            let selected = control_selected_option_key(control).unwrap_or_default();
+            let select = Select::new(id, label)
+                .options(control_options(control))
+                .placeholder(
+                    control
+                        .placeholder
+                        .clone()
+                        .unwrap_or_else(|| "Select".to_string()),
+                )
+                .selected(selected)
+                .disabled(disabled || control.options.is_empty())
+                .on_select(control_select_change_handler(
+                    node_id,
+                    node_data.clone(),
+                    control_plan.clone(),
+                    view.clone(),
+                ))
+                .with_size(Size::XSmall);
+            select.into_any_element()
+        }
+        OpenGpuiControlPrimitive::Switch => Switch::new(id)
+            .label(label)
+            .checked(control_bool_value(control))
+            .disabled(disabled)
+            .on_change(control_bool_change_handler(
+                node_id,
+                node_data.clone(),
+                control_plan.clone(),
+                view.clone(),
+            ))
+            .with_size(Size::XSmall)
+            .into_any_element(),
+        OpenGpuiControlPrimitive::Slider => Slider::new(id, label)
+            .value(control_number_value(control))
+            .disabled(disabled)
+            .on_change(control_slider_change_handler(
+                node_id,
+                node_data.clone(),
+                control_plan.clone(),
+                view.clone(),
+            ))
+            .with_size(Size::XSmall)
+            .into_any_element(),
+        OpenGpuiControlPrimitive::CodeEditor | OpenGpuiControlPrimitive::ColorSwatch => {
+            Badge::new(id, format!("{}: {}", control.label, value))
+                .variant(BadgeVariant::Default)
+                .with_size(Size::XSmall)
+                .into_any_element()
+        }
+        OpenGpuiControlPrimitive::AssetPickerStub
+        | OpenGpuiControlPrimitive::VariablePickerStub
+        | OpenGpuiControlPrimitive::PortBindingDisplay => {
+            Button::new(id, format!("{}*", control.label))
+                .variant(ButtonVariant::Secondary)
+                .with_size(Size::XSmall)
+                .into_any_element()
+        }
+    };
+
+    render_node_internal_interaction_region(element)
+}
+
+fn render_control_preview(control: &OpenGpuiControlPlan, index: usize) -> AnyElement {
+    let id = format!("jellyflow-control-preview:{}:{index}", control.key);
     let disabled = control.disabled_reason.is_some();
     let read_only = control.read_only || !control.is_editable();
     let label = control.label.clone();
@@ -1804,8 +1966,7 @@ fn render_control_plan(control: &OpenGpuiControlPlan, index: usize) -> AnyElemen
             .with_size(Size::XSmall)
             .into_any_element(),
         OpenGpuiControlPrimitive::Select | OpenGpuiControlPrimitive::MultiSelect => {
-            let selected = control_value_label(control);
-            let select = Select::new(id, label)
+            Select::new(id, label)
                 .options(control_options(control))
                 .placeholder(
                     control
@@ -1813,10 +1974,10 @@ fn render_control_plan(control: &OpenGpuiControlPlan, index: usize) -> AnyElemen
                         .clone()
                         .unwrap_or_else(|| "Select".to_string()),
                 )
-                .selected(selected)
+                .selected(control_selected_option_key(control).unwrap_or_default())
                 .disabled(disabled || control.options.is_empty())
-                .with_size(Size::XSmall);
-            select.into_any_element()
+                .with_size(Size::XSmall)
+                .into_any_element()
         }
         OpenGpuiControlPrimitive::Switch => Switch::new(id)
             .label(label)
@@ -1846,12 +2007,158 @@ fn render_control_plan(control: &OpenGpuiControlPlan, index: usize) -> AnyElemen
     }
 }
 
+fn control_text_change_handler(
+    node_id: JellyNodeId,
+    node_data: Value,
+    control: OpenGpuiControlPlan,
+    view: WeakEntity<JellyflowCanvasView>,
+) -> impl Fn(String, &mut Window, &mut App) + 'static {
+    move |value, _window, cx| {
+        let node = authoring_node_from_control_data(node_data.clone());
+        let outcome =
+            OpenGpuiAuthoringController.plan_control_text_edit(node_id, &node, &control, value);
+        view.update(cx, |this, cx| {
+            this.dispatch_control_authoring_plan(outcome, cx);
+        })
+        .ok();
+    }
+}
+
+fn control_number_change_handler(
+    node_id: JellyNodeId,
+    node_data: Value,
+    control: OpenGpuiControlPlan,
+    view: WeakEntity<JellyflowCanvasView>,
+) -> impl Fn(open_gpui_ui_components::NumberInputChange, &mut Window, &mut App) + 'static {
+    move |change, _window, cx| {
+        if !change.changed() {
+            return;
+        }
+        let node = authoring_node_from_control_data(node_data.clone());
+        let outcome = OpenGpuiAuthoringController.plan_control_number_edit(
+            node_id,
+            &node,
+            &control,
+            change.value() as f64,
+        );
+        view.update(cx, |this, cx| {
+            this.dispatch_control_authoring_plan(outcome, cx);
+        })
+        .ok();
+    }
+}
+
+fn control_slider_change_handler(
+    node_id: JellyNodeId,
+    node_data: Value,
+    control: OpenGpuiControlPlan,
+    view: WeakEntity<JellyflowCanvasView>,
+) -> impl Fn(open_gpui_ui_components::SliderChange, &mut Window, &mut App) + 'static {
+    move |change, _window, cx| {
+        if !change.changed() {
+            return;
+        }
+        let node = authoring_node_from_control_data(node_data.clone());
+        let outcome = OpenGpuiAuthoringController.plan_control_number_edit(
+            node_id,
+            &node,
+            &control,
+            change.value() as f64,
+        );
+        view.update(cx, |this, cx| {
+            this.dispatch_control_authoring_plan(outcome, cx);
+        })
+        .ok();
+    }
+}
+
+fn control_bool_change_handler(
+    node_id: JellyNodeId,
+    node_data: Value,
+    control: OpenGpuiControlPlan,
+    view: WeakEntity<JellyflowCanvasView>,
+) -> impl Fn(bool, &open_gpui::ClickEvent, &mut Window, &mut App) + 'static {
+    move |checked, _event, _window, cx| {
+        let node = authoring_node_from_control_data(node_data.clone());
+        let outcome =
+            OpenGpuiAuthoringController.plan_control_bool_edit(node_id, &node, &control, checked);
+        view.update(cx, |this, cx| {
+            this.dispatch_control_authoring_plan(outcome, cx);
+        })
+        .ok();
+    }
+}
+
+fn control_select_change_handler(
+    node_id: JellyNodeId,
+    node_data: Value,
+    control: OpenGpuiControlPlan,
+    view: WeakEntity<JellyflowCanvasView>,
+) -> impl Fn(open_gpui_ui_components::SelectSelection, &mut Window, &mut App) + 'static {
+    move |selection, _window, cx| {
+        let node = authoring_node_from_control_data(node_data.clone());
+        let outcome = OpenGpuiAuthoringController.plan_control_select_edit(
+            node_id,
+            &node,
+            &control,
+            selection.value(),
+        );
+        view.update(cx, |this, cx| {
+            this.dispatch_control_authoring_plan(outcome, cx);
+        })
+        .ok();
+    }
+}
+
+fn authoring_node_from_control_data(data: Value) -> Node {
+    Node {
+        kind: NodeKindKey::new("open-gpui.authoring.control"),
+        kind_version: 1,
+        pos: JellyPoint::default(),
+        origin: None,
+        selectable: None,
+        focusable: None,
+        draggable: None,
+        connectable: None,
+        deletable: None,
+        parent: None,
+        extent: None,
+        expand_parent: None,
+        size: None,
+        hidden: false,
+        collapsed: false,
+        ports: Vec::new(),
+        data,
+    }
+}
+
+fn render_node_internal_interaction_region(child: AnyElement) -> AnyElement {
+    div()
+        .block_mouse_except_scroll()
+        .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, _window, cx| {
+            cx.stop_propagation();
+            let _ = event;
+        })
+        .on_key_down(|_: &KeyDownEvent, _window, cx| {
+            cx.stop_propagation();
+        })
+        .child(child)
+        .into_any_element()
+}
+
+fn report_authoring_skip(reason: OpenGpuiAuthoringSkipReason) {
+    match reason {
+        OpenGpuiAuthoringSkipReason::UnchangedControl { .. } => {}
+        other => eprintln!("control authoring skipped: {other:?}"),
+    }
+}
+
 fn control_options(control: &OpenGpuiControlPlan) -> Vec<ListboxOption> {
     control
         .options
         .iter()
         .map(|option| {
-            ListboxOption::new(json_value_label(&option.value), option.label.clone())
+            ListboxOption::new(control_option_key(option), option.label.clone())
                 .disabled(option.disabled)
         })
         .collect()
@@ -2886,6 +3193,8 @@ fn port_y(index: usize, count: usize, height: f32) -> f32 {
 
 fn main() {
     application().run(|cx: &mut App| {
+        init_text_input(cx);
+
         let bounds = Bounds::centered(None, size(px(CANVAS_WIDTH), px(CANVAS_HEIGHT)), cx);
         let (store, editor, projection) = demo_state();
         let node_kit_registry = NodeKitRegistry::builtin();
@@ -3096,6 +3405,116 @@ mod tests {
                     .iter()
                     .any(|control| control.key == "inspector.model" && control.is_editable())
         }));
+    }
+
+    #[test]
+    fn live_control_authoring_plans_update_dify_node_data_with_typed_values() {
+        let store = make_demo_store();
+        let node_id = JellyNodeId::from_u128(3);
+        let node = store.graph().nodes().get(&node_id).expect("llm node");
+        let registry = NodeKitRegistry::builtin().node_registry();
+        let descriptor = registry
+            .view_descriptor(&NodeKindKey::new("demo.llm"))
+            .expect("llm descriptor");
+        let node_data = node.data.clone();
+        let prompt_slot = descriptor
+            .surface_slot("field.prompt")
+            .expect("prompt slot");
+        let model_slot = descriptor.surface_slot("badge.model").expect("model slot");
+        let config_slot = descriptor
+            .surface_slot("config.model")
+            .expect("config slot");
+        let prompt = project_slot_controls(&node_data, prompt_slot)
+            .into_iter()
+            .find(|control| control.key == "control.prompt")
+            .expect("prompt control");
+        let model = project_slot_controls(&node_data, model_slot)
+            .into_iter()
+            .find(|control| control.key == "control.model")
+            .expect("model control");
+        let config_controls = project_slot_controls(&node_data, config_slot);
+        let temperature = config_controls
+            .iter()
+            .find(|control| control.key == "control.temperature")
+            .expect("temperature control");
+        let stream = config_controls
+            .iter()
+            .find(|control| control.key == "control.stream")
+            .expect("stream control");
+        let controller = OpenGpuiAuthoringController;
+
+        let prompt_plan = controller
+            .plan_control_text_edit(
+                node_id,
+                &authoring_node_from_control_data(node_data.clone()),
+                &prompt,
+                "Write a normalized JSON row",
+            )
+            .expect("prompt edit")
+            .into_plan()
+            .expect("prompt edit plan");
+        assert_node_data_path_value(
+            &prompt_plan,
+            ["fields", "prompt"],
+            serde_json::json!("Write a normalized JSON row"),
+        );
+
+        let option = model
+            .options
+            .iter()
+            .find(|option| option.label == "GPT 4.1")
+            .expect("model option");
+        let select_plan = controller
+            .plan_control_select_edit(
+                node_id,
+                &authoring_node_from_control_data(node_data),
+                &model,
+                control_option_key(option),
+            )
+            .expect("select edit")
+            .into_plan()
+            .expect("select edit plan");
+        assert_node_data_path_value(
+            &select_plan,
+            ["meta", "model"],
+            serde_json::json!("gpt-4.1"),
+        );
+        assert_eq!(
+            select_plan.invalidation.reason,
+            NodeInternalsInvalidationReason::DataChanged
+        );
+
+        let number_plan = controller
+            .plan_control_number_edit(
+                node_id,
+                &authoring_node_from_control_data(node.data.clone()),
+                temperature,
+                1.5,
+            )
+            .expect("temperature edit")
+            .into_plan()
+            .expect("temperature edit plan");
+        assert_node_data_path_value(
+            &number_plan,
+            ["config", "model", "temperature"],
+            serde_json::json!(1.5),
+        );
+
+        let switch_plan = controller
+            .plan_control_bool_edit(
+                node_id,
+                &authoring_node_from_control_data(node.data.clone()),
+                stream,
+                true,
+            )
+            .expect("stream edit")
+            .into_plan()
+            .expect("stream edit plan");
+        assert_node_data_path_value(
+            &switch_plan,
+            ["config", "model", "stream"],
+            serde_json::json!(true),
+        );
     }
 
     #[test]
@@ -3661,6 +4080,21 @@ mod tests {
             .unwrap();
 
         (measured_store, transform, prompt, completion)
+    }
+
+    fn assert_node_data_path_value<const N: usize>(
+        plan: &OpenGpuiControlEditPlan,
+        path: [&str; N],
+        expected: Value,
+    ) {
+        let [GraphOp::SetNodeData { to, .. }] = plan.transaction.ops() else {
+            panic!("expected one SetNodeData op");
+        };
+        let mut value = to;
+        for segment in path {
+            value = &value[segment];
+        }
+        assert_eq!(*value, expected);
     }
 
     #[test]
