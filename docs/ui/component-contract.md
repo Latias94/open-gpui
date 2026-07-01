@@ -683,8 +683,11 @@ regression-prone behaviors each slice must keep covered.
 
 The Components page should keep the official component catalog visible and distinguish shipped
 components from adapter-only helpers, internal anatomy, state contracts, and deferred entries. Its
-catalog metadata lives in `components/catalog.rs`; `components/render.rs` consumes that metadata
-and owns only rendering. The page has two supported inspection modes: the full all-components
+root module is a small facade: catalog metadata lives in `components/catalog.rs`; the visible
+conformance gate list lives in `components/conformance.rs`; sample descriptors, resolved-state
+builders, and static sample data live in `components/samples.rs`; callback logs and mutable sample
+runtime state live in `components/runtime.rs`; `components/render.rs` consumes those modules and
+owns only GPUI rendering. The page has two supported inspection modes: the full all-components
 conformance page, and a focused component-family view entered from official catalog cards. Focused
 mode may hide unrelated sections, but it must keep the section directory available, expose an
 explicit `All components` control, reset the page viewport when the family changes, and keep nested
