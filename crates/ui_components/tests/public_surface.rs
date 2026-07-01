@@ -1,2 +1,2 @@
-#[path = "support/public_surface.rs"]
+#[path = "public_surface/mod.rs"]
 mod public_surface;

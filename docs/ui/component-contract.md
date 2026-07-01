@@ -271,8 +271,11 @@ reserved for caller-owned render-frame inputs. `Switch::on_change`, `Toggle::on_
 activation, modal action outcomes, close affordances, or table sort requests rather than scalar
 value changes.
 
-Keep crate-root exports explicit. Do not use wildcard public re-exports in component crates.
-GPUI-specific helpers that remain public for concrete applications must be reachable through
+Keep crate-root exports explicit. The shared default export surface lives in
+`crates/ui_components/src/public_api/default.rs`; both the crate root and prelude re-export that
+curated surface, while prelude-only additions remain local to `prelude.rs`. Do not use wildcard
+public re-exports in component crates except for that curated default-surface hop. GPUI-specific
+helpers that remain public for concrete applications must be reachable through
 `open_gpui_ui_components::gpui_adapter`; current examples include `TextInputController`,
 `init_text_input`, `focus_ring_shadow`, accessibility mapping helpers, geometry conversion helpers,
 and GPUI overlay scheduling helpers. The crate root and prelude default interface are reserved for
@@ -706,11 +709,17 @@ regression-prone behaviors each slice must keep covered.
 The Components page should keep the official component catalog visible and distinguish shipped
 components from adapter-only helpers, internal anatomy, state contracts, and deferred entries. Its
 root module is a small facade: catalog metadata lives in `components/catalog.rs`; the visible
-conformance gate list lives in `components/conformance.rs`; sample descriptors, resolved-state
-builders, and static sample data live in `components/samples.rs`; callback logs and mutable sample
-runtime state live in `components/runtime.rs`; `components/render.rs` consumes those modules and
-owns only GPUI rendering. The page has two supported inspection modes: the full all-components
-conformance page, and a focused component-family view entered from official catalog cards. Focused
+conformance gate list lives in `components/conformance.rs`; `components/samples.rs`,
+`components/runtime.rs`, and `components/render.rs` are private parent facades over explicit
+family-owned modules. Sample descriptors and static sample data live under
+`components/samples/`; Tree, Table, and VirtualizedList runtime probes live under
+`components/runtime/`; page orchestration, section dispatch, readouts, focus controls, and shared
+card helpers live under `components/render/`. `components.rs` must not expose `runtime` or
+`samples` as public modules, and it must not use wildcard facade exports such as
+`pub use runtime::*` or `pub use samples::*`; only stable sample accessors, conformance metadata,
+and runtime probe names are re-exported explicitly. The page has two supported inspection modes:
+the full all-components conformance page, and a focused component-family view entered from
+official catalog cards. Focused
 mode may hide unrelated sections, but it must keep the section directory available, expose an
 explicit `All components` control, reset the page viewport when the family changes, and keep nested
 sample scrolling local to the sample viewport. Directory chips remain anchor jumps inside the
