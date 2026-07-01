@@ -1,8 +1,9 @@
 use open_gpui_ui_components::component_contract::{
     COMPONENT_API_INVENTORY, ComponentApiInventoryEntry, PUBLIC_SURFACE_OWNER_MAP,
     PublicSurfaceOwnerClass, PublicSurfaceOwnerEntry, SurfaceDocsStatus, SurfaceGalleryStatus,
-    component_public_methods, component_source_home, component_source_inputs,
-    public_owner_for_component_inventory, table_render_owner_files,
+    component_inventory_default_export, component_public_methods, component_source_home,
+    component_source_inputs, public_owner_for_component_inventory, public_surface_default_export,
+    table_render_owner_files,
 };
 use open_gpui_ui_components::{ColorIntent, FocusRing, gpui_adapter::gpui_role_from_ui};
 use open_gpui_ui_core::{
@@ -34,6 +35,32 @@ struct SurfaceManifestEntry {
     gallery_status: SurfaceGalleryStatus,
     docs_status: SurfaceDocsStatus,
     docs_token: Option<&'static str>,
+}
+
+fn registry_default_surface_tokens() -> std::collections::BTreeSet<String> {
+    let mut tokens = COMPONENT_API_INVENTORY
+        .iter()
+        .filter(|entry| component_inventory_default_export(entry))
+        .map(|entry| entry.component.to_owned())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    tokens.extend(
+        PUBLIC_SURFACE_OWNER_MAP
+            .iter()
+            .filter(|entry| public_surface_default_export(entry))
+            .map(|entry| entry.name.to_owned()),
+    );
+
+    tokens
+}
+
+fn registry_non_default_surface_tokens() -> std::collections::BTreeSet<String> {
+    PUBLIC_SURFACE_OWNER_MAP
+        .iter()
+        .filter(|entry| !public_surface_default_export(entry))
+        .filter(|entry| !entry.name.contains("::"))
+        .map(|entry| entry.name.to_owned())
+        .collect()
 }
 
 fn component_public_methods_from_source(component: &str) -> Vec<String> {

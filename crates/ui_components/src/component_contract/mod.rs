@@ -117,6 +117,30 @@ pub enum SurfaceDocsStatus {
     Verification,
 }
 
+/// Returns whether an API inventory component is intended for root/prelude defaults.
+pub fn component_inventory_default_export(entry: &ComponentApiInventoryEntry) -> bool {
+    matches!(
+        public_owner_for_component_inventory(entry.component),
+        PublicSurfaceOwnerClass::OfficialComponent
+            | PublicSurfaceOwnerClass::OfficialComponentRecipe
+    )
+}
+
+/// Returns whether an adjacent public surface is intended for root/prelude defaults.
+pub fn public_surface_default_export(entry: &PublicSurfaceOwnerEntry) -> bool {
+    match entry.owner {
+        PublicSurfaceOwnerClass::OfficialComponent
+        | PublicSurfaceOwnerClass::OfficialComponentRecipe
+        | PublicSurfaceOwnerClass::RendererNeutralStateContract
+        | PublicSurfaceOwnerClass::DiagnosticSurface
+        | PublicSurfaceOwnerClass::InternalImplementationDetail => {
+            !entry.name.starts_with("primitives::") && entry.home != "removed"
+        }
+        PublicSurfaceOwnerClass::GpuiAdapterHelper
+        | PublicSurfaceOwnerClass::DeprecatedRemovalTarget => false,
+    }
+}
+
 /// Public adjacent surfaces that are not primary component inventory rows.
 pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
     PublicSurfaceOwnerEntry {

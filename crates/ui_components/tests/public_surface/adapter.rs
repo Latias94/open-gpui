@@ -166,14 +166,12 @@ fn gpui_adapter_exports_group_runtime_specific_surfaces() {
 
 #[test]
 fn adapter_only_helpers_do_not_leak_from_default_exports() {
-    let adapter_only_tokens = [
-        "TextInputController",
-        "init_text_input",
-        "focus_ring_shadow",
-        "GpuiOverlayState",
-        "GpuiOverlayAdapterConfig",
-        "gpui_px_from_ui",
-    ];
+    let adapter_only_tokens = PUBLIC_SURFACE_OWNER_MAP
+        .iter()
+        .filter(|entry| entry.owner == PublicSurfaceOwnerClass::GpuiAdapterHelper)
+        .filter(|entry| !entry.name.contains("::"))
+        .map(|entry| entry.name)
+        .collect::<Vec<_>>();
 
     for file_name in ["lib.rs", "prelude.rs"] {
         let source =
@@ -185,9 +183,9 @@ fn adapter_only_helpers_do_not_leak_from_default_exports() {
             source
         };
 
-        for token in adapter_only_tokens {
+        for token in &adapter_only_tokens {
             assert!(
-                !default_interface.contains(token),
+                !default_interface.contains(*token),
                 "{file_name} default interface must not expose adapter-only token `{token}`"
             );
         }
