@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use jellyflow::{
     NodeGraphStore,
     core::{
@@ -27,7 +25,8 @@ use jellyflow::{
         },
     },
 };
-use jellyflow_open_gpui::open_gpui_node_renderer_context;
+#[cfg(test)]
+use jellyflow_open_gpui::OpenGpuiNodeRendererResolution;
 use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiAuthoringController,
     OpenGpuiAuthoringOutcome, OpenGpuiAuthoringSkipReason, OpenGpuiBlackboardPlan,
@@ -36,9 +35,9 @@ use jellyflow_open_gpui::{
     OpenGpuiDynamicPortPolicy, OpenGpuiInspectorPlan, OpenGpuiInspectorSurface,
     OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource, OpenGpuiMeasurementContext,
     OpenGpuiMeasurementId, OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
-    OpenGpuiMenuPlan, OpenGpuiNodeRendererContext, OpenGpuiNodeRendererRegistry,
-    OpenGpuiNodeRendererResolution, OpenGpuiNodeRendererState,
-    OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
+    OpenGpuiMenuPlan, OpenGpuiNodeRendererContext, OpenGpuiNodeRendererHostContext,
+    OpenGpuiNodeRendererOutputSource, OpenGpuiNodeRendererRegistry, OpenGpuiNodeRendererState,
+    OpenGpuiNodeRendererTable, OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout, OpenGpuiRepeatableActionPlan,
     OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
     OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
@@ -46,8 +45,20 @@ use jellyflow_open_gpui::{
     OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection, OpenGpuiViewBounds,
     OpenGpuiViewPoint, OpenGpuiViewSize, apply_dropped_wire_insert, control_option_key,
     control_selected_option_key, layout_pass_measurement_from_regions, measured_surface_anchors,
-    project_actions_for_surface, project_blackboards_for_descriptor, project_dropped_wire_menu,
-    project_inspectors_for_surface, project_menu, project_node_measurement, project_slot_controls,
+    open_gpui_action_button_element_id, open_gpui_action_menu_element_id,
+    open_gpui_action_summary_element_id, open_gpui_blackboard_item_element_id,
+    open_gpui_blackboard_status_element_id, open_gpui_chrome_fallback_button_element_id,
+    open_gpui_control_element_id, open_gpui_custom_action_missing_element_id,
+    open_gpui_custom_renderer_badge_element_id, open_gpui_custom_repeatables_badge_element_id,
+    open_gpui_custom_slots_badge_element_id, open_gpui_node_renderer_context,
+    open_gpui_repeatable_add_action_element_id, open_gpui_repeatable_collection_element_id,
+    open_gpui_repeatable_item_element_id, open_gpui_repeatable_remove_action_element_id,
+    open_gpui_repeatable_reorder_action_element_id, open_gpui_slot_action_button_element_id,
+    open_gpui_slot_action_label_element_id, open_gpui_slot_badge_element_id,
+    open_gpui_slot_preview_progress_element_id, open_gpui_slot_status_label_element_id,
+    open_gpui_slot_value_element_id, project_actions_for_surface,
+    project_blackboards_for_descriptor, project_dropped_wire_menu, project_inspectors_for_surface,
+    project_menu, project_node_measurement, project_slot_controls,
     projected_node_surface_graph_layout, repeatable_item_projection, repeatable_surface_projection,
     resolve_inspector_target_bounds,
 };
@@ -83,13 +94,13 @@ measured_element bounds for visible slots, controls, repeatable rows, and anchor
 fallback now means initial, dirty, hidden, missing, duplicate, or partial coverage; the remaining \
 maturity gap is productized authoring interaction coverage and advanced widget stubs.";
 
-type GpuiNodeRenderer = Box<
-    dyn Fn(
-        &OpenGpuiNodeRendererContext,
-        OpenGpuiBoundsCollector,
-        WeakEntity<JellyflowCanvasView>,
-    ) -> AnyElement,
->;
+#[derive(Clone)]
+struct GpuiNodeRendererServices {
+    collector: OpenGpuiBoundsCollector,
+    view: WeakEntity<JellyflowCanvasView>,
+}
+
+type GpuiNodeRendererTable = OpenGpuiNodeRendererTable<GpuiNodeRendererServices, AnyElement>;
 
 struct JellyflowCanvasView {
     editor: CanvasEditor,
@@ -1283,9 +1294,10 @@ fn render_blackboard_card(
                 )
                 .child(
                     Badge::new(
-                        format!(
-                            "jellyflow-blackboard-item:{}:{}:{}",
-                            node_id.0, blackboard.key, item.item_id
+                        open_gpui_blackboard_item_element_id(
+                            node_id,
+                            &blackboard.key,
+                            &item.item_id,
                         ),
                         format!("{} controls", item.controls),
                     )
@@ -1337,10 +1349,7 @@ fn render_blackboard_card(
                 )
                 .child(
                     Badge::new(
-                        format!(
-                            "jellyflow-blackboard-status:{}:{}",
-                            node_id.0, blackboard.key
-                        ),
+                        open_gpui_blackboard_status_element_id(node_id, &blackboard.key),
                         format!("{} items", blackboard.item_count),
                     )
                     .variant(BadgeVariant::Secondary)
@@ -1385,19 +1394,28 @@ fn render_node_surface(
     view: WeakEntity<JellyflowCanvasView>,
 ) -> impl IntoElement {
     let registry = demo_node_renderer_registry();
-    match registry.resolve(&surface.renderer_context) {
-        OpenGpuiNodeRendererResolution::Custom(registration) => {
-            let renderers = demo_custom_node_renderers();
-            if let Some(renderer) = renderers.get(&registration.renderer_key) {
-                let shell = render_node_surface_shell(bounds, &surface);
-                let body = renderer(&surface.renderer_context, collector.clone(), view.clone());
-                return shell.child(body).into_any_element();
-            }
-            render_descriptor_fallback_node_surface(bounds, node_id, surface, collector, view)
-        }
-        OpenGpuiNodeRendererResolution::Fallback(_) => {
-            render_descriptor_fallback_node_surface(bounds, node_id, surface, collector, view)
-        }
+    let renderers = demo_custom_node_renderers();
+    let services = GpuiNodeRendererServices { collector, view };
+    let rendered = registry.render_with_host(
+        &surface.renderer_context,
+        &services,
+        &renderers,
+        |host, _fallback| {
+            render_descriptor_fallback_node_surface(
+                bounds,
+                node_id,
+                surface.clone(),
+                host.services().collector.clone(),
+                host.services().view.clone(),
+            )
+        },
+    );
+
+    match rendered.source {
+        OpenGpuiNodeRendererOutputSource::Custom(_) => render_node_surface_shell(bounds, &surface)
+            .child(rendered.output)
+            .into_any_element(),
+        OpenGpuiNodeRendererOutputSource::Fallback(_) => rendered.output,
     }
 }
 
@@ -1568,22 +1586,21 @@ fn demo_node_renderer_registry() -> OpenGpuiNodeRendererRegistry {
     OpenGpuiNodeRendererRegistry::new().with_renderer("decision-card", "Dify LLM decision card")
 }
 
-fn demo_custom_node_renderers() -> BTreeMap<String, GpuiNodeRenderer> {
-    let mut renderers: BTreeMap<String, GpuiNodeRenderer> = BTreeMap::new();
+fn demo_custom_node_renderers() -> GpuiNodeRendererTable {
+    let mut renderers = GpuiNodeRendererTable::new();
     renderers.insert(
         "decision-card".to_owned(),
-        Box::new(|context, collector, view| {
-            render_decision_card_node_surface(context, collector, view)
-        }),
+        Box::new(|context| render_decision_card_node_surface(context)),
     );
     renderers
 }
 
 fn render_decision_card_node_surface(
-    context: &OpenGpuiNodeRendererContext,
-    collector: OpenGpuiBoundsCollector,
-    view: WeakEntity<JellyflowCanvasView>,
+    host: &OpenGpuiNodeRendererHostContext<'_, GpuiNodeRendererServices>,
 ) -> AnyElement {
+    let context = host.semantic();
+    let collector = host.services().collector.clone();
+    let view = host.services().view.clone();
     let prompt_control = context.control("control.prompt");
     let model_control = context.control("control.model");
     let temperature_control = context.control("control.temperature");
@@ -1622,7 +1639,7 @@ fn render_decision_card_node_surface(
                 .overflow_hidden()
                 .child(
                     Badge::new(
-                        format!("jellyflow-custom-renderer:{}", context.renderer_key),
+                        open_gpui_custom_renderer_badge_element_id(&context.renderer_key),
                         "custom renderer",
                     )
                     .variant(BadgeVariant::Default)
@@ -1757,7 +1774,7 @@ fn render_decision_card_node_surface(
                         })
                         .unwrap_or_else(|| {
                             Badge::new(
-                                format!("jellyflow-custom-action-missing:{}", context.node_id.0),
+                                open_gpui_custom_action_missing_element_id(context.node_id),
                                 "no action",
                             )
                             .variant(BadgeVariant::Outline)
@@ -1779,7 +1796,7 @@ fn render_decision_card_node_surface(
                 .overflow_hidden()
                 .child(
                     Badge::new(
-                        format!("jellyflow-custom-slots:{}", context.node_id.0),
+                        open_gpui_custom_slots_badge_element_id(context.node_id),
                         format!("{} slots", context.surface_layout.slots.len()),
                     )
                     .variant(BadgeVariant::Secondary)
@@ -1787,7 +1804,7 @@ fn render_decision_card_node_surface(
                 )
                 .child(
                     Badge::new(
-                        format!("jellyflow-custom-repeatables:{}", context.node_id.0),
+                        open_gpui_custom_repeatables_badge_element_id(context.node_id),
                         format!("{} repeatables", context.repeatable_items.len()),
                     )
                     .variant(BadgeVariant::Outline)
@@ -2041,10 +2058,7 @@ fn render_surface_action_summary(surface: &NodeSurfaceSummary) -> AnyElement {
         .take(2)
         .map(|action| {
             Badge::new(
-                format!(
-                    "jellyflow-action-summary:{}:{}",
-                    surface.renderer_context.node_id.0, action.key
-                ),
+                open_gpui_action_summary_element_id(surface.renderer_context.node_id, &action.key),
                 action_summary_label(action),
             )
             .variant(if action.dispatchable() {
@@ -2080,47 +2094,6 @@ fn surface_action_plan_count(surface: &NodeSurfaceSummary) -> usize {
         + surface.toolbar_menu.actions.len()
 }
 
-fn node_element_scope(node_id: Option<JellyNodeId>) -> String {
-    node_id
-        .map(|node_id| node_id.0.to_string())
-        .unwrap_or_else(|| "graph".to_owned())
-}
-
-fn action_button_element_id(
-    node_id: Option<JellyNodeId>,
-    menu_key: &str,
-    action_key: &str,
-    index: usize,
-) -> String {
-    format!(
-        "jellyflow-action-button:{}:{menu_key}:{action_key}:{index}",
-        node_element_scope(node_id)
-    )
-}
-
-fn action_menu_element_id(node_id: Option<JellyNodeId>, menu_key: &str, id_suffix: &str) -> String {
-    format!(
-        "jellyflow-action-menu:{}:{menu_key}:{id_suffix}",
-        node_element_scope(node_id)
-    )
-}
-
-fn control_element_id(
-    node_id: JellyNodeId,
-    control_scope: &str,
-    control_key: &str,
-    index: usize,
-) -> String {
-    format!(
-        "jellyflow-control:{}:{control_scope}:{control_key}:{index}",
-        node_id.0
-    )
-}
-
-fn chrome_fallback_button_id(node_id: JellyNodeId, node_kind: &str) -> String {
-    format!("jellyflow-chrome-run-fallback:{}:{node_kind}", node_id.0)
-}
-
 fn render_dispatch_action_button(
     menu: &OpenGpuiMenuPlan,
     action: &OpenGpuiActionPlan,
@@ -2131,7 +2104,7 @@ fn render_dispatch_action_button(
     let action_key = action.key.clone();
     let menu = menu.clone();
     let mut button = Button::new(
-        action_button_element_id(node_id, &menu.key, &action.key, index),
+        open_gpui_action_button_element_id(node_id, &menu.key, &action.key, index),
         action_button_label(action),
     )
     .variant(action_button_variant(action, index))
@@ -2168,7 +2141,7 @@ fn render_action_menu(
         .collect::<Vec<_>>();
 
     Menu::new(
-        action_menu_element_id(node_id, &menu.key, id_suffix),
+        open_gpui_action_menu_element_id(node_id, &menu.key, id_suffix),
         format!("{} {}", menu.label, menu.actions.len()),
     )
     .items(items)
@@ -2212,7 +2185,10 @@ fn render_chrome_action_buttons(
     if actions.is_empty() {
         return vec![
             Button::new(
-                chrome_fallback_button_id(surface.renderer_context.node_id, &surface.node_kind),
+                open_gpui_chrome_fallback_button_element_id(
+                    surface.renderer_context.node_id,
+                    &surface.node_kind,
+                ),
                 fallback_label.to_owned(),
             )
             .variant(ButtonVariant::Default)
@@ -2629,22 +2605,21 @@ fn render_slot_label(
     status: &'static str,
 ) -> AnyElement {
     match slot.kind {
-        NodeSurfaceSlotKind::Badge | NodeSurfaceSlotKind::MetricBadge => Badge::new(
-            format!("jellyflow-slot-badge:{}:{}", node_id.0, slot.key),
-            label,
-        )
-        .variant(BadgeVariant::Secondary)
-        .with_size(Size::XSmall)
-        .into_any_element(),
+        NodeSurfaceSlotKind::Badge | NodeSurfaceSlotKind::MetricBadge => {
+            Badge::new(open_gpui_slot_badge_element_id(node_id, &slot.key), label)
+                .variant(BadgeVariant::Secondary)
+                .with_size(Size::XSmall)
+                .into_any_element()
+        }
         NodeSurfaceSlotKind::StatusBanner => Badge::new(
-            format!("jellyflow-status-label:{}:{}", node_id.0, slot.key),
+            open_gpui_slot_status_label_element_id(node_id, &slot.key),
             label,
         )
         .variant(BadgeVariant::Default)
         .with_size(Size::XSmall)
         .into_any_element(),
         NodeSurfaceSlotKind::ActionRow => Badge::new(
-            format!("jellyflow-action-label:{}:{}", node_id.0, slot.key),
+            open_gpui_slot_action_label_element_id(node_id, &slot.key),
             label,
         )
         .variant(BadgeVariant::Outline)
@@ -2686,7 +2661,7 @@ fn render_slot_value(
             .flex_shrink_0()
             .child(
                 Progress::new(
-                    format!("jellyflow-preview-progress:{}:{}", node_id.0, slot.key),
+                    open_gpui_slot_preview_progress_element_id(node_id, &slot.key),
                     value,
                 )
                 .value(64.0)
@@ -2695,13 +2670,12 @@ fn render_slot_value(
             .into_any_element(),
         NodeSurfaceSlotKind::Badge
         | NodeSurfaceSlotKind::MetricBadge
-        | NodeSurfaceSlotKind::StatusBanner => Badge::new(
-            format!("jellyflow-slot-value:{}:{}", node_id.0, slot.key),
-            value,
-        )
-        .variant(BadgeVariant::Default)
-        .with_size(Size::XSmall)
-        .into_any_element(),
+        | NodeSurfaceSlotKind::StatusBanner => {
+            Badge::new(open_gpui_slot_value_element_id(node_id, &slot.key), value)
+                .variant(BadgeVariant::Default)
+                .with_size(Size::XSmall)
+                .into_any_element()
+        }
         _ => div()
             .text_xs()
             .text_color(rgb(0x475569))
@@ -2778,7 +2752,7 @@ fn render_control_plan(
     index: usize,
     view: WeakEntity<JellyflowCanvasView>,
 ) -> AnyElement {
-    let id = control_element_id(node_id, control_scope, &control.key, index);
+    let id = open_gpui_control_element_id(node_id, control_scope, &control.key, index);
     let read_only = control_component_read_only(control);
     let disabled = control_component_disabled(control);
     let interaction_disabled = control_component_interaction_disabled(control);
@@ -3116,7 +3090,7 @@ fn render_action_buttons(
         .enumerate()
         .map(|(index, action)| {
             Button::new(
-                format!("jellyflow-action:{}:{}:{index}", node_id.0, slot.key),
+                open_gpui_slot_action_button_element_id(node_id, &slot.key, index),
                 action.trim().to_owned(),
             )
             .variant(if index == 0 {
@@ -3251,9 +3225,9 @@ fn render_repeatable_row(
                 .gap_1()
                 .child(
                     Badge::new(
-                        format!(
-                            "jellyflow-repeatable:{}:{}",
-                            node_id.0, repeatable.projection.key
+                        open_gpui_repeatable_collection_element_id(
+                            node_id,
+                            &repeatable.projection.key,
                         ),
                         format!("{} controls", repeatable.projection.controls),
                     )
@@ -3262,7 +3236,7 @@ fn render_repeatable_row(
                 )
                 .child(repeatable_action_button(
                     node_id,
-                    format!("jellyflow-repeatable-add:{}:{collection_key}", node_id.0),
+                    open_gpui_repeatable_add_action_element_id(node_id, &collection_key),
                     "Add",
                     ButtonVariant::Secondary,
                     add_disabled,
@@ -3349,11 +3323,10 @@ fn render_repeatable_item_row(
                 .gap_1()
                 .child(
                     Badge::new(
-                        format!(
-                            "jellyflow-repeatable-item:{}:{}:{}",
-                            node_id.0,
-                            repeatable.projection.collection_key,
-                            repeatable.projection.item_id
+                        open_gpui_repeatable_item_element_id(
+                            node_id,
+                            &repeatable.projection.collection_key,
+                            &repeatable.projection.item_id,
                         ),
                         badge,
                     )
@@ -3362,9 +3335,10 @@ fn render_repeatable_item_row(
                 )
                 .child(repeatable_action_button(
                     node_id,
-                    format!(
-                        "jellyflow-repeatable-up:{}:{collection_key}:{item_id}",
-                        node_id.0
+                    open_gpui_repeatable_reorder_action_element_id(
+                        node_id,
+                        &collection_key,
+                        &item_id,
                     ),
                     "Up",
                     ButtonVariant::Secondary,
@@ -3378,9 +3352,10 @@ fn render_repeatable_item_row(
                 ))
                 .child(repeatable_action_button(
                     node_id,
-                    format!(
-                        "jellyflow-repeatable-remove:{}:{collection_key}:{item_id}",
-                        node_id.0
+                    open_gpui_repeatable_remove_action_element_id(
+                        node_id,
+                        &collection_key,
+                        &item_id,
                     ),
                     "Del",
                     ButtonVariant::Destructive,
@@ -4329,23 +4304,23 @@ mod tests {
         let second = JellyNodeId::from_u128(2);
 
         assert_ne!(
-            control_element_id(first, "field.prompt", "control.prompt", 0),
-            control_element_id(second, "field.prompt", "control.prompt", 0)
+            open_gpui_control_element_id(first, "field.prompt", "control.prompt", 0),
+            open_gpui_control_element_id(second, "field.prompt", "control.prompt", 0)
         );
         assert_ne!(
-            action_button_element_id(Some(first), "synthetic.Node", "action.llm.run", 0),
-            action_button_element_id(Some(second), "synthetic.Node", "action.llm.run", 0)
+            open_gpui_action_button_element_id(Some(first), "synthetic.Node", "action.llm.run", 0),
+            open_gpui_action_button_element_id(Some(second), "synthetic.Node", "action.llm.run", 0)
         );
         assert_ne!(
-            action_menu_element_id(Some(first), "synthetic.Node", "toolbar"),
-            action_menu_element_id(Some(second), "synthetic.Node", "toolbar")
+            open_gpui_action_menu_element_id(Some(first), "synthetic.Node", "toolbar"),
+            open_gpui_action_menu_element_id(Some(second), "synthetic.Node", "toolbar")
         );
         assert_ne!(
-            chrome_fallback_button_id(first, "demo.llm"),
-            chrome_fallback_button_id(second, "demo.llm")
+            open_gpui_chrome_fallback_button_element_id(first, "demo.llm"),
+            open_gpui_chrome_fallback_button_element_id(second, "demo.llm")
         );
         assert!(
-            action_button_element_id(None, "synthetic.Graph", "action.graph", 0)
+            open_gpui_action_button_element_id(None, "synthetic.Graph", "action.graph", 0)
                 .contains(":graph:")
         );
     }
