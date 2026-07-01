@@ -24,10 +24,10 @@ use crate::{
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{
-    AnyElement, BorderStyle, Bounds, Context, CursorStyle, DragMoveEvent, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Render, Rgba, SharedString, Styled, Window, black, canvas, div, point,
-    px, quad, rgb, rgba,
+    AnyElement, BorderStyle, Bounds, Context, CursorStyle, DispatchPhase, DragMoveEvent,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, Render, Rgba, SharedString, Styled, Window, black, canvas,
+    div, point, px, quad, rgb, rgba,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -211,6 +211,9 @@ impl Render for DockHost {
         }
 
         host = host.child(self.render_divider_event_layer(&session, cx));
+        if active_docking_drag {
+            host = host.child(self.render_payload_drag_event_layer(cx));
+        }
 
         if let Some(sample) = transition_sample.as_ref() {
             host = host.child(self.render_transition_sample_layer(&session, sample));
@@ -465,11 +468,11 @@ impl DockHost {
                     );
                 },
             ));
-        root_container = root_container.child(
-            self.render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
-                drop_scene_fact::root(root, bounds)
-            }),
-        );
+        root_container = root_container.child(self.render_viewport_drop_scene_fact_probe(
+            viewport_host_scene_frame,
+            move |bounds| drop_scene_fact::root(root, bounds),
+            cx,
+        ));
         root_container = root_container.child(root_child);
         root_container.into_any_element()
     }
@@ -543,6 +546,74 @@ impl DockHost {
                     entity.update(app, |host, cx| {
                         host.finish_splitter_drag_from_render(cx);
                     });
+                });
+            },
+        )
+        .absolute()
+        .top(px(0.0))
+        .left(px(0.0))
+        .size_full()
+        .into_any_element()
+    }
+
+    fn render_payload_drag_event_layer(&self, cx: &mut Context<Self>) -> AnyElement {
+        let entity = cx.entity();
+
+        canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _app| {
+                window.on_mouse_event({
+                    let entity = entity.clone();
+                    move |event: &MouseMoveEvent, phase, window, app| {
+                        if phase != DispatchPhase::Capture
+                            || event.pressed_button != Some(MouseButton::Left)
+                            || !bounds.contains(&event.position)
+                        {
+                            return;
+                        }
+                        let Some(payload) = app.active_drag_value::<DockDragPayload>().cloned()
+                        else {
+                            return;
+                        };
+                        let changed = entity.update(app, |host, cx| {
+                            host.update_payload_drag_hover_from_rendered_host_scene(
+                                &payload,
+                                event.position,
+                                window,
+                                cx,
+                            )
+                        });
+                        if changed {
+                            window.refresh();
+                        }
+                    }
+                });
+
+                window.on_mouse_event({
+                    let entity = entity.clone();
+                    move |event: &MouseUpEvent, phase, window, app| {
+                        if phase != DispatchPhase::Capture
+                            || event.button != MouseButton::Left
+                            || !bounds.contains(&event.position)
+                        {
+                            return;
+                        }
+                        let Some(payload) = app.active_drag_value::<DockDragPayload>().cloned()
+                        else {
+                            return;
+                        };
+                        entity.update(app, |host, cx| {
+                            host.drop_payload_release_from_rendered_host_scene(
+                                payload,
+                                event.position,
+                                window,
+                                cx,
+                            );
+                        });
+                        app.stop_active_drag(window);
+                        app.stop_propagation();
+                        window.refresh();
+                    }
                 });
             },
         )
@@ -703,11 +774,11 @@ impl DockHost {
                     );
                 },
             ));
-        empty = empty.child(
-            self.render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
-                drop_scene_fact::empty_space(space, bounds)
-            }),
-        );
+        empty = empty.child(self.render_viewport_drop_scene_fact_probe(
+            viewport_host_scene_frame,
+            move |bounds| drop_scene_fact::empty_space(space, bounds),
+            cx,
+        ));
         empty = empty.child(session.empty_message().to_string());
         empty.into_any_element()
     }
@@ -747,11 +818,11 @@ impl DockHost {
                     );
                 },
             ));
-        empty = empty.child(
-            self.render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
-                drop_scene_fact::empty_central_space(space, bounds)
-            }),
-        );
+        empty = empty.child(self.render_viewport_drop_scene_fact_probe(
+            viewport_host_scene_frame,
+            move |bounds| drop_scene_fact::empty_central_space(space, bounds),
+            cx,
+        ));
         empty.into_any_element()
     }
 
@@ -1102,8 +1173,14 @@ impl DockHost {
                     drop_guide_style,
                     passthrough_pointer_input,
                 );
+                let interaction_frame_changed = entity.update(app, |host, _| {
+                    host.publish_rendered_viewport_host_scene_frame_from_render(
+                        preparation.frame.clone(),
+                        window,
+                    )
+                });
                 *frame_slot.borrow_mut() = preparation.frame;
-                if preparation.changed {
+                if preparation.changed || interaction_frame_changed {
                     window.refresh();
                 }
             },
@@ -1121,18 +1198,24 @@ impl DockHost {
         &self,
         frame_slot: &DockViewportHostSceneFrameSlot,
         fact_for_bounds: impl FnOnce(Bounds<Pixels>) -> DockHostDropSceneFact + 'static,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
+        let entity = cx.entity();
         let runtime = self.viewport_runtime().clone();
         let frame_slot = frame_slot.clone();
         canvas(
-            move |bounds, _window, _| {
+            move |bounds, window, app| {
                 let Some(frame) = frame_slot.borrow().as_ref().cloned() else {
                     return;
                 };
                 if let Some(next_frame) =
                     runtime.push_viewport_host_scene_frame_fact(&frame, fact_for_bounds(bounds))
                 {
+                    let frame = Some(next_frame.clone());
                     *frame_slot.borrow_mut() = Some(next_frame);
+                    entity.update(app, |host, _| {
+                        host.publish_rendered_viewport_host_scene_frame_from_render(frame, window);
+                    });
                 }
             },
             |_, _, _, _| (),

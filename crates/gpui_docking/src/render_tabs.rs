@@ -114,11 +114,11 @@ impl DockHost {
                 },
             ));
         if let Some(drop_root) = drop_root {
-            tabs =
-                tabs.child(self.render_viewport_drop_scene_fact_probe(
-                    viewport_host_scene_frame,
-                    move |bounds| drop_scene_fact::leaf(drop_root, node, bounds, is_central),
-                ));
+            tabs = tabs.child(self.render_viewport_drop_scene_fact_probe(
+                viewport_host_scene_frame,
+                move |bounds| drop_scene_fact::leaf(drop_root, node, bounds, is_central),
+                cx,
+            ));
         }
 
         let stack_drag_entity = entity.clone();
@@ -214,11 +214,11 @@ impl DockHost {
                 },
             );
         tab_bar = tab_bar_a11y.apply_to(tab_bar);
-        tab_bar = tab_bar.child(
-            self.render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
-                drop_scene_fact::tab_bar(node, tab_count, bounds, is_central)
-            }),
-        );
+        tab_bar = tab_bar.child(self.render_viewport_drop_scene_fact_probe(
+            viewport_host_scene_frame,
+            move |bounds| drop_scene_fact::tab_bar(node, tab_count, bounds, is_central),
+            cx,
+        ));
 
         for (index, item) in items.into_iter().enumerate() {
             let title = session.panel_title(&item);
@@ -349,13 +349,11 @@ impl DockHost {
                     },
                 );
             tab = tab_a11y.apply_to(tab);
-            tab =
-                tab.child(self.render_viewport_drop_scene_fact_probe(
-                    viewport_host_scene_frame,
-                    move |bounds| {
-                        drop_scene_fact::tab_label(node, target_index, bounds, is_central)
-                    },
-                ));
+            tab = tab.child(self.render_viewport_drop_scene_fact_probe(
+                viewport_host_scene_frame,
+                move |bounds| drop_scene_fact::tab_label(node, target_index, bounds, is_central),
+                cx,
+            ));
             tab = tab.child(title.clone());
             if session.panel_is_closable(&item) {
                 let close_selector = self.record_debug_selector(

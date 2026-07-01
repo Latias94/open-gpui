@@ -324,6 +324,10 @@ impl DockDropRuntime {
         self.resolution.as_ref()
     }
 
+    pub(crate) fn scene_position(&self) -> Option<Point<Pixels>> {
+        self.scene.as_ref().map(|scene| scene.position)
+    }
+
     pub(crate) fn drop_guide_style(&self) -> DockDropGuideStyle {
         self.scene
             .as_ref()

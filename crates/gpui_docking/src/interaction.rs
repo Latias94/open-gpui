@@ -871,6 +871,10 @@ impl DockInteractionRuntime {
         })
     }
 
+    pub(crate) fn drop_scene_position(&self) -> Option<Point<Pixels>> {
+        self.drop.scene_position()
+    }
+
     #[cfg(test)]
     pub(crate) fn splitter_drag(&self) -> Option<&SplitterDrag> {
         self.splitter_drag.as_ref()

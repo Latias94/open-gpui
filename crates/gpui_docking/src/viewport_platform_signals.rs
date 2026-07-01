@@ -189,6 +189,11 @@ impl DockViewportPlatformSignals {
         self
     }
 
+    pub(crate) fn without_trusted_hovered_window(mut self) -> Self {
+        self.trusted_hovered_signal = DockViewportTrustedHoveredSignal::Unavailable;
+        self
+    }
+
     pub(crate) fn has_global_window_bounds(&self) -> bool {
         self.global_window_bounds
     }
@@ -245,7 +250,6 @@ impl DockViewportPlatformSignals {
         self
     }
 
-    #[cfg(test)]
     pub(crate) fn with_global_window_bounds(mut self, supported: bool) -> Self {
         self.global_window_bounds = supported;
         self

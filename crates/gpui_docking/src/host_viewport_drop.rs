@@ -52,6 +52,7 @@ impl DockHost {
         let event_receiver_local_scene_proof =
             self.interaction().viewport_host_scene_frame().cloned();
         let request = viewport_drop_route_request_from_host(
+            self.space(),
             payload,
             position,
             window,
@@ -124,6 +125,7 @@ impl DockHost {
         let drag_session = release.drag_session().cloned();
         let tear_off_geometry = release.tear_off_geometry();
         viewport_drop_route_request_from_host(
+            self.space(),
             release.payload(),
             release.release_position(),
             window,
@@ -137,6 +139,7 @@ impl DockHost {
 }
 
 fn viewport_drop_route_request_from_host(
+    host_space: &crate::DockSpaceId,
     payload: &DockDragPayload,
     host_position: Point<Pixels>,
     window: &Window,
@@ -151,6 +154,18 @@ fn viewport_drop_route_request_from_host(
         }
         DockPayloadDropReleaseOrigin::SourceOnly => DockViewportPlatformSignals::from_app(cx),
     };
+    let event_receiver_window = Some(window.window_handle().window_id());
+    let trusted_hovered_window = platform_signals.target_context().trusted_hovered_window();
+    let local_event_receiver_route = origin == DockPayloadDropReleaseOrigin::HoveredHost
+        && payload.source_space == *host_space
+        && trusted_hovered_window.is_none_or(|hovered| Some(hovered) == event_receiver_window);
+    let platform_signals = if local_event_receiver_route {
+        platform_signals
+            .with_global_window_bounds(false)
+            .without_trusted_hovered_window()
+    } else {
+        platform_signals
+    };
     let suggested_window_bounds = suggested_window_bounds_for_host_release(
         window.window_bounds(),
         host_position,
@@ -163,7 +178,9 @@ fn viewport_drop_route_request_from_host(
         DockViewportDropPayload::from_drag_payload(payload),
         DockViewportDropReleasePoint::host_local_with_bounds_frame(
             host_position,
-            if cx.viewport_capabilities().global_window_bounds {
+            if local_event_receiver_route {
+                DockViewportWindowBoundsFrame::WindowLocal(window.bounds())
+            } else if cx.viewport_capabilities().global_window_bounds {
                 DockViewportWindowBoundsFrame::GlobalScreen(window.bounds())
             } else {
                 DockViewportWindowBoundsFrame::WindowLocal(window.bounds())

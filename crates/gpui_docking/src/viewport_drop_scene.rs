@@ -34,10 +34,6 @@ impl DockViewportHostSceneFrame {
         self.identity.matches(space, window_id)
     }
 
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
-    }
-
     fn space(&self) -> &DockSpaceId {
         self.identity.space()
     }

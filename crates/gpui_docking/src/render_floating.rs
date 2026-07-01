@@ -143,6 +143,7 @@ impl DockHost {
                 move |title_bounds| {
                     drop_scene_fact::floating_title_bar(floating, target_tabs, title_bounds, bounds)
                 },
+                cx,
             ));
             let mut payload = DockDragPayload::new_floating(space.clone(), floating, title.clone());
             if let Some(preview_titles) = session.multi_preview_tab_titles_for_node(floating) {

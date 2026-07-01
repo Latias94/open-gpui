@@ -836,18 +836,34 @@ impl DockViewportAdapter {
         if snapshot.window.window_id() != receiver_window {
             return None;
         }
-        let facts_generation =
-            self.snapshot_facts_generation(request.source_space(), receiver_window)?;
         if let Some(proof) = proof
-            && (!proof.matches_viewport(request.source_space(), receiver_window)
-                || proof.generation() != facts_generation)
+            && !proof.matches_viewport(request.source_space(), receiver_window)
+        {
+            return None;
+        }
+        let facts_generation = self
+            .snapshot_facts_generation(request.source_space(), receiver_window)
+            .or_else(|| {
+                let _proof = proof?;
+                if request.coordinate_space()
+                    != DockViewportPointerCoordinateSpace::EventReceiverLocal
+                    || snapshot.is_platform_close_requested()
+                    || snapshot.input_mask == DockViewportInputMask::Minimized
+                {
+                    return None;
+                }
+                Some(snapshot.facts_generation())
+            })?;
+        let host_bounds = snapshot.host_bounds?;
+        if request.coordinate_space() != DockViewportPointerCoordinateSpace::EventReceiverLocal
+            && snapshot.global_screen_bounds().is_none()
         {
             return None;
         }
         Some(DockEventReceiverLocalSceneRouteContext {
             receiver_window,
             facts_generation,
-            host_bounds: snapshot.host_bounds?,
+            host_bounds,
             global_screen_bounds: snapshot.global_screen_bounds(),
         })
     }
@@ -1592,7 +1608,7 @@ mod tests {
     }
 
     #[test]
-    fn event_receiver_local_scene_proof_rejects_stale_generation() {
+    fn event_receiver_local_scene_proof_allows_stale_route_facts_for_event_receiver_local() {
         let source = space("source");
         let source_window = handle(1);
         let mut adapter = DockViewportAdapter::new();
@@ -1604,6 +1620,7 @@ mod tests {
             ))),
             bounds(10.0, 20.0, 300.0, 200.0),
         );
+        assert!(adapter.mark_window_snapshot_stale(source_window.window_id()));
         let request = DockViewportDropRouteRequest::from_platform_signals(
             source.clone(),
             DockNodeId::null(),
@@ -1619,13 +1636,18 @@ mod tests {
         .with_event_receiver_local_scene_proof(Some(scene_proof(
             &source,
             source_window,
-            0,
+            1,
         )));
 
         assert_eq!(
             adapter.resolve_payload_drop_route(&request, &DockPolicy::default()),
-            DockViewportDropRoute::Unavailable,
-            "event-receiver proof must be tied to the current rendered scene generation"
+            DockViewportDropRoute::Local {
+                host_position: point(px(20.0), px(30.0)),
+                window_id: source_window.window_id(),
+                facts_generation: 2,
+                source: DockViewportRouteSelectionSource::EventReceiverLocalScene,
+            },
+            "same-window scene proof should keep host-local routing alive while adapter route facts wait for the next render"
         );
     }
 
