@@ -117,6 +117,29 @@ pub enum SurfaceDocsStatus {
     Verification,
 }
 
+/// Canonical product metadata for a public component-library surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComponentContractEntry {
+    /// Public component, recipe, state contract, helper, or anatomy token.
+    pub name: &'static str,
+    /// Product ownership classification.
+    pub owner: PublicSurfaceOwnerClass,
+    /// Registry-owned component family or ownership group.
+    pub family: Option<&'static str>,
+    /// Gallery classification for rendered dogfood or adjacent readouts.
+    pub gallery_status: SurfaceGalleryStatus,
+    /// Documentation location expected for this row.
+    pub docs_status: SurfaceDocsStatus,
+    /// Token that should appear in the owning docs when docs coverage is expected.
+    pub docs_token: Option<&'static str>,
+    /// Whether root and prelude should expose this row through the default surface.
+    pub default_export: bool,
+    /// Source files or module directories that own this surface.
+    pub source_inputs: &'static [&'static str],
+    /// Primary source home used by public-surface manifests.
+    pub source_home: &'static str,
+}
+
 /// Official overlay component rows in the API inventory.
 pub const OFFICIAL_OVERLAY_COMPONENTS: &[&str] = &[
     "Tooltip",
@@ -139,124 +162,965 @@ pub const COMPONENT_RECIPE_COMPONENTS: &[&str] = &[
     "TableToolbar",
 ];
 
+/// Product-level metadata rows for official components and adjacent public surfaces.
+pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
+    ComponentContractEntry {
+        name: "Accordion",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("disclosure"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Accordion"),
+        default_export: true,
+        source_inputs: &["accordion.rs"],
+        source_home: "accordion.rs",
+    },
+    ComponentContractEntry {
+        name: "Button",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("action"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Button"),
+        default_export: true,
+        source_inputs: &["button.rs"],
+        source_home: "button.rs",
+    },
+    ComponentContractEntry {
+        name: "Badge",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("display"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Badge"),
+        default_export: true,
+        source_inputs: &["badge.rs"],
+        source_home: "badge.rs",
+    },
+    ComponentContractEntry {
+        name: "Collapsible",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("disclosure"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Collapsible"),
+        default_export: true,
+        source_inputs: &["collapsible.rs"],
+        source_home: "collapsible.rs",
+    },
+    ComponentContractEntry {
+        name: "Link",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("navigation"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Link"),
+        default_export: true,
+        source_inputs: &["link.rs"],
+        source_home: "link.rs",
+    },
+    ComponentContractEntry {
+        name: "Breadcrumb",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("navigation"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Breadcrumb"),
+        default_export: true,
+        source_inputs: &["breadcrumb.rs"],
+        source_home: "breadcrumb.rs",
+    },
+    ComponentContractEntry {
+        name: "Tag",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("display"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Tag"),
+        default_export: true,
+        source_inputs: &["tag.rs"],
+        source_home: "tag.rs",
+    },
+    ComponentContractEntry {
+        name: "ToastStack",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("feedback"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("ToastStack"),
+        default_export: true,
+        source_inputs: &["toast.rs"],
+        source_home: "toast.rs",
+    },
+    ComponentContractEntry {
+        name: "IconButton",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("action"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("IconButton"),
+        default_export: true,
+        source_inputs: &["icon_button.rs"],
+        source_home: "icon_button.rs",
+    },
+    ComponentContractEntry {
+        name: "Slider",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("form"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Slider"),
+        default_export: true,
+        source_inputs: &["slider.rs"],
+        source_home: "slider.rs",
+    },
+    ComponentContractEntry {
+        name: "NumberInput",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("form"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("NumberInput"),
+        default_export: true,
+        source_inputs: &["number_input.rs"],
+        source_home: "number_input.rs",
+    },
+    ComponentContractEntry {
+        name: "Switch",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("form"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Switch"),
+        default_export: true,
+        source_inputs: &["switch.rs"],
+        source_home: "switch.rs",
+    },
+    ComponentContractEntry {
+        name: "Checkbox",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("form"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Checkbox"),
+        default_export: true,
+        source_inputs: &["checkbox.rs"],
+        source_home: "checkbox.rs",
+    },
+    ComponentContractEntry {
+        name: "RadioGroup",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("choice"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("RadioGroup"),
+        default_export: true,
+        source_inputs: &["radio.rs"],
+        source_home: "radio.rs",
+    },
+    ComponentContractEntry {
+        name: "Toggle",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("action"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Toggle"),
+        default_export: true,
+        source_inputs: &["toggle.rs"],
+        source_home: "toggle.rs",
+    },
+    ComponentContractEntry {
+        name: "ToggleGroup",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("action"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("ToggleGroup"),
+        default_export: true,
+        source_inputs: &["toggle_group.rs"],
+        source_home: "toggle_group.rs",
+    },
+    ComponentContractEntry {
+        name: "Toolbar",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("shell"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Toolbar"),
+        default_export: true,
+        source_inputs: &["toolbar.rs"],
+        source_home: "toolbar.rs",
+    },
+    ComponentContractEntry {
+        name: "Sidebar",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("shell"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Sidebar"),
+        default_export: true,
+        source_inputs: &["sidebar.rs"],
+        source_home: "sidebar.rs",
+    },
+    ComponentContractEntry {
+        name: "Tree",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("hierarchy"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Tree"),
+        default_export: true,
+        source_inputs: &["tree.rs", "tree/movement.rs", "tree/render_plan.rs"],
+        source_home: "tree.rs",
+    },
+    ComponentContractEntry {
+        name: "Listbox",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("choice"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Listbox"),
+        default_export: true,
+        source_inputs: &["listbox.rs"],
+        source_home: "listbox.rs",
+    },
+    ComponentContractEntry {
+        name: "Select",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("choice"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Select"),
+        default_export: true,
+        source_inputs: &["select.rs"],
+        source_home: "select.rs",
+    },
+    ComponentContractEntry {
+        name: "Combobox",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("choice-search"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Combobox"),
+        default_export: true,
+        source_inputs: &["combobox.rs"],
+        source_home: "combobox.rs",
+    },
+    ComponentContractEntry {
+        name: "Command",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("choice-search"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Command"),
+        default_export: true,
+        source_inputs: &[
+            "command/mod.rs",
+            "command/descriptor.rs",
+            "command/model.rs",
+            "command/render_plan.rs",
+            "command/runtime.rs",
+            "command/style.rs",
+        ],
+        source_home: "command/mod.rs",
+    },
+    ComponentContractEntry {
+        name: "Label",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("form"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Label"),
+        default_export: true,
+        source_inputs: &["label.rs"],
+        source_home: "label.rs",
+    },
+    ComponentContractEntry {
+        name: "TextInput",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("form"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("TextInput"),
+        default_export: true,
+        source_inputs: &["text_input.rs"],
+        source_home: "text_input.rs",
+    },
+    ComponentContractEntry {
+        name: "Textarea",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("form"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Textarea"),
+        default_export: true,
+        source_inputs: &["textarea.rs"],
+        source_home: "textarea.rs",
+    },
+    ComponentContractEntry {
+        name: "Field",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("form"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Field"),
+        default_export: true,
+        source_inputs: &["field.rs"],
+        source_home: "field.rs",
+    },
+    ComponentContractEntry {
+        name: "Tabs",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("navigation"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Tabs"),
+        default_export: true,
+        source_inputs: &["tabs.rs"],
+        source_home: "tabs.rs",
+    },
+    ComponentContractEntry {
+        name: "ScrollArea",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("layout"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("ScrollArea"),
+        default_export: true,
+        source_inputs: &["scroll_area.rs"],
+        source_home: "scroll_area.rs",
+    },
+    ComponentContractEntry {
+        name: "Splitter",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("layout"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Splitter"),
+        default_export: true,
+        source_inputs: &["splitter.rs"],
+        source_home: "splitter.rs",
+    },
+    ComponentContractEntry {
+        name: "Table",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("data"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Table"),
+        default_export: true,
+        source_inputs: &["table/mod.rs", "table/resolve.rs"],
+        source_home: "table/mod.rs",
+    },
+    ComponentContractEntry {
+        name: "TableFacetedFilter",
+        owner: PublicSurfaceOwnerClass::OfficialComponentRecipe,
+        family: Some("data"),
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("TableFacetedFilter"),
+        default_export: true,
+        source_inputs: &["table/faceted_filter"],
+        source_home: "table/faceted_filter",
+    },
+    ComponentContractEntry {
+        name: "TableColumnVisibility",
+        owner: PublicSurfaceOwnerClass::OfficialComponentRecipe,
+        family: Some("data"),
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("TableColumnVisibility"),
+        default_export: true,
+        source_inputs: &["table/column_visibility"],
+        source_home: "table/column_visibility",
+    },
+    ComponentContractEntry {
+        name: "TableGlobalFilter",
+        owner: PublicSurfaceOwnerClass::OfficialComponentRecipe,
+        family: Some("data"),
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("TableGlobalFilter"),
+        default_export: true,
+        source_inputs: &["table/global_filter"],
+        source_home: "table/global_filter",
+    },
+    ComponentContractEntry {
+        name: "TablePredicateFilter",
+        owner: PublicSurfaceOwnerClass::OfficialComponentRecipe,
+        family: Some("data"),
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("TablePredicateFilter"),
+        default_export: true,
+        source_inputs: &["table/predicate_filter"],
+        source_home: "table/predicate_filter",
+    },
+    ComponentContractEntry {
+        name: "TableToolbar",
+        owner: PublicSurfaceOwnerClass::OfficialComponentRecipe,
+        family: Some("data"),
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("TableToolbar"),
+        default_export: true,
+        source_inputs: &["table/toolbar.rs"],
+        source_home: "table/toolbar.rs",
+    },
+    ComponentContractEntry {
+        name: "TableRangeFilter",
+        owner: PublicSurfaceOwnerClass::OfficialComponentRecipe,
+        family: Some("data"),
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("TableRangeFilter"),
+        default_export: true,
+        source_inputs: &["table/range_filter"],
+        source_home: "table/range_filter",
+    },
+    ComponentContractEntry {
+        name: "VirtualizedList",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("data"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("VirtualizedList"),
+        default_export: true,
+        source_inputs: &["virtualized_list.rs"],
+        source_home: "virtualized_list.rs",
+    },
+    ComponentContractEntry {
+        name: "StatusCue",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("feedback"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("StatusCue"),
+        default_export: true,
+        source_inputs: &["feedback.rs"],
+        source_home: "feedback.rs",
+    },
+    ComponentContractEntry {
+        name: "EmptyState",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("feedback"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("EmptyState"),
+        default_export: true,
+        source_inputs: &["feedback.rs"],
+        source_home: "feedback.rs",
+    },
+    ComponentContractEntry {
+        name: "Separator",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("layout"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Separator"),
+        default_export: true,
+        source_inputs: &["separator.rs"],
+        source_home: "separator.rs",
+    },
+    ComponentContractEntry {
+        name: "Kbd",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("display"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Kbd"),
+        default_export: true,
+        source_inputs: &["kbd.rs"],
+        source_home: "kbd.rs",
+    },
+    ComponentContractEntry {
+        name: "Progress",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("status"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Progress"),
+        default_export: true,
+        source_inputs: &["progress.rs"],
+        source_home: "progress.rs",
+    },
+    ComponentContractEntry {
+        name: "Skeleton",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("status"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Skeleton"),
+        default_export: true,
+        source_inputs: &["skeleton.rs"],
+        source_home: "skeleton.rs",
+    },
+    ComponentContractEntry {
+        name: "Avatar",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("identity"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Avatar"),
+        default_export: true,
+        source_inputs: &["avatar.rs"],
+        source_home: "avatar.rs",
+    },
+    ComponentContractEntry {
+        name: "AvatarGroup",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("identity"),
+        gallery_status: SurfaceGalleryStatus::OfficialComponent,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("AvatarGroup"),
+        default_export: true,
+        source_inputs: &["avatar.rs"],
+        source_home: "avatar.rs",
+    },
+    ComponentContractEntry {
+        name: "Tooltip",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("overlay"),
+        gallery_status: SurfaceGalleryStatus::OfficialOverlay,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Tooltip"),
+        default_export: true,
+        source_inputs: &["tooltip.rs"],
+        source_home: "tooltip.rs",
+    },
+    ComponentContractEntry {
+        name: "HoverCard",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("overlay"),
+        gallery_status: SurfaceGalleryStatus::OfficialOverlay,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("HoverCard"),
+        default_export: true,
+        source_inputs: &["hover_card.rs"],
+        source_home: "hover_card.rs",
+    },
+    ComponentContractEntry {
+        name: "Popover",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("overlay"),
+        gallery_status: SurfaceGalleryStatus::OfficialOverlay,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Popover"),
+        default_export: true,
+        source_inputs: &["popover.rs"],
+        source_home: "popover.rs",
+    },
+    ComponentContractEntry {
+        name: "Dialog",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("overlay"),
+        gallery_status: SurfaceGalleryStatus::OfficialOverlay,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Dialog"),
+        default_export: true,
+        source_inputs: &["dialog.rs"],
+        source_home: "dialog.rs",
+    },
+    ComponentContractEntry {
+        name: "AlertDialog",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("overlay"),
+        gallery_status: SurfaceGalleryStatus::OfficialOverlay,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("AlertDialog"),
+        default_export: true,
+        source_inputs: &["alert_dialog.rs"],
+        source_home: "alert_dialog.rs",
+    },
+    ComponentContractEntry {
+        name: "Sheet",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("overlay"),
+        gallery_status: SurfaceGalleryStatus::OfficialOverlay,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Sheet"),
+        default_export: true,
+        source_inputs: &["sheet.rs"],
+        source_home: "sheet.rs",
+    },
+    ComponentContractEntry {
+        name: "Menu",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("overlay"),
+        gallery_status: SurfaceGalleryStatus::OfficialOverlay,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("Menu"),
+        default_export: true,
+        source_inputs: &["menu.rs"],
+        source_home: "menu.rs",
+    },
+    ComponentContractEntry {
+        name: "ContextMenu",
+        owner: PublicSurfaceOwnerClass::OfficialComponent,
+        family: Some("overlay"),
+        gallery_status: SurfaceGalleryStatus::OfficialOverlay,
+        docs_status: SurfaceDocsStatus::ComponentCatalog,
+        docs_token: Some("ContextMenu"),
+        default_export: true,
+        source_inputs: &["context_menu.rs"],
+        source_home: "context_menu.rs",
+    },
+    ComponentContractEntry {
+        name: "TreeState",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        family: Some("hierarchy"),
+        gallery_status: SurfaceGalleryStatus::StateContract,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("TreeState"),
+        default_export: true,
+        source_inputs: &["tree.rs"],
+        source_home: "tree.rs",
+    },
+    ComponentContractEntry {
+        name: "VirtualizedListState",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        family: Some("data"),
+        gallery_status: SurfaceGalleryStatus::StateContract,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("VirtualizedListState"),
+        default_export: true,
+        source_inputs: &["virtualized_list.rs"],
+        source_home: "virtualized_list.rs",
+    },
+    ComponentContractEntry {
+        name: "GpuiOverlayAdapterConfig",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("open_gpui_ui_components::gpui_adapter"),
+        default_export: false,
+        source_inputs: &["gpui_adapter"],
+        source_home: "gpui_adapter",
+    },
+    ComponentContractEntry {
+        name: "GpuiOverlayState",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("open_gpui_ui_components::gpui_adapter"),
+        default_export: false,
+        source_inputs: &["gpui_adapter"],
+        source_home: "gpui_adapter",
+    },
+    ComponentContractEntry {
+        name: "TextInputController",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        family: Some("form-adapter"),
+        gallery_status: SurfaceGalleryStatus::AdapterOnly,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("open_gpui_ui_components::gpui_adapter"),
+        default_export: false,
+        source_inputs: &["gpui_adapter"],
+        source_home: "gpui_adapter",
+    },
+    ComponentContractEntry {
+        name: "init_text_input",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("open_gpui_ui_components::gpui_adapter"),
+        default_export: false,
+        source_inputs: &["gpui_adapter"],
+        source_home: "gpui_adapter",
+    },
+    ComponentContractEntry {
+        name: "focus_ring_shadow",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("open_gpui_ui_components::gpui_adapter"),
+        default_export: false,
+        source_inputs: &["gpui_adapter"],
+        source_home: "gpui_adapter",
+    },
+    ComponentContractEntry {
+        name: "gpui_px_from_ui",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("open_gpui_ui_components::gpui_adapter"),
+        default_export: false,
+        source_inputs: &["gpui_adapter"],
+        source_home: "gpui_adapter",
+    },
+    ComponentContractEntry {
+        name: "gpui_point_from_ui",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("open_gpui_ui_components::gpui_adapter"),
+        default_export: false,
+        source_inputs: &["gpui_adapter"],
+        source_home: "gpui_adapter",
+    },
+    ComponentContractEntry {
+        name: "gpui_size_from_ui",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("open_gpui_ui_components::gpui_adapter"),
+        default_export: false,
+        source_inputs: &["gpui_adapter"],
+        source_home: "gpui_adapter",
+    },
+    ComponentContractEntry {
+        name: "TableBehaviorSnapshot",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("TableBehaviorSnapshot"),
+        default_export: true,
+        source_inputs: &["table/behavior.rs"],
+        source_home: "table/behavior.rs",
+    },
+    ComponentContractEntry {
+        name: "TableToolbarColors",
+        owner: PublicSurfaceOwnerClass::OfficialComponentRecipe,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("TableToolbarColors"),
+        default_export: true,
+        source_inputs: &["table/toolbar.rs"],
+        source_home: "table/toolbar.rs",
+    },
+    ComponentContractEntry {
+        name: "TreeBehaviorSnapshot",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("TreeBehaviorSnapshot"),
+        default_export: true,
+        source_inputs: &["tree/render_plan.rs"],
+        source_home: "tree/render_plan.rs",
+    },
+    ComponentContractEntry {
+        name: "VirtualizedListBehaviorSnapshot",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("VirtualizedListBehaviorSnapshot"),
+        default_export: true,
+        source_inputs: &["virtualized_list.rs"],
+        source_home: "virtualized_list.rs",
+    },
+    ComponentContractEntry {
+        name: "CommandBehaviorSnapshot",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("CommandBehaviorSnapshot"),
+        default_export: true,
+        source_inputs: &["command/render_plan.rs"],
+        source_home: "command/render_plan.rs",
+    },
+    ComponentContractEntry {
+        name: "ToolbarItem",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        family: Some("shell"),
+        gallery_status: SurfaceGalleryStatus::InternalAnatomy,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("ToolbarItem"),
+        default_export: true,
+        source_inputs: &["toolbar.rs"],
+        source_home: "toolbar.rs",
+    },
+    ComponentContractEntry {
+        name: "SidebarItem",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        family: Some("shell"),
+        gallery_status: SurfaceGalleryStatus::InternalAnatomy,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("SidebarItem"),
+        default_export: true,
+        source_inputs: &["sidebar.rs"],
+        source_home: "sidebar.rs",
+    },
+    ComponentContractEntry {
+        name: "ListboxOption",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        family: Some("choice"),
+        gallery_status: SurfaceGalleryStatus::InternalAnatomy,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("ListboxOption"),
+        default_export: true,
+        source_inputs: &["listbox.rs"],
+        source_home: "listbox.rs",
+    },
+    ComponentContractEntry {
+        name: "primitives::active_descendant",
+        owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::Verification,
+        docs_token: Some("primitives::active_descendant"),
+        default_export: false,
+        source_inputs: &["removed"],
+        source_home: "removed",
+    },
+    ComponentContractEntry {
+        name: "primitives::collection",
+        owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::Verification,
+        docs_token: Some("primitives::collection"),
+        default_export: false,
+        source_inputs: &["removed"],
+        source_home: "removed",
+    },
+    ComponentContractEntry {
+        name: "primitives::controllable_state",
+        owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::Verification,
+        docs_token: Some("primitives::controllable_state"),
+        default_export: false,
+        source_inputs: &["removed"],
+        source_home: "removed",
+    },
+    ComponentContractEntry {
+        name: "primitives::overlay",
+        owner: PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::Verification,
+        docs_token: Some("primitives::overlay"),
+        default_export: false,
+        source_inputs: &["removed"],
+        source_home: "removed",
+    },
+    ComponentContractEntry {
+        name: "primitives::field_state",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("ui_components::primitives"),
+        default_export: false,
+        source_inputs: &["primitives/field_state.rs"],
+        source_home: "primitives/field_state.rs",
+    },
+    ComponentContractEntry {
+        name: "primitives::focus_ring",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("ui_components::primitives"),
+        default_export: false,
+        source_inputs: &["primitives/focus_ring.rs"],
+        source_home: "primitives/focus_ring.rs",
+    },
+    ComponentContractEntry {
+        name: "primitives::roving_focus_group",
+        owner: PublicSurfaceOwnerClass::InternalImplementationDetail,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("ui_components::primitives"),
+        default_export: false,
+        source_inputs: &["primitives/roving_focus_group.rs"],
+        source_home: "primitives/roving_focus_group.rs",
+    },
+    ComponentContractEntry {
+        name: "primitives::trigger_a11y",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        family: None,
+        gallery_status: SurfaceGalleryStatus::NotInGallery,
+        docs_status: SurfaceDocsStatus::ComponentContract,
+        docs_token: Some("ui_components::primitives"),
+        default_export: false,
+        source_inputs: &["primitives/trigger_a11y.rs"],
+        source_home: "primitives/trigger_a11y.rs",
+    },
+];
+
+/// Returns the canonical product metadata row for a public surface token.
+pub const fn component_contract_entry(name: &str) -> Option<&'static ComponentContractEntry> {
+    let mut index = 0;
+    while index < COMPONENT_CONTRACT_REGISTRY.len() {
+        if token_eq(COMPONENT_CONTRACT_REGISTRY[index].name, name) {
+            return Some(&COMPONENT_CONTRACT_REGISTRY[index]);
+        }
+        index += 1;
+    }
+
+    None
+}
+
 /// Returns whether an API inventory component is intended for root/prelude defaults.
 pub fn component_inventory_default_export(entry: &ComponentApiInventoryEntry) -> bool {
-    matches!(
-        public_owner_for_component_inventory(entry.component),
-        PublicSurfaceOwnerClass::OfficialComponent
-            | PublicSurfaceOwnerClass::OfficialComponentRecipe
-    )
+    component_contract_entry(entry.component).is_some_and(|entry| entry.default_export)
 }
 
 /// Returns whether an adjacent public surface is intended for root/prelude defaults.
 pub fn public_surface_default_export(entry: &PublicSurfaceOwnerEntry) -> bool {
-    match entry.owner {
-        PublicSurfaceOwnerClass::OfficialComponent
-        | PublicSurfaceOwnerClass::OfficialComponentRecipe
-        | PublicSurfaceOwnerClass::RendererNeutralStateContract
-        | PublicSurfaceOwnerClass::DiagnosticSurface
-        | PublicSurfaceOwnerClass::InternalImplementationDetail => {
-            !entry.name.starts_with("primitives::") && entry.home != "removed"
-        }
-        PublicSurfaceOwnerClass::GpuiAdapterHelper
-        | PublicSurfaceOwnerClass::DeprecatedRemovalTarget => false,
-    }
+    component_contract_entry(entry.name).is_some_and(|entry| entry.default_export)
 }
 
 /// Returns the registry-owned gallery status for a component or adjacent surface.
 pub const fn component_contract_gallery_status(name: &str) -> SurfaceGalleryStatus {
-    if component_inventory_is_overlay(name) {
-        SurfaceGalleryStatus::OfficialOverlay
-    } else if component_api_inventory_contains(name)
-        && !component_inventory_is_recipe(name)
-        && !component_inventory_is_overlay(name)
-    {
-        SurfaceGalleryStatus::OfficialComponent
-    } else if token_eq(name, "TextInputController") {
-        SurfaceGalleryStatus::AdapterOnly
-    } else if token_eq(name, "ToolbarItem")
-        || token_eq(name, "SidebarItem")
-        || token_eq(name, "ListboxOption")
-    {
-        SurfaceGalleryStatus::InternalAnatomy
-    } else if token_eq(name, "TreeState") || token_eq(name, "VirtualizedListState") {
-        SurfaceGalleryStatus::StateContract
-    } else {
-        SurfaceGalleryStatus::NotInGallery
+    match component_contract_entry(name) {
+        Some(entry) => entry.gallery_status,
+        None => SurfaceGalleryStatus::NotInGallery,
     }
 }
 
 /// Returns the registry-owned component family or ownership group.
 pub const fn component_contract_family(name: &str) -> Option<&'static str> {
-    if token_eq(name, "Button")
-        || token_eq(name, "ToggleGroup")
-        || token_eq(name, "IconButton")
-        || token_eq(name, "Toggle")
-    {
-        Some("action")
-    } else if token_eq(name, "Badge") || token_eq(name, "Tag") || token_eq(name, "Kbd") {
-        Some("display")
-    } else if token_eq(name, "Accordion") || token_eq(name, "Collapsible") {
-        Some("disclosure")
-    } else if token_eq(name, "Slider")
-        || token_eq(name, "NumberInput")
-        || token_eq(name, "Switch")
-        || token_eq(name, "Checkbox")
-        || token_eq(name, "Label")
-        || token_eq(name, "TextInput")
-        || token_eq(name, "Textarea")
-        || token_eq(name, "Field")
-    {
-        Some("form")
-    } else if token_eq(name, "Link") || token_eq(name, "Breadcrumb") || token_eq(name, "Tabs") {
-        Some("navigation")
-    } else if token_eq(name, "ToastStack")
-        || token_eq(name, "StatusCue")
-        || token_eq(name, "EmptyState")
-    {
-        Some("feedback")
-    } else if token_eq(name, "RadioGroup")
-        || token_eq(name, "Listbox")
-        || token_eq(name, "Select")
-        || token_eq(name, "ListboxOption")
-    {
-        Some("choice")
-    } else if token_eq(name, "Combobox") || token_eq(name, "Command") {
-        Some("choice-search")
-    } else if token_eq(name, "Toolbar")
-        || token_eq(name, "Sidebar")
-        || token_eq(name, "ToolbarItem")
-        || token_eq(name, "SidebarItem")
-    {
-        Some("shell")
-    } else if token_eq(name, "Tree") || token_eq(name, "TreeState") {
-        Some("hierarchy")
-    } else if token_eq(name, "ScrollArea")
-        || token_eq(name, "Splitter")
-        || token_eq(name, "Separator")
-    {
-        Some("layout")
-    } else if token_eq(name, "Table")
-        || token_eq(name, "VirtualizedList")
-        || token_eq(name, "VirtualizedListState")
-        || token_eq(name, "TableColumnVisibility")
-        || token_eq(name, "TableFacetedFilter")
-        || token_eq(name, "TableGlobalFilter")
-        || token_eq(name, "TablePredicateFilter")
-        || token_eq(name, "TableRangeFilter")
-        || token_eq(name, "TableToolbar")
-    {
-        Some("data")
-    } else if token_eq(name, "Progress") || token_eq(name, "Skeleton") {
-        Some("status")
-    } else if token_eq(name, "Avatar") || token_eq(name, "AvatarGroup") {
-        Some("identity")
-    } else if token_eq(name, "TextInputController") {
-        Some("form-adapter")
-    } else if component_inventory_is_overlay(name) {
-        Some("overlay")
-    } else {
-        None
+    match component_contract_entry(name) {
+        Some(entry) => entry.family,
+        None => None,
+    }
+}
+
+/// Returns the primary registry-owned source home for a public surface.
+pub const fn component_contract_source_home(name: &str) -> Option<&'static str> {
+    match component_contract_entry(name) {
+        Some(entry) => Some(entry.source_home),
+        None => None,
+    }
+}
+
+/// Returns whether the surface should be exported through root and prelude defaults.
+pub const fn component_contract_default_export(name: &str) -> bool {
+    match component_contract_entry(name) {
+        Some(entry) => entry.default_export,
+        None => false,
+    }
+}
+
+/// Returns the registry-owned docs coverage status for a public surface.
+pub const fn component_contract_docs_status(name: &str) -> Option<SurfaceDocsStatus> {
+    match component_contract_entry(name) {
+        Some(entry) => Some(entry.docs_status),
+        None => None,
+    }
+}
+
+/// Returns the docs token that should prove documentation coverage for a public surface.
+pub const fn component_contract_docs_token(name: &str) -> Option<&'static str> {
+    match component_contract_entry(name) {
+        Some(entry) => entry.docs_token,
+        None => None,
     }
 }
 
@@ -276,38 +1140,6 @@ const fn token_eq(left: &str, right: &str) -> bool {
     }
 
     true
-}
-
-const fn component_api_inventory_contains(component: &str) -> bool {
-    let mut index = 0;
-    while index < COMPONENT_API_INVENTORY.len() {
-        if token_eq(COMPONENT_API_INVENTORY[index].component, component) {
-            return true;
-        }
-        index += 1;
-    }
-
-    false
-}
-
-const fn component_inventory_is_overlay(component: &str) -> bool {
-    token_list_contains(OFFICIAL_OVERLAY_COMPONENTS, component)
-}
-
-const fn component_inventory_is_recipe(component: &str) -> bool {
-    token_list_contains(COMPONENT_RECIPE_COMPONENTS, component)
-}
-
-const fn token_list_contains(list: &[&str], token: &str) -> bool {
-    let mut index = 0;
-    while index < list.len() {
-        if token_eq(list[index], token) {
-            return true;
-        }
-        index += 1;
-    }
-
-    false
 }
 
 /// Public adjacent surfaces that are not primary component inventory rows.
@@ -1699,70 +2531,9 @@ pub fn component_render_inputs(component: &str) -> &'static [&'static str] {
 
 /// Returns source file or module paths that own the component implementation.
 pub fn component_source_inputs(component: &str) -> &'static [&'static str] {
-    match component {
-        "Accordion" => &["accordion.rs"],
-        "Button" => &["button.rs"],
-        "Badge" => &["badge.rs"],
-        "Breadcrumb" => &["breadcrumb.rs"],
-        "Collapsible" => &["collapsible.rs"],
-        "Link" => &["link.rs"],
-        "Tag" => &["tag.rs"],
-        "ToastStack" => &["toast.rs"],
-        "IconButton" => &["icon_button.rs"],
-        "Switch" => &["switch.rs"],
-        "Checkbox" => &["checkbox.rs"],
-        "RadioGroup" => &["radio.rs"],
-        "Toggle" => &["toggle.rs"],
-        "ToggleGroup" => &["toggle_group.rs"],
-        "Toolbar" => &["toolbar.rs"],
-        "Sidebar" => &["sidebar.rs"],
-        "Tree" => &["tree.rs", "tree/movement.rs", "tree/render_plan.rs"],
-        "Listbox" => &["listbox.rs"],
-        "Select" => &["select.rs"],
-        "Combobox" => &["combobox.rs"],
-        "Command" => &[
-            "command/mod.rs",
-            "command/descriptor.rs",
-            "command/model.rs",
-            "command/render_plan.rs",
-            "command/runtime.rs",
-            "command/style.rs",
-        ],
-        "Label" => &["label.rs"],
-        "TextInput" => &["text_input.rs"],
-        "Textarea" => &["textarea.rs"],
-        "Field" => &["field.rs"],
-        "Tabs" => &["tabs.rs"],
-        "ScrollArea" => &["scroll_area.rs"],
-        "Splitter" => &["splitter.rs"],
-        "Table" => &["table/mod.rs", "table/resolve.rs"],
-        "TableColumnVisibility" => &["table/column_visibility"],
-        "TableFacetedFilter" => &["table/faceted_filter"],
-        "TableGlobalFilter" => &["table/global_filter"],
-        "TablePredicateFilter" => &["table/predicate_filter"],
-        "TableRangeFilter" => &["table/range_filter"],
-        "TableToolbar" => &["table/toolbar.rs"],
-        "VirtualizedList" => &["virtualized_list.rs"],
-        "StatusCue" => &["feedback.rs"],
-        "EmptyState" => &["feedback.rs"],
-        "Separator" => &["separator.rs"],
-        "Kbd" => &["kbd.rs"],
-        "Progress" => &["progress.rs"],
-        "Skeleton" => &["skeleton.rs"],
-        "Avatar" => &["avatar.rs"],
-        "AvatarGroup" => &["avatar.rs"],
-        "Tooltip" => &["tooltip.rs"],
-        "HoverCard" => &["hover_card.rs"],
-        "Popover" => &["popover.rs"],
-        "Dialog" => &["dialog.rs"],
-        "AlertDialog" => &["alert_dialog.rs"],
-        "Sheet" => &["sheet.rs"],
-        "Menu" => &["menu.rs"],
-        "ContextMenu" => &["context_menu.rs"],
-        "Slider" => &["slider.rs"],
-        "NumberInput" => &["number_input.rs"],
-        _ => panic!("missing source file mapping for `{component}`"),
-    }
+    component_contract_entry(component)
+        .map(|entry| entry.source_inputs)
+        .unwrap_or_else(|| panic!("missing source file mapping for `{component}`"))
 }
 
 /// Returns table submodules that own split render behavior.
@@ -2457,11 +3228,9 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
 
 /// Returns the public surface owner class for an inventory component row.
 pub fn public_owner_for_component_inventory(component: &str) -> PublicSurfaceOwnerClass {
-    if component_inventory_is_recipe(component) {
-        PublicSurfaceOwnerClass::OfficialComponentRecipe
-    } else {
-        PublicSurfaceOwnerClass::OfficialComponent
-    }
+    component_contract_entry(component)
+        .map(|entry| entry.owner)
+        .unwrap_or_else(|| panic!("missing public owner mapping for `{component}`"))
 }
 
 /// Normalizes a source mapping entry into the manifest home path.

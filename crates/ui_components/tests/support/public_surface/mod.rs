@@ -1,10 +1,9 @@
 use open_gpui_ui_components::component_contract::{
-    COMPONENT_API_INVENTORY, COMPONENT_RECIPE_COMPONENTS, ComponentApiInventoryEntry,
-    OFFICIAL_OVERLAY_COMPONENTS, PUBLIC_SURFACE_OWNER_MAP, PublicSurfaceOwnerClass,
-    PublicSurfaceOwnerEntry, SurfaceDocsStatus, SurfaceGalleryStatus,
-    component_contract_gallery_status, component_inventory_default_export, component_public_methods,
-    component_source_home, component_source_inputs,
-    public_owner_for_component_inventory, public_surface_default_export, table_render_owner_files,
+    COMPONENT_API_INVENTORY, COMPONENT_CONTRACT_REGISTRY, COMPONENT_RECIPE_COMPONENTS,
+    ComponentApiInventoryEntry, OFFICIAL_OVERLAY_COMPONENTS, PUBLIC_SURFACE_OWNER_MAP,
+    PublicSurfaceOwnerClass, SurfaceDocsStatus, SurfaceGalleryStatus,
+    component_contract_gallery_status, component_public_methods, component_source_inputs,
+    public_owner_for_component_inventory, table_render_owner_files,
 };
 use open_gpui_ui_components::{ColorIntent, FocusRing, gpui_adapter::gpui_role_from_ui};
 use open_gpui_ui_core::{
@@ -39,26 +38,17 @@ struct SurfaceManifestEntry {
 }
 
 fn registry_default_surface_tokens() -> std::collections::BTreeSet<String> {
-    let mut tokens = COMPONENT_API_INVENTORY
+    COMPONENT_CONTRACT_REGISTRY
         .iter()
-        .filter(|entry| component_inventory_default_export(entry))
-        .map(|entry| entry.component.to_owned())
-        .collect::<std::collections::BTreeSet<_>>();
-
-    tokens.extend(
-        PUBLIC_SURFACE_OWNER_MAP
-            .iter()
-            .filter(|entry| public_surface_default_export(entry))
-            .map(|entry| entry.name.to_owned()),
-    );
-
-    tokens
+        .filter(|entry| entry.default_export)
+        .map(|entry| entry.name.to_owned())
+        .collect()
 }
 
 fn registry_non_default_surface_tokens() -> std::collections::BTreeSet<String> {
-    PUBLIC_SURFACE_OWNER_MAP
+    COMPONENT_CONTRACT_REGISTRY
         .iter()
-        .filter(|entry| !public_surface_default_export(entry))
+        .filter(|entry| !entry.default_export)
         .filter(|entry| !entry.name.contains("::"))
         .map(|entry| entry.name.to_owned())
         .collect()
@@ -200,45 +190,23 @@ fn ui_component_source_files() -> Vec<std::path::PathBuf> {
 fn surface_manifest() -> Vec<SurfaceManifestEntry> {
     let root_exports = default_reexport_tokens("lib.rs");
     let prelude_exports = default_reexport_tokens("prelude.rs");
-    let mut entries = Vec::new();
-
-    for entry in COMPONENT_API_INVENTORY {
-        entries.push(SurfaceManifestEntry {
-            name: entry.component.to_owned(),
-            owner: public_owner_for_component_inventory(entry.component),
-            home: component_source_inputs(entry.component)
-                .first()
-                .map(|source| component_source_home(*source))
-                .unwrap_or("unknown")
-                .to_owned(),
-            root_export: root_exports.contains(entry.component),
-            prelude_export: prelude_exports.contains(entry.component),
-            primitive_status: SurfacePrimitiveStatus::NotPrimitive,
-            adapter_only: false,
-            diagnostic_only: false,
-            gallery_status: component_gallery_status(entry.component)
-                .unwrap_or(SurfaceGalleryStatus::NotInGallery),
-            docs_status: SurfaceDocsStatus::ComponentCatalog,
-            docs_token: Some(entry.component),
-        });
-    }
-
-    for entry in PUBLIC_SURFACE_OWNER_MAP {
-        entries.push(SurfaceManifestEntry {
+    let mut entries = COMPONENT_CONTRACT_REGISTRY
+        .iter()
+        .map(|entry| SurfaceManifestEntry {
             name: entry.name.to_owned(),
             owner: entry.owner,
-            home: entry.home.to_owned(),
+            home: entry.source_home.to_owned(),
             root_export: root_exports.contains(entry.name),
             prelude_export: prelude_exports.contains(entry.name),
-            primitive_status: primitive_status_for_surface(entry),
+            primitive_status: primitive_status_for_surface(entry.name, entry.source_home),
             adapter_only: entry.owner == PublicSurfaceOwnerClass::GpuiAdapterHelper,
             diagnostic_only: entry.owner == PublicSurfaceOwnerClass::DiagnosticSurface,
             gallery_status: component_gallery_status(entry.name)
                 .unwrap_or(SurfaceGalleryStatus::NotInGallery),
-            docs_status: docs_status_for_surface(entry),
-            docs_token: docs_token_for_surface(entry),
-        });
-    }
+            docs_status: entry.docs_status,
+            docs_token: entry.docs_token,
+        })
+        .collect::<Vec<_>>();
 
     entries.sort_by(|left, right| left.name.cmp(&right.name));
     entries
@@ -251,41 +219,13 @@ fn component_gallery_status(name: &str) -> Option<SurfaceGalleryStatus> {
     }
 }
 
-fn primitive_status_for_surface(entry: &PublicSurfaceOwnerEntry) -> SurfacePrimitiveStatus {
-    if entry.name.starts_with("primitives::") && entry.home == "removed" {
+fn primitive_status_for_surface(name: &str, home: &str) -> SurfacePrimitiveStatus {
+    if name.starts_with("primitives::") && home == "removed" {
         SurfacePrimitiveStatus::RemovedPrimitiveModule
-    } else if entry.name.starts_with("primitives::") {
+    } else if name.starts_with("primitives::") {
         SurfacePrimitiveStatus::PublicPrimitiveModule
     } else {
         SurfacePrimitiveStatus::NotPrimitive
-    }
-}
-
-fn docs_status_for_surface(entry: &PublicSurfaceOwnerEntry) -> SurfaceDocsStatus {
-    match entry.owner {
-        PublicSurfaceOwnerClass::OfficialComponent
-        | PublicSurfaceOwnerClass::OfficialComponentRecipe
-        | PublicSurfaceOwnerClass::RendererNeutralStateContract
-        | PublicSurfaceOwnerClass::GpuiAdapterHelper
-        | PublicSurfaceOwnerClass::InternalImplementationDetail => {
-            SurfaceDocsStatus::ComponentContract
-        }
-        PublicSurfaceOwnerClass::DiagnosticSurface => {
-            SurfaceDocsStatus::ComponentContractOrVerification
-        }
-        PublicSurfaceOwnerClass::DeprecatedRemovalTarget => SurfaceDocsStatus::Verification,
-    }
-}
-
-fn docs_token_for_surface(entry: &PublicSurfaceOwnerEntry) -> Option<&'static str> {
-    if entry.home == "removed" {
-        Some(entry.name)
-    } else if entry.owner == PublicSurfaceOwnerClass::GpuiAdapterHelper {
-        Some("open_gpui_ui_components::gpui_adapter")
-    } else if entry.name.starts_with("primitives::") {
-        Some("ui_components::primitives")
-    } else {
-        Some(entry.name.rsplit("::").next().unwrap_or(entry.name))
     }
 }
 

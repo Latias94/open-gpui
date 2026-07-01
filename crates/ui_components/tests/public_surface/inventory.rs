@@ -37,6 +37,78 @@ fn component_api_inventory_covers_official_gallery_catalog() {
 }
 
 #[test]
+fn component_contract_registry_covers_inventory_and_adjacent_surfaces() {
+    use std::collections::BTreeSet;
+
+    let registry_names = COMPONENT_CONTRACT_REGISTRY
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    let inventory_names = COMPONENT_API_INVENTORY
+        .iter()
+        .map(|entry| entry.component)
+        .collect::<BTreeSet<_>>();
+    let adjacent_names = PUBLIC_SURFACE_OWNER_MAP
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+
+    let missing_inventory = inventory_names
+        .difference(&registry_names)
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        missing_inventory,
+        Vec::<&str>::new(),
+        "component inventory rows must have canonical contract registry metadata"
+    );
+
+    let missing_adjacent = adjacent_names
+        .difference(&registry_names)
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        missing_adjacent,
+        Vec::<&str>::new(),
+        "adjacent public-surface rows must have canonical contract registry metadata"
+    );
+}
+
+#[test]
+fn component_contract_registry_aligns_compatibility_lists() {
+    let overlays = OFFICIAL_OVERLAY_COMPONENTS
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let recipes = COMPONENT_RECIPE_COMPONENTS
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let inventory = COMPONENT_API_INVENTORY
+        .iter()
+        .map(|entry| entry.component)
+        .collect::<std::collections::BTreeSet<_>>();
+
+    for entry in COMPONENT_CONTRACT_REGISTRY {
+        if entry.gallery_status == SurfaceGalleryStatus::OfficialOverlay {
+            assert!(
+                overlays.contains(entry.name),
+                "official overlay `{}` should stay in OFFICIAL_OVERLAY_COMPONENTS",
+                entry.name
+            );
+        }
+        if inventory.contains(entry.name) {
+            assert_eq!(
+                entry.owner == PublicSurfaceOwnerClass::OfficialComponentRecipe,
+                recipes.contains(entry.name),
+                "{} recipe ownership drifted from COMPONENT_RECIPE_COMPONENTS",
+                entry.name
+            );
+        }
+    }
+}
+
+#[test]
 fn component_recipe_inventory_rows_are_classified_once() {
     use std::collections::BTreeSet;
 
