@@ -1,8 +1,9 @@
 use open_gpui::{div, px};
-use open_gpui_ui_components::{gpui_adapter::gpui_role_from_ui, ColorIntent, FocusRing};
+use open_gpui_ui_components::{ColorIntent, FocusRing, gpui_adapter::gpui_role_from_ui};
 use open_gpui_ui_core::{
-    rect, semantic, ui_point, ui_px, ui_size, Orientation, OverlayLayerKind, OverlayLayerPolicy,
-    OverlayPlacementAlignment, OverlayPlacementSide, OverlayPresence, Role, UiPoint, UiPx, UiSize,
+    Orientation, OverlayLayerKind, OverlayLayerPolicy, OverlayPlacementAlignment,
+    OverlayPlacementSide, OverlayPresence, Role, UiPoint, UiPx, UiSize, rect, semantic, ui_point,
+    ui_px, ui_size,
 };
 
 #[derive(Debug)]

@@ -1,55 +1,35 @@
+mod support;
+
 use open_gpui::{
-    div, point, px, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    ScrollDelta, ScrollWheelEvent, Styled, Window,
+    Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Render, ScrollDelta,
+    ScrollWheelEvent, Styled, Window, div, point, px,
 };
 use open_gpui_ui_components::{
-    gpui_adapter::init_text_input, PopoverOpenMode, ScrollArea, Table, TableCellEditApplyOutcome,
-    TableCellEditChange, TableCellEditor, TableCellValue, TableColumn, TableColumnFacets,
-    TableColumnGroup, TableColumnId, TableColumnOrderChange, TableColumnOrderPlacement,
-    TableColumnPinning, TableColumnRegion, TableColumnResizeMode, TableColumnSizing,
-    TableColumnSizingChange, TableColumnVisibility, TableColumnVisibilityAction,
-    TableColumnVisibilityChange, TableColumnVisibilityOverrides, TableColumnVisibilityState,
-    TableExpansionMode, TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange,
-    TableFacetedFilterState, TableFilter, TableGlobalFacetSummary, TableGlobalFilter,
-    TableGlobalFilterChange, TableGlobalFilterState, TableHeaderAction, TableNumericFilterOperator,
-    TablePagination, TablePredicateFilter, TablePredicateFilterChange,
-    TablePredicateFilterOperator, TablePredicateFilterOperatorOptionState,
-    TablePredicateFilterState, TableRangeFilter, TableRangeFilterChange, TableRangeFilterState,
-    TableRow, TableRowChildrenLoadState, TableRowId, TableRowMeasureMode, TableRowPinning,
-    TableRowPinningPolicy, TableRowRegion, TableSelectOption, TableSelectionActivationMode,
-    TableSelectionMode, TableSelectionScope, TableSort, TableSortDirection, TableStageMode,
-    TableState, TableTextFilterOperator, TableToolbar, TableToolbarState, VirtualizerItemKey,
-    VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
+    PopoverOpenMode, ScrollArea, Table, TableCellEditApplyOutcome, TableCellEditChange,
+    TableCellEditor, TableCellValue, TableColumn, TableColumnFacets, TableColumnGroup,
+    TableColumnId, TableColumnOrderChange, TableColumnOrderPlacement, TableColumnPinning,
+    TableColumnRegion, TableColumnResizeMode, TableColumnSizing, TableColumnSizingChange,
+    TableColumnVisibility, TableColumnVisibilityAction, TableColumnVisibilityChange,
+    TableColumnVisibilityOverrides, TableColumnVisibilityState, TableExpansionMode,
+    TableFacetValueCount, TableFacetedFilter, TableFacetedFilterChange, TableFacetedFilterState,
+    TableFilter, TableGlobalFacetSummary, TableGlobalFilter, TableGlobalFilterChange,
+    TableGlobalFilterState, TableHeaderAction, TableNumericFilterOperator, TablePagination,
+    TablePredicateFilter, TablePredicateFilterChange, TablePredicateFilterOperator,
+    TablePredicateFilterOperatorOptionState, TablePredicateFilterState, TableRangeFilter,
+    TableRangeFilterChange, TableRangeFilterState, TableRow, TableRowChildrenLoadState, TableRowId,
+    TableRowMeasureMode, TableRowPinning, TableRowPinningPolicy, TableRowRegion, TableSelectOption,
+    TableSelectionActivationMode, TableSelectionMode, TableSelectionScope, TableSort,
+    TableSortDirection, TableStageMode, TableState, TableTextFilterOperator, TableToolbar,
+    TableToolbarState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
+    VirtualizerSnapshotItem, gpui_adapter::init_text_input,
 };
 use open_gpui_ui_core::{
-    ui_px, OutsidePressPolicy, OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable,
-    Size, ThemeTokens, TokenKey, UiPx,
+    OutsidePressPolicy, OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable, Size, UiPx,
+    ui_px,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
-
-const TEST_SURFACE: TokenKey = TokenKey::new("test.surface");
-const TEST_SURFACE_MUTED: TokenKey = TokenKey::new("test.surface_muted");
-const TEST_BORDER: TokenKey = TokenKey::new("test.border");
-const TEST_TEXT: TokenKey = TokenKey::new("test.text");
-const TEST_TEXT_MUTED: TokenKey = TokenKey::new("test.text_muted");
-const TEST_ACCENT: TokenKey = TokenKey::new("test.accent");
-const TEST_FOCUS_RING: TokenKey = TokenKey::new("test.focus_ring");
-const TEST_DESTRUCTIVE: TokenKey = TokenKey::new("test.destructive");
-
-fn custom_tokens() -> ThemeTokens {
-    ThemeTokens {
-        surface: TEST_SURFACE,
-        surface_muted: TEST_SURFACE_MUTED,
-        border: TEST_BORDER,
-        text: TEST_TEXT,
-        text_muted: TEST_TEXT_MUTED,
-        accent: TEST_ACCENT,
-        focus_ring: TEST_FOCUS_RING,
-        destructive: TEST_DESTRUCTIVE,
-        ..ThemeTokens::default()
-    }
-}
+use support::tokens::{TEST_TEXT, TEST_TEXT_MUTED, custom_tokens};
 
 fn sample_table_state(row_count: usize) -> TableState {
     let rows = (0..row_count).map(|index| {
@@ -355,9 +335,11 @@ fn table_behavior_snapshot_exposes_manual_expansion_and_child_load_metadata() {
             .and_then(TableRowChildrenLoadState::message),
         Some("Loading children")
     );
-    assert!(loading_row
-        .children_load_state()
-        .is_some_and(TableRowChildrenLoadState::is_loading));
+    assert!(
+        loading_row
+            .children_load_state()
+            .is_some_and(TableRowChildrenLoadState::is_loading)
+    );
 }
 
 #[test]
@@ -821,18 +803,24 @@ fn table_range_filter_change_updates_filters_and_resets_pagination() {
     let cleared_state = cleared.apply_to(next);
     assert_eq!(cleared_state.pagination().page_index(), 0);
     assert_eq!(cleared_state.filters().len(), 2);
-    assert!(cleared_state
-        .filters()
-        .iter()
-        .all(|filter| filter.number_range_bounds().is_none()));
-    assert!(cleared_state
-        .filters()
-        .iter()
-        .any(|filter| filter.column().as_str() == "team"));
-    assert!(cleared_state
-        .filters()
-        .iter()
-        .any(|filter| filter.column().as_str() == "score" && filter.query() == "1"));
+    assert!(
+        cleared_state
+            .filters()
+            .iter()
+            .all(|filter| filter.number_range_bounds().is_none())
+    );
+    assert!(
+        cleared_state
+            .filters()
+            .iter()
+            .any(|filter| filter.column().as_str() == "team")
+    );
+    assert!(
+        cleared_state
+            .filters()
+            .iter()
+            .any(|filter| filter.column().as_str() == "score" && filter.query() == "1")
+    );
 }
 
 #[test]
@@ -1274,14 +1262,16 @@ fn table_predicate_filter_change_updates_only_target_predicate_filters() {
     assert_eq!(next.column_visibility(), state.column_visibility());
     assert_eq!(next.global_filter(), state.global_filter());
     assert_eq!(next.filters().len(), 5);
-    assert!(next
-        .filters()
-        .iter()
-        .any(|filter| filter.column().as_str() == "team" && filter.query() == "UI"));
-    assert!(next
-        .filters()
-        .iter()
-        .any(|filter| filter.number_range_bounds() == score_range.number_range_bounds()));
+    assert!(
+        next.filters()
+            .iter()
+            .any(|filter| filter.column().as_str() == "team" && filter.query() == "UI")
+    );
+    assert!(
+        next.filters()
+            .iter()
+            .any(|filter| filter.number_range_bounds() == score_range.number_range_bounds())
+    );
     assert!(next.filters().iter().any(|filter| {
         filter.column().as_str() == "score"
             && filter
@@ -1311,14 +1301,18 @@ fn table_predicate_filter_change_updates_only_target_predicate_filters() {
     let cleared_state = cleared.apply_to(next);
     assert_eq!(cleared_state.pagination().page_index(), 0);
     assert_eq!(cleared_state.filters().len(), 4);
-    assert!(cleared_state
-        .filters()
-        .iter()
-        .all(|filter| filter.number_comparison_value().is_none()));
-    assert!(cleared_state
-        .filters()
-        .iter()
-        .any(|filter| filter.number_range_bounds() == score_range.number_range_bounds()));
+    assert!(
+        cleared_state
+            .filters()
+            .iter()
+            .all(|filter| filter.number_comparison_value().is_none())
+    );
+    assert!(
+        cleared_state
+            .filters()
+            .iter()
+            .any(|filter| filter.number_range_bounds() == score_range.number_range_bounds())
+    );
     assert!(cleared_state.filters().iter().any(|filter| {
         filter.column().as_str() == "score"
             && filter
@@ -1758,7 +1752,9 @@ fn table_behavior_snapshot_exposes_row_pinning_regions() {
             .iter()
             .map(|row| row.id().as_str())
             .collect::<Vec<_>>(),
-        ["row-0001", "row-0004", "row-0006", "row-0007", "row-0005", "row-0010",]
+        [
+            "row-0001", "row-0004", "row-0006", "row-0007", "row-0005", "row-0010",
+        ]
     );
     assert_eq!(snapshot.row_counts().pinned_center_rows(), 3);
     assert_eq!(snapshot.row_counts().rendered_rows(), 6);
@@ -1826,11 +1822,13 @@ fn table_behavior_snapshot_exposes_center_column_summary_without_window_internal
     assert_eq!(regions.center_width(), ui_px(540.0));
     assert_eq!(regions.right_width(), ui_px(132.0));
     assert_eq!(regions.aria_columns(), 8);
-    assert!(snapshot
-        .columns()
-        .iter()
-        .filter(|column| column.region() == TableColumnRegion::Center)
-        .all(|column| column.id().as_str().starts_with("metric_")));
+    assert!(
+        snapshot
+            .columns()
+            .iter()
+            .filter(|column| column.region() == TableColumnRegion::Center)
+            .all(|column| column.id().as_str().starts_with("metric_"))
+    );
 }
 
 #[test]
@@ -2065,10 +2063,12 @@ fn table_header_action_cycles_sorting_without_render_coupling() {
         Some(TableSortDirection::Descending)
     );
     assert_eq!(clear_action.next_direction(), None);
-    assert!(clear_action
-        .apply_to(sample_table_state(8))
-        .sorting()
-        .is_empty());
+    assert!(
+        clear_action
+            .apply_to(sample_table_state(8))
+            .sorting()
+            .is_empty()
+    );
 }
 
 #[test]

@@ -1,47 +1,26 @@
+mod support;
+
 use open_gpui::{
-    div, point, px, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    ScrollDelta, ScrollWheelEvent, Styled, Window,
+    Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Render, ScrollDelta,
+    ScrollWheelEvent, Styled, Window, div, point, px,
 };
 use open_gpui_ui_components::{
-    gpui_adapter::init_text_input, listbox_navigation_target, Combobox, ComboboxGroup,
-    ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command, CommandGroup,
-    CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItem,
-    CommandItemDescriptor, CommandLoadingState, CommandMatchSource, CommandOpenMode,
+    Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command,
+    CommandGroup, CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode,
+    CommandItem, CommandItemDescriptor, CommandLoadingState, CommandMatchSource, CommandOpenMode,
     CommandQueryMode, CommandSelection, CommandSelectionChange, CommandSelectionMode, Listbox,
     ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
     ListboxOptionKind, ListboxSelection, ListboxState, ScrollArea, ScrollResetPolicy, Select,
-    SelectOpenMode, SelectSelection, VirtualizerRange,
+    SelectOpenMode, SelectSelection, VirtualizerRange, gpui_adapter::init_text_input,
+    listbox_navigation_target,
 };
 use open_gpui_ui_core::{
-    ui_px, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable, Size,
-    ThemeTokens, TokenKey,
+    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
+    OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable, Size, ThemeTokens, ui_px,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
-
-const TEST_SURFACE: TokenKey = TokenKey::new("test.surface");
-const TEST_SURFACE_MUTED: TokenKey = TokenKey::new("test.surface_muted");
-const TEST_BORDER: TokenKey = TokenKey::new("test.border");
-const TEST_TEXT: TokenKey = TokenKey::new("test.text");
-const TEST_TEXT_MUTED: TokenKey = TokenKey::new("test.text_muted");
-const TEST_ACCENT: TokenKey = TokenKey::new("test.accent");
-const TEST_FOCUS_RING: TokenKey = TokenKey::new("test.focus_ring");
-const TEST_DESTRUCTIVE: TokenKey = TokenKey::new("test.destructive");
-
-fn custom_tokens() -> ThemeTokens {
-    ThemeTokens {
-        surface: TEST_SURFACE,
-        surface_muted: TEST_SURFACE_MUTED,
-        border: TEST_BORDER,
-        text: TEST_TEXT,
-        text_muted: TEST_TEXT_MUTED,
-        accent: TEST_ACCENT,
-        focus_ring: TEST_FOCUS_RING,
-        destructive: TEST_DESTRUCTIVE,
-        ..ThemeTokens::default()
-    }
-}
+use support::tokens::custom_tokens;
 
 #[test]
 fn listbox_state_resolves_grouped_options_navigation_and_typeahead() {
@@ -1202,10 +1181,12 @@ fn command_state_empty_query_preserves_caller_order() {
             "group-one".to_string(),
         ]
     );
-    assert!(state
-        .items()
-        .iter()
-        .all(|item| item.match_source().is_none() && item.match_score() == 0));
+    assert!(
+        state
+            .items()
+            .iter()
+            .all(|item| item.match_source().is_none() && item.match_score() == 0)
+    );
     assert!(state.groups().iter().all(|group| group.match_score() == 0));
 }
 

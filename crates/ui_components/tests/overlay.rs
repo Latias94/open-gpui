@@ -1,25 +1,26 @@
 use open_gpui::{
-    div, point, px, Anchor, Context, IntoElement, MouseButton, ParentElement, Render, ScrollDelta,
-    ScrollWheelEvent, Styled, Window,
+    Anchor, Context, IntoElement, MouseButton, ParentElement, Render, ScrollDelta,
+    ScrollWheelEvent, Styled, Window, div, point, px,
 };
 use open_gpui_ui_components::{
+    AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, ButtonVariant,
+    ColorState, ContextMenu, Dialog, DialogOpenMode, HoverCard, HoverCardContentKind,
+    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, Menu, MenuItem, MenuItemKind,
+    MenuOpenMode, MenuSelection, MenuSubmenuSurface, Popover, PopoverOpenMode, Sheet,
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Tooltip, TooltipContentKind,
+    TooltipDelayPolicy, TooltipOpenIntent,
     gpui_adapter::{
+        DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         default_deferred_priority, escape_open_change, gpui_anchor, outside_press_open_change,
-        point_anchor_placement, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
-        DEFAULT_OVERLAY_SAFE_MARGIN,
+        point_anchor_placement,
     },
-    menu_navigation_target, AlertDialog, AlertDialogActionKind, AlertDialogIntent,
-    AlertDialogOpenMode, ButtonVariant, ColorState, ContextMenu, Dialog, DialogOpenMode, HoverCard,
-    HoverCardContentKind, HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, Menu,
-    MenuItem, MenuItemKind, MenuOpenMode, MenuSelection, MenuSubmenuSurface, Popover,
-    PopoverOpenMode, Sheet, SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide,
-    Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent,
+    menu_navigation_target,
 };
 use open_gpui_ui_core::{
-    rect, semantic, ui_point, ui_px, ui_size, DismissReason, EscapeKeyPolicy, FocusRestoreIntent,
-    InitialFocusIntent, OutsidePressPolicy, OverlayAnchorInput, OverlayLayerKind,
-    OverlayLayerPolicy, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
-    OverlayPresence, Role, Sizable, Size, Toggled,
+    DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+    OverlayAnchorInput, OverlayLayerKind, OverlayLayerPolicy, OverlayPlacementAlignment,
+    OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role, Sizable, Size, Toggled,
+    rect, semantic, ui_point, ui_px, ui_size,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -926,20 +927,26 @@ fn menu_state_resolves_submenu_surface_and_safe_hover_contract() {
             ui_size(ui_px(200.0), ui_px(96.0)),
         )
     );
-    assert!(surface
-        .hover_corridor()
-        .contains_point(ui_point(ui_px(210.0), ui_px(60.0))));
-    assert!(!surface
-        .hover_corridor()
-        .contains_point(ui_point(ui_px(20.0), ui_px(20.0))));
-    assert!(state
-        .submenu_surface_for_trigger(
-            &[String::from("2:close")],
-            trigger_bounds,
-            content_size,
-            None
-        )
-        .is_none());
+    assert!(
+        surface
+            .hover_corridor()
+            .contains_point(ui_point(ui_px(210.0), ui_px(60.0)))
+    );
+    assert!(
+        !surface
+            .hover_corridor()
+            .contains_point(ui_point(ui_px(20.0), ui_px(20.0)))
+    );
+    assert!(
+        state
+            .submenu_surface_for_trigger(
+                &[String::from("2:close")],
+                trigger_bounds,
+                content_size,
+                None
+            )
+            .is_none()
+    );
 
     let closed_nested_submenu = Menu::new("closed-nested-menu", "Closed nested")
         .open(true)
