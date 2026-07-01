@@ -2671,8 +2671,9 @@ fn render_control_plan(
     view: WeakEntity<JellyflowCanvasView>,
 ) -> AnyElement {
     let id = format!("jellyflow-control:{}:{index}", control.key);
-    let disabled = control.disabled_reason.is_some();
-    let read_only = control.read_only || !control.is_editable();
+    let read_only = control_component_read_only(control);
+    let disabled = control_component_disabled(control);
+    let interaction_disabled = control_component_interaction_disabled(control);
     let label = control.label.clone();
     let value = control_value_label(control);
     let control_plan = control.clone();
@@ -2728,7 +2729,7 @@ fn render_control_plan(
                         .unwrap_or_else(|| "Select".to_string()),
                 )
                 .selected(selected)
-                .disabled(disabled || control.options.is_empty())
+                .disabled(interaction_disabled || control.options.is_empty())
                 .on_select(control_select_change_handler(
                     node_id,
                     node_data.clone(),
@@ -2741,7 +2742,7 @@ fn render_control_plan(
         OpenGpuiControlPrimitive::Switch => Switch::new(id)
             .label(label)
             .checked(control_bool_value(control))
-            .disabled(disabled)
+            .disabled(interaction_disabled)
             .on_change(control_bool_change_handler(
                 node_id,
                 node_data.clone(),
@@ -2752,7 +2753,7 @@ fn render_control_plan(
             .into_any_element(),
         OpenGpuiControlPrimitive::Slider => Slider::new(id, label)
             .value(control_number_value(control))
-            .disabled(disabled)
+            .disabled(interaction_disabled)
             .on_change(control_slider_change_handler(
                 node_id,
                 node_data.clone(),
@@ -2772,6 +2773,7 @@ fn render_control_plan(
         | OpenGpuiControlPrimitive::PortBindingDisplay => {
             Button::new(id, format!("{}*", control.label))
                 .variant(ButtonVariant::Secondary)
+                .disabled(true)
                 .with_size(Size::XSmall)
                 .into_any_element()
         }
@@ -2939,6 +2941,18 @@ fn control_options(control: &OpenGpuiControlPlan) -> Vec<ListboxOption> {
                 .disabled(option.disabled)
         })
         .collect()
+}
+
+fn control_component_disabled(control: &OpenGpuiControlPlan) -> bool {
+    control.disabled_reason.is_some() || control.is_partial_stub()
+}
+
+fn control_component_read_only(control: &OpenGpuiControlPlan) -> bool {
+    control.read_only || !control.is_editable()
+}
+
+fn control_component_interaction_disabled(control: &OpenGpuiControlPlan) -> bool {
+    control_component_disabled(control) || control_component_read_only(control)
 }
 
 fn control_value_label(control: &OpenGpuiControlPlan) -> String {
@@ -4568,6 +4582,51 @@ mod tests {
             ["config", "model", "stream"],
             serde_json::json!(true),
         );
+    }
+
+    #[test]
+    fn unavailable_controls_render_with_disabled_or_readonly_interaction_state() {
+        let store = make_demo_store();
+        let node = store
+            .graph()
+            .nodes()
+            .get(&JellyNodeId::from_u128(3))
+            .expect("llm node");
+        let registry = NodeKitRegistry::builtin().node_registry();
+        let descriptor = registry
+            .view_descriptor(&NodeKindKey::new("demo.llm"))
+            .expect("llm descriptor");
+        let prompt_slot = descriptor
+            .surface_slot("field.prompt")
+            .expect("prompt slot");
+        let model_slot = descriptor.surface_slot("badge.model").expect("model slot");
+        let prompt_controls = project_slot_controls(&node.data, prompt_slot);
+        let prompt = prompt_controls
+            .iter()
+            .find(|control| control.key == "control.prompt")
+            .expect("prompt control");
+        let stub = prompt_controls
+            .iter()
+            .find(|control| control.is_partial_stub())
+            .expect("stub control");
+        let model = project_slot_controls(&node.data, model_slot)
+            .into_iter()
+            .find(|control| control.key == "control.model")
+            .expect("model control");
+        let mut read_only_model = model.clone();
+        read_only_model.read_only = true;
+
+        assert!(!control_component_disabled(prompt));
+        assert!(!control_component_read_only(prompt));
+        assert!(!control_component_interaction_disabled(prompt));
+
+        assert!(control_component_disabled(stub));
+        assert!(control_component_read_only(stub));
+        assert!(control_component_interaction_disabled(stub));
+
+        assert!(!control_component_disabled(&read_only_model));
+        assert!(control_component_read_only(&read_only_model));
+        assert!(control_component_interaction_disabled(&read_only_model));
     }
 
     #[test]
