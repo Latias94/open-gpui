@@ -80,6 +80,8 @@ use serde_json::Value;
 mod node_component_kit;
 mod product_gallery;
 mod product_renderers;
+#[cfg(test)]
+mod visual_regression;
 
 const REPEATABLE_ITEM_SNAPSHOTS_FIELD: &str = "jellyflow_repeatable_items";
 #[cfg(test)]
@@ -3724,8 +3726,9 @@ mod tests {
         testing::{
             OpenGpuiHostCapabilityGap, OpenGpuiHostRendererSource, OpenGpuiHostSurfaceReport,
             OpenGpuiHostSurfaceReportRow, assert_authoring_interaction_regression_gates,
-            assert_host_surface_report_contract, assert_product_fixture_regression_gates,
-            assert_product_gallery_host_report_gates, product_fixture_catalog,
+            assert_host_surface_report_contract, assert_host_visual_interaction_report_gates,
+            assert_product_fixture_regression_gates, assert_product_gallery_host_report_gates,
+            product_fixture_catalog,
         },
     };
     use open_gpui_canvas::{
@@ -4833,6 +4836,8 @@ mod tests {
         let report = canvas_host_surface_report();
         assert_host_surface_report_contract(&report);
         assert_product_gallery_host_report_gates(&report);
+        let visual_report = visual_regression::canvas_host_visual_interaction_report();
+        assert_host_visual_interaction_report_gates(&visual_report);
         assert!(report.rows.iter().any(|row| {
             row.fixture_id == "workflow.review"
                 && row.renderer_key == "decision-card"
