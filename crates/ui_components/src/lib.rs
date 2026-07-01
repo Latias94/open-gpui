@@ -18,6 +18,7 @@ pub mod collapsible;
 pub mod color;
 pub mod combobox;
 pub mod command;
+pub mod component_contract;
 pub mod context_menu;
 pub mod dialog;
 pub mod feedback;
