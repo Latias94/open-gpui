@@ -1,9 +1,9 @@
 use open_gpui_ui_components::component_contract::{
     COMPONENT_API_INVENTORY, ComponentApiInventoryEntry, PUBLIC_SURFACE_OWNER_MAP,
     PublicSurfaceOwnerClass, PublicSurfaceOwnerEntry, SurfaceDocsStatus, SurfaceGalleryStatus,
-    component_inventory_default_export, component_public_methods, component_source_home,
-    component_source_inputs, public_owner_for_component_inventory, public_surface_default_export,
-    table_render_owner_files,
+    component_contract_gallery_status, component_inventory_default_export,
+    component_public_methods, component_source_home, component_source_inputs,
+    public_owner_for_component_inventory, public_surface_default_export, table_render_owner_files,
 };
 use open_gpui_ui_components::{ColorIntent, FocusRing, gpui_adapter::gpui_role_from_ui};
 use open_gpui_ui_core::{
@@ -281,44 +281,10 @@ fn surface_manifest() -> Vec<SurfaceManifestEntry> {
 }
 
 fn component_gallery_status(name: &str) -> Option<SurfaceGalleryStatus> {
-    for constructor in [
-        (
-            "ComponentCatalogEntry::official(",
-            SurfaceGalleryStatus::OfficialComponent,
-        ),
-        (
-            "ComponentCatalogEntry::adapter_only(",
-            SurfaceGalleryStatus::AdapterOnly,
-        ),
-        (
-            "ComponentCatalogEntry::internal_anatomy(",
-            SurfaceGalleryStatus::InternalAnatomy,
-        ),
-        (
-            "ComponentCatalogEntry::state_contract(",
-            SurfaceGalleryStatus::StateContract,
-        ),
-        (
-            "ComponentCatalogEntry::deferred(",
-            SurfaceGalleryStatus::NotInGallery,
-        ),
-    ] {
-        if component_catalog_names_from_gallery_constructor(constructor.0)
-            .iter()
-            .any(|entry| entry == name)
-        {
-            return Some(constructor.1);
-        }
+    match component_contract_gallery_status(name) {
+        SurfaceGalleryStatus::NotInGallery => None,
+        status => Some(status),
     }
-
-    if overlay_catalog_names_from_gallery_source()
-        .iter()
-        .any(|entry| entry == name)
-    {
-        return Some(SurfaceGalleryStatus::OfficialOverlay);
-    }
-
-    None
 }
 
 fn overlay_catalog_names_from_gallery_source() -> Vec<String> {

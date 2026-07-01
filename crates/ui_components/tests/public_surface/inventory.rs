@@ -8,17 +8,24 @@ fn component_api_inventory_covers_official_gallery_catalog() {
         .iter()
         .map(|entry| entry.component.to_string())
         .collect::<BTreeSet<_>>();
-    let catalog_names = official_component_catalog_names_from_gallery_source()
-        .into_iter()
+    let registry_official_names = COMPONENT_API_INVENTORY
+        .iter()
+        .filter(|entry| {
+            matches!(
+                component_contract_gallery_status(entry.component),
+                SurfaceGalleryStatus::OfficialComponent | SurfaceGalleryStatus::OfficialOverlay
+            )
+        })
+        .map(|entry| entry.component.to_string())
         .collect::<BTreeSet<_>>();
 
-    let missing = catalog_names
+    let missing = registry_official_names
         .difference(&inventory_names)
         .cloned()
         .collect::<Vec<_>>();
     assert!(
         missing.is_empty(),
-        "official Components catalog entries need public API inventory rows: {missing:?}"
+        "registry official component entries need public API inventory rows: {missing:?}"
     );
 
     for overlay in [

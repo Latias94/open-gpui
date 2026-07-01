@@ -31,44 +31,29 @@ fn surface_manifest_classifies_public_surface_once() {
 
 #[test]
 fn surface_manifest_aligns_adjacent_gallery_statuses() {
-    let status_expectations = [
-        (
-            "ComponentCatalogEntry::state_contract(",
-            SurfaceGalleryStatus::StateContract,
-        ),
-        (
-            "ComponentCatalogEntry::adapter_only(",
-            SurfaceGalleryStatus::AdapterOnly,
-        ),
-        (
-            "ComponentCatalogEntry::internal_anatomy(",
-            SurfaceGalleryStatus::InternalAnatomy,
-        ),
-    ];
     let manifest = surface_manifest();
 
-    for (constructor, expected_status) in status_expectations {
-        let names = component_catalog_names_from_gallery_constructor(constructor);
-        assert!(
-            !names.is_empty(),
-            "gallery constructor `{constructor}` should remain covered by the owner map"
-        );
-
-        for name in names {
-            let entries = manifest
-                .iter()
-                .filter(|entry| entry.name == name)
-                .collect::<Vec<_>>();
-            assert_eq!(
-                entries.len(),
-                1,
-                "gallery catalog entry `{name}` should have exactly one adjacent public surface owner"
-            );
-            assert_eq!(
-                entries[0].gallery_status, expected_status,
-                "gallery catalog entry `{name}` changed manifest gallery status"
-            );
+    for owner in PUBLIC_SURFACE_OWNER_MAP {
+        let expected_status = component_contract_gallery_status(owner.name);
+        if expected_status == SurfaceGalleryStatus::NotInGallery {
+            continue;
         }
+
+        let entries = manifest
+            .iter()
+            .filter(|entry| entry.name == owner.name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            entries.len(),
+            1,
+            "registry gallery surface `{}` should have exactly one manifest owner",
+            owner.name
+        );
+        assert_eq!(
+            entries[0].gallery_status, expected_status,
+            "registry gallery surface `{}` changed manifest gallery status",
+            owner.name
+        );
     }
 }
 

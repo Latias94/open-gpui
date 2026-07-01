@@ -2,6 +2,10 @@ use open_gpui::{
     Bounds, Entity, MouseButton, Pixels, ScrollDelta, ScrollWheelEvent, VisualTestContext, point,
     px, size,
 };
+use open_gpui_ui_components::component_contract::{
+    COMPONENT_API_INVENTORY, PUBLIC_SURFACE_OWNER_MAP, SurfaceGalleryStatus,
+    component_contract_family, component_contract_gallery_status,
+};
 use open_gpui_ui_components::{
     AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant, ComboboxOpenMode,
     CommandIndexSnapshotMode, CommandOpenMode, CommandSelectionMode, DialogOpenMode,
@@ -1496,55 +1500,22 @@ fn components_page_samples_expose_component_metadata() {
     let tables = pages::components::table_samples(tokens);
     let virtualized_lists = pages::components::virtualized_list_samples(tokens);
 
-    let official_names: Vec<_> = catalog
+    let official_names = catalog
         .iter()
         .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
         .map(|entry| entry.name)
-        .collect();
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected_official_names = COMPONENT_API_INVENTORY
+        .iter()
+        .filter(|entry| {
+            component_contract_gallery_status(entry.component)
+                == SurfaceGalleryStatus::OfficialComponent
+        })
+        .map(|entry| entry.component)
+        .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
-        official_names,
-        vec![
-            "Button",
-            "Badge",
-            "Accordion",
-            "Collapsible",
-            "Slider",
-            "NumberInput",
-            "ToggleGroup",
-            "Link",
-            "Breadcrumb",
-            "Tag",
-            "ToastStack",
-            "IconButton",
-            "Switch",
-            "Checkbox",
-            "RadioGroup",
-            "Toggle",
-            "Toolbar",
-            "Sidebar",
-            "Tree",
-            "Listbox",
-            "Select",
-            "Combobox",
-            "Command",
-            "Label",
-            "TextInput",
-            "Textarea",
-            "Field",
-            "Tabs",
-            "ScrollArea",
-            "Splitter",
-            "Table",
-            "VirtualizedList",
-            "StatusCue",
-            "EmptyState",
-            "Separator",
-            "Kbd",
-            "Progress",
-            "Skeleton",
-            "Avatar",
-            "AvatarGroup",
-        ]
+        official_names, expected_official_names,
+        "Components catalog official rows should follow the component contract registry order"
     );
     assert!(catalog.iter().all(|entry| !entry.name.trim().is_empty()));
     assert!(
@@ -1604,6 +1575,11 @@ fn components_page_samples_expose_component_metadata() {
 
     assert_eq!(gates.len(), 11);
     assert_eq!(gates[0].id, "public-api-exports");
+    assert!(
+        gates[0]
+            .evidence
+            .contains(&"crates/ui_components/src/component_contract/mod.rs")
+    );
     assert!(
         gates[0]
             .evidence
@@ -2658,7 +2634,8 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(components_source.contains("TableSampleRuntimeLog"));
     assert!(components_source.contains("table_samples"));
     assert!(catalog_source.contains("pub const COMPONENT_CATALOG"));
-    assert!(catalog_source.contains("ComponentCatalogEntry::official("));
+    assert!(catalog_source.contains("ComponentCatalogEntry::registry_sample("));
+    assert!(!catalog_source.contains("ComponentCatalogEntry::official("));
     assert!(catalog_source.contains("ComponentCatalogEntry::state_contract("));
     assert!(conformance_source.contains("pub const COMPONENT_CONFORMANCE_GATES"));
     for module_path in [
@@ -2735,6 +2712,70 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(
         render_sections_source.contains("pages::components::COMPONENT_CATALOG"),
         "rendering should consume catalog metadata instead of owning it"
+    );
+}
+
+#[test]
+fn components_catalog_consumes_component_contract_registry() {
+    use std::collections::BTreeSet;
+
+    for entry in pages::components::COMPONENT_CATALOG {
+        let expected_status = pages::components::ComponentCatalogStatus::from_registry(
+            component_contract_gallery_status(entry.name),
+        );
+        assert_eq!(
+            entry.status, expected_status,
+            "catalog entry `{}` should derive status from the component contract registry",
+            entry.name
+        );
+
+        if let Some(expected_family) = component_contract_family(entry.name) {
+            assert_eq!(
+                entry.family, expected_family,
+                "catalog entry `{}` should derive family from the component contract registry",
+                entry.name
+            );
+        }
+    }
+
+    let catalog_names = pages::components::COMPONENT_CATALOG
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    let registry_official_names = COMPONENT_API_INVENTORY
+        .iter()
+        .filter(|entry| {
+            component_contract_gallery_status(entry.component)
+                == SurfaceGalleryStatus::OfficialComponent
+        })
+        .map(|entry| entry.component)
+        .collect::<BTreeSet<_>>();
+    let catalog_official_names = pages::components::COMPONENT_CATALOG
+        .iter()
+        .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        catalog_official_names, registry_official_names,
+        "Components catalog official rows should be registry-owned"
+    );
+
+    let missing_adjacent_surfaces = PUBLIC_SURFACE_OWNER_MAP
+        .iter()
+        .filter(|entry| {
+            matches!(
+                component_contract_gallery_status(entry.name),
+                SurfaceGalleryStatus::AdapterOnly
+                    | SurfaceGalleryStatus::InternalAnatomy
+                    | SurfaceGalleryStatus::StateContract
+            )
+        })
+        .filter(|entry| !catalog_names.contains(entry.name))
+        .map(|entry| entry.name)
+        .collect::<Vec<_>>();
+    assert!(
+        missing_adjacent_surfaces.is_empty(),
+        "Components catalog should include registry gallery-adjacent surfaces: {missing_adjacent_surfaces:?}"
     );
 }
 

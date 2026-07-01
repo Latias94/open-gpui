@@ -141,6 +141,174 @@ pub fn public_surface_default_export(entry: &PublicSurfaceOwnerEntry) -> bool {
     }
 }
 
+/// Returns the registry-owned gallery status for a component or adjacent surface.
+pub const fn component_contract_gallery_status(name: &str) -> SurfaceGalleryStatus {
+    if token_eq(name, "Tooltip")
+        || token_eq(name, "HoverCard")
+        || token_eq(name, "Popover")
+        || token_eq(name, "Dialog")
+        || token_eq(name, "AlertDialog")
+        || token_eq(name, "Sheet")
+        || token_eq(name, "Menu")
+        || token_eq(name, "ContextMenu")
+    {
+        SurfaceGalleryStatus::OfficialOverlay
+    } else if token_eq(name, "Button")
+        || token_eq(name, "Badge")
+        || token_eq(name, "Accordion")
+        || token_eq(name, "Collapsible")
+        || token_eq(name, "Slider")
+        || token_eq(name, "NumberInput")
+        || token_eq(name, "ToggleGroup")
+        || token_eq(name, "Link")
+        || token_eq(name, "Breadcrumb")
+        || token_eq(name, "Tag")
+        || token_eq(name, "ToastStack")
+        || token_eq(name, "IconButton")
+        || token_eq(name, "Switch")
+        || token_eq(name, "Checkbox")
+        || token_eq(name, "RadioGroup")
+        || token_eq(name, "Toggle")
+        || token_eq(name, "Toolbar")
+        || token_eq(name, "Sidebar")
+        || token_eq(name, "Tree")
+        || token_eq(name, "Listbox")
+        || token_eq(name, "Select")
+        || token_eq(name, "Combobox")
+        || token_eq(name, "Command")
+        || token_eq(name, "Label")
+        || token_eq(name, "TextInput")
+        || token_eq(name, "Textarea")
+        || token_eq(name, "Field")
+        || token_eq(name, "Tabs")
+        || token_eq(name, "ScrollArea")
+        || token_eq(name, "Splitter")
+        || token_eq(name, "Table")
+        || token_eq(name, "VirtualizedList")
+        || token_eq(name, "StatusCue")
+        || token_eq(name, "EmptyState")
+        || token_eq(name, "Separator")
+        || token_eq(name, "Kbd")
+        || token_eq(name, "Progress")
+        || token_eq(name, "Skeleton")
+        || token_eq(name, "Avatar")
+        || token_eq(name, "AvatarGroup")
+    {
+        SurfaceGalleryStatus::OfficialComponent
+    } else if token_eq(name, "TextInputController") {
+        SurfaceGalleryStatus::AdapterOnly
+    } else if token_eq(name, "ToolbarItem")
+        || token_eq(name, "SidebarItem")
+        || token_eq(name, "ListboxOption")
+    {
+        SurfaceGalleryStatus::InternalAnatomy
+    } else if token_eq(name, "TreeState") || token_eq(name, "VirtualizedListState") {
+        SurfaceGalleryStatus::StateContract
+    } else {
+        SurfaceGalleryStatus::NotInGallery
+    }
+}
+
+/// Returns the registry-owned component family or ownership group.
+pub const fn component_contract_family(name: &str) -> Option<&'static str> {
+    if token_eq(name, "Button")
+        || token_eq(name, "ToggleGroup")
+        || token_eq(name, "IconButton")
+        || token_eq(name, "Toggle")
+    {
+        Some("action")
+    } else if token_eq(name, "Badge") || token_eq(name, "Tag") || token_eq(name, "Kbd") {
+        Some("display")
+    } else if token_eq(name, "Accordion") || token_eq(name, "Collapsible") {
+        Some("disclosure")
+    } else if token_eq(name, "Slider")
+        || token_eq(name, "NumberInput")
+        || token_eq(name, "Switch")
+        || token_eq(name, "Checkbox")
+        || token_eq(name, "Label")
+        || token_eq(name, "TextInput")
+        || token_eq(name, "Textarea")
+        || token_eq(name, "Field")
+    {
+        Some("form")
+    } else if token_eq(name, "Link") || token_eq(name, "Breadcrumb") || token_eq(name, "Tabs") {
+        Some("navigation")
+    } else if token_eq(name, "ToastStack")
+        || token_eq(name, "StatusCue")
+        || token_eq(name, "EmptyState")
+    {
+        Some("feedback")
+    } else if token_eq(name, "RadioGroup")
+        || token_eq(name, "Listbox")
+        || token_eq(name, "Select")
+        || token_eq(name, "ListboxOption")
+    {
+        Some("choice")
+    } else if token_eq(name, "Combobox") || token_eq(name, "Command") {
+        Some("choice-search")
+    } else if token_eq(name, "Toolbar")
+        || token_eq(name, "Sidebar")
+        || token_eq(name, "ToolbarItem")
+        || token_eq(name, "SidebarItem")
+    {
+        Some("shell")
+    } else if token_eq(name, "Tree") || token_eq(name, "TreeState") {
+        Some("hierarchy")
+    } else if token_eq(name, "ScrollArea")
+        || token_eq(name, "Splitter")
+        || token_eq(name, "Separator")
+    {
+        Some("layout")
+    } else if token_eq(name, "Table")
+        || token_eq(name, "VirtualizedList")
+        || token_eq(name, "VirtualizedListState")
+        || token_eq(name, "TableColumnVisibility")
+        || token_eq(name, "TableFacetedFilter")
+        || token_eq(name, "TableGlobalFilter")
+        || token_eq(name, "TablePredicateFilter")
+        || token_eq(name, "TableRangeFilter")
+        || token_eq(name, "TableToolbar")
+    {
+        Some("data")
+    } else if token_eq(name, "Progress") || token_eq(name, "Skeleton") {
+        Some("status")
+    } else if token_eq(name, "Avatar") || token_eq(name, "AvatarGroup") {
+        Some("identity")
+    } else if token_eq(name, "TextInputController") {
+        Some("form-adapter")
+    } else if token_eq(name, "Tooltip")
+        || token_eq(name, "HoverCard")
+        || token_eq(name, "Popover")
+        || token_eq(name, "Dialog")
+        || token_eq(name, "AlertDialog")
+        || token_eq(name, "Sheet")
+        || token_eq(name, "Menu")
+        || token_eq(name, "ContextMenu")
+    {
+        Some("overlay")
+    } else {
+        None
+    }
+}
+
+const fn token_eq(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    if left.len() != right.len() {
+        return false;
+    }
+
+    let mut index = 0;
+    while index < left.len() {
+        if left[index] != right[index] {
+            return false;
+        }
+        index += 1;
+    }
+
+    true
+}
+
 /// Public adjacent surfaces that are not primary component inventory rows.
 pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
     PublicSurfaceOwnerEntry {
