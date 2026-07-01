@@ -45,6 +45,53 @@ fn command_component_source_mapping_tracks_split_owners() {
 }
 
 #[test]
+fn menu_component_source_mapping_tracks_split_owners() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let menu_sources = [
+        "menu/mod.rs",
+        "menu/descriptor.rs",
+        "menu/model.rs",
+        "menu/render_plan.rs",
+        "menu/runtime.rs",
+        "menu/style.rs",
+    ];
+
+    assert!(!source_dir.join("menu.rs").exists());
+    assert_eq!(component_source_inputs("Menu"), menu_sources);
+
+    for owner in menu_sources {
+        assert!(
+            source_dir.join(owner).is_file(),
+            "split Menu owner `{owner}` should exist"
+        );
+    }
+}
+
+#[test]
+fn context_menu_component_source_mapping_tracks_split_owners() {
+    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let context_menu_sources = [
+        "context_menu/mod.rs",
+        "context_menu/model.rs",
+        "menu/mod.rs",
+        "menu/descriptor.rs",
+        "menu/model.rs",
+        "menu/runtime.rs",
+        "menu/style.rs",
+    ];
+
+    assert!(!source_dir.join("context_menu.rs").exists());
+    assert_eq!(component_source_inputs("ContextMenu"), context_menu_sources);
+
+    for owner in context_menu_sources {
+        assert!(
+            source_dir.join(owner).is_file(),
+            "split ContextMenu owner `{owner}` should exist"
+        );
+    }
+}
+
+#[test]
 fn component_source_mapping_expands_split_component_directories() {
     let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let source_files = component_source_paths("TableRangeFilter")

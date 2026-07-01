@@ -1,6 +1,6 @@
 //! Internal runtime helpers for menu-like overlays.
 
-use crate::menu::MenuSubmenuNavigation;
+use super::MenuSubmenuNavigation;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
