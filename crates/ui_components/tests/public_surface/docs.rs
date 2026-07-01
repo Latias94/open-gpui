@@ -6,6 +6,9 @@ fn component_contract_docs_match_current_public_surface_vocabulary() {
         "components::catalog::COMPONENT_CATALOG",
         "components/catalog.rs",
         "components/render.rs",
+        "components/samples/",
+        "components/runtime/",
+        "components/render/",
         "`adapter-only`",
         "`internal-anatomy`",
         "`state-contract`",
@@ -17,6 +20,10 @@ fn component_contract_docs_match_current_public_surface_vocabulary() {
         "Virtualized adapters share a crate-private row-window projection",
         "`open_gpui_ui_components::choice`",
         "`open_gpui_ui_components::gpui_adapter`",
+        "public_api/default.rs",
+        "must not use wildcard facade exports such as",
+        "pub use runtime::*",
+        "pub use samples::*",
     ] {
         assert!(
             contract.contains(required),

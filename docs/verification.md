@@ -271,9 +271,13 @@ explicit accessible labels, size metrics, `Role::Image`, group visible/hidden co
 label state, and source metadata staying outside image-loading ownership. The gallery metadata and
 short-viewport smoke tests also verify those primitives are listed as official catalog entries and
 render visible samples with stable debug selectors.
-The public API inventory gate lives in `crates/ui_components/tests/public_surface.rs`, with the
-long manifest helpers in `crates/ui_components/tests/support/public_surface.rs`. Its key
-sentinels include `component_api_inventory_covers_official_gallery_catalog` and
+The public API inventory gate lives in `crates/ui_components/tests/public_surface.rs`. Its focused
+contract modules live under `crates/ui_components/tests/public_surface/`, while shared parsing and
+manifest helpers live in `crates/ui_components/tests/support/public_surface/mod.rs`. The component
+crate root and prelude both re-export the curated default surface from
+`crates/ui_components/src/public_api/default.rs`; GPUI runtime adapter helpers remain explicitly
+namespaced under `open_gpui_ui_components::gpui_adapter`. Key sentinels include
+`component_api_inventory_covers_official_gallery_catalog` and
 `component_api_inventory_uses_stable_ownership_vocabulary`. Run the focused proof with:
 
 ```sh
@@ -468,6 +472,14 @@ changes them. They cover the public export map, removed primitive aliases, overl
 choice/search behavior, the Table behavior-snapshot and internal render-plan boundary, shared
 row-window projection, theme registry, and gallery catalog/conformance/runtime/sample/render
 module split:
+
+The Components gallery root keeps `runtime`, `samples`, and render ownership private. Stable
+gallery API names are re-exported explicitly from `components.rs`; sample families live under
+`examples/ui-foundation-gallery/src/pages/components/samples/`, runtime probes under
+`examples/ui-foundation-gallery/src/pages/components/runtime/`, and render orchestration/readouts
+under `examples/ui-foundation-gallery/src/pages/components/render/`. Source-contract tests should
+reject `pub mod runtime`, `pub mod samples`, `pub use runtime::*`, and `pub use samples::*` in the
+Components facade.
 
 ```powershell
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
