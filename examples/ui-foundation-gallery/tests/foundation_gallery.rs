@@ -2628,8 +2628,16 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(components_source.contains("pub mod catalog;"));
     assert!(components_source.contains("pub use catalog::{"));
     assert!(components_source.contains("pub mod conformance;"));
-    assert!(components_source.contains("pub mod runtime;"));
-    assert!(components_source.contains("pub mod samples;"));
+    assert!(components_source.contains("mod runtime;"));
+    assert!(components_source.contains("mod samples;"));
+    assert!(components_source.contains("pub use runtime::{"));
+    assert!(components_source.contains("pub use samples::{"));
+    assert!(!components_source.contains("pub mod runtime;"));
+    assert!(!components_source.contains("pub mod samples;"));
+    assert!(!components_source.contains("pub use runtime::*;"));
+    assert!(!components_source.contains("pub use samples::*;"));
+    assert!(components_source.contains("TableSampleRuntimeLog"));
+    assert!(components_source.contains("table_samples"));
     assert!(catalog_source.contains("pub const COMPONENT_CATALOG"));
     assert!(catalog_source.contains("ComponentCatalogEntry::official("));
     assert!(catalog_source.contains("ComponentCatalogEntry::state_contract("));
