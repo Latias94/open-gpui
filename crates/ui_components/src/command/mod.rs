@@ -32,7 +32,8 @@ use crate::text_editing::TextEditingPolicy;
 use crate::text_input::adapter::TextInputController;
 use crate::text_input::{TextInputDisplayMode, TextInputState};
 use crate::theme::ThemeResolver;
-pub use render_plan::{CommandRenderPlan, CommandRowRenderPlan};
+pub use render_plan::{CommandBehaviorSnapshot, CommandRowBehaviorSnapshot};
+pub(crate) use render_plan::{CommandRenderPlan, CommandRowRenderPlan};
 use runtime::{
     CommandOpenChangeHandler, CommandQueryChangeHandler, CommandRuntime,
     CommandSelectedValuesChangeHandler, CommandSelectionHandler, command_content_element,
@@ -2019,16 +2020,25 @@ impl Command {
         )
     }
 
-    /// Returns the default virtualized result render plan at the viewport origin.
-    pub fn render_plan(&self) -> CommandRenderPlan {
-        self.render_plan_with_viewport(
+    /// Returns the default command behavior snapshot at the viewport origin.
+    pub fn behavior_snapshot(&self) -> CommandBehaviorSnapshot {
+        self.behavior_snapshot_with_viewport(
             UiPx::ZERO,
             self.metrics.row_height() * self.viewport_item_count as f32,
         )
     }
 
-    /// Resolves the renderer-neutral command result render plan for a viewport snapshot.
-    pub fn render_plan_with_viewport(
+    /// Resolves the command behavior snapshot for a viewport.
+    pub fn behavior_snapshot_with_viewport(
+        &self,
+        scroll_offset: UiPx,
+        viewport_extent: UiPx,
+    ) -> CommandBehaviorSnapshot {
+        let plan = self.render_plan_with_viewport(scroll_offset, viewport_extent);
+        CommandBehaviorSnapshot::from_render_plan(&plan)
+    }
+
+    fn render_plan_with_viewport(
         &self,
         scroll_offset: UiPx,
         viewport_extent: UiPx,

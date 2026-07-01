@@ -28,11 +28,12 @@ pub use crate::combobox::{
     ComboboxOpenMode, ComboboxOption, ComboboxOptionDescriptor, ComboboxSelection, ComboboxState,
 };
 pub use crate::command::{
-    Command, CommandColors, CommandDialogState, CommandGroup, CommandGroupDescriptor,
-    CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItem, CommandItemDescriptor,
-    CommandItemState, CommandLoadingState, CommandMatchSource, CommandMetrics, CommandOpenMode,
-    CommandQueryMode, CommandRenderPlan, CommandRowRenderPlan, CommandSelectedChipState,
-    CommandSelection, CommandSelectionChange, CommandSelectionMode, CommandState,
+    Command, CommandBehaviorSnapshot, CommandColors, CommandDialogState, CommandGroup,
+    CommandGroupDescriptor, CommandIndexSnapshot, CommandIndexSnapshotMode, CommandItem,
+    CommandItemDescriptor, CommandItemState, CommandLoadingState, CommandMatchSource,
+    CommandMetrics, CommandOpenMode, CommandQueryMode, CommandRowBehaviorSnapshot,
+    CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandSelectionMode,
+    CommandState,
 };
 pub use crate::context_menu::{ContextMenu, ContextMenuState};
 pub use crate::dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
@@ -151,14 +152,14 @@ pub use crate::tooltip::{
     TooltipOpenIntent, TooltipState,
 };
 pub use crate::tree::{
-    Tree, TreeChildrenLoadState, TreeDropPosition, TreeFocusTarget, TreeItemDescriptor,
-    TreeItemState, TreeKeyboardAction, TreeMetrics, TreeMove, TreeMoveTarget, TreeRenderPlan,
-    TreeRowRenderPlan, TreeSelection, TreeState, TreeToggle, apply_tree_move,
+    Tree, TreeBehaviorSnapshot, TreeChildrenLoadState, TreeDropPosition, TreeFocusTarget,
+    TreeItemDescriptor, TreeItemState, TreeKeyboardAction, TreeMetrics, TreeMove, TreeMoveTarget,
+    TreeRowBehaviorSnapshot, TreeSelection, TreeState, TreeToggle, apply_tree_move,
     tree_navigation_target,
 };
 pub use crate::virtualized_list::{
-    VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListMetrics, VirtualizedListRenderPlan, VirtualizedListRowRenderPlan,
+    VirtualizedList, VirtualizedListActivation, VirtualizedListBehaviorSnapshot,
+    VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRowBehaviorSnapshot,
     VirtualizedListScrollStrategy, VirtualizedListState, virtualized_list_navigation_target,
     virtualized_list_scroll_target,
 };

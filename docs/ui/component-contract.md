@@ -877,13 +877,14 @@ unloaded, or virtualized descendants.
 `roving_focus.rs` now owns the shared vertical, paged, and typeahead target helpers used by
 `Listbox`, `Tabs`, `RadioGroup`, `Menu`, `Sidebar`, `Toolbar`, `Tree`, and `VirtualizedList`, so
 the component-specific adapters keep only their own branch and activation rules.
-`VirtualizedList` is now an official rendered component. Its adapter resolves a
-`VirtualizedListRenderPlan` from stable descriptors, owns a keyed GPUI runtime plus persistent
-`ScrollHandle`, and keeps row rendering inside its viewport. `VirtualizedListState` remains the
-renderer-neutral keyboard/navigation contract: active/selected indices, page navigation,
-activation payloads, viewport item count, fixed row metrics, overscan, and semantic scroll
-strategy labels. Rendered range calculation remains owned by
-`open_gpui_ui_core::VirtualizerState`.
+`VirtualizedList` is now an official rendered component. Its adapter keeps the render plan
+crate-private, exposes `VirtualizedListBehaviorSnapshot` for diagnostics, owns a keyed GPUI
+runtime plus persistent `ScrollHandle`, and keeps row rendering inside its viewport.
+`VirtualizedListState` remains the renderer-neutral keyboard/navigation contract:
+active/selected indices, page navigation, activation payloads, viewport item count, fixed row
+metrics, overscan, and semantic scroll strategy labels. Rendered range calculation remains owned
+by `open_gpui_ui_core::VirtualizerState`. `TreeBehaviorSnapshot` and `CommandBehaviorSnapshot`
+follow the same public boundary: behavior probes are stable, renderer assembly plans are internal.
 `menu_runtime.rs` owns submenu hover timing, branch switching, trigger-bound caches, and local
 submenu scroll handles for `Menu` and `ContextMenu`, keeping render assembly thin while preserving
 safe hover and local scroll ownership.

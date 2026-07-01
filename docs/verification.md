@@ -447,10 +447,9 @@ For GPUI runtime focus assertions, `VisualTestContext::debug_selector_is_focused
 `VisualTestContext::focused_debug_selector` are the preferred test hooks. They use test-only
 debug-selector-to-focus-handle data and keep focus checks independent from component internals.
 The public surface manifest keeps adapter-only, renderer-neutral state, primitive, gallery, and
-docs ownership explicit while the UI component architecture is being deepened. Table diagnostics
-now expose `TableBehaviorSnapshot`; remaining render-plan surfaces such as `TreeRenderPlan`,
-`VirtualizedListRenderPlan`, and `CommandRenderPlan` must stay intentionally classified until later
-units replace them with narrower behavior snapshots or story probes.
+docs ownership explicit while the UI component architecture is being deepened. Table, Tree,
+VirtualizedList, and Command diagnostics now expose behavior snapshots; renderer assembly plans
+stay crate-private unless a future component deliberately promotes a narrower state contract.
 For the UI architecture deepening refactor, keep the focused gates below close to the code that
 changes them. They cover the public export map, removed primitive aliases, overlay runtime policy,
 choice/search behavior, Table diagnostics boundary, shared row-window projection, theme registry,
@@ -463,7 +462,7 @@ cargo nextest run -p open-gpui-ui-components overlay_adapter_config_defaults_fol
 cargo nextest run -p open-gpui-ui-components choice_surfaces_share_stable_value_resolution_and_query_normalization listbox select combobox command
 cargo nextest run -p open-gpui-ui-components table_behavior_snapshot table_runtime table_component_source_mapping_tracks_split_render_owners
 cargo nextest run -p open-gpui-ui-core virtualizer
-cargo nextest run -p open-gpui-ui-components row_window virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts virtualized_list_component_render_plan_applies_builder_metrics tree_runtime table_behavior_snapshot_exposes_center_column_summary_without_window_internals table_behavior_snapshot_exposes_pinned_column_regions
+cargo nextest run -p open-gpui-ui-components row_window virtualized_list_behavior_snapshot_uses_item_descriptors_and_virtualizer_contracts virtualized_list_behavior_snapshot_applies_builder_metrics tree_runtime table_behavior_snapshot_exposes_center_column_summary_without_window_internals table_behavior_snapshot_exposes_pinned_column_regions
 cargo nextest run -p open-gpui-ui-components theme_registry theme_resolver default_theme theme_snapshots
 cargo run -p xtask -- scan-theme-drift
 cargo nextest run -p open-gpui-ui-foundation-gallery token_page_exposes_runtime_theme_mode_metadata token_page_samples_follow_theme_token_order components_page_samples_expose_component_metadata components_catalog_metadata_is_separate_from_rendering official_component_catalog_entries_have_signals_and_sample_selectors state_contract_catalog_entries_have_signals_and_readout_selectors gallery_story_contracts_cover_components_state_readouts_and_overlays components_gallery_smoke_focuses_catalog_family_and_restores_all_mode components_gallery_smoke_focuses_every_focusable_catalog_entry

@@ -21,7 +21,8 @@ use crate::roving_focus::{first_enabled, typeahead_target, vertical_roving_navig
 mod movement;
 mod render_plan;
 pub use movement::{TreeDropPosition, TreeMove, TreeMoveTarget, apply_tree_move};
-pub use render_plan::{TreeRenderPlan, TreeRowRenderPlan};
+pub(crate) use render_plan::TreeRenderPlan;
+pub use render_plan::{TreeBehaviorSnapshot, TreeRowBehaviorSnapshot};
 
 type TreeSelectHandler = Rc<dyn Fn(TreeSelection, &mut Window, &mut App)>;
 type TreeToggleHandler = Rc<dyn Fn(TreeToggle, &mut Window, &mut App)>;
@@ -959,8 +960,17 @@ impl Tree {
         )
     }
 
-    /// Returns a fixed-row virtualized render plan from the builder seed.
-    pub fn render_plan(&self, scroll_offset: UiPx, viewport_extent: UiPx) -> TreeRenderPlan {
+    /// Returns a fixed-row virtualized behavior snapshot from the builder seed.
+    pub fn behavior_snapshot(
+        &self,
+        scroll_offset: UiPx,
+        viewport_extent: UiPx,
+    ) -> TreeBehaviorSnapshot {
+        let plan = self.render_plan(scroll_offset, viewport_extent);
+        TreeBehaviorSnapshot::from_render_plan(&plan)
+    }
+
+    fn render_plan(&self, scroll_offset: UiPx, viewport_extent: UiPx) -> TreeRenderPlan {
         TreeRenderPlan::resolve(
             self.id.clone(),
             self.label.to_string(),
@@ -2043,57 +2053,49 @@ mod tests {
     }
 
     #[test]
-    fn tree_render_plan_virtualizes_visible_rows_with_stable_metadata() {
+    fn tree_behavior_snapshot_virtualizes_visible_rows_with_stable_metadata() {
         let items = (0..100)
             .map(|index| {
                 TreeItemDescriptor::new(format!("node-{index:04}"), format!("Node {index:04}"))
             })
             .collect::<Vec<_>>();
-        let state = TreeState::resolve(
-            Size::Small,
-            "Large tree",
-            Some("node-0012"),
-            Some("node-0012"),
-            items,
-        );
-        let row_height = state.metrics().row_height();
-        let plan = TreeRenderPlan::resolve(
-            "large-tree",
-            "Large tree",
-            state,
-            row_height * 10.0,
-            row_height * 5.0,
-            5,
-            4,
-        );
+        let tree = Tree::new("large-tree", "Large tree", items)
+            .with_size(Size::Small)
+            .default_selected("node-0012")
+            .default_focused("node-0012")
+            .virtualized(true)
+            .viewport_item_count(5)
+            .overscan_count(4);
+        let row_height = TreeMetrics::from_size(Size::Small).row_height();
+        let snapshot = tree.behavior_snapshot(row_height * 10.0, row_height * 5.0);
 
-        assert_eq!(plan.tree_id(), "large-tree");
-        assert_eq!(plan.label(), "Large tree");
-        assert_eq!(plan.role(), Role::Tree);
-        assert_eq!(plan.row_role(), Role::TreeItem);
-        assert_eq!(plan.virtualizer().count(), 100);
+        assert_eq!(snapshot.tree_id(), "large-tree");
+        assert_eq!(snapshot.label(), "Large tree");
+        assert_eq!(snapshot.role(), Role::Tree);
+        assert_eq!(snapshot.row_role(), Role::TreeItem);
+        assert_eq!(snapshot.state().items().len(), 100);
         assert_eq!(
-            *plan.virtualizer().visible_range(),
+            *snapshot.visible_range(),
             open_gpui_ui_core::VirtualizerRange::new(10, 15)
         );
         assert_eq!(
-            *plan.virtualizer().overscan_range(),
+            *snapshot.overscan_range(),
             open_gpui_ui_core::VirtualizerRange::new(8, 17)
         );
-        assert_eq!(plan.visible_row_count(), 5);
-        assert_eq!(plan.rendered_row_count(), 9);
-        assert_eq!(plan.virtualizer().measurements().len(), 9);
-        assert_eq!(plan.rows()[0].index(), 8);
-        assert_eq!(plan.rows()[0].value(), "node-0008");
-        assert_eq!(plan.rows()[0].render_key(), "8:node-0008");
-        assert_eq!(plan.rows()[0].virtual_start(), row_height * 8.0);
-        assert_eq!(plan.rows()[0].virtual_size(), row_height);
+        assert_eq!(snapshot.visible_row_count(), 5);
+        assert_eq!(snapshot.rendered_row_count(), 9);
+        assert_eq!(snapshot.rows().len(), 9);
+        assert_eq!(snapshot.rows()[0].index(), 8);
+        assert_eq!(snapshot.rows()[0].value(), "node-0008");
+        assert_eq!(snapshot.rows()[0].render_key(), "8:node-0008");
+        assert_eq!(snapshot.rows()[0].virtual_start(), row_height * 8.0);
+        assert_eq!(snapshot.rows()[0].virtual_size(), row_height);
         assert_eq!(
-            plan.focused_row().map(TreeRowRenderPlan::value),
+            snapshot.focused_row().map(|row| row.value()),
             Some("node-0012")
         );
         assert_eq!(
-            plan.selected_row().map(TreeRowRenderPlan::value),
+            snapshot.selected_row().map(|row| row.value()),
             Some("node-0012")
         );
     }

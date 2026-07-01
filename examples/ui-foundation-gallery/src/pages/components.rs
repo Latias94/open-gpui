@@ -27,8 +27,8 @@ use open_gpui_ui_components::{
     TextInputState, Textarea, TextareaState, Toast, ToastStack, ToastStackState, Toggle,
     ToggleGroup, ToggleGroupItem, ToggleGroupSelectionMode, ToggleGroupState, ToggleState,
     ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
-    Tree, TreeItemDescriptor, TreeMove, TreeRenderPlan, TreeState, VirtualizedList,
-    VirtualizedListItemDescriptor, VirtualizedListMetrics, VirtualizedListRenderPlan,
+    Tree, TreeBehaviorSnapshot, TreeItemDescriptor, TreeMove, TreeState, VirtualizedList,
+    VirtualizedListBehaviorSnapshot, VirtualizedListItemDescriptor, VirtualizedListMetrics,
     VirtualizedListScrollStrategy, VirtualizedListState, apply_tree_move,
 };
 use open_gpui_ui_core::{
@@ -213,7 +213,7 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::TableRowRegions",
     "open_gpui_ui_components::VirtualizedList",
     "open_gpui_ui_components::VirtualizedListItemDescriptor",
-    "open_gpui_ui_components::VirtualizedListRenderPlan",
+    "open_gpui_ui_components::VirtualizedListBehaviorSnapshot",
     "open_gpui_ui_components::VirtualizerState",
     "open_gpui_ui_components::Tree",
     "open_gpui_ui_components::TreeMetrics",
@@ -374,11 +374,11 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
         summary: "Tree composes renderer-neutral hierarchy state with GPUI focus, expansion, selection, and local scroll ownership.",
         evidence: &[
             "Tree::state",
-            "Tree::render_plan",
-            "TreeRenderPlan",
+            "Tree::behavior_snapshot",
+            "TreeBehaviorSnapshot",
             "TreeState::keyboard_action_for_key",
             "TreeState::typeahead_target",
-            "tree_render_plan_virtualizes_visible_rows_with_stable_metadata",
+            "tree_behavior_snapshot_virtualizes_visible_rows_with_stable_metadata",
             "tree_runtime_expands_reveals_and_selects_items",
             "tree_runtime_typeahead_focuses_visible_matching_row",
             "components_gallery_smoke_tree_expands_and_selects",
@@ -392,7 +392,8 @@ pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
         title: "VirtualizedList renderer contract",
         summary: "VirtualizedList keeps its state contract, row reveal logic, and inner scroll ownership aligned with the rendered adapter.",
         evidence: &[
-            "VirtualizedList::render_plan",
+            "VirtualizedList::behavior_snapshot_with_viewport",
+            "VirtualizedListBehaviorSnapshot",
             "VirtualizedListState::navigation_target",
             "virtualized_list_runtime_reveals_active_row_and_emits_activation",
             "components_gallery_smoke_virtualized_list_scroll_stays_inside_sample",
@@ -1773,9 +1774,9 @@ impl TreeSample {
         tree
     }
 
-    /// Resolves the sample's virtualized render plan at the viewport origin.
-    pub fn render_plan(&self) -> TreeRenderPlan {
-        self.build_tree().render_plan(
+    /// Resolves the sample's virtualized behavior snapshot at the viewport origin.
+    pub fn behavior_snapshot(&self) -> TreeBehaviorSnapshot {
+        self.build_tree().behavior_snapshot(
             UiPx::ZERO,
             self.state.metrics().row_height() * self.viewport_item_count as f32,
         )
@@ -1901,20 +1902,20 @@ pub fn record_virtualized_list_activation(
 }
 
 impl VirtualizedListSampleStateSummary {
-    fn from_plan(plan: &VirtualizedListRenderPlan) -> Self {
-        let visible = plan.virtualizer().visible_range();
-        let overscan = plan.virtualizer().overscan_range();
+    fn from_snapshot(snapshot: &VirtualizedListBehaviorSnapshot) -> Self {
+        let visible = snapshot.visible_range();
+        let overscan = snapshot.overscan_range();
 
         Self {
-            item_count: plan.state().item_count(),
-            rendered_rows: plan.rendered_row_count(),
-            visible_rows: plan.visible_row_count(),
+            item_count: snapshot.state().item_count(),
+            rendered_rows: snapshot.rendered_row_count(),
+            visible_rows: snapshot.visible_row_count(),
             visible_start: visible.start(),
             visible_end: visible.end(),
             overscan_start: overscan.start(),
             overscan_end: overscan.end(),
-            active_index: plan.state().active_index(),
-            selected_index: plan.state().selected_index(),
+            active_index: snapshot.state().active_index(),
+            selected_index: snapshot.state().selected_index(),
         }
     }
 }
@@ -1943,10 +1944,10 @@ impl VirtualizedListSample {
         list
     }
 
-    /// Resolves the sample's render plan at the viewport origin.
-    pub fn render_plan(&self) -> VirtualizedListRenderPlan {
+    /// Resolves the sample's behavior snapshot at the viewport origin.
+    pub fn behavior_snapshot(&self) -> VirtualizedListBehaviorSnapshot {
         self.build_list()
-            .render_plan(UiPx::ZERO, self.viewport_extent)
+            .behavior_snapshot_with_viewport(UiPx::ZERO, self.viewport_extent)
     }
 
     /// Returns the precomputed state summary.
@@ -4219,9 +4220,9 @@ fn build_virtualized_list_samples() -> [VirtualizedListSample; 1] {
 
 impl VirtualizedListSample {
     fn with_state_summary(self) -> Self {
-        let plan = self.render_plan();
+        let snapshot = self.behavior_snapshot();
         Self {
-            state_summary: VirtualizedListSampleStateSummary::from_plan(&plan),
+            state_summary: VirtualizedListSampleStateSummary::from_snapshot(&snapshot),
             ..self
         }
     }

@@ -1928,12 +1928,12 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(release_tree.viewport_item_count, 8);
     assert_eq!(release_tree.overscan_count, 4);
     assert_eq!(release_tree.state.items().len(), 240);
-    let release_tree_plan = release_tree.render_plan();
-    assert_eq!(release_tree_plan.virtualizer().count(), 240);
-    assert_eq!(release_tree_plan.visible_row_count(), 8);
-    assert_eq!(release_tree_plan.rendered_row_count(), 12);
+    let release_tree_snapshot = release_tree.behavior_snapshot();
+    assert_eq!(release_tree_snapshot.state().items().len(), 240);
+    assert_eq!(release_tree_snapshot.visible_row_count(), 8);
+    assert_eq!(release_tree_snapshot.rendered_row_count(), 12);
     assert_eq!(
-        release_tree_plan.rows()[0].render_key(),
+        release_tree_snapshot.rows()[0].render_key(),
         "0:release-node-0000"
     );
     let editable_tree = &trees[3];
@@ -2549,17 +2549,17 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(release_navigation.state.item_count(), 10_000);
     assert_eq!(release_navigation.state.active_index(), Some(0));
     assert_eq!(release_navigation.state.selected_index(), Some(0));
-    let release_navigation_plan = release_navigation.render_plan();
+    let release_navigation_snapshot = release_navigation.behavior_snapshot();
     let release_navigation_summary = release_navigation.state_summary();
-    assert_eq!(release_navigation_plan.role(), Role::ListBox);
-    assert_eq!(release_navigation_plan.row_role(), Role::ListBoxOption);
+    assert_eq!(release_navigation_snapshot.role(), Role::ListBox);
+    assert_eq!(release_navigation_snapshot.row_role(), Role::ListBoxOption);
     assert_eq!(release_navigation_summary.item_count, 10_000);
     assert_eq!(release_navigation_summary.visible_start, 0);
     assert_eq!(release_navigation_summary.active_index, Some(0));
     assert_eq!(release_navigation_summary.selected_index, Some(0));
     assert!(
-        release_navigation_plan.rendered_row_count()
-            <= release_navigation_plan.visible_row_count() + release_navigation.overscan
+        release_navigation_snapshot.rendered_row_count()
+            <= release_navigation_snapshot.visible_row_count() + release_navigation.overscan
     );
 }
 
@@ -2652,7 +2652,7 @@ fn verification_docs_list_current_ui_architecture_focused_gates() {
         "table_behavior_snapshot_exposes_editable_leaf_cell_kinds_for_leaf_cells_only",
         "table_component_source_mapping_tracks_split_render_owners",
         "row_window",
-        "virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts",
+        "virtualized_list_behavior_snapshot_uses_item_descriptors_and_virtualizer_contracts",
         "theme_registry",
         "theme_resolver",
         "theme_snapshots",
@@ -4011,7 +4011,7 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"open_gpui_ui_components::TreeState"));
     assert!(signals.contains(&"open_gpui_ui_components::VirtualizedList"));
     assert!(signals.contains(&"open_gpui_ui_components::VirtualizedListItemDescriptor"));
-    assert!(signals.contains(&"open_gpui_ui_components::VirtualizedListRenderPlan"));
+    assert!(signals.contains(&"open_gpui_ui_components::VirtualizedListBehaviorSnapshot"));
     assert!(signals.contains(&"open_gpui_ui_components::VirtualizerState"));
     assert!(signals.contains(&"open_gpui_ui_components::VirtualizedListState"));
     assert!(signals.contains(&"Role::ListBox"));

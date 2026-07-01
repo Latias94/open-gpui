@@ -41,11 +41,10 @@ use open_gpui_ui_components::{
     ThemeValidationError, Toggle, ToggleGroup, ToggleGroupItem, ToggleVariant, Toolbar,
     ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
     TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, Tree, TreeChildrenLoadState,
-    TreeDropPosition, TreeItemDescriptor, TreeMove, TreeMoveTarget, TreeRenderPlan,
-    TreeRowRenderPlan, VirtualizedList, VirtualizedListActivation, VirtualizedListItemDescriptor,
-    VirtualizedListRenderPlan, VirtualizedListRowRenderPlan, VirtualizedListScrollStrategy,
-    VirtualizedListState, VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot,
-    VirtualizerSnapshotItem, active_index_from_str_keys, apply_tree_move, first_enabled,
+    TreeDropPosition, TreeItemDescriptor, TreeMove, TreeMoveTarget, VirtualizedList,
+    VirtualizedListActivation, VirtualizedListItemDescriptor, VirtualizedListScrollStrategy,
+    VirtualizerItemKey, VirtualizerRange, VirtualizerSnapshot, VirtualizerSnapshotItem,
+    active_index_from_str_keys, apply_tree_move, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -231,18 +230,18 @@ const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
         home: "table/toolbar.rs",
     },
     PublicSurfaceOwnerEntry {
-        name: "TreeRenderPlan",
-        owner: PublicSurfaceOwnerClass::DiagnosticSurface,
+        name: "TreeBehaviorSnapshot",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
         home: "tree/render_plan.rs",
     },
     PublicSurfaceOwnerEntry {
-        name: "VirtualizedListRenderPlan",
-        owner: PublicSurfaceOwnerClass::DiagnosticSurface,
+        name: "VirtualizedListBehaviorSnapshot",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
         home: "virtualized_list.rs",
     },
     PublicSurfaceOwnerEntry {
-        name: "CommandRenderPlan",
-        owner: PublicSurfaceOwnerClass::DiagnosticSurface,
+        name: "CommandBehaviorSnapshot",
+        owner: PublicSurfaceOwnerClass::RendererNeutralStateContract,
         home: "command/render_plan.rs",
     },
     PublicSurfaceOwnerEntry {
@@ -1821,7 +1820,7 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "on_move",
             "items",
             "state",
-            "render_plan",
+            "behavior_snapshot",
         ],
         "Listbox" => &[
             "new",
@@ -1921,8 +1920,8 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "on_select",
             "on_selected_values_change",
             "state",
-            "render_plan",
-            "render_plan_with_viewport",
+            "behavior_snapshot",
+            "behavior_snapshot_with_viewport",
         ],
         "Label" => &[
             "new",
@@ -2140,7 +2139,8 @@ fn component_public_methods(component: &str) -> &'static [&'static str] {
             "overscan",
             "on_activate",
             "state",
-            "render_plan",
+            "behavior_snapshot",
+            "behavior_snapshot_with_viewport",
         ],
         "StatusCue" => &["new", "intent", "tokens", "state"],
         "EmptyState" => &["new", "description", "intent", "tokens", "state"],
@@ -6303,7 +6303,7 @@ fn table_behavior_snapshot_exposes_nested_header_summary_and_region_widths() {
 }
 
 #[test]
-fn virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts() {
+fn virtualized_list_behavior_snapshot_uses_item_descriptors_and_virtualizer_contracts() {
     let items = (0..10_000)
         .map(|index| {
             VirtualizedListItemDescriptor::new(
@@ -6312,42 +6312,27 @@ fn virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts(
             )
         })
         .collect::<Vec<_>>();
-    let state = VirtualizedListState::resolve(
-        Size::Small,
-        false,
-        items.len(),
-        Some(104),
-        Some(101),
-        Some(7),
-    );
-    let plan = VirtualizedListRenderPlan::resolve(
-        "contracts-list",
-        "Contracts list",
-        state,
-        &items,
-        ui_px(2_800.0),
-        ui_px(196.0),
-    );
+    let snapshot = VirtualizedList::new("contracts-list", "Contracts list", items)
+        .with_size(Size::Small)
+        .default_active_index(104)
+        .default_selected_index(101)
+        .viewport_item_count(7)
+        .behavior_snapshot_with_viewport(ui_px(2_800.0), ui_px(196.0));
 
-    assert_eq!(plan.role(), Role::ListBox);
-    assert_eq!(plan.row_role(), Role::ListBoxOption);
-    assert_eq!(plan.virtualizer().count(), 10_000);
-    assert_eq!(plan.virtualizer().total_size(), ui_px(280_000.0));
-    assert_eq!(
-        *plan.virtualizer().visible_range(),
-        VirtualizerRange::new(100, 107)
-    );
-    assert_eq!(
-        *plan.virtualizer().overscan_range(),
-        VirtualizerRange::new(98, 109)
-    );
-    assert_eq!(plan.visible_row_count(), 7);
-    assert_eq!(plan.rendered_row_count(), 11);
-    assert_eq!(plan.rows()[0].index(), 98);
-    assert_eq!(plan.rows()[0].render_key(), "item-0098");
+    assert_eq!(snapshot.role(), Role::ListBox);
+    assert_eq!(snapshot.row_role(), Role::ListBoxOption);
+    assert_eq!(snapshot.state().item_count(), 10_000);
+    assert_eq!(snapshot.total_size(), ui_px(280_000.0));
+    assert_eq!(*snapshot.visible_range(), VirtualizerRange::new(100, 107));
+    assert_eq!(*snapshot.overscan_range(), VirtualizerRange::new(98, 109));
+    assert_eq!(snapshot.visible_row_count(), 7);
+    assert_eq!(snapshot.rendered_row_count(), 11);
+    assert_eq!(snapshot.rows()[0].index(), 98);
+    assert_eq!(snapshot.rows()[0].render_key(), "item-0098");
 
-    let active_row: &VirtualizedListRowRenderPlan =
-        plan.active_row().expect("active row should be rendered");
+    let active_row = snapshot
+        .active_row()
+        .expect("active row should be rendered");
     assert_eq!(active_row.index(), 104);
     assert_eq!(active_row.key(), "item-0104");
     assert_eq!(active_row.label(), "Item 0104");
@@ -6359,7 +6344,7 @@ fn virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts(
     assert_eq!(active_row.virtual_start(), ui_px(2_912.0));
     assert_eq!(active_row.virtual_size(), ui_px(28.0));
 
-    let selected_row = plan
+    let selected_row = snapshot
         .selected_row()
         .expect("selected row should be rendered");
     assert_eq!(selected_row.index(), 101);
@@ -6371,17 +6356,17 @@ fn virtualized_list_render_plan_uses_item_descriptors_and_virtualizer_contracts(
         virtualized_list_scroll_target(
             VirtualizedListScrollStrategy::Top,
             activation.index(),
-            plan.state().item_count(),
-            plan.metrics().row_height(),
-            plan.virtualizer().viewport_extent(),
-            plan.virtualizer().scroll_offset(),
+            snapshot.state().item_count(),
+            snapshot.metrics().row_height(),
+            snapshot.viewport_extent(),
+            snapshot.scroll_offset(),
         ),
         ui_px(2_912.0)
     );
 }
 
 #[test]
-fn virtualized_list_component_render_plan_applies_builder_metrics() {
+fn virtualized_list_behavior_snapshot_applies_builder_metrics() {
     let items = (0..32)
         .map(|index| {
             VirtualizedListItemDescriptor::new(
@@ -6390,28 +6375,22 @@ fn virtualized_list_component_render_plan_applies_builder_metrics() {
             )
         })
         .collect::<Vec<_>>();
-    let plan = VirtualizedList::new("builder-list", "Builder list", items)
+    let snapshot = VirtualizedList::new("builder-list", "Builder list", items)
         .with_size(Size::Small)
         .row_height(ui_px(24.0))
         .overscan(2)
         .default_active_index(5)
         .default_selected_index(3)
         .viewport_item_count(4)
-        .render_plan(ui_px(48.0), ui_px(96.0));
+        .behavior_snapshot_with_viewport(ui_px(48.0), ui_px(96.0));
 
-    assert_eq!(plan.metrics().row_height(), ui_px(24.0));
-    assert_eq!(plan.overscan_count(), 2);
-    assert_eq!(plan.visible_row_count(), 4);
-    assert_eq!(
-        *plan.virtualizer().visible_range(),
-        VirtualizerRange::new(2, 6)
-    );
-    assert_eq!(
-        *plan.virtualizer().overscan_range(),
-        VirtualizerRange::new(1, 7)
-    );
-    assert_eq!(plan.active_row().map(|row| row.index()), Some(5));
-    assert_eq!(plan.selected_row().map(|row| row.index()), Some(3));
+    assert_eq!(snapshot.metrics().row_height(), ui_px(24.0));
+    assert_eq!(snapshot.overscan_count(), 2);
+    assert_eq!(snapshot.visible_row_count(), 4);
+    assert_eq!(*snapshot.visible_range(), VirtualizerRange::new(2, 6));
+    assert_eq!(*snapshot.overscan_range(), VirtualizerRange::new(1, 7));
+    assert_eq!(snapshot.active_row().map(|row| row.index()), Some(5));
+    assert_eq!(snapshot.selected_row().map(|row| row.index()), Some(3));
 }
 
 #[open_gpui::test]
@@ -7215,33 +7194,6 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     );
     let prelude_tree_state: prelude::TreeState =
         prelude::TreeState::resolve(Size::Medium, "Tree", None, None, [prelude_tree_descriptor]);
-    let root_tree_plan: root::TreeRenderPlan = root::TreeRenderPlan::resolve(
-        "root-tree-plan",
-        "Root tree plan",
-        root_tree_state.clone(),
-        ui_px(0.0),
-        ui_px(32.0),
-        2,
-        1,
-    );
-    let prelude_tree_plan: prelude::TreeRenderPlan = prelude::TreeRenderPlan::resolve(
-        "prelude-tree-plan",
-        "Prelude tree plan",
-        prelude_tree_state.clone(),
-        ui_px(0.0),
-        ui_px(32.0),
-        2,
-        1,
-    );
-    let direct_tree_plan: TreeRenderPlan = TreeRenderPlan::resolve(
-        "direct-tree-plan",
-        "Direct tree plan",
-        root_tree_state.clone(),
-        ui_px(0.0),
-        ui_px(32.0),
-        2,
-        1,
-    );
     let move_items = [
         root::TreeItemDescriptor::new("root", "Root")
             .expanded(true)
@@ -7279,6 +7231,7 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         "Root virtualized component",
         root_virtualized_items.clone(),
     )
+    .with_size(Size::Small)
     .default_active_index(4)
     .default_selected_index(4)
     .viewport_item_count(3);
@@ -7295,40 +7248,30 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         "Prelude virtualized component",
         prelude_virtualized_items.clone(),
     )
+    .with_size(Size::Small)
     .default_active_index(4)
     .default_selected_index(4)
     .viewport_item_count(3);
-    let root_virtualized_plan: root::VirtualizedListRenderPlan =
-        root::VirtualizedListRenderPlan::resolve(
-            "root-virtualized-list",
-            "Root virtualized list",
-            root_virtualized_state.clone(),
-            &root_virtualized_items,
-            ui_px(28.0),
-            ui_px(56.0),
-        );
-    let prelude_virtualized_plan: prelude::VirtualizedListRenderPlan =
-        prelude::VirtualizedListRenderPlan::resolve(
-            "prelude-virtualized-list",
-            "Prelude virtualized list",
-            prelude_virtualized_state.clone(),
-            &prelude_virtualized_items,
-            ui_px(28.0),
-            ui_px(56.0),
-        );
-    let _root_virtualized_row: &root::VirtualizedListRowRenderPlan =
-        root_virtualized_plan.active_row().unwrap();
-    let _prelude_virtualized_row: &prelude::VirtualizedListRowRenderPlan =
-        prelude_virtualized_plan.active_row().unwrap();
-    let root_virtualized_component_plan = root_virtualized_list.state();
-    let prelude_virtualized_component_plan = prelude_virtualized_list.state();
+    let root_virtualized_snapshot: root::VirtualizedListBehaviorSnapshot =
+        root_virtualized_list.behavior_snapshot_with_viewport(ui_px(28.0), ui_px(56.0));
+    let prelude_virtualized_snapshot: prelude::VirtualizedListBehaviorSnapshot =
+        prelude_virtualized_list.behavior_snapshot_with_viewport(ui_px(28.0), ui_px(56.0));
+    let _root_virtualized_row: &root::VirtualizedListRowBehaviorSnapshot =
+        root_virtualized_snapshot.active_row().unwrap();
+    let _prelude_virtualized_row: &prelude::VirtualizedListRowBehaviorSnapshot =
+        prelude_virtualized_snapshot.active_row().unwrap();
+    let root_virtualized_component_state = root_virtualized_list.state();
+    let prelude_virtualized_component_state = prelude_virtualized_list.state();
     let root_tree_component_state = root_tree.state();
-    let root_tree_component_plan = root_tree.render_plan(ui_px(0.0), ui_px(32.0));
+    let root_tree_component_snapshot: root::TreeBehaviorSnapshot =
+        root_tree.behavior_snapshot(ui_px(0.0), ui_px(32.0));
     let prelude_tree_component_state = prelude_tree.state();
-    let prelude_tree_component_plan = prelude_tree.render_plan(ui_px(0.0), ui_px(32.0));
-    let _root_tree_row: &root::TreeRowRenderPlan = root_tree_plan.rows().first().unwrap();
-    let _prelude_tree_row: &prelude::TreeRowRenderPlan = prelude_tree_plan.rows().first().unwrap();
-    let _direct_tree_row: &TreeRowRenderPlan = direct_tree_plan.rows().first().unwrap();
+    let prelude_tree_component_snapshot: prelude::TreeBehaviorSnapshot =
+        prelude_tree.behavior_snapshot(ui_px(0.0), ui_px(32.0));
+    let _root_tree_row: &root::TreeRowBehaviorSnapshot =
+        root_tree_component_snapshot.rows().first().unwrap();
+    let _prelude_tree_row: &prelude::TreeRowBehaviorSnapshot =
+        prelude_tree_component_snapshot.rows().first().unwrap();
     let _root_tree_toggle: Option<root::TreeToggle> =
         root::TreeToggle::from_item(&root_tree_state.items()[0]);
     let _prelude_tree_toggle: Option<prelude::TreeToggle> =
@@ -7359,8 +7302,8 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
     assert_eq!(root_tree_component_state.role(), Role::Tree);
     assert_eq!(prelude_tree_component_state.item_role(), Role::TreeItem);
     assert_eq!(root_tree_component_state.focused_value(), Some("root"));
-    assert_eq!(root_tree_component_plan.role(), Role::Tree);
-    assert_eq!(prelude_tree_component_plan.row_role(), Role::TreeItem);
+    assert_eq!(root_tree_component_snapshot.role(), Role::Tree);
+    assert_eq!(prelude_tree_component_snapshot.row_role(), Role::TreeItem);
     assert_eq!(root_tree_state.items().len(), 1);
     assert_eq!(prelude_tree_state.items().len(), 1);
     assert_eq!(root_tree_state.role(), Role::Tree);
@@ -7379,9 +7322,12 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         prelude::tree_navigation_target("home", 0, &[false]),
         Some(0)
     );
-    assert_eq!(root_tree_plan.rows()[0].render_key(), "0:root");
-    assert_eq!(prelude_tree_plan.virtualizer().count(), 1);
-    assert_eq!(direct_tree_plan.rendered_row_count(), 1);
+    assert_eq!(
+        root_tree_component_snapshot.rows()[0].render_key(),
+        "0:root"
+    );
+    assert_eq!(prelude_tree_component_snapshot.state().items().len(), 1);
+    assert_eq!(root_tree_component_snapshot.rendered_row_count(), 1);
     assert_eq!(root_tree_move.position(), TreeDropPosition::Before);
     assert_eq!(root_tree_move.target_parent_value(), None);
     assert_eq!(root_tree_move.sibling_anchor_value(), Some("sibling"));
@@ -7396,21 +7342,21 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         prelude_virtualized_state.navigation_target("pagedown"),
         Some(7)
     );
-    assert_eq!(root_virtualized_component_plan.role(), Role::ListBox);
+    assert_eq!(root_virtualized_component_state.active_index(), Some(4));
     assert_eq!(
-        prelude_virtualized_component_plan.row_role(),
-        Role::ListBoxOption
+        prelude_virtualized_component_state.selected_index(),
+        Some(4)
     );
-    assert_eq!(root_virtualized_plan.role(), Role::ListBox);
-    assert_eq!(prelude_virtualized_plan.row_role(), Role::ListBoxOption);
+    assert_eq!(root_virtualized_snapshot.role(), Role::ListBox);
+    assert_eq!(prelude_virtualized_snapshot.row_role(), Role::ListBoxOption);
     assert_eq!(
         root::virtualized_list_scroll_target(
             root::VirtualizedListScrollStrategy::Top,
             4,
-            root_virtualized_plan.state().item_count(),
-            root_virtualized_plan.metrics().row_height(),
-            root_virtualized_plan.virtualizer().viewport_extent(),
-            root_virtualized_plan.virtualizer().scroll_offset(),
+            root_virtualized_snapshot.state().item_count(),
+            root_virtualized_snapshot.metrics().row_height(),
+            root_virtualized_snapshot.viewport_extent(),
+            root_virtualized_snapshot.scroll_offset(),
         ),
         ui_px(112.0)
     );
@@ -7418,10 +7364,10 @@ fn feedback_tree_and_virtualized_list_public_exports_remain_explicit() {
         prelude::virtualized_list_scroll_target(
             prelude::VirtualizedListScrollStrategy::Top,
             4,
-            prelude_virtualized_plan.state().item_count(),
-            prelude_virtualized_plan.metrics().row_height(),
-            prelude_virtualized_plan.virtualizer().viewport_extent(),
-            prelude_virtualized_plan.virtualizer().scroll_offset(),
+            prelude_virtualized_snapshot.state().item_count(),
+            prelude_virtualized_snapshot.metrics().row_height(),
+            prelude_virtualized_snapshot.viewport_extent(),
+            prelude_virtualized_snapshot.scroll_offset(),
         ),
         ui_px(112.0)
     );
@@ -11337,12 +11283,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_command_snapshot = root::CommandIndexSnapshot::new("root-v1")
         .mode(root::CommandIndexSnapshotMode::PreRankedFilter)
         .item(root::CommandItemDescriptor::new("open", "Open"));
-    let root_command_plan: root::CommandRenderPlan =
+    let root_command_snapshot: root::CommandBehaviorSnapshot =
         root::Command::new("root-command-plan", "Commands")
             .items(root_command_items)
             .index_snapshot(root_command_snapshot)
-            .render_plan();
-    let _root_command_row: Option<&root::CommandRowRenderPlan> = root_command_plan.rows().first();
+            .behavior_snapshot();
+    let _root_command_row: Option<&root::CommandRowBehaviorSnapshot> =
+        root_command_snapshot.rows().first();
     let root_menu_state = root::Menu::new("root-menu", "Menu")
         .default_open(true)
         .default_focused_value("more")
@@ -11423,13 +11370,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_command_snapshot = prelude::CommandIndexSnapshot::new("prelude-v1")
         .mode(prelude::CommandIndexSnapshotMode::PreFiltered)
         .item(prelude::CommandItemDescriptor::new("open", "Open"));
-    let prelude_command_plan: prelude::CommandRenderPlan =
+    let prelude_command_snapshot: prelude::CommandBehaviorSnapshot =
         prelude::Command::new("prelude-command-plan", "Commands")
             .items(prelude_command_items)
             .index_snapshot(prelude_command_snapshot)
-            .render_plan();
-    let _prelude_command_row: Option<&prelude::CommandRowRenderPlan> =
-        prelude_command_plan.rows().first();
+            .behavior_snapshot();
+    let _prelude_command_row: Option<&prelude::CommandRowBehaviorSnapshot> =
+        prelude_command_snapshot.rows().first();
     let prelude_menu_state = prelude::Menu::new("prelude-menu", "Menu")
         .default_open(true)
         .default_focused_value("more")
@@ -11512,7 +11459,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_select_option.value(),
         root_combobox.state(),
         root_command.state(),
-        root_command_plan.role(),
+        root_command_snapshot.role(),
         root_menu_submenu_navigation.focused_value(),
         root_menu_safe_hover_corridor.bounds(),
         root_scroll.state(),
@@ -11550,7 +11497,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_select_option.value(),
         prelude_combobox.state(),
         prelude_command.state(),
-        prelude_command_plan.row_role(),
+        prelude_command_snapshot.row_role(),
         prelude_menu_submenu_navigation.focused_value(),
         prelude_menu_safe_hover_corridor.bounds(),
         prelude_scroll.state(),
@@ -11916,7 +11863,6 @@ fn surface_manifest_classifies_public_surface_once() {
         PublicSurfaceOwnerClass::OfficialComponent,
         PublicSurfaceOwnerClass::RendererNeutralStateContract,
         PublicSurfaceOwnerClass::GpuiAdapterHelper,
-        PublicSurfaceOwnerClass::DiagnosticSurface,
         PublicSurfaceOwnerClass::DeprecatedRemovalTarget,
         PublicSurfaceOwnerClass::InternalImplementationDetail,
     ] {
@@ -14893,7 +14839,7 @@ fn command_index_snapshot_loading_coexists_with_visible_and_empty_results() {
 }
 
 #[test]
-fn command_render_plan_virtualizes_large_result_sets_with_stable_rows() {
+fn command_behavior_snapshot_virtualizes_large_result_sets_with_stable_rows() {
     let command =
         Command::new("large-command", "Commands")
             .with_size(Size::Small)
@@ -14904,58 +14850,51 @@ fn command_render_plan_virtualizes_large_result_sets_with_stable_rows() {
             .items((0..10_000).map(|index| {
                 CommandItem::new(format!("item-{index:04}"), format!("Item {index:04}"))
             }));
-    let plan = command.render_plan_with_viewport(ui_px(2_800.0), ui_px(196.0));
+    let snapshot = command.behavior_snapshot_with_viewport(ui_px(2_800.0), ui_px(196.0));
 
-    assert_eq!(plan.role(), Role::ListBox);
-    assert_eq!(plan.row_role(), Role::ListBoxOption);
-    assert_eq!(plan.virtualizer().count(), 10_000);
-    assert_eq!(plan.state().total_item_count(), 10_000);
-    assert_eq!(plan.state().filtered_item_count(), 10_000);
-    assert_eq!(
-        *plan.virtualizer().visible_range(),
-        VirtualizerRange::new(100, 107)
-    );
-    assert_eq!(
-        *plan.virtualizer().overscan_range(),
-        VirtualizerRange::new(98, 109)
-    );
-    assert_eq!(plan.visible_row_count(), 7);
-    assert_eq!(plan.rendered_row_count(), 11);
-    assert_eq!(plan.rows()[0].index(), 98);
-    assert_eq!(plan.rows()[0].render_key(), "item-0098");
+    assert_eq!(snapshot.role(), Role::ListBox);
+    assert_eq!(snapshot.row_role(), Role::ListBoxOption);
+    assert_eq!(snapshot.state().total_item_count(), 10_000);
+    assert_eq!(snapshot.state().filtered_item_count(), 10_000);
+    assert_eq!(*snapshot.visible_range(), VirtualizerRange::new(100, 107));
+    assert_eq!(*snapshot.overscan_range(), VirtualizerRange::new(98, 109));
+    assert_eq!(snapshot.visible_row_count(), 7);
+    assert_eq!(snapshot.rendered_row_count(), 11);
+    assert_eq!(snapshot.rows()[0].index(), 98);
+    assert_eq!(snapshot.rows()[0].render_key(), "item-0098");
 
-    let active = plan.active_row().expect("active command row should render");
+    let active = snapshot
+        .active_row()
+        .expect("active command row should render");
     assert_eq!(active.index(), 104);
     assert_eq!(active.value(), "item-0104");
     assert!(active.active());
     assert_eq!(active.virtual_start(), ui_px(2_912.0));
     assert_eq!(active.virtual_size(), ui_px(28.0));
     assert_eq!(
-        plan.selected_rows()
+        snapshot
+            .selected_rows()
             .map(|row| row.value().to_owned())
             .collect::<Vec<_>>(),
         vec!["item-0101".to_string()]
     );
 
-    let scrolled = command.render_plan_with_viewport(ui_px(5_600.0), ui_px(196.0));
-    assert_eq!(
-        *scrolled.virtualizer().visible_range(),
-        VirtualizerRange::new(200, 207)
-    );
+    let scrolled = command.behavior_snapshot_with_viewport(ui_px(5_600.0), ui_px(196.0));
+    assert_eq!(*scrolled.visible_range(), VirtualizerRange::new(200, 207));
     assert_eq!(scrolled.rows()[0].value(), "item-0198");
 }
 
 #[test]
-fn command_render_plan_clamps_filtered_scroll_and_disambiguates_duplicate_values() {
-    let duplicate_plan = Command::new("duplicate-command", "Commands")
+fn command_behavior_snapshot_clamps_filtered_scroll_and_disambiguates_duplicate_values() {
+    let duplicate_snapshot = Command::new("duplicate-command", "Commands")
         .row_height(ui_px(28.0))
         .item(CommandItem::new("duplicate", "Open File"))
         .item(CommandItem::new("duplicate", "Open Recent"))
         .item(CommandItem::new("unique", "Close File"))
-        .render_plan_with_viewport(ui_px(0.0), ui_px(112.0));
+        .behavior_snapshot_with_viewport(ui_px(0.0), ui_px(112.0));
 
     assert_eq!(
-        duplicate_plan
+        duplicate_snapshot
             .rows()
             .iter()
             .map(|row| (row.value().to_owned(), row.render_key().to_owned()))
@@ -14966,15 +14905,6 @@ fn command_render_plan_clamps_filtered_scroll_and_disambiguates_duplicate_values
             ("unique".to_string(), "unique".to_string()),
         ]
     );
-    assert_eq!(
-        duplicate_plan
-            .virtualizer()
-            .items()
-            .iter()
-            .map(|measurement| measurement.key().as_str())
-            .collect::<Vec<_>>(),
-        ["0:duplicate", "1:duplicate", "unique"]
-    );
 
     let filtered =
         Command::new("filtered-command", "Commands")
@@ -14983,10 +14913,10 @@ fn command_render_plan_clamps_filtered_scroll_and_disambiguates_duplicate_values
             .items((0..10_000).map(|index| {
                 CommandItem::new(format!("item-{index:04}"), format!("Item {index:04}"))
             }))
-            .render_plan_with_viewport(ui_px(80_000.0), ui_px(112.0));
+            .behavior_snapshot_with_viewport(ui_px(80_000.0), ui_px(112.0));
 
     assert_eq!(filtered.state().filtered_item_count(), 1);
-    assert_eq!(filtered.virtualizer().scroll_offset(), ui_px(0.0));
+    assert_eq!(filtered.scroll_offset(), ui_px(0.0));
     assert_eq!(filtered.rows()[0].value(), "item-0001");
 }
 
