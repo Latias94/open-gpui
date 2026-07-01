@@ -2628,6 +2628,10 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     let render_sections_source = include_str!("../src/pages/components/render/sections.rs");
     let render_support_source = include_str!("../src/pages/components/render/support.rs");
     let runtime_source = include_str!("../src/pages/components/runtime.rs");
+    let runtime_table_source = include_str!("../src/pages/components/runtime/table.rs");
+    let runtime_tree_source = include_str!("../src/pages/components/runtime/tree.rs");
+    let runtime_virtualized_list_source =
+        include_str!("../src/pages/components/runtime/virtualized_list.rs");
     let samples_source = include_str!("../src/pages/components/samples.rs");
     let foundation_samples_source = include_str!("../src/pages/components/samples/foundation.rs");
     let feedback_samples_source = include_str!("../src/pages/components/samples/feedback.rs");
@@ -2657,7 +2661,22 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(catalog_source.contains("ComponentCatalogEntry::official("));
     assert!(catalog_source.contains("ComponentCatalogEntry::state_contract("));
     assert!(conformance_source.contains("pub const COMPONENT_CONFORMANCE_GATES"));
-    assert!(runtime_source.contains("pub struct TableSampleRuntimeLog"));
+    for module_path in [
+        "#[path = \"runtime/table.rs\"]",
+        "#[path = \"runtime/tree.rs\"]",
+        "#[path = \"runtime/virtualized_list.rs\"]",
+    ] {
+        assert!(
+            runtime_source.contains(module_path),
+            "runtime facade should declare owner module `{module_path}`"
+        );
+    }
+    assert!(runtime_table_source.contains("pub struct TableSampleRuntimeLog"));
+    assert!(runtime_tree_source.contains("pub struct TreeSampleRuntimeLog"));
+    assert!(runtime_virtualized_list_source.contains("pub struct VirtualizedListSampleRuntimeLog"));
+    assert!(!runtime_source.contains("pub struct TableSampleRuntimeLog"));
+    assert!(!runtime_source.contains("pub struct TreeSampleRuntimeLog"));
+    assert!(!runtime_source.contains("pub struct VirtualizedListSampleRuntimeLog"));
     for module_path in [
         "#[path = \"samples/foundation.rs\"]",
         "#[path = \"samples/feedback.rs\"]",
