@@ -867,7 +867,7 @@ Current docking multi-viewport capability states:
   previews, and route-preview marker shape, while debug selectors continue to anchor rendered
   dogfood checks. Presentation, overlay, transition, zoom/focus, divider hit map, and accessibility
   descriptors are covered by focused tests. The native runtime panel exposes this as
-  `preview proof: presentation-scene+overlay-layers+tab-insertion+motion+zoom+divider-hit-map+a11y+reduced-motion`.
+  `preview proof: presentation-scene+overlay-layers+tab-insertion+motion+zoom+divider-hit-map+corner-drag+a11y+route-cleanup+reduced-motion`.
   Automated owners: `host_presentation_scene_tests`, `host_viewport_preview_visual_tests`,
   `host_transition_tests`, `host_zoom_focus_tests`, `host_divider_hit_map_tests`, and
   `host_accessibility_tests`. Transparent payload-window rendering, platform accessibility mapping,

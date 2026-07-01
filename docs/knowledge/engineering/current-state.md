@@ -2,7 +2,7 @@
 type: Current State
 title: Docking runtime capability follow-up state
 status: active
-timestamp: 2026-07-01T12:51:25+08:00
+timestamp: 2026-07-01T13:10:08+08:00
 git_branch: main
 related_plan:
   - docs/plans/2026-06-30-003-refactor-docking-split-motion-primitives-plan.md
@@ -36,6 +36,8 @@ verified_by:
   - cargo nextest run -p open-gpui-docking transition_plan_from_route_overlay_describes_source_marker source_hover_over_known_viewport_renders_target_drop_preview routed_preview_replacement_clears_old_target_overlay_without_stale_payload escape_clears_routed_marker_target_overlay_and_active_drag viewport_runtime_begin_payload_drag_clears_previous_routed_preview viewport_runtime_revalidates_routed_preview_release_against_current_policy --no-fail-fast
   - cargo nextest run -p open-gpui-docking host_render_tests::viewport_failed_panel_focus_preserves_current_focus_and_history host_viewport_preview_tests::handle_suite::escape_clears_routed_marker_target_overlay_and_active_drag --no-fail-fast
   - cargo nextest run -p open-gpui-docking host_viewport_preview_tests host_render_tests host_transition_tests --no-fail-fast
+  - cargo check -p open-gpui-docking-native
+  - cargo nextest run -p open-gpui-docking-native runtime_status_panel_formats_platform_capabilities --no-fail-fast
   - git diff --check
   - python $HOME/.codex/skills/engineering-wiki-memory/scripts/wiki_memory.py validate --root docs/knowledge/engineering
 ---
@@ -90,12 +92,16 @@ verified_by:
   routed target clears stale target overlays, and Escape during a real GPUI docking drag clears the
   source marker, target preview, runtime session, and active drag without stealing normal panel
   focus.
-- In progress: Phase C continues with native dogfood evidence and ADR/helper deletion from U10-U11.
-- Last verified: Phase A, Phase B, U5, U6, U7, U8, and U9 focused gates passed locally; see the
-  runtime capability verification evidence file.
+- Done: U10 native dogfood closeout is implemented locally. The runtime status panel proof string
+  now names corner-drag and route-cleanup alongside presentation, overlay, tab insertion, motion,
+  zoom, divider-hit-map, a11y, and reduced-motion capability proofs.
+- In progress: Phase C continues with final U11 ADR/helper deletion.
+- Last verified: Phase A, Phase B, U5, U6, U7, U8, U9, and U10 focused gates passed locally; see
+  the runtime capability verification evidence file.
 - Blocked: None.
-- Next action: commit U9, then continue with U10 native dogfood closeout and final U11 ADR/helper
-  cleanup.
+- Next action: commit U10, then continue with final U11 ADR/helper cleanup. U11 should decide
+  whether to delete or connect the remaining docking-local dead-code warnings for corner affordance
+  states and `DockOverlayScene::payload_ghosts`.
 
 # Citations
 

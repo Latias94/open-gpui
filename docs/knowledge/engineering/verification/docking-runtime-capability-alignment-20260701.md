@@ -220,3 +220,30 @@ The routed overlay cleanup keeps current viewport facts authoritative. Cached ro
 drive visible feedback, but release still revalidates against current policy and current target
 facts. Escape cancellation intentionally uses render-scoped focus capture only while a
 `DockDragPayload` is active, avoiding a permanent focusable root around normal docking content.
+
+## U10 / Phase Closeout Dogfood Proof
+
+Recorded U10 phase closeout evidence:
+
+- The native runtime status panel proof string now names the currently shipped preview/motion
+  capabilities: presentation scene, overlay layers, tab insertion, motion, zoom, divider hit map,
+  corner drag, accessibility, route cleanup, and reduced motion.
+- `docs/verification.md` dogfood steps cover routed target replacement cleanup and Escape
+  cancellation after a target preview appears.
+- Engineering memory now treats U9 as complete and points the next action at final U11 ADR/helper
+  cleanup.
+
+## U10 Commands
+
+- `cargo check -p open-gpui-docking-native` - passed. Existing upstream/macOS warnings remain,
+  including `objc` macro `unexpected_cfgs`; U11 cleanup should decide whether to delete or connect
+  the two docking-local dead-code items reported during this check.
+- `cargo nextest run -p open-gpui-docking-native runtime_status_panel_formats_platform_capabilities --no-fail-fast` -
+  passed, 1 test.
+
+## U10 Verification Notes
+
+The proof string is intentionally capability-oriented rather than pixel-oriented. It does not claim
+transparent drag windows, platform-native accessibility action callbacks, screenshot baselines, or
+every-frame-perfect animation; those remain outside the current shipped boundary unless a later plan
+adds them.

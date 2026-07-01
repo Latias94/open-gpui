@@ -6,6 +6,16 @@ status: active
 
 # Log
 
+- 2026-07-01: Completed U10 from
+  `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
+  tree. The native runtime status panel proof string now includes
+  `corner-drag` and `route-cleanup` alongside presentation scene, overlay layers, tab insertion,
+  motion, zoom, divider hit map, accessibility, and reduced motion. `docs/verification.md` now
+  matches the proof panel and keeps the manual dogfood steps focused on routed target replacement
+  and Escape cleanup. Verified `cargo check -p open-gpui-docking-native` and
+  `cargo nextest run -p open-gpui-docking-native runtime_status_panel_formats_platform_capabilities --no-fail-fast`.
+  Next action is commit U10, then do final U11 ADR/helper cleanup; the native check exposed two
+  docking-local dead-code warnings to resolve or document there.
 - 2026-07-01: Completed U9 from
   `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
   tree. Routed cross-window feedback now has explicit source-marker versus target-preview ownership:
