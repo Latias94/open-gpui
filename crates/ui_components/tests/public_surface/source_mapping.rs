@@ -135,8 +135,8 @@ fn table_behavior_source_mapping_tracks_split_owners() {
     ];
 
     assert!(
-        !source_dir.join("table/behavior.rs").exists(),
-        "TableBehaviorSnapshot should resolve through table/behavior/mod.rs instead of the old single-file owner"
+        !source_dir.join("table").join("behavior.rs").exists(),
+        "TableBehaviorSnapshot should resolve through the split table behavior module instead of the old single-file owner"
     );
     assert_eq!(
         component_source_inputs("TableBehaviorSnapshot"),

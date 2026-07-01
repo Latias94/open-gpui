@@ -105,7 +105,7 @@ The current repository already has meaningful foundation code:
 - `crates/ui_components/src/overlay.rs` adapts overlay policy into GPUI overlay state and deferred layer priorities.
 - `crates/ui_components/src/choice.rs` centralizes stable-value selection helpers, but it is private and too narrow for framework-level choice/search behavior.
 - `crates/ui_components/src/roving_focus.rs` contains navigation and typeahead helpers that should become part of a deeper primitive surface.
-- `crates/ui_components/src/menu_runtime.rs` contains submenu hover, safe hover, and scroll runtime behavior that should be isolated and reused.
+- `crates/ui_components/src/menu/runtime.rs` contains submenu hover, safe hover, and scroll runtime behavior that should be isolated and reused.
 - `crates/ui_components/src/command.rs` and `crates/ui_components/src/table.rs` contain strong feature work, but each file has accumulated multiple distinct responsibilities.
 
 Reference patterns:
@@ -775,7 +775,7 @@ Default: do not enforce a hard line-count budget. The rule is responsibility own
 - `crates/ui_components/src/overlay.rs`
 - `crates/ui_components/src/choice.rs`
 - `crates/ui_components/src/roving_focus.rs`
-- `crates/ui_components/src/menu_runtime.rs`
+- `crates/ui_components/src/menu/runtime.rs`
 - `crates/ui_components/src/command.rs`
 - `crates/ui_components/src/table.rs`
 - `repo-ref/fret/ecosystem/fret-ui-kit/src/primitives/mod.rs`

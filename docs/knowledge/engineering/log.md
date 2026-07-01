@@ -209,7 +209,7 @@ status: active
   `docs/plans/2026-06-28-001-refactor-ui-choice-surface-plan.md` in the working tree.
   `ui_components::choice` now centralizes stable-value projection, query normalization, and
   multi-select dedupe for `Command`, `Combobox`, and `Select`; `roving_focus.rs` owns shared
-  vertical, paged, and typeahead target helpers; and `menu_runtime.rs` owns Menu / ContextMenu
+  vertical, paged, and typeahead target helpers; and `menu/runtime.rs` owns Menu / ContextMenu
   runtime state, submenu hover timers, branch switching, and local submenu scroll handles. The
   Components gallery now exposes a `choice-surfaces` conformance gate plus state readouts for
   stable values, selected chips, query/typeahead metadata, and shared navigation behavior. Verified

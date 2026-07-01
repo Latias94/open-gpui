@@ -25,6 +25,14 @@ fn component_contract_docs_match_current_public_surface_vocabulary() {
         "public_api/default.rs",
         "root_and_prelude_exports_match_registry_default_surface_intent",
         "command_component_source_mapping_tracks_split_owners",
+        "Menu`, `ContextMenu`, and `Tree` follow that shape",
+        "`menu/runtime.rs` owns submenu hover timing",
+        "`table/behavior/mod.rs`",
+        "`table/behavior/counts.rs`",
+        "`table/behavior/columns.rs`",
+        "`table/behavior/header.rs`",
+        "`table/behavior/rows.rs`",
+        "`table/behavior/tree.rs`",
         "components_catalog_consumes_component_contract_registry",
         "must not use wildcard facade exports such as",
         "pub use runtime::*",
@@ -44,6 +52,7 @@ fn component_contract_docs_match_current_public_surface_vocabulary() {
         "theme registry gap",
         "COMPONENT_CATALOG` owns the current",
         "gallery constructors for official status",
+        concat!("`menu_", "runtime.rs` owns submenu hover timing"),
     ] {
         assert!(
             !contract.contains(removed),

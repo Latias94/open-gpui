@@ -304,8 +304,12 @@ descriptor reorder, multi-select selected chips, virtualized result render plans
 snapshots, inline and dialog command filtering, keyboard activation, shortcut payloads, non-dialog
 content persistence, and dialog Escape/outside press dismissal. Command ownership is split across
 `command/descriptor.rs`, `command/model.rs`, `command/style.rs`, `command/render_plan.rs`, and
-`command/runtime.rs`, while `command/mod.rs` remains the public builder facade. The focused gallery Command smoke
-renders ranked, multi-select, virtualized, and indexed/loading samples in focused family mode,
+`command/runtime.rs`, while `command/mod.rs` remains the public builder facade. Menu,
+ContextMenu, Tree, and Table behavior snapshots now follow the same source-owner discipline:
+`menu/` owns descriptor/model/render-plan/runtime/style plus the facade, `context_menu/` owns the
+point-anchor facade and neutral state, `tree/` owns descriptor/model/movement/render-plan/runtime
+boundaries, and `table/behavior/` owns counts, columns, header, rows, and tree summary snapshots.
+The focused gallery Command smoke renders ranked, multi-select, virtualized, and indexed/loading samples in focused family mode,
 verifies selected chips, stable selected values, and snapshot metadata are inspectable, and
 confirms wheel input on the virtualized sample does not move the surrounding card.
 Run the focused proof with:
@@ -364,7 +368,7 @@ cargo nextest run -p open-gpui-ui-foundation-gallery official_component_catalog_
 
 The choice and runtime seams are guarded separately: `choice.rs` owns stable-value and normalized
 query helpers for `Command`, `Combobox`, and `Select`; `roving_focus.rs` owns the shared enabled-item
-navigation targets used across listbox-like surfaces; and `menu_runtime.rs` owns submenu hover
+navigation targets used across listbox-like surfaces; and `menu/runtime.rs` owns submenu hover
 timing plus local scroll state for `Menu` and `ContextMenu`.
 Feedback coverage now promotes `StatusCue` and `EmptyState` as official rendered Components
 catalog entries. The focused component tests verify root/prelude exports, feedback intent labels,
@@ -534,6 +538,24 @@ changes them. They cover the component contract registry, public export map, rem
 aliases, overlay runtime policy, choice/search behavior, the Command ownership split, the Table
 behavior-snapshot and internal render-plan boundary, shared row-window projection, theme registry,
 and gallery catalog/conformance/runtime/sample/render module split:
+
+For the registry-backed family-boundary refactor, run the focused ownership gates whenever
+`component_contract` source mappings or the Menu, ContextMenu, Tree, or Table behavior owners move:
+
+```powershell
+cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --check
+cargo check -p open-gpui-ui-components --tests
+cargo check -p open-gpui-ui-foundation-gallery --tests
+cargo nextest run -p open-gpui-ui-components public_surface --no-fail-fast
+cargo nextest run -p open-gpui-ui-components menu --no-fail-fast
+cargo nextest run -p open-gpui-ui-components context_menu --no-fail-fast
+cargo nextest run -p open-gpui-ui-components tree --no-fail-fast
+cargo nextest run -p open-gpui-ui-components table --no-fail-fast
+cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata --no-fail-fast
+cargo nextest run -p open-gpui-ui-foundation-gallery overlay --no-fail-fast
+cargo nextest run -p open-gpui-ui-foundation-gallery tree --no-fail-fast
+cargo nextest run -p open-gpui-ui-foundation-gallery table --no-fail-fast
+```
 
 The Components gallery root keeps `runtime`, `samples`, and render ownership private. Stable
 gallery API names are re-exported explicitly from `components.rs`; sample families live under

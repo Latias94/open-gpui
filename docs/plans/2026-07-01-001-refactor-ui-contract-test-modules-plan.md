@@ -203,7 +203,7 @@ flowchart TB
 
 - **Goal:** Move Table behavior, runtime, callback, column, row, virtualization, and source-mapping tests into a dedicated integration module.
 - **Requirements:** R5, R6, R8, R9, R10, R11, R12.
-- **Files:** `crates/ui_components/tests/components.rs`, `crates/ui_components/tests/table.rs`, `crates/ui_components/tests/support/mod.rs`, `crates/ui_components/src/table/behavior.rs`, `crates/ui_components/src/table/resolve.rs`.
+- **Files:** `crates/ui_components/tests/components.rs`, `crates/ui_components/tests/table.rs`, `crates/ui_components/tests/support/mod.rs`, `crates/ui_components/src/table/behavior/mod.rs`, `crates/ui_components/src/table/resolve.rs`.
 - **Approach:** Move Table-only helpers and tests into `table.rs`; keep shared sample builders in support only if more than one focused module needs them; convert broad render-plan assertions to behavior snapshot assertions when they are testing user-facing behavior.
 - **Test Scenarios:** Filtering, grouping, row pinning, column sizing, nested headers, editing metadata, callbacks, virtual windows, pinned columns, and source ownership tests still pass under Table-focused filters.
 - **Verification:** `cargo nextest run -p open-gpui-ui-components table --no-fail-fast`.
@@ -230,7 +230,7 @@ flowchart TB
 
 - **Goal:** Replace the misleading `TableRenderDiagnostics` vocabulary with an internal render-plan name and tighten type visibility.
 - **Requirements:** R2, R4, R9, R10, R11, R12, R16.
-- **Files:** `crates/ui_components/src/table/mod.rs`, `crates/ui_components/src/table/render_plan/mod.rs`, `crates/ui_components/src/table/render_plan/columns.rs`, `crates/ui_components/src/table/render_plan/header.rs`, `crates/ui_components/src/table/render_plan/rows.rs`, `crates/ui_components/src/table/behavior.rs`, `crates/ui_components/src/table/body/mod.rs`, `crates/ui_components/src/table/header.rs`, `crates/ui_components/src/table/resolve.rs`, `crates/ui_components/src/table/runtime.rs`, `docs/ui/component-contract.md`.
+- **Files:** `crates/ui_components/src/table/mod.rs`, `crates/ui_components/src/table/render_plan/mod.rs`, `crates/ui_components/src/table/render_plan/columns.rs`, `crates/ui_components/src/table/render_plan/header.rs`, `crates/ui_components/src/table/render_plan/rows.rs`, `crates/ui_components/src/table/behavior/mod.rs`, `crates/ui_components/src/table/body/mod.rs`, `crates/ui_components/src/table/header.rs`, `crates/ui_components/src/table/resolve.rs`, `crates/ui_components/src/table/runtime.rs`, `docs/ui/component-contract.md`.
 - **Approach:** Rename `TableRenderDiagnostics` to `TableRenderPlan` or `TableViewportPlan`; rename internal `diagnostics` functions to render-plan terminology; update `TableBehaviorSnapshot` construction to read from the renamed internal plan; narrow `pub` visibility on render-plan row, column, header, and region types after call sites are clear.
 - **Test Scenarios:** No `TableRenderDiagnostics` references remain; no Table render-plan type is root/prelude-exported; behavior snapshot tests still verify the public behavior contract; internal table rendering still resolves pinned, center, header, and virtual row plans.
 - **Verification:** `cargo nextest run -p open-gpui-ui-components table --no-fail-fast` and `rg -n "TableRenderDiagnostics|pub use .*RenderPlan|pub\\(crate\\) use render_plan" crates/ui_components/src crates/ui_components/tests docs/ui/component-contract.md`.

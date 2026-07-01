@@ -589,6 +589,11 @@ filter recipes, `column_visibility.rs`, `toolbar.rs`, and `metrics.rs` own the c
 surfaces. This ownership note is about review locality only; it does not add a second public Table
 contract or promise behavior beyond the exported `TableState`, `TableBehaviorSnapshot`, `Table`,
 filter recipes, callback payloads, and stable gallery/debug-selector proofs.
+`TableBehaviorSnapshot` keeps the public readout in `table/behavior/mod.rs`, while row counts and
+visible windows live in `table/behavior/counts.rs`, column regions and column snapshots in
+`table/behavior/columns.rs`, nested header summaries in `table/behavior/header.rs`, tree summaries
+in `table/behavior/tree.rs`, and rendered row/cell snapshots in `table/behavior/rows.rs`. This
+mirrors the Command split pattern without reopening the Table renderer.
 Crate-private region render plans expose summed widths to the adapter, and header/body cells read
 the same resolved column widths. For pinned tables, a crate-private center-column window virtualizes
 the shared horizontal center lane from adapter-owned horizontal scroll input. The adapter keeps
@@ -934,7 +939,16 @@ active/selected indices, page navigation, activation payloads, viewport item cou
 metrics, overscan, and semantic scroll strategy labels. Rendered range calculation remains owned
 by `open_gpui_ui_core::VirtualizerState`. `TreeBehaviorSnapshot` and `CommandBehaviorSnapshot`
 follow the same public boundary: behavior probes are stable, renderer assembly plans are internal.
-`menu_runtime.rs` owns submenu hover timing, branch switching, trigger-bound caches, and local
+`command/mod.rs` is the reference split facade: descriptor, model, style, render-plan, and runtime
+owners stay in sibling modules. `Menu`, `ContextMenu`, and `Tree` follow that shape: `menu/mod.rs`
+keeps the builder/render facade while `menu/descriptor.rs`, `menu/model.rs`,
+`menu/render_plan.rs`, `menu/runtime.rs`, and `menu/style.rs` own the public model, submenu
+placement contract, timing, and metrics; `context_menu/mod.rs` keeps the point-anchor facade while
+`context_menu/model.rs` owns the renderer-neutral context-menu state; `tree/mod.rs` keeps the
+render facade while `tree/descriptor.rs`, `tree/model.rs`, `tree/runtime.rs`, `tree/style.rs`,
+`tree/movement.rs`, and `tree/render_plan.rs` own descriptor data, state, adapter runtime, metrics,
+drag/drop movement, and virtualized behavior snapshots.
+`menu/runtime.rs` owns submenu hover timing, branch switching, trigger-bound caches, and local
 submenu scroll handles for `Menu` and `ContextMenu`, keeping render assembly thin while preserving
 safe hover and local scroll ownership.
 `Splitter` covers panel fraction normalization, min/max constraints, collapsed-panel metadata,
