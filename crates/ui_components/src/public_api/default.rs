@@ -1,5 +1,9 @@
 //! Curated default public API surface shared by the crate root and prelude.
 
+pub use crate::a11y::{
+    A11yContractError, A11yContractViolation, A11yDescriptionSource, A11yLabelSource,
+    A11yValueKind, A11yValueMetadata, ComponentA11yContract,
+};
 pub use crate::accordion::{
     Accordion, AccordionColors, AccordionItem, AccordionItemDescriptor, AccordionItemState,
     AccordionMetrics, AccordionMode, AccordionOpenChange, AccordionState,

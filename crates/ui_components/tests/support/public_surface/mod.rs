@@ -10,7 +10,7 @@ use open_gpui_ui_components::component_contract::{
 };
 use open_gpui_ui_components::{ColorIntent, FocusRing, gpui_adapter::gpui_role_from_ui};
 use open_gpui_ui_core::{
-    Orientation, OverlayLayerKind, OverlayLayerPolicy, OverlayPlacementAlignment,
+    AccessibleAction, Orientation, OverlayLayerKind, OverlayLayerPolicy, OverlayPlacementAlignment,
     OverlayPlacementSide, OverlayPresence, Role, UiPoint, UiPx, UiSize, rect, semantic, ui_point,
     ui_px, ui_size,
 };

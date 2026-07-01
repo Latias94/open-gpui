@@ -10,6 +10,40 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_overlay: prelude::OverlayResolvedState = prelude::OverlayResolvedState::resolve(
         OverlayLayerPolicy::new(OverlayLayerKind::Tooltip, OverlayPresence::open()),
     );
+    let root_a11y_contract = root::ComponentA11yContract::new("Button", Role::Button)
+        .with_label_source(root::A11yLabelSource::VisibleText)
+        .with_description_source(root::A11yDescriptionSource::None)
+        .selected_state(false)
+        .disabled_state(false)
+        .with_actions(&[AccessibleAction::Click]);
+    let prelude_a11y_contract = prelude::ComponentA11yContract::new("Slider", Role::Slider)
+        .with_label_source(prelude::A11yLabelSource::VisibleText)
+        .with_value_metadata(prelude::A11yValueMetadata::present(
+            prelude::A11yValueKind::Percent,
+        ))
+        .with_orientation(Orientation::Horizontal)
+        .with_actions(&[
+            AccessibleAction::Increment,
+            AccessibleAction::Decrement,
+            AccessibleAction::SetValue,
+        ]);
+    let _root_a11y_error: root::A11yContractError =
+        root::ComponentA11yContract::new("IconButton", Role::Button)
+            .validate()
+            .unwrap_err()
+            .error();
+    let _prelude_a11y_violation: prelude::A11yContractViolation =
+        prelude::ComponentA11yContract::new("NumberInput", Role::SpinButton)
+            .with_label_source(prelude::A11yLabelSource::ExplicitLabel)
+            .validate()
+            .unwrap_err();
+    assert!(root::A11yLabelSource::ExplicitLabel.provides_name());
+    assert!(
+        prelude::A11yValueMetadata::absent(prelude::A11yValueKind::Number).kind()
+            == prelude::A11yValueKind::Number
+    );
+    root_a11y_contract.validate().unwrap();
+    prelude_a11y_contract.validate().unwrap();
     let root_button = root::Button::new("save", "Save");
     let root_accordion = root::Accordion::new("accordion")
         .mode(root::AccordionMode::Multiple)

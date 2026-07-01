@@ -7,23 +7,24 @@ use open_gpui_ui_components::component_contract::{
     component_contract_family, component_contract_gallery_status,
 };
 use open_gpui_ui_components::{
-    AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant, ComboboxOpenMode,
-    CommandIndexSnapshotMode, CommandOpenMode, CommandSelectionMode, DialogOpenMode,
-    FeedbackIntent, HoverCardOpenIntent, HoverCardOpenMode, MenuItemKind, MenuOpenMode,
-    OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TableCellEditor,
-    TableCellValue, TableColumnFacets, TableColumnId, TableColumnOrderChange, TableColumnRegion,
-    TableExpansionMode, TableExpansionState, TableGlobalFilterChange, TablePredicateFilterChange,
-    TablePredicateFilterOperator, TableRangeFilterChange, TableRowChildrenLoadState, TableRowId,
-    TableRowRegion, TableStageMode, TableTextFilterOperator, TextInputDisplayMode, ThemeMode,
-    ToggleVariant, TooltipOpenIntent, TreeKeyboardAction, VirtualizedListScrollStrategy,
+    A11yLabelSource, A11yValueKind, AlertDialogIntent, AlertDialogOpenMode, BadgeVariant,
+    ButtonVariant, ComboboxOpenMode, CommandIndexSnapshotMode, CommandOpenMode,
+    CommandSelectionMode, DialogOpenMode, FeedbackIntent, HoverCardOpenIntent, HoverCardOpenMode,
+    MenuItemKind, MenuOpenMode, OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis,
+    ScrollResetPolicy, SelectOpenMode, SheetCloseAffordance, SheetModalMode, SheetOpenMode,
+    SheetSide, TableCellEditor, TableCellValue, TableColumnFacets, TableColumnId,
+    TableColumnOrderChange, TableColumnRegion, TableExpansionMode, TableExpansionState,
+    TableGlobalFilterChange, TablePredicateFilterChange, TablePredicateFilterOperator,
+    TableRangeFilterChange, TableRowChildrenLoadState, TableRowId, TableRowRegion, TableStageMode,
+    TableTextFilterOperator, TextInputDisplayMode, ThemeMode, ToggleVariant, TooltipOpenIntent,
+    TreeKeyboardAction, VirtualizedListScrollStrategy,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state, init_text_input,
     },
 };
 use open_gpui_ui_core::{
-    Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
-    InitialFocusIntent, Orientation, OutsidePressPolicy, OverlayLayerKind,
+    AccessibleAction, Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy,
+    FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy, OverlayLayerKind,
     OverlayPlacementAlignment, OverlayPlacementSide, PanelAdaptiveClass, Role, Size,
     TableColumnWidthPolicy, ThemeTokens, Toggled, semantic, ui_point, ui_px,
 };
@@ -1636,6 +1637,72 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(gates[8].id, "state-contract-readouts");
     assert_eq!(gates[9].id, "choice-surfaces");
     assert_eq!(gates[10].id, "a11y-labels");
+    assert!(gates[10].evidence.contains(&"ComponentA11yContract"));
+    assert!(gates[10].evidence.contains(&"COMPONENT_A11Y_CLAIMS"));
+    assert!(
+        gates[10]
+            .evidence
+            .contains(&"crates/ui_components/tests/a11y.rs")
+    );
+    assert!(
+        gates[10]
+            .evidence
+            .contains(&"representative_component_a11y_contracts_are_valid")
+    );
+
+    let a11y_claims = pages::components::COMPONENT_A11Y_CLAIMS;
+    assert_eq!(a11y_claims.len(), 11);
+    assert!(a11y_claims.iter().all(
+        |claim| claim.selector_prefix.starts_with("gallery:component-")
+            && claim.label_source.provides_name()
+    ));
+    let claim_names = a11y_claims
+        .iter()
+        .map(|claim| claim.component)
+        .collect::<std::collections::BTreeSet<_>>();
+    for expected in [
+        "Button",
+        "IconButton",
+        "Checkbox",
+        "Slider",
+        "NumberInput",
+        "Progress",
+        "Listbox option",
+        "Tree item",
+        "Table",
+        "VirtualizedList row",
+        "Splitter handle",
+    ] {
+        assert!(
+            claim_names.contains(expected),
+            "expected `{expected}` in component a11y claims"
+        );
+    }
+    assert!(a11y_claims.iter().any(|claim| {
+        claim.component == "IconButton"
+            && claim.role == Role::Button
+            && claim.label_source == A11yLabelSource::ExplicitLabel
+            && claim.actions.contains(&AccessibleAction::Click)
+    }));
+    assert!(a11y_claims.iter().any(|claim| {
+        claim.component == "Slider"
+            && claim.role == Role::Slider
+            && claim.value_kind == Some(A11yValueKind::Percent)
+            && claim.orientation == Some(Orientation::Horizontal)
+            && claim.actions.contains(&AccessibleAction::SetValue)
+    }));
+    assert!(a11y_claims.iter().any(|claim| {
+        claim.component == "Table"
+            && claim.role == Role::Table
+            && claim.value_kind == Some(A11yValueKind::Count)
+    }));
+    assert!(a11y_claims.iter().any(|claim| {
+        claim.component == "Splitter handle"
+            && claim.role == Role::Splitter
+            && claim.orientation == Some(Orientation::Vertical)
+            && claim.actions.contains(&AccessibleAction::Increment)
+            && claim.actions.contains(&AccessibleAction::Decrement)
+    }));
 
     assert_eq!(buttons.len(), 6);
     assert_eq!(buttons[0].id, "default");
