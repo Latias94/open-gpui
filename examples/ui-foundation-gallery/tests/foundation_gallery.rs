@@ -2624,6 +2624,16 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     let render_source = include_str!("../src/pages/components/render.rs");
     let runtime_source = include_str!("../src/pages/components/runtime.rs");
     let samples_source = include_str!("../src/pages/components/samples.rs");
+    let foundation_samples_source = include_str!("../src/pages/components/samples/foundation.rs");
+    let feedback_samples_source = include_str!("../src/pages/components/samples/feedback.rs");
+    let tree_samples_source = include_str!("../src/pages/components/samples/tree.rs");
+    let virtualized_list_samples_source =
+        include_str!("../src/pages/components/samples/virtualized_list.rs");
+    let choice_samples_source = include_str!("../src/pages/components/samples/choice.rs");
+    let text_samples_source = include_str!("../src/pages/components/samples/text.rs");
+    let navigation_samples_source = include_str!("../src/pages/components/samples/navigation.rs");
+    let table_samples_source = include_str!("../src/pages/components/samples/table.rs");
+    let layout_samples_source = include_str!("../src/pages/components/samples/layout.rs");
 
     assert!(components_source.contains("pub mod catalog;"));
     assert!(components_source.contains("pub use catalog::{"));
@@ -2643,7 +2653,35 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(catalog_source.contains("ComponentCatalogEntry::state_contract("));
     assert!(conformance_source.contains("pub const COMPONENT_CONFORMANCE_GATES"));
     assert!(runtime_source.contains("pub struct TableSampleRuntimeLog"));
-    assert!(samples_source.contains("pub struct ButtonSample"));
+    for module_path in [
+        "#[path = \"samples/foundation.rs\"]",
+        "#[path = \"samples/feedback.rs\"]",
+        "#[path = \"samples/tree.rs\"]",
+        "#[path = \"samples/virtualized_list.rs\"]",
+        "#[path = \"samples/choice.rs\"]",
+        "#[path = \"samples/text.rs\"]",
+        "#[path = \"samples/navigation.rs\"]",
+        "#[path = \"samples/table.rs\"]",
+        "#[path = \"samples/layout.rs\"]",
+    ] {
+        assert!(
+            samples_source.contains(module_path),
+            "samples facade should declare family module `{module_path}`"
+        );
+    }
+    assert!(samples_source.contains("pub use foundation::{"));
+    assert!(samples_source.contains("pub use table::{"));
+    assert!(foundation_samples_source.contains("pub struct ButtonSample"));
+    assert!(feedback_samples_source.contains("pub struct StatusCueSample"));
+    assert!(tree_samples_source.contains("pub struct TreeSample"));
+    assert!(virtualized_list_samples_source.contains("pub struct VirtualizedListSample"));
+    assert!(choice_samples_source.contains("pub struct CheckboxSample"));
+    assert!(text_samples_source.contains("pub struct TextInputSample"));
+    assert!(navigation_samples_source.contains("pub struct TabsSample"));
+    assert!(table_samples_source.contains("pub struct TableSample"));
+    assert!(layout_samples_source.contains("pub struct ScrollAreaSample"));
+    assert!(!samples_source.contains("pub struct ButtonSample"));
+    assert!(!samples_source.contains("static TABLE_SAMPLES"));
     assert!(!components_source.contains("ComponentCatalogEntry::official("));
     assert!(!components_source.contains("pub struct ButtonSample"));
     assert!(!components_source.contains("pub struct TableSampleRuntimeLog"));
@@ -2699,15 +2737,16 @@ fn verification_docs_list_current_ui_architecture_focused_gates() {
 #[test]
 fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
     let samples_source = include_str!("../src/pages/components/samples.rs");
+    let layout_samples_source = include_str!("../src/pages/components/samples/layout.rs");
     let render_source = include_str!("../src/pages/components/render.rs");
-    let splitter_struct_start = samples_source
+    let splitter_struct_start = layout_samples_source
         .find("pub struct SplitterSample {")
         .expect("expected SplitterSample struct to exist");
-    let splitter_struct_end = samples_source[splitter_struct_start..]
-        .find("impl_component_sample_selectors!(SplitterSample, \"component-splitter-sample\");")
+    let splitter_struct_end = layout_samples_source[splitter_struct_start..]
+        .find("/// Returns scroll area samples backed by real component state.")
         .map(|offset| splitter_struct_start + offset)
-        .expect("expected SplitterSample selector impl to exist");
-    let splitter_struct = &samples_source[splitter_struct_start..splitter_struct_end];
+        .expect("expected SplitterSample sample builder to follow struct declarations");
+    let splitter_struct = &layout_samples_source[splitter_struct_start..splitter_struct_end];
     let splitter_section = render_source
         .split("component_page_section(\"splitter\")")
         .nth(1)
@@ -2718,6 +2757,9 @@ fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
         })
         .expect("expected Splitter section in components render source");
 
+    assert!(samples_source.contains(
+        "impl_component_sample_selectors!(SplitterSample, \"component-splitter-sample\");"
+    ));
     assert!(!splitter_struct.contains("pub orientation: Orientation,"));
     assert!(!splitter_struct.contains("pub size: Size,"));
     assert!(splitter_section.contains(".orientation(state.orientation())"));
