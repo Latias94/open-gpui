@@ -211,7 +211,12 @@ fn invalid_hover_feedback_stays_inside_bounds() -> bool {
     let Some(node) = document.node(&NodeId::from(canvas_node_id(&transform))) else {
         return false;
     };
-    let measured_completion_point = node.position + point(px(268.0), px(150.0));
+    let Some(completion_handle) = node.handle(Some(&open_gpui_canvas::HandleId::from(
+        canvas_port_id(&completion),
+    ))) else {
+        return false;
+    };
+    let measured_completion_point = node.position + completion_handle.position;
     let records = runtime
         .precise_hit_test_with_kind_registry(
             &document,
@@ -335,7 +340,7 @@ fn edge_endpoints_follow_measured_handles() -> bool {
     };
 
     prompt_handle.position == point(px(0.0), px(51.0))
-        && completion_handle.position == point(px(268.0), px(150.0))
+        && completion_handle.position == point(canvas_node.size.width, px(150.0))
 }
 
 fn measured_transform_store() -> (NodeGraphStore, JellyNodeId, JellyPortId, JellyPortId) {

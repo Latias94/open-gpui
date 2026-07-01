@@ -5629,7 +5629,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(prompt_handle.position, point(px(0.0), px(51.0)));
-        assert_eq!(completion_handle.position, point(px(268.0), px(150.0)));
+        assert_eq!(
+            completion_handle.position,
+            point(canvas_node.size.width, px(150.0))
+        );
         let resolution = measured_store.resolve_node_handle_measurement(ConnectionHandleRef::new(
             transform,
             prompt,
@@ -5778,7 +5781,12 @@ mod tests {
         let node = document
             .node(&NodeId::from(canvas_node_id(&transform)))
             .expect("transform canvas node");
-        let measured_completion_point = node.position + point(px(268.0), px(150.0));
+        let completion_handle = node
+            .handle(Some(&open_gpui_canvas::HandleId::from(canvas_port_id(
+                &completion,
+            ))))
+            .expect("completion handle");
+        let measured_completion_point = node.position + completion_handle.position;
         let records = runtime
             .precise_hit_test_with_kind_registry(
                 &document,
