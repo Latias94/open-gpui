@@ -20,6 +20,7 @@ struct DockTabReorderHold {
 #[derive(Debug, Default)]
 pub(crate) struct DockDropRuntime {
     resolution: Option<DockDropResolution>,
+    guide_target: Option<DockResolvedDropTarget>,
     scene: Option<DockHostDropScene>,
 }
 
@@ -148,6 +149,28 @@ impl DockHostDropScene {
         })
     }
 
+    pub(crate) fn resolve_guide_target_with_validator(
+        &self,
+        policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
+        edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
+    ) -> Option<DockResolvedDropTarget> {
+        drop_target::resolve_layout_drop_guide(DockDropResolverInput {
+            position: self.position,
+            payload_size: self.payload_size,
+            drop_guide_style: self.drop_guide_style,
+            policy,
+            target_validator,
+            edge_plan_resolver,
+            tab_labels: &self.tab_labels,
+            tab_bars: &self.tab_bars,
+            leaves: &self.leaves,
+            root: self.root,
+            floating_title_bars: &self.floating_title_bars,
+            empty_spaces: &self.empty_spaces,
+        })
+    }
+
     fn for_release_position(&self, position: Point<Pixels>) -> Self {
         let mut scene = self.clone();
         scene.position = position;
@@ -236,16 +259,16 @@ impl DockDropRuntime {
         target_validator: Option<&DockDropTargetValidator<'_>>,
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
     ) -> bool {
-        let resolution = match self.resolve_scene_resolution(
+        let (resolution, guide_target) = match self.resolve_scene_resolution(
             scene,
             policy,
             target_validator,
             edge_plan_resolver,
         ) {
-            Some(resolution) => resolution,
+            Some(resolved) => resolved,
             None => return false,
         };
-        self.replace_resolution(resolution)
+        self.replace_resolution(resolution, guide_target)
     }
 
     fn resolve_scene_resolution(
@@ -254,13 +277,18 @@ impl DockDropRuntime {
         policy: &DockPolicy,
         target_validator: Option<&DockDropTargetValidator<'_>>,
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
-    ) -> Option<Option<DockDropResolution>> {
+    ) -> Option<(Option<DockDropResolution>, Option<DockResolvedDropTarget>)> {
         let mut resolution =
             match scene.resolve_drop_with_validator(policy, target_validator, edge_plan_resolver) {
                 Some(resolution) => Some(resolution),
                 None if scene.clear_on_miss => None,
                 None => return None,
             };
+        let guide_target = if resolution.is_none() {
+            scene.resolve_guide_target_with_validator(policy, target_validator, edge_plan_resolver)
+        } else {
+            None
+        };
         if let Some(existing) = self.resolution.as_ref().and_then(valid_target)
             && let Some(reorder_hold) = tab_reorder_hold(existing)
             && reorder_hold.bounds.contains(&scene.position)
@@ -271,7 +299,7 @@ impl DockDropRuntime {
         {
             resolution = Some(DockDropResolution::Valid(existing.clone()));
         }
-        Some(resolution)
+        Some((resolution, guide_target))
     }
 
     pub(crate) fn take_release_target_at(
@@ -294,16 +322,24 @@ impl DockDropRuntime {
         );
         self.scene = None;
         match resolution {
-            Some(Some(DockDropResolution::Valid(target))) => {
+            Some((Some(DockDropResolution::Valid(target)), _)) => {
                 self.resolution = None;
+                self.guide_target = None;
                 Some(target)
             }
-            Some(Some(DockDropResolution::Rejected(rejection))) => {
+            Some((Some(DockDropResolution::Rejected(rejection)), _)) => {
                 self.resolution = Some(DockDropResolution::Rejected(rejection));
+                self.guide_target = None;
                 None
             }
-            Some(None) | None => {
+            Some((None, guide_target)) => {
                 self.resolution = None;
+                self.guide_target = guide_target;
+                None
+            }
+            None => {
+                self.resolution = None;
+                self.guide_target = None;
                 None
             }
         }
@@ -316,12 +352,18 @@ impl DockDropRuntime {
     }
 
     pub(crate) fn clear(&mut self) -> bool {
-        let changed = self.resolution.take().is_some() || self.scene.take().is_some();
+        let changed = self.resolution.take().is_some()
+            || self.guide_target.take().is_some()
+            || self.scene.take().is_some();
         changed
     }
 
     pub(crate) fn drop_resolution(&self) -> Option<&DockDropResolution> {
         self.resolution.as_ref()
+    }
+
+    pub(crate) fn guide_target(&self) -> Option<&DockResolvedDropTarget> {
+        self.guide_target.as_ref()
     }
 
     pub(crate) fn scene_position(&self) -> Option<Point<Pixels>> {
@@ -359,11 +401,16 @@ impl DockDropRuntime {
         self.scene.as_mut().expect("scene should be initialized")
     }
 
-    fn replace_resolution(&mut self, resolution: Option<DockDropResolution>) -> bool {
-        if self.resolution == resolution {
+    fn replace_resolution(
+        &mut self,
+        resolution: Option<DockDropResolution>,
+        guide_target: Option<DockResolvedDropTarget>,
+    ) -> bool {
+        if self.resolution == resolution && self.guide_target == guide_target {
             return false;
         }
         self.resolution = resolution;
+        self.guide_target = guide_target;
         true
     }
 

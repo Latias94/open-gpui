@@ -30,6 +30,7 @@ pub(crate) struct DockPreviewScene {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockPreviewDecision {
     Allowed,
+    GuideOnly,
     Rejected { reason: Option<DockPolicyError> },
 }
 
@@ -160,6 +161,7 @@ pub(crate) struct DockPreviewVisualDescriptor {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockPreviewVisualDecision {
     Allowed,
+    GuideOnly,
     Rejected,
 }
 
@@ -207,6 +209,13 @@ impl DockDropPreview {
         style: DockDropGuideStyle,
     ) -> Option<Self> {
         Self::from_target(target, DockPreviewDecision::allowed(), style)
+    }
+
+    pub(crate) fn from_guide_target(
+        target: &DockResolvedDropTarget,
+        style: DockDropGuideStyle,
+    ) -> Option<Self> {
+        Self::from_target(target, DockPreviewDecision::guide_only(), style)
     }
 
     pub(crate) fn from_rejected_target(
@@ -284,6 +293,11 @@ impl DockPreviewScene {
         decision: DockPreviewDecision,
         style: DockDropGuideStyle,
     ) -> Self {
+        let body_bounds = if decision.is_guide_only() {
+            Bounds::new(body_bounds.origin, size(px(0.0), px(0.0)))
+        } else {
+            body_bounds
+        };
         let payload_tabs =
             payload_tabs_for_target(target, target_tabs, insert_index, &decision, body_bounds);
         let layers = preview_layers_for_target(target, target_bounds, &decision, style);
@@ -344,6 +358,7 @@ impl From<&DockPreviewDecision> for DockPreviewVisualDecision {
     fn from(decision: &DockPreviewDecision) -> Self {
         match decision {
             DockPreviewDecision::Allowed => Self::Allowed,
+            DockPreviewDecision::GuideOnly => Self::GuideOnly,
             DockPreviewDecision::Rejected { .. } => Self::Rejected,
         }
     }
@@ -358,14 +373,23 @@ impl DockPreviewDecision {
         Self::Rejected { reason }
     }
 
+    pub(crate) fn guide_only() -> Self {
+        Self::GuideOnly
+    }
+
     pub(crate) fn is_allowed(&self) -> bool {
         matches!(self, Self::Allowed)
+    }
+
+    pub(crate) fn is_guide_only(&self) -> bool {
+        matches!(self, Self::GuideOnly)
     }
 
     #[cfg(test)]
     pub(crate) fn rejection_reason(&self) -> Option<&DockPolicyError> {
         match self {
             Self::Allowed => None,
+            Self::GuideOnly => None,
             Self::Rejected { reason } => reason.as_ref(),
         }
     }
@@ -487,7 +511,7 @@ fn preview_layer_for_target(
     decision: &DockPreviewDecision,
     style: DockDropGuideStyle,
 ) -> DockPreviewLayer {
-    let active = active_layer_for_target(target) == Some(kind);
+    let active = active_layer_for_target(target) == Some(kind) && !decision.is_guide_only();
     let zone = active
         .then(|| target.zone())
         .flatten()
@@ -818,6 +842,73 @@ mod tests {
                 .filter(|drop_box| drop_box.active)
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn guide_only_target_builds_drop_boxes_without_delivery_body() {
+        let tabs = DockNodeId::null();
+        let preview = DockDropPreview::from_guide_target(
+            &resolved_target(
+                DockResolvedDropTargetKind::LeafCenter {
+                    root: tabs,
+                    target_tabs: tabs,
+                },
+                None,
+            ),
+            DockDropGuideStyle::default(),
+        )
+        .expect("guide target should produce preview");
+        let visual = preview.visual_descriptor();
+
+        assert_eq!(visual.decision, DockPreviewVisualDecision::GuideOnly);
+        assert_eq!(visual.active_layer, None);
+        assert_eq!(visual.active_zone, None);
+        assert_eq!(visual.payload_tabs, Vec::new());
+        assert!(!visual.has_body);
+        assert_eq!(preview.scene.layers[0].kind, DockPreviewLayerKind::Inner);
+        assert_eq!(preview.scene.layers[0].drop_boxes.len(), 5);
+        assert!(
+            preview
+                .scene
+                .layers
+                .iter()
+                .flat_map(|layer| layer.drop_boxes.iter())
+                .all(|drop_box| !drop_box.active),
+            "guide-only preview should render passive drop boxes without selecting a drop target"
+        );
+    }
+
+    #[test]
+    fn guide_only_root_target_does_not_activate_split_preview() {
+        let root = DockNodeId::null();
+        let preview = DockDropPreview::from_guide_target(
+            &resolved_target(
+                DockResolvedDropTargetKind::RootEdge {
+                    root,
+                    leaf_tabs: None,
+                    zone: DropZone::Left,
+                },
+                None,
+            ),
+            DockDropGuideStyle::default(),
+        )
+        .expect("root guide target should produce preview");
+        let visual = preview.visual_descriptor();
+
+        assert_eq!(visual.decision, DockPreviewVisualDecision::GuideOnly);
+        assert_eq!(visual.active_layer, None);
+        assert_eq!(visual.active_zone, None);
+        assert_eq!(preview.scene.active_split(), None);
+        assert!(!visual.has_body);
+        assert_eq!(preview.scene.layers.len(), 2);
+        assert!(
+            preview
+                .scene
+                .layers
+                .iter()
+                .flat_map(|layer| layer.drop_boxes.iter())
+                .all(|drop_box| !drop_box.active)
         );
     }
 

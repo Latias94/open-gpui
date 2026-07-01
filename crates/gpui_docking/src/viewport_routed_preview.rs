@@ -236,10 +236,17 @@ pub(crate) fn routed_drop_preview_from_target(
 ) -> Option<DockViewportRoutedDropPreview> {
     let window_id = target.target_window_id()?;
     let space = target.target_space().clone();
-    let mut preview = crate::drop_preview::DockDropPreview::from_resolved_target(
-        target.target(),
-        target.drop_guide_style(),
-    )?;
+    let mut preview = if target.is_preview_only() {
+        crate::drop_preview::DockDropPreview::from_guide_target(
+            target.target(),
+            target.drop_guide_style(),
+        )?
+    } else {
+        crate::drop_preview::DockDropPreview::from_resolved_target(
+            target.target(),
+            target.drop_guide_style(),
+        )?
+    };
     preview.populate_payload_tabs(payload);
     Some(DockViewportRoutedDropPreview::new(
         space,

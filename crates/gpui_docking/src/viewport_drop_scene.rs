@@ -1,4 +1,3 @@
-#[cfg(test)]
 use crate::drop_target::DockResolvedDropTarget;
 use crate::{
     DockNodeId, DockPolicy, DockSpaceId, DockViewportIdentity,
@@ -153,7 +152,23 @@ pub(crate) struct DockViewportHostSceneRegistry {
 pub(crate) struct DockViewportResolvedFrame {
     pub(crate) frame: DockViewportHostSceneFrame,
     pub(crate) drop_guide_style: DockDropGuideStyle,
-    pub(crate) resolution: DockDropResolution,
+    pub(crate) resolution: DockViewportFrameResolution,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum DockViewportFrameResolution {
+    Drop(DockDropResolution),
+    GuideOnly(DockResolvedDropTarget),
+}
+
+impl DockViewportFrameResolution {
+    #[cfg(test)]
+    pub(crate) fn target(self) -> Option<DockResolvedDropTarget> {
+        match self {
+            Self::Drop(resolution) => resolution.target(),
+            Self::GuideOnly(target) => Some(target),
+        }
+    }
 }
 
 impl DockViewportHostSceneRegistry {
@@ -302,7 +317,9 @@ impl DockViewportHostSceneRegistry {
         target_validator: Option<&DockDropTargetValidator<'_>>,
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
     ) -> Option<DockViewportResolvedFrame> {
-        let snapshot = self.scenes.get(space)?;
+        let Some(snapshot) = self.scenes.get(space) else {
+            return None;
+        };
         if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
             return None;
         }
@@ -314,8 +331,21 @@ impl DockViewportHostSceneRegistry {
             snapshot.host_bounds.origin.y + host_position.y,
         );
         scene = scene.with_payload_size(payload_size);
-        let resolution =
-            scene.resolve_drop_with_validator(policy, target_validator, edge_plan_resolver)?;
+        let resolution = scene
+            .resolve_drop_with_validator(policy, target_validator, edge_plan_resolver)
+            .map(DockViewportFrameResolution::Drop)
+            .or_else(|| {
+                scene
+                    .resolve_guide_target_with_validator(
+                        policy,
+                        target_validator,
+                        edge_plan_resolver,
+                    )
+                    .map(DockViewportFrameResolution::GuideOnly)
+            });
+        let Some(resolution) = resolution else {
+            return None;
+        };
         Some(DockViewportResolvedFrame {
             frame,
             drop_guide_style,

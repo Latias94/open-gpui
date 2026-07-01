@@ -866,9 +866,16 @@ impl DockInteractionRuntime {
     }
 
     pub(crate) fn drop_preview(&self) -> Option<DockDropPreview> {
-        self.drop.drop_resolution().and_then(|resolution| {
-            DockDropPreview::from_resolution(resolution, self.drop.drop_guide_style())
-        })
+        self.drop
+            .drop_resolution()
+            .and_then(|resolution| {
+                DockDropPreview::from_resolution(resolution, self.drop.drop_guide_style())
+            })
+            .or_else(|| {
+                self.drop.guide_target().and_then(|target| {
+                    DockDropPreview::from_guide_target(target, self.drop.drop_guide_style())
+                })
+            })
     }
 
     pub(crate) fn drop_scene_position(&self) -> Option<Point<Pixels>> {

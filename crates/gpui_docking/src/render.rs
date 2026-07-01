@@ -567,8 +567,10 @@ impl DockHost {
                     move |event: &MouseMoveEvent, phase, window, app| {
                         if phase != DispatchPhase::Capture
                             || event.pressed_button != Some(MouseButton::Left)
-                            || !bounds.contains(&event.position)
                         {
+                            return;
+                        }
+                        if !bounds.contains(&event.position) {
                             return;
                         }
                         let Some(payload) = app.active_drag_value::<DockDragPayload>().cloned()
@@ -592,10 +594,10 @@ impl DockHost {
                 window.on_mouse_event({
                     let entity = entity.clone();
                     move |event: &MouseUpEvent, phase, window, app| {
-                        if phase != DispatchPhase::Capture
-                            || event.button != MouseButton::Left
-                            || !bounds.contains(&event.position)
-                        {
+                        if phase != DispatchPhase::Capture || event.button != MouseButton::Left {
+                            return;
+                        }
+                        if !bounds.contains(&event.position) {
                             return;
                         }
                         let Some(payload) = app.active_drag_value::<DockDragPayload>().cloned()
@@ -1011,7 +1013,9 @@ impl DockHost {
                         .child(placement.title),
                 );
             }
-        } else {
+        } else if scene.body.body_bounds.size.width > px(0.0)
+            && scene.body.body_bounds.size.height > px(0.0)
+        {
             let body_selector = self.record_debug_selector(
                 DockDebugRegion::DropPreviewBody,
                 format!("{}:drop-preview:body", session.selector_prefix()),

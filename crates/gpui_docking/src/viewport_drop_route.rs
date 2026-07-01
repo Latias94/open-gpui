@@ -107,12 +107,13 @@ impl DockViewportDropRouteResolution {
         }
     }
 
-    pub(crate) fn into_route(self) -> DockViewportDropRoute {
-        self.route
-    }
-
+    #[cfg(test)]
     pub(crate) fn route_ref(&self) -> &DockViewportDropRoute {
         &self.route
+    }
+
+    pub(crate) fn into_route(self) -> DockViewportDropRoute {
+        self.route
     }
 
     pub(crate) fn unavailable_reason(&self) -> Option<DockViewportDropRouteUnavailableReason> {
@@ -166,6 +167,7 @@ struct DockTrustedHoveredWindowLocalDropTarget {
     facts_generation: u64,
 }
 
+#[derive(Debug, Clone, Copy)]
 enum DockEventReceiverLocalSceneRouteContextMode {
     HitTestedScene,
     ReceiverSceneProof,
@@ -774,8 +776,11 @@ impl DockViewportAdapter {
             target_context,
             DockEventReceiverLocalSceneRouteContextMode::ReceiverSceneProof,
         )?;
-        let host_position =
-            route_context.host_position_from_window_position(request.release_position())?;
+        let Some(host_position) =
+            route_context.host_position_from_window_position(request.release_position())
+        else {
+            return None;
+        };
         Some(route_context.local_route(host_position))
     }
 
@@ -797,7 +802,10 @@ impl DockViewportAdapter {
             request.release_position().x - screen_bounds.origin.x,
             request.release_position().y - screen_bounds.origin.y,
         );
-        let host_position = route_context.host_position_from_window_position(window_position)?;
+        let Some(host_position) = route_context.host_position_from_window_position(window_position)
+        else {
+            return None;
+        };
         Some(route_context.local_route(host_position))
     }
 
@@ -827,12 +835,18 @@ impl DockViewportAdapter {
         if proof_required && proof.is_none() {
             return None;
         }
-        let receiver_window = request.event_receiver_window()?;
-        let receiver_space = self.space_for_window_id(receiver_window)?;
+        let Some(receiver_window) = request.event_receiver_window() else {
+            return None;
+        };
+        let Some(receiver_space) = self.space_for_window_id(receiver_window) else {
+            return None;
+        };
         if receiver_space != request.source_space() {
             return None;
         }
-        let snapshot = self.snapshot(request.source_space())?;
+        let Some(snapshot) = self.snapshot(request.source_space()) else {
+            return None;
+        };
         if snapshot.window.window_id() != receiver_window {
             return None;
         }
@@ -841,7 +855,7 @@ impl DockViewportAdapter {
         {
             return None;
         }
-        let facts_generation = self
+        let facts_generation = match self
             .snapshot_facts_generation(request.source_space(), receiver_window)
             .or_else(|| {
                 let _proof = proof?;
@@ -853,8 +867,15 @@ impl DockViewportAdapter {
                     return None;
                 }
                 Some(snapshot.facts_generation())
-            })?;
-        let host_bounds = snapshot.host_bounds?;
+            }) {
+            Some(facts_generation) => facts_generation,
+            None => {
+                return None;
+            }
+        };
+        let Some(host_bounds) = snapshot.host_bounds else {
+            return None;
+        };
         if request.coordinate_space() != DockViewportPointerCoordinateSpace::EventReceiverLocal
             && snapshot.global_screen_bounds().is_none()
         {

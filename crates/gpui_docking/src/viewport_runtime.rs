@@ -1714,29 +1714,6 @@ impl DockViewportRuntime {
         let initial_route_request =
             self.backend_route_request_without_target_context_resample(request, cx);
         update.mark_changed(initial_route_request.changed);
-        let initial_snapshot = DockViewportDropRouteSnapshot::resolve(
-            &self.adapter,
-            initial_route_request.request,
-            &policy,
-        );
-        let initial_route = initial_snapshot.route_resolution.route_ref();
-        let initial_unavailable_reason = initial_snapshot.route_resolution.unavailable_reason();
-        if initial_route_request.changed
-            || initial_unavailable_reason.is_some()
-            || matches!(
-                initial_route,
-                DockViewportDropRoute::TearOff | DockViewportDropRoute::Rejected(_)
-            )
-        {
-            log::debug!(
-                "[DEBUG-docking-native] runtime route snapshot source_space={} source_node={:?} route={:?} initial_changed={} initial_unavailable_reason={:?}",
-                request.source_space().as_str(),
-                request.source_node(),
-                initial_route,
-                initial_route_request.changed,
-                initial_unavailable_reason
-            );
-        }
 
         let DockViewportDropRouteSnapshotRefresh {
             snapshot: resampled_snapshot,

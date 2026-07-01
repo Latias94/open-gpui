@@ -848,17 +848,19 @@ mod runtime_suite {
             runtime.update_routed_drop_preview(&preview_resolution, &payload, app);
         });
 
+        cx.set_platform_window_stack(Some(vec![source_opened.window(), target_opened.window()]));
+        cx.set_platform_hovered_window(Some(target_opened.window()));
+        let release_signals = cx.update(|app| {
+            crate::DockViewportPlatformSignals::from_app(app).with_frozen_target_context()
+        });
+        cx.set_platform_hovered_window(None);
         let release_request = DockViewportDropRouteRequest::from_platform_signals_with_origin(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
             release_position,
             None,
-            crate::DockViewportPlatformSignals::from_target_context(
-                DockViewportTargetContext::new()
-                    .with_trusted_hovered_window(target_opened.window())
-                    .with_window_stack([source_opened.window(), target_opened.window()]),
-            ),
+            release_signals,
             DockPayloadDropReleaseOrigin::SourceOnly,
         )
         .with_drag_session(Some(session));

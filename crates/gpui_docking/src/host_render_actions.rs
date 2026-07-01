@@ -217,13 +217,15 @@ impl DockHost {
         } else {
             self.clear_drop_preview_interaction()
         };
-        self.update_payload_drag_hover_state_from_render(payload, position, window, cx)
+        let changed = self
+            .update_payload_drag_hover_state_from_render(payload, position, window, cx)
             .merge(
                 crate::host_interaction_outcome::DockHostInteractionOutcome::from_session_changed(
                     local_preview_cleared,
                 ),
             )
-            .finish(cx)
+            .finish(cx);
+        changed
     }
 
     pub(crate) fn publish_rendered_viewport_host_scene_frame_from_render(
