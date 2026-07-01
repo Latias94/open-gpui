@@ -125,12 +125,12 @@ pub(crate) fn product_gallery_cases() -> Vec<ProductGalleryCase> {
                 ),
                 "shader.material_mix" => (
                     "Material mix",
-                    "Shader graph cards with typed rails, dynamic inputs, and missing-port facts.",
+                    "Shader graph cards with typed rails, dynamic inputs, and missing-port diagnostics.",
                     0x7c3aed,
                 ),
                 "erd.customer_orders" => (
                     "Customer orders",
-                    "Database table cards with field rows, relation handles, and column repeatables.",
+                    "Database table cards with field rows, relation handles, and explicit port downgrades.",
                     0x2563eb,
                 ),
                 "mind-map.strategy" => (

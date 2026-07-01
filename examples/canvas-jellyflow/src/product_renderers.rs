@@ -813,6 +813,11 @@ fn render_repeatable_item_chip(
     let disabled = projection.remove_disabled_reason.is_some();
     let missing_port =
         projection.dynamic_port_policy == OpenGpuiDynamicPortPolicy::MissingGraphPort;
+    let label = if missing_port {
+        format!("{label} no port")
+    } else {
+        label
+    };
     let collection_key = projection.collection_key.clone();
     let item_id = projection.item_id.clone();
     let anchor = projection.anchor.clone();
@@ -876,6 +881,7 @@ fn render_repeatable_item_row(
     let disabled = projection.remove_disabled_reason.is_some();
     let item_index = projection.item_index;
     let anchor = projection.anchor.clone();
+    let dynamic_port_policy = projection.dynamic_port_policy;
 
     node_component_kit::render_measured_region(
         context.repeatable_item_measurement_id(projection.slot_key.clone(), item_id.clone()),
@@ -917,6 +923,12 @@ fn render_repeatable_item_row(
                     .flex()
                     .items_center()
                     .gap_1()
+                    .child(repeatable_port_policy_badge(
+                        context,
+                        &collection_key,
+                        &item_id,
+                        dynamic_port_policy,
+                    ))
                     .child(node_component_kit::repeatable_action_button(
                         context.node_id,
                         open_gpui_repeatable_reorder_action_element_id(
@@ -953,6 +965,28 @@ fn render_repeatable_item_row(
             )
             .child(hidden_anchor_measurement(context, anchor, collector)),
     )
+}
+
+fn repeatable_port_policy_badge(
+    context: &OpenGpuiNodeRendererContext,
+    collection_key: &str,
+    item_id: &str,
+    policy: OpenGpuiDynamicPortPolicy,
+) -> AnyElement {
+    if policy != OpenGpuiDynamicPortPolicy::MissingGraphPort {
+        return div().w(px(0.0)).h(px(0.0)).into_any_element();
+    }
+
+    Badge::new(
+        format!(
+            "jellyflow-repeatable-port-policy:{}:{collection_key}:{item_id}",
+            context.node_id.0
+        ),
+        "no port",
+    )
+    .variant(BadgeVariant::Destructive)
+    .with_size(Size::XSmall)
+    .into_any_element()
 }
 
 fn render_repeatable_add(
