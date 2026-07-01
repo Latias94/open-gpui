@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use jellyflow::{
     NodeGraphStore,
     core::{
@@ -25,6 +27,9 @@ use jellyflow::{
         },
     },
 };
+#[cfg(test)]
+use jellyflow_open_gpui::OpenGpuiControlEventValue;
+use jellyflow_open_gpui::open_gpui_node_renderer_context;
 use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiAuthoringController,
     OpenGpuiAuthoringOutcome, OpenGpuiAuthoringSkipReason, OpenGpuiBoundsCollector,
@@ -32,7 +37,9 @@ use jellyflow_open_gpui::{
     OpenGpuiDynamicPortPolicy, OpenGpuiInspectorPlan, OpenGpuiInspectorSurface,
     OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource, OpenGpuiMeasurementContext,
     OpenGpuiMeasurementId, OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
-    OpenGpuiMenuPlan, OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
+    OpenGpuiMenuPlan, OpenGpuiNodeRendererContext, OpenGpuiNodeRendererRegistry,
+    OpenGpuiNodeRendererResolution, OpenGpuiNodeRendererState,
+    OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout,
     OpenGpuiRepeatableItemLayout as NodeRepeatableItemLayout,
     OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
@@ -75,6 +82,14 @@ const GPUI_LAYOUT_PASS_MEASUREMENT_GAP: &str = "canvas-jellyflow can project Jel
 authoring controls, repeatables, and actions through open-gpui components, but it cannot claim \
 full layout-pass measurement until open-gpui exposes a stable element-bounds callback for \
 node-local slot/control/anchor regions during layout or prepaint.";
+
+type GpuiNodeRenderer = Box<
+    dyn Fn(
+        &OpenGpuiNodeRendererContext,
+        OpenGpuiBoundsCollector,
+        WeakEntity<JellyflowCanvasView>,
+    ) -> AnyElement,
+>;
 
 struct JellyflowCanvasView {
     editor: CanvasEditor,
@@ -136,6 +151,7 @@ struct NodeSurfaceSummary {
     menus: usize,
     action_menus: Vec<OpenGpuiMenuPlan>,
     toolbar_menu: OpenGpuiMenuPlan,
+    renderer_context: OpenGpuiNodeRendererContext,
     inspectors: usize,
     blackboards: usize,
     repeatables: Vec<NodeRepeatableSurfaceProjection>,
@@ -486,9 +502,12 @@ impl JellyflowCanvasView {
 
     fn node_surface_summary(&self, node: &CanvasNode, zoom: f32) -> Option<NodeSurfaceSummary> {
         let jelly_node = jelly_node_id_from_node(node)?;
+        let jelly_node_record = self.store.graph().nodes().get(&jelly_node)?;
         node_surface_summary_for_node(
             node,
             jelly_node,
+            jelly_node_record,
+            self.store.graph(),
             zoom,
             self.editor
                 .selection()
@@ -901,10 +920,56 @@ fn render_node_surface(
     collector: OpenGpuiBoundsCollector,
     view: WeakEntity<JellyflowCanvasView>,
 ) -> impl IntoElement {
+    let registry = demo_node_renderer_registry();
+    match registry.resolve(&surface.renderer_context) {
+        OpenGpuiNodeRendererResolution::Custom(registration) => {
+            let renderers = demo_custom_node_renderers();
+            if let Some(renderer) = renderers.get(&registration.renderer_key) {
+                let shell = render_node_surface_shell(bounds, &surface);
+                let body = renderer(&surface.renderer_context, collector.clone(), view.clone());
+                return shell.child(body).into_any_element();
+            }
+            render_descriptor_fallback_node_surface(bounds, node_id, surface, collector, view)
+        }
+        OpenGpuiNodeRendererResolution::Fallback(_) => {
+            render_descriptor_fallback_node_surface(bounds, node_id, surface, collector, view)
+        }
+    }
+}
+
+fn render_node_surface_shell(
+    bounds: Bounds<Pixels>,
+    surface: &NodeSurfaceSummary,
+) -> open_gpui::Div {
     let zoom = surface.zoom;
     let pad = if zoom >= 1.0 { px(10.0) } else { px(8.0) };
     let top = bounds.top() + pad;
     let left = bounds.left() + pad;
+    let inner_width = (bounds.size.width - pad * 2.0).max(px(0.0));
+    let inner_height = (bounds.size.height - pad * 2.0).max(px(0.0));
+
+    div()
+        .absolute()
+        .left(left)
+        .top(top)
+        .w(inner_width)
+        .h(inner_height)
+        .relative()
+        .flex_shrink_0()
+        .min_w(px(0.0))
+        .min_h(px(0.0))
+        .overflow_hidden()
+}
+
+fn render_descriptor_fallback_node_surface(
+    bounds: Bounds<Pixels>,
+    node_id: JellyNodeId,
+    surface: NodeSurfaceSummary,
+    collector: OpenGpuiBoundsCollector,
+    view: WeakEntity<JellyflowCanvasView>,
+) -> AnyElement {
+    let zoom = surface.zoom;
+    let pad = if zoom >= 1.0 { px(10.0) } else { px(8.0) };
     let inner_width = (bounds.size.width - pad * 2.0).max(px(0.0));
     let inner_height = (bounds.size.height - pad * 2.0).max(px(0.0));
     let slot_limit = adapter_slot_limit_for_height(inner_height, surface.projection.slot_limit);
@@ -932,16 +997,7 @@ fn render_node_surface(
         rgb(0x475569)
     };
 
-    div()
-        .absolute()
-        .left(left)
-        .top(top)
-        .w(inner_width)
-        .h(inner_height)
-        .relative()
-        .flex_shrink_0()
-        .min_w(px(0.0))
-        .min_h(px(0.0))
+    render_node_surface_shell(bounds, &surface)
         .rounded_sm()
         .border_1()
         .border_color(accent)
@@ -1041,6 +1097,309 @@ fn render_node_surface(
             collector,
             view,
         ))
+        .into_any_element()
+}
+
+fn demo_node_renderer_registry() -> OpenGpuiNodeRendererRegistry {
+    OpenGpuiNodeRendererRegistry::new().with_renderer("decision-card", "Dify LLM decision card")
+}
+
+fn demo_custom_node_renderers() -> BTreeMap<String, GpuiNodeRenderer> {
+    let mut renderers: BTreeMap<String, GpuiNodeRenderer> = BTreeMap::new();
+    renderers.insert(
+        "decision-card".to_owned(),
+        Box::new(|context, collector, view| {
+            render_decision_card_node_surface(context, collector, view)
+        }),
+    );
+    renderers
+}
+
+fn render_decision_card_node_surface(
+    context: &OpenGpuiNodeRendererContext,
+    collector: OpenGpuiBoundsCollector,
+    view: WeakEntity<JellyflowCanvasView>,
+) -> AnyElement {
+    let prompt_control = context.control("control.prompt");
+    let model_control = context.control("control.model");
+    let temperature_control = context.control("control.temperature");
+    let stream_control = context.control("control.stream");
+    let primary_action = context
+        .toolbar_menu
+        .actions
+        .iter()
+        .find(|action| action.key == "action.llm.run")
+        .or_else(|| context.toolbar_menu.actions.first());
+
+    div()
+        .size_full()
+        .relative()
+        .rounded_sm()
+        .border_1()
+        .border_color(if context.state.selected {
+            rgb(0x2563eb)
+        } else {
+            rgb(0x0f766e)
+        })
+        .bg(rgb(0xf8fafc))
+        .overflow_hidden()
+        .shadow_sm()
+        .child(
+            div()
+                .absolute()
+                .left(px(8.0))
+                .top(px(8.0))
+                .right(px(8.0))
+                .h(px(24.0))
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .overflow_hidden()
+                .child(
+                    Badge::new(
+                        format!("jellyflow-custom-renderer:{}", context.renderer_key),
+                        "custom renderer",
+                    )
+                    .variant(BadgeVariant::Default)
+                    .with_size(Size::XSmall),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .truncate()
+                        .min_w(px(0.0))
+                        .text_color(rgb(0x64748b))
+                        .child(context.renderer_key.clone()),
+                ),
+        )
+        .child(render_measured_region(
+            context.slot_measurement_id("field.prompt"),
+            collector.clone(),
+            div()
+                .absolute()
+                .left(px(8.0))
+                .top(px(38.0))
+                .right(px(8.0))
+                .h(px(34.0))
+                .rounded_sm()
+                .bg(rgb(0xecfeff))
+                .px_2()
+                .py_1()
+                .overflow_hidden()
+                .child(
+                    div()
+                        .text_sm()
+                        .line_height(px(18.0))
+                        .truncate()
+                        .text_color(rgb(0x0f172a))
+                        .child(context.title.clone()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .line_height(px(14.0))
+                        .truncate()
+                        .text_color(rgb(0x475569))
+                        .child(context.summary.clone().unwrap_or_default()),
+                ),
+        ))
+        .child(render_measured_region(
+            context.anchor_measurement_id("field.prompt"),
+            collector.clone(),
+            div()
+                .absolute()
+                .left(px(0.0))
+                .top(px(46.0))
+                .w(px(8.0))
+                .h(px(20.0)),
+        ))
+        .child(render_measured_region(
+            context.anchor_measurement_id("field.completion"),
+            collector.clone(),
+            div()
+                .absolute()
+                .right(px(0.0))
+                .bottom(px(46.0))
+                .w(px(8.0))
+                .h(px(20.0)),
+        ))
+        .child(
+            div()
+                .absolute()
+                .left(px(8.0))
+                .top(px(78.0))
+                .right(px(8.0))
+                .h(px(58.0))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .overflow_hidden()
+                .child(render_custom_control_row(
+                    context,
+                    "field.prompt",
+                    prompt_control.as_ref(),
+                    0,
+                    collector.clone(),
+                    view.clone(),
+                ))
+                .child(render_custom_control_row(
+                    context,
+                    "badge.model",
+                    model_control.as_ref(),
+                    1,
+                    collector.clone(),
+                    view.clone(),
+                )),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(px(8.0))
+                .top(px(142.0))
+                .right(px(8.0))
+                .h(px(28.0))
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_1()
+                .overflow_hidden()
+                .child(render_custom_control_chip(
+                    context,
+                    "config.model",
+                    temperature_control.as_ref(),
+                    2,
+                    collector.clone(),
+                    view.clone(),
+                ))
+                .child(render_custom_control_chip(
+                    context,
+                    "config.model",
+                    stream_control.as_ref(),
+                    3,
+                    collector,
+                    view,
+                ))
+                .child(
+                    primary_action
+                        .map(|action| render_action_button(action, 0))
+                        .unwrap_or_else(|| {
+                            Badge::new(
+                                format!("jellyflow-custom-action-missing:{}", context.node_id.0),
+                                "no action",
+                            )
+                            .variant(BadgeVariant::Outline)
+                            .with_size(Size::XSmall)
+                            .into_any_element()
+                        }),
+                ),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(px(8.0))
+                .bottom(px(8.0))
+                .right(px(8.0))
+                .h(px(18.0))
+                .flex()
+                .items_center()
+                .gap_1()
+                .overflow_hidden()
+                .child(
+                    Badge::new(
+                        format!("jellyflow-custom-slots:{}", context.node_id.0),
+                        format!("{} slots", context.surface_layout.slots.len()),
+                    )
+                    .variant(BadgeVariant::Secondary)
+                    .with_size(Size::XSmall),
+                )
+                .child(
+                    Badge::new(
+                        format!("jellyflow-custom-repeatables:{}", context.node_id.0),
+                        format!("{} repeatables", context.repeatable_items.len()),
+                    )
+                    .variant(BadgeVariant::Outline)
+                    .with_size(Size::XSmall),
+                ),
+        )
+        .into_any_element()
+}
+
+fn render_custom_control_row(
+    context: &OpenGpuiNodeRendererContext,
+    slot_key: &str,
+    control: Option<&OpenGpuiControlPlan>,
+    index: usize,
+    collector: OpenGpuiBoundsCollector,
+    view: WeakEntity<JellyflowCanvasView>,
+) -> AnyElement {
+    let Some(control) = control else {
+        return div().into_any_element();
+    };
+    render_measured_region(
+        context.control_measurement_id(slot_key, control.key.clone()),
+        collector,
+        div()
+            .h(px(26.0))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .rounded_sm()
+            .bg(rgb(0xffffff))
+            .border_1()
+            .border_color(rgb(0xcbd5e1))
+            .px_2()
+            .overflow_hidden()
+            .child(
+                div()
+                    .text_xs()
+                    .truncate()
+                    .min_w(px(0.0))
+                    .text_color(rgb(0x334155))
+                    .child(control.label.clone()),
+            )
+            .child(
+                div()
+                    .max_w(px(132.0))
+                    .overflow_hidden()
+                    .child(render_control_plan(
+                        context.node_id,
+                        context.node_data.clone(),
+                        control,
+                        index,
+                        view,
+                    )),
+            ),
+    )
+}
+
+fn render_custom_control_chip(
+    context: &OpenGpuiNodeRendererContext,
+    slot_key: &str,
+    control: Option<&OpenGpuiControlPlan>,
+    index: usize,
+    collector: OpenGpuiBoundsCollector,
+    view: WeakEntity<JellyflowCanvasView>,
+) -> AnyElement {
+    let Some(control) = control else {
+        return div().into_any_element();
+    };
+    render_measured_region(
+        context.control_measurement_id(slot_key, control.key.clone()),
+        collector,
+        div()
+            .h(px(24.0))
+            .max_w(px(112.0))
+            .overflow_hidden()
+            .child(render_control_plan(
+                context.node_id,
+                context.node_data.clone(),
+                control,
+                index,
+                view,
+            )),
+    )
 }
 
 fn render_inspector_target_highlight(
@@ -1075,6 +1434,8 @@ fn render_inspector_target_highlight(
 fn node_surface_summary_for_node(
     node: &CanvasNode,
     jelly_node: JellyNodeId,
+    jelly_node_record: &Node,
+    graph: &Graph,
     zoom: f32,
     selected: bool,
     semantic_registry: &NodeRegistry,
@@ -1111,6 +1472,19 @@ fn node_surface_summary_for_node(
         .to_string();
     let action_menus = node_action_menus(&descriptor);
     let toolbar_menu = node_toolbar_menu(&descriptor);
+    let renderer_context = open_gpui_node_renderer_context(
+        jelly_node,
+        jelly_node_record,
+        graph,
+        &descriptor,
+        OpenGpuiNodeRendererState {
+            selected,
+            hidden: node.hidden,
+            ..OpenGpuiNodeRendererState::default()
+        },
+        projection.clone(),
+        slots.clone(),
+    );
     let inspector_target = if selected {
         project_inspectors_for_surface(
             &descriptor,
@@ -1141,6 +1515,7 @@ fn node_surface_summary_for_node(
         menus: descriptor.menus.len(),
         action_menus,
         toolbar_menu,
+        renderer_context,
         inspectors: descriptor.inspectors.len(),
         blackboards: descriptor.blackboards.len(),
         repeatables,
@@ -2665,7 +3040,7 @@ fn project_store(
 fn project_kit_fixture(
     kit_key: &str,
     fixture_key: &str,
-) -> Result<(CanvasDocument, ProjectionSummary), Box<dyn std::error::Error>> {
+) -> Result<(NodeGraphStore, CanvasDocument, ProjectionSummary), Box<dyn std::error::Error>> {
     use jellyflow::runtime::schema::NodeKitKey;
 
     let graph =
@@ -2675,13 +3050,23 @@ fn project_kit_fixture(
         NodeGraphViewState::default(),
         NodeGraphEditorConfig::default(),
     );
-    project_store(&store).map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
+    let (document, projection) =
+        project_store(&store).map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?;
+    Ok((store, document, projection))
 }
 
 #[cfg(test)]
 fn project_schema_node(
     kind: &str,
-) -> Result<(CanvasDocument, ProjectionSummary, JellyNodeId), Box<dyn std::error::Error>> {
+) -> Result<
+    (
+        NodeGraphStore,
+        CanvasDocument,
+        ProjectionSummary,
+        JellyNodeId,
+    ),
+    Box<dyn std::error::Error>,
+> {
     use jellyflow::runtime::runtime::create_node::CreateNodeRequest;
 
     let registry = NodeKitRegistry::builtin().node_registry();
@@ -2696,7 +3081,7 @@ fn project_schema_node(
     )?;
     let node_id = outcome.node_id();
     let (document, projection) = project_store(&store)?;
-    Ok((document, projection, node_id))
+    Ok((store, document, projection, node_id))
 }
 
 fn project_edge_route(edge: &Edge) -> open_gpui_canvas::CanvasEdgeRoute {
@@ -3314,7 +3699,7 @@ mod tests {
 
     #[test]
     fn semantic_chrome_projects_into_gpui_node_surface_summary() {
-        let (_store, editor, _) = demo_state();
+        let (store, editor, _) = demo_state();
         let node_kit_registry = NodeKitRegistry::builtin();
         let semantic_registry = node_kit_registry.node_registry();
         let model = CanvasPaintModel::from(&editor);
@@ -3343,6 +3728,12 @@ mod tests {
         let surface = node_surface_summary_for_node(
             node,
             JellyNodeId::from_u128(3),
+            store
+                .graph()
+                .nodes()
+                .get(&JellyNodeId::from_u128(3))
+                .expect("llm graph node exists"),
+            store.graph(),
             model.viewport().zoom,
             true,
             &semantic_registry,
@@ -3405,6 +3796,118 @@ mod tests {
                     .iter()
                     .any(|control| control.key == "inspector.model" && control.is_editable())
         }));
+    }
+
+    #[test]
+    fn gpui_custom_renderer_registry_routes_known_and_fallback_surfaces() {
+        let (store, editor, _) = demo_state();
+        let node_kit_registry = NodeKitRegistry::builtin();
+        let semantic_registry = node_kit_registry.node_registry();
+        let model = CanvasPaintModel::from(&editor);
+        let registry = demo_node_renderer_registry();
+
+        let llm_canvas_node = editor
+            .document()
+            .node(&NodeId::from(canvas_node_id(&JellyNodeId::from_u128(3))))
+            .expect("llm node exists");
+        let llm_record = store
+            .graph()
+            .nodes()
+            .get(&JellyNodeId::from_u128(3))
+            .expect("llm graph node exists");
+        let llm_surface = node_surface_summary_for_node(
+            llm_canvas_node,
+            JellyNodeId::from_u128(3),
+            llm_record,
+            store.graph(),
+            model.viewport().zoom,
+            true,
+            &semantic_registry,
+            &node_kit_registry,
+            None,
+        )
+        .expect("llm surface summary");
+
+        assert!(matches!(
+            registry.resolve(&llm_surface.renderer_context),
+            OpenGpuiNodeRendererResolution::Custom(_)
+        ));
+        assert!(
+            demo_custom_node_renderers().contains_key(&llm_surface.renderer_context.renderer_key)
+        );
+        assert_eq!(llm_surface.renderer_context.renderer_key, "decision-card");
+        assert!(
+            llm_surface
+                .renderer_context
+                .control("control.prompt")
+                .is_some()
+        );
+        assert!(
+            llm_surface
+                .renderer_context
+                .plan_control_event(
+                    "control.prompt",
+                    OpenGpuiControlEventValue::Text("Route with a custom renderer".to_owned()),
+                )
+                .expect("custom renderer control helper should plan")
+                .is_planned()
+        );
+        assert!(
+            llm_surface
+                .renderer_context
+                .plan_menu_action_dispatch("synthetic.Toolbar", "action.llm.run")
+                .expect("toolbar menu exists")
+                .is_planned()
+        );
+        assert!(
+            llm_surface
+                .renderer_context
+                .slot_measurement_id("field.prompt")
+                .element_id()
+                .contains(":slot:field.prompt")
+        );
+        assert!(
+            llm_surface
+                .renderer_context
+                .control_measurement_id("field.prompt", "control.prompt")
+                .element_id()
+                .contains(":control:field.prompt:control.prompt")
+        );
+        assert!(
+            llm_surface
+                .renderer_context
+                .anchor_measurement_id("field.completion")
+                .element_id()
+                .contains(":anchor:field.completion")
+        );
+
+        let source_canvas_node = editor
+            .document()
+            .node(&NodeId::from(canvas_node_id(&JellyNodeId::from_u128(2))))
+            .expect("source node exists");
+        let source_record = store
+            .graph()
+            .nodes()
+            .get(&JellyNodeId::from_u128(2))
+            .expect("source graph node exists");
+        let source_surface = node_surface_summary_for_node(
+            source_canvas_node,
+            JellyNodeId::from_u128(2),
+            source_record,
+            store.graph(),
+            model.viewport().zoom,
+            false,
+            &semantic_registry,
+            &node_kit_registry,
+            None,
+        )
+        .expect("source surface summary");
+
+        assert_eq!(source_surface.renderer_context.renderer_key, "source-card");
+        assert!(matches!(
+            registry.resolve(&source_surface.renderer_context),
+            OpenGpuiNodeRendererResolution::Fallback(_)
+        ));
     }
 
     #[test]
@@ -3519,8 +4022,9 @@ mod tests {
 
     #[test]
     fn shader_fixture_projects_typed_ports_into_gpui_surface_summary() {
-        let (document, projection) = project_kit_fixture("shader.blueprint", "shader.material_mix")
-            .expect("shader fixture projects");
+        let (store, document, projection) =
+            project_kit_fixture("shader.blueprint", "shader.material_mix")
+                .expect("shader fixture projects");
         let node_kit_registry = NodeKitRegistry::builtin();
         let semantic_registry = node_kit_registry.node_registry();
 
@@ -3533,9 +4037,17 @@ mod tests {
             .nodes()
             .find(|node| node.kind == "shader-card")
             .expect("shader-card canvas node exists");
+        let shader_node_id = jelly_node_id_from_node(shader_node).expect("shader jelly node id");
+        let shader_record = store
+            .graph()
+            .nodes()
+            .get(&shader_node_id)
+            .expect("shader graph node exists");
         let surface = node_surface_summary_for_node(
             shader_node,
-            jelly_node_id_from_node(shader_node).expect("shader jelly node id"),
+            shader_node_id,
+            shader_record,
+            store.graph(),
             1.0,
             false,
             &semantic_registry,
@@ -3573,16 +4085,23 @@ mod tests {
 
     #[test]
     fn shader_default_node_projects_dynamic_repeatable_items_into_surface_summary() {
-        let (document, projection, node_id) =
+        let (store, document, projection, node_id) =
             project_schema_node("demo.shader.mix").expect("shader schema node projects");
         let node_kit_registry = NodeKitRegistry::builtin();
         let semantic_registry = node_kit_registry.node_registry();
         let shader_node = document
             .node(&NodeId::from(canvas_node_id(&node_id)))
             .expect("shader-card canvas node exists");
+        let shader_record = store
+            .graph()
+            .nodes()
+            .get(&node_id)
+            .expect("shader graph node exists");
         let surface = node_surface_summary_for_node(
             shader_node,
             node_id,
+            shader_record,
+            store.graph(),
             1.0,
             false,
             &semantic_registry,
@@ -3712,7 +4231,7 @@ mod tests {
 
     #[test]
     fn gpui_surface_consumes_controls_repeatables_and_actions_as_local_projection() {
-        let (document, projection) =
+        let (store, document, projection) =
             project_kit_fixture("erd.table", "erd.customer_orders").expect("erd projects");
         let node_kit_registry = NodeKitRegistry::builtin();
         let semantic_registry = node_kit_registry.node_registry();
@@ -3720,9 +4239,17 @@ mod tests {
             .nodes()
             .find(|node| node.kind == "table-card")
             .expect("table-card canvas node exists");
+        let table_node_id = jelly_node_id_from_node(table_node).expect("table jelly node id");
+        let table_record = store
+            .graph()
+            .nodes()
+            .get(&table_node_id)
+            .expect("table graph node exists");
         let surface = node_surface_summary_for_node(
             table_node,
-            jelly_node_id_from_node(table_node).expect("table jelly node id"),
+            table_node_id,
+            table_record,
+            store.graph(),
             1.0,
             true,
             &semantic_registry,
