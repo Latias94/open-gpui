@@ -117,6 +117,28 @@ pub enum SurfaceDocsStatus {
     Verification,
 }
 
+/// Official overlay component rows in the API inventory.
+pub const OFFICIAL_OVERLAY_COMPONENTS: &[&str] = &[
+    "Tooltip",
+    "HoverCard",
+    "Popover",
+    "Dialog",
+    "AlertDialog",
+    "Sheet",
+    "Menu",
+    "ContextMenu",
+];
+
+/// Component recipe rows that belong to a larger official family.
+pub const COMPONENT_RECIPE_COMPONENTS: &[&str] = &[
+    "TableColumnVisibility",
+    "TableFacetedFilter",
+    "TableGlobalFilter",
+    "TablePredicateFilter",
+    "TableRangeFilter",
+    "TableToolbar",
+];
+
 /// Returns whether an API inventory component is intended for root/prelude defaults.
 pub fn component_inventory_default_export(entry: &ComponentApiInventoryEntry) -> bool {
     matches!(
@@ -143,56 +165,11 @@ pub fn public_surface_default_export(entry: &PublicSurfaceOwnerEntry) -> bool {
 
 /// Returns the registry-owned gallery status for a component or adjacent surface.
 pub const fn component_contract_gallery_status(name: &str) -> SurfaceGalleryStatus {
-    if token_eq(name, "Tooltip")
-        || token_eq(name, "HoverCard")
-        || token_eq(name, "Popover")
-        || token_eq(name, "Dialog")
-        || token_eq(name, "AlertDialog")
-        || token_eq(name, "Sheet")
-        || token_eq(name, "Menu")
-        || token_eq(name, "ContextMenu")
-    {
+    if component_inventory_is_overlay(name) {
         SurfaceGalleryStatus::OfficialOverlay
-    } else if token_eq(name, "Button")
-        || token_eq(name, "Badge")
-        || token_eq(name, "Accordion")
-        || token_eq(name, "Collapsible")
-        || token_eq(name, "Slider")
-        || token_eq(name, "NumberInput")
-        || token_eq(name, "ToggleGroup")
-        || token_eq(name, "Link")
-        || token_eq(name, "Breadcrumb")
-        || token_eq(name, "Tag")
-        || token_eq(name, "ToastStack")
-        || token_eq(name, "IconButton")
-        || token_eq(name, "Switch")
-        || token_eq(name, "Checkbox")
-        || token_eq(name, "RadioGroup")
-        || token_eq(name, "Toggle")
-        || token_eq(name, "Toolbar")
-        || token_eq(name, "Sidebar")
-        || token_eq(name, "Tree")
-        || token_eq(name, "Listbox")
-        || token_eq(name, "Select")
-        || token_eq(name, "Combobox")
-        || token_eq(name, "Command")
-        || token_eq(name, "Label")
-        || token_eq(name, "TextInput")
-        || token_eq(name, "Textarea")
-        || token_eq(name, "Field")
-        || token_eq(name, "Tabs")
-        || token_eq(name, "ScrollArea")
-        || token_eq(name, "Splitter")
-        || token_eq(name, "Table")
-        || token_eq(name, "VirtualizedList")
-        || token_eq(name, "StatusCue")
-        || token_eq(name, "EmptyState")
-        || token_eq(name, "Separator")
-        || token_eq(name, "Kbd")
-        || token_eq(name, "Progress")
-        || token_eq(name, "Skeleton")
-        || token_eq(name, "Avatar")
-        || token_eq(name, "AvatarGroup")
+    } else if component_api_inventory_contains(name)
+        && !component_inventory_is_recipe(name)
+        && !component_inventory_is_overlay(name)
     {
         SurfaceGalleryStatus::OfficialComponent
     } else if token_eq(name, "TextInputController") {
@@ -276,15 +253,7 @@ pub const fn component_contract_family(name: &str) -> Option<&'static str> {
         Some("identity")
     } else if token_eq(name, "TextInputController") {
         Some("form-adapter")
-    } else if token_eq(name, "Tooltip")
-        || token_eq(name, "HoverCard")
-        || token_eq(name, "Popover")
-        || token_eq(name, "Dialog")
-        || token_eq(name, "AlertDialog")
-        || token_eq(name, "Sheet")
-        || token_eq(name, "Menu")
-        || token_eq(name, "ContextMenu")
-    {
+    } else if component_inventory_is_overlay(name) {
         Some("overlay")
     } else {
         None
@@ -307,6 +276,38 @@ const fn token_eq(left: &str, right: &str) -> bool {
     }
 
     true
+}
+
+const fn component_api_inventory_contains(component: &str) -> bool {
+    let mut index = 0;
+    while index < COMPONENT_API_INVENTORY.len() {
+        if token_eq(COMPONENT_API_INVENTORY[index].component, component) {
+            return true;
+        }
+        index += 1;
+    }
+
+    false
+}
+
+const fn component_inventory_is_overlay(component: &str) -> bool {
+    token_list_contains(OFFICIAL_OVERLAY_COMPONENTS, component)
+}
+
+const fn component_inventory_is_recipe(component: &str) -> bool {
+    token_list_contains(COMPONENT_RECIPE_COMPONENTS, component)
+}
+
+const fn token_list_contains(list: &[&str], token: &str) -> bool {
+    let mut index = 0;
+    while index < list.len() {
+        if token_eq(list[index], token) {
+            return true;
+        }
+        index += 1;
+    }
+
+    false
 }
 
 /// Public adjacent surfaces that are not primary component inventory rows.
@@ -2456,14 +2457,10 @@ pub fn component_public_methods(component: &str) -> &'static [&'static str] {
 
 /// Returns the public surface owner class for an inventory component row.
 pub fn public_owner_for_component_inventory(component: &str) -> PublicSurfaceOwnerClass {
-    match component {
-        "TableColumnVisibility"
-        | "TableFacetedFilter"
-        | "TableGlobalFilter"
-        | "TablePredicateFilter"
-        | "TableRangeFilter"
-        | "TableToolbar" => PublicSurfaceOwnerClass::OfficialComponentRecipe,
-        _ => PublicSurfaceOwnerClass::OfficialComponent,
+    if component_inventory_is_recipe(component) {
+        PublicSurfaceOwnerClass::OfficialComponentRecipe
+    } else {
+        PublicSurfaceOwnerClass::OfficialComponent
     }
 }
 

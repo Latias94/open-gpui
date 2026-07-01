@@ -28,19 +28,49 @@ fn component_api_inventory_covers_official_gallery_catalog() {
         "registry official component entries need public API inventory rows: {missing:?}"
     );
 
-    for overlay in [
-        "Tooltip",
-        "HoverCard",
-        "Popover",
-        "Dialog",
-        "AlertDialog",
-        "Sheet",
-        "Menu",
-        "ContextMenu",
-    ] {
+    for overlay in OFFICIAL_OVERLAY_COMPONENTS {
         assert!(
-            inventory_names.contains(overlay),
+            inventory_names.contains(*overlay),
             "overlay component `{overlay}` needs a public API inventory row"
+        );
+    }
+}
+
+#[test]
+fn component_recipe_inventory_rows_are_classified_once() {
+    use std::collections::BTreeSet;
+
+    let recipe_names = COMPONENT_RECIPE_COMPONENTS
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+
+    for recipe in COMPONENT_RECIPE_COMPONENTS {
+        assert!(
+            COMPONENT_API_INVENTORY
+                .iter()
+                .any(|entry| entry.component == *recipe),
+            "component recipe `{recipe}` needs a public API inventory row"
+        );
+        assert_eq!(
+            public_owner_for_component_inventory(recipe),
+            PublicSurfaceOwnerClass::OfficialComponentRecipe,
+            "component recipe `{recipe}` must use the registry recipe owner"
+        );
+        assert_eq!(
+            component_contract_gallery_status(recipe),
+            SurfaceGalleryStatus::NotInGallery,
+            "component recipe `{recipe}` should not become a standalone official gallery row"
+        );
+    }
+
+    for entry in COMPONENT_API_INVENTORY {
+        assert_eq!(
+            public_owner_for_component_inventory(entry.component)
+                == PublicSurfaceOwnerClass::OfficialComponentRecipe,
+            recipe_names.contains(entry.component),
+            "{} owner classification drifted from COMPONENT_RECIPE_COMPONENTS",
+            entry.component
         );
     }
 }
