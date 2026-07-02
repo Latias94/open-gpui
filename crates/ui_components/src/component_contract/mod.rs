@@ -1,14 +1,12 @@
-//! Typed component-library contract registry.
+//! Typed component-library contract tables.
 //!
-//! The registry records product-level component intent for public-surface tests,
+//! The tables record product-level component intent for public-surface tests,
 //! gallery dogfood consumers, documentation checks, and future component tooling.
 //! It is deliberately renderer-neutral: rows name GPUI adapter helpers, but they
 //! do not store GPUI runtime handles, callbacks, elements, windows, or contexts.
 
 mod api_inventory;
-mod manifest;
 mod projections;
-mod recipes;
 mod rows;
 mod source_mapping;
 mod surfaces;
@@ -18,29 +16,13 @@ pub use api_inventory::{
     COMPONENT_API_INVENTORY, component_public_methods, component_render_inputs,
     public_owner_for_component_inventory,
 };
-pub use manifest::{
-    COMPONENT_REGISTRY_MANIFEST_VERSION, ComponentRegistryApiInventory, ComponentRegistryCallback,
-    ComponentRegistryDefaultSeed, ComponentRegistryDistributionAuthority, ComponentRegistryDocs,
-    ComponentRegistryDocsStatus, ComponentRegistryEntry, ComponentRegistryGallery,
-    ComponentRegistryGalleryStatus, ComponentRegistryGeneratedFile, ComponentRegistryManifest,
-    ComponentRegistryOwnerClass, ComponentRegistryPackage, ComponentRegistryPublicExport,
-    ComponentRegistryRecipe, ComponentRegistrySource, ComponentRegistryVerificationKind,
-    ComponentRegistryVerificationOwner, component_registry_manifest,
-    component_registry_manifest_schema,
-};
 pub use projections::{
     component_contract_default_export, component_contract_docs_status,
     component_contract_docs_token, component_contract_entry, component_contract_family,
     component_contract_gallery_status, component_contract_source_home,
     component_inventory_default_export, public_surface_default_export,
 };
-pub use recipes::{
-    COMPONENT_SCAFFOLD_RECIPES, ScaffoldRecipe, ScaffoldRecipeGeneratedFile,
-    ScaffoldRecipeOutputOwnership,
-};
-pub use rows::{
-    COMPONENT_CONTRACT_REGISTRY, COMPONENT_RECIPE_COMPONENTS, OFFICIAL_OVERLAY_COMPONENTS,
-};
+pub use rows::{COMPONENT_CONTRACT_ROWS, COMPONENT_RECIPE_COMPONENTS, OFFICIAL_OVERLAY_COMPONENTS};
 pub use source_mapping::{
     component_source_home, component_source_inputs, table_render_owner_files,
 };

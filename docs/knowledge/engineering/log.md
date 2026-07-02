@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-07-02: Removed the native UI hybrid registry layer after deciding it duplicated crate source
+  and typed contract facts in an AI-assisted workflow. Deleted the manifest/schema projection,
+  scaffold recipe metadata, export examples, committed registry JSON/schema artifacts,
+  `scan-ui-registry`, the registry validation plan, and the active architecture guide. Gallery tests
+  now validate catalog/story evidence directly against `COMPONENT_CONTRACT_ROWS`. ADR 0014
+  supersedes ADR 0013, and current strategy returns to Cargo crates, direct source inspection,
+  typed component contract tables, `scan-ui-contract`, and focused behavior gates. Next fearless
+  refactor candidates are Table/runtime simplification, gallery sample/runtime decomposition, and
+  cleanup of remaining source-inspection contract friction.
 - 2026-07-02: Confirmed `main` and `origin/main` at `e257d52f` after the native UI hybrid registry
   close-out, deleted the remote feature branch `origin/refactor/native-ui-hybrid-registry`, and
   refreshed engineering memory so it no longer points at the merged feature branch as active work.

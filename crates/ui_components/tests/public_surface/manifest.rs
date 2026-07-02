@@ -46,12 +46,12 @@ fn surface_manifest_aligns_adjacent_gallery_statuses() {
         assert_eq!(
             entries.len(),
             1,
-            "registry gallery surface `{}` should have exactly one manifest owner",
+            "contract gallery surface `{}` should have exactly one manifest owner",
             owner.name
         );
         assert_eq!(
             entries[0].gallery_status, expected_status,
-            "registry gallery surface `{}` changed manifest gallery status",
+            "contract gallery surface `{}` changed manifest gallery status",
             owner.name
         );
     }

@@ -84,7 +84,7 @@ pub struct PublicSurfaceOwnerEntry {
     pub home: &'static str,
 }
 
-/// Registry-owned gallery classification for a component or adjacent surface.
+/// Contract-owned gallery classification for a component or adjacent surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SurfaceGalleryStatus {
     /// Official component sample in the Components gallery.
@@ -101,7 +101,7 @@ pub enum SurfaceGalleryStatus {
     NotInGallery,
 }
 
-/// Documentation location expected for a registry row.
+/// Documentation location expected for a contract row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SurfaceDocsStatus {
     /// Documented through the component catalog.
@@ -121,7 +121,7 @@ pub struct ComponentContractEntry {
     pub name: &'static str,
     /// Product ownership classification.
     pub owner: PublicSurfaceOwnerClass,
-    /// Registry-owned component family or ownership group.
+    /// Contract-owned component family or ownership group.
     pub family: Option<&'static str>,
     /// Gallery classification for rendered dogfood or adjacent readouts.
     pub gallery_status: SurfaceGalleryStatus,

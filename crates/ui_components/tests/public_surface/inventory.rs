@@ -8,7 +8,7 @@ fn component_api_inventory_covers_official_gallery_catalog() {
         .iter()
         .map(|entry| entry.component.to_string())
         .collect::<BTreeSet<_>>();
-    let registry_official_names = COMPONENT_API_INVENTORY
+    let contract_official_names = COMPONENT_API_INVENTORY
         .iter()
         .filter(|entry| {
             matches!(
@@ -19,13 +19,13 @@ fn component_api_inventory_covers_official_gallery_catalog() {
         .map(|entry| entry.component.to_string())
         .collect::<BTreeSet<_>>();
 
-    let missing = registry_official_names
+    let missing = contract_official_names
         .difference(&inventory_names)
         .cloned()
         .collect::<Vec<_>>();
     assert!(
         missing.is_empty(),
-        "registry official component entries need public API inventory rows: {missing:?}"
+        "contract official component entries need public API inventory rows: {missing:?}"
     );
 
     for overlay in OFFICIAL_OVERLAY_COMPONENTS {
@@ -37,10 +37,10 @@ fn component_api_inventory_covers_official_gallery_catalog() {
 }
 
 #[test]
-fn component_contract_registry_covers_inventory_and_adjacent_surfaces() {
+fn component_contract_rows_cover_inventory_and_adjacent_surfaces() {
     use std::collections::BTreeSet;
 
-    let registry_names = COMPONENT_CONTRACT_REGISTRY
+    let contract_names = COMPONENT_CONTRACT_ROWS
         .iter()
         .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
@@ -54,82 +54,34 @@ fn component_contract_registry_covers_inventory_and_adjacent_surfaces() {
         .collect::<BTreeSet<_>>();
 
     let missing_inventory = inventory_names
-        .difference(&registry_names)
+        .difference(&contract_names)
         .copied()
         .collect::<Vec<_>>();
     assert_eq!(
         missing_inventory,
         Vec::<&str>::new(),
-        "component inventory rows must have canonical contract registry metadata"
+        "component inventory rows must have canonical contract row metadata"
     );
 
     let missing_adjacent = adjacent_names
-        .difference(&registry_names)
+        .difference(&contract_names)
         .copied()
         .collect::<Vec<_>>();
     assert_eq!(
         missing_adjacent,
         Vec::<&str>::new(),
-        "adjacent public-surface rows must have canonical contract registry metadata"
+        "adjacent public-surface rows must have canonical contract row metadata"
     );
 }
 
 #[test]
-fn component_registry_manifest_covers_registry_and_inventory_rows() {
-    use std::collections::{BTreeMap, BTreeSet};
-
-    let manifest = component_registry_manifest();
-    let manifest_entries = manifest
-        .entries
-        .iter()
-        .map(|entry| (entry.name.as_str(), entry))
-        .collect::<BTreeMap<_, _>>();
-    let registry_names = COMPONENT_CONTRACT_REGISTRY
-        .iter()
-        .map(|entry| entry.name)
-        .collect::<BTreeSet<_>>();
-
-    assert_eq!(
-        manifest_entries.keys().copied().collect::<BTreeSet<_>>(),
-        registry_names,
-        "component registry manifest should be a projection of the typed registry rows"
-    );
-
-    for entry in COMPONENT_API_INVENTORY {
-        let manifest_entry = manifest_entries.get(entry.component).unwrap_or_else(|| {
-            panic!(
-                "manifest should include inventory row `{}`",
-                entry.component
-            )
-        });
-        assert!(
-            manifest_entry.api.is_some(),
-            "manifest inventory row `{}` should include API summary",
-            entry.component
-        );
-        assert_eq!(
-            manifest_entry.public_export.root,
-            component_contract_default_export(entry.component),
-            "manifest root export intent drifted for `{}`",
-            entry.component
-        );
-        assert_eq!(
-            manifest_entry.public_export.prelude,
-            component_contract_default_export(entry.component),
-            "manifest prelude export intent drifted for `{}`",
-            entry.component
-        );
-    }
-}
-
-#[test]
-fn component_contract_projection_functions_delegate_to_registry_rows() {
-    for entry in COMPONENT_CONTRACT_REGISTRY {
+fn component_contract_projection_functions_delegate_to_contract_rows() {
+    for entry in COMPONENT_CONTRACT_ROWS {
         let projected = component_contract_entry(entry.name)
-            .unwrap_or_else(|| panic!("missing canonical registry row for `{}`", entry.name));
+            .unwrap_or_else(|| panic!("missing canonical contract row for `{}`", entry.name));
         assert_eq!(
             projected, entry,
-            "{} projection should return the canonical registry row",
+            "{} projection should return the canonical contract row",
             entry.name
         );
         assert_eq!(component_contract_family(entry.name), entry.family);
@@ -155,7 +107,7 @@ fn component_contract_projection_functions_delegate_to_registry_rows() {
 }
 
 #[test]
-fn component_contract_registry_is_split_by_responsibility() {
+fn component_contract_rows_are_split_by_responsibility() {
     let contract_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("src")
         .join("component_contract");
@@ -190,7 +142,7 @@ fn component_contract_registry_is_split_by_responsibility() {
     }
 
     let rows = read_source_file(&contract_dir.join("rows.rs"));
-    assert!(rows.contains("COMPONENT_CONTRACT_REGISTRY"));
+    assert!(rows.contains("COMPONENT_CONTRACT_ROWS"));
     let inventory = read_source_file(&contract_dir.join("api_inventory.rs"));
     assert!(inventory.contains("COMPONENT_API_INVENTORY"));
     assert!(inventory.contains("component_public_methods"));
@@ -201,7 +153,7 @@ fn component_contract_registry_is_split_by_responsibility() {
 }
 
 #[test]
-fn component_contract_registry_aligns_compatibility_lists() {
+fn component_contract_rows_align_compatibility_lists() {
     let overlays = OFFICIAL_OVERLAY_COMPONENTS
         .iter()
         .copied()
@@ -215,7 +167,7 @@ fn component_contract_registry_aligns_compatibility_lists() {
         .map(|entry| entry.component)
         .collect::<std::collections::BTreeSet<_>>();
 
-    for entry in COMPONENT_CONTRACT_REGISTRY {
+    for entry in COMPONENT_CONTRACT_ROWS {
         if entry.gallery_status == SurfaceGalleryStatus::OfficialOverlay {
             assert!(
                 overlays.contains(entry.name),
@@ -253,7 +205,7 @@ fn component_recipe_inventory_rows_are_classified_once() {
         assert_eq!(
             public_owner_for_component_inventory(recipe),
             PublicSurfaceOwnerClass::OfficialComponentRecipe,
-            "component recipe `{recipe}` must use the registry recipe owner"
+            "component recipe `{recipe}` must use the contract recipe owner"
         );
         assert_eq!(
             component_contract_gallery_status(recipe),

@@ -7,7 +7,7 @@ use std::{
 use crate::theme_schema::theme_schema_failures;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RegistryEntry {
+struct ContractRow {
     name: String,
     owner: String,
     gallery_status: String,
@@ -66,20 +66,20 @@ pub(crate) fn scan_ui_contract(root: &Path) -> Result<(), ()> {
 fn ui_contract_failures(root: &Path) -> Vec<String> {
     let mut failures = Vec::new();
     let source_dir = root.join("crates/ui_components/src");
-    let registry_path = source_dir.join("component_contract/rows.rs");
+    let rows_path = source_dir.join("component_contract/rows.rs");
     let conformance_path =
         root.join("examples/ui-foundation-gallery/src/pages/components/conformance.rs");
     let component_contract_docs_path = root.join("docs/ui/component-contract.md");
     let verification_docs_path = root.join("docs/verification.md");
 
-    let registry_source = read_to_string(&registry_path, &mut failures);
+    let rows_source = read_to_string(&rows_path, &mut failures);
     let conformance_source = read_to_string(&conformance_path, &mut failures);
     let component_contract_docs = read_to_string(&component_contract_docs_path, &mut failures);
     let verification_docs = read_to_string(&verification_docs_path, &mut failures);
     let root_exports = default_reexport_tokens(&source_dir, "lib.rs", &mut failures);
     let prelude_exports = default_reexport_tokens(&source_dir, "prelude.rs", &mut failures);
 
-    let Some(registry_source) = registry_source else {
+    let Some(rows_source) = rows_source else {
         return failures;
     };
     let Some(conformance_source) = conformance_source else {
@@ -92,7 +92,7 @@ fn ui_contract_failures(root: &Path) -> Vec<String> {
         return failures;
     };
 
-    let (entries, parse_failures) = registry_entries_from_source(&registry_source);
+    let (entries, parse_failures) = contract_rows_from_source(&rows_source);
     failures.extend(
         parse_failures.into_iter().map(|failure| {
             format!("crates/ui_components/src/component_contract/rows.rs: {failure}")
@@ -103,7 +103,7 @@ fn ui_contract_failures(root: &Path) -> Vec<String> {
         component_contract: &component_contract_docs,
         verification: &verification_docs,
     };
-    failures.extend(audit_registry_entries(
+    failures.extend(audit_contract_rows(
         &entries,
         &root_exports,
         &prelude_exports,
@@ -127,12 +127,12 @@ fn read_to_string(path: &Path, failures: &mut Vec<String>) -> Option<String> {
     )
 }
 
-fn audit_registry_entries(
-    entries: &[RegistryEntry],
+fn audit_contract_rows(
+    entries: &[ContractRow],
     root_exports: &BTreeSet<String>,
     prelude_exports: &BTreeSet<String>,
     docs: &Docs<'_>,
-    mut source_home_exists: impl FnMut(&RegistryEntry) -> bool,
+    mut source_home_exists: impl FnMut(&ContractRow) -> bool,
     mut removed_primitive_exists: impl FnMut(&str) -> bool,
 ) -> Vec<String> {
     let mut failures = Vec::new();
@@ -141,7 +141,7 @@ fn audit_registry_entries(
     for entry in entries {
         if let Some(previous) = owners.insert(entry.name.as_str(), entry.source_home.as_str()) {
             failures.push(format!(
-                "crates/ui_components/src/component_contract/rows.rs: registry row `{}` is duplicated; previous source_home `{previous}`, duplicate source_home `{}`",
+                "crates/ui_components/src/component_contract/rows.rs: contract row `{}` is duplicated; previous source_home `{previous}`, duplicate source_home `{}`",
                 entry.name, entry.source_home
             ));
         }
@@ -151,13 +151,13 @@ fn audit_registry_entries(
         if entry.default_export {
             if !root_exports.contains(&entry.name) {
                 failures.push(format!(
-                    "crates/ui_components/src/lib.rs: default-export registry row `{}` is missing from crate root exports; add it to crates/ui_components/src/public_api/default.rs or explicitly re-export it",
+                    "crates/ui_components/src/lib.rs: default-export contract row `{}` is missing from crate root exports; add it to crates/ui_components/src/public_api/default.rs or explicitly re-export it",
                     entry.name
                 ));
             }
             if !prelude_exports.contains(&entry.name) {
                 failures.push(format!(
-                    "crates/ui_components/src/prelude.rs: default-export registry row `{}` is missing from prelude exports; add it to crates/ui_components/src/public_api/default.rs or explicitly re-export it",
+                    "crates/ui_components/src/prelude.rs: default-export contract row `{}` is missing from prelude exports; add it to crates/ui_components/src/public_api/default.rs or explicitly re-export it",
                     entry.name
                 ));
             }
@@ -166,13 +166,13 @@ fn audit_registry_entries(
         if entry.source_home == "removed" {
             if removed_primitive_exists(&entry.name) {
                 failures.push(format!(
-                    "crates/ui_components/src/primitives/mod.rs: removed primitive `{}` reappeared; delete the compatibility module or update the registry ownership",
+                    "crates/ui_components/src/primitives/mod.rs: removed primitive `{}` reappeared; delete the compatibility module or update the contract ownership",
                     entry.name
                 ));
             }
         } else if !source_home_exists(entry) {
             failures.push(format!(
-                "crates/ui_components/src/component_contract/rows.rs: registry row `{}` source_home `{}` does not exist under crates/ui_components/src",
+                "crates/ui_components/src/component_contract/rows.rs: contract row `{}` source_home `{}` does not exist under crates/ui_components/src",
                 entry.name, entry.source_home
             ));
         }
@@ -185,18 +185,13 @@ fn audit_registry_entries(
     failures
 }
 
-fn audit_docs_token(
-    entry: &RegistryEntry,
-    token: &str,
-    docs: &Docs<'_>,
-    failures: &mut Vec<String>,
-) {
+fn audit_docs_token(entry: &ContractRow, token: &str, docs: &Docs<'_>, failures: &mut Vec<String>) {
     match entry.docs_status {
         DocsStatus::ComponentCatalog => {}
         DocsStatus::ComponentContract => {
             if !docs.component_contract.contains(token) {
                 failures.push(format!(
-                    "docs/ui/component-contract.md: missing docs token `{token}` for registry row `{}`",
+                    "docs/ui/component-contract.md: missing docs token `{token}` for contract row `{}`",
                     entry.name
                 ));
             }
@@ -204,7 +199,7 @@ fn audit_docs_token(
         DocsStatus::ComponentContractOrVerification => {
             if !docs.component_contract.contains(token) && !docs.verification.contains(token) {
                 failures.push(format!(
-                    "docs/ui/component-contract.md or docs/verification.md: missing docs token `{token}` for registry row `{}`",
+                    "docs/ui/component-contract.md or docs/verification.md: missing docs token `{token}` for contract row `{}`",
                     entry.name
                 ));
             }
@@ -217,12 +212,12 @@ fn audit_docs_token(
                     .contains("primitive_deletion_target_inventory")
             {
                 failures.push(format!(
-                    "docs/verification.md: missing docs token `{token}` for registry row `{}`",
+                    "docs/verification.md: missing docs token `{token}` for contract row `{}`",
                     entry.name
                 ));
             } else if !docs.verification.contains(token) && entry.source_home != "removed" {
                 failures.push(format!(
-                    "docs/verification.md: missing docs token `{token}` for registry row `{}`",
+                    "docs/verification.md: missing docs token `{token}` for contract row `{}`",
                     entry.name
                 ));
             }
@@ -230,7 +225,7 @@ fn audit_docs_token(
     }
 }
 
-fn audit_gallery_status(entry: &RegistryEntry, failures: &mut Vec<String>) {
+fn audit_gallery_status(entry: &ContractRow, failures: &mut Vec<String>) {
     let valid_status = match entry.owner.as_str() {
         "OfficialComponent" => matches!(
             entry.gallery_status.as_str(),
@@ -261,13 +256,13 @@ fn audit_gallery_status(entry: &RegistryEntry, failures: &mut Vec<String>) {
 
     if !valid_status {
         failures.push(format!(
-            "crates/ui_components/src/component_contract/rows.rs: registry row `{}` owner `{}` is incompatible with gallery_status `{}`; align the row with SurfaceGalleryStatus ownership rules",
+            "crates/ui_components/src/component_contract/rows.rs: contract row `{}` owner `{}` is incompatible with gallery_status `{}`; align the row with SurfaceGalleryStatus ownership rules",
             entry.name, entry.owner, entry.gallery_status
         ));
     }
 }
 
-fn source_home_exists(source_dir: &Path, entry: &RegistryEntry) -> bool {
+fn source_home_exists(source_dir: &Path, entry: &ContractRow) -> bool {
     if entry.source_home == "gpui_adapter" {
         let lib_rs = source_dir.join("lib.rs");
         return fs::read_to_string(lib_rs).is_ok_and(|source| {
@@ -298,14 +293,14 @@ fn removed_primitive_module_exists(source_dir: &Path, name: &str) -> bool {
     })
 }
 
-fn registry_entries_from_source(source: &str) -> (Vec<RegistryEntry>, Vec<String>) {
+fn contract_rows_from_source(source: &str) -> (Vec<ContractRow>, Vec<String>) {
     let (blocks, block_failures) = struct_literal_blocks(source, "ComponentContractEntry");
     let mut entries = Vec::new();
     let mut failures = Vec::new();
     failures.extend(block_failures);
 
     for block in blocks {
-        match registry_entry_from_block(block) {
+        match contract_row_from_block(block) {
             Ok(entry) => entries.push(entry),
             Err(error) => failures.push(error),
         }
@@ -314,21 +309,21 @@ fn registry_entries_from_source(source: &str) -> (Vec<RegistryEntry>, Vec<String
     (entries, failures)
 }
 
-fn registry_entry_from_block(block: &str) -> Result<RegistryEntry, String> {
-    let name = string_field(block, "name").ok_or("registry row missing `name`")?;
+fn contract_row_from_block(block: &str) -> Result<ContractRow, String> {
+    let name = string_field(block, "name").ok_or("contract row missing `name`")?;
     let owner = enum_variant_field(block, "owner")
-        .ok_or_else(|| format!("registry row `{name}` missing or has unknown `owner`"))?;
+        .ok_or_else(|| format!("contract row `{name}` missing or has unknown `owner`"))?;
     let gallery_status = enum_variant_field(block, "gallery_status")
-        .ok_or_else(|| format!("registry row `{name}` missing or has unknown `gallery_status`"))?;
+        .ok_or_else(|| format!("contract row `{name}` missing or has unknown `gallery_status`"))?;
     let docs_status = docs_status_field(block)
-        .ok_or_else(|| format!("registry row `{name}` missing or has unknown `docs_status`"))?;
+        .ok_or_else(|| format!("contract row `{name}` missing or has unknown `docs_status`"))?;
     let docs_token = optional_string_field(block, "docs_token");
     let default_export = bool_field(block, "default_export")
-        .ok_or_else(|| format!("registry row `{name}` missing `default_export`"))?;
+        .ok_or_else(|| format!("contract row `{name}` missing `default_export`"))?;
     let source_home = string_field(block, "source_home")
-        .ok_or_else(|| format!("registry row `{name}` missing `source_home`"))?;
+        .ok_or_else(|| format!("contract row `{name}` missing `source_home`"))?;
 
-    Ok(RegistryEntry {
+    Ok(ContractRow {
         name,
         owner,
         gallery_status,
@@ -734,10 +729,10 @@ fn audit_conformance_gate_evidence(gates: &[ConformanceGate]) -> Vec<String> {
 
     for (class, token) in [
         (
-            "registry",
+            "contract",
             "crates/ui_components/src/component_contract/rows.rs",
         ),
-        ("registry", "crates/ui_components/tests/public_surface.rs"),
+        ("contract", "crates/ui_components/tests/public_surface.rs"),
         (
             "gallery",
             "examples/ui-foundation-gallery/tests/foundation_gallery.rs",
@@ -1027,8 +1022,8 @@ mod tests {
         docs_token: Option<&str>,
         default_export: bool,
         source_home: &str,
-    ) -> RegistryEntry {
-        RegistryEntry {
+    ) -> ContractRow {
+        ContractRow {
             name: name.to_string(),
             owner: owner.to_string(),
             gallery_status: gallery_status.to_string(),
@@ -1051,9 +1046,9 @@ mod tests {
     }
 
     #[test]
-    fn registry_parser_reads_entry_fields() {
+    fn contract_row_parser_reads_entry_fields() {
         let source = r#"
-pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
+pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
     ComponentContractEntry {
         name: "Button",
         owner: PublicSurfaceOwnerClass::OfficialComponent,
@@ -1068,7 +1063,7 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
 ];
 "#;
 
-        let (entries, failures) = registry_entries_from_source(source);
+        let (entries, failures) = contract_rows_from_source(source);
 
         assert!(failures.is_empty(), "{failures:?}");
         assert_eq!(entries.len(), 1);
@@ -1095,7 +1090,7 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
         let root_exports = BTreeSet::new();
         let prelude_exports = BTreeSet::from(["Button".to_string()]);
 
-        let failures = audit_registry_entries(
+        let failures = audit_contract_rows(
             &entries,
             &root_exports,
             &prelude_exports,
@@ -1120,7 +1115,7 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
             "tooltip.rs",
         )];
 
-        let failures = audit_registry_entries(
+        let failures = audit_contract_rows(
             &entries,
             &BTreeSet::new(),
             &BTreeSet::new(),
@@ -1145,7 +1140,7 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
             "dialog.rs",
         )];
 
-        let failures = audit_registry_entries(
+        let failures = audit_contract_rows(
             &entries,
             &BTreeSet::new(),
             &BTreeSet::new(),
@@ -1170,7 +1165,7 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
             "removed",
         )];
 
-        let failures = audit_registry_entries(
+        let failures = audit_contract_rows(
             &entries,
             &BTreeSet::new(),
             &BTreeSet::new(),
@@ -1186,7 +1181,7 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
     }
 
     #[test]
-    fn audit_reports_incompatible_registry_gallery_status() {
+    fn audit_reports_incompatible_contract_gallery_status() {
         let entries = [entry(
             "ButtonState",
             "RendererNeutralStateContract",
@@ -1197,7 +1192,7 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
             "button.rs",
         )];
 
-        let failures = audit_registry_entries(
+        let failures = audit_contract_rows(
             &entries,
             &BTreeSet::new(),
             &BTreeSet::new(),
@@ -1221,7 +1216,7 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
             "verification.rs",
         )];
 
-        let failures = audit_registry_entries(
+        let failures = audit_contract_rows(
             &entries,
             &BTreeSet::new(),
             &BTreeSet::new(),

@@ -3,9 +3,8 @@ use open_gpui::{
     px, size,
 };
 use open_gpui_ui_components::component_contract::{
-    COMPONENT_API_INVENTORY, ComponentRegistryGalleryStatus, ComponentRegistryVerificationKind,
-    PUBLIC_SURFACE_OWNER_MAP, SurfaceGalleryStatus, component_contract_family,
-    component_contract_gallery_status, component_registry_manifest,
+    COMPONENT_API_INVENTORY, COMPONENT_CONTRACT_ROWS, PUBLIC_SURFACE_OWNER_MAP,
+    SurfaceGalleryStatus, component_contract_family, component_contract_gallery_status,
 };
 use open_gpui_ui_components::{
     A11yLabelSource, A11yValueKind, AlertDialogIntent, AlertDialogOpenMode, BadgeVariant,
@@ -1517,7 +1516,7 @@ fn components_page_samples_expose_component_metadata() {
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         official_names, expected_official_names,
-        "Components catalog official rows should follow the component contract registry order"
+        "Components catalog official rows should follow the component contract rows order"
     );
     assert!(catalog.iter().all(|entry| !entry.name.trim().is_empty()));
     assert!(
@@ -2728,7 +2727,7 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(components_source.contains("TableSampleRuntimeLog"));
     assert!(components_source.contains("table_samples"));
     assert!(catalog_source.contains("pub const COMPONENT_CATALOG"));
-    assert!(catalog_source.contains("ComponentCatalogEntry::registry_sample("));
+    assert!(catalog_source.contains("ComponentCatalogEntry::contract_sample("));
     assert!(catalog_source.contains("ComponentCatalogEntry::state_contract("));
     assert!(conformance_source.contains("pub const COMPONENT_CONFORMANCE_GATES"));
     for module_path in [
@@ -2808,23 +2807,23 @@ fn components_catalog_metadata_is_separate_from_rendering() {
 }
 
 #[test]
-fn components_catalog_consumes_component_contract_registry() {
+fn components_catalog_consumes_component_contract_rows() {
     use std::collections::BTreeSet;
 
     for entry in pages::components::COMPONENT_CATALOG {
-        let expected_status = pages::components::ComponentCatalogStatus::from_registry(
+        let expected_status = pages::components::ComponentCatalogStatus::from_contract(
             component_contract_gallery_status(entry.name),
         );
         assert_eq!(
             entry.status, expected_status,
-            "catalog entry `{}` should derive status from the component contract registry",
+            "catalog entry `{}` should derive status from the component contract rows",
             entry.name
         );
 
         if let Some(expected_family) = component_contract_family(entry.name) {
             assert_eq!(
                 entry.family, expected_family,
-                "catalog entry `{}` should derive family from the component contract registry",
+                "catalog entry `{}` should derive family from the component contract rows",
                 entry.name
             );
         }
@@ -2834,7 +2833,7 @@ fn components_catalog_consumes_component_contract_registry() {
         .iter()
         .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
-    let registry_official_names = COMPONENT_API_INVENTORY
+    let contract_official_names = COMPONENT_API_INVENTORY
         .iter()
         .filter(|entry| {
             component_contract_gallery_status(entry.component)
@@ -2848,8 +2847,8 @@ fn components_catalog_consumes_component_contract_registry() {
         .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
     assert_eq!(
-        catalog_official_names, registry_official_names,
-        "Components catalog official rows should be registry-owned"
+        catalog_official_names, contract_official_names,
+        "Components catalog official rows should be contract-owned"
     );
 
     let missing_adjacent_surfaces = PUBLIC_SURFACE_OWNER_MAP
@@ -2867,7 +2866,7 @@ fn components_catalog_consumes_component_contract_registry() {
         .collect::<Vec<_>>();
     assert!(
         missing_adjacent_surfaces.is_empty(),
-        "Components catalog should include registry gallery-adjacent surfaces: {missing_adjacent_surfaces:?}"
+        "Components catalog should include contract gallery-adjacent surfaces: {missing_adjacent_surfaces:?}"
     );
 }
 
@@ -3325,10 +3324,9 @@ fn gallery_catalog_manifest_tracks_components_and_overlay_catalogs() {
 }
 
 #[test]
-fn gallery_catalog_entries_satisfy_component_registry_manifest_evidence() {
+fn gallery_catalog_entries_satisfy_component_contract_evidence() {
     use std::collections::{BTreeMap, BTreeSet};
 
-    let manifest = component_registry_manifest();
     let component_catalog = pages::components::COMPONENT_CATALOG
         .iter()
         .map(|entry| (entry.name, entry))
@@ -3338,120 +3336,109 @@ fn gallery_catalog_entries_satisfy_component_registry_manifest_evidence() {
         .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
 
-    for entry in manifest
-        .entries
+    for entry in COMPONENT_CONTRACT_ROWS
         .iter()
-        .filter(|entry| entry.gallery.status != ComponentRegistryGalleryStatus::NotInGallery)
+        .filter(|entry| entry.gallery_status != SurfaceGalleryStatus::NotInGallery)
     {
-        assert!(
-            entry.verification.iter().any(|owner| {
-                owner.kind == ComponentRegistryVerificationKind::Gallery
-                    && owner.target.contains("examples/ui-foundation-gallery")
-            }),
-            "manifest row `{}` should name a gallery verification owner",
-            entry.name
-        );
-
-        match entry.gallery.status {
-            ComponentRegistryGalleryStatus::OfficialComponent
-            | ComponentRegistryGalleryStatus::AdapterOnly
-            | ComponentRegistryGalleryStatus::InternalAnatomy
-            | ComponentRegistryGalleryStatus::StateContract => {
+        match entry.gallery_status {
+            SurfaceGalleryStatus::OfficialComponent
+            | SurfaceGalleryStatus::AdapterOnly
+            | SurfaceGalleryStatus::InternalAnatomy
+            | SurfaceGalleryStatus::StateContract => {
                 let catalog_entry = component_catalog
-                    .get(entry.name.as_str())
+                    .get(entry.name)
                     .unwrap_or_else(|| {
                         panic!(
-                            "manifest row `{}` claims Components gallery evidence but no catalog row exists",
+                            "component contract row `{}` claims Components gallery evidence but no catalog row exists",
                             entry.name
                         )
                     });
-                let expected_status = match entry.gallery.status {
-                    ComponentRegistryGalleryStatus::OfficialComponent => {
+                let expected_status = match entry.gallery_status {
+                    SurfaceGalleryStatus::OfficialComponent => {
                         pages::components::ComponentCatalogStatus::Official
                     }
-                    ComponentRegistryGalleryStatus::AdapterOnly => {
+                    SurfaceGalleryStatus::AdapterOnly => {
                         pages::components::ComponentCatalogStatus::AdapterOnly
                     }
-                    ComponentRegistryGalleryStatus::InternalAnatomy => {
+                    SurfaceGalleryStatus::InternalAnatomy => {
                         pages::components::ComponentCatalogStatus::InternalAnatomy
                     }
-                    ComponentRegistryGalleryStatus::StateContract => {
+                    SurfaceGalleryStatus::StateContract => {
                         pages::components::ComponentCatalogStatus::StateContract
                     }
-                    ComponentRegistryGalleryStatus::OfficialOverlay
-                    | ComponentRegistryGalleryStatus::NotInGallery => unreachable!(),
+                    SurfaceGalleryStatus::OfficialOverlay | SurfaceGalleryStatus::NotInGallery => {
+                        unreachable!()
+                    }
                 };
                 assert_eq!(
                     catalog_entry.status, expected_status,
-                    "manifest row `{}` should agree with Components catalog status",
+                    "component contract row `{}` should agree with Components catalog status",
                     entry.name
                 );
-                if entry.gallery.status == ComponentRegistryGalleryStatus::OfficialComponent {
+                if entry.gallery_status == SurfaceGalleryStatus::OfficialComponent {
                     assert!(
                         catalog_entry.sample_selector.is_some(),
-                        "official manifest row `{}` needs a rendered sample selector",
+                        "official component contract row `{}` needs a rendered sample selector",
                         entry.name
                     );
                 }
-                if entry.gallery.status == ComponentRegistryGalleryStatus::StateContract {
+                if entry.gallery_status == SurfaceGalleryStatus::StateContract {
                     assert!(
                         catalog_entry.state_contract_selector.is_some(),
-                        "state-contract manifest row `{}` needs a readout selector",
+                        "state-contract component contract row `{}` needs a readout selector",
                         entry.name
                     );
                 }
             }
-            ComponentRegistryGalleryStatus::OfficialOverlay => {
+            SurfaceGalleryStatus::OfficialOverlay => {
                 assert!(
-                    overlay_names.contains(entry.name.as_str()),
-                    "manifest row `{}` claims overlay gallery evidence but no overlay catalog row exists",
+                    overlay_names.contains(entry.name),
+                    "component contract row `{}` claims overlay gallery evidence but no overlay catalog row exists",
                     entry.name
                 );
             }
-            ComponentRegistryGalleryStatus::NotInGallery => unreachable!(),
+            SurfaceGalleryStatus::NotInGallery => unreachable!(),
         }
     }
 }
 
 #[test]
-fn gallery_story_contracts_reference_component_registry_manifest_rows() {
+fn gallery_story_contracts_reference_component_contract_rows() {
     use std::collections::BTreeMap;
 
-    let manifest_entries = component_registry_manifest()
-        .entries
-        .into_iter()
-        .map(|entry| (entry.name.clone(), entry))
+    let contract_entries = COMPONENT_CONTRACT_ROWS
+        .iter()
+        .map(|entry| (entry.name, entry))
         .collect::<BTreeMap<_, _>>();
 
     for story in pages::components::component_story_contracts() {
-        let entry = manifest_entries.get(story.owner_name()).unwrap_or_else(|| {
+        let entry = contract_entries.get(story.owner_name()).unwrap_or_else(|| {
             panic!(
-                "component story `{}` should reference a manifest row",
+                "component story `{}` should reference a component contract row",
                 story.owner_name()
             )
         });
         assert!(
             matches!(
-                entry.gallery.status,
-                ComponentRegistryGalleryStatus::OfficialComponent
-                    | ComponentRegistryGalleryStatus::StateContract
+                entry.gallery_status,
+                SurfaceGalleryStatus::OfficialComponent | SurfaceGalleryStatus::StateContract
             ),
             "component story `{}` should be official component or state-contract evidence, got {:?}",
             story.owner_name(),
-            entry.gallery.status
+            entry.gallery_status
         );
     }
 
     for story in pages::overlay::overlay_story_contracts() {
-        let entry = manifest_entries.get(story.owner_name()).unwrap_or_else(|| {
+        let entry = contract_entries.get(story.owner_name()).unwrap_or_else(|| {
             panic!(
-                "overlay story `{}` should reference a manifest row",
+                "overlay story `{}` should reference a component contract row",
                 story.owner_name()
             )
         });
         assert_eq!(
-            entry.gallery.status,
-            ComponentRegistryGalleryStatus::OfficialOverlay,
+            entry.gallery_status,
+            SurfaceGalleryStatus::OfficialOverlay,
             "overlay story `{}` should be official overlay evidence",
             story.owner_name()
         );

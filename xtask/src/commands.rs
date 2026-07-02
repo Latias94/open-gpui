@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     import_boundary::scan_import_boundary, theme_drift::scan_theme_drift,
-    theme_schema::scan_theme_schema, ui_contract::scan_ui_contract, ui_registry::scan_ui_registry,
+    theme_schema::scan_theme_schema, ui_contract::scan_ui_contract,
 };
 
 pub fn run_from_env() -> ExitCode {
@@ -24,7 +24,6 @@ pub fn run_from_env() -> ExitCode {
         "scan-theme-schema" => scan_theme_schema(&root),
         "scan-import-boundary" => scan_import_boundary(&root),
         "scan-ui-contract" => scan_ui_contract(&root),
-        "scan-ui-registry" => scan_ui_registry(&root),
         _ => {
             eprintln!("unknown command: {command}");
             print_usage();
@@ -48,7 +47,6 @@ fn print_usage() {
     eprintln!("  scan-theme-schema     scan theme JSON schema artifact drift");
     eprintln!("  scan-import-boundary  scan for disallowed import residue");
     eprintln!("  scan-ui-contract      scan UI component contract drift");
-    eprintln!("  scan-ui-registry      scan UI component registry artifact drift");
 }
 
 fn verify(root: &Path) -> Result<(), ()> {
@@ -58,7 +56,6 @@ fn verify(root: &Path) -> Result<(), ()> {
     run_ui_component_tests(root)?;
     scan_theme_drift(root)?;
     scan_import_boundary(root)?;
-    scan_ui_registry(root)?;
     scan_ui_contract(root)?;
     Ok(())
 }
@@ -119,31 +116,4 @@ fn workspace_root() -> PathBuf {
         .parent()
         .expect("xtask manifest should live under the workspace root")
         .to_path_buf()
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn verify_runs_registry_scan_before_ui_contract_scan() {
-        let source = include_str!("commands.rs");
-        let registry_scan = source
-            .find("scan_ui_registry(root)?;")
-            .expect("verify should run scan_ui_registry");
-        let contract_scan = source
-            .find("scan_ui_contract(root)?;")
-            .expect("verify should run scan_ui_contract");
-
-        assert!(
-            registry_scan < contract_scan,
-            "registry artifact drift should fail before the broader UI contract scan"
-        );
-    }
-
-    #[test]
-    fn usage_lists_ui_registry_scan_command() {
-        let source = include_str!("commands.rs");
-
-        assert!(source.contains("\"scan-ui-registry\" => scan_ui_registry(&root),"));
-        assert!(source.contains("scan-ui-registry      scan UI component registry artifact drift"));
-    }
 }

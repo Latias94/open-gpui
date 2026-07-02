@@ -4,9 +4,9 @@
 
 * [Current State](current-state.md) - Short durable summary of the active engineering state.
 * [Update Log](log.md) - Chronological history of meaningful memory updates.
-* [Open GPUI native UI framework distribution strategy](decisions/open-gpui-native-ui-framework-distribution-strategy.md) - Decision memory for Cargo-first distribution plus metadata registry, scaffold recipes, gallery, theme, a11y, and verification.
-* [Native UI hybrid registry implementation guide](../../architecture/native-ui-hybrid-registry.md) - Architecture guide for manifest v1, committed artifacts, scaffold recipes, and the add/modify/verify loop.
-* [ADR 0013: Open GPUI Native UI Hybrid Registry](../../adr/0013-open-gpui-native-ui-hybrid-registry.md) - Formal ADR for the Cargo-first metadata registry artifacts, scaffold recipes, gallery evidence, and scan command.
+* [Open GPUI native UI framework distribution strategy](decisions/open-gpui-native-ui-framework-distribution-strategy.md) - Decision memory for Cargo-first crate distribution, source inspection, typed contract checks, gallery, theme, a11y, and verification.
+* [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](../../adr/0014-remove-native-ui-hybrid-registry.md) - Current decision removing the generated registry manifest, scaffold recipes, artifacts, and scan command.
+* [ADR 0013: Open GPUI Native UI Hybrid Registry](../../adr/0013-open-gpui-native-ui-hybrid-registry.md) - Superseded decision for the removed hybrid registry experiment.
 * [Native UI framework design research handoff](sessions/2026-07-02-native-ui-framework-design-research-handoff.md) - Handoff for the 28-item native UI framework design research report and next architecture step.
 * [Native UI framework research report verification](verification/native-ui-framework-research-report-20260702.md) - Verification evidence for the generated research report and JSON field coverage.
 * [Native UI hybrid registry architecture planning](progress/2026-07-02-native-ui-hybrid-registry-architecture-plan.md) - Work progress note for the implementation-ready hybrid registry MVP plan.

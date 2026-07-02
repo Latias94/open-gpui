@@ -27,7 +27,7 @@ pub const COMPONENT_RECIPE_COMPONENTS: &[&str] = &[
 ];
 
 /// Product-level metadata rows for official components and adjacent public surfaces.
-pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
+pub const COMPONENT_CONTRACT_ROWS: &[ComponentContractEntry] = &[
     ComponentContractEntry {
         name: "Accordion",
         owner: PublicSurfaceOwnerClass::OfficialComponent,

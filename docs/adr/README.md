@@ -21,3 +21,4 @@ platform strategy, or ecosystem compatibility.
 - [ADR 0011: Docking Split Motion Primitive Boundary](0011-docking-split-motion-primitive-boundary.md)
 - [ADR 0012: Docking Runtime Capability Alignment](0012-docking-runtime-capability-alignment.md)
 - [ADR 0013: Open GPUI Native UI Hybrid Registry](0013-open-gpui-native-ui-hybrid-registry.md)
+- [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](0014-remove-native-ui-hybrid-registry.md)

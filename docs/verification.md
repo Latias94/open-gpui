@@ -16,7 +16,6 @@ The gate runs:
 - `cargo nextest run -p open-gpui-ui-foundation-gallery`
 - `cargo run -p xtask -- scan-theme-drift`
 - `cargo run -p xtask -- scan-import-boundary`
-- `cargo run -p xtask -- scan-ui-registry`
 - `cargo run -p xtask -- scan-ui-contract`
 
 For focused `open-gpui-canvas` work, run:
@@ -340,26 +339,26 @@ The public API inventory gate lives in `crates/ui_components/tests/public_surfac
 contract modules live under `crates/ui_components/tests/public_surface/`, while shared manifest
 projectors live in `crates/ui_components/tests/support/public_surface/mod.rs`. The product source
 of truth lives under `crates/ui_components/src/component_contract/`: `rows.rs` owns canonical
-registry rows, `projections.rs` owns query APIs, `api_inventory.rs` owns public API inventory and
+contract rows, `projections.rs` owns query APIs, `api_inventory.rs` owns public API inventory and
 method baselines, `surfaces.rs` owns adjacent public-surface rows, and `source_mapping.rs` owns
-source-owner projections. Tests and gallery consume that typed registry instead of reading gallery
+source-owner projections. Tests and gallery consume those typed contract rows instead of reading gallery
 source strings for shipped status. The component crate root and prelude both re-export the curated default surface from
 `crates/ui_components/src/public_api/default.rs`; GPUI runtime adapter helpers remain explicitly
 namespaced under `open_gpui_ui_components::gpui_adapter`. Key sentinels include
 `component_api_inventory_covers_official_gallery_catalog`,
 `component_api_inventory_uses_stable_ownership_vocabulary`, and
-`component_contract_projection_functions_delegate_to_registry_rows`,
-`component_contract_registry_is_split_by_responsibility`, and
-`root_and_prelude_exports_match_registry_default_surface_intent`. Run the focused proof with:
+`component_contract_projection_functions_delegate_to_contract_rows`,
+`component_contract_rows_are_split_by_responsibility`, and
+`root_and_prelude_exports_match_contract_default_surface_intent`. Run the focused proof with:
 
 ```sh
 cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
 ```
 
-That gate checks that every registry-official component has a matching API inventory row, that
+That gate checks that every contract-official component has a matching API inventory row, that
 overlay families are explicitly listed, that public method baselines catch top-level builder
 drift, that render/controlled/default/policy vocabulary stays consistent, that root/prelude
-default exports match registry intent, and that renderer-neutral resolved state remains free of
+default exports match contract intent, and that renderer-neutral resolved state remains free of
 GPUI runtime types.
 
 Accessibility contract coverage now has its own semantic gate. `ComponentA11yContract` validates
@@ -569,12 +568,12 @@ docs ownership explicit while the UI component architecture is being deepened. T
 VirtualizedList, and Command expose behavior snapshots or state readouts; renderer assembly plans
 stay crate-private unless a future component deliberately promotes a narrower state contract.
 For the UI architecture deepening refactor, keep the focused gates below close to the code that
-changes them. They cover the component contract registry, public export map, removed primitive
+changes them. They cover the component contract rows, public export map, removed primitive
 aliases, overlay runtime policy, choice/search behavior, the Command ownership split, the Table
 behavior-snapshot and internal render-plan boundary, shared row-window projection, theme registry,
 and gallery catalog/conformance/runtime/sample/render module split:
 
-For the registry-backed family-boundary refactor, run the focused ownership gates whenever
+For the contract-backed family-boundary refactor, run the focused ownership gates whenever
 `component_contract` source mappings or the Menu, ContextMenu, Tree, or Table behavior owners move:
 
 ```powershell
@@ -592,11 +591,10 @@ cargo nextest run -p open-gpui-ui-foundation-gallery tree --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery table --no-fail-fast
 ```
 
-For registry, a11y, gallery conformance, and theme productization work, start from the reusable UI
-contract audit before dropping to focused behavior tests:
+For component contract, a11y, gallery conformance, and theme productization work, start from the
+reusable UI contract audit before dropping to focused behavior tests:
 
 ```powershell
-cargo run -p xtask -- scan-ui-registry
 cargo run -p xtask -- scan-ui-contract
 cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery --check
 cargo check -p open-gpui-ui-components --tests
@@ -607,24 +605,13 @@ cargo nextest run -p open-gpui-ui-components theme --no-fail-fast
 cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_conformance_gates_reference_core_and_gallery_contracts --no-fail-fast
 ```
 
-`scan-ui-registry` checks `docs/registry/open-gpui-component-registry-v1.json`,
-`docs/schemas/open-gpui-component-registry-v1.schema.json`, required registry rows, scaffold recipe
-ids, recipe source-component references, generated file intents, and verification gates. Regenerate
-artifacts with
-`cargo run -p open-gpui-ui-components --example export_component_registry --quiet` and
-`cargo run -p open-gpui-ui-components --example export_component_registry_schema --quiet` before
-running this gate after component contract or recipe metadata changes.
-
-The architecture and ownership model for this workflow is documented in
-`docs/architecture/native-ui-hybrid-registry.md` and ADR 0013.
-
-`scan-ui-contract` checks the component contract registry, default root/prelude exports, source
+`scan-ui-contract` checks the component contract tables, default root/prelude exports, source
 homes, docs tokens, removed primitive targets, gallery conformance evidence, representative
 `COMPONENT_A11Y_CLAIMS`, and the committed theme schema artifact. Use the narrower
 `scan-theme-schema`, `scan-theme-drift`, and focused nextest commands when investigating a specific
 failure.
 
-Run the full component and gallery package gates only after broad registry, theme, or gallery
+Run the full component and gallery package gates only after broad contract-table, theme, or gallery
 changes:
 
 ```powershell
@@ -671,7 +658,7 @@ The binary-level gates above include these focused sentinels:
 `table_behavior_snapshot_exposes_center_column_summary_without_window_internals`,
 `table_behavior_snapshot_exposes_pinned_column_regions`, `theme_registry`, `theme_resolver`,
 `theme_snapshots`, `components_catalog_metadata_is_separate_from_rendering`,
-`components_catalog_consumes_component_contract_registry`,
+`components_catalog_consumes_component_contract_rows`,
 `official_component_catalog_entries_have_signals_and_sample_selectors`,
 `state_contract_catalog_entries_have_signals_and_readout_selectors`,
 `gallery_story_contracts_cover_components_state_readouts_and_overlays`,

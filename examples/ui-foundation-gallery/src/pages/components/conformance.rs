@@ -151,7 +151,7 @@ pub const COMPONENT_CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
     ComponentConformanceGate {
         id: "public-api-exports",
         title: "Public API exports",
-        summary: "The component contract registry, crate root, and prelude exports stay aligned for every shipped component type.",
+        summary: "The component contract rows, crate root, and prelude exports stay aligned for every shipped component type.",
         evidence: &[
             "crates/ui_components/src/component_contract/mod.rs",
             "crates/ui_components/src/component_contract/rows.rs",

@@ -1,6 +1,6 @@
 # ADR 0013: Open GPUI Native UI Hybrid Registry
 
-**Status**: Accepted
+**Status**: Superseded by ADR 0014
 **Date**: 2026-07-02
 
 ## Context

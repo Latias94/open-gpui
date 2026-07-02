@@ -6,33 +6,16 @@ without rewriting the public API. ADR 0008 treats the current UI crates as the a
 boundary; future headless extraction is historical boundary evidence, not the current roadmap or
 the next implied refactor.
 
-## Hybrid Registry And Scaffold Recipes
+## Contract Tables
 
-The component contract registry is the product authority for component metadata. Cargo remains the
-distribution authority for official implementations; the generated registry manifest exists so
-humans, tools, and agents can inspect components, recipes, docs tokens, gallery evidence, source
-homes, and verification gates without treating copied source as the canonical package surface.
+The component contract tables are the product authority for component metadata used by local tests.
+Cargo remains the distribution authority for official implementations, and crate source remains the primary inspection surface for humans and AI agents.
 
-Scaffold recipes are metadata-first composition starters. `table-filters-toolbar`,
-`field-control-composition`, `themed-surface-wrapper`, and `gallery-story-sample` describe
-output intent, required imports, customization boundaries, source components, and focused
-verification gates. Their output ownership is explicit through `ScaffoldRecipeOutputOwnership`:
-`AppOwnedSource`, `CargoDependencySnippet`, or `GalleryStorySample`. They are not a public
-source-editing package manager: official components such as `Button`, `Table`, `Field`, and
-`ThemeDefinition` still ship through `open-gpui-ui-components`, while recipes only describe where
-local wrapper, dependency, or gallery sample code may begin.
+Open GPUI does not ship a generated component registry manifest, scaffold recipe manifest, or registry JSON/schema artifact.
+The removed hybrid registry layer duplicated typed source facts without proving enough value over direct source inspection and focused contract scans.
 
-The committed registry artifact lives at
-`docs/registry/open-gpui-component-registry-v1.json`; its JSON schema lives at
-`docs/schemas/open-gpui-component-registry-v1.schema.json`. Regenerate them with
-`cargo run -p open-gpui-ui-components --example export_component_registry --quiet` and
-`cargo run -p open-gpui-ui-components --example export_component_registry_schema --quiet`, then
-run `cargo run -p xtask -- scan-ui-registry`. The scan compares generated output with the committed
-artifacts and checks recipe source-component references, generated-file intents, and verification
-gates.
-
-The architecture workflow is documented in
-[`docs/architecture/native-ui-hybrid-registry.md`](../architecture/native-ui-hybrid-registry.md).
+Use `crates/ui_components/src/component_contract/` to keep public component ownership, source homes, docs tokens, gallery status, and default export intent aligned.
+Use `cargo run -p xtask -- scan-ui-contract` and focused `cargo nextest` gates to catch drift.
 
 ## Resolved State
 
@@ -339,32 +322,32 @@ A component is official only when it satisfies the current-crate completion cont
   cannot prove;
 - `docs/verification.md` names any manual or automated gate added by the component.
 
-`open_gpui_ui_components::component_contract` owns the current product registry for this contract;
+`open_gpui_ui_components::component_contract` owns the current product contract table;
 its source home is the `crates/ui_components/src/component_contract/` module family.
 `component_contract/mod.rs` is only the facade; `component_contract/types.rs` owns row types,
-`component_contract/rows.rs` owns canonical registry rows, `component_contract/projections.rs`
+`component_contract/rows.rs` owns canonical contract rows, `component_contract/projections.rs`
 owns query APIs, `component_contract/source_mapping.rs` owns source-owner projections,
 `component_contract/surfaces.rs` owns adjacent public-surface rows, and
 `component_contract/api_inventory.rs` owns public API inventory and method baselines. That split is
 a shared fact-source cleanup, not a broad component-file-size cleanup.
-That registry classifies official components, official recipes, renderer-neutral state contracts,
+That contract table classifies official components, official recipes, renderer-neutral state contracts,
 GPUI adapter helpers, public anatomy, diagnostics, and removed compatibility targets. It also
 records API inventory rows, source homes, docs tokens, gallery status, and default-export intent.
 `examples/ui-foundation-gallery::pages::components::catalog::COMPONENT_CATALOG` is a gallery view
-model over that registry. The Components page re-exports that catalog through
+model over that table. The Components page re-exports that catalog through
 `examples/ui-foundation-gallery::pages::components::COMPONENT_CATALOG` so tests and rendering keep
 their stable consumer path, but official status and family grouping are derived from the component
-crate registry. Entries with registry status `official` satisfy the checklist above. Entries with
-registry status `adapter-only` are public GPUI helper surfaces such as `TextInputController`, not
-standalone components. Entries with registry status `internal-anatomy` are public parts of a
+crate contract rows. Entries with contract status `official` satisfy the checklist above. Entries with
+contract status `adapter-only` are public GPUI helper surfaces such as `TextInputController`, not
+standalone components. Entries with contract status `internal-anatomy` are public parts of a
 component family, such as `ToolbarItem`, `SidebarItem`, and `ListboxOption`, and should not be
-promoted to standalone components without a new resolved-state contract. Entries with registry
+promoted to standalone components without a new resolved-state contract. Entries with contract
 status `state-contract` are public renderer-neutral contracts with gallery readouts and signal
 coverage, but they are not themselves rendered GPUI components. They may sit beside an official
 adapter, as `TreeState` does for `Tree`. They must use `state_contract_selector`, not the official
 `sample_selector`, and they must not satisfy the official rendered-component gate by accident.
-Entries with registry status `deferred` are planned components that must not be treated as shipped
-API until they satisfy the checklist and gain a registry entry.
+Entries with contract status `deferred` are planned components that must not be treated as shipped
+API until they satisfy the checklist and gain a contract row.
 
 Public surface ownership uses a stricter source-facing vocabulary than the visible gallery status.
 `official component` names are rendered GPUI components with inventory rows and sample selectors.
@@ -798,7 +781,7 @@ public-contract evidence, then adds gallery-owned sample selectors, focused-sect
 probes, and rendered dogfood. It should expose stable sample ids, real resolved state, and a short
 gate list that names the regression-prone behaviors each slice must keep covered.
 
-The Components page should keep the registry-backed component catalog visible and distinguish
+The Components page should keep the contract-backed component catalog visible and distinguish
 shipped components from adapter-only helpers, internal anatomy, state contracts, and deferred
 entries. Its root module is a small facade: catalog view-model metadata lives in
 `components/catalog.rs`; the visible conformance gate list lives in `components/conformance.rs`;
@@ -820,12 +803,12 @@ current page mode; they must not implicitly change the focused family. The page 
 these gates visible:
 
 - crate-root and prelude exports stay explicit;
-- registry default-export intent stays aligned through
-  `root_and_prelude_exports_match_registry_default_surface_intent`;
-- registry source ownership stays aligned through
+- contract-row default-export intent stays aligned through
+  `root_and_prelude_exports_match_contract_default_surface_intent`;
+- contract-row source ownership stays aligned through
   `command_component_source_mapping_tracks_split_owners`;
-- gallery catalog status and family grouping stay registry-owned through
-  `components_catalog_consumes_component_contract_registry`;
+- gallery catalog status and family grouping stay contract-owned through
+  `components_catalog_consumes_component_contract_rows`;
 - adapter-only helper exports stay grouped under `open_gpui_ui_components::gpui_adapter`;
 - every official catalog entry keeps matching component/state signals and a rendered sample
   selector;
@@ -845,7 +828,7 @@ these gates visible:
 - icon-only affordances and labels keep their accessible metadata explicit;
 - `COMPONENT_A11Y_CLAIMS` and `ComponentA11yClaim` keep representative sample selectors, roles,
   label sources, value metadata, orientation, and actions aligned with `ComponentA11yContract`.
-- `cargo run -p xtask -- scan-ui-contract` keeps registry rows, default exports, docs tokens,
+- `cargo run -p xtask -- scan-ui-contract` keeps contract rows, default exports, docs tokens,
   conformance evidence, a11y claims, and the theme schema artifact aligned before gallery smoke
   tests are needed.
 
@@ -897,7 +880,7 @@ Before extraction, keep these boundary rules explicit:
 
 The active next UI productization slice is
 `docs/plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md`: split the component contract
-registry, add focused accessibility contract gates, and add a theme JSON schema plus file-loader
+table, add focused accessibility contract gates, and add a theme JSON schema plus file-loader
 facade. Broad remaining-1k-line component splitting and `open-gpui-ui-headless` extraction are not
 part of that slice. The runtime theme table now covers semantic component colors for light, dark,
 high-contrast, registry-loaded snapshots, and JSON-loaded `ThemeDefinition` values; UIs should

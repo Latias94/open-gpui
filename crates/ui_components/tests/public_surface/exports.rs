@@ -366,30 +366,30 @@ fn public_reexports_stay_explicit_without_wildcards() {
 }
 
 #[test]
-fn root_and_prelude_exports_match_registry_default_surface_intent() {
-    let registry_defaults = registry_default_surface_tokens();
-    let registry_non_defaults = registry_non_default_surface_tokens();
+fn root_and_prelude_exports_match_contract_default_surface_intent() {
+    let contract_defaults = contract_default_surface_tokens();
+    let contract_non_defaults = contract_non_default_surface_tokens();
 
     for file_name in ["lib.rs", "prelude.rs"] {
         let exports = default_reexport_tokens(file_name);
-        let missing_defaults = registry_defaults
+        let missing_defaults = contract_defaults
             .difference(&exports)
             .cloned()
             .collect::<Vec<_>>();
         assert_eq!(
             missing_defaults,
             Vec::<String>::new(),
-            "{file_name} default exports are missing registry default surfaces"
+            "{file_name} default exports are missing contract default surfaces"
         );
 
-        let leaked_non_defaults = registry_non_defaults
+        let leaked_non_defaults = contract_non_defaults
             .intersection(&exports)
             .cloned()
             .collect::<Vec<_>>();
         assert_eq!(
             leaked_non_defaults,
             Vec::<String>::new(),
-            "{file_name} default exports leaked registry non-default surfaces"
+            "{file_name} default exports leaked contract non-default surfaces"
         );
     }
 }
