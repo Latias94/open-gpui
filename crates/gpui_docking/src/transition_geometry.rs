@@ -1,4 +1,3 @@
-#[cfg(test)]
 use crate::overlay_scene::{DockOverlayLayerKind, DockOverlayScene};
 use crate::{
     DockNodeId, DropZone, SplitAxis,
@@ -86,17 +85,30 @@ pub(crate) struct DockOverlayTransition {
     pub(crate) immediate: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum DockOverlayTransitionKind {
-    #[cfg(test)]
     RouteMarker,
-    #[cfg(test)]
+    TargetBody,
+    GuideBox,
     TabInsertion,
-    #[cfg(test)]
+    PayloadTab,
     PayloadGhost,
     FocusRing,
-    #[cfg(test)]
     RejectedNoop,
+}
+
+impl DockOverlayTransitionKind {
+    pub(crate) fn from_layer_kind(kind: DockOverlayLayerKind) -> Self {
+        match kind {
+            DockOverlayLayerKind::RouteMarker => Self::RouteMarker,
+            DockOverlayLayerKind::TargetBody => Self::TargetBody,
+            DockOverlayLayerKind::GuideBox => Self::GuideBox,
+            DockOverlayLayerKind::TabInsertion => Self::TabInsertion,
+            DockOverlayLayerKind::PayloadTab => Self::PayloadTab,
+            DockOverlayLayerKind::PayloadGhost => Self::PayloadGhost,
+            DockOverlayLayerKind::RejectedState => Self::RejectedNoop,
+        }
+    }
 }
 
 impl DockTransitionPlan {
@@ -114,7 +126,6 @@ impl DockTransitionPlan {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn from_overlay_scene(
         final_scene: &DockPresentationScene,
         overlay_scene: &DockOverlayScene,
@@ -128,30 +139,13 @@ impl DockTransitionPlan {
             overlay_transitions: overlay_scene
                 .layers
                 .iter()
-                .filter_map(|layer| {
-                    let kind = match layer.kind {
-                        DockOverlayLayerKind::RouteMarker => DockOverlayTransitionKind::RouteMarker,
-                        DockOverlayLayerKind::TabInsertion => {
-                            DockOverlayTransitionKind::TabInsertion
-                        }
-                        DockOverlayLayerKind::PayloadGhost => {
-                            DockOverlayTransitionKind::PayloadGhost
-                        }
-                        DockOverlayLayerKind::RejectedState => {
-                            DockOverlayTransitionKind::RejectedNoop
-                        }
-                        DockOverlayLayerKind::TargetBody
-                        | DockOverlayLayerKind::GuideBox
-                        | DockOverlayLayerKind::PayloadTab => return None,
-                    };
-                    Some(DockOverlayTransition {
-                        kind,
-                        bounds: layer.bounds,
-                        target_node: layer.target_node,
-                        zone: layer.zone,
-                        payload_index: layer.payload_index,
-                        immediate: preference.is_immediate(),
-                    })
+                .map(|layer| DockOverlayTransition {
+                    kind: DockOverlayTransitionKind::from_layer_kind(layer.kind),
+                    bounds: layer.bounds,
+                    target_node: layer.target_node,
+                    zone: layer.zone,
+                    payload_index: layer.payload_index,
+                    immediate: preference.is_immediate(),
                 })
                 .collect(),
         }

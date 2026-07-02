@@ -539,6 +539,8 @@ fn resolve_root_edge_drop(
         Some(_) => return None,
         None => None,
     };
+    let is_central_region =
+        leaf.is_some_and(|leaf| leaf.is_central && leaf.root == leaf.target_tabs);
 
     let geometry = geometry::resolve_outer_drop_geometry_with_style(
         root.bounds,
@@ -569,7 +571,7 @@ fn resolve_root_edge_drop(
         preview_bounds: Some(metadata.preview_bounds),
         edge_sizing: Some(metadata.edge_sizing),
         edge_plan,
-        is_central_region: false,
+        is_central_region,
     })
 }
 
@@ -594,7 +596,8 @@ fn root_guide_target(
         preview_bounds: Some(root.bounds),
         edge_sizing: None,
         edge_plan: None,
-        is_central_region: false,
+        is_central_region: leaf
+            .is_some_and(|leaf| leaf.is_central && leaf.root == leaf.target_tabs),
     }
 }
 

@@ -6,6 +6,59 @@ status: active
 
 # Log
 
+- 2026-07-02: Merged `refactor/docking-flat-motion-runtime` into local `main`. The merge keeps the
+  latest native/gallery/table productization state from `origin/main` and adds the docking motion
+  runtime work. Because `main` already used ADR 0013 and ADR 0014 for the native UI hybrid registry
+  experiment/removal, the UI motion runtime decision was renumbered to ADR 0015 during conflict
+  resolution.
+- 2026-07-02: Applied the ImGui-aligned overlay preview geometry cleanup on
+  `refactor/docking-flat-motion-runtime`. Removed `DockOverlayTransition::from_bounds`, deleted
+  overlay sample-to-layer bounds interpolation, and changed overlay replacement tests so all drop
+  preview layers remain pinned to the current semantic target. Pane, divider, zoom, and
+  programmatic Splitter interpolation remain because those represent real layout motion rather than
+  hover preview affordance geometry.
+- 2026-07-02: Closed out
+  `docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md` on
+  `refactor/docking-flat-motion-runtime`. The shared runtime, Splitter migration, docking executor
+  migration, native proof surface, and ADR 0015 are implemented and verified. Final broad docking
+  nextest and native checks passed; the local `ui-components` nextest filter for
+  `splitter component_api_inventory` compiled but repeatedly hung, so equivalent focused direct
+  `cargo test` gates were used for the Splitter runtime and public-surface inventory. A local ImGui
+  comparison confirmed that `DockNodePreviewDockSetup` / `DockNodePreviewDockRender` compute dock
+  preview geometry from the current hovered target each frame instead of interpolating from previous
+  preview bounds. The follow-up cleanup removed Open GPUI overlay `from_bounds` interpolation while
+  keeping pane/divider/zoom retarget motion.
+- 2026-07-02: Started and implemented the shared UI motion runtime foundation from
+  `docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md` on
+  `refactor/docking-flat-motion-runtime`. `open_gpui_ui_core` now owns renderer-neutral
+  `MotionTimeline` sampling and stable-identity retarget helpers. `ui_components::Splitter`
+  consumes the shared timeline for programmatic fraction animation while keeping pointer drag
+  immediate. `gpui_docking::DockTransitionExecutor` consumes the same timeline and retarget helper
+  for pane, divider, and overlay transition retargeting while keeping docking semantics local.
+  Added ADR 0015 for the new boundary and extended the native runtime panel with a `motion proof`
+  capability line. Focused verification has passed; final broad gates and wiki validation remain
+  the next action.
+- 2026-07-02: Implemented the flat motion runtime plan on
+  `refactor/docking-flat-motion-runtime` through `b7a8290`. Docking now uses shared motion sampling
+  tokens, transition retargeting from sampled pane/divider/overlay geometry, real final-size pane
+  content reveal with occlusion masks, presentation-scene-seeded viewport drop facts, independent
+  overlay preview transition execution, programmatic Splitter fraction motion, and zoom/unzoom
+  retargeting from active samples. `docs/verification.md`, `examples/docking-native`, and
+  `docs/knowledge/engineering/current-state.md` now describe the shipped capability without
+  claiming pixel-perfect or native compositor parity. Focused gates passed for UI-core motion,
+  Splitter adapter, docking transition/render/zoom/presentation, and preview/routing suites. Final
+  closeout passed `cargo nextest run -p open-gpui-docking --no-fail-fast` (860/860),
+  `cargo check -p open-gpui-docking-native`, and engineering wiki validation. Next action is the
+  closeout commit and normal branch integration.
+- 2026-07-02: Created
+  `docs/plans/2026-07-02-002-refactor-docking-flat-motion-runtime-plan.md` as the next docking
+  UI/UX runtime-quality plan. It supersedes the June 30 descriptor/runtime plans for the animation
+  execution layer while preserving ADR 0010/0011/0012 as accepted boundaries. The plan focuses on
+  flat presentation-scene render authority, real pane-content reveal instead of placeholder
+  transition rectangles, interruptible transition retargeting, shared motion curve/reduced-motion
+  vocabulary, root-level overlay stability, programmatic splitter motion, and zoom/focus polish.
+  Added engineering memory at
+  `docs/knowledge/engineering/progress/2026-07-02-docking-flat-motion-runtime-plan.md`.
 - 2026-07-02: Split `examples/ui-foundation-gallery/src/shell.rs` into a shell facade plus
   `src/shell/support.rs`, `src/shell/components.rs`, and `src/shell/overlay.rs`. `GalleryShell`,
   snapshot derivation, navigation/content rendering, and window open entry points stay in the

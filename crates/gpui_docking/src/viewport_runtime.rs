@@ -850,6 +850,7 @@ impl DockViewportRuntime {
         .is_some_and(|registration| registration.changed)
     }
 
+    #[cfg(test)]
     pub(crate) fn begin_viewport_host_scene_frame(
         &mut self,
         space: impl Into<DockSpaceId>,
@@ -858,6 +859,27 @@ impl DockViewportRuntime {
         host_bounds: Bounds<Pixels>,
         host_position: Point<Pixels>,
         drop_guide_style: crate::DockDropGuideStyle,
+    ) -> Option<DockViewportHostSceneRegistration> {
+        self.begin_viewport_host_scene_frame_with_facts(
+            space,
+            window_id,
+            window_facts,
+            host_bounds,
+            host_position,
+            drop_guide_style,
+            Vec::new(),
+        )
+    }
+
+    pub(crate) fn begin_viewport_host_scene_frame_with_facts(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        window_id: WindowId,
+        window_facts: DockViewportWindowFacts,
+        host_bounds: Bounds<Pixels>,
+        host_position: Point<Pixels>,
+        drop_guide_style: crate::DockDropGuideStyle,
+        initial_facts: Vec<DockHostDropSceneFact>,
     ) -> Option<DockViewportHostSceneRegistration> {
         let space = space.into();
         let window = self.adapter.window_for_space(&space)?;
@@ -871,13 +893,14 @@ impl DockViewportRuntime {
             false
         };
         let changed = self.update_viewport_snapshot(&space, window_facts, host_bounds);
-        let mut registration = self.frame_coordinator.register_host_scene(
+        let mut registration = self.frame_coordinator.register_host_scene_with_facts(
             space,
             window_id,
             window_facts,
             host_bounds,
             host_position,
             drop_guide_style,
+            initial_facts,
         );
         registration.changed |= changed || close_cancelled;
         Some(registration)

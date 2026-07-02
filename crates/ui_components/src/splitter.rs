@@ -7,44 +7,186 @@ use open_gpui::{
     IntoElement, ParentElement, Pixels, Point, Render, RenderOnce, Styled, Window, div, px,
     relative, rgb,
 };
-use open_gpui_ui_core::{Orientation, Sizable, Size};
+use open_gpui_ui_core::{MotionPreference, MotionSpec, MotionTimeline, Orientation, Sizable, Size};
+use std::time::Instant;
 
 const EPSILON: f32 = 0.000_1;
 
 pub use open_gpui_ui_core::{
-    SplitterHandleLayout, SplitterHandleState, SplitterHitMap, SplitterHitTarget,
-    SplitterJunctionHitRegion, SplitterLayoutScene, SplitterMetrics, SplitterPanelDescriptor,
-    SplitterPanelLayout, SplitterPanelState, SplitterResizeOutcome, SplitterResizeResult,
-    SplitterState,
+    SplitterHandleLayout, SplitterHandleState, SplitterHandleTransition,
+    SplitterHandleTransitionKind, SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion,
+    SplitterLayoutScene, SplitterLayoutTransition, SplitterMetrics, SplitterPanelDescriptor,
+    SplitterPanelLayout, SplitterPanelState, SplitterPanelTransition, SplitterPanelTransitionKind,
+    SplitterResizeOutcome, SplitterResizeResult, SplitterState, SplitterTransitionIntent,
 };
 
 #[derive(Debug, Clone, Default)]
 struct SplitterRuntime {
     panel_ids: Vec<String>,
+    state_fractions: Vec<f32>,
     panel_fractions: Vec<f32>,
     drag_start: Option<SplitterDragStart>,
+    transition: Option<SplitterRuntimeTransition>,
 }
 
 impl SplitterRuntime {
-    fn sync(&mut self, state: &SplitterState) {
+    fn sync(&mut self, state: &SplitterState) -> bool {
+        self.sync_at(state, Instant::now())
+    }
+
+    fn sync_at(&mut self, state: &SplitterState, now: Instant) -> bool {
+        self.sync_at_with_spec(
+            state,
+            now,
+            MotionSpec::committed_layout(MotionPreference::Animated),
+        )
+    }
+
+    fn sync_at_with_spec(&mut self, state: &SplitterState, now: Instant, spec: MotionSpec) -> bool {
         let panel_ids = state
             .panels()
             .iter()
             .map(|panel| panel.id().to_owned())
             .collect::<Vec<_>>();
-
-        if self.panel_ids == panel_ids && self.panel_fractions.len() == state.panels().len() {
-            return;
-        }
-
-        self.panel_ids = panel_ids;
-        self.panel_fractions = state
+        let target_fractions = state
             .panels()
             .iter()
             .map(SplitterPanelState::fraction)
-            .collect();
-        self.drag_start = None;
+            .collect::<Vec<_>>();
+
+        if self.panel_ids.is_empty()
+            || self.panel_ids != panel_ids
+            || self.panel_fractions.len() != target_fractions.len()
+        {
+            self.sync_immediate(panel_ids, target_fractions);
+            return false;
+        }
+
+        if let Some(transition) = self.transition.as_ref()
+            && transition.panel_ids == panel_ids
+            && fractions_equal(&transition.to_fractions, &target_fractions)
+        {
+            let complete = self.sample_transition(now);
+            return !complete;
+        }
+
+        if fractions_equal(&self.state_fractions, &target_fractions) {
+            self.transition = None;
+            return false;
+        }
+
+        let from_fractions = self
+            .transition
+            .as_ref()
+            .map(|_| self.sampled_transition_fractions(now))
+            .unwrap_or_else(|| self.panel_fractions.clone());
+        if fractions_equal(&from_fractions, &target_fractions) {
+            self.state_fractions = target_fractions;
+            self.panel_fractions = from_fractions;
+            self.transition = None;
+            return false;
+        }
+        if spec.is_immediate() {
+            self.state_fractions = target_fractions.clone();
+            self.panel_fractions = target_fractions;
+            self.transition = None;
+            return false;
+        }
+        self.panel_fractions = from_fractions.clone();
+        self.state_fractions = target_fractions.clone();
+        self.transition = Some(SplitterRuntimeTransition {
+            panel_ids,
+            from_fractions,
+            to_fractions: target_fractions,
+            timeline: MotionTimeline::new(spec, now),
+        });
+        true
     }
+
+    fn sync_immediate(&mut self, panel_ids: Vec<String>, panel_fractions: Vec<f32>) {
+        self.panel_ids = panel_ids;
+        self.state_fractions = panel_fractions.clone();
+        self.panel_fractions = panel_fractions;
+        self.drag_start = None;
+        self.transition = None;
+    }
+
+    fn sync_drag_state(&mut self, state: &SplitterState) {
+        let panel_ids = state
+            .panels()
+            .iter()
+            .map(|panel| panel.id().to_owned())
+            .collect::<Vec<_>>();
+        let panel_fractions = state
+            .panels()
+            .iter()
+            .map(SplitterPanelState::fraction)
+            .collect::<Vec<_>>();
+
+        if self.panel_ids != panel_ids || self.panel_fractions.len() != panel_fractions.len() {
+            self.sync_immediate(panel_ids, panel_fractions);
+            return;
+        }
+
+        self.transition = None;
+    }
+
+    fn sample_transition(&mut self, now: Instant) -> bool {
+        let Some(transition) = self.transition.as_ref() else {
+            return true;
+        };
+        let sample = transition.timeline.sample(now);
+        self.panel_fractions = lerp_fractions(
+            &transition.from_fractions,
+            &transition.to_fractions,
+            sample.progress(),
+        );
+        let complete = sample.reached_final_state();
+        if complete {
+            self.panel_fractions = transition.to_fractions.clone();
+            self.transition = None;
+        }
+        complete
+    }
+
+    fn sampled_transition_fractions(&self, now: Instant) -> Vec<f32> {
+        let Some(transition) = self.transition.as_ref() else {
+            return self.panel_fractions.clone();
+        };
+        let progress = transition.timeline.sample(now).progress();
+        lerp_fractions(
+            &transition.from_fractions,
+            &transition.to_fractions,
+            progress,
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SplitterRuntimeTransition {
+    panel_ids: Vec<String>,
+    from_fractions: Vec<f32>,
+    to_fractions: Vec<f32>,
+    timeline: MotionTimeline,
+}
+
+fn fractions_equal(left: &[f32], right: &[f32]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(left, right)| (left - right).abs() <= EPSILON)
+}
+
+fn lerp_fractions(from: &[f32], to: &[f32], progress: f32) -> Vec<f32> {
+    if from.len() != to.len() {
+        return to.to_vec();
+    }
+    let progress = progress.clamp(0.0, 1.0);
+    from.iter()
+        .zip(to)
+        .map(|(from, to)| from + ((to - from) * progress))
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -175,7 +317,10 @@ impl RenderOnce for Splitter {
         let base_state = self.state();
         let runtime =
             window.use_keyed_state(self.id.clone(), cx, |_, _| SplitterRuntime::default());
-        runtime.update(cx, |runtime, _| runtime.sync(&base_state));
+        let needs_frame = runtime.update(cx, |runtime, _| runtime.sync(&base_state));
+        if needs_frame {
+            window.request_animation_frame();
+        }
         let runtime_snapshot = runtime.read(cx).clone();
         let state = base_state.with_panel_fractions(&runtime_snapshot.panel_fractions);
         let is_vertical = matches!(state.orientation(), Orientation::Vertical);
@@ -202,7 +347,7 @@ impl RenderOnce for Splitter {
                 }
 
                 runtime_for_drag.update(cx, |runtime, _| {
-                    runtime.sync(&drag_state);
+                    runtime.sync_drag_state(&drag_state);
 
                     let axis_length = if is_vertical {
                         event.bounds.size.height
@@ -330,7 +475,7 @@ fn render_handle(
                 move |_, _, _, _, cx| {
                     cx.stop_propagation();
                     drag_runtime.update(cx, |runtime, _| {
-                        runtime.sync(&drag_state);
+                        runtime.sync_drag_state(&drag_state);
                         runtime.drag_start = None;
                     });
                     cx.new(|_| SplitterDragPreview)
@@ -355,4 +500,97 @@ fn render_handle(
                 }),
         )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn state(left: f32, right: f32) -> SplitterState {
+        SplitterState::resolve(
+            "runtime-motion",
+            Orientation::Horizontal,
+            Size::Medium,
+            false,
+            [
+                SplitterPanelDescriptor::new("left", left),
+                SplitterPanelDescriptor::new("right", right),
+            ],
+        )
+    }
+
+    #[test]
+    fn runtime_animates_programmatic_fraction_changes() {
+        let start = Instant::now();
+        let from = state(0.3, 0.7);
+        let to = state(0.6, 0.4);
+        let mut runtime = SplitterRuntime::default();
+
+        assert!(!runtime.sync_at(&from, start));
+        assert!(fractions_equal(&runtime.panel_fractions, &[0.3, 0.7]));
+
+        assert!(runtime.sync_at(&to, start));
+        assert!(fractions_equal(&runtime.panel_fractions, &[0.3, 0.7]));
+
+        assert!(runtime.sync_at(&to, start + Duration::from_millis(90)));
+        assert!(
+            runtime.panel_fractions[0] > 0.3 && runtime.panel_fractions[0] < 0.6,
+            "programmatic splitter change should sample between old and new fractions"
+        );
+
+        assert!(!runtime.sync_at(&to, start + Duration::from_millis(220)));
+        assert!(fractions_equal(&runtime.panel_fractions, &[0.6, 0.4]));
+        assert!(runtime.transition.is_none());
+    }
+
+    #[test]
+    fn runtime_retargets_from_sampled_fraction_and_drag_syncs_immediately() {
+        let start = Instant::now();
+        let from = state(0.3, 0.7);
+        let first_target = state(0.6, 0.4);
+        let second_target = state(0.2, 0.8);
+        let mut runtime = SplitterRuntime::default();
+
+        runtime.sync_at(&from, start);
+        runtime.sync_at(&first_target, start);
+        runtime.sync_at(&first_target, start + Duration::from_millis(45));
+        let sampled_left = runtime.panel_fractions[0];
+
+        assert!(runtime.sync_at(&second_target, start + Duration::from_millis(45)));
+        assert!(
+            (runtime.panel_fractions[0] - sampled_left).abs() <= EPSILON,
+            "retargeting should start from the sampled fraction instead of the original fraction"
+        );
+
+        runtime.sync_drag_state(&from);
+        assert!(runtime.transition.is_none());
+        assert!(
+            (runtime.panel_fractions[0] - sampled_left).abs() <= EPSILON,
+            "drag sync should cancel animation without discarding the current runtime override"
+        );
+
+        let mut empty_runtime = SplitterRuntime::default();
+        empty_runtime.sync_drag_state(&from);
+        assert!(fractions_equal(&empty_runtime.panel_fractions, &[0.3, 0.7]));
+    }
+
+    #[test]
+    fn runtime_reduced_motion_completes_without_transition() {
+        let start = Instant::now();
+        let from = state(0.3, 0.7);
+        let to = state(0.6, 0.4);
+        let mut runtime = SplitterRuntime::default();
+
+        runtime.sync_at(&from, start);
+        assert!(!runtime.sync_at_with_spec(
+            &to,
+            start,
+            MotionSpec::committed_layout(MotionPreference::Reduced)
+        ));
+
+        assert!(fractions_equal(&runtime.state_fractions, &[0.6, 0.4]));
+        assert!(fractions_equal(&runtime.panel_fractions, &[0.6, 0.4]));
+        assert!(runtime.transition.is_none());
+    }
 }

@@ -16,6 +16,10 @@ pub use crate::{
     },
     grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d},
     motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec},
+    motion_runtime::{
+        MotionRetargetItem, MotionRetargetSet, MotionSnapshot, MotionTimeline,
+        MotionTimelineSample, MotionTimelineState, retarget_motion_snapshots,
+    },
     overlay::{
         DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
         FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,
@@ -29,9 +33,11 @@ pub use crate::{
     sizing::{Density, Sizable, Size},
     split::{
         SplitTreeChild, SplitTreeNode, SplitterHandleLayout, SplitterHandlePlacement,
-        SplitterHandleState, SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion,
-        SplitterLayoutScene, SplitterMetrics, SplitterPanelDescriptor, SplitterPanelLayout,
-        SplitterPanelState, SplitterResizeOutcome, SplitterResizeResult, SplitterState,
+        SplitterHandleState, SplitterHandleTransition, SplitterHandleTransitionKind,
+        SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion, SplitterLayoutScene,
+        SplitterLayoutTransition, SplitterMetrics, SplitterPanelDescriptor, SplitterPanelLayout,
+        SplitterPanelState, SplitterPanelTransition, SplitterPanelTransitionKind,
+        SplitterResizeOutcome, SplitterResizeResult, SplitterState, SplitterTransitionIntent,
         normalize_split_fractions, resize_split_fractions_by_pixels, resolve_split_fractions,
         resolve_split_fractions_with_fill_child,
     },

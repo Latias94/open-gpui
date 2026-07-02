@@ -573,7 +573,7 @@ fn availability_for_target(
         (DockResolvedDropTargetKind::RootEdge { .. }, DockPreviewLayerKind::Inner) => {
             DockPreviewAvailability {
                 center: false,
-                sides: false,
+                sides: !target.is_central_region && target.availability.sides,
             }
         }
         (DockResolvedDropTargetKind::RootEdge { .. }, DockPreviewLayerKind::Outer) => {
@@ -699,8 +699,8 @@ fn debug_node_for_target(
         | DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
         | DockResolvedDropTargetKind::InnerEdge { target_tabs, .. }
         | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => Some(target_tabs),
-        DockResolvedDropTargetKind::RootEdge { .. }
-        | DockResolvedDropTargetKind::EmptyDockSpace { .. } => None,
+        DockResolvedDropTargetKind::RootEdge { leaf_tabs, .. } => leaf_tabs,
+        DockResolvedDropTargetKind::EmptyDockSpace { .. } => None,
     }
 }
 
@@ -958,13 +958,14 @@ mod tests {
     }
 
     #[test]
-    fn root_edge_target_preserves_inner_layer_but_activates_outer_layer() {
+    fn root_edge_target_keeps_passive_inner_side_guides_while_outer_layer_is_active() {
         let root = DockNodeId::null();
+        let leaf_tabs = DockNodeId::null();
         let preview = DockDropPreview::from_resolved_target(
             &resolved_target(
                 DockResolvedDropTargetKind::RootEdge {
                     root,
-                    leaf_tabs: None,
+                    leaf_tabs: Some(leaf_tabs),
                     zone: DropZone::Right,
                 },
                 Some(drop_box(DockDropBoxKind::OuterEdge(DropZone::Right))),
@@ -977,8 +978,16 @@ mod tests {
         assert_eq!(preview.scene.layers[0].kind, DockPreviewLayerKind::Inner);
         assert_eq!(preview.scene.layers[1].kind, DockPreviewLayerKind::Outer);
         assert!(!preview.scene.layers[0].availability.center);
-        assert!(!preview.scene.layers[0].availability.sides);
-        assert!(preview.scene.layers[0].drop_boxes.is_empty());
+        assert!(preview.scene.layers[0].availability.sides);
+        assert_eq!(preview.scene.layers[0].drop_boxes.len(), 4);
+        assert!(
+            preview.scene.layers[0].drop_boxes.iter().all(|drop_box| {
+                matches!(drop_box.kind, DockDropBoxKind::InnerEdge(_))
+                    && drop_box.debug_node == Some(leaf_tabs)
+                    && !drop_box.active
+            }),
+            "inner layer should keep passive leaf side guides while the outer layer owns delivery"
+        );
         assert!(!preview.scene.layers[1].availability.center);
         assert!(preview.scene.layers[1].availability.sides);
         assert_eq!(
@@ -988,6 +997,32 @@ mod tests {
                 .map(|drop_box| drop_box.layer),
             Some(DockPreviewLayerKind::Outer)
         );
+    }
+
+    #[test]
+    fn root_edge_target_over_central_root_keeps_inner_side_guides_hidden() {
+        let root = DockNodeId::null();
+        let mut target = resolved_target(
+            DockResolvedDropTargetKind::RootEdge {
+                root,
+                leaf_tabs: Some(root),
+                zone: DropZone::Right,
+            },
+            Some(drop_box(DockDropBoxKind::OuterEdge(DropZone::Right))),
+        );
+        target.is_central_region = true;
+
+        let preview = DockDropPreview::from_resolved_target(&target, DockDropGuideStyle::default())
+            .expect("root edge target should produce preview");
+
+        assert_eq!(preview.scene.layers.len(), 2);
+        assert_eq!(preview.scene.layers[0].kind, DockPreviewLayerKind::Inner);
+        assert!(!preview.scene.layers[0].availability.center);
+        assert!(!preview.scene.layers[0].availability.sides);
+        assert!(preview.scene.layers[0].drop_boxes.is_empty());
+        assert_eq!(preview.scene.layers[1].kind, DockPreviewLayerKind::Outer);
+        assert!(!preview.scene.layers[1].availability.center);
+        assert!(preview.scene.layers[1].availability.sides);
     }
 
     #[test]
