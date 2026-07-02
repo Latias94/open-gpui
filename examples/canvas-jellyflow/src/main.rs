@@ -4321,7 +4321,7 @@ mod tests {
             product_fixture_catalog,
         },
     };
-    use open_gpui::{AppContext as _, MouseMoveEvent, MouseUpEvent};
+    use open_gpui::{MouseMoveEvent, MouseUpEvent};
     use open_gpui_canvas::{
         CanvasConnectionEndpointRole, CanvasEditorInputMapper, CanvasGeometryFacts, CanvasRuntime,
         connection_hit_options,
