@@ -120,6 +120,7 @@ pub enum CanvasConnectionRelease {
     Connected(CanvasConnectedRelease),
     Dropped(CanvasDroppedConnectionRelease),
     Reconnected(CanvasReconnectedRelease),
+    ReconnectDropped(CanvasDroppedReconnectRelease),
     Rejected(CanvasRejectedConnectionRelease),
 }
 
@@ -143,6 +144,14 @@ pub struct CanvasReconnectedRelease {
     pub endpoint: CanvasConnectionEndpointRole,
     pub fixed: CanvasEndpoint,
     pub replacement: CanvasEndpoint,
+    pub position: Point<Pixels>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CanvasDroppedReconnectRelease {
+    pub edge_id: EdgeId,
+    pub endpoint: CanvasConnectionEndpointRole,
+    pub fixed: CanvasEndpoint,
     pub position: Point<Pixels>,
 }
 
@@ -4310,6 +4319,136 @@ mod tests {
         assert_eq!(edge.target.handle_id, Some(HandleId::from("in")));
         assert_eq!(editor.document().edge_count(), 1);
         assert_eq!(editor.history().undo_depth(), 1);
+        assert_eq!(
+            editor.take_connection_release(),
+            Some(CanvasConnectionRelease::Reconnected(
+                CanvasReconnectedRelease {
+                    edge_id: EdgeId::from("edge"),
+                    endpoint: CanvasConnectionEndpointRole::Source,
+                    fixed: CanvasEndpoint::new("b", Some("in")),
+                    replacement: CanvasEndpoint::new("c", Some("out")),
+                    position: point(px(-100.0), px(50.0)),
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn select_tool_reconnect_pointer_down_clears_stale_release() {
+        use crate::{CanvasHandle, HandleRole};
+
+        let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut source_handle = CanvasHandle::new("out", point(px(100.0), px(50.0)));
+        source_handle.role = HandleRole::Source;
+        source.handles.push(source_handle);
+
+        let mut target =
+            CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut target_handle = CanvasHandle::new("in", point(px(0.0), px(50.0)));
+        target_handle.role = HandleRole::Target;
+        target.handles.push(target_handle);
+
+        let document = document_fixture()
+            .node(source)
+            .node(target)
+            .edge(CanvasEdge::new(
+                "edge",
+                CanvasEndpoint::new("a", Some("out")),
+                CanvasEndpoint::new("b", Some("in")),
+            ))
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Edge(
+                EdgeId::from("edge"),
+            )))
+            .unwrap();
+        editor
+            .apply_tool_effect(CanvasToolEffect::SetConnectionRelease(Some(
+                CanvasConnectionRelease::Rejected(CanvasRejectedConnectionRelease {
+                    reason: CanvasConnectionRejectReason::InvalidTarget,
+                    source: None,
+                    edge_id: Some(EdgeId::from("edge")),
+                    endpoint: Some(CanvasConnectionEndpointRole::Target),
+                    position: point(px(999.0), px(999.0)),
+                }),
+            )))
+            .unwrap();
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(200.0), px(50.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert_eq!(editor.take_connection_release(), None);
+    }
+
+    #[test]
+    fn select_tool_reports_dropped_reconnect_release_for_empty_canvas() {
+        use crate::{CanvasHandle, HandleId, HandleRole};
+
+        let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut source_handle = CanvasHandle::new("out", point(px(100.0), px(50.0)));
+        source_handle.role = HandleRole::Source;
+        source.handles.push(source_handle);
+
+        let mut target =
+            CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut target_handle = CanvasHandle::new("in", point(px(0.0), px(50.0)));
+        target_handle.role = HandleRole::Target;
+        target.handles.push(target_handle);
+
+        let document = document_fixture()
+            .node(source)
+            .node(target)
+            .edge(CanvasEdge::new(
+                "edge",
+                CanvasEndpoint::new("a", Some("out")),
+                CanvasEndpoint::new("b", Some("in")),
+            ))
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Edge(
+                EdgeId::from("edge"),
+            )))
+            .unwrap();
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(200.0), px(50.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(340.0), px(180.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        let edge = editor.document().edge(&EdgeId::from("edge")).unwrap();
+        assert_eq!(edge.source.node_id, NodeId::from("a"));
+        assert_eq!(edge.source.handle_id, Some(HandleId::from("out")));
+        assert_eq!(edge.target.node_id, NodeId::from("b"));
+        assert_eq!(edge.target.handle_id, Some(HandleId::from("in")));
+        assert_eq!(editor.history().undo_depth(), 0);
+        assert_eq!(
+            editor.take_connection_release(),
+            Some(CanvasConnectionRelease::ReconnectDropped(
+                CanvasDroppedReconnectRelease {
+                    edge_id: EdgeId::from("edge"),
+                    endpoint: CanvasConnectionEndpointRole::Target,
+                    fixed: CanvasEndpoint::new("a", Some("out")),
+                    position: point(px(340.0), px(180.0)),
+                }
+            ))
+        );
     }
 
     #[test]

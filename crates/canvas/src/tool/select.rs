@@ -2,8 +2,8 @@ use super::context::CanvasConnectionHit;
 use super::*;
 use crate::{
     CanvasConnectionEndpointRole, CanvasConnectionRejectReason, CanvasConnectionRelease,
-    CanvasReconnectedRelease, CanvasRejectedConnectionRelease, CanvasResizeHandle, CanvasViewport,
-    HitOptions,
+    CanvasDroppedReconnectRelease, CanvasReconnectedRelease, CanvasRejectedConnectionRelease,
+    CanvasResizeHandle, CanvasViewport, HitOptions,
 };
 use open_gpui::Axis;
 
@@ -223,12 +223,15 @@ impl SelectToolStateMachine {
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
         let document_position = context.viewport().view_to_document(position);
         if let Some(target) = context.selected_reconnect_target_at(document_position) {
-            return Ok(vec![CanvasToolEffect::SetState(ToolState::Reconnecting {
-                edge_id: target.edge_id,
-                endpoint: target.endpoint,
-                fixed: target.fixed,
-                current: document_position,
-            })]);
+            return Ok(vec![
+                CanvasToolEffect::SetConnectionRelease(None),
+                CanvasToolEffect::SetState(ToolState::Reconnecting {
+                    edge_id: target.edge_id,
+                    endpoint: target.endpoint,
+                    fixed: target.fixed,
+                    current: document_position,
+                }),
+            ]);
         }
 
         if let Some(handle) = context.transform_handle_at(document_position) {
@@ -511,11 +514,10 @@ impl SelectToolStateMachine {
             }
             CanvasConnectionHit::Empty => {
                 effects.push(CanvasToolEffect::SetConnectionRelease(Some(
-                    CanvasConnectionRelease::Rejected(CanvasRejectedConnectionRelease {
-                        reason: CanvasConnectionRejectReason::NoTarget,
-                        source: None,
-                        edge_id: Some(edge_id.clone()),
-                        endpoint: Some(endpoint),
+                    CanvasConnectionRelease::ReconnectDropped(CanvasDroppedReconnectRelease {
+                        edge_id: edge_id.clone(),
+                        endpoint,
+                        fixed: fixed.clone(),
                         position: document_position,
                     }),
                 )));

@@ -130,11 +130,11 @@ pub use store::{
 };
 pub use tool::{
     CanvasConnectedRelease, CanvasConnectionDragState, CanvasConnectionRejectReason,
-    CanvasConnectionRelease, CanvasDroppedConnectionRelease, CanvasEditor, CanvasEvent,
-    CanvasHistory, CanvasKey, CanvasKeyModifiers, CanvasReconnectedRelease,
-    CanvasRejectedConnectionRelease, CanvasSelection, CanvasSelectionMode, CanvasTool,
-    CanvasToolContext, CanvasToolId, CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry,
-    CanvasToolRegistryError, PointerButton,
+    CanvasConnectionRelease, CanvasDroppedConnectionRelease, CanvasDroppedReconnectRelease,
+    CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey, CanvasKeyModifiers,
+    CanvasReconnectedRelease, CanvasRejectedConnectionRelease, CanvasSelection,
+    CanvasSelectionMode, CanvasTool, CanvasToolContext, CanvasToolId, CanvasToolIntent,
+    CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError, PointerButton,
 };
 pub use transform::{
     CanvasResizeHandle, CanvasTransformHandle, CanvasTransformTarget, canvas_transform_handles,

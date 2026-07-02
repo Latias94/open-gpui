@@ -4312,10 +4312,10 @@ mod tests {
         testing::{
             OpenGpuiHostCapabilityGap, OpenGpuiHostProductInteractionReport,
             OpenGpuiHostRendererSource, OpenGpuiHostSurfaceReport, OpenGpuiHostSurfaceReportRow,
-            assert_authoring_interaction_regression_gates, assert_host_surface_report_contract,
-            assert_host_visual_interaction_report_gates, assert_product_fixture_regression_gates,
-            assert_product_gallery_host_report_gates, assert_product_interaction_report_gates,
-            product_fixture_catalog,
+            OpenGpuiReconnectSequenceEvidence, assert_authoring_interaction_regression_gates,
+            assert_host_surface_report_contract, assert_host_visual_interaction_report_gates,
+            assert_product_fixture_regression_gates, assert_product_gallery_host_report_gates,
+            assert_product_interaction_report_gates, product_fixture_catalog,
         },
     };
     use open_gpui::{MouseMoveEvent, MouseUpEvent};
@@ -6007,8 +6007,42 @@ mod tests {
     #[test]
     fn selected_product_edge_reconnect_gesture_plans_jellyflow_transaction() {
         assert!(
-            product_reconnect_gesture_sync_probe(),
+            product_reconnect_gesture_sync_probe(CanvasConnectionEndpointRole::Target).is_some_and(
+                |evidence| {
+                    evidence.target_endpoint_switch_store_synced
+                        && evidence.compatible_reconnect_preserves_edge_id
+                }
+            ),
             "dragging a selected canvas edge endpoint should update the edge and sync through Jellyflow reconnect rules"
+        );
+    }
+
+    #[test]
+    fn selected_product_edge_source_reconnect_gesture_plans_jellyflow_transaction() {
+        assert!(
+            product_reconnect_gesture_sync_probe(CanvasConnectionEndpointRole::Source).is_some_and(
+                |evidence| {
+                    evidence.source_endpoint_switch_store_synced
+                        && evidence.compatible_reconnect_preserves_edge_id
+                }
+            ),
+            "dragging a selected canvas edge source endpoint should update the edge and sync through Jellyflow reconnect rules"
+        );
+    }
+
+    #[test]
+    fn empty_product_edge_reconnect_reports_drop_without_corrupting_edge() {
+        assert!(
+            product_reconnect_empty_drop_probe(),
+            "releasing a reconnect handle on empty canvas should report a dropped reconnect outcome without changing the edge"
+        );
+    }
+
+    #[test]
+    fn product_reconnect_sequence_report_covers_endpoint_switches_and_recovery() {
+        assert!(
+            product_reconnect_sequence_evidence().complete(),
+            "product reconnect evidence should cover source/target endpoint switches, invalid rollback, empty drops, and second gesture recovery"
         );
     }
 
@@ -6231,7 +6265,178 @@ mod tests {
             .is_some_and(|edge| edge.to == target_port)
     }
 
-    fn product_reconnect_gesture_sync_probe() -> bool {
+    fn product_reconnect_gesture_sync_probe(
+        endpoint: CanvasConnectionEndpointRole,
+    ) -> Option<OpenGpuiReconnectSequenceEvidence> {
+        let mut store = make_demo_store();
+        let Ok((document, _projection)) = project_store(&store) else {
+            return None;
+        };
+        let Ok(mut editor) = editor_for_document(document) else {
+            return None;
+        };
+        let (edge_id, old_node, old_port, new_node, new_port, expected_from, expected_to) =
+            match endpoint {
+                CanvasConnectionEndpointRole::Source => (
+                    JellyEdgeId::from_u128(201),
+                    JellyNodeId::from_u128(3),
+                    JellyPortId::from_u128(31),
+                    JellyNodeId::from_u128(2),
+                    JellyPortId::from_u128(20),
+                    JellyPortId::from_u128(20),
+                    JellyPortId::from_u128(40),
+                ),
+                CanvasConnectionEndpointRole::Target => (
+                    JellyEdgeId::from_u128(200),
+                    JellyNodeId::from_u128(3),
+                    JellyPortId::from_u128(30),
+                    JellyNodeId::from_u128(4),
+                    JellyPortId::from_u128(40),
+                    JellyPortId::from_u128(20),
+                    JellyPortId::from_u128(40),
+                ),
+            };
+        let canvas_edge_id = open_gpui_canvas::EdgeId::from(canvas_edge_id(&edge_id));
+        if editor
+            .apply_tool_intent(CanvasToolIntent::ReplaceSelection(HitTarget::Edge(
+                canvas_edge_id.clone(),
+            )))
+            .is_err()
+        {
+            return None;
+        }
+
+        let old_endpoint = endpoint_document_position(editor.document(), old_node, old_port);
+        let new_endpoint = endpoint_document_position(editor.document(), new_node, new_port);
+        let (Some(old_endpoint), Some(new_endpoint)) = (old_endpoint, new_endpoint) else {
+            return None;
+        };
+
+        let old_endpoint_view = editor.viewport().document_to_view(old_endpoint);
+        let new_endpoint_view = editor.viewport().document_to_view(new_endpoint);
+        if editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: old_endpoint_view,
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .is_err()
+            || editor
+                .handle_event(CanvasEvent::PointerMove {
+                    position: new_endpoint_view,
+                    modifiers: CanvasKeyModifiers::default(),
+                })
+                .is_err()
+            || editor
+                .handle_event(CanvasEvent::PointerUp {
+                    position: new_endpoint_view,
+                    button: PointerButton::Primary,
+                    modifiers: CanvasKeyModifiers::default(),
+                })
+                .is_err()
+        {
+            return None;
+        }
+
+        let release_preserved_edge_id = matches!(
+            editor.take_connection_release(),
+            Some(CanvasConnectionRelease::Reconnected(release))
+                if release.edge_id == canvas_edge_id
+                    && release.endpoint == endpoint
+                    && release
+                        .replacement
+                        .handle_id
+                        .as_ref()
+                        .is_some_and(|handle| handle.as_str() == canvas_port_id(&new_port))
+        );
+        let Some(edge) = editor.document().edge(&canvas_edge_id) else {
+            return None;
+        };
+        let document_endpoint_switched = match endpoint {
+            CanvasConnectionEndpointRole::Source => edge
+                .source
+                .handle_id
+                .as_ref()
+                .is_some_and(|handle| handle.as_str() == canvas_port_id(&new_port)),
+            CanvasConnectionEndpointRole::Target => edge
+                .target
+                .handle_id
+                .as_ref()
+                .is_some_and(|handle| handle.as_str() == canvas_port_id(&new_port)),
+        };
+        if !document_endpoint_switched {
+            return None;
+        }
+
+        let adapter = OpenGpuiAdapter::default();
+        let Ok(transactions) =
+            canvas_document_connection_sync_transactions(&adapter, &store, editor.document())
+        else {
+            return None;
+        };
+        let plans_expected_reconnect =
+            transactions
+                .iter()
+                .flat_map(GraphTransaction::ops)
+                .any(|op| {
+                    matches!(
+                        op,
+                        GraphOp::SetEdgeEndpoints { id, to, .. }
+                            if *id == edge_id && to.from == expected_from && to.to == expected_to
+                    )
+                });
+        if !plans_expected_reconnect {
+            return None;
+        }
+        for transaction in transactions {
+            if store.dispatch_transaction(&transaction).is_err() {
+                return None;
+            }
+        }
+
+        let store_edge_synced = store
+            .graph()
+            .edges()
+            .get(&edge_id)
+            .is_some_and(|edge| edge.from == expected_from && edge.to == expected_to);
+        let mut evidence = OpenGpuiReconnectSequenceEvidence::default();
+        match endpoint {
+            CanvasConnectionEndpointRole::Source => {
+                evidence.source_endpoint_switch_store_synced = store_edge_synced;
+            }
+            CanvasConnectionEndpointRole::Target => {
+                evidence.target_endpoint_switch_store_synced = store_edge_synced;
+            }
+        }
+        evidence.compatible_reconnect_preserves_edge_id =
+            release_preserved_edge_id && store_edge_synced;
+        Some(evidence)
+    }
+
+    fn product_reconnect_sequence_evidence() -> OpenGpuiReconnectSequenceEvidence {
+        let mut evidence = OpenGpuiReconnectSequenceEvidence::default();
+        let source = product_reconnect_gesture_sync_probe(CanvasConnectionEndpointRole::Source);
+        let target = product_reconnect_gesture_sync_probe(CanvasConnectionEndpointRole::Target);
+        if let Some(source) = source {
+            evidence.source_endpoint_switch_store_synced =
+                source.source_endpoint_switch_store_synced;
+        }
+        if let Some(target) = target {
+            evidence.target_endpoint_switch_store_synced =
+                target.target_endpoint_switch_store_synced;
+        }
+        evidence.compatible_reconnect_preserves_edge_id = source
+            .is_some_and(|source| source.compatible_reconnect_preserves_edge_id)
+            && target.is_some_and(|target| target.compatible_reconnect_preserves_edge_id);
+        evidence.invalid_reconnect_rolls_back_projection =
+            product_invalid_reconnect_rollback_probe();
+        evidence.empty_reconnect_reports_drop = product_reconnect_empty_drop_probe();
+        evidence.second_gesture_after_rejection_clears_planning_error =
+            product_second_reconnect_after_rejection_probe();
+        evidence
+    }
+
+    fn product_reconnect_empty_drop_probe() -> bool {
         let store = make_demo_store();
         let Ok((document, _projection)) = project_store(&store) else {
             return false;
@@ -6249,39 +6454,24 @@ mod tests {
         {
             return false;
         }
-
-        let old_target = endpoint_document_position(
+        let Some(old_target) = endpoint_document_position(
             editor.document(),
             JellyNodeId::from_u128(3),
             JellyPortId::from_u128(30),
-        );
-        let new_target = endpoint_document_position(
-            editor.document(),
-            JellyNodeId::from_u128(4),
-            JellyPortId::from_u128(40),
-        );
-        let (Some(old_target), Some(new_target)) = (old_target, new_target) else {
+        ) else {
             return false;
         };
-
-        let old_target_view = editor.viewport().document_to_view(old_target);
-        let new_target_view = editor.viewport().document_to_view(new_target);
+        let release_point = point(px(760.0), px(430.0));
         if editor
             .handle_event(CanvasEvent::PointerDown {
-                position: old_target_view,
+                position: editor.viewport().document_to_view(old_target),
                 button: PointerButton::Primary,
                 modifiers: CanvasKeyModifiers::default(),
             })
             .is_err()
             || editor
-                .handle_event(CanvasEvent::PointerMove {
-                    position: new_target_view,
-                    modifiers: CanvasKeyModifiers::default(),
-                })
-                .is_err()
-            || editor
                 .handle_event(CanvasEvent::PointerUp {
-                    position: new_target_view,
+                    position: editor.viewport().document_to_view(release_point),
                     button: PointerButton::Primary,
                     modifiers: CanvasKeyModifiers::default(),
                 })
@@ -6290,34 +6480,155 @@ mod tests {
             return false;
         }
 
-        let Some(edge) = editor.document().edge(&canvas_edge_id) else {
-            return false;
-        };
-        if !edge
-            .target
-            .handle_id
-            .as_ref()
-            .is_some_and(|handle| handle.as_str() == canvas_port_id(&JellyPortId::from_u128(40)))
-        {
-            return false;
-        }
-
-        let adapter = OpenGpuiAdapter::default();
-        let Ok(transactions) =
-            canvas_document_connection_sync_transactions(&adapter, &store, editor.document())
-        else {
-            return false;
-        };
-        transactions
-            .iter()
-            .flat_map(GraphTransaction::ops)
-            .any(|op| {
-                matches!(
-                    op,
-                    GraphOp::SetEdgeEndpoints { id, to, .. }
-                        if *id == edge_id && to.to == JellyPortId::from_u128(40)
-                )
+        let release = editor.take_connection_release();
+        let edge_unchanged = editor.document().edge(&canvas_edge_id).is_some_and(|edge| {
+            edge.source.handle_id.as_ref().is_some_and(|handle| {
+                handle.as_str() == canvas_port_id(&JellyPortId::from_u128(20))
+            }) && edge.target.handle_id.as_ref().is_some_and(|handle| {
+                handle.as_str() == canvas_port_id(&JellyPortId::from_u128(30))
             })
+        });
+        edge_unchanged
+            && matches!(
+                release,
+                Some(CanvasConnectionRelease::ReconnectDropped(drop))
+                    if drop.edge_id == canvas_edge_id
+                        && drop.endpoint == CanvasConnectionEndpointRole::Target
+                        && drop.fixed.handle_id.as_ref().is_some_and(|handle| handle.as_str() == canvas_port_id(&JellyPortId::from_u128(20)))
+            )
+    }
+
+    fn product_invalid_reconnect_rollback_probe() -> bool {
+        product_rejected_reconnect_projection_refresh().is_some_and(|outcome| {
+            outcome.invalid_reconnect_rejected && outcome.refreshed_to_store_projection
+        })
+    }
+
+    fn product_second_reconnect_after_rejection_probe() -> bool {
+        product_rejected_reconnect_projection_refresh().is_some_and(|outcome| {
+            outcome.invalid_reconnect_rejected
+                && outcome.refreshed_to_store_projection
+                && outcome.second_empty_drop_did_not_replay_error
+        })
+    }
+
+    struct ProductRejectedReconnectOutcome {
+        invalid_reconnect_rejected: bool,
+        refreshed_to_store_projection: bool,
+        second_empty_drop_did_not_replay_error: bool,
+    }
+
+    fn product_rejected_reconnect_projection_refresh() -> Option<ProductRejectedReconnectOutcome> {
+        let mut store = make_demo_store();
+        let blocked_target = JellyPortId::from_u128(40);
+        store
+            .dispatch_transaction(&GraphTransaction::from_ops([
+                GraphOp::SetPortConnectableEnd {
+                    id: blocked_target,
+                    from: None,
+                    to: Some(false),
+                },
+            ]))
+            .ok()?;
+        let (document, _projection) = project_store(&store).ok()?;
+        let mut editor = editor_for_document(document).ok()?;
+        let edge_id = JellyEdgeId::from_u128(200);
+        let canvas_edge_id = open_gpui_canvas::EdgeId::from(canvas_edge_id(&edge_id));
+        editor
+            .apply_tool_intent(CanvasToolIntent::ReplaceSelection(HitTarget::Edge(
+                canvas_edge_id.clone(),
+            )))
+            .ok()?;
+        let old_target = endpoint_document_position(
+            editor.document(),
+            JellyNodeId::from_u128(3),
+            JellyPortId::from_u128(30),
+        )?;
+        let blocked_target_point = endpoint_document_position(
+            editor.document(),
+            JellyNodeId::from_u128(4),
+            blocked_target,
+        )?;
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: editor.viewport().document_to_view(old_target),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .ok()?;
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: editor.viewport().document_to_view(blocked_target_point),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .ok()?;
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: editor.viewport().document_to_view(blocked_target_point),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .ok()?;
+
+        let invalid_reconnect_rejected = matches!(
+            canvas_document_connection_sync_transactions(
+                &OpenGpuiAdapter::default(),
+                &store,
+                editor.document(),
+            ),
+            Err(OpenGpuiConnectionSyncError::ReconnectRejected { .. })
+        );
+        let (refreshed_document, _projection) = project_store(&store).ok()?;
+        let refreshed_to_store_projection =
+            refreshed_document
+                .edge(&canvas_edge_id)
+                .is_some_and(|edge| {
+                    edge.target.handle_id.as_ref().is_some_and(|handle| {
+                        handle.as_str() == canvas_port_id(&JellyPortId::from_u128(30))
+                    })
+                });
+        let mut refreshed_editor = editor_for_document(refreshed_document).ok()?;
+        refreshed_editor
+            .apply_tool_intent(CanvasToolIntent::ReplaceSelection(HitTarget::Edge(
+                canvas_edge_id.clone(),
+            )))
+            .ok()?;
+        let old_target = endpoint_document_position(
+            refreshed_editor.document(),
+            JellyNodeId::from_u128(3),
+            JellyPortId::from_u128(30),
+        )?;
+        let release_point = point(px(780.0), px(440.0));
+        refreshed_editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: refreshed_editor.viewport().document_to_view(old_target),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .ok()?;
+        refreshed_editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: refreshed_editor.viewport().document_to_view(release_point),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .ok()?;
+        let second_empty_drop_did_not_replay_error = matches!(
+            refreshed_editor.take_connection_release(),
+            Some(CanvasConnectionRelease::ReconnectDropped(_))
+        )
+            && canvas_document_connection_sync_transactions(
+                &OpenGpuiAdapter::default(),
+                &store,
+                refreshed_editor.document(),
+            )
+            .is_ok_and(|transactions| transactions.is_empty());
+
+        Some(ProductRejectedReconnectOutcome {
+            invalid_reconnect_rejected,
+            refreshed_to_store_projection,
+            second_empty_drop_did_not_replay_error,
+        })
     }
 
     fn endpoint_document_position(
@@ -6558,6 +6869,7 @@ mod tests {
         let connect_flow_store_synced = product_connection_store_sync_probe();
         let port_hotspot_path_checked = product_port_hotspot_path_probe();
         let reconnect_affordance_visible = product_reconnect_affordance_probe();
+        let reconnect_sequence_evidence = product_reconnect_sequence_evidence();
         let dropped_wire_gesture_connected = product_dropped_wire_gesture_probe();
 
         let mut report = OpenGpuiHostProductInteractionReport::default();
@@ -6567,6 +6879,7 @@ mod tests {
         report.mark_tool_switcher_visible(product_tool_switcher_visible());
         report.mark_connect_flow_store_synced(connect_flow_store_synced);
         report.mark_reconnect_affordance_visible(reconnect_affordance_visible);
+        report.mark_reconnect_sequence_evidence(reconnect_sequence_evidence);
         report.mark_dropped_wire_gesture_connected(dropped_wire_gesture_connected);
         if let Some(evidence) = graph_affordance_evidence {
             report.mark_graph_affordance_evidence(evidence);
