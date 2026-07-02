@@ -6,6 +6,17 @@ status: active
 
 # Log
 
+- 2026-07-02: Closed out
+  `docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md` on
+  `refactor/docking-flat-motion-runtime`. The shared runtime, Splitter migration, docking executor
+  migration, native proof surface, and ADR 0013 are implemented and verified. Final broad docking
+  nextest and native checks passed; the local `ui-components` nextest filter for
+  `splitter component_api_inventory` compiled but repeatedly hung, so equivalent focused direct
+  `cargo test` gates were used for the Splitter runtime and public-surface inventory. A local ImGui
+  comparison confirmed that `DockNodePreviewDockSetup` / `DockNodePreviewDockRender` compute dock
+  preview geometry from the current hovered target each frame instead of interpolating from previous
+  preview bounds. That supports a focused follow-up to delete Open GPUI overlay `from_bounds`
+  interpolation while keeping pane/divider/zoom retarget motion.
 - 2026-07-02: Started and implemented the shared UI motion runtime foundation from
   `docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md` on
   `refactor/docking-flat-motion-runtime`. `open_gpui_ui_core` now owns renderer-neutral

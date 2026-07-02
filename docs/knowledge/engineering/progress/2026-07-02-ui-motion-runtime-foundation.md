@@ -1,8 +1,8 @@
 ---
 type: Work Progress
 title: UI motion runtime foundation
-status: active
-timestamp: 2026-07-02T22:46:36+08:00
+status: verified
+timestamp: 2026-07-02T23:13:30+08:00
 git_branch: refactor/docking-flat-motion-runtime
 related_plan: docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md
 related_adr:
@@ -15,16 +15,22 @@ git_commits:
   - 0bb5897 refactor(ui-components): use shared motion timeline for splitter
   - d028e31 refactor(docking): use shared motion runtime for transitions
   - 55628ca test(docking): expose motion runtime proof summary
+  - dbb8c2f docs(ui): record motion runtime foundation boundary
 verified_by:
   - cargo fmt --all -- --check
   - git diff --check
+  - cargo nextest run -p open-gpui-ui-core motion split --no-fail-fast
   - cargo nextest run -p open-gpui-ui-core motion --no-fail-fast
   - cargo test -p open-gpui-ui-components runtime_animates_programmatic_fraction_changes --lib -- --nocapture
   - cargo test -p open-gpui-ui-components runtime_retargets_from_sampled_fraction_and_drag_syncs_immediately --lib -- --nocapture
   - cargo test -p open-gpui-ui-components runtime_reduced_motion_completes_without_transition --lib -- --nocapture
   - cargo test -p open-gpui-ui-components --test public_surface component_api_inventory_tracks_public_method_surface -- --nocapture
   - cargo nextest run -p open-gpui-docking transition_executor_samples_timeline_and_reveal_geometry transition_executor_replaces_active_execution_and_completes_reduced_motion_immediately overlay_retarget_keeps_tab_preview_layers_at_current_target_bounds host_unzoom_command_retargets_from_active_zoom_sample public_focus_command_uses_immediate_overlay_only_feedback --no-fail-fast
+  - cargo nextest run -p open-gpui-docking transition_executor_samples_timeline_and_reveal_geometry transition_executor_replaces_active_execution_and_completes_reduced_motion_immediately overlay_retarget_keeps_tab_preview_layers_at_current_target_bounds --no-fail-fast
+  - cargo nextest run -p open-gpui-docking --no-fail-fast
+  - cargo check -p open-gpui-docking-native
   - cargo nextest run -p open-gpui-docking-native runtime_status_panel_formats_platform_capabilities --no-fail-fast
+  - python $HOME/.codex/skills/engineering-wiki-memory/scripts/wiki_memory.py validate --root docs/knowledge/engineering
 tags:
   - ui-core
   - motion
@@ -63,11 +69,34 @@ Implemented the shared UI motion runtime foundation from
   semantics.
 - No compositor, spring, keyframe, or broad public animation framework was introduced.
 
-# Current Verification State
+# Verified State
 
 Focused gates have passed for `ui_core`, splitter runtime, docking transition retargeting, zoom
-retargeting, focus immediacy, and the native proof summary. Final broad package gates and
-engineering wiki validation still need to run before marking this progress record verified.
+retargeting, focus immediacy, and the native proof summary. The broad docking package gate passed
+with `cargo nextest run -p open-gpui-docking --no-fail-fast` after the shared runtime migration.
+The docking native package builds and its proof-summary test passes.
+
+The planned `cargo nextest run -p open-gpui-ui-components splitter component_api_inventory
+--no-fail-fast` filter compiled but repeatedly hung in the local runner. The equivalent focused
+behavior and public-surface checks passed with direct `cargo test` commands listed above.
+
+# Shipping Review
+
+The final manual diff scan found no actionable correctness issue in the shared runtime,
+`Splitter` migration, docking executor migration, overlay retarget behavior, or native proof
+surface. A dedicated simplify/code-review subagent pass was attempted but did not return before the
+local timeout; it was interrupted without workspace changes. The remaining larger animation topics
+stay outside this plan: fuller flat-render authority, compositor/native animation backends, and
+future zoom/focus motion refinements.
+
+# Follow-up Note
+
+Dear ImGui's docking preview path computes preview rectangles from the current hovered target each
+frame in `DockNodePreviewDockSetup` / `DockNodePreviewDockRender`. It does not preserve prior drop
+preview bounds for cross-target geometry interpolation. That makes overlay `from_bounds`
+interpolation in Open GPUI a good candidate for deletion in a focused follow-up: drop-preview
+geometry should stay pinned to the current semantic target, while pane, divider, and zoom layout
+motion can continue using sampled retargeting.
 
 # Citations
 
