@@ -3,8 +3,9 @@ use open_gpui::{
     px, size,
 };
 use open_gpui_ui_components::component_contract::{
-    COMPONENT_API_INVENTORY, PUBLIC_SURFACE_OWNER_MAP, SurfaceGalleryStatus,
-    component_contract_family, component_contract_gallery_status,
+    COMPONENT_API_INVENTORY, ComponentRegistryGalleryStatus, ComponentRegistryVerificationKind,
+    PUBLIC_SURFACE_OWNER_MAP, SurfaceGalleryStatus, component_contract_family,
+    component_contract_gallery_status, component_registry_manifest,
 };
 use open_gpui_ui_components::{
     A11yLabelSource, A11yValueKind, AlertDialogIntent, AlertDialogOpenMode, BadgeVariant,
@@ -3321,6 +3322,140 @@ fn gallery_catalog_manifest_tracks_components_and_overlay_catalogs() {
             && !entry.sample_selector.trim().is_empty()
             && !entry.catalog_selector().trim().is_empty()
     }));
+}
+
+#[test]
+fn gallery_catalog_entries_satisfy_component_registry_manifest_evidence() {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let manifest = component_registry_manifest();
+    let component_catalog = pages::components::COMPONENT_CATALOG
+        .iter()
+        .map(|entry| (entry.name, entry))
+        .collect::<BTreeMap<_, _>>();
+    let overlay_names = pages::overlay::OVERLAY_CATALOG
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+
+    for entry in manifest
+        .entries
+        .iter()
+        .filter(|entry| entry.gallery.status != ComponentRegistryGalleryStatus::NotInGallery)
+    {
+        assert!(
+            entry.verification.iter().any(|owner| {
+                owner.kind == ComponentRegistryVerificationKind::Gallery
+                    && owner.target.contains("examples/ui-foundation-gallery")
+            }),
+            "manifest row `{}` should name a gallery verification owner",
+            entry.name
+        );
+
+        match entry.gallery.status {
+            ComponentRegistryGalleryStatus::OfficialComponent
+            | ComponentRegistryGalleryStatus::AdapterOnly
+            | ComponentRegistryGalleryStatus::InternalAnatomy
+            | ComponentRegistryGalleryStatus::StateContract => {
+                let catalog_entry = component_catalog
+                    .get(entry.name.as_str())
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "manifest row `{}` claims Components gallery evidence but no catalog row exists",
+                            entry.name
+                        )
+                    });
+                let expected_status = match entry.gallery.status {
+                    ComponentRegistryGalleryStatus::OfficialComponent => {
+                        pages::components::ComponentCatalogStatus::Official
+                    }
+                    ComponentRegistryGalleryStatus::AdapterOnly => {
+                        pages::components::ComponentCatalogStatus::AdapterOnly
+                    }
+                    ComponentRegistryGalleryStatus::InternalAnatomy => {
+                        pages::components::ComponentCatalogStatus::InternalAnatomy
+                    }
+                    ComponentRegistryGalleryStatus::StateContract => {
+                        pages::components::ComponentCatalogStatus::StateContract
+                    }
+                    ComponentRegistryGalleryStatus::OfficialOverlay
+                    | ComponentRegistryGalleryStatus::NotInGallery => unreachable!(),
+                };
+                assert_eq!(
+                    catalog_entry.status, expected_status,
+                    "manifest row `{}` should agree with Components catalog status",
+                    entry.name
+                );
+                if entry.gallery.status == ComponentRegistryGalleryStatus::OfficialComponent {
+                    assert!(
+                        catalog_entry.sample_selector.is_some(),
+                        "official manifest row `{}` needs a rendered sample selector",
+                        entry.name
+                    );
+                }
+                if entry.gallery.status == ComponentRegistryGalleryStatus::StateContract {
+                    assert!(
+                        catalog_entry.state_contract_selector.is_some(),
+                        "state-contract manifest row `{}` needs a readout selector",
+                        entry.name
+                    );
+                }
+            }
+            ComponentRegistryGalleryStatus::OfficialOverlay => {
+                assert!(
+                    overlay_names.contains(entry.name.as_str()),
+                    "manifest row `{}` claims overlay gallery evidence but no overlay catalog row exists",
+                    entry.name
+                );
+            }
+            ComponentRegistryGalleryStatus::NotInGallery => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn gallery_story_contracts_reference_component_registry_manifest_rows() {
+    use std::collections::BTreeMap;
+
+    let manifest_entries = component_registry_manifest()
+        .entries
+        .into_iter()
+        .map(|entry| (entry.name.clone(), entry))
+        .collect::<BTreeMap<_, _>>();
+
+    for story in pages::components::component_story_contracts() {
+        let entry = manifest_entries.get(story.owner_name()).unwrap_or_else(|| {
+            panic!(
+                "component story `{}` should reference a manifest row",
+                story.owner_name()
+            )
+        });
+        assert!(
+            matches!(
+                entry.gallery.status,
+                ComponentRegistryGalleryStatus::OfficialComponent
+                    | ComponentRegistryGalleryStatus::StateContract
+            ),
+            "component story `{}` should be official component or state-contract evidence, got {:?}",
+            story.owner_name(),
+            entry.gallery.status
+        );
+    }
+
+    for story in pages::overlay::overlay_story_contracts() {
+        let entry = manifest_entries.get(story.owner_name()).unwrap_or_else(|| {
+            panic!(
+                "overlay story `{}` should reference a manifest row",
+                story.owner_name()
+            )
+        });
+        assert_eq!(
+            entry.gallery.status,
+            ComponentRegistryGalleryStatus::OfficialOverlay,
+            "overlay story `{}` should be official overlay evidence",
+            story.owner_name()
+        );
+    }
 }
 
 #[test]
