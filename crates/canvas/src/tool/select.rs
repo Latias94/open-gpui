@@ -512,7 +512,7 @@ impl SelectToolStateMachine {
             CanvasConnectionHit::Empty => {
                 effects.push(CanvasToolEffect::SetConnectionRelease(Some(
                     CanvasConnectionRelease::Rejected(CanvasRejectedConnectionRelease {
-                        reason: CanvasConnectionRejectReason::InvalidTarget,
+                        reason: CanvasConnectionRejectReason::NoTarget,
                         source: None,
                         edge_id: Some(edge_id.clone()),
                         endpoint: Some(endpoint),
