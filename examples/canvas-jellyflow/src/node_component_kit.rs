@@ -1,8 +1,11 @@
-use std::{collections::BTreeMap, rc::Rc};
+use std::rc::Rc;
 
 use jellyflow::{
     core::{CanvasSize, NodeId as JellyNodeId},
-    runtime::schema::NodeSurfaceSlotProjection,
+    runtime::{
+        runtime::measurement::{NodeInternalsInvalidationReason, NodeMeasurementOutcome},
+        schema::NodeSurfaceSlotProjection,
+    },
 };
 use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiBoundsCollector, OpenGpuiControlEventValue, OpenGpuiControlPlan,
@@ -14,7 +17,7 @@ use jellyflow_open_gpui::{
 };
 use open_gpui::{
     AnyElement, App, Bounds, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Window, div,
-    measured_element, prelude::*, px,
+    measured_element, prelude::*, px, rgb,
 };
 use open_gpui_ui_components::prelude::Sizable;
 use open_gpui_ui_components::{
@@ -31,7 +34,10 @@ pub struct OpenGpuiNodeComponentProps {
     pub renderer_key: String,
     pub title: String,
     pub selected: bool,
+    pub hovered: bool,
+    pub focused: bool,
     pub dragging: bool,
+    pub resizing: bool,
     pub disabled: bool,
     pub hidden: bool,
     pub connectable: bool,
@@ -47,7 +53,10 @@ impl OpenGpuiNodeComponentProps {
             renderer_key: context.renderer_key.clone(),
             title: context.title.clone(),
             selected: context.state.selected,
+            hovered: context.state.hovered,
+            focused: context.state.focused,
             dragging: context.state.dragging,
+            resizing: context.state.resizing,
             disabled: context.state.disabled,
             hidden: context.state.hidden,
             connectable: !context.state.disabled && !context.state.hidden,
@@ -70,75 +79,95 @@ impl<'a, Services> OpenGpuiNodeComponentContext<'a, Services> {
         }
     }
 
-    pub fn host(&self) -> &'a OpenGpuiNodeRendererHostContext<'a, Services> {
-        self.host
+    pub fn semantic(&self) -> &'a OpenGpuiNodeRendererContext {
+        self.host.semantic()
+    }
+
+    pub fn services(&self) -> &'a Services {
+        self.host.services()
     }
 
     pub fn props(&self) -> &OpenGpuiNodeComponentProps {
         &self.props
     }
-}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OpenGpuiNodeComponentRegistration {
-    pub renderer_key: String,
-    pub label: String,
-}
+    pub fn node_id(&self) -> JellyNodeId {
+        self.host.node_id()
+    }
 
-impl OpenGpuiNodeComponentRegistration {
-    pub fn new(renderer_key: impl Into<String>, label: impl Into<String>) -> Self {
-        Self {
-            renderer_key: renderer_key.into(),
-            label: label.into(),
-        }
+    pub fn renderer_key(&self) -> &str {
+        self.host.renderer_key()
+    }
+
+    pub fn surface_slots(&self) -> &[NodeSurfaceSlotProjection] {
+        self.host.surface_slots()
+    }
+
+    pub fn repeatables(&self) -> &[jellyflow_open_gpui::OpenGpuiRepeatableSurfaceLayout] {
+        self.host.repeatables()
+    }
+
+    pub fn repeatable_items(&self) -> &[jellyflow_open_gpui::OpenGpuiRepeatableItemLayout] {
+        self.host.repeatable_items()
+    }
+
+    pub fn action_menus(&self) -> &[OpenGpuiMenuPlan] {
+        self.host.action_menus()
+    }
+
+    pub fn toolbar_menu(&self) -> &OpenGpuiMenuPlan {
+        self.host.toolbar_menu()
+    }
+
+    pub fn slot_measurement_id(&self, slot_key: impl Into<String>) -> OpenGpuiMeasurementId {
+        self.host.slot_measurement_id(slot_key)
+    }
+
+    pub fn control_measurement_id(
+        &self,
+        slot_key: impl AsRef<str>,
+        control_key: impl Into<String>,
+    ) -> OpenGpuiMeasurementId {
+        self.host.control_measurement_id(slot_key, control_key)
+    }
+
+    pub fn repeatable_item_measurement_id(
+        &self,
+        slot_key: impl Into<String>,
+        item_id: impl Into<String>,
+    ) -> OpenGpuiMeasurementId {
+        self.host.repeatable_item_measurement_id(slot_key, item_id)
+    }
+
+    pub fn anchor_measurement_id(&self, anchor_key: impl Into<String>) -> OpenGpuiMeasurementId {
+        self.host.anchor_measurement_id(anchor_key)
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct OpenGpuiNodeComponentRegistry {
-    components: BTreeMap<String, OpenGpuiNodeComponentRegistration>,
-}
-
-impl OpenGpuiNodeComponentRegistry {
-    pub fn new() -> Self {
-        Self::default()
+impl OpenGpuiNodeComponentContext<'_, crate::GpuiNodeRendererServices> {
+    pub(crate) fn actions(&self) -> NodeComponentKitActions {
+        crate::node_component_kit_actions(self.services().view.clone())
     }
 
-    pub fn register(
-        &mut self,
-        renderer_key: impl Into<String>,
-        label: impl Into<String>,
-    ) -> &mut Self {
-        let renderer_key = renderer_key.into();
-        self.components.insert(
-            renderer_key.clone(),
-            OpenGpuiNodeComponentRegistration::new(renderer_key, label),
-        );
-        self
-    }
-
-    pub fn with_components<I, K, L>(mut self, components: I) -> Self
-    where
-        I: IntoIterator<Item = (K, L)>,
-        K: Into<String>,
-        L: Into<String>,
-    {
-        for (renderer_key, label) in components {
-            self.register(renderer_key, label);
-        }
-        self
-    }
-
-    pub fn contains(&self, renderer_key: &str) -> bool {
-        self.components.contains_key(renderer_key)
-    }
-
-    pub fn registration(&self, renderer_key: &str) -> Option<&OpenGpuiNodeComponentRegistration> {
-        self.components.get(renderer_key)
-    }
-
-    pub fn keys(&self) -> impl Iterator<Item = &str> {
-        self.components.keys().map(String::as_str)
+    pub(crate) fn request_node_internals_update(
+        &self,
+        reason: NodeInternalsInvalidationReason,
+        cx: &mut App,
+    ) -> Option<NodeMeasurementOutcome> {
+        let node_id = self.node_id();
+        self.services()
+            .view
+            .update(cx, |this, cx| {
+                let outcome =
+                    crate::request_node_internals_update(&mut this.store, node_id, reason);
+                if outcome.changed() {
+                    this.measured_regions.clear();
+                    this.measurement_frame_pending = true;
+                    cx.notify();
+                }
+                outcome
+            })
+            .ok()
     }
 }
 
@@ -209,6 +238,44 @@ pub fn render_measured_region(
         collector.record_id(id.clone(), gpui_view_bounds(bounds), global_id);
     })
     .into_any_element()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OpenGpuiNodeAnchorPlacement {
+    LeftRail,
+    RightRail,
+    Inline,
+}
+
+pub fn render_handle_region(
+    id: OpenGpuiMeasurementId,
+    collector: OpenGpuiBoundsCollector,
+    placement: OpenGpuiNodeAnchorPlacement,
+) -> AnyElement {
+    let anchor = match placement {
+        OpenGpuiNodeAnchorPlacement::LeftRail => {
+            div().w(px(8.0)).h(px(20.0)).rounded_sm().bg(rgb(0x2563eb))
+        }
+        OpenGpuiNodeAnchorPlacement::RightRail => {
+            div().w(px(8.0)).h(px(20.0)).rounded_sm().bg(rgb(0x2563eb))
+        }
+        OpenGpuiNodeAnchorPlacement::Inline => div()
+            .flex_shrink_0()
+            .w(px(8.0))
+            .h(px(18.0))
+            .rounded_sm()
+            .bg(rgb(0x2563eb)),
+    };
+
+    render_measured_region(id, collector, anchor)
+}
+
+pub fn render_anchor_region(
+    id: OpenGpuiMeasurementId,
+    collector: OpenGpuiBoundsCollector,
+    placement: OpenGpuiNodeAnchorPlacement,
+) -> AnyElement {
+    render_handle_region(id, collector, placement)
 }
 
 pub fn gpui_view_bounds(bounds: Bounds<Pixels>) -> OpenGpuiViewBounds {

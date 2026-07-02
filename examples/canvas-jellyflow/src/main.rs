@@ -757,6 +757,8 @@ impl JellyflowCanvasView {
     ) -> Vec<AnyElement> {
         let zoom = model.viewport().zoom;
         let collector = self.measured_regions.clone();
+        let renderer_registry = demo_node_renderer_registry();
+        let renderers = demo_custom_node_renderers();
         self.editor
             .document()
             .nodes()
@@ -771,6 +773,8 @@ impl JellyflowCanvasView {
                         surface,
                         collector.clone(),
                         view,
+                        &renderer_registry,
+                        &renderers,
                     )
                     .into_any_element(),
                 )
@@ -1506,7 +1510,7 @@ fn apply_demo_dropped_wire_insert(
     Ok(outcome)
 }
 
-fn request_node_internals_update(
+pub(crate) fn request_node_internals_update(
     store: &mut NodeGraphStore,
     node_id: JellyNodeId,
     reason: NodeInternalsInvalidationReason,
@@ -1832,16 +1836,16 @@ fn render_node_surface(
     surface: NodeSurfaceSummary,
     collector: OpenGpuiBoundsCollector,
     view: WeakEntity<JellyflowCanvasView>,
+    registry: &OpenGpuiNodeRendererRegistry,
+    renderers: &GpuiNodeRendererTable,
 ) -> impl IntoElement {
-    let registry = demo_node_renderer_registry();
-    let renderers = demo_custom_node_renderers();
     let services = GpuiNodeRendererServices { collector, view };
     let rendered = registry.render_with_host(
         &surface.renderer_context,
         &services,
-        &renderers,
+        renderers,
         |host, _fallback| {
-            render_descriptor_fallback_node_surface(
+            render_descriptor_fallback_node_content(
                 bounds,
                 node_id,
                 surface.clone(),
@@ -1851,17 +1855,26 @@ fn render_node_surface(
         },
     );
 
-    match rendered.source {
-        OpenGpuiNodeRendererOutputSource::Custom(_) => render_node_surface_shell(bounds, &surface)
-            .child(rendered.output)
-            .into_any_element(),
-        OpenGpuiNodeRendererOutputSource::Fallback(_) => rendered.output,
-    }
+    let chrome = match &rendered.source {
+        OpenGpuiNodeRendererOutputSource::Custom(_) => OpenGpuiNodeWrapperChrome::Custom,
+        OpenGpuiNodeRendererOutputSource::Fallback(_) => OpenGpuiNodeWrapperChrome::Fallback,
+    };
+
+    render_open_gpui_node_wrapper(bounds, &surface, chrome)
+        .child(rendered.output)
+        .into_any_element()
 }
 
-fn render_node_surface_shell(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OpenGpuiNodeWrapperChrome {
+    Custom,
+    Fallback,
+}
+
+fn render_open_gpui_node_wrapper(
     bounds: Bounds<Pixels>,
     surface: &NodeSurfaceSummary,
+    chrome: OpenGpuiNodeWrapperChrome,
 ) -> open_gpui::Div {
     let zoom = surface.zoom;
     let pad = if zoom >= 1.0 { px(10.0) } else { px(8.0) };
@@ -1870,7 +1883,7 @@ fn render_node_surface_shell(
     let inner_width = (bounds.size.width - pad * 2.0).max(px(0.0));
     let inner_height = (bounds.size.height - pad * 2.0).max(px(0.0));
 
-    div()
+    let wrapper = div()
         .absolute()
         .left(left)
         .top(top)
@@ -1879,10 +1892,28 @@ fn render_node_surface_shell(
         .flex_shrink_0()
         .min_w(px(0.0))
         .min_h(px(0.0))
-        .overflow_hidden()
+        .overflow_hidden();
+
+    match chrome {
+        OpenGpuiNodeWrapperChrome::Custom => wrapper,
+        OpenGpuiNodeWrapperChrome::Fallback => {
+            let accent = if surface.selected {
+                rgb(0x2563eb)
+            } else {
+                rgb(0x475569)
+            };
+
+            wrapper
+                .rounded_sm()
+                .border_1()
+                .border_color(accent)
+                .bg(rgb(0xffffff))
+                .shadow_sm()
+        }
+    }
 }
 
-fn render_descriptor_fallback_node_surface(
+fn render_descriptor_fallback_node_content(
     bounds: Bounds<Pixels>,
     node_id: JellyNodeId,
     surface: NodeSurfaceSummary,
@@ -1918,13 +1949,10 @@ fn render_descriptor_fallback_node_surface(
         rgb(0x475569)
     };
 
-    render_node_surface_shell(bounds, &surface)
-        .rounded_sm()
-        .border_1()
-        .border_color(accent)
-        .bg(rgb(0xffffff))
+    div()
+        .relative()
+        .size_full()
         .overflow_hidden()
-        .shadow_sm()
         .child(
             div()
                 .absolute()
