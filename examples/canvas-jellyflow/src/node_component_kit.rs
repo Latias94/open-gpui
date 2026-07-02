@@ -1,6 +1,9 @@
 use std::rc::Rc;
 
-use jellyflow::{core::NodeId as JellyNodeId, runtime::schema::NodeSurfaceSlotProjection};
+use jellyflow::{
+    core::{CanvasSize, NodeId as JellyNodeId},
+    runtime::schema::NodeSurfaceSlotProjection,
+};
 use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiBoundsCollector, OpenGpuiControlEventValue, OpenGpuiControlPlan,
     OpenGpuiControlPrimitive, OpenGpuiMeasurementId, OpenGpuiMenuPlan,
@@ -95,6 +98,219 @@ pub fn gpui_view_bounds(bounds: Bounds<Pixels>) -> OpenGpuiViewBounds {
         OpenGpuiViewPoint::new(bounds.origin.x.as_f32(), bounds.origin.y.as_f32()),
         OpenGpuiViewSize::new(bounds.size.width.as_f32(), bounds.size.height.as_f32()),
     )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AdaptiveNodeLayoutMode {
+    Full,
+    Compact,
+    Shell,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AdaptiveNodeLayoutRegion {
+    pub key: String,
+    pub top: f32,
+    pub height: f32,
+    pub mode: AdaptiveNodeLayoutMode,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AdaptiveRepeatableLayoutPlan {
+    pub region: AdaptiveNodeLayoutRegion,
+    pub visible_items: usize,
+    pub hidden_items: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AdaptiveNodeLayoutStack {
+    cursor_y: f32,
+    bottom_y: f32,
+    gap: f32,
+    regions: Vec<AdaptiveNodeLayoutRegion>,
+}
+
+impl AdaptiveNodeLayoutStack {
+    pub fn new(
+        node_size: CanvasSize,
+        pad: f32,
+        header_height: f32,
+        footer_height: f32,
+        gap: f32,
+    ) -> Self {
+        let cursor_y = pad + header_height + gap;
+        let bottom_y = (node_size.height - pad - footer_height).max(cursor_y);
+        Self {
+            cursor_y,
+            bottom_y,
+            gap,
+            regions: Vec::new(),
+        }
+    }
+
+    pub fn from_available_height(available_height: f32, gap: f32) -> Self {
+        Self {
+            cursor_y: 0.0,
+            bottom_y: available_height.max(0.0),
+            gap,
+            regions: Vec::new(),
+        }
+    }
+
+    pub fn available_height(&self) -> f32 {
+        (self.bottom_y - self.cursor_y).max(0.0)
+    }
+
+    pub fn regions(&self) -> &[AdaptiveNodeLayoutRegion] {
+        &self.regions
+    }
+
+    pub fn reserve_region(
+        &mut self,
+        key: impl Into<String>,
+        full_height: f32,
+        compact_height: f32,
+    ) -> AdaptiveNodeLayoutRegion {
+        let available = self.available_height();
+        let mode = if available >= full_height {
+            AdaptiveNodeLayoutMode::Full
+        } else if available >= compact_height {
+            AdaptiveNodeLayoutMode::Compact
+        } else {
+            AdaptiveNodeLayoutMode::Shell
+        };
+        let height = match mode {
+            AdaptiveNodeLayoutMode::Full => full_height,
+            AdaptiveNodeLayoutMode::Compact => available.min(full_height),
+            AdaptiveNodeLayoutMode::Shell => available,
+        }
+        .max(0.0);
+        self.push_region(key, height, mode)
+    }
+
+    pub fn reserve_repeatable_list(
+        &mut self,
+        key: impl Into<String>,
+        item_count: usize,
+        max_visible_items: usize,
+        row_height: f32,
+        row_gap: f32,
+        overflow_indicator_height: f32,
+    ) -> AdaptiveRepeatableLayoutPlan {
+        let key = key.into();
+        let available = self.available_height();
+        let visible_items = repeatable_visible_items_for_height(
+            available,
+            item_count,
+            max_visible_items,
+            row_height,
+            row_gap,
+            overflow_indicator_height,
+        );
+        let hidden_items = item_count.saturating_sub(visible_items);
+        let needed_height = repeatable_list_height(
+            visible_items,
+            hidden_items,
+            row_height,
+            row_gap,
+            overflow_indicator_height,
+        );
+        let mode = if hidden_items == 0 && visible_items == item_count {
+            AdaptiveNodeLayoutMode::Full
+        } else if visible_items > 0 {
+            AdaptiveNodeLayoutMode::Compact
+        } else {
+            AdaptiveNodeLayoutMode::Shell
+        };
+        let region = self.push_region(key, needed_height.min(available), mode);
+
+        AdaptiveRepeatableLayoutPlan {
+            region,
+            visible_items,
+            hidden_items,
+        }
+    }
+
+    fn push_region(
+        &mut self,
+        key: impl Into<String>,
+        height: f32,
+        mode: AdaptiveNodeLayoutMode,
+    ) -> AdaptiveNodeLayoutRegion {
+        let region = AdaptiveNodeLayoutRegion {
+            key: key.into(),
+            top: self.cursor_y,
+            height,
+            mode,
+        };
+        self.cursor_y = (self.cursor_y + height + self.gap).min(self.bottom_y);
+        self.regions.push(region.clone());
+        region
+    }
+}
+
+pub fn adaptive_repeatable_list_plan(
+    key: impl Into<String>,
+    available_height: f32,
+    item_count: usize,
+    max_visible_items: usize,
+    row_height: f32,
+    row_gap: f32,
+    overflow_indicator_height: f32,
+) -> AdaptiveRepeatableLayoutPlan {
+    AdaptiveNodeLayoutStack::from_available_height(available_height, row_gap)
+        .reserve_repeatable_list(
+            key,
+            item_count,
+            max_visible_items,
+            row_height,
+            row_gap,
+            overflow_indicator_height,
+        )
+}
+
+fn repeatable_visible_items_for_height(
+    available_height: f32,
+    item_count: usize,
+    max_visible_items: usize,
+    row_height: f32,
+    row_gap: f32,
+    overflow_indicator_height: f32,
+) -> usize {
+    let max_visible = item_count.min(max_visible_items);
+    (0..=max_visible)
+        .rev()
+        .find(|visible_items| {
+            repeatable_list_height(
+                *visible_items,
+                item_count.saturating_sub(*visible_items),
+                row_height,
+                row_gap,
+                overflow_indicator_height,
+            ) <= available_height.max(0.0)
+        })
+        .unwrap_or(0)
+}
+
+fn repeatable_list_height(
+    visible_items: usize,
+    hidden_items: usize,
+    row_height: f32,
+    row_gap: f32,
+    overflow_indicator_height: f32,
+) -> f32 {
+    let row_count = visible_items + usize::from(hidden_items > 0);
+    if row_count == 0 {
+        return 0.0;
+    }
+
+    let visible_height = visible_items as f32 * row_height;
+    let overflow_height = if hidden_items > 0 {
+        overflow_indicator_height
+    } else {
+        0.0
+    };
+    visible_height + overflow_height + row_gap * row_count.saturating_sub(1) as f32
 }
 
 pub fn render_interactive_control_region(child: AnyElement) -> AnyElement {
@@ -526,5 +742,57 @@ fn action_menu_item_label(action: &OpenGpuiActionPlan) -> String {
         (Some(shortcut), None) => format!("{} · {}", action.label, shortcut),
         (None, Some(reason)) => format!("{} · {}", action.label, reason),
         (None, None) => action.label.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adaptive_layout_stack_downgrades_regions_before_overflowing_node() {
+        let mut layout = AdaptiveNodeLayoutStack::new(
+            CanvasSize {
+                width: 320.0,
+                height: 150.0,
+            },
+            10.0,
+            24.0,
+            10.0,
+            6.0,
+        );
+
+        let preview = layout.reserve_region("preview", 54.0, 32.0);
+        let control = layout.reserve_region("control", 40.0, 28.0);
+        let shell = layout.reserve_region("actions", 34.0, 24.0);
+
+        assert_eq!(preview.mode, AdaptiveNodeLayoutMode::Full);
+        assert_eq!(control.mode, AdaptiveNodeLayoutMode::Compact);
+        assert_eq!(shell.mode, AdaptiveNodeLayoutMode::Shell);
+        assert!(
+            layout
+                .regions()
+                .iter()
+                .all(|region| region.top + region.height <= 130.0)
+        );
+    }
+
+    #[test]
+    fn adaptive_repeatable_plan_reserves_overflow_indicator_height() {
+        let plan = adaptive_repeatable_list_plan("table.columns", 90.0, 5, 4, 30.0, 4.0, 22.0);
+
+        assert_eq!(plan.visible_items, 2);
+        assert_eq!(plan.hidden_items, 3);
+        assert_eq!(plan.region.mode, AdaptiveNodeLayoutMode::Compact);
+        assert!(plan.region.height <= 90.0);
+    }
+
+    #[test]
+    fn adaptive_repeatable_plan_shells_when_rows_cannot_fit() {
+        let plan = adaptive_repeatable_list_plan("shader.inputs", 18.0, 3, 3, 30.0, 4.0, 22.0);
+
+        assert_eq!(plan.visible_items, 0);
+        assert_eq!(plan.hidden_items, 3);
+        assert_eq!(plan.region.mode, AdaptiveNodeLayoutMode::Shell);
     }
 }

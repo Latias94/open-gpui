@@ -34,14 +34,14 @@ use jellyflow_open_gpui::OpenGpuiNodeRendererResolution;
 use jellyflow_open_gpui::{
     OpenGpuiActionPlan, OpenGpuiActionSurface, OpenGpuiAdapter, OpenGpuiAuthoringController,
     OpenGpuiAuthoringOutcome, OpenGpuiAuthoringSkipReason, OpenGpuiBlackboardPlan,
-    OpenGpuiBoundsCollector, OpenGpuiConnectionSyncError, OpenGpuiConnectionSyncRequest,
-    OpenGpuiControlEditPlan, OpenGpuiControlEventValue, OpenGpuiControlPlan,
-    OpenGpuiDroppedWireInsertError, OpenGpuiDynamicPortPolicy, OpenGpuiInspectorPlan,
-    OpenGpuiInspectorSurface, OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource,
-    OpenGpuiMeasurementContext, OpenGpuiMeasurementId,
-    OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource, OpenGpuiMenuPlan,
-    OpenGpuiNodeRendererContext, OpenGpuiNodeRendererOutputSource, OpenGpuiNodeRendererRegistry,
-    OpenGpuiNodeRendererState, OpenGpuiNodeRendererTable,
+    OpenGpuiBoundsCollector, OpenGpuiConnectionPreviewPolicyEvidence, OpenGpuiConnectionSyncError,
+    OpenGpuiConnectionSyncRequest, OpenGpuiControlEditPlan, OpenGpuiControlEventValue,
+    OpenGpuiControlPlan, OpenGpuiDroppedWireInsertError, OpenGpuiDynamicPortPolicy,
+    OpenGpuiGraphAffordanceEvidence, OpenGpuiInspectorPlan, OpenGpuiInspectorSurface,
+    OpenGpuiInspectorTargetBounds, OpenGpuiInspectorTargetSource, OpenGpuiMeasurementContext,
+    OpenGpuiMeasurementId, OpenGpuiMeasurementMode as NodeSurfaceMeasurementSource,
+    OpenGpuiMenuPlan, OpenGpuiNodeRendererContext, OpenGpuiNodeRendererOutputSource,
+    OpenGpuiNodeRendererRegistry, OpenGpuiNodeRendererState, OpenGpuiNodeRendererTable,
     OpenGpuiNodeSurfaceLayout as NodeSurfaceComponentLayout,
     OpenGpuiNodeSurfaceSlotLayout as NodeSurfaceSlotLayout, OpenGpuiNodeTransformSnapshot,
     OpenGpuiProductSurfacePreset, OpenGpuiRepeatableActionPlan,
@@ -49,7 +49,7 @@ use jellyflow_open_gpui::{
     OpenGpuiRepeatableItemProjection as NodeRepeatableItemProjection,
     OpenGpuiRepeatableSurfaceLayout as NodeRepeatableSurfaceLayout,
     OpenGpuiRepeatableSurfaceProjection as NodeRepeatableSurfaceProjection, OpenGpuiViewPoint,
-    apply_dropped_wire_insert, assign_layout_pass_measurement_revision,
+    OpenGpuiWireRouteEvidence, apply_dropped_wire_insert, assign_layout_pass_measurement_revision,
     layout_pass_measurement_from_regions, measured_surface_anchors,
     open_gpui_action_summary_element_id, open_gpui_blackboard_item_element_id,
     open_gpui_blackboard_status_element_id, open_gpui_chrome_fallback_button_element_id,
@@ -6504,6 +6504,7 @@ mod tests {
         let mut product_drag_surfaces = 0;
         let mut hidden_repeatable_overflow = 0;
         let mut repeatable_overflow_indicators = 0;
+        let mut graph_affordance_evidence = None;
 
         for fixture in catalog {
             let (store, document, _projection) =
@@ -6536,6 +6537,10 @@ mod tests {
                     == OpenGpuiHostRendererSource::ProductRenderer
                 {
                     product_drag_surfaces += 1;
+                    graph_affordance_evidence = Some(merge_graph_affordance_evidence(
+                        graph_affordance_evidence,
+                        surface.renderer_context.surface_preset.graph_affordance,
+                    ));
                     hidden_repeatable_overflow += hidden_repeatable_overflow_for_surface(&surface);
                     repeatable_overflow_indicators +=
                         repeatable_overflow_indicator_count_for_surface(&surface);
@@ -6561,8 +6566,71 @@ mod tests {
         report.mark_connect_flow_store_synced(connect_flow_store_synced);
         report.mark_reconnect_affordance_visible(reconnect_affordance_visible);
         report.mark_dropped_wire_gesture_connected(dropped_wire_gesture_connected);
+        if let Some(evidence) = graph_affordance_evidence {
+            report.mark_graph_affordance_evidence(evidence);
+        }
         report.mark_repeatable_overflow(hidden_repeatable_overflow, repeatable_overflow_indicators);
         report
+    }
+
+    fn merge_graph_affordance_evidence(
+        current: Option<OpenGpuiGraphAffordanceEvidence>,
+        next: OpenGpuiGraphAffordanceEvidence,
+    ) -> OpenGpuiGraphAffordanceEvidence {
+        let Some(current) = current else {
+            return next;
+        };
+
+        OpenGpuiGraphAffordanceEvidence {
+            committed_wire_route: merge_wire_route_evidence(
+                current.committed_wire_route,
+                next.committed_wire_route,
+            ),
+            connection_preview_policy: merge_preview_policy_evidence(
+                current.connection_preview_policy,
+                next.connection_preview_policy,
+            ),
+            port_placement_budget: current
+                .port_placement_budget
+                .min(next.port_placement_budget),
+            endpoint_hit_budget: current.endpoint_hit_budget.min(next.endpoint_hit_budget),
+            reconnect_affordance_budget: current
+                .reconnect_affordance_budget
+                .min(next.reconnect_affordance_budget),
+            drag_region_count: current.drag_region_count + next.drag_region_count,
+            readable_layout_region_count: current.readable_layout_region_count
+                + next.readable_layout_region_count,
+        }
+    }
+
+    fn merge_wire_route_evidence(
+        current: OpenGpuiWireRouteEvidence,
+        next: OpenGpuiWireRouteEvidence,
+    ) -> OpenGpuiWireRouteEvidence {
+        if current == OpenGpuiWireRouteEvidence::Straight
+            || next == OpenGpuiWireRouteEvidence::Straight
+        {
+            OpenGpuiWireRouteEvidence::Straight
+        } else if current == OpenGpuiWireRouteEvidence::Bezier
+            || next == OpenGpuiWireRouteEvidence::Bezier
+        {
+            OpenGpuiWireRouteEvidence::Bezier
+        } else {
+            OpenGpuiWireRouteEvidence::Orthogonal
+        }
+    }
+
+    fn merge_preview_policy_evidence(
+        current: OpenGpuiConnectionPreviewPolicyEvidence,
+        next: OpenGpuiConnectionPreviewPolicyEvidence,
+    ) -> OpenGpuiConnectionPreviewPolicyEvidence {
+        if current == OpenGpuiConnectionPreviewPolicyEvidence::MirrorsCommittedRoute
+            && next == OpenGpuiConnectionPreviewPolicyEvidence::MirrorsCommittedRoute
+        {
+            OpenGpuiConnectionPreviewPolicyEvidence::MirrorsCommittedRoute
+        } else {
+            OpenGpuiConnectionPreviewPolicyEvidence::DirectLineFallback
+        }
     }
 
     fn augmented_shader_repeatable_overflow_probe() -> usize {

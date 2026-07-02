@@ -878,7 +878,7 @@ fn render_table_columns(
     collector: OpenGpuiBoundsCollector,
     actions: &NodeComponentKitActions,
 ) -> AnyElement {
-    let visible_limit = table_visible_repeatable_limit(context);
+    let visible_limit = table_visible_repeatable_limit(context, items.len());
     let hidden_count = items.len().saturating_sub(visible_limit);
 
     div()
@@ -905,12 +905,30 @@ fn render_table_columns(
         .into_any_element()
 }
 
-fn table_visible_repeatable_limit(context: &OpenGpuiNodeRendererContext) -> usize {
+fn table_visible_repeatable_limit(
+    context: &OpenGpuiNodeRendererContext,
+    item_count: usize,
+) -> usize {
     let budget_limit = context.surface_preset.repeatable_visible_items_or(3);
-    let available_height = (context.node_size.height - ERD_COLUMNS_TOP - CARD_PAD).max(0.0);
-    let row_stride = REPEATABLE_ROW_HEIGHT + 4.0;
-    let fitting_rows = (available_height / row_stride).floor().max(1.0) as usize;
-    budget_limit.min(fitting_rows)
+    table_visible_repeatable_limit_for_height(context.node_size.height, budget_limit, item_count)
+}
+
+fn table_visible_repeatable_limit_for_height(
+    node_height: f32,
+    budget_limit: usize,
+    item_count: usize,
+) -> usize {
+    let available_height = (node_height - ERD_COLUMNS_TOP - CARD_PAD).max(0.0);
+    node_component_kit::adaptive_repeatable_list_plan(
+        "table.columns",
+        available_height,
+        item_count,
+        budget_limit,
+        REPEATABLE_ROW_HEIGHT,
+        4.0,
+        CONTROL_CHIP_HEIGHT,
+    )
+    .visible_items
 }
 
 fn render_repeatable_overflow_indicator(
@@ -1305,6 +1323,24 @@ mod tests {
             "{kind} min height {} must fit renderer requirement {}",
             minimum.height,
             required.height
+        );
+    }
+
+    #[test]
+    fn table_repeatable_limit_accounts_for_overflow_indicator_budget() {
+        let reduced_height = ERD_COLUMNS_TOP + CARD_PAD + REPEATABLE_ROW_HEIGHT * 2.0 + 4.0;
+
+        assert_eq!(
+            table_visible_repeatable_limit_for_height(reduced_height, 4, 5),
+            1
+        );
+        assert_eq!(
+            table_visible_repeatable_limit_for_height(
+                ERD_COLUMNS_TOP + CARD_PAD + (REPEATABLE_ROW_HEIGHT + 4.0) * 4.0,
+                4,
+                4,
+            ),
+            4
         );
     }
 }
