@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-02T23:45:00+08:00
+timestamp: 2026-07-02T23:58:00+08:00
 git_branch: main
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
@@ -14,6 +14,7 @@ related_plan:
   - docs/plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md
   - docs/plans/2026-07-02-002-refactor-docking-flat-motion-runtime-plan.md
   - docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md
+  - docs/plans/2026-07-02-004-refactor-docking-render-authority-convergence-plan.md
 related_research:
   - native-ui-framework-design-research/report.md
 related_adr:
@@ -119,6 +120,9 @@ verified_by:
   programmatic Splitter interpolation remain because they represent real layout motion.
 - Done: ADR 0015 records the generalized UI motion runtime boundary after native registry ADRs
   occupied ADR 0013 and ADR 0014.
+- Planned: `docs/plans/2026-07-02-004-refactor-docking-render-authority-convergence-plan.md`
+  narrows the next docking pass to scene/render/drop-fact geometry parity and duplicate render
+  geometry deletion. This is a geometry-authority follow-up, not a new animation-framework pass.
 - Current docs direction: component ecosystem changes start with
   `cargo run -p xtask -- scan-ui-contract`, followed by public-surface, a11y, theme, or gallery
   focused nextest gates for behavior proof. Docking preview follow-up should start from the native
@@ -126,9 +130,10 @@ verified_by:
 - Not current roadmap work: broad splitting of every remaining 1k+ component file and
   `open-gpui-ui-headless` extraction.
 - Blocked: None.
-- Next action: push merged `main`, then continue the fearless refactor sequence with the remaining
-  large gallery render owners, especially
-  `examples/ui-foundation-gallery/src/pages/components/render/sections.rs`.
+- Next action: for docking, start the render authority convergence plan with U1 parity tests for
+  root split, nested pane, floating container, empty central region, and zoomed scene. For broader
+  UI work, continue the fearless refactor sequence with remaining large gallery render owners,
+  especially `examples/ui-foundation-gallery/src/pages/components/render/sections.rs`.
 
 # Citations
 
@@ -141,6 +146,7 @@ verified_by:
 - [Native UI hybrid registry architecture plan](../../plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md)
 - [Docking flat motion runtime plan](../../plans/2026-07-02-002-refactor-docking-flat-motion-runtime-plan.md)
 - [UI motion runtime foundation plan](../../plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md)
+- [Docking render authority convergence plan](../../plans/2026-07-02-004-refactor-docking-render-authority-convergence-plan.md)
 - [Native UI framework design research report](../../../native-ui-framework-design-research/report.md)
 - [Native UI framework distribution strategy decision](decisions/open-gpui-native-ui-framework-distribution-strategy.md)
 - [Native UI framework strategy architecture page](../../architecture/native-ui-framework-strategy.md)
