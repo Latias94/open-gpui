@@ -77,7 +77,6 @@ impl<'a, Services> OpenGpuiNodeComponentContext<'a, Services> {
     pub fn props(&self) -> &OpenGpuiNodeComponentProps {
         &self.props
     }
-
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
