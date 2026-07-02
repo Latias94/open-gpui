@@ -4,8 +4,9 @@ use schemars::{JsonSchema, Schema, schema_for};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    COMPONENT_API_INVENTORY, COMPONENT_CONTRACT_REGISTRY, ComponentApiInventoryEntry,
-    ComponentContractEntry, PublicSurfaceOwnerClass, SurfaceDocsStatus, SurfaceGalleryStatus,
+    COMPONENT_API_INVENTORY, COMPONENT_CONTRACT_REGISTRY, COMPONENT_SCAFFOLD_RECIPES,
+    ComponentApiInventoryEntry, ComponentContractEntry, PublicSurfaceOwnerClass, ScaffoldRecipe,
+    ScaffoldRecipeOutputOwnership, SurfaceDocsStatus, SurfaceGalleryStatus,
     component_public_methods, component_render_inputs,
 };
 
@@ -21,6 +22,8 @@ pub struct ComponentRegistryManifest {
     pub package: ComponentRegistryPackage,
     /// Sorted component, recipe, state-contract, helper, anatomy, and removal rows.
     pub entries: Vec<ComponentRegistryEntry>,
+    /// App-owned scaffold recipes published with the registry metadata.
+    pub recipes: Vec<ComponentRegistryRecipe>,
 }
 
 /// Cargo package metadata for the generated registry manifest.
@@ -211,6 +214,38 @@ pub struct ComponentRegistryVerificationOwner {
     pub reason: String,
 }
 
+/// App-owned scaffold recipe metadata included in the registry manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ComponentRegistryRecipe {
+    /// Stable recipe identifier.
+    pub id: String,
+    /// Human-facing recipe title.
+    pub title: String,
+    /// Owning component family.
+    pub family: String,
+    /// Registry entries composed by this recipe.
+    pub source_components: Vec<String>,
+    /// Generated files and their purposes, not a source-copy package contract.
+    pub generated_files: Vec<ComponentRegistryGeneratedFile>,
+    /// Imports expected in generated starter code.
+    pub required_imports: Vec<String>,
+    /// Boundary between generated starter code and application-owned behavior.
+    pub customization_boundary: String,
+    /// Focused gates that keep this recipe aligned.
+    pub verification_gates: Vec<String>,
+    /// Ownership classification for generated output.
+    pub output_ownership: ScaffoldRecipeOutputOwnership,
+}
+
+/// Generated file intent included in the registry manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ComponentRegistryGeneratedFile {
+    /// Suggested path for generated starter code.
+    pub path_hint: String,
+    /// Purpose of the generated starter file.
+    pub intent: String,
+}
+
 /// Verification owner class for registry manifest evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -241,6 +276,7 @@ pub fn component_registry_manifest() -> ComponentRegistryManifest {
             distribution_authority: ComponentRegistryDistributionAuthority::CargoCrate,
         },
         entries,
+        recipes: component_registry_recipes(),
     }
 }
 
@@ -272,6 +308,36 @@ fn component_registry_entry(entry: &ComponentContractEntry) -> ComponentRegistry
         },
         api: api_inventory_for(entry.name).map(component_registry_api_inventory),
         verification: verification_owners(entry),
+    }
+}
+
+fn component_registry_recipes() -> Vec<ComponentRegistryRecipe> {
+    let mut recipes = COMPONENT_SCAFFOLD_RECIPES
+        .iter()
+        .map(component_registry_recipe)
+        .collect::<Vec<_>>();
+    recipes.sort_by(|left, right| left.id.cmp(&right.id));
+    recipes
+}
+
+fn component_registry_recipe(recipe: &ScaffoldRecipe) -> ComponentRegistryRecipe {
+    ComponentRegistryRecipe {
+        id: recipe.id.to_owned(),
+        title: recipe.title.to_owned(),
+        family: recipe.family.to_owned(),
+        source_components: strings(recipe.source_components),
+        generated_files: recipe
+            .generated_files
+            .iter()
+            .map(|file| ComponentRegistryGeneratedFile {
+                path_hint: file.path_hint.to_owned(),
+                intent: file.intent.to_owned(),
+            })
+            .collect(),
+        required_imports: strings(recipe.required_imports),
+        customization_boundary: recipe.customization_boundary.to_owned(),
+        verification_gates: strings(recipe.verification_gates),
+        output_ownership: recipe.output_ownership,
     }
 }
 

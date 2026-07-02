@@ -6,6 +6,20 @@ without rewriting the public API. ADR 0008 treats the current UI crates as the a
 boundary; future headless extraction is historical boundary evidence, not the current roadmap or
 the next implied refactor.
 
+## Hybrid Registry And Scaffold Recipes
+
+The component contract registry is the product authority for component metadata. Cargo remains the
+distribution authority for official implementations; the generated registry manifest exists so
+humans, tools, and agents can inspect components, recipes, docs tokens, gallery evidence, source
+homes, and verification gates without treating copied source as the canonical package surface.
+
+Scaffold recipes are metadata-first composition starters. `table-filters-toolbar`,
+`field-control-composition`, `themed-surface-wrapper`, and `gallery-story-sample` describe
+app-owned or gallery-owned output intent, required imports, customization boundaries, source
+components, and focused verification gates. They are not a public source-editing package manager:
+official components such as `Button`, `Table`, `Field`, and `ThemeDefinition` still ship through
+`open-gpui-ui-components`, while recipes only describe where local wrapper or sample code may begin.
+
 ## Resolved State
 
 Every component should expose a resolved state or descriptor type. The state type is the primary

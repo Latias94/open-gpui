@@ -8,6 +8,7 @@
 mod api_inventory;
 mod manifest;
 mod projections;
+mod recipes;
 mod rows;
 mod source_mapping;
 mod surfaces;
@@ -21,16 +22,21 @@ pub use manifest::{
     COMPONENT_REGISTRY_MANIFEST_VERSION, ComponentRegistryApiInventory, ComponentRegistryCallback,
     ComponentRegistryDefaultSeed, ComponentRegistryDistributionAuthority, ComponentRegistryDocs,
     ComponentRegistryDocsStatus, ComponentRegistryEntry, ComponentRegistryGallery,
-    ComponentRegistryGalleryStatus, ComponentRegistryManifest, ComponentRegistryOwnerClass,
-    ComponentRegistryPackage, ComponentRegistryPublicExport, ComponentRegistrySource,
-    ComponentRegistryVerificationKind, ComponentRegistryVerificationOwner,
-    component_registry_manifest, component_registry_manifest_schema,
+    ComponentRegistryGalleryStatus, ComponentRegistryGeneratedFile, ComponentRegistryManifest,
+    ComponentRegistryOwnerClass, ComponentRegistryPackage, ComponentRegistryPublicExport,
+    ComponentRegistryRecipe, ComponentRegistrySource, ComponentRegistryVerificationKind,
+    ComponentRegistryVerificationOwner, component_registry_manifest,
+    component_registry_manifest_schema,
 };
 pub use projections::{
     component_contract_default_export, component_contract_docs_status,
     component_contract_docs_token, component_contract_entry, component_contract_family,
     component_contract_gallery_status, component_contract_source_home,
     component_inventory_default_export, public_surface_default_export,
+};
+pub use recipes::{
+    COMPONENT_SCAFFOLD_RECIPES, ScaffoldRecipe, ScaffoldRecipeGeneratedFile,
+    ScaffoldRecipeOutputOwnership,
 };
 pub use rows::{
     COMPONENT_CONTRACT_REGISTRY, COMPONENT_RECIPE_COMPONENTS, OFFICIAL_OVERLAY_COMPONENTS,
