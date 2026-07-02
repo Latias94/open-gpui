@@ -39,6 +39,10 @@ pub use crate::command::{
     CommandSelectedChipState, CommandSelection, CommandSelectionChange, CommandSelectionMode,
     CommandState,
 };
+pub use crate::component_contract::{
+    COMPONENT_A11Y_EVIDENCE, COMPONENT_CONFORMANCE_GATES, ComponentA11yEvidence,
+    ComponentConformanceGate, component_a11y_evidence,
+};
 pub use crate::context_menu::{ContextMenu, ContextMenuState};
 pub use crate::dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
 pub use crate::feedback::{

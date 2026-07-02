@@ -1,333 +1,69 @@
-//! Component conformance gates for the foundation gallery.
+//! Component conformance bindings for the foundation gallery.
 
-use open_gpui_ui_components::{A11yLabelSource, A11yValueKind};
-use open_gpui_ui_core::{AccessibleAction, Orientation, Role};
+pub use open_gpui_ui_components::{COMPONENT_CONFORMANCE_GATES, ComponentConformanceGate};
+use open_gpui_ui_components::{ComponentA11yEvidence, component_a11y_evidence};
 
-/// One component conformance gate shown by the Components page.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ComponentConformanceGate {
-    /// Stable gate id.
-    pub id: &'static str,
-    /// Visible gate title.
-    pub title: &'static str,
-    /// Behavior or contract that this gate protects.
-    pub summary: &'static str,
-    /// Durable test or document evidence for this gate.
-    pub evidence: &'static [&'static str],
-}
-
-/// One renderer-neutral accessibility claim tied to representative gallery samples.
+/// One renderer-neutral accessibility claim tied to a representative gallery sample selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ComponentA11yClaim {
     /// Component or component part covered by the claim.
     pub component: &'static str,
     /// Stable sample selector prefix used by the gallery renderer.
     pub selector_prefix: &'static str,
-    /// Renderer-neutral role expected for the component or part.
-    pub role: Role,
-    /// Source that provides the accessible name.
-    pub label_source: A11yLabelSource,
-    /// Optional value metadata kind exposed by the component.
-    pub value_kind: Option<A11yValueKind>,
-    /// Optional orientation metadata exposed by the component.
-    pub orientation: Option<Orientation>,
-    /// Supported accessibility actions covered by the representative contract.
-    pub actions: &'static [AccessibleAction],
 }
 
-/// Representative accessibility claims that keep gallery samples aligned with component contracts.
+impl ComponentA11yClaim {
+    /// Returns the component-owned accessibility evidence for this gallery selector binding.
+    pub fn evidence(self) -> &'static ComponentA11yEvidence {
+        component_a11y_evidence(self.component)
+            .expect("gallery a11y claim must reference component-owned evidence")
+    }
+}
+
+/// Gallery selector bindings for component-owned representative accessibility evidence.
 pub const COMPONENT_A11Y_CLAIMS: &[ComponentA11yClaim] = &[
     ComponentA11yClaim {
         component: "Button",
         selector_prefix: "gallery:component-button-sample",
-        role: Role::Button,
-        label_source: A11yLabelSource::VisibleText,
-        value_kind: None,
-        orientation: None,
-        actions: &[AccessibleAction::Click],
     },
     ComponentA11yClaim {
         component: "IconButton",
         selector_prefix: "gallery:component-icon-button-sample",
-        role: Role::Button,
-        label_source: A11yLabelSource::ExplicitLabel,
-        value_kind: None,
-        orientation: None,
-        actions: &[AccessibleAction::Click],
     },
     ComponentA11yClaim {
         component: "Checkbox",
         selector_prefix: "gallery:component-checkbox-sample",
-        role: Role::CheckBox,
-        label_source: A11yLabelSource::VisibleText,
-        value_kind: None,
-        orientation: None,
-        actions: &[AccessibleAction::Click],
     },
     ComponentA11yClaim {
         component: "Slider",
         selector_prefix: "gallery:component-slider-sample",
-        role: Role::Slider,
-        label_source: A11yLabelSource::VisibleText,
-        value_kind: Some(A11yValueKind::Percent),
-        orientation: Some(Orientation::Horizontal),
-        actions: &[
-            AccessibleAction::Increment,
-            AccessibleAction::Decrement,
-            AccessibleAction::SetValue,
-        ],
     },
     ComponentA11yClaim {
         component: "NumberInput",
         selector_prefix: "gallery:component-number-input-sample",
-        role: Role::SpinButton,
-        label_source: A11yLabelSource::VisibleText,
-        value_kind: Some(A11yValueKind::Number),
-        orientation: None,
-        actions: &[
-            AccessibleAction::Increment,
-            AccessibleAction::Decrement,
-            AccessibleAction::SetValue,
-        ],
     },
     ComponentA11yClaim {
         component: "Progress",
         selector_prefix: "gallery:component-progress-sample",
-        role: Role::ProgressIndicator,
-        label_source: A11yLabelSource::VisibleText,
-        value_kind: Some(A11yValueKind::Percent),
-        orientation: None,
-        actions: &[],
     },
     ComponentA11yClaim {
         component: "Listbox option",
         selector_prefix: "gallery:component-listbox-sample",
-        role: Role::ListBoxOption,
-        label_source: A11yLabelSource::VisibleText,
-        value_kind: Some(A11yValueKind::Selection),
-        orientation: None,
-        actions: &[AccessibleAction::Click],
     },
     ComponentA11yClaim {
         component: "Tree item",
         selector_prefix: "gallery:component-tree-sample",
-        role: Role::TreeItem,
-        label_source: A11yLabelSource::VisibleText,
-        value_kind: None,
-        orientation: None,
-        actions: &[AccessibleAction::Click, AccessibleAction::Focus],
     },
     ComponentA11yClaim {
         component: "Table",
         selector_prefix: "gallery:component-table-sample",
-        role: Role::Table,
-        label_source: A11yLabelSource::VisibleText,
-        value_kind: Some(A11yValueKind::Count),
-        orientation: None,
-        actions: &[],
     },
     ComponentA11yClaim {
         component: "VirtualizedList row",
         selector_prefix: "gallery:component-virtualized-list-sample",
-        role: Role::ListBoxOption,
-        label_source: A11yLabelSource::VisibleText,
-        value_kind: Some(A11yValueKind::Count),
-        orientation: None,
-        actions: &[AccessibleAction::Click, AccessibleAction::Focus],
     },
     ComponentA11yClaim {
         component: "Splitter handle",
         selector_prefix: "gallery:component-splitter-sample",
-        role: Role::Splitter,
-        label_source: A11yLabelSource::Generated,
-        value_kind: None,
-        orientation: Some(Orientation::Vertical),
-        actions: &[AccessibleAction::Increment, AccessibleAction::Decrement],
-    },
-];
-
-/// Regression-prone component behaviors that every new slice should keep covered.
-pub const COMPONENT_CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
-    ComponentConformanceGate {
-        id: "public-api-exports",
-        title: "Public API exports",
-        summary: "The component contract rows, crate root, and prelude exports stay aligned for every shipped component type.",
-        evidence: &[
-            "crates/ui_components/src/component_contract/mod.rs",
-            "crates/ui_components/src/component_contract/rows.rs",
-            "crates/ui_components/src/component_contract/projections.rs",
-            "crates/ui_components/src/component_contract/api_inventory.rs",
-            "crates/ui_components/src/lib.rs",
-            "crates/ui_components/src/prelude.rs",
-            "crates/ui_components/tests/public_surface.rs",
-        ],
-    },
-    ComponentConformanceGate {
-        id: "gallery-metadata",
-        title: "Gallery metadata",
-        summary: "Components samples expose stable ids, real resolved state, and page signals.",
-        evidence: &[
-            "examples/ui-foundation-gallery/src/pages/components.rs",
-            "examples/ui-foundation-gallery/tests/foundation_gallery.rs",
-        ],
-    },
-    ComponentConformanceGate {
-        id: "scroll-redraw",
-        title: "Scroll redraw persistence",
-        summary: "ScrollArea default handles survive reconstructed component values and reset only by policy.",
-        evidence: &[
-            "ScrollAreaRuntime",
-            "scroll_area_default_handle_survives_reconstructed_component_values",
-            "scroll_area_reset_key_resets_default_runtime_handle",
-        ],
-    },
-    ComponentConformanceGate {
-        id: "splitter-runtime",
-        title: "Splitter runtime constraints",
-        summary: "Splitter runtime fractions keep min/max and collapsed-panel restore behavior centralized.",
-        evidence: &[
-            "SplitterState::with_panel_fractions",
-            "SplitterState::resized_by",
-            "splitter_runtime_fraction_overrides_still_use_resize_constraints",
-        ],
-    },
-    ComponentConformanceGate {
-        id: "tabs-overflow",
-        title: "Tabs overflow and roving focus",
-        summary: "Tabs keep disabled-item skipping, tab-stop metadata, and vertical rail overflow dogfood.",
-        evidence: &[
-            "workspace-tabs",
-            "components_page_tabs_samples_expose_roving_focus_contract",
-            "docs/verification.md",
-        ],
-    },
-    ComponentConformanceGate {
-        id: "table-virtualization",
-        title: "Table row models and scroll ownership",
-        summary: "Table keeps stable row ids, grouped/expanded row metadata, aggregate metadata, pinned columns, pinned rows, resize handles, content-fit width growth, single-line and multiline editors, column visibility controls, and nested scroll ownership.",
-        evidence: &[
-            "TableState::resolve",
-            "Table::behavior_snapshot",
-            "TableHeaderAction",
-            "release-rollup",
-            "grouped-custom-aggregation",
-            "release-resize",
-            "content-fit-release",
-            "toggle-release",
-            "select-release",
-            "multiline-release",
-            "row-pinning",
-            "filter-board",
-            "TableColumnWidthPolicy",
-            "TableGlobalFilter",
-            "TablePredicateFilter",
-            "TableFacetedFilter",
-            "TableRangeFilter",
-            "TableColumnVisibility",
-            "TableColumnVisibilityChange",
-            "TableToolbar",
-            "components_gallery_smoke_global_filter_updates_table_rows",
-            "components_gallery_smoke_predicate_filter_updates_table_rows",
-            "components_gallery_smoke_faceted_filter_updates_table_rows",
-            "components_gallery_smoke_range_filter_updates_table_rows",
-            "components_gallery_smoke_content_fit_table_cell_edit_widens_name_column",
-            "components_gallery_smoke_checkbox_table_cell_updates_sample_rows",
-            "components_gallery_smoke_select_table_cell_updates_sample_rows",
-            "components_gallery_smoke_multiline_table_cell_updates_sample_rows",
-            "components_gallery_smoke_column_visibility_updates_release_matrix",
-            "components_gallery_smoke_table_scroll_stays_inside_sample",
-            "components_gallery_smoke_focused_table_scroll_stays_inside_sample",
-            "components_gallery_smoke_grouped_table_scroll_stays_inside_sample",
-            "components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_sample",
-            "components_gallery_smoke_grouped_table_column_reorder_updates_sample",
-            "components_gallery_smoke_matrix_table_center_column_window_stays_inside_sample",
-            "components_page_table_samples_expose_virtualized_row_model_contract",
-            "components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample",
-            "components_gallery_smoke_resizable_table_resize_updates_sample",
-        ],
-    },
-    ComponentConformanceGate {
-        id: "tree-renderer",
-        title: "Tree renderer contract",
-        summary: "Tree composes renderer-neutral hierarchy state with GPUI focus, expansion, selection, and local scroll ownership.",
-        evidence: &[
-            "Tree::state",
-            "Tree::behavior_snapshot",
-            "TreeBehaviorSnapshot",
-            "TreeState::keyboard_action_for_key",
-            "TreeState::typeahead_target",
-            "tree_behavior_snapshot_virtualizes_visible_rows_with_stable_metadata",
-            "tree_runtime_expands_reveals_and_selects_items",
-            "tree_runtime_typeahead_focuses_visible_matching_row",
-            "components_gallery_smoke_tree_expands_and_selects",
-            "components_gallery_smoke_tree_lazy_branches_emit_load_metadata",
-            "components_gallery_smoke_tree_card_wheel_does_not_leak_to_page",
-            "components_gallery_smoke_virtualized_tree_scrolls_inside_sample",
-        ],
-    },
-    ComponentConformanceGate {
-        id: "virtualized-list-renderer",
-        title: "VirtualizedList renderer contract",
-        summary: "VirtualizedList keeps its state contract, row reveal logic, and inner scroll ownership aligned with the rendered adapter.",
-        evidence: &[
-            "VirtualizedList::behavior_snapshot_with_viewport",
-            "VirtualizedListBehaviorSnapshot",
-            "VirtualizedListState::navigation_target",
-            "virtualized_list_runtime_reveals_active_row_and_emits_activation",
-            "components_gallery_smoke_virtualized_list_scroll_stays_inside_sample",
-            "components_gallery_smoke_virtualized_list_card_wheel_does_not_leak_to_page",
-            "components_gallery_smoke_virtualized_list_keyboard_reveals_and_activates",
-        ],
-    },
-    ComponentConformanceGate {
-        id: "state-contract-readouts",
-        title: "State contract readouts",
-        summary: "Renderer-neutral TreeState and VirtualizedListState stay visible beside concrete renderers.",
-        evidence: &[
-            "state_contract_readout_pairs",
-            "TreeState::keyboard_action_for_key",
-            "VirtualizedListState::navigation_target",
-            "components_page_state_contract_samples_expose_tree_and_virtualized_list_contracts",
-        ],
-    },
-    ComponentConformanceGate {
-        id: "choice-surfaces",
-        title: "Choice identity and navigation",
-        summary: "Choice surfaces keep stable value identity, shared listbox navigation, and focused gallery readouts aligned.",
-        evidence: &[
-            "choice.rs",
-            "roving_focus.rs",
-            "components_page_search_samples_expose_combobox_and_command_contracts",
-            "component_gallery_shell_reads_choice_active_metadata_from_resolved_state",
-            "components_gallery_smoke_focused_command_samples_cover_depth_behaviors",
-        ],
-    },
-    ComponentConformanceGate {
-        id: "a11y-labels",
-        title: "A11y claims",
-        summary: "Representative samples keep roles, label sources, value metadata, orientation, and actions aligned with renderer-neutral component contracts.",
-        evidence: &[
-            "ComponentA11yContract",
-            "COMPONENT_A11Y_CLAIMS",
-            "crates/ui_components/tests/a11y.rs",
-            "representative_component_a11y_contracts_are_valid",
-            "IconButton::new",
-            "Label::for_control",
-            "components_page_samples_keep_explicit_a11y_metadata",
-        ],
-    },
-    ComponentConformanceGate {
-        id: "theme-schema",
-        title: "Theme schema",
-        summary: "Portable theme files, theme recipe ownership, and component color token coverage stay aligned with the component contract.",
-        evidence: &[
-            "crates/ui_components/src/theme/schema.rs",
-            "crates/ui_components/src/theme/recipes.rs",
-            "crates/ui_components/tests/theme.rs",
-            "docs/schemas/open-gpui-theme-v1.schema.json",
-            "theme_json_schema_exposes_portable_theme_contract",
-            "cargo run -p xtask -- scan-theme-drift",
-            "cargo run -p xtask -- scan-theme-schema",
-        ],
     },
 ];

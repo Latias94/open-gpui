@@ -34,6 +34,11 @@ struct Docs<'a> {
 struct A11yClaim {
     component: String,
     selector_prefix: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct A11yEvidence {
+    component: String,
     role: String,
     label_source: String,
     value_kind: Option<String>,
@@ -67,12 +72,14 @@ fn ui_contract_failures(root: &Path) -> Vec<String> {
     let mut failures = Vec::new();
     let source_dir = root.join("crates/ui_components/src");
     let rows_path = source_dir.join("component_contract/rows.rs");
+    let evidence_path = source_dir.join("component_contract/evidence.rs");
     let conformance_path =
         root.join("examples/ui-foundation-gallery/src/pages/components/conformance.rs");
     let component_contract_docs_path = root.join("docs/ui/component-contract.md");
     let verification_docs_path = root.join("docs/verification.md");
 
     let rows_source = read_to_string(&rows_path, &mut failures);
+    let evidence_source = read_to_string(&evidence_path, &mut failures);
     let conformance_source = read_to_string(&conformance_path, &mut failures);
     let component_contract_docs = read_to_string(&component_contract_docs_path, &mut failures);
     let verification_docs = read_to_string(&verification_docs_path, &mut failures);
@@ -80,6 +87,9 @@ fn ui_contract_failures(root: &Path) -> Vec<String> {
     let prelude_exports = default_reexport_tokens(&source_dir, "prelude.rs", &mut failures);
 
     let Some(rows_source) = rows_source else {
+        return failures;
+    };
+    let Some(evidence_source) = evidence_source else {
         return failures;
     };
     let Some(conformance_source) = conformance_source else {
@@ -111,7 +121,10 @@ fn ui_contract_failures(root: &Path) -> Vec<String> {
         |entry| source_home_exists(&source_dir, entry),
         |name| removed_primitive_module_exists(&source_dir, name),
     ));
-    failures.extend(audit_gallery_contracts(&conformance_source));
+    failures.extend(audit_gallery_contracts(
+        &conformance_source,
+        &evidence_source,
+    ));
     failures.extend(theme_schema_failures(root));
 
     failures
@@ -385,21 +398,64 @@ fn field_tail<'a>(block: &'a str, field: &str) -> Option<&'a str> {
     Some(&block[start..])
 }
 
-fn audit_gallery_contracts(conformance_source: &str) -> Vec<String> {
+fn audit_gallery_contracts(conformance_source: &str, evidence_source: &str) -> Vec<String> {
     let mut failures = Vec::new();
+    let (evidence, evidence_parse_failures) = a11y_evidence_from_source(evidence_source);
+    failures.extend(evidence_parse_failures.into_iter().map(|failure| {
+        format!("crates/ui_components/src/component_contract/evidence.rs: {failure}")
+    }));
+
     let (claims, claim_parse_failures) = a11y_claims_from_source(conformance_source);
     failures.extend(claim_parse_failures.into_iter().map(|failure| {
         format!("examples/ui-foundation-gallery/src/pages/components/conformance.rs: {failure}")
     }));
-    failures.extend(audit_a11y_claims(&claims));
+    failures.extend(audit_a11y_claims(&claims, &evidence));
 
-    let (gates, gate_parse_failures) = conformance_gates_from_source(conformance_source);
+    let (gates, gate_parse_failures) = conformance_gates_from_source(evidence_source);
     failures.extend(gate_parse_failures.into_iter().map(|failure| {
-        format!("examples/ui-foundation-gallery/src/pages/components/conformance.rs: {failure}")
+        format!("crates/ui_components/src/component_contract/evidence.rs: {failure}")
     }));
     failures.extend(audit_conformance_gate_evidence(&gates));
 
     failures
+}
+
+fn a11y_evidence_from_source(source: &str) -> (Vec<A11yEvidence>, Vec<String>) {
+    let (blocks, block_failures) = struct_literal_blocks(source, "ComponentA11yEvidence");
+    let mut evidence = Vec::new();
+    let mut failures = block_failures;
+
+    for block in blocks {
+        match a11y_evidence_from_block(block) {
+            Ok(entry) => evidence.push(entry),
+            Err(error) => failures.push(error),
+        }
+    }
+
+    (evidence, failures)
+}
+
+fn a11y_evidence_from_block(block: &str) -> Result<A11yEvidence, String> {
+    let component = string_field(block, "component").ok_or("a11y evidence missing `component`")?;
+    let role = enum_variant_field(block, "role")
+        .ok_or_else(|| format!("a11y evidence `{component}` missing `role`"))?;
+    let label_source = enum_variant_field(block, "label_source")
+        .ok_or_else(|| format!("a11y evidence `{component}` missing `label_source`"))?;
+    let value_kind = optional_enum_variant_field(block, "value_kind")
+        .ok_or_else(|| format!("a11y evidence `{component}` missing `value_kind`"))?;
+    let orientation = optional_enum_variant_field(block, "orientation")
+        .ok_or_else(|| format!("a11y evidence `{component}` missing `orientation`"))?;
+    let actions = action_set_field(block)
+        .ok_or_else(|| format!("a11y evidence `{component}` missing `actions`"))?;
+
+    Ok(A11yEvidence {
+        component,
+        role,
+        label_source,
+        value_kind,
+        orientation,
+        actions,
+    })
 }
 
 fn a11y_claims_from_source(source: &str) -> (Vec<A11yClaim>, Vec<String>) {
@@ -421,25 +477,10 @@ fn a11y_claim_from_block(block: &str) -> Result<A11yClaim, String> {
     let component = string_field(block, "component").ok_or("a11y claim missing `component`")?;
     let selector_prefix = string_field(block, "selector_prefix")
         .ok_or_else(|| format!("a11y claim `{component}` missing `selector_prefix`"))?;
-    let role = enum_variant_field(block, "role")
-        .ok_or_else(|| format!("a11y claim `{component}` missing `role`"))?;
-    let label_source = enum_variant_field(block, "label_source")
-        .ok_or_else(|| format!("a11y claim `{component}` missing `label_source`"))?;
-    let value_kind = optional_enum_variant_field(block, "value_kind")
-        .ok_or_else(|| format!("a11y claim `{component}` missing `value_kind`"))?;
-    let orientation = optional_enum_variant_field(block, "orientation")
-        .ok_or_else(|| format!("a11y claim `{component}` missing `orientation`"))?;
-    let actions = action_set_field(block)
-        .ok_or_else(|| format!("a11y claim `{component}` missing `actions`"))?;
 
     Ok(A11yClaim {
         component,
         selector_prefix,
-        role,
-        label_source,
-        value_kind,
-        orientation,
-        actions,
     })
 }
 
@@ -457,12 +498,28 @@ fn action_set_field(block: &str) -> Option<BTreeSet<String>> {
     Some(enum_variants_with_prefix(body, "AccessibleAction::"))
 }
 
-fn audit_a11y_claims(claims: &[A11yClaim]) -> Vec<String> {
+fn audit_a11y_claims(claims: &[A11yClaim], evidence: &[A11yEvidence]) -> Vec<String> {
     let mut failures = Vec::new();
-    let mut by_component = BTreeMap::new();
+    let mut claims_by_component = BTreeMap::new();
+    let mut evidence_by_component = BTreeMap::new();
+
+    for entry in evidence {
+        if let Some(previous) = evidence_by_component.insert(entry.component.as_str(), entry) {
+            failures.push(format!(
+                "crates/ui_components/src/component_contract/evidence.rs: duplicate COMPONENT_A11Y_EVIDENCE row `{}`; previous role `{}`, duplicate role `{}`",
+                entry.component, previous.role, entry.role
+            ));
+        }
+        if entry.label_source == "NotRequired" {
+            failures.push(format!(
+                "crates/ui_components/src/component_contract/evidence.rs: a11y evidence `{}` must name the accessible label source",
+                entry.component
+            ));
+        }
+    }
 
     for claim in claims {
-        if let Some(previous) = by_component.insert(claim.component.as_str(), claim) {
+        if let Some(previous) = claims_by_component.insert(claim.component.as_str(), claim) {
             failures.push(format!(
                 "examples/ui-foundation-gallery/src/pages/components/conformance.rs: duplicate COMPONENT_A11Y_CLAIMS row `{}`; previous selector `{}`, duplicate selector `{}`",
                 claim.component, previous.selector_prefix, claim.selector_prefix
@@ -475,195 +532,24 @@ fn audit_a11y_claims(claims: &[A11yClaim]) -> Vec<String> {
                 claim.component, claim.selector_prefix
             ));
         }
-        if claim.label_source == "NotRequired" {
+        if !evidence_by_component.contains_key(claim.component.as_str()) {
             failures.push(format!(
-                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{}` must name the accessible label source",
+                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{}` has no component-owned COMPONENT_A11Y_EVIDENCE row",
                 claim.component
             ));
         }
     }
 
-    for expected in EXPECTED_A11Y_CLAIMS {
-        if !by_component.contains_key(expected.component) {
+    for expected in evidence {
+        if !claims_by_component.contains_key(expected.component.as_str()) {
             failures.push(format!(
-                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: COMPONENT_A11Y_CLAIMS is missing representative claim `{}`",
+                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: COMPONENT_A11Y_CLAIMS is missing selector binding for component-owned evidence `{}`",
                 expected.component
             ));
         }
-        audit_claim_fact(&by_component, expected, &mut failures);
     }
 
     failures
-}
-
-struct ExpectedA11yClaim {
-    component: &'static str,
-    selector_prefix: &'static str,
-    role: &'static str,
-    label_source: &'static str,
-    value_kind: Option<&'static str>,
-    orientation: Option<&'static str>,
-    actions: &'static [&'static str],
-}
-
-const EXPECTED_A11Y_CLAIMS: &[ExpectedA11yClaim] = &[
-    ExpectedA11yClaim {
-        component: "Button",
-        selector_prefix: "gallery:component-button-sample",
-        role: "Button",
-        label_source: "VisibleText",
-        value_kind: None,
-        orientation: None,
-        actions: &["Click"],
-    },
-    ExpectedA11yClaim {
-        component: "IconButton",
-        selector_prefix: "gallery:component-icon-button-sample",
-        role: "Button",
-        label_source: "ExplicitLabel",
-        value_kind: None,
-        orientation: None,
-        actions: &["Click"],
-    },
-    ExpectedA11yClaim {
-        component: "Checkbox",
-        selector_prefix: "gallery:component-checkbox-sample",
-        role: "CheckBox",
-        label_source: "VisibleText",
-        value_kind: None,
-        orientation: None,
-        actions: &["Click"],
-    },
-    ExpectedA11yClaim {
-        component: "Slider",
-        selector_prefix: "gallery:component-slider-sample",
-        role: "Slider",
-        label_source: "VisibleText",
-        value_kind: Some("Percent"),
-        orientation: Some("Horizontal"),
-        actions: &["Increment", "Decrement", "SetValue"],
-    },
-    ExpectedA11yClaim {
-        component: "NumberInput",
-        selector_prefix: "gallery:component-number-input-sample",
-        role: "SpinButton",
-        label_source: "VisibleText",
-        value_kind: Some("Number"),
-        orientation: None,
-        actions: &["Increment", "Decrement", "SetValue"],
-    },
-    ExpectedA11yClaim {
-        component: "Progress",
-        selector_prefix: "gallery:component-progress-sample",
-        role: "ProgressIndicator",
-        label_source: "VisibleText",
-        value_kind: Some("Percent"),
-        orientation: None,
-        actions: &[],
-    },
-    ExpectedA11yClaim {
-        component: "Listbox option",
-        selector_prefix: "gallery:component-listbox-sample",
-        role: "ListBoxOption",
-        label_source: "VisibleText",
-        value_kind: Some("Selection"),
-        orientation: None,
-        actions: &["Click"],
-    },
-    ExpectedA11yClaim {
-        component: "Tree item",
-        selector_prefix: "gallery:component-tree-sample",
-        role: "TreeItem",
-        label_source: "VisibleText",
-        value_kind: None,
-        orientation: None,
-        actions: &["Click", "Focus"],
-    },
-    ExpectedA11yClaim {
-        component: "Table",
-        selector_prefix: "gallery:component-table-sample",
-        role: "Table",
-        label_source: "VisibleText",
-        value_kind: Some("Count"),
-        orientation: None,
-        actions: &[],
-    },
-    ExpectedA11yClaim {
-        component: "VirtualizedList row",
-        selector_prefix: "gallery:component-virtualized-list-sample",
-        role: "ListBoxOption",
-        label_source: "VisibleText",
-        value_kind: Some("Count"),
-        orientation: None,
-        actions: &["Click", "Focus"],
-    },
-    ExpectedA11yClaim {
-        component: "Splitter handle",
-        selector_prefix: "gallery:component-splitter-sample",
-        role: "Splitter",
-        label_source: "Generated",
-        value_kind: None,
-        orientation: Some("Vertical"),
-        actions: &["Increment", "Decrement"],
-    },
-];
-
-fn audit_claim_fact(
-    by_component: &BTreeMap<&str, &A11yClaim>,
-    expected: &ExpectedA11yClaim,
-    failures: &mut Vec<String>,
-) {
-    let component = expected.component;
-    let Some(claim) = by_component.get(component) else {
-        return;
-    };
-
-    if claim.selector_prefix != expected.selector_prefix {
-        failures.push(format!(
-            "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` selector_prefix `{}` should be `{}`",
-            claim.selector_prefix, expected.selector_prefix
-        ));
-    }
-    if claim.role != expected.role {
-        failures.push(format!(
-            "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` role `{}` should be `{}`",
-            claim.role, expected.role
-        ));
-    }
-    if claim.label_source != expected.label_source {
-        failures.push(format!(
-            "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` label_source `{}` should be `{}`",
-            claim.label_source, expected.label_source
-        ));
-    }
-    if claim.value_kind.as_deref() != expected.value_kind {
-        failures.push(format!(
-            "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` value_kind `{:?}` should be `{:?}`",
-            claim.value_kind, expected.value_kind
-        ));
-    }
-    if claim.orientation.as_deref() != expected.orientation {
-        failures.push(format!(
-            "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` orientation `{:?}` should be `{:?}`",
-            claim.orientation, expected.orientation
-        ));
-    }
-
-    let expected_actions = expected.actions.iter().copied().collect::<BTreeSet<_>>();
-    for action in expected.actions {
-        if !claim.actions.contains(*action) {
-            failures.push(format!(
-                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` is missing action `{action}`"
-            ));
-        }
-    }
-    for action in &claim.actions {
-        if !expected_actions.contains(action.as_str()) {
-            failures.push(format!(
-                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` has unexpected action `{action}`"
-            ));
-        }
-    }
 }
 
 fn conformance_gates_from_source(source: &str) -> (Vec<ConformanceGate>, Vec<String>) {
@@ -722,7 +608,7 @@ fn audit_conformance_gate_evidence(gates: &[ConformanceGate]) -> Vec<String> {
     ] {
         if !gate_ids.contains(required_gate) {
             failures.push(format!(
-                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: COMPONENT_CONFORMANCE_GATES is missing `{required_gate}`"
+                "crates/ui_components/src/component_contract/evidence.rs: COMPONENT_CONFORMANCE_GATES is missing `{required_gate}`"
             ));
         }
     }
@@ -732,12 +618,17 @@ fn audit_conformance_gate_evidence(gates: &[ConformanceGate]) -> Vec<String> {
             "contract",
             "crates/ui_components/src/component_contract/rows.rs",
         ),
+        (
+            "contract",
+            "crates/ui_components/src/component_contract/evidence.rs",
+        ),
         ("contract", "crates/ui_components/tests/public_surface.rs"),
         (
             "gallery",
             "examples/ui-foundation-gallery/tests/foundation_gallery.rs",
         ),
         ("a11y", "ComponentA11yContract"),
+        ("a11y", "COMPONENT_A11Y_EVIDENCE"),
         ("a11y", "COMPONENT_A11Y_CLAIMS"),
         ("a11y", "crates/ui_components/tests/a11y.rs"),
         ("theme", "crates/ui_components/src/theme/schema.rs"),
@@ -748,7 +639,7 @@ fn audit_conformance_gate_evidence(gates: &[ConformanceGate]) -> Vec<String> {
     ] {
         if !all_evidence.contains(token) {
             failures.push(format!(
-                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: conformance evidence is missing {class} owner `{token}`"
+                "crates/ui_components/src/component_contract/evidence.rs: conformance evidence is missing {class} owner `{token}`"
             ));
         }
     }
@@ -764,7 +655,16 @@ fn struct_literal_blocks<'a>(source: &'a str, type_name: &str) -> (Vec<&'a str>,
     while let Some(relative_start) = source[search_from..].find(type_name) {
         let start = search_from + relative_start;
         let line_start = source[..start].rfind('\n').map_or(0, |index| index + 1);
-        if source[line_start..start].contains("struct") {
+        let line_prefix = &source[line_start..start];
+        let trimmed_line_prefix = line_prefix.trim_start();
+        if line_prefix.contains("struct")
+            || line_prefix.contains("fn ")
+            || trimmed_line_prefix.starts_with("impl ")
+            || trimmed_line_prefix.starts_with("use ")
+            || trimmed_line_prefix.starts_with("pub use ")
+            || trimmed_line_prefix.starts_with("///")
+            || trimmed_line_prefix.starts_with("//!")
+        {
             search_from = start + type_name.len();
             continue;
         }
@@ -1045,6 +945,17 @@ mod tests {
         failures.iter().any(|failure| failure.contains(needle))
     }
 
+    fn evidence(component: &str, role: &str) -> A11yEvidence {
+        A11yEvidence {
+            component: component.to_string(),
+            role: role.to_string(),
+            label_source: "VisibleText".to_string(),
+            value_kind: None,
+            orientation: None,
+            actions: BTreeSet::from(["Click".to_string()]),
+        }
+    }
+
     #[test]
     fn contract_row_parser_reads_entry_fields() {
         let source = r#"
@@ -1247,50 +1158,48 @@ pub use crate::field::Field as FormField;
         let claims = [A11yClaim {
             component: "Button".to_string(),
             selector_prefix: "gallery:component-button-sample".to_string(),
-            role: "Button".to_string(),
-            label_source: "VisibleText".to_string(),
-            value_kind: None,
-            orientation: None,
-            actions: BTreeSet::from(["Click".to_string()]),
         }];
+        let evidence = [
+            evidence("Button", "Button"),
+            evidence("IconButton", "Button"),
+        ];
 
-        let failures = audit_a11y_claims(&claims);
+        let failures = audit_a11y_claims(&claims, &evidence);
 
-        assert!(has_failure(&failures, "IconButton"));
+        assert!(has_failure(&failures, "selector binding"));
     }
 
     #[test]
-    fn audit_reports_slider_claim_missing_set_value_action() {
+    fn audit_reports_a11y_claim_without_component_evidence() {
         let claims = [A11yClaim {
-            component: "Slider".to_string(),
-            selector_prefix: "gallery:component-slider-sample".to_string(),
-            role: "Slider".to_string(),
-            label_source: "VisibleText".to_string(),
-            value_kind: Some("Percent".to_string()),
-            orientation: Some("Horizontal".to_string()),
-            actions: BTreeSet::from(["Increment".to_string(), "Decrement".to_string()]),
+            component: "GalleryOnly".to_string(),
+            selector_prefix: "gallery:component-gallery-only-sample".to_string(),
         }];
+        let evidence = [evidence("Button", "Button")];
 
-        let failures = audit_a11y_claims(&claims);
+        let failures = audit_a11y_claims(&claims, &evidence);
 
-        assert!(has_failure(&failures, "SetValue"));
+        assert!(has_failure(
+            &failures,
+            "no component-owned COMPONENT_A11Y_EVIDENCE"
+        ));
     }
 
     #[test]
-    fn audit_reports_unexpected_a11y_action() {
+    fn audit_reports_a11y_evidence_without_label_source() {
         let claims = [A11yClaim {
-            component: "Progress".to_string(),
-            selector_prefix: "gallery:component-progress-sample".to_string(),
-            role: "ProgressIndicator".to_string(),
-            label_source: "VisibleText".to_string(),
-            value_kind: Some("Percent".to_string()),
-            orientation: None,
-            actions: BTreeSet::from(["Click".to_string()]),
+            component: "Button".to_string(),
+            selector_prefix: "gallery:component-button-sample".to_string(),
         }];
+        let mut evidence = evidence("Button", "Button");
+        evidence.label_source = "NotRequired".to_string();
 
-        let failures = audit_a11y_claims(&claims);
+        let failures = audit_a11y_claims(&claims, &[evidence]);
 
-        assert!(has_failure(&failures, "unexpected action `Click`"));
+        assert!(has_failure(
+            &failures,
+            "must name the accessible label source"
+        ));
     }
 
     #[test]

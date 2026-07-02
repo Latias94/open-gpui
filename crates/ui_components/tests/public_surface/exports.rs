@@ -44,6 +44,17 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     );
     root_a11y_contract.validate().unwrap();
     prelude_a11y_contract.validate().unwrap();
+    let _root_a11y_evidence: root::ComponentA11yEvidence = root::COMPONENT_A11Y_EVIDENCE[0];
+    let _prelude_a11y_evidence: prelude::ComponentA11yEvidence =
+        prelude::COMPONENT_A11Y_EVIDENCE[0];
+    let _root_conformance_gate: root::ComponentConformanceGate =
+        root::COMPONENT_CONFORMANCE_GATES[0];
+    let _prelude_conformance_gate: prelude::ComponentConformanceGate =
+        prelude::COMPONENT_CONFORMANCE_GATES[0];
+    assert_eq!(
+        root::component_a11y_evidence("Button").map(|evidence| evidence.role),
+        Some(Role::Button)
+    );
     let root_button = root::Button::new("save", "Save");
     let root_accordion = root::Accordion::new("accordion")
         .mode(root::AccordionMode::Multiple)

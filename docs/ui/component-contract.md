@@ -826,8 +826,9 @@ these gates visible:
 - Splitter runtime fractions continue to share one constraint solver;
 - Tabs keep overflow and roving-focus behavior visible in the page;
 - icon-only affordances and labels keep their accessible metadata explicit;
-- `COMPONENT_A11Y_CLAIMS` and `ComponentA11yClaim` keep representative sample selectors, roles,
-  label sources, value metadata, orientation, and actions aligned with `ComponentA11yContract`.
+- `COMPONENT_A11Y_EVIDENCE` keeps representative roles, label sources, value metadata,
+  orientation, and actions aligned with `ComponentA11yContract`; gallery `COMPONENT_A11Y_CLAIMS`
+  bind those facts to sample selectors.
 - `cargo run -p xtask -- scan-ui-contract` keeps contract rows, default exports, docs tokens,
   conformance evidence, a11y claims, and the theme schema artifact aligned before gallery smoke
   tests are needed.

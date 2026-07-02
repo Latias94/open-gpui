@@ -373,8 +373,9 @@ That gate covers `A11yLabelSource`, `A11yDescriptionSource`, `A11yValueMetadata`
 `A11yValueKind`, `A11yContractError`, and `A11yContractViolation` across representative Button,
 IconButton, Checkbox, Slider, NumberInput, Progress, Dialog, Menu, Listbox, Tree, Table,
 VirtualizedList, and Splitter contracts. The Components gallery conformance gate also exposes
-`COMPONENT_A11Y_CLAIMS` / `ComponentA11yClaim`, so sample selector metadata stays aligned with
-roles, label sources, value metadata, orientation, and supported actions.
+component-owned `COMPONENT_A11Y_EVIDENCE` plus gallery-owned `COMPONENT_A11Y_CLAIMS`
+selector bindings, so sample selector metadata stays aligned with roles, label sources, value
+metadata, orientation, and supported actions.
 
 Theme portability is guarded by the theme focused gate:
 
@@ -607,7 +608,8 @@ cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_exp
 
 `scan-ui-contract` checks the component contract tables, default root/prelude exports, source
 homes, docs tokens, removed primitive targets, gallery conformance evidence, representative
-`COMPONENT_A11Y_CLAIMS`, and the committed theme schema artifact. Use the narrower
+`COMPONENT_A11Y_EVIDENCE`, gallery `COMPONENT_A11Y_CLAIMS`, and the committed theme schema
+artifact. Use the narrower
 `scan-theme-schema`, `scan-theme-drift`, and focused nextest commands when investigating a specific
 failure.
 

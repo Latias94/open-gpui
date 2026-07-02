@@ -182,6 +182,7 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(gates[9].id, "choice-surfaces");
     assert_eq!(gates[10].id, "a11y-labels");
     assert!(gates[10].evidence.contains(&"ComponentA11yContract"));
+    assert!(gates[10].evidence.contains(&"COMPONENT_A11Y_EVIDENCE"));
     assert!(gates[10].evidence.contains(&"COMPONENT_A11Y_CLAIMS"));
     assert!(
         gates[10]
@@ -212,10 +213,10 @@ fn components_page_samples_expose_component_metadata() {
 
     let a11y_claims = pages::components::COMPONENT_A11Y_CLAIMS;
     assert_eq!(a11y_claims.len(), 11);
-    assert!(a11y_claims.iter().all(
-        |claim| claim.selector_prefix.starts_with("gallery:component-")
-            && claim.label_source.provides_name()
-    ));
+    assert!(a11y_claims.iter().all(|claim| {
+        claim.selector_prefix.starts_with("gallery:component-")
+            && claim.evidence().label_source.provides_name()
+    }));
     let claim_names = a11y_claims
         .iter()
         .map(|claim| claim.component)
@@ -239,29 +240,33 @@ fn components_page_samples_expose_component_metadata() {
         );
     }
     assert!(a11y_claims.iter().any(|claim| {
+        let evidence = claim.evidence();
         claim.component == "IconButton"
-            && claim.role == Role::Button
-            && claim.label_source == A11yLabelSource::ExplicitLabel
-            && claim.actions.contains(&AccessibleAction::Click)
+            && evidence.role == Role::Button
+            && evidence.label_source == A11yLabelSource::ExplicitLabel
+            && evidence.actions.contains(&AccessibleAction::Click)
     }));
     assert!(a11y_claims.iter().any(|claim| {
+        let evidence = claim.evidence();
         claim.component == "Slider"
-            && claim.role == Role::Slider
-            && claim.value_kind == Some(A11yValueKind::Percent)
-            && claim.orientation == Some(Orientation::Horizontal)
-            && claim.actions.contains(&AccessibleAction::SetValue)
+            && evidence.role == Role::Slider
+            && evidence.value_kind == Some(A11yValueKind::Percent)
+            && evidence.orientation == Some(Orientation::Horizontal)
+            && evidence.actions.contains(&AccessibleAction::SetValue)
     }));
     assert!(a11y_claims.iter().any(|claim| {
+        let evidence = claim.evidence();
         claim.component == "Table"
-            && claim.role == Role::Table
-            && claim.value_kind == Some(A11yValueKind::Count)
+            && evidence.role == Role::Table
+            && evidence.value_kind == Some(A11yValueKind::Count)
     }));
     assert!(a11y_claims.iter().any(|claim| {
+        let evidence = claim.evidence();
         claim.component == "Splitter handle"
-            && claim.role == Role::Splitter
-            && claim.orientation == Some(Orientation::Vertical)
-            && claim.actions.contains(&AccessibleAction::Increment)
-            && claim.actions.contains(&AccessibleAction::Decrement)
+            && evidence.role == Role::Splitter
+            && evidence.orientation == Some(Orientation::Vertical)
+            && evidence.actions.contains(&AccessibleAction::Increment)
+            && evidence.actions.contains(&AccessibleAction::Decrement)
     }));
 
     assert_eq!(buttons.len(), 6);
@@ -1234,6 +1239,8 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     let components_source = include_str!("../../src/pages/components.rs");
     let catalog_source = include_str!("../../src/pages/components/catalog.rs");
     let conformance_source = include_str!("../../src/pages/components/conformance.rs");
+    let component_evidence_source =
+        include_str!("../../../../crates/ui_components/src/component_contract/evidence.rs");
     let render_source = include_str!("../../src/pages/components/render.rs");
     let render_families_source = include_str!("../../src/pages/components/render/families.rs");
     let render_focus_source = include_str!("../../src/pages/components/render/focus.rs");
@@ -1275,7 +1282,8 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(catalog_source.contains("pub const COMPONENT_CATALOG"));
     assert!(catalog_source.contains("ComponentCatalogEntry::contract_sample("));
     assert!(catalog_source.contains("ComponentCatalogEntry::state_contract("));
-    assert!(conformance_source.contains("pub const COMPONENT_CONFORMANCE_GATES"));
+    assert!(conformance_source.contains("COMPONENT_CONFORMANCE_GATES, ComponentConformanceGate"));
+    assert!(component_evidence_source.contains("pub const COMPONENT_CONFORMANCE_GATES"));
     for module_path in [
         "#[path = \"runtime/table.rs\"]",
         "#[path = \"runtime/tree.rs\"]",

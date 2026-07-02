@@ -6,6 +6,7 @@
 //! do not store GPUI runtime handles, callbacks, elements, windows, or contexts.
 
 mod api_inventory;
+mod evidence;
 mod projections;
 mod rows;
 mod source_mapping;
@@ -16,6 +17,7 @@ pub use api_inventory::{
     COMPONENT_API_INVENTORY, component_public_methods, component_render_inputs,
     public_owner_for_component_inventory,
 };
+pub use evidence::{COMPONENT_A11Y_EVIDENCE, COMPONENT_CONFORMANCE_GATES, component_a11y_evidence};
 pub use projections::{
     component_contract_default_export, component_contract_docs_status,
     component_contract_docs_token, component_contract_entry, component_contract_family,
@@ -28,6 +30,7 @@ pub use source_mapping::{
 };
 pub use surfaces::PUBLIC_SURFACE_OWNER_MAP;
 pub use types::{
-    CallbackApi, ComponentApiInventoryEntry, ComponentContractEntry, DefaultSeedApi,
-    PublicSurfaceOwnerClass, PublicSurfaceOwnerEntry, SurfaceDocsStatus, SurfaceGalleryStatus,
+    CallbackApi, ComponentA11yEvidence, ComponentApiInventoryEntry, ComponentConformanceGate,
+    ComponentContractEntry, DefaultSeedApi, PublicSurfaceOwnerClass, PublicSurfaceOwnerEntry,
+    SurfaceDocsStatus, SurfaceGalleryStatus,
 };
