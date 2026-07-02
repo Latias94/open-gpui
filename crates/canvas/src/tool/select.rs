@@ -1,6 +1,8 @@
 use super::*;
-use crate::{CanvasConnectionEndpointRole, CanvasResizeHandle, HitOptions};
+use crate::{CanvasConnectionEndpointRole, CanvasResizeHandle, CanvasViewport, HitOptions};
 use open_gpui::Axis;
+
+const TRANSLATION_DRAG_THRESHOLD: f32 = 3.0;
 
 pub(super) struct SelectToolStateMachine;
 
@@ -41,6 +43,20 @@ impl SelectToolStateMachine {
                     ..
                 },
             ) => self.handle_idle_pointer_down(context, position, modifiers)?,
+            (
+                ToolState::PendingTranslation {
+                    origin,
+                    node_ids,
+                    shape_ids,
+                    ..
+                },
+                CanvasEvent::PointerMove {
+                    position,
+                    modifiers,
+                },
+            ) => self.handle_pending_translation_pointer_move(
+                context, position, modifiers, *origin, node_ids, shape_ids,
+            )?,
             (
                 ToolState::Translating {
                     last,
@@ -158,6 +174,12 @@ impl SelectToolStateMachine {
             (ToolState::Reconnecting { .. }, CanvasEvent::Cancel) => {
                 vec![CanvasToolEffect::SetState(ToolState::Idle)]
             }
+            (ToolState::PendingTranslation { base_selection, .. }, CanvasEvent::Cancel) => {
+                vec![
+                    CanvasToolEffect::SetSelection(base_selection.clone()),
+                    CanvasToolEffect::SetState(ToolState::Idle),
+                ]
+            }
             (ToolState::Pointing { base_selection, .. }, CanvasEvent::Cancel)
             | (ToolState::Selecting { base_selection, .. }, CanvasEvent::Cancel) => {
                 vec![
@@ -166,6 +188,9 @@ impl SelectToolStateMachine {
                 ]
             }
             (ToolState::Pointing { .. }, CanvasEvent::PointerUp { .. }) => {
+                vec![CanvasToolEffect::SetState(ToolState::Idle)]
+            }
+            (ToolState::PendingTranslation { .. }, CanvasEvent::PointerUp { .. }) => {
                 vec![CanvasToolEffect::SetState(ToolState::Idle)]
             }
             (ToolState::Selecting { .. }, CanvasEvent::PointerUp { .. }) => {
@@ -262,15 +287,12 @@ impl SelectToolStateMachine {
         }
         let (node_ids, shape_ids) = context.translatable_selection_ids(&selection);
         vec![
-            CanvasToolEffect::BeginGesture,
             CanvasToolEffect::SetSelection(selection),
-            CanvasToolEffect::SetState(ToolState::Translating {
+            CanvasToolEffect::SetState(ToolState::PendingTranslation {
                 origin: document_position,
-                last: document_position,
-                constraint_axis: None,
                 node_ids,
                 shape_ids,
-                snap_guides: Vec::new(),
+                base_selection: context.selection().clone(),
             }),
         ]
     }
@@ -296,6 +318,26 @@ impl SelectToolStateMachine {
             base_selection: context.selection().clone(),
         }));
         effects
+    }
+
+    fn handle_pending_translation_pointer_move(
+        &self,
+        context: CanvasToolReducerContext<'_>,
+        position: Point<Pixels>,
+        modifiers: CanvasKeyModifiers,
+        origin: Point<Pixels>,
+        node_ids: &[NodeId],
+        shape_ids: &[ShapeId],
+    ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
+        if !translation_drag_threshold_exceeded(context.viewport(), origin, position) {
+            return Ok(Vec::new());
+        }
+
+        let mut effects = vec![CanvasToolEffect::BeginGesture];
+        effects.extend(self.handle_translating_pointer_move(
+            context, position, modifiers, origin, origin, None, node_ids, shape_ids,
+        )?);
+        Ok(effects)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -459,6 +501,18 @@ fn selection_bounds(origin: Point<Pixels>, current: Point<Pixels>) -> Bounds<Pix
         Point::new(origin.x.min(current.x), origin.y.min(current.y)),
         Point::new(origin.x.max(current.x), origin.y.max(current.y)),
     )
+}
+
+fn translation_drag_threshold_exceeded(
+    viewport: CanvasViewport,
+    origin: Point<Pixels>,
+    current_view_position: Point<Pixels>,
+) -> bool {
+    let origin_view_position = viewport.document_to_view(origin);
+    let delta = current_view_position - origin_view_position;
+    let dx = delta.x.as_f32();
+    let dy = delta.y.as_f32();
+    dx.mul_add(dx, dy * dy) >= TRANSLATION_DRAG_THRESHOLD * TRANSLATION_DRAG_THRESHOLD
 }
 
 fn constrained_drag_position(

@@ -1173,6 +1173,120 @@ mod tests {
     }
 
     #[test]
+    fn select_tool_waits_for_drag_threshold_before_translating_node() {
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "n1",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .build();
+        let mut editor = CanvasEditor::new(document);
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(10.0), px(10.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert!(!editor.is_tool_state_idle());
+        assert!(matches!(
+            editor.session.state,
+            ToolState::PendingTranslation { .. }
+        ));
+        assert_eq!(editor.history().undo_depth(), 0);
+
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(12.0), px(12.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert!(matches!(
+            editor.session.state,
+            ToolState::PendingTranslation { .. }
+        ));
+        assert_eq!(
+            editor
+                .document()
+                .node(&NodeId::from("n1"))
+                .unwrap()
+                .position,
+            point(px(0.0), px(0.0))
+        );
+        assert_eq!(editor.history().undo_depth(), 0);
+
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(12.0), px(12.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert_eq!(editor.session.state, ToolState::Idle);
+        assert_eq!(editor.history().undo_depth(), 0);
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![NodeId::from("n1")]
+        );
+    }
+
+    #[test]
+    fn select_tool_cancel_pending_translation_restores_base_selection() {
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "base",
+                point(px(120.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .node(CanvasNode::new(
+                "next",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("base"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(10.0), px(10.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        assert!(matches!(
+            editor.session.state,
+            ToolState::PendingTranslation { .. }
+        ));
+
+        editor.handle_event(CanvasEvent::Cancel).unwrap();
+
+        assert_eq!(editor.session.state, ToolState::Idle);
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![NodeId::from("base")]
+        );
+        assert_eq!(editor.history().undo_depth(), 0);
+    }
+
+    #[test]
     fn select_tool_translates_shape() {
         let document = document_fixture()
             .shape(CanvasShape::new(

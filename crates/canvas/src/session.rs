@@ -23,6 +23,12 @@ pub(crate) enum ToolState {
         selection_mode: crate::tool::CanvasSelectionMode,
         base_selection: CanvasSelection,
     },
+    PendingTranslation {
+        origin: Point<Pixels>,
+        node_ids: Vec<NodeId>,
+        shape_ids: Vec<ShapeId>,
+        base_selection: CanvasSelection,
+    },
     Translating {
         origin: Point<Pixels>,
         last: Point<Pixels>,

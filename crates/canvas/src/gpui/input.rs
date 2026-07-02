@@ -208,13 +208,23 @@ pub fn register_canvas_editor_input<T>(
         let entity = entity.clone();
         let handler = handler.clone();
         move |event: &MouseMoveEvent, phase, _, cx| {
-            if phase != DispatchPhase::Bubble {
-                return;
-            }
-
             entity.update(cx, |target, cx| {
-                let mapper = mapper.with_pointer_interacting(handler.pointer_interacting(target));
-                if let Some(event) = mapper.mouse_move(event) {
+                let pointer_interacting = handler.pointer_interacting(target);
+                if pointer_interacting {
+                    if phase != DispatchPhase::Capture {
+                        return;
+                    }
+                    let mapper = mapper.with_pointer_interacting(true);
+                    if let Some(event) = mapper.mouse_move(event) {
+                        handler.dispatch_event(target, event, cx);
+                        cx.stop_propagation();
+                    }
+                    return;
+                }
+
+                if phase == DispatchPhase::Bubble
+                    && let Some(event) = mapper.mouse_move(event)
+                {
                     handler.dispatch_event(target, event, cx);
                 }
             });
@@ -225,13 +235,23 @@ pub fn register_canvas_editor_input<T>(
         let entity = entity.clone();
         let handler = handler.clone();
         move |event: &MouseUpEvent, phase, _, cx| {
-            if phase != DispatchPhase::Bubble {
-                return;
-            }
-
             entity.update(cx, |target, cx| {
-                let mapper = mapper.with_pointer_interacting(handler.pointer_interacting(target));
-                if let Some(event) = mapper.mouse_up(event) {
+                let pointer_interacting = handler.pointer_interacting(target);
+                if pointer_interacting {
+                    if phase != DispatchPhase::Capture {
+                        return;
+                    }
+                    let mapper = mapper.with_pointer_interacting(true);
+                    if let Some(event) = mapper.mouse_up(event) {
+                        handler.dispatch_event(target, event, cx);
+                        cx.stop_propagation();
+                    }
+                    return;
+                }
+
+                if phase == DispatchPhase::Bubble
+                    && let Some(event) = mapper.mouse_up(event)
+                {
                     handler.dispatch_event(target, event, cx);
                 }
             });

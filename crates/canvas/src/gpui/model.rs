@@ -182,7 +182,10 @@ impl Default for CanvasPaintInteraction {
 impl CanvasPaintInteractionState {
     pub(crate) fn from_tool_state(state: ToolState) -> Self {
         match state {
-            ToolState::Idle | ToolState::Pointing { .. } | ToolState::Panning { .. } => Self::Idle,
+            ToolState::Idle
+            | ToolState::Pointing { .. }
+            | ToolState::PendingTranslation { .. }
+            | ToolState::Panning { .. } => Self::Idle,
             ToolState::Selecting {
                 origin, current, ..
             } => Self::Selecting { origin, current },
