@@ -324,12 +324,7 @@ fn docs_status_field(block: &str) -> Option<DocsStatus> {
 
 fn enum_variant_field(block: &str, field: &str) -> Option<String> {
     let rest = field_value(block, field)?.trim_start();
-    let variant_start = rest.rfind("::").map(|index| index + 2).unwrap_or(0);
-    let variant = rest[variant_start..]
-        .chars()
-        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
-        .collect::<String>();
-    (!variant.is_empty()).then_some(variant)
+    enum_variant_from_source(rest)
 }
 
 fn field_value<'a>(block: &'a str, field: &str) -> Option<&'a str> {
@@ -410,17 +405,8 @@ fn optional_enum_variant_field(block: &str, field: &str) -> Option<Option<String
 }
 
 fn action_set_field(block: &str) -> Option<BTreeSet<String>> {
-    let rest = field_tail(block, "actions")?.trim_start();
-    if rest.starts_with("&[]") {
-        return Some(BTreeSet::new());
-    }
-
-    let open = rest.find("&[")? + 1;
-    let close = matching_bracket(rest, open)?;
-    Some(enum_variants_with_prefix(
-        &rest[open + 1..close],
-        "AccessibleAction::",
-    ))
+    let body = bracketed_slice_field(block, "actions")?;
+    Some(enum_variants_with_prefix(body, "AccessibleAction::"))
 }
 
 fn audit_a11y_claims(claims: &[A11yClaim]) -> Vec<String> {
@@ -593,10 +579,18 @@ fn conformance_gate_from_block(block: &str) -> Result<ConformanceGate, String> {
 }
 
 fn evidence_field(block: &str) -> Option<BTreeSet<String>> {
-    let rest = field_tail(block, "evidence")?.trim_start();
+    Some(
+        quoted_strings(bracketed_slice_field(block, "evidence")?)
+            .into_iter()
+            .collect(),
+    )
+}
+
+fn bracketed_slice_field<'a>(block: &'a str, field: &str) -> Option<&'a str> {
+    let rest = field_tail(block, field)?.trim_start();
     let open = rest.find("&[")? + 1;
     let close = matching_bracket(rest, open)?;
-    Some(quoted_strings(&rest[open + 1..close]).into_iter().collect())
+    Some(&rest[open + 1..close])
 }
 
 fn audit_conformance_gate_evidence(gates: &[ConformanceGate]) -> Vec<String> {
