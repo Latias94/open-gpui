@@ -36,7 +36,7 @@ pub use focus::FocusTargetId;
 pub use geometry::{
     UiEdges, UiPoint, UiPx, UiRect, UiSize, ui_edges, ui_point, ui_px, ui_rect, ui_size,
 };
-pub use grid_viewport::{GridViewport2D, resolve_grid_viewport_2d};
+pub use grid_viewport::{GridViewport2D, RowWindow, RowWindowItem, resolve_grid_viewport_2d};
 pub use motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
 pub use overlay::{
     DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,

@@ -1,7 +1,9 @@
 //! Renderer-neutral two-axis viewport contracts for table-like grids.
 
 use crate::geometry::UiPx;
-use crate::virtualizer::{VirtualizerRange, VirtualizerResolvedState, VirtualizerState};
+use crate::virtualizer::{
+    VirtualizerItemMeasurement, VirtualizerRange, VirtualizerResolvedState, VirtualizerState,
+};
 
 /// Combined row and column viewport metadata for a grid body.
 #[derive(Debug, Clone, PartialEq)]
@@ -125,10 +127,112 @@ fn clamp_scroll_offset(scroll_offset: UiPx, total_size: UiPx, viewport_extent: U
     }
 }
 
+/// One projected row in a virtualized render window.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RowWindowItem<T> {
+    index: usize,
+    render_key: String,
+    measurement: VirtualizerItemMeasurement,
+    row: T,
+}
+
+impl<T> RowWindowItem<T> {
+    /// Creates a row-window item from virtualizer measurement metadata.
+    fn new(measurement: &VirtualizerItemMeasurement, row: T) -> Self {
+        Self {
+            index: measurement.index(),
+            render_key: measurement.key().as_str().to_owned(),
+            measurement: measurement.clone(),
+            row,
+        }
+    }
+
+    /// Returns the source row index used by the virtualizer.
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Returns the stable render key supplied to the virtualizer.
+    pub fn render_key(&self) -> &str {
+        &self.render_key
+    }
+
+    /// Returns the virtualizer measurement for this row.
+    pub const fn measurement(&self) -> &VirtualizerItemMeasurement {
+        &self.measurement
+    }
+
+    /// Returns the virtual row size.
+    pub const fn virtual_size(&self) -> UiPx {
+        self.measurement.size()
+    }
+
+    /// Returns the projected row payload.
+    pub const fn row(&self) -> &T {
+        &self.row
+    }
+
+    /// Consumes the projection item and returns its parts.
+    pub fn into_parts(self) -> (usize, String, VirtualizerItemMeasurement, T) {
+        (self.index, self.render_key, self.measurement, self.row)
+    }
+}
+
+/// Projected rows plus row-window metadata shared by virtualized components.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RowWindow<T> {
+    rows: Vec<RowWindowItem<T>>,
+    visible_row_count: usize,
+    overscan_count: usize,
+}
+
+impl<T> RowWindow<T> {
+    /// Projects a virtualizer window into component row payloads.
+    pub fn project(
+        virtualizer: &VirtualizerResolvedState,
+        mut row_at: impl FnMut(usize) -> Option<T>,
+    ) -> Self {
+        let rows = virtualizer
+            .items()
+            .iter()
+            .filter_map(|measurement| {
+                row_at(measurement.index()).map(|row| RowWindowItem::new(measurement, row))
+            })
+            .collect();
+
+        Self {
+            rows,
+            visible_row_count: virtualizer.visible_items().len(),
+            overscan_count: virtualizer.overscan(),
+        }
+    }
+
+    /// Returns the projected rows after overscan.
+    pub fn rows(&self) -> &[RowWindowItem<T>] {
+        &self.rows
+    }
+
+    /// Consumes the projection and returns projected rows after overscan.
+    pub fn into_rows(self) -> Vec<RowWindowItem<T>> {
+        self.rows
+    }
+
+    /// Returns the number of visible rows before overscan.
+    pub const fn visible_row_count(&self) -> usize {
+        self.visible_row_count
+    }
+
+    /// Returns the overscan row budget.
+    pub const fn overscan_count(&self) -> usize {
+        self.overscan_count
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::geometry::ui_px;
+    use crate::virtualizer::VirtualizerItemKey;
     #[test]
     fn resolve_grid_viewport_2d_clamps_offsets_and_exposes_ranges() {
         let rows = VirtualizerState::new(4, ui_px(20.0))
@@ -272,5 +376,35 @@ mod tests {
 
         assert_eq!(viewport.row_virtualizer(), &rows);
         assert_eq!(viewport.column_virtualizer(), &columns);
+    }
+
+    #[test]
+    fn row_window_projection_preserves_ranges_keys_and_measurements() {
+        let source = ["alpha", "bravo", "charlie", "delta"];
+        let virtualizer = VirtualizerState::new(source.len(), ui_px(20.0))
+            .with_viewport_extent(ui_px(40.0))
+            .with_overscan(1)
+            .with_scroll_offset(ui_px(20.0))
+            .resolve_fixed_window(|index| VirtualizerItemKey::new(source[index]));
+
+        let window = RowWindow::project(&virtualizer, |index| source.get(index).copied());
+
+        assert_eq!(
+            window.visible_row_count(),
+            virtualizer.visible_items().len()
+        );
+        assert_eq!(window.overscan_count(), 1);
+        assert_eq!(
+            window
+                .rows()
+                .iter()
+                .map(|row| (row.index(), row.render_key().to_owned(), row.virtual_size()))
+                .collect::<Vec<_>>(),
+            virtualizer
+                .items()
+                .iter()
+                .map(|item| (item.index(), item.key().as_str().to_owned(), item.size()))
+                .collect::<Vec<_>>()
+        );
     }
 }

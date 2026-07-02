@@ -1,7 +1,6 @@
 use super::{TreeItemState, TreeMetrics, TreeState, nonnegative_px};
-use crate::row_window::RowWindow;
 use open_gpui_ui_core::{
-    Role, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
+    Role, RowWindow, UiPx, VirtualizerItemKey, VirtualizerItemMeasurement, VirtualizerRange,
     VirtualizerResolvedState, VirtualizerState,
 };
 

@@ -41,7 +41,6 @@ pub mod progress;
 mod public_api;
 pub mod radio;
 pub mod roving_focus;
-mod row_window;
 pub mod scroll_area;
 pub mod select;
 pub mod separator;
