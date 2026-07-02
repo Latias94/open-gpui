@@ -127,9 +127,10 @@ pub use store::{
     CanvasStoreMutationSource,
 };
 pub use tool::{
-    CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey, CanvasKeyModifiers, CanvasSelection,
-    CanvasSelectionMode, CanvasTool, CanvasToolContext, CanvasToolId, CanvasToolIntent,
-    CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError, PointerButton,
+    CanvasConnectionDragState, CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey,
+    CanvasKeyModifiers, CanvasSelection, CanvasSelectionMode, CanvasTool, CanvasToolContext,
+    CanvasToolId, CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry,
+    CanvasToolRegistryError, PointerButton,
 };
 pub use transform::{
     CanvasResizeHandle, CanvasTransformHandle, CanvasTransformTarget, canvas_transform_handles,

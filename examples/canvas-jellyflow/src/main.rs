@@ -72,7 +72,7 @@ use open_gpui_canvas::{
     CanvasKeyModifiers, CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode,
     CanvasNodeKind, CanvasNodeRenderPolicy, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
     CanvasTool, CanvasToolIntent, CanvasViewport, DocumentError, HandleRole, HitTarget, NodeId,
-    PointerButton, canvas_editor_view_with_frame,
+    PointerButton, canvas_editor_view_with_frame, connection_hit_options,
 };
 #[cfg(test)]
 use open_gpui_canvas::{CanvasTransaction, DocumentCommand};
@@ -894,9 +894,14 @@ impl JellyflowCanvasView {
         };
 
         self.auto_fit_viewport = false;
+        let dropped_wire_intent =
+            dropped_wire_intent_from_canvas_event(&self.editor, &self.store, &event);
         match self.editor.handle_event(event) {
             Ok(()) => {
-                self.sync_store_from_canvas_document();
+                let synced = self.sync_store_from_canvas_document();
+                if !synced && let Some((source, pointer)) = dropped_wire_intent {
+                    self.dispatch_first_dropped_wire_insert(source, pointer, cx);
+                }
             }
             Err(error) => {
                 eprintln!("canvas event failed: {error}");
@@ -1116,6 +1121,34 @@ impl JellyflowCanvasView {
             }
             Err(error) => report_dropped_wire_insert_error(error),
         }
+    }
+
+    fn dispatch_first_dropped_wire_insert(
+        &mut self,
+        source: ConnectionHandleRef,
+        pointer: JellyPoint,
+        cx: &mut Context<Self>,
+    ) {
+        let source_key = self
+            .store
+            .graph()
+            .ports()
+            .get(&source.port)
+            .map(|port| port.key.clone());
+        let menu = project_dropped_wire_menu(
+            &self.semantic_registry,
+            source,
+            source_key.as_ref(),
+            pointer,
+        );
+        let Some(action_key) = menu
+            .enabled_actions()
+            .next()
+            .map(|action| action.key.clone())
+        else {
+            return;
+        };
+        self.dispatch_dropped_wire_insert(&menu, &action_key, source, pointer, cx);
     }
 
     fn is_pointer_interacting(&self) -> bool {
@@ -1372,6 +1405,56 @@ fn dropped_wire_source_for_menu(
         })?;
     let source = dropped_wire_source_for_port_key(graph, &PortKey::new(source_key))?;
     Some((source, dropped_wire_insert_pointer(graph, source)))
+}
+
+fn dropped_wire_intent_from_canvas_event(
+    editor: &CanvasEditor,
+    store: &NodeGraphStore,
+    event: &CanvasEvent,
+) -> Option<(ConnectionHandleRef, JellyPoint)> {
+    let CanvasEvent::PointerUp {
+        position,
+        button: PointerButton::Primary,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    let drag = editor.connection_drag_state()?;
+    let document_position = editor.viewport().view_to_document(*position);
+    if editor
+        .runtime()
+        .precise_hit_test_with_kind_registry(
+            editor.document(),
+            editor.kind_registry(),
+            document_position,
+            connection_hit_options(),
+        )
+        .any(|record| matches!(record.target, HitTarget::Handle { .. }))
+    {
+        return None;
+    }
+    let source = connection_handle_ref_from_canvas_endpoint(store.graph(), &drag.source)?;
+    Some((
+        source,
+        JellyPoint {
+            x: document_position.x.as_f32(),
+            y: document_position.y.as_f32(),
+        },
+    ))
+}
+
+fn connection_handle_ref_from_canvas_endpoint(
+    graph: &Graph,
+    endpoint: &open_gpui_canvas::CanvasEndpoint,
+) -> Option<ConnectionHandleRef> {
+    let node = jelly_node_id_from_str(endpoint.node_id.as_str())?;
+    let port = endpoint
+        .handle_id
+        .as_ref()
+        .and_then(|handle| jelly_port_id_from_str(handle.as_str()))?;
+    let direction = graph.ports().get(&port)?.dir;
+    Some(ConnectionHandleRef::new(node, port, direction))
 }
 
 fn dropped_wire_source_for_port_key(
@@ -5755,9 +5838,22 @@ mod tests {
             "{report:?}"
         );
         assert!(
-            report
+            !report
                 .gaps
-                .contains(&OpenGpuiHostProductInteractionGap::ReconnectAffordanceMissing)
+                .contains(&OpenGpuiHostProductInteractionGap::ReconnectAffordanceMissing),
+            "{report:?}"
+        );
+        assert!(
+            !report
+                .gaps
+                .contains(&OpenGpuiHostProductInteractionGap::PortHotspotPathMissing),
+            "{report:?}"
+        );
+        assert!(
+            !report
+                .gaps
+                .contains(&OpenGpuiHostProductInteractionGap::DroppedWireGestureDetached),
+            "{report:?}"
         );
         assert!(
             !report
@@ -5826,6 +5922,22 @@ mod tests {
         assert!(
             product_reconnect_store_sync_probe(),
             "canvas edge endpoint update should dispatch through Jellyflow reconnect rules"
+        );
+    }
+
+    #[test]
+    fn selected_product_edge_exposes_reconnect_affordances() {
+        assert!(
+            product_reconnect_affordance_probe(),
+            "selected product edge should expose reconnect affordance handles"
+        );
+    }
+
+    #[test]
+    fn dropped_wire_gesture_commits_insert_from_connect_release() {
+        assert!(
+            product_dropped_wire_gesture_probe(),
+            "connect release away from a port should dispatch dropped-wire insert"
         );
     }
 
@@ -5933,6 +6045,133 @@ mod tests {
             .is_some_and(|edge| edge.to == target_port)
     }
 
+    fn product_reconnect_affordance_probe() -> bool {
+        let store = make_demo_store();
+        let Ok((document, _projection)) = project_store(&store) else {
+            return false;
+        };
+        let Ok(mut editor) = editor_for_document(document) else {
+            return false;
+        };
+        let edge_id = open_gpui_canvas::EdgeId::from(canvas_edge_id(&JellyEdgeId::from_u128(200)));
+        if editor
+            .apply_tool_intent(CanvasToolIntent::ReplaceSelection(HitTarget::Edge(
+                edge_id.clone(),
+            )))
+            .is_err()
+        {
+            return false;
+        }
+        let model = CanvasPaintModel::from(&editor);
+        let frame = open_gpui_canvas::collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), default_canvas_view_size()),
+            CanvasPaintOptions::default(),
+        );
+        let handles = &frame.interaction.reconnect_handles;
+        handles.len() >= 2
+            && handles
+                .iter()
+                .filter(|handle| handle.edge_id == edge_id)
+                .count()
+                == 2
+    }
+
+    fn product_dropped_wire_gesture_probe() -> bool {
+        let mut store = make_demo_store();
+        let registry = NodeKitRegistry::builtin().node_registry();
+        let source = ConnectionHandleRef::new(
+            JellyNodeId::from_u128(3),
+            JellyPortId::from_u128(31),
+            PortDirection::Out,
+        );
+        let Ok((document, _projection)) = project_store(&store) else {
+            return false;
+        };
+        let Ok(mut editor) = editor_for_document(document) else {
+            return false;
+        };
+        if editor.set_tool(CanvasTool::Connect).is_err() {
+            return false;
+        }
+        let Some(source_node) = editor
+            .document()
+            .node(&NodeId::from(canvas_node_id(&source.node)))
+        else {
+            return false;
+        };
+        let Some(source_handle) = source_node.handle(Some(&open_gpui_canvas::HandleId::from(
+            canvas_port_id(&source.port),
+        ))) else {
+            return false;
+        };
+        let source_view = editor
+            .viewport()
+            .document_to_view(source_node.position + source_handle.position);
+        if editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: source_view,
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .is_err()
+            || editor.connection_drag_state().is_none()
+        {
+            return false;
+        }
+
+        let pointer = JellyPoint { x: 760.0, y: 430.0 };
+        let release_view = editor
+            .viewport()
+            .document_to_view(point(px(pointer.x), px(pointer.y)));
+        let release = CanvasEvent::PointerUp {
+            position: release_view,
+            button: PointerButton::Primary,
+            modifiers: CanvasKeyModifiers::default(),
+        };
+        let Some((resolved_source, resolved_pointer)) =
+            dropped_wire_intent_from_canvas_event(&editor, &store, &release)
+        else {
+            return false;
+        };
+        if resolved_source != source {
+            return false;
+        }
+        if editor.handle_event(release).is_err() {
+            return false;
+        }
+        let source_key = PortKey::new("completion");
+        let menu = project_dropped_wire_menu(
+            &registry,
+            resolved_source,
+            Some(&source_key),
+            resolved_pointer,
+        );
+        let Some(action_key) = menu
+            .enabled_actions()
+            .next()
+            .map(|action| action.key.clone())
+        else {
+            return false;
+        };
+        let before_nodes = store.graph().nodes().len();
+        let before_edges = store.graph().edges().len();
+        if apply_demo_dropped_wire_insert(
+            &mut store,
+            &registry,
+            &menu,
+            &action_key,
+            resolved_source,
+            resolved_pointer,
+        )
+        .is_err()
+        {
+            return false;
+        }
+        store.graph().nodes().len() == before_nodes + 1
+            && store.graph().edges().len() == before_edges + 1
+    }
+
     fn product_port_hotspot_path_probe() -> bool {
         let (measured_store, transform, prompt, _) = measured_transform_store();
         let Ok((document, _projection)) = project_store(&measured_store) else {
@@ -6019,6 +6258,8 @@ mod tests {
                 && product_surface_drag_sequence_probe(ProductSurfaceDragProbeEnd::Cancel);
         let connect_flow_store_synced = product_connection_store_sync_probe();
         let port_hotspot_path_checked = product_port_hotspot_path_probe();
+        let reconnect_affordance_visible = product_reconnect_affordance_probe();
+        let dropped_wire_gesture_connected = product_dropped_wire_gesture_probe();
 
         let mut report = OpenGpuiHostProductInteractionReport::default();
         report.mark_drag_surface_coverage(product_drag_surfaces, drag_sequence_checked);
@@ -6026,8 +6267,8 @@ mod tests {
         report.mark_port_hotspot_path_checked(port_hotspot_path_checked);
         report.mark_tool_switcher_visible(product_tool_switcher_visible());
         report.mark_connect_flow_store_synced(connect_flow_store_synced);
-        report.mark_reconnect_affordance_visible(false);
-        report.mark_dropped_wire_gesture_connected(false);
+        report.mark_reconnect_affordance_visible(reconnect_affordance_visible);
+        report.mark_dropped_wire_gesture_connected(dropped_wire_gesture_connected);
         report.mark_repeatable_overflow(hidden_repeatable_overflow, repeatable_overflow_indicators);
         report
     }

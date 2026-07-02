@@ -6,10 +6,10 @@ use crate::{
     CanvasEndpoint, CanvasGeometryFacts, CanvasKindLabel, CanvasRecordId, CanvasRecordScopeOptions,
     CanvasResolvedSelectionScope, CanvasRoutePath, CanvasRouteSegment, CanvasSelection,
     CanvasSnapAxis, CanvasSnapGuide, CanvasTransformHandle, CanvasTransformTarget, CanvasViewport,
-    HitOptions, HitTarget, canvas_transform_handles, connection_hit_options,
+    EdgeId, HitOptions, HitTarget, canvas_transform_handles, connection_hit_options,
     resolve_selection_scope,
 };
-use open_gpui::{Bounds, Hsla, Pixels, Point, SharedString, TextRun, Window, WrappedLine};
+use open_gpui::{Bounds, Hsla, Pixels, Point, SharedString, TextRun, Window, WrappedLine, px, size};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CanvasPaintFrame {
@@ -104,6 +104,7 @@ pub struct CanvasPaintInteractionFrame {
     pub selection_bounds: Option<Bounds<Pixels>>,
     pub structural_selection_bounds: Option<Bounds<Pixels>>,
     pub connection_preview: Option<CanvasPaintConnectionPreview>,
+    pub reconnect_handles: Vec<CanvasPaintReconnectHandle>,
     pub transform_handles: Vec<CanvasPaintTransformHandle>,
     pub snap_guides: Vec<CanvasPaintSnapGuide>,
 }
@@ -112,6 +113,19 @@ pub struct CanvasPaintInteractionFrame {
 pub struct CanvasPaintConnectionPreview {
     pub source_view_position: Point<Pixels>,
     pub target_view_position: Point<Pixels>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CanvasPaintReconnectEndpoint {
+    Source,
+    Target,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasPaintReconnectHandle {
+    pub edge_id: EdgeId,
+    pub endpoint: CanvasPaintReconnectEndpoint,
+    pub view_bounds: Bounds<Pixels>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -333,6 +347,7 @@ fn interaction_frame(
             ),
             structural_selection_bounds: None,
             connection_preview: None,
+            reconnect_handles: Vec::new(),
             transform_handles: Vec::new(),
             snap_guides: Vec::new(),
         },
@@ -341,6 +356,7 @@ fn interaction_frame(
                 selection_bounds: None,
                 structural_selection_bounds: structural_selection_bounds(model, selection_scope),
                 connection_preview: connection_preview(model, source, *current),
+                reconnect_handles: Vec::new(),
                 transform_handles: Vec::new(),
                 snap_guides: Vec::new(),
             }
@@ -349,6 +365,7 @@ fn interaction_frame(
             selection_bounds: None,
             structural_selection_bounds: structural_selection_bounds(model, selection_scope),
             connection_preview: None,
+            reconnect_handles: reconnect_handles_for_model(model),
             transform_handles: transform_handles_for_model(model),
             snap_guides: paint_snap_guides(model, snap_guides),
         },
@@ -356,6 +373,7 @@ fn interaction_frame(
             selection_bounds: None,
             structural_selection_bounds: structural_selection_bounds(model, selection_scope),
             connection_preview: None,
+            reconnect_handles: reconnect_handles_for_model(model),
             transform_handles: transform_handles_for_model(model),
             snap_guides: Vec::new(),
         },
@@ -410,6 +428,42 @@ fn transform_handles_for_model(model: &CanvasPaintModel) -> Vec<CanvasPaintTrans
             .document_bounds_to_view(handle.document_bounds),
     })
     .collect()
+}
+
+fn reconnect_handles_for_model(model: &CanvasPaintModel) -> Vec<CanvasPaintReconnectHandle> {
+    let facts = CanvasGeometryFacts::with_kind_registry(
+        model.document.as_ref(),
+        model.kind_registry.as_ref(),
+    );
+    model
+        .interaction
+        .selection()
+        .selected_edges()
+        .filter_map(|edge_id| {
+            let edge = model.document.edge(edge_id)?;
+            let source = facts.endpoint_position(&edge.source).ok()?;
+            let target = facts.endpoint_position(&edge.target).ok()?;
+            Some([
+                CanvasPaintReconnectHandle {
+                    edge_id: edge_id.clone(),
+                    endpoint: CanvasPaintReconnectEndpoint::Source,
+                    view_bounds: Bounds::centered_at(
+                        model.viewport.document_to_view(source),
+                        size(px(14.0), px(14.0)),
+                    ),
+                },
+                CanvasPaintReconnectHandle {
+                    edge_id: edge_id.clone(),
+                    endpoint: CanvasPaintReconnectEndpoint::Target,
+                    view_bounds: Bounds::centered_at(
+                        model.viewport.document_to_view(target),
+                        size(px(14.0), px(14.0)),
+                    ),
+                },
+            ])
+        })
+        .flatten()
+        .collect()
 }
 
 fn connection_preview(

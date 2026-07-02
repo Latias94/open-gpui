@@ -959,6 +959,52 @@ mod tests {
     }
 
     #[test]
+    fn selected_edge_adds_reconnect_handles_to_paint_frame() {
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(10.0), px(10.0)),
+                size(px(40.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(90.0), px(10.0)),
+                size(px(40.0), px(20.0)),
+            ))
+            .edge(CanvasEdge::new(
+                "edge",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Edge(
+                crate::EdgeId::from("edge"),
+            )))
+            .unwrap();
+        let model = CanvasPaintModel::from(&editor);
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(100.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert_eq!(frame.interaction.reconnect_handles.len(), 2);
+        assert!(frame.interaction.reconnect_handles.iter().any(|handle| {
+            handle.edge_id == crate::EdgeId::from("edge")
+                && handle.endpoint == CanvasPaintReconnectEndpoint::Source
+                && handle.view_bounds.contains(&point(px(30.0), px(20.0)))
+        }));
+        assert!(frame.interaction.reconnect_handles.iter().any(|handle| {
+            handle.edge_id == crate::EdgeId::from("edge")
+                && handle.endpoint == CanvasPaintReconnectEndpoint::Target
+                && handle.view_bounds.contains(&point(px(110.0), px(20.0)))
+        }));
+    }
+
+    #[test]
     fn translating_state_adds_snap_guides_to_paint_frame() {
         let document = document_fixture()
             .node(CanvasNode::new(

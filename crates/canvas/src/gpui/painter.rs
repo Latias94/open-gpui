@@ -180,6 +180,18 @@ pub fn paint_canvas_frame(
             theme.handle_corner_radius,
         );
     }
+
+    for handle in &frame.frame.interaction.reconnect_handles {
+        paint_rect(
+            window,
+            canvas_bounds,
+            handle.view_bounds,
+            theme.handle_fill,
+            theme.handle_stroke,
+            theme.handle_stroke_width,
+            handle.view_bounds.size.width * 0.5,
+        );
+    }
 }
 
 fn record_has_selection_feedback(record: &CanvasPaintRecord) -> bool {

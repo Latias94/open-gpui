@@ -107,6 +107,12 @@ pub enum CanvasEvent {
     Cancel,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasConnectionDragState {
+    pub source: CanvasEndpoint,
+    pub current: Point<Pixels>,
+}
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct CanvasToolId(String);
@@ -666,6 +672,16 @@ impl CanvasEditor {
 
     pub fn is_tool_state_idle(&self) -> bool {
         matches!(self.state(), ToolState::Idle)
+    }
+
+    pub fn connection_drag_state(&self) -> Option<CanvasConnectionDragState> {
+        match self.state() {
+            ToolState::Connecting { source, current } => Some(CanvasConnectionDragState {
+                source: source.clone(),
+                current: *current,
+            }),
+            _ => None,
+        }
     }
 
     pub fn tool_context(&self) -> CanvasToolContext<'_> {
@@ -3921,6 +3937,35 @@ mod tests {
         let edge = editor.document().edges().next().unwrap();
         assert_eq!(edge.source.handle_id, Some(HandleId::from("out")));
         assert_eq!(edge.target.handle_id, Some(HandleId::from("in")));
+    }
+
+    #[test]
+    fn connect_tool_exposes_read_only_drag_state() {
+        use crate::{CanvasHandle, HandleId, HandleRole};
+
+        let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut source_handle = CanvasHandle::new("out", point(px(100.0), px(50.0)));
+        source_handle.role = HandleRole::Source;
+        source.handles.push(source_handle);
+        let target = CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+        let document = document_fixture().node(source).node(target).build();
+        let mut editor = CanvasEditor::new(document);
+        editor.set_tool(CanvasTool::Connect).unwrap();
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(100.0), px(50.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        let drag = editor
+            .connection_drag_state()
+            .expect("connect drag should expose source state");
+        assert_eq!(drag.source.node_id, NodeId::from("a"));
+        assert_eq!(drag.source.handle_id, Some(HandleId::from("out")));
+        assert_eq!(drag.current, point(px(100.0), px(50.0)));
     }
 
     #[test]
