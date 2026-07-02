@@ -4,7 +4,10 @@ use std::{
     process::{Command, ExitCode},
 };
 
-use crate::{import_boundary::scan_import_boundary, theme_drift::scan_theme_drift};
+use crate::{
+    import_boundary::scan_import_boundary, theme_drift::scan_theme_drift,
+    ui_contract::scan_ui_contract,
+};
 
 pub fn run_from_env() -> ExitCode {
     let mut args = env::args().skip(1);
@@ -19,6 +22,7 @@ pub fn run_from_env() -> ExitCode {
         "renderer-smoke" => renderer_smoke(&root),
         "scan-theme-drift" => scan_theme_drift(&root),
         "scan-import-boundary" => scan_import_boundary(&root),
+        "scan-ui-contract" => scan_ui_contract(&root),
         _ => {
             eprintln!("unknown command: {command}");
             print_usage();
@@ -40,6 +44,7 @@ fn print_usage() {
     eprintln!("  renderer-smoke        run the native wgpu renderer smoke test");
     eprintln!("  scan-theme-drift      scan theme token and recipe drift");
     eprintln!("  scan-import-boundary  scan for disallowed import residue");
+    eprintln!("  scan-ui-contract      scan UI component contract drift");
 }
 
 fn verify(root: &Path) -> Result<(), ()> {
