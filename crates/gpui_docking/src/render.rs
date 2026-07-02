@@ -1388,6 +1388,9 @@ fn apply_overlay_transition_sample(
 ) {
     for layer in &mut overlay_scene.layers {
         let key = overlay_transition_key_for_layer(layer);
+        if !key.0.animates_from_previous_bounds() {
+            continue;
+        }
         if let Some(overlay) = sample
             .overlays
             .iter()
@@ -1658,6 +1661,7 @@ mod tests {
     use super::*;
     use crate::drop_preview::DockDropRoutePreviewKind;
     use open_gpui::{point, size};
+    use slotmap::Key;
 
     fn preview(rejected: bool, payload_tab: bool) -> DockDropPreview {
         let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
@@ -1694,6 +1698,27 @@ mod tests {
             kind,
             bounds: Bounds::new(point(px(0.0), px(0.0)), size(px(56.0), px(40.0))),
             rejected,
+        }
+    }
+
+    fn test_overlay_layer(
+        tabs: DockNodeId,
+        kind: crate::overlay_scene::DockOverlayLayerKind,
+        bounds: Bounds<Pixels>,
+        zone: Option<DropZone>,
+        payload_index: Option<usize>,
+    ) -> DockOverlayLayer {
+        DockOverlayLayer {
+            kind,
+            bounds,
+            target_node: Some(tabs),
+            zone,
+            preview_layer: None,
+            active: true,
+            payload_index,
+            payload_title: payload_index.map(|_| "Preview".to_string()),
+            drop_box: None,
+            tab_insertion: None,
         }
     }
 
@@ -1753,6 +1778,139 @@ mod tests {
                     title: "Diff".to_string(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn overlay_transition_sample_does_not_move_pointer_coupled_tab_preview_layers() {
+        let tabs = DockNodeId::null();
+        let current_body = Bounds::new(point(px(80.0), px(26.0)), size(px(180.0), px(120.0)));
+        let current_insertion = Bounds::new(point(px(120.0), px(0.0)), size(px(3.0), px(26.0)));
+        let current_payload = Bounds::new(point(px(124.0), px(0.0)), size(px(90.0), px(26.0)));
+        let sampled_body = Bounds::new(point(px(20.0), px(26.0)), size(px(180.0), px(120.0)));
+        let sampled_insertion = Bounds::new(point(px(12.0), px(0.0)), size(px(3.0), px(26.0)));
+        let sampled_payload = Bounds::new(point(px(16.0), px(0.0)), size(px(80.0), px(26.0)));
+        let mut overlay = DockOverlayScene {
+            layers: vec![
+                test_overlay_layer(
+                    tabs,
+                    crate::overlay_scene::DockOverlayLayerKind::TargetBody,
+                    current_body,
+                    None,
+                    None,
+                ),
+                test_overlay_layer(
+                    tabs,
+                    crate::overlay_scene::DockOverlayLayerKind::TabInsertion,
+                    current_insertion,
+                    Some(DropZone::Center),
+                    None,
+                ),
+                test_overlay_layer(
+                    tabs,
+                    crate::overlay_scene::DockOverlayLayerKind::PayloadTab,
+                    current_payload,
+                    Some(DropZone::Center),
+                    Some(0),
+                ),
+                test_overlay_layer(
+                    tabs,
+                    crate::overlay_scene::DockOverlayLayerKind::PayloadGhost,
+                    current_payload,
+                    Some(DropZone::Center),
+                    Some(0),
+                ),
+            ],
+        };
+        let sample = DockTransitionSample {
+            final_scene: DockPresentationScene {
+                space: crate::DockSpaceId::from("test"),
+                bounds: current_body,
+                root: Some(tabs),
+                panes: Vec::new(),
+                tab_bars: Vec::new(),
+                tab_labels: Vec::new(),
+                splitters: Vec::new(),
+                floating_containers: Vec::new(),
+                focus_regions: Vec::new(),
+                overlay_anchors: Vec::new(),
+            },
+            progress: 0.0,
+            complete: false,
+            needs_frame: true,
+            pane_bounds: Vec::new(),
+            pane_clips: Vec::new(),
+            dividers: Vec::new(),
+            overlays: vec![
+                DockOverlaySample {
+                    kind: DockOverlayTransitionKind::TargetBody,
+                    bounds: sampled_body,
+                    target_node: Some(tabs),
+                    zone: None,
+                    payload_index: None,
+                    progress: 0.0,
+                },
+                DockOverlaySample {
+                    kind: DockOverlayTransitionKind::TabInsertion,
+                    bounds: sampled_insertion,
+                    target_node: Some(tabs),
+                    zone: Some(DropZone::Center),
+                    payload_index: None,
+                    progress: 0.0,
+                },
+                DockOverlaySample {
+                    kind: DockOverlayTransitionKind::PayloadTab,
+                    bounds: sampled_payload,
+                    target_node: Some(tabs),
+                    zone: Some(DropZone::Center),
+                    payload_index: Some(0),
+                    progress: 0.0,
+                },
+                DockOverlaySample {
+                    kind: DockOverlayTransitionKind::PayloadGhost,
+                    bounds: sampled_payload,
+                    target_node: Some(tabs),
+                    zone: Some(DropZone::Center),
+                    payload_index: Some(0),
+                    progress: 0.0,
+                },
+            ],
+        };
+
+        apply_overlay_transition_sample(&mut overlay, &sample);
+
+        let bounds_for = |kind, payload_index| {
+            overlay
+                .layers
+                .iter()
+                .find(|layer| layer.kind == kind && layer.payload_index == payload_index)
+                .map(|layer| layer.bounds)
+                .expect("overlay should include layer kind")
+        };
+        assert_eq!(
+            bounds_for(crate::overlay_scene::DockOverlayLayerKind::TargetBody, None),
+            sampled_body
+        );
+        assert_eq!(
+            bounds_for(
+                crate::overlay_scene::DockOverlayLayerKind::TabInsertion,
+                None
+            ),
+            current_insertion
+        );
+        assert_eq!(
+            bounds_for(
+                crate::overlay_scene::DockOverlayLayerKind::PayloadTab,
+                Some(0)
+            ),
+            current_payload
+        );
+        assert_eq!(
+            bounds_for(
+                crate::overlay_scene::DockOverlayLayerKind::PayloadGhost,
+                Some(0)
+            ),
+            current_payload
         );
     }
 

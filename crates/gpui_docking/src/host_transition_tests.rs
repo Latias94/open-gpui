@@ -51,6 +51,27 @@ fn single_pane_scene(
     }
 }
 
+fn tab_preview_overlay_layer(
+    tabs: crate::DockNodeId,
+    kind: DockOverlayLayerKind,
+    bounds: Bounds<open_gpui::Pixels>,
+    zone: Option<DropZone>,
+    payload_index: Option<usize>,
+) -> DockOverlayLayer {
+    DockOverlayLayer {
+        kind,
+        bounds,
+        target_node: Some(tabs),
+        zone,
+        preview_layer: None,
+        active: true,
+        payload_index,
+        payload_title: payload_index.map(|_| "Preview".to_string()),
+        drop_box: None,
+        tab_insertion: None,
+    }
+}
+
 #[open_gpui::test]
 fn transition_plan_describes_split_insertion_from_final_scene(cx: &mut TestAppContext) {
     let (graph, root, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
@@ -592,6 +613,118 @@ fn transition_plan_keeps_tab_insertion_layers_at_current_target_bounds() {
             "tab insertion preview layers should not lag behind the current pointer target"
         );
     }
+}
+
+#[open_gpui::test]
+fn overlay_retarget_keeps_tab_preview_layers_at_current_target_bounds(cx: &mut TestAppContext) {
+    let (graph, _root, tabs, _right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+    let scene = single_pane_scene(tabs, host_bounds(320.0, 200.0));
+    let previous_body = floating_bounds(10.0, 26.0, 180.0, 120.0);
+    let next_body = floating_bounds(80.0, 26.0, 180.0, 120.0);
+    let previous_insertion = floating_bounds(12.0, 0.0, 3.0, 26.0);
+    let next_insertion = floating_bounds(120.0, 0.0, 3.0, 26.0);
+    let previous_payload = floating_bounds(16.0, 0.0, 80.0, 26.0);
+    let next_payload = floating_bounds(124.0, 0.0, 90.0, 26.0);
+    let tab_preview_scene = |body, insertion, payload| DockOverlayScene {
+        layers: vec![
+            tab_preview_overlay_layer(tabs, DockOverlayLayerKind::TargetBody, body, None, None),
+            tab_preview_overlay_layer(
+                tabs,
+                DockOverlayLayerKind::TabInsertion,
+                insertion,
+                Some(DropZone::Center),
+                None,
+            ),
+            tab_preview_overlay_layer(
+                tabs,
+                DockOverlayLayerKind::PayloadTab,
+                payload,
+                Some(DropZone::Center),
+                Some(0),
+            ),
+            tab_preview_overlay_layer(
+                tabs,
+                DockOverlayLayerKind::PayloadGhost,
+                payload,
+                Some(DropZone::Center),
+                Some(0),
+            ),
+        ],
+    };
+    let previous = tab_preview_scene(previous_body, previous_insertion, previous_payload);
+    let next = tab_preview_scene(next_body, next_insertion, next_payload);
+    let first_plan =
+        DockTransitionPlan::from_overlay_scene(&scene, &previous, DockMotionPreference::Animated);
+    let replacement_plan = DockTransitionPlan::between_overlay_scenes(
+        &scene,
+        &previous,
+        &next,
+        DockMotionPreference::Animated,
+    );
+    let spec = MotionSpec::new(
+        MotionPreference::Animated,
+        MotionDuration::Custom(Duration::from_millis(400)),
+        MotionEasing::Linear,
+    );
+
+    host.update(cx, |host, _| {
+        assert_eq!(
+            host.execute_overlay_transition_plan(first_plan, spec, None),
+            DockTransitionExecutionState::Scheduled
+        );
+        assert!(
+            host.sample_overlay_transition_for_test(Duration::from_millis(0))
+                .is_some()
+        );
+        assert!(
+            host.sample_overlay_transition_for_test(Duration::from_millis(100))
+                .is_some()
+        );
+
+        assert_eq!(
+            host.execute_overlay_transition_plan(replacement_plan, spec, None),
+            DockTransitionExecutionState::Scheduled
+        );
+        let sample = host
+            .sample_overlay_transition_for_test(Duration::from_millis(100))
+            .expect("replacement overlay transition should expose a retargeted start sample");
+        assert_eq!(sample.progress, 0.0);
+
+        let overlay_bounds = |kind, payload_index| {
+            sample
+                .overlays
+                .iter()
+                .find(|overlay| overlay.kind == kind && overlay.payload_index == payload_index)
+                .map(|overlay| overlay.bounds)
+                .expect("sample should include overlay kind")
+        };
+        assert_eq!(
+            overlay_bounds(DockOverlayTransitionKind::TargetBody, None),
+            previous_body,
+            "target body can retarget from the active sampled position"
+        );
+        assert_eq!(
+            overlay_bounds(DockOverlayTransitionKind::TabInsertion, None),
+            next_insertion,
+            "tab insertion should stay pinned to the current pointer target"
+        );
+        assert_eq!(
+            overlay_bounds(DockOverlayTransitionKind::PayloadTab, Some(0)),
+            next_payload,
+            "payload tab preview should not drift from the current insertion slot"
+        );
+        assert_eq!(
+            overlay_bounds(DockOverlayTransitionKind::PayloadGhost, Some(0)),
+            next_payload,
+            "payload ghost should stay aligned with the payload tab preview"
+        );
+    });
 }
 
 #[test]

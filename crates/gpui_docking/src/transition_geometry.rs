@@ -111,7 +111,7 @@ impl DockOverlayTransitionKind {
         }
     }
 
-    fn animates_from_previous_bounds(self) -> bool {
+    pub(crate) fn animates_from_previous_bounds(self) -> bool {
         !matches!(
             self,
             Self::TabInsertion | Self::PayloadTab | Self::PayloadGhost

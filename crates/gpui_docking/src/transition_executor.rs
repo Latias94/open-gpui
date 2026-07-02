@@ -310,6 +310,9 @@ fn retarget_plan_from_sample(
         .map(|overlay| (overlay_key(overlay), overlay.bounds))
         .collect::<HashMap<_, _>>();
     for transition in &mut plan.overlay_transitions {
+        if !transition.kind.animates_from_previous_bounds() {
+            continue;
+        }
         if let Some(bounds) = overlay_bounds.get(&transition_key(transition)).copied() {
             transition.from_bounds = Some(bounds);
         }
