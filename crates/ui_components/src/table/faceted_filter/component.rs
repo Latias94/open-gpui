@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use crate::popover::Popover;
+use crate::theme::ThemeResolver;
 use open_gpui::{App, IntoElement, RenderOnce, SharedString, Window};
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayPlacementAlignment,
@@ -246,6 +247,7 @@ impl Sizable for TableFacetedFilter {
 
 impl RenderOnce for TableFacetedFilter {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let runtime_id = format!("{}-runtime", self.id);
         let runtime = window.use_keyed_state(runtime_id, cx, |_, _| TableFacetedFilterRuntime {
             query: self.default_query.clone(),
@@ -311,6 +313,7 @@ impl RenderOnce for TableFacetedFilter {
             options_height,
             self.size,
             self.tokens,
+            &theme,
         );
 
         let mut popover = Popover::element(self.id.clone(), summary_text, content)

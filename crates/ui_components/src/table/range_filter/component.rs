@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use crate::popover::Popover;
 use crate::table::filtering::{normalize_table_range_filter_values, table_range_filter_value_text};
+use crate::theme::ThemeResolver;
 use open_gpui::{App, IntoElement, RenderOnce, SharedString, Window};
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayPlacementAlignment,
@@ -209,6 +210,7 @@ impl Sizable for TableRangeFilter {
 
 impl RenderOnce for TableRangeFilter {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let runtime_id = format!("{}-runtime", self.id);
         let runtime = window.use_keyed_state(runtime_id, cx, |_, _| TableRangeFilterRuntime {
             min_text: self.default_min_text.clone(),
@@ -247,6 +249,7 @@ impl RenderOnce for TableRangeFilter {
             self.column_id.clone(),
             self.size,
             self.tokens,
+            &theme,
         );
         let summary_text = if state.active() {
             state.trigger_label().to_owned()

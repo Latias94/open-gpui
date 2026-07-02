@@ -12,7 +12,7 @@ use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::theme::ThemeResolver;
 
 /// Resolved checkbox metrics.
@@ -371,7 +371,8 @@ impl Sizable for Checkbox {
 }
 
 impl RenderOnce for Checkbox {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -391,6 +392,7 @@ impl RenderOnce for Checkbox {
             .or_else(|| label.clone())
             .unwrap_or_else(|| SharedString::from("Checkbox"));
         let debug_id = self.id.to_string();
+        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
 
         div()
             .id(self.id)
@@ -403,7 +405,7 @@ impl RenderOnce for Checkbox {
             .ui_role(state.role())
             .aria_label(label_text)
             .ui_aria_toggled(state.toggled())
-            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+            .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| this.cursor_pointer())
             .when_some(
@@ -424,22 +426,22 @@ impl RenderOnce for Checkbox {
                     .justify_center()
                     .rounded(gpui_px_from_ui(metrics.box_radius()))
                     .border_1()
-                    .border_color(ThemeResolver::resolve(colors.border()))
-                    .bg(ThemeResolver::resolve(colors.background()))
-                    .hover(|style| style.bg(ThemeResolver::resolve(colors.hover_background())))
+                    .border_color(theme.resolve(colors.border()))
+                    .bg(theme.resolve(colors.background()))
+                    .hover(|style| style.bg(theme.resolve(colors.hover_background())))
                     .child({
                         let indicator = if state.indeterminate() {
                             div()
                                 .w(gpui_px_from_ui(metrics.indicator_size()))
                                 .h(gpui_px_from_ui(metrics.mixed_bar_height()))
                                 .rounded(gpui_px_from_ui(metrics.mixed_bar_height()))
-                                .bg(ThemeResolver::resolve(colors.indicator()))
+                                .bg(theme.resolve(colors.indicator()))
                         } else if state.checked() {
                             div()
                                 .w(gpui_px_from_ui(metrics.indicator_size()))
                                 .h(gpui_px_from_ui(metrics.indicator_size()))
                                 .rounded(gpui_px_from_ui(metrics.indicator_size()))
-                                .bg(ThemeResolver::resolve(colors.indicator()))
+                                .bg(theme.resolve(colors.indicator()))
                         } else {
                             div().w(open_gpui::px(0.0)).h(open_gpui::px(0.0))
                         };
@@ -451,7 +453,7 @@ impl RenderOnce for Checkbox {
                     div()
                         .text_size(gpui_px_from_ui(metrics.label_text_size()))
                         .line_height(gpui_px_from_ui(metrics.box_size()))
-                        .text_color(ThemeResolver::resolve(colors.label()))
+                        .text_color(theme.resolve(colors.label()))
                         .child(label),
                 )
             })

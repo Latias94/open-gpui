@@ -215,7 +215,8 @@ impl Sizable for Label {
 }
 
 impl RenderOnce for Label {
-    fn render(self, _window: &mut Window, _cx: &mut open_gpui::App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut open_gpui::App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -230,13 +231,13 @@ impl RenderOnce for Label {
             .aria_label(text.clone())
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
-            .text_color(ThemeResolver::resolve(colors.text()))
+            .text_color(theme.resolve(colors.text()))
             .when(state.disabled(), |this| this.opacity(0.56))
             .child(text)
             .when(state.required(), |this| {
                 this.child(
                     div()
-                        .text_color(ThemeResolver::resolve(colors.required_marker()))
+                        .text_color(theme.resolve(colors.required_marker()))
                         .text_size(gpui_px_from_ui(metrics.marker_size()))
                         .line_height(gpui_px_from_ui(metrics.text_size()))
                         .child("*"),

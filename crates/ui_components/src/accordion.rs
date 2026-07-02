@@ -2,7 +2,7 @@
 
 use crate::a11y::UiA11yElementExt;
 use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
@@ -458,7 +458,8 @@ impl Sizable for Accordion {
 }
 
 impl RenderOnce for Accordion {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -496,6 +497,17 @@ impl RenderOnce for Accordion {
                         let item_focus_ring = focus_ring;
                         let item_colors = colors;
                         let item_on_change = on_open_change.clone();
+                        let item_focus_shadow =
+                            focus_ring_shadow_with_theme(item_focus_ring, &theme);
+                        let item_border = theme.resolve(item_colors.border());
+                        let item_background = theme.resolve(if open {
+                            item_colors.hover_background()
+                        } else {
+                            item_colors.background()
+                        });
+                        let item_foreground = theme.resolve(item_colors.foreground());
+                        let item_hover_background = theme.resolve(item_colors.hover_background());
+                        let content_background = theme.resolve(item_colors.background());
 
                         div()
                             .id(format!("accordion:{value}"))
@@ -514,13 +526,9 @@ impl RenderOnce for Accordion {
                                     .gap_2()
                                     .rounded(gpui_px_from_ui(metrics.radius()))
                                     .border_1()
-                                    .border_color(ThemeResolver::resolve(item_colors.border()))
-                                    .bg(ThemeResolver::resolve(if open {
-                                        item_colors.hover_background()
-                                    } else {
-                                        item_colors.background()
-                                    }))
-                                    .text_color(ThemeResolver::resolve(item_colors.foreground()))
+                                    .border_color(item_border)
+                                    .bg(item_background)
+                                    .text_color(item_foreground)
                                     .text_size(gpui_px_from_ui(metrics.text_size()))
                                     .line_height(gpui_px_from_ui(metrics.text_size()))
                                     .focusable()
@@ -529,15 +537,12 @@ impl RenderOnce for Accordion {
                                     .aria_label(label.clone())
                                     .aria_expanded(open)
                                     .focus_visible(move |style| {
-                                        style.shadow(focus_ring_shadow(item_focus_ring))
+                                        style.shadow(item_focus_shadow.clone())
                                     })
                                     .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                                     .when(!disabled, |this| {
-                                        this.cursor_pointer().hover(move |style| {
-                                            style.bg(ThemeResolver::resolve(
-                                                item_colors.hover_background(),
-                                            ))
-                                        })
+                                        this.cursor_pointer()
+                                            .hover(move |style| style.bg(item_hover_background))
                                     })
                                     .when_some(item_on_change.filter(|_| !disabled), {
                                         let change = change.clone();
@@ -558,8 +563,8 @@ impl RenderOnce for Accordion {
                                         .ui_role(item_state.content_role())
                                         .rounded(gpui_px_from_ui(metrics.radius()))
                                         .border_1()
-                                        .border_color(ThemeResolver::resolve(item_colors.border()))
-                                        .bg(ThemeResolver::resolve(item_colors.background()))
+                                        .border_color(item_border)
+                                        .bg(content_background)
                                         .p_3()
                                         .child(content),
                                 )

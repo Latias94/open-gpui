@@ -20,7 +20,7 @@ use crate::overlay::{
     GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, gpui_overlay_state,
     gpui_relative_overlay_layer,
 };
-use crate::theme::ThemeResolver;
+use crate::theme::{ThemeContext, ThemeResolver};
 
 /// Open affordance for a tooltip trigger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -445,7 +445,8 @@ impl Sizable for Tooltip {
 }
 
 impl RenderOnce for Tooltip {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let id = self.id;
@@ -488,6 +489,7 @@ impl RenderOnce for Tooltip {
                         state,
                         accessible_label,
                         children,
+                        &theme,
                     ),
                 ))
             })
@@ -500,6 +502,7 @@ fn tooltip_surface_element(
     state: TooltipState,
     accessible_label: SharedString,
     children: Vec<AnyElement>,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
@@ -512,9 +515,9 @@ fn tooltip_surface_element(
         .py(gpui_px_from_ui(metrics.padding_y()))
         .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(colors.border()))
-        .bg(ThemeResolver::resolve(colors.background()))
-        .text_color(ThemeResolver::resolve(colors.foreground()))
+        .border_color(theme.resolve(colors.border()))
+        .bg(theme.resolve(colors.background()))
+        .text_color(theme.resolve(colors.foreground()))
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .shadow_lg()

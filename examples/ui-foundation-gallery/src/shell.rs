@@ -18,10 +18,11 @@ use open_gpui_ui_components::{
     ListboxOption, ListboxState, Menu, MenuItem, OverlayResolvedState, Popover, Progress,
     ProgressState, ScrollArea, Select, SelectOpenMode, SelectState, Separator, SeparatorState,
     Sheet, Skeleton, SkeletonState, SwitchState, TextInput, TextInputState, Textarea,
-    TextareaState, ToggleState, Tooltip,
+    TextareaState, ThemeResolver, ToggleState, Tooltip,
     gpui_adapter::{
-        DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, focus_ring_shadow,
-        gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui, init_text_input,
+        DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt,
+        focus_ring_shadow_with_theme, gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui,
+        init_text_input,
     },
 };
 
@@ -1034,6 +1035,8 @@ impl GalleryShell {
             ThemeTokens::default().focus_ring,
             0x2f80ed,
         ));
+        let theme = ThemeResolver::current(cx);
+        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
 
         div()
             .id(spec.id)
@@ -1046,7 +1049,7 @@ impl GalleryShell {
             .border_color(rgb(0xd6d8ce))
             .bg(rgb(0xffffff))
             .p_3()
-            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+            .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .track_focus(handle)
             .focusable()
             .tab_stop(true)
@@ -1879,6 +1882,9 @@ impl GalleryShell {
             0x2f80ed,
         ));
 
+        let theme = ThemeResolver::current(cx);
+        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+
         overlay_sample_card_shell(
             format!("overlay-tooltip-sample:{}", sample_id),
             Some(debug_selector),
@@ -1903,7 +1909,7 @@ impl GalleryShell {
                 })
                 .px_3()
                 .py_2()
-                .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                .focus_visible(move |style| style.shadow(focus_shadow.clone()))
                 .track_focus(focus_handle)
                 .focusable()
                 .tab_stop(!state.disabled())

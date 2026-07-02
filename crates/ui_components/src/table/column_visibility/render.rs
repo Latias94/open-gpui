@@ -2,7 +2,7 @@ use crate::button::{Button, ButtonVariant};
 use crate::checkbox::Checkbox;
 use crate::geometry::gpui_px_from_ui;
 use crate::scroll_area::ScrollArea;
-use crate::theme::ThemeResolver;
+use crate::theme::ThemeContext;
 use open_gpui::prelude::*;
 use open_gpui::{
     Entity, IntoElement, ParentElement, StatefulInteractiveElement, Styled, div, px, rgba,
@@ -23,6 +23,7 @@ pub(in crate::table::column_visibility) fn table_column_visibility_content_eleme
     on_change: Option<TableColumnVisibilityChangeHandler>,
     items_height: UiPx,
     size: Size,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let disabled = state.popover().disabled();
     let content_debug_id = state.id().to_owned();
@@ -86,9 +87,7 @@ pub(in crate::table::column_visibility) fn table_column_visibility_content_eleme
         .flex()
         .flex_col()
         .gap_2()
-        .text_color(ThemeResolver::resolve(
-            state.popover().colors().foreground(),
-        ))
+        .text_color(theme.resolve(state.popover().colors().foreground()))
         .on_scroll_wheel(|_, window, cx| {
             window.prevent_default();
             cx.stop_propagation();

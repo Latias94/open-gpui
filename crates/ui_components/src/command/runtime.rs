@@ -17,7 +17,7 @@ use crate::overlay::{
 use crate::scroll_area::ScrollArea;
 use crate::text_input::TextInput;
 use crate::text_input::adapter::TextInputController;
-use crate::theme::ThemeResolver;
+use crate::theme::ThemeContext;
 use crate::virtualized_list::{VirtualizedListScrollStrategy, virtualized_list_scroll_target};
 
 use super::render_plan::resolve_command_viewport_extent;
@@ -81,6 +81,7 @@ pub(super) fn command_dialog_layer_element(
     on_select: Option<CommandSelectionHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     tokens: ThemeTokens,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let outside_change = outside_press_open_change(dialog_state.overlay().policy());
@@ -134,6 +135,7 @@ pub(super) fn command_dialog_layer_element(
                     on_select,
                     on_selected_values_change,
                     tokens,
+                    theme,
                 )),
         )
 }
@@ -155,6 +157,7 @@ pub(super) fn command_content_element(
     on_select: Option<CommandSelectionHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     tokens: ThemeTokens,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
@@ -221,9 +224,9 @@ pub(super) fn command_content_element(
         .gap_2()
         .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(colors.border()))
-        .bg(ThemeResolver::resolve(colors.surface()))
-        .text_color(ThemeResolver::resolve(colors.foreground()))
+        .border_color(theme.resolve(colors.border()))
+        .bg(theme.resolve(colors.surface()))
+        .text_color(theme.resolve(colors.foreground()))
         .shadow_lg()
         .when_some(dialog_state.clone(), |this, dialog_state| {
             this.occlude().ui_role(dialog_state.role())
@@ -305,8 +308,8 @@ pub(super) fn command_content_element(
                             .py(px(1.0))
                             .rounded(gpui_px_from_ui(state.size().control_radius()))
                             .border_1()
-                            .border_color(ThemeResolver::resolve(colors.border()))
-                            .text_color(ThemeResolver::resolve(colors.foreground()))
+                            .border_color(theme.resolve(colors.border()))
+                            .text_color(theme.resolve(colors.foreground()))
                             .child(chip.label().to_owned()),
                     )
                 },
@@ -316,7 +319,7 @@ pub(super) fn command_content_element(
             this.child(
                 div()
                     .id(loading_id)
-                    .text_color(ThemeResolver::resolve(colors.muted_foreground()))
+                    .text_color(theme.resolve(colors.muted_foreground()))
                     .ui_role(loading.role())
                     .aria_label(loading.message().to_owned())
                     .child(loading.message().to_owned()),
@@ -347,6 +350,7 @@ pub(super) fn command_content_element(
                             on_open_change,
                             on_selected_values_change,
                             state.dialog().is_some(),
+                            theme,
                         ),
                     )
                     .vertical()
@@ -435,6 +439,7 @@ fn render_command_results_body(
     on_open_change: Option<CommandOpenChangeHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     dialog_enabled: bool,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let command_id = command_id.to_owned();
     let listbox_id = plan.listbox_id().to_owned();
@@ -456,7 +461,7 @@ fn render_command_results_body(
         .p(gpui_px_from_ui(state.listbox().metrics().surface_padding()))
         .text_size(gpui_px_from_ui(state.listbox().metrics().text_size()))
         .line_height(gpui_px_from_ui(state.listbox().metrics().text_size()))
-        .text_color(ThemeResolver::resolve(colors.foreground()))
+        .text_color(theme.resolve(colors.foreground()))
         .ui_role(plan.role())
         .aria_label(plan.label().to_owned())
         .aria_disabled(state.disabled())
@@ -474,6 +479,7 @@ fn render_command_results_body(
             on_open_change,
             on_selected_values_change,
             dialog_enabled,
+            theme,
         ))
 }
 
@@ -492,6 +498,7 @@ fn command_result_children(
     on_open_change: Option<CommandOpenChangeHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     dialog_enabled: bool,
+    theme: &ThemeContext,
 ) -> Vec<AnyElement> {
     if state.empty() {
         return vec![
@@ -510,7 +517,7 @@ fn command_result_children(
                 .py(gpui_px_from_ui(
                     state.listbox().metrics().option_padding_y(),
                 ))
-                .text_color(ThemeResolver::resolve(colors.muted_foreground()))
+                .text_color(theme.resolve(colors.muted_foreground()))
                 .child(state.empty_label().to_owned())
                 .into_any_element(),
         ];
@@ -531,6 +538,7 @@ fn command_result_children(
                 on_open_change.clone(),
                 on_selected_values_change.clone(),
                 dialog_enabled,
+                theme,
             )
             .into_any_element()
         })
@@ -551,6 +559,7 @@ fn render_command_result_row(
     on_open_change: Option<CommandOpenChangeHandler>,
     on_selected_values_change: Option<CommandSelectedValuesChangeHandler>,
     dialog_enabled: bool,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let option_value = row.value().to_owned();
     let render_key = row.render_key().to_owned();
@@ -567,6 +576,15 @@ fn render_command_result_row(
     } else {
         UiPx::ZERO
     };
+    let group_label_color = theme.resolve(colors.muted_foreground());
+    let row_background = theme.resolve(command_row_background(active, selected, colors));
+    let row_foreground = theme.resolve(if disabled {
+        colors.muted_foreground()
+    } else {
+        colors.foreground()
+    });
+    let row_hover_background = theme.resolve(command_row_hover_background(colors));
+    let shortcut_foreground = theme.resolve(colors.shortcut_foreground());
 
     div()
         .id(format!("command-row:{render_key}"))
@@ -593,7 +611,7 @@ fn render_command_result_row(
                     .items_center()
                     .text_xs()
                     .font_weight(FontWeight::BOLD)
-                    .text_color(ThemeResolver::resolve(colors.muted_foreground()))
+                    .text_color(group_label_color)
                     .ui_role(Role::Group)
                     .aria_label(label.clone())
                     .child(label),
@@ -616,14 +634,8 @@ fn render_command_result_row(
                 .justify_between()
                 .gap_2()
                 .rounded(gpui_px_from_ui(metrics.radius()))
-                .bg(ThemeResolver::resolve(command_row_background(
-                    active, selected, colors,
-                )))
-                .text_color(ThemeResolver::resolve(if disabled {
-                    colors.muted_foreground()
-                } else {
-                    colors.foreground()
-                }))
+                .bg(row_background)
+                .text_color(row_foreground)
                 .ui_role(row.role())
                 .aria_label(label.clone())
                 .aria_selected(selected)
@@ -634,9 +646,7 @@ fn render_command_result_row(
                 .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                 .when(!disabled, |this| {
                     this.cursor_pointer()
-                        .hover(move |style| {
-                            style.bg(ThemeResolver::resolve(command_row_hover_background(colors)))
-                        })
+                        .hover(move |style| style.bg(row_hover_background))
                         .on_click(move |_event: &ClickEvent, window, cx| {
                             cx.stop_propagation();
                             window.prevent_default();
@@ -664,7 +674,7 @@ fn render_command_result_row(
                             .flex_none()
                             .min_w(gpui_px_from_ui(metrics.shortcut_min_width()))
                             .text_xs()
-                            .text_color(ThemeResolver::resolve(colors.shortcut_foreground()))
+                            .text_color(shortcut_foreground)
                             .child(shortcut),
                     )
                 }),

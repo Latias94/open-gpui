@@ -45,7 +45,8 @@ The concrete component owns the GPUI adapter. This layer may use:
 - AccessKit role/action/state mapping;
 - hitboxes, pointer events, keyboard actions, cursor behavior, and event propagation;
 - scroll handles, overlay anchoring, portals, and deferred rendering;
-- concrete color values produced by `open_gpui_ui_components::ThemeResolver`.
+- concrete color values produced from a render-time
+  `open_gpui_ui_components::ThemeContext`, usually via `ThemeResolver::current(cx)`.
 
 The adapter should read from the resolved state rather than duplicating semantic decisions in the
 render body.
@@ -79,6 +80,15 @@ policy. It does not own global overlay ordering, callback storage, or window sub
 `resolve_escape_key`, `resolve_outside_press`, and `resolve_focus_restore`, so nested overlay
 behavior can be tested without a GPUI window before an adapter wires concrete events and focus
 handles.
+`open_gpui_ui_core::overlay::resolve_overlay_placement` is the shared anchored-placement solver for
+explicit neutral placement inputs. It returns `OverlayPlacementResolution` with fit and trace
+metadata, so point-anchored and render-plan overlays that provide anchor bounds, content size, and
+safe bounds use one flip/shift policy. `open_gpui_ui_components::overlay` owns the GPUI host
+mapping: `GpuiOverlayPlacement`, `gpui_relative_overlay_layer`, `gpui_positioned_overlay_layer`,
+and `gpui_full_window_overlay_layer` convert neutral placement and layer policy into concrete
+`anchored` / `deferred` / full-window elements. Trigger-anchored components that do not yet own
+measured trigger/content bounds still delegate final live positioning to GPUI's anchored layer; the
+neutral solver remains the testable policy boundary rather than a measured overlay runtime.
 
 Interactive overlay adapters should bind persistent trigger/content focus handles in keyed runtime
 state instead of allocating them from rebuilt `RenderOnce` values. Resolved state declares
@@ -213,6 +223,15 @@ adapter owns the `TextInputController`, keyed runtime query/open/selection state
 outside-press and Escape wiring, deferred dialog rendering, concrete focus handles, and scroll
 handles; the renderer-neutral state owns ranking, selection projection, snapshot metadata, and the
 virtualized result render plan.
+`open_gpui_ui_core::CommandDescriptor` is the shared app-command metadata contract for component
+projection. It carries id, label, group, keywords, shortcut, disabled state, caller-owned `when`
+metadata, and app-owned menu path without storing callbacks, dispatch, keybinding resolution, or a
+global registry. `CommandItem::from_command_descriptor`, `CommandIndexSnapshot::command_descriptor`,
+`MenuItem::from_command_descriptor`, and `ContextMenu`'s shared menu state consume the one-item
+presentation fields so Command, Menu, and ContextMenu can present the same metadata while
+applications remain the execution authority. `menu_path` is retained on the core descriptor as
+caller grouping metadata; applications that want submenu hierarchy should group descriptors before
+building `MenuItem::submenu` trees rather than expecting one-item projection to create hierarchy.
 
 `SeparatorState`, `KbdState`, `ProgressState`, and `SkeletonState` are low-state primitives. They
 still expose resolved state, metrics, token intents, and stable rendered debug selectors rather
@@ -241,10 +260,12 @@ changing border width. `FocusRing` keeps the focus color as a `ColorIntent`, rec
 width as neutral `UiPx`, and documents that it does not change layout.
 
 The GPUI adapter should apply the ring inside `focus_visible` using
-`open_gpui_ui_components::gpui_adapter::focus_ring_shadow`. This paints an outer box shadow, so
-keyboard focus visibility does not resize or move the focused component. `focus_ring_shadow` is
-available only through `open_gpui_ui_components::gpui_adapter` because its `BoxShadow` return type
-is renderer-specific.
+`open_gpui_ui_components::gpui_adapter::focus_ring_shadow_with_theme` and the render-time
+`ThemeContext`. This paints an outer box shadow, so keyboard focus visibility does not resize or
+move the focused component. `focus_ring_shadow` remains a default-light compatibility helper and
+must not be used by production component render paths. Both helpers are available only through
+`open_gpui_ui_components::gpui_adapter` because their `BoxShadow` return type is
+renderer-specific.
 
 ## Public API
 
@@ -289,9 +310,10 @@ curated surface, while prelude-only additions remain local to `prelude.rs`. Do n
 public re-exports in component crates except for that curated default-surface hop. GPUI-specific
 helpers that remain public for concrete applications must be reachable through
 `open_gpui_ui_components::gpui_adapter`; current examples include `TextInputController`,
-`init_text_input`, `focus_ring_shadow`, accessibility mapping helpers, geometry conversion helpers,
-and GPUI overlay scheduling helpers. The crate root and prelude default interface are reserved for
-official components and renderer-neutral contracts.
+`init_text_input`, `focus_ring_shadow_with_theme`, the legacy `focus_ring_shadow` compatibility
+helper, accessibility mapping helpers, geometry conversion helpers, and GPUI overlay scheduling
+helpers. The crate root and prelude default interface are reserved for official components and
+renderer-neutral contracts.
 
 The current foundation refactor makes these names shipped high-value component families:
 `Accordion`, `Collapsible`, `Slider`, `NumberInput`, `ToggleGroup`, `Link`, `Breadcrumb`, `Tag`,
@@ -407,11 +429,14 @@ Component state should expose `ColorIntent` values rather than concrete GPUI col
 keeps the semantic `TokenKey`, `ColorState`, and fallback RGB visible for tests, documentation, and
 future adapter work.
 
-The GPUI adapter should resolve intents through `ThemeResolver` immediately before calling style
-APIs such as `bg`, `border_color`, and `text_color`. `ThemeResolver::resolve` uses the default
-light `ThemeSnapshot` for compatibility. New code that has an explicit theme should call
-`ThemeResolver::resolve_with(intent, snapshot)` so `(TokenKey, ColorState)` lookups come from the
-runtime theme table before falling back to the intent RGB.
+The GPUI adapter should resolve intents through `ThemeResolver::current(cx)` immediately before
+calling style APIs such as `bg`, `border_color`, and `text_color`. The returned `ThemeContext`
+owns the render-time snapshot, so adapters and their helper functions should pass it explicitly or
+pre-resolve concrete colors before storing style/event closures. `ThemeResolver::resolve` remains
+a legacy default-light compatibility path for tests or compatibility shims only; production render
+paths should not call it directly. Code with an immutable snapshot can call
+`ThemeResolver::resolve_with(intent, snapshot)` so `(TokenKey, ColorState)` lookups come from that
+snapshot before falling back to the intent RGB.
 
 `ThemeSnapshot` is an immutable table view with a `ThemeMode`, `revision`, and color entries. The
 revision is the cache invalidation hook for future app-level theme providers. Components should not
@@ -426,9 +451,11 @@ replaces entries by stable id, and stores owned color tables behind `ThemeRegist
 `ThemeRegistrationDiagnostics`
 records which built-in mode supplied fallback colors and how many entries were filled from that
 fallback. Missing optional token/state colors are completed from a built-in snapshot; missing id,
-label, mode, or revision fail validation with `ThemeValidationError`. The registry intentionally
-does not expose or mutate a global active theme: consumers choose an entry, take its immutable
-`ThemeSnapshot`, and pass that snapshot to `ThemeResolver::resolve_with`.
+label, mode, or revision fail validation with `ThemeValidationError`. `ThemeRuntime` is the GPUI
+app-global owner for the active theme id plus registry, and render code consumes cloned
+`ThemeContext` values from that runtime. Consumers can still choose an entry, take its immutable
+`ThemeSnapshot`, and pass that snapshot to `ThemeResolver::resolve_with` when they need an explicit
+non-runtime lookup.
 
 Portable theme files are JSON and versioned by `THEME_JSON_SCHEMA_VERSION`. The public loader
 surface is `theme_json_schema`, `theme_definition_from_json_str`,
@@ -607,12 +634,13 @@ mutation. The first `Table` adapter consumes virtualizer snapshots as measuremen
 scroll offset from the adapter runtime wins during render, and one-shot scroll-position restoration
 remains a future adapter-runtime policy.
 
-Virtualized adapters share a crate-private row-window projection around `VirtualizerResolvedState`.
-That seam maps the virtualizer's rendered measurements into component row payloads, stable render
-keys, visible-row counts, overscan budget, and scroll geometry without owning a concrete
-`ScrollHandle`. `VirtualizedList`, `Tree`, and the `Table` center-row body use this shared
-projection for their visible/overscan windows, while duplicate-key disambiguation, tree hierarchy,
-activation payloads, and pinned Table row bands remain component-specific contracts.
+Virtualized adapters share `open_gpui_ui_core::grid_viewport::RowWindow` and `RowWindowItem` around
+`VirtualizerResolvedState`. That renderer-neutral seam maps the virtualizer's rendered
+measurements into component row payloads, stable render keys, visible-row counts, overscan budget,
+and scroll geometry without owning a concrete `ScrollHandle`. `VirtualizedList`, `Tree`, and the
+`Table` center-row body use this shared projection for their visible/overscan windows, while
+duplicate-key disambiguation, tree hierarchy, activation payloads, and pinned Table row bands
+remain component-specific contracts.
 
 The GPUI `Table` adapter resolves table state and virtualizer ranges before rendering. The adapter
 owns the element tree, concrete scroll viewport, wheel containment, sticky header overlay,
@@ -824,6 +852,9 @@ these gates visible:
 - every official component, state readout, and overlay sample has a `StoryContract` that declares
   the selectors and runtime probes tests may use for open, dismiss, select, edit, scroll, focus,
   activate, and public-payload assertions;
+- `component_story_contract_for(name)` and `component_story_contracts_for_focus(mode)` are the
+  gallery-side authority for focused-section ids, sample selector pairs, state readout selector
+  pairs, and focusable catalog traversal;
 - gallery samples continue to show real resolved state for each shipped component;
 - all-components and focused component-family modes preserve the catalog, section directory, page
   scroll reset, and nested scroll containment contracts;
@@ -879,20 +910,23 @@ Before extraction, keep these boundary rules explicit:
 - component resolved state now exposes `OverlayResolvedState` for overlay policy/presence/focus
   data. `GpuiOverlayState` remains a GPUI adapter helper for deferred priority, snap margins, and
   renderer scheduling, and should not be stored in public `*State` contracts;
-- `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow`, and GPUI overlay
-  scheduling helpers are adapter-only public surfaces. They are intentionally grouped under
+- `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow_with_theme`, the
+  legacy `focus_ring_shadow` helper, and GPUI overlay scheduling helpers are adapter-only public
+  surfaces. They are intentionally grouped under
   `open_gpui_ui_components::gpui_adapter`; a future headless crate needs smaller neutral models or
   an explicit rule that these capabilities remain framework-specific.
 
 ## Current Known Gaps
 
-The active next UI productization slice is
-`docs/plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md`: split the component contract
-table, add focused accessibility contract gates, and add a theme JSON schema plus file-loader
-facade. Broad remaining-1k-line component splitting and `open-gpui-ui-headless` extraction are not
-part of that slice. The runtime theme table now covers semantic component colors for light, dark,
-high-contrast, registry-loaded snapshots, and JSON-loaded `ThemeDefinition` values; UIs should
-load or construct definitions, register them, and pass immutable snapshots to component adapters.
+The current deep-module productization slice is
+`docs/plans/2026-07-02-003-refactor-ui-framework-deep-modules-plan.md`: runtime theme context,
+typed a11y evidence, removed registry history, shared overlay placement, shared row-window
+projection, gallery story contracts, and app-command descriptor projection are now the active
+architecture boundary. Broad remaining-1k-line component splitting and `open-gpui-ui-headless`
+extraction are not part of that slice. The runtime theme table now covers semantic component
+colors for light, dark, high-contrast, registry-loaded snapshots, and JSON-loaded
+`ThemeDefinition` values; UIs should load or construct definitions, register them, install or
+select a `ThemeRuntime`, and let component adapters resolve colors from `ThemeResolver::current(cx)`.
 Single-line editable text input now uses GPUI's `EntityInputHandler`/
 `ElementInputHandler` path through `TextInputController`. Applications can either supply an
 adapter-owned controller directly or use the standard controlled shape
@@ -908,8 +942,9 @@ metadata, and keeps GPUI focus handles, input handlers, scroll handles, and call
 adapter. Field composition can wrap either `TextInput` or `Textarea` without owning editor values.
 Password reveal toggles, credential-manager affordances, textarea auto-grow/drag-resize, undo/redo,
 completion, validation engines, rich text, and code-editor behavior remain out of scope. `Field`
-still stays separate from the editing controller and remains composition-only. `focus_ring_shadow`
-is GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.
+still stays separate from the editing controller and remains composition-only.
+`focus_ring_shadow_with_theme` and the legacy `focus_ring_shadow` helper are GPUI-adapter code and
+should stay out of a future headless crate if `FocusRing` is extracted.
 ADR 0008 keeps current-crate productization as the active roadmap. ADR 0006 keeps the strict
 boundary checkpoint as future extraction evidence, not active work, and ADR 0007 records the
 post-boundary extraction design without creating the behavior crate.
@@ -922,17 +957,21 @@ semantic facades with GPUI adapter mapping exposed through
 state now uses neutral `OverlayResolvedState`; `GpuiOverlayState` is adapter-only scheduling
 state. Extraction is no longer blocked by UI-core GPUI dependencies or `UiPx` style conversion
 impls; the remaining non-headless surfaces are GPUI-owned adapter APIs such as
-`TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow`, adapter geometry
-conversion helpers, and GPUI overlay scheduling helpers. These public adapter APIs are now grouped
-under `open_gpui_ui_components::gpui_adapter`. Shared roving-focus helpers now live in
+`TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow_with_theme`, the
+legacy `focus_ring_shadow` helper, adapter geometry conversion helpers, and GPUI overlay scheduling
+helpers. These public adapter APIs are now grouped under `open_gpui_ui_components::gpui_adapter`.
+Shared roving-focus helpers now live in
 `open_gpui_ui_components::roving_focus`, with `Tabs` preserving compatibility re-exports.
 The choice family now also has a shared internal seam in `open_gpui_ui_components::choice` for flat
 stable-value projection, enabled-item selected/active fallback, typeahead matching, multi-select
 dedupe, and normalized query handling across `Listbox`, `Command`, `Combobox`, and `Select`.
 `open_gpui_ui_core` now owns `UiPx`, `UiPoint`, `UiSize`, `UiRect`, and `UiEdges`, and
 `ContextMenuState` stores a neutral point anchor plus renderer-neutral `OverlayPlacementInput`.
-GPUI placement is resolved only inside the adapter/render boundary. Overlay stack Escape,
-outside-press, and focus-restore ordering now have window-free tests in `open_gpui_ui_core`.
+`open_gpui_ui_core::overlay::resolve_overlay_placement` resolves side/alignment/fit/safe-bounds
+behavior for explicit neutral inputs before the GPUI adapter maps it into `GpuiOverlayPlacement`.
+GPUI layer mounting and any final live trigger/content measurement remain inside the
+adapter/render boundary. Overlay stack Escape, outside-press, placement policy, and focus-restore
+ordering now have window-free tests in `open_gpui_ui_core`.
 `Checkbox` now exposes checked, unchecked, and indeterminate resolved state plus theme intents for
 the box, indicator, label, and focus ring. `Label` now exposes control-association metadata at the
 resolved-state layer while keeping the visual adapter small. `Tabs` now keeps the roving-focus
@@ -973,10 +1012,11 @@ spacer geometry preserves the full scrollable width. It also ships GPUI resize h
 controlled commit callbacks and on-end/on-change resize mode support.
 For row-pinned samples, top and bottom row bands render outside the center vertical scroll area,
 and the center virtualizer counts only center rows.
-`VirtualizedList`, `Tree`, and the Table center row body share the internal row-window projection
-for stable keys, measurements, visible counts, overscan counts, and scroll offsets. The projection
-intentionally stops at the row-window boundary: Table row regions, Tree selection/focus metadata,
-and VirtualizedList activation/selection payloads stay owned by their components.
+`VirtualizedList`, `Tree`, and the Table center row body share
+`open_gpui_ui_core::grid_viewport::RowWindow` for stable keys, measurements, visible counts,
+overscan counts, and scroll offsets. The projection intentionally stops at the row-window
+boundary: Table row regions, Tree selection/focus metadata, and VirtualizedList
+activation/selection payloads stay owned by their components.
 Table faceting is a metadata sidecar over configured columns: client facets derive unique
 value/count entries and numeric ranges from the source snapshot while excluding the target column's
 own local filter, and manual facet payloads can replace client-derived summaries for server-owned
@@ -1024,14 +1064,16 @@ metrics, overscan, and semantic scroll strategy labels. Rendered range calculati
 by `open_gpui_ui_core::VirtualizerState`. `TreeBehaviorSnapshot` and `CommandBehaviorSnapshot`
 follow the same public boundary: behavior probes are stable, renderer assembly plans are internal.
 `command/mod.rs` is the reference split facade: descriptor, model, style, render-plan, and runtime
-owners stay in sibling modules. `Menu`, `ContextMenu`, and `Tree` follow that shape: `menu/mod.rs`
-keeps the builder/render facade while `menu/descriptor.rs`, `menu/model.rs`,
-`menu/render_plan.rs`, `menu/runtime.rs`, and `menu/style.rs` own the public model, submenu
-placement contract, timing, and metrics; `context_menu/mod.rs` keeps the point-anchor facade while
-`context_menu/model.rs` owns the renderer-neutral context-menu state; `tree/mod.rs` keeps the
-render facade while `tree/descriptor.rs`, `tree/model.rs`, `tree/runtime.rs`, `tree/style.rs`,
-`tree/movement.rs`, and `tree/render_plan.rs` own descriptor data, state, adapter runtime, metrics,
-drag/drop movement, and virtualized behavior snapshots.
+owners stay in sibling modules, while `open_gpui_ui_core::CommandDescriptor` is the cross-surface
+app-command descriptor consumed by Command, Menu, and ContextMenu projections. `Menu`,
+`ContextMenu`, and `Tree` follow that shape: `menu/mod.rs` keeps the builder/render facade while
+`menu/descriptor.rs`, `menu/model.rs`, `menu/render_plan.rs`, `menu/runtime.rs`, and
+`menu/style.rs` own the public model, submenu placement contract, timing, and metrics;
+`context_menu/mod.rs` keeps the point-anchor facade while `context_menu/model.rs` owns the
+renderer-neutral context-menu state; `tree/mod.rs` keeps the render facade while
+`tree/descriptor.rs`, `tree/model.rs`, `tree/runtime.rs`, `tree/style.rs`, `tree/movement.rs`, and
+`tree/render_plan.rs` own descriptor data, state, adapter runtime, metrics, drag/drop movement,
+and virtualized behavior snapshots.
 `menu/runtime.rs` owns submenu hover timing, branch switching, trigger-bound caches, and local
 submenu scroll handles for `Menu` and `ContextMenu`, keeping render assembly thin while preserving
 safe hover and local scroll ownership.

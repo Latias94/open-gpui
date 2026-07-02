@@ -15,7 +15,7 @@ use open_gpui_ui_core::{
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::listbox::{
     Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
     ListboxState,
@@ -27,7 +27,7 @@ use crate::overlay::{
     set_overlay_open,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
-use crate::theme::ThemeResolver;
+use crate::theme::{ThemeContext, ThemeResolver};
 
 type SelectOpenChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
 type SelectSelectionHandler = Rc<dyn Fn(SelectSelection, &mut Window, &mut App)>;
@@ -677,6 +677,7 @@ impl Sizable for Select {
 
 impl RenderOnce for Select {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| SelectRuntime {
             open: self.default_open,
             active_value: self.active_value.clone(),
@@ -731,6 +732,15 @@ impl RenderOnce for Select {
         let disabled = state.disabled();
         let open = state.open();
         let selected = state.selected_value().is_some();
+        let trigger_border = theme.resolve(colors.trigger_border());
+        let trigger_background = theme.resolve(colors.trigger_background());
+        let trigger_foreground = theme.resolve(if selected {
+            colors.trigger_foreground()
+        } else {
+            colors.trigger_placeholder_foreground()
+        });
+        let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
+        let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
         let trigger_label = state.trigger_label().to_owned();
         let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
@@ -780,13 +790,9 @@ impl RenderOnce for Select {
                     .gap_2()
                     .rounded(gpui_px_from_ui(metrics.radius()))
                     .border_1()
-                    .border_color(ThemeResolver::resolve(colors.trigger_border()))
-                    .bg(ThemeResolver::resolve(colors.trigger_background()))
-                    .text_color(ThemeResolver::resolve(if selected {
-                        colors.trigger_foreground()
-                    } else {
-                        colors.trigger_placeholder_foreground()
-                    }))
+                    .border_color(trigger_border)
+                    .bg(trigger_background)
+                    .text_color(trigger_foreground)
                     .text_size(gpui_px_from_ui(metrics.text_size()))
                     .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
@@ -796,7 +802,7 @@ impl RenderOnce for Select {
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)
                     .aria_disabled(disabled)
-                    .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                    .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                     .on_key_down({
                         let runtime = runtime.clone();
                         let on_open_change = self.on_open_change.clone();
@@ -824,9 +830,7 @@ impl RenderOnce for Select {
                         let runtime = runtime.clone();
                         let on_open_change = self.on_open_change.clone();
                         this.cursor_pointer()
-                            .hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
-                            })
+                            .hover(move |style| style.bg(trigger_hover_background))
                             .capture_any_mouse_up(move |_, window, cx| {
                                 consume_overlay_event(window, cx);
                                 let next_open = !open;
@@ -865,6 +869,7 @@ impl RenderOnce for Select {
                         self.on_open_change.clone(),
                         self.on_select.clone(),
                         self.tokens,
+                        &theme,
                     ),
                 ))
             })
@@ -883,6 +888,7 @@ fn select_content_element(
     on_open_change: Option<SelectOpenChangeHandler>,
     on_select: Option<SelectSelectionHandler>,
     tokens: ThemeTokens,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
@@ -940,9 +946,9 @@ fn select_content_element(
         .flex_col()
         .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(colors.content_border()))
-        .bg(ThemeResolver::resolve(colors.content_background()))
-        .text_color(ThemeResolver::resolve(colors.content_foreground()))
+        .border_color(theme.resolve(colors.content_border()))
+        .bg(theme.resolve(colors.content_background()))
+        .text_color(theme.resolve(colors.content_foreground()))
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .shadow_lg()

@@ -2,8 +2,8 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-02T23:45:00+08:00
-git_branch: main
+timestamp: 2026-07-03T01:57:49+08:00
+git_branch: refactor/ui-framework-deepening
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
   - docs/plans/2026-07-01-002-refactor-ui-public-gallery-boundaries-plan.md
@@ -14,6 +14,7 @@ related_plan:
   - docs/plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md
   - docs/plans/2026-07-02-002-refactor-docking-flat-motion-runtime-plan.md
   - docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md
+  - docs/plans/2026-07-02-003-refactor-ui-framework-deep-modules-plan.md
 related_research:
   - native-ui-framework-design-research/report.md
 related_adr:
@@ -57,6 +58,19 @@ verified_by:
   - cargo nextest run -p open-gpui-docking transition_executor_samples_timeline_and_reveal_geometry transition_executor_replaces_active_execution_and_completes_reduced_motion_immediately transition_sample_overlay_renders_from_executor source_hover_over_known_viewport_renders_target_drop_preview routed_preview_replacement_clears_old_target_overlay_without_stale_payload --no-fail-fast
   - cargo check -p open-gpui-docking
   - cargo check -p open-gpui-docking-native
+  - cargo check -p open-gpui-ui-core --tests
+  - cargo check -p open-gpui-ui-components --tests
+  - cargo check -p open-gpui-ui-foundation-gallery --tests
+  - cargo nextest run -p open-gpui-ui-core overlay grid_viewport command --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components theme a11y menu context_menu command --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components command_descriptors --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-components --test public_surface --no-fail-fast
+  - cargo nextest run -p open-gpui-ui-foundation-gallery component --no-fail-fast
+  - cargo run -p xtask -- scan-theme-drift
+  - cargo run -p xtask -- scan-theme-schema
+  - cargo run -p xtask -- scan-ui-contract
+  - no production matches from rg -n "ThemeResolver::resolve\(" crates/ui_components/src -g "*.rs"
+  - only focus.rs compatibility matches from rg -n "focus_ring_shadow\(|ThemeContext::light\(\)" crates/ui_components/src -g "*.rs"
   - git diff --check
   - python native-ui-framework-design-research/generate_report.py
   - python -m py_compile native-ui-framework-design-research/generate_report.py
@@ -66,7 +80,31 @@ verified_by:
 
 # Current State
 
-- Branch: `main`; `origin/main` was at `f3a7de9` before the docking flat motion runtime merge.
+- Branch: `refactor/ui-framework-deepening`; `origin/main` was merged into the branch during the
+  deep-module refactor so the work includes the latest docking flat motion runtime merge.
+- Done on `refactor/ui-framework-deepening`: component render paths now resolve color intents from
+  `ThemeResolver::current(cx)` / `ThemeContext` or an explicit snapshot. Direct
+  `ThemeResolver::resolve(...)` is documented as default-light compatibility only, and `rg -n
+  "ThemeResolver::resolve\(" crates/ui_components/src -g "*.rs"` has no production hits.
+  Focus-ring painting follows the same runtime theme rule through
+  `focus_ring_shadow_with_theme`; the default-light `focus_ring_shadow` compatibility helper is
+  fenced to `focus.rs` by public-surface tests.
+- Done on `refactor/ui-framework-deepening`: `open_gpui_ui_core::overlay::resolve_overlay_placement`
+  is the shared anchored-placement solver for explicit neutral placement inputs, while
+  `open_gpui_ui_components::overlay` owns GPUI host mapping through `GpuiOverlayPlacement` and
+  relative/positioned/full-window layer helpers. Trigger-anchored components still rely on GPUI for
+  final live measured placement until a measured overlay runtime exists.
+- Done on `refactor/ui-framework-deepening`: `open_gpui_ui_core::grid_viewport::RowWindow` and
+  `RowWindowItem` are the shared renderer-neutral row-window projection for Table,
+  VirtualizedList, and Tree; component-specific selection, hierarchy, activation, and pinned-row
+  contracts stay local.
+- Done on `refactor/ui-framework-deepening`: gallery selector/readout/focus traversal now derives
+  from `StoryContract` through `component_story_contract_for(name)` and
+  `component_story_contracts_for_focus(mode)`.
+- Done on `refactor/ui-framework-deepening`: `open_gpui_ui_core::CommandDescriptor` is the
+  app-command metadata contract projected by Command, Menu, and ContextMenu without owning a global
+  command registry, dispatch, callbacks, or keybinding resolution. Its `menu_path` remains
+  app-owned grouping metadata; one-item projections do not auto-build submenu hierarchy.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default
@@ -126,8 +164,9 @@ verified_by:
 - Not current roadmap work: broad splitting of every remaining 1k+ component file and
   `open-gpui-ui-headless` extraction.
 - Blocked: None.
-- Next action: push merged `main`, then continue the fearless refactor sequence with the remaining
-  large gallery render owners, especially
+- Next action: close out `refactor/ui-framework-deepening` with final verification, review, and a
+  conventional commit. After merge, the next independent fearless-refactor candidate is still the
+  large gallery render ownership surface, especially
   `examples/ui-foundation-gallery/src/pages/components/render/sections.rs`.
 
 # Citations
@@ -141,6 +180,8 @@ verified_by:
 - [Native UI hybrid registry architecture plan](../../plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md)
 - [Docking flat motion runtime plan](../../plans/2026-07-02-002-refactor-docking-flat-motion-runtime-plan.md)
 - [UI motion runtime foundation plan](../../plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md)
+- [UI framework deep modules plan](../../plans/2026-07-02-003-refactor-ui-framework-deep-modules-plan.md)
+- [UI framework deep modules verification](verification/2026-07-02-ui-framework-deep-modules.md)
 - [Native UI framework design research report](../../../native-ui-framework-design-research/report.md)
 - [Native UI framework distribution strategy decision](decisions/open-gpui-native-ui-framework-distribution-strategy.md)
 - [Native UI framework strategy architecture page](../../architecture/native-ui-framework-strategy.md)

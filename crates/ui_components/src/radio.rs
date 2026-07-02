@@ -15,7 +15,7 @@ use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_
 use crate::a11y::UiA11yElementExt;
 use crate::choice::{ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection};
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::theme::ThemeResolver;
 
 /// Pure descriptor for one radio item.
@@ -589,6 +589,7 @@ impl Sizable for RadioGroup {
 
 impl RenderOnce for RadioGroup {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let RadioGroup {
             id,
             label,
@@ -684,6 +685,24 @@ impl RenderOnce for RadioGroup {
                     let is_selected = item.selected();
                     let is_tab_stop = Some(index) == tab_stop_index;
                     let item_value = item.value().to_owned();
+                    let label_color = theme.resolve(if item.disabled() {
+                        colors.label_muted()
+                    } else {
+                        colors.label()
+                    });
+                    let hover_background = theme.resolve(colors.hover_background());
+                    let control_border = theme.resolve(if is_selected {
+                        colors.control_border_selected()
+                    } else {
+                        colors.control_border()
+                    });
+                    let control_background = theme.resolve(if is_selected {
+                        colors.control_background_selected()
+                    } else {
+                        colors.control_background()
+                    });
+                    let indicator_color = theme.resolve(colors.indicator());
+                    let item_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
 
                     div()
                         .id(radio_item_id(item.value()))
@@ -711,16 +730,11 @@ impl RenderOnce for RadioGroup {
                         .rounded(gpui_px_from_ui(metrics.radius()))
                         .text_size(gpui_px_from_ui(metrics.label_text_size()))
                         .line_height(gpui_px_from_ui(metrics.label_text_size()))
-                        .text_color(ThemeResolver::resolve(if item.disabled() {
-                            colors.label_muted()
-                        } else {
-                            colors.label()
-                        }))
-                        .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                        .text_color(label_color)
+                        .focus_visible(move |style| style.shadow(item_focus_shadow.clone()))
                         .when(!item.disabled(), |this| {
-                            this.cursor_pointer().hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.hover_background()))
-                            })
+                            this.cursor_pointer()
+                                .hover(move |style| style.bg(hover_background))
                         })
                         .when(item.disabled(), |this| {
                             this.opacity(0.56).cursor_not_allowed()
@@ -828,22 +842,14 @@ impl RenderOnce for RadioGroup {
                                 .justify_center()
                                 .rounded(gpui_px_from_ui(metrics.control_size()))
                                 .border_1()
-                                .border_color(ThemeResolver::resolve(if is_selected {
-                                    colors.control_border_selected()
-                                } else {
-                                    colors.control_border()
-                                }))
-                                .bg(ThemeResolver::resolve(if is_selected {
-                                    colors.control_background_selected()
-                                } else {
-                                    colors.control_background()
-                                }))
+                                .border_color(control_border)
+                                .bg(control_background)
                                 .child(if is_selected {
                                     div()
                                         .w(gpui_px_from_ui(metrics.indicator_size()))
                                         .h(gpui_px_from_ui(metrics.indicator_size()))
                                         .rounded(gpui_px_from_ui(metrics.indicator_size()))
-                                        .bg(ThemeResolver::resolve(colors.indicator()))
+                                        .bg(indicator_color)
                                 } else {
                                     div().w(px(0.0)).h(px(0.0))
                                 }),

@@ -166,7 +166,8 @@ impl Sizable for Separator {
 }
 
 impl RenderOnce for Separator {
-    fn render(self, _window: &mut open_gpui::Window, _cx: &mut open_gpui::App) -> impl IntoElement {
+    fn render(self, _window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -177,7 +178,7 @@ impl RenderOnce for Separator {
             .id(self.id)
             .debug_selector(move || format!("separator:{debug_id}:root"))
             .flex_none()
-            .bg(ThemeResolver::resolve(colors.line()))
+            .bg(theme.resolve(colors.line()))
             .when(state.orientation() == Orientation::Horizontal, |this| {
                 this.w_full().h(thickness).min_h(thickness)
             })

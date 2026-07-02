@@ -40,6 +40,11 @@ pub const PUBLIC_SURFACE_OWNER_MAP: &[PublicSurfaceOwnerEntry] = &[
         home: "gpui_adapter",
     },
     PublicSurfaceOwnerEntry {
+        name: "focus_ring_shadow_with_theme",
+        owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
+        home: "gpui_adapter",
+    },
+    PublicSurfaceOwnerEntry {
         name: "gpui_px_from_ui",
         owner: PublicSurfaceOwnerClass::GpuiAdapterHelper,
         home: "gpui_adapter",

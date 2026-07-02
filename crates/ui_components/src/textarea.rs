@@ -15,7 +15,7 @@ use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::text_editing::{
     self, EditableTextDocument, TextEditingPolicy, TextEditingProjection, TextSelection,
 };
@@ -807,6 +807,7 @@ impl Sizable for Textarea {
 
 impl RenderOnce for Textarea {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let debug_id = self.id.to_string();
         let controller_id = format!("textarea:{debug_id}:controller");
@@ -814,7 +815,8 @@ impl RenderOnce for Textarea {
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
-        let text_color = ThemeResolver::resolve(if state.placeholder_visible() {
+        let focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
+        let text_color = theme.resolve(if state.placeholder_visible() {
             colors.placeholder()
         } else {
             colors.foreground()
@@ -872,8 +874,8 @@ impl RenderOnce for Textarea {
             .flex_col()
             .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
-            .border_color(ThemeResolver::resolve(colors.border()))
-            .bg(ThemeResolver::resolve(colors.background()))
+            .border_color(theme.resolve(colors.border()))
+            .bg(theme.resolve(colors.background()))
             .px(gpui_px_from_ui(metrics.padding_x()))
             .py(gpui_px_from_ui(metrics.padding_y()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
@@ -891,7 +893,7 @@ impl RenderOnce for Textarea {
             .tab_stop(state.tab_stop_enabled())
             .ui_role(state.role())
             .aria_label(self.label)
-            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+            .focus_visible(move |style| style.shadow(focus_shadow.clone()))
             .when(state.disabled(), |this| {
                 this.opacity(0.56).cursor_not_allowed()
             })
@@ -940,11 +942,10 @@ impl RenderOnce for Textarea {
                             .map(|controller| EditableTextareaElement {
                                 controller,
                                 placeholder: placeholder.clone(),
-                                text_color: ThemeResolver::resolve(colors.foreground()).into(),
-                                placeholder_color: ThemeResolver::resolve(colors.placeholder())
-                                    .into(),
+                                text_color: theme.resolve(colors.foreground()).into(),
+                                placeholder_color: theme.resolve(colors.placeholder()).into(),
                                 selection_color: rgba(0x2f80ed33).into(),
-                                caret_color: ThemeResolver::resolve(colors.foreground()).into(),
+                                caret_color: theme.resolve(colors.foreground()).into(),
                                 text_size: gpui_px_from_ui(metrics.text_size()).into(),
                                 line_height: gpui_px_from_ui(metrics.line_height()),
                                 min_rows: metrics.rows(),

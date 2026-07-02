@@ -6,7 +6,7 @@ use crate::checkbox::Checkbox;
 use crate::geometry::gpui_px_from_ui;
 use crate::scroll_area::ScrollArea;
 use crate::text_input::TextInput;
-use crate::theme::ThemeResolver;
+use crate::theme::ThemeContext;
 use open_gpui::prelude::*;
 use open_gpui::{
     App, Entity, IntoElement, ParentElement, StatefulInteractiveElement, Styled, Window, div, px,
@@ -34,6 +34,7 @@ pub(in crate::table::faceted_filter) fn table_faceted_filter_content_element(
     options_height: UiPx,
     size: Size,
     tokens: ThemeTokens,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let disabled = state.popover().disabled();
     let query = state.query().to_owned();
@@ -67,9 +68,7 @@ pub(in crate::table::faceted_filter) fn table_faceted_filter_content_element(
         .flex()
         .flex_col()
         .gap_2()
-        .text_color(ThemeResolver::resolve(
-            state.popover().colors().foreground(),
-        ))
+        .text_color(theme.resolve(state.popover().colors().foreground()))
         .on_scroll_wheel(|_, window, cx| {
             window.prevent_default();
             cx.stop_propagation();

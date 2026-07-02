@@ -16,7 +16,7 @@ use open_gpui_ui_core::{
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::ui_size_from_gpui_size;
 use crate::overlay::{
     OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
@@ -24,7 +24,7 @@ use crate::overlay::{
     gpui_full_window_overlay_layer, gpui_overlay_state, outside_press_open_change,
     resolve_overlay_open_state, restore_overlay_focus, set_overlay_open,
 };
-use crate::theme::ThemeResolver;
+use crate::theme::{ThemeContext, ThemeResolver};
 
 type SheetOpenChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
 type SheetCloseHandler = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -768,6 +768,7 @@ impl Sizable for Sheet {
 
 impl RenderOnce for Sheet {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, cx| SheetRuntime {
             open: self.default_open,
             trigger_focus: cx.focus_handle(),
@@ -831,6 +832,11 @@ impl RenderOnce for Sheet {
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
         let open = state.open();
+        let trigger_border = theme.resolve(colors.trigger_border());
+        let trigger_background = theme.resolve(colors.trigger_background());
+        let trigger_foreground = theme.resolve(colors.trigger_foreground());
+        let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
+        let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
         let trigger_focus = runtime.read(cx).trigger_focus.clone();
         let close_focus = runtime.read(cx).close_focus.clone();
         let overlay_adapter = gpui_overlay_state(state.overlay());
@@ -862,9 +868,9 @@ impl RenderOnce for Sheet {
                     .justify_center()
                     .rounded(gpui_px_from_ui(metrics.radius()))
                     .border_1()
-                    .border_color(ThemeResolver::resolve(colors.trigger_border()))
-                    .bg(ThemeResolver::resolve(colors.trigger_background()))
-                    .text_color(ThemeResolver::resolve(colors.trigger_foreground()))
+                    .border_color(trigger_border)
+                    .bg(trigger_background)
+                    .text_color(trigger_foreground)
                     .text_size(gpui_px_from_ui(metrics.text_size()))
                     .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
@@ -875,7 +881,7 @@ impl RenderOnce for Sheet {
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)
                     .aria_disabled(disabled)
-                    .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                    .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                     .when(open, |this| {
                         let runtime = runtime.clone();
                         let on_open_change = on_open_change.clone();
@@ -905,9 +911,7 @@ impl RenderOnce for Sheet {
                         let initial_focus = state.initial_focus_intent().clone();
                         let focus_state = state.clone();
                         this.cursor_pointer()
-                            .hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
-                            })
+                            .hover(move |style| style.bg(trigger_hover_background))
                             .on_click(move |_event: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 let next_open = !open;
@@ -947,6 +951,7 @@ impl RenderOnce for Sheet {
                         close_focus.clone(),
                         on_close.clone(),
                         on_open_change.clone(),
+                        &theme,
                     ),
                 ))
             })
@@ -962,6 +967,7 @@ fn sheet_surface_element(
     close_focus: FocusHandle,
     on_close: Option<SheetCloseHandler>,
     on_open_change: Option<SheetOpenChangeHandler>,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
@@ -983,9 +989,9 @@ fn sheet_surface_element(
         .gap_3()
         .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(colors.border()))
-        .bg(ThemeResolver::resolve(colors.surface()))
-        .text_color(ThemeResolver::resolve(colors.foreground()))
+        .border_color(theme.resolve(colors.border()))
+        .bg(theme.resolve(colors.surface()))
+        .text_color(theme.resolve(colors.foreground()))
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .shadow_lg()
@@ -1058,9 +1064,7 @@ fn sheet_surface_element(
                             |this, description| {
                                 this.child(
                                     div()
-                                        .text_color(ThemeResolver::resolve(
-                                            colors.muted_foreground(),
-                                        ))
+                                        .text_color(theme.resolve(colors.muted_foreground()))
                                         .child(description),
                                 )
                             },
@@ -1074,6 +1078,7 @@ fn sheet_surface_element(
                         close_focus.clone(),
                         on_close.clone(),
                         on_open_change.clone(),
+                        theme,
                     ))
                 }),
         )
@@ -1090,6 +1095,7 @@ fn sheet_layer_element(
     close_focus: FocusHandle,
     on_close: Option<SheetCloseHandler>,
     on_open_change: Option<SheetOpenChangeHandler>,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let geometry = sheet_surface_geometry(state.side(), metrics, ui_size_from_gpui_size(viewport));
@@ -1106,6 +1112,7 @@ fn sheet_layer_element(
             close_focus,
             on_close,
             on_open_change,
+            theme,
         )
         .into_any_element();
     }
@@ -1131,6 +1138,7 @@ fn sheet_layer_element(
                 close_focus,
                 on_close,
                 on_open_change,
+                theme,
             )
             .into_any_element(),
         )
@@ -1148,6 +1156,7 @@ fn modal_sheet_layer_element(
     close_focus: FocusHandle,
     on_close: Option<SheetCloseHandler>,
     on_open_change: Option<SheetOpenChangeHandler>,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let colors = state.colors();
     let outside_change = outside_press_open_change(state.overlay().policy());
@@ -1163,7 +1172,7 @@ fn modal_sheet_layer_element(
         .top(px(0.0))
         .w(viewport.width)
         .h(viewport.height)
-        .bg(ThemeResolver::resolve(colors.barrier()))
+        .bg(theme.resolve(colors.barrier()))
         .occlude()
         .on_any_mouse_down(|_, window, cx| {
             consume_overlay_event(window, cx);
@@ -1194,6 +1203,7 @@ fn modal_sheet_layer_element(
             close_focus,
             on_close,
             on_open_change,
+            theme,
         ))
 }
 
@@ -1252,11 +1262,17 @@ fn sheet_close_button(
     close_focus: FocusHandle,
     on_close: Option<SheetCloseHandler>,
     on_open_change: Option<SheetOpenChangeHandler>,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
     let focus_ring = state.focus_ring();
     let focus_restore = state.focus_restore_intent().clone();
+    let close_border = theme.resolve(colors.close_border());
+    let close_background = theme.resolve(colors.close_background());
+    let close_foreground = theme.resolve(colors.close_foreground());
+    let close_hover_background = theme.resolve(colors.close_hover_background());
+    let close_focus_shadow = focus_ring_shadow_with_theme(focus_ring, theme);
 
     div()
         .id("sheet-close")
@@ -1268,9 +1284,9 @@ fn sheet_close_button(
         .justify_center()
         .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(colors.close_border()))
-        .bg(ThemeResolver::resolve(colors.close_background()))
-        .text_color(ThemeResolver::resolve(colors.close_foreground()))
+        .border_color(close_border)
+        .bg(close_background)
+        .text_color(close_foreground)
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .focusable()
@@ -1278,9 +1294,9 @@ fn sheet_close_button(
         .tab_stop(true)
         .ui_role(Role::Button)
         .aria_label("Close sheet")
-        .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+        .focus_visible(move |style| style.shadow(close_focus_shadow.clone()))
         .cursor_pointer()
-        .hover(move |style| style.bg(ThemeResolver::resolve(colors.close_hover_background())))
+        .hover(move |style| style.bg(close_hover_background))
         .on_click(move |_event: &ClickEvent, window, cx| {
             cx.stop_propagation();
             close_sheet(

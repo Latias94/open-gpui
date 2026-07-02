@@ -190,7 +190,8 @@ impl Sizable for Kbd {
 }
 
 impl RenderOnce for Kbd {
-    fn render(self, _window: &mut open_gpui::Window, _cx: &mut open_gpui::App) -> impl IntoElement {
+    fn render(self, _window: &mut open_gpui::Window, cx: &mut open_gpui::App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
@@ -208,9 +209,9 @@ impl RenderOnce for Kbd {
             .justify_center()
             .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
-            .border_color(ThemeResolver::resolve(colors.border()))
-            .bg(ThemeResolver::resolve(colors.background()))
-            .text_color(ThemeResolver::resolve(colors.foreground()))
+            .border_color(theme.resolve(colors.border()))
+            .bg(theme.resolve(colors.background()))
+            .text_color(theme.resolve(colors.foreground()))
             .text_size(gpui_px_from_ui(metrics.text_size()))
             .line_height(gpui_px_from_ui(metrics.text_size()))
             .font_weight(FontWeight::MEDIUM)

@@ -5,7 +5,7 @@ use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
 use crate::choice::{
     self, ChoiceCollection, ChoiceInteractionPolicy, ChoiceItemProjection, ChoiceSelectionMode,
 };
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 use open_gpui::prelude::*;
@@ -636,6 +636,7 @@ impl Sizable for ToggleGroup {
 
 impl RenderOnce for ToggleGroup {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let ToggleGroup {
             id,
             label,
@@ -726,8 +727,8 @@ impl RenderOnce for ToggleGroup {
                 .p(gpui_px_from_ui(metrics.padding()))
                 .rounded(gpui_px_from_ui(metrics.radius()))
                 .border_1()
-                .border_color(ThemeResolver::resolve(colors.border()))
-                .bg(ThemeResolver::resolve(colors.background()))
+                .border_color(theme.resolve(colors.border()))
+                .bg(theme.resolve(colors.background()))
                 .when(is_vertical, |this| this.flex_col().items_stretch())
                 .when(!is_vertical, |this| this.flex_row().items_center())
                 .children(state.items().iter().enumerate().map(|(index, item)| {
@@ -753,6 +754,23 @@ impl RenderOnce for ToggleGroup {
                     } else {
                         None
                     };
+                    let item_border = theme.resolve(if item_selected {
+                        selected_colors.border()
+                    } else {
+                        colors.border()
+                    });
+                    let item_background = theme.resolve(if item_selected {
+                        selected_colors.background()
+                    } else {
+                        colors.background()
+                    });
+                    let item_foreground = theme.resolve(if item_selected {
+                        selected_colors.foreground()
+                    } else {
+                        colors.foreground()
+                    });
+                    let item_hover_background = theme.resolve(colors.hover_background());
+                    let item_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
 
                     div()
                         .id(format!("toggle-group-item:{item_value}"))
@@ -782,28 +800,15 @@ impl RenderOnce for ToggleGroup {
                         .justify_center()
                         .rounded(gpui_px_from_ui(metrics.item().radius()))
                         .border_1()
-                        .border_color(ThemeResolver::resolve(if item_selected {
-                            selected_colors.border()
-                        } else {
-                            colors.border()
-                        }))
-                        .bg(ThemeResolver::resolve(if item_selected {
-                            selected_colors.background()
-                        } else {
-                            colors.background()
-                        }))
-                        .text_color(ThemeResolver::resolve(if item_selected {
-                            selected_colors.foreground()
-                        } else {
-                            colors.foreground()
-                        }))
+                        .border_color(item_border)
+                        .bg(item_background)
+                        .text_color(item_foreground)
                         .text_size(gpui_px_from_ui(metrics.item().text_size()))
                         .line_height(gpui_px_from_ui(metrics.item().text_size()))
-                        .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                        .focus_visible(move |style| style.shadow(item_focus_shadow.clone()))
                         .when(!item_disabled, |this| {
-                            this.cursor_pointer().hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.hover_background()))
-                            })
+                            this.cursor_pointer()
+                                .hover(move |style| style.bg(item_hover_background))
                         })
                         .when(item_disabled, |this| {
                             this.opacity(0.56).cursor_not_allowed()

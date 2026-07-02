@@ -17,13 +17,13 @@ use open_gpui_ui_core::{
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::focus::{FocusRing, focus_ring_shadow_with_theme};
 use crate::overlay::{
     GpuiOverlayPlacement, OverlayDisclosureConfig, OverlayDisclosureOpenMode, OverlayResolvedState,
     consume_overlay_event, emit_overlay_open_change, escape_open_change, gpui_overlay_state,
     gpui_relative_overlay_layer, outside_press_open_change, resolve_overlay_open_state,
 };
-use crate::theme::ThemeResolver;
+use crate::theme::{ThemeContext, ThemeResolver};
 
 type HoverCardOpenChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
 
@@ -737,6 +737,7 @@ impl Sizable for HoverCard {
 
 impl RenderOnce for HoverCard {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, cx| HoverCardRuntime {
             open: self.default_open,
             focus_open: false,
@@ -820,6 +821,11 @@ impl RenderOnce for HoverCard {
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
         let open = state.open();
+        let trigger_border = theme.resolve(colors.trigger_border());
+        let trigger_background = theme.resolve(colors.trigger_background());
+        let trigger_foreground = theme.resolve(colors.trigger_foreground());
+        let trigger_hover_background = theme.resolve(colors.trigger_hover_background());
+        let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
         let trigger_focus = runtime.read(cx).trigger_focus.clone();
         let content_focus = runtime.read(cx).content_focus.clone();
         let overlay_adapter = gpui_overlay_state(state.overlay());
@@ -862,9 +868,9 @@ impl RenderOnce for HoverCard {
                     .justify_center()
                     .rounded(gpui_px_from_ui(metrics.radius()))
                     .border_1()
-                    .border_color(ThemeResolver::resolve(colors.trigger_border()))
-                    .bg(ThemeResolver::resolve(colors.trigger_background()))
-                    .text_color(ThemeResolver::resolve(colors.trigger_foreground()))
+                    .border_color(trigger_border)
+                    .bg(trigger_background)
+                    .text_color(trigger_foreground)
                     .text_size(gpui_px_from_ui(metrics.text_size()))
                     .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
@@ -875,7 +881,7 @@ impl RenderOnce for HoverCard {
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)
                     .aria_disabled(disabled)
-                    .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                    .focus_visible(move |style| style.shadow(trigger_focus_shadow))
                     .when(open, |this| {
                         let runtime = runtime.clone();
                         let on_open_change = on_open_change.clone();
@@ -902,9 +908,7 @@ impl RenderOnce for HoverCard {
                         let opens_on_hover = state.open_intent().opens_on_hover();
                         let opens_manually = state.open_intent().opens_manually();
                         this.cursor_pointer()
-                            .hover(move |style| {
-                                style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
-                            })
+                            .hover(move |style| style.bg(trigger_hover_background))
                             .on_hover({
                                 let runtime = runtime.clone();
                                 let on_open_change = on_open_change.clone();
@@ -951,6 +955,7 @@ impl RenderOnce for HoverCard {
                         content_focus.clone(),
                         on_open_change.clone(),
                         debug_id.clone(),
+                        &theme,
                     ),
                 ))
             })
@@ -965,6 +970,7 @@ fn hover_card_content_element(
     content_focus: FocusHandle,
     on_open_change: Option<HoverCardOpenChangeHandler>,
     debug_id: String,
+    theme: &ThemeContext,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
@@ -985,9 +991,9 @@ fn hover_card_content_element(
         .gap_2()
         .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
-        .border_color(ThemeResolver::resolve(colors.border()))
-        .bg(ThemeResolver::resolve(colors.background()))
-        .text_color(ThemeResolver::resolve(colors.foreground()))
+        .border_color(theme.resolve(colors.border()))
+        .bg(theme.resolve(colors.background()))
+        .text_color(theme.resolve(colors.foreground()))
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .shadow_lg()

@@ -6,6 +6,17 @@ status: active
 
 # Log
 
+- 2026-07-03: Completed the deep UI framework module refactor on
+  `refactor/ui-framework-deepening`. The branch now uses runtime `ThemeContext` / explicit
+  snapshots for component color resolution, centralizes overlay placement in
+  `open_gpui_ui_core::overlay::resolve_overlay_placement`, shares
+  `open_gpui_ui_core::grid_viewport::RowWindow` across Table / VirtualizedList / Tree, derives
+  gallery focus and selector traversal from `StoryContract`, and adds
+  `open_gpui_ui_core::CommandDescriptor` as the minimal app-command metadata projection for
+  Command, Menu, and ContextMenu. Focused checks passed for UI-core, UI-components, foundation
+  gallery, theme drift/schema scans, `scan-ui-contract`, and the no-production-hit
+  `ThemeResolver::resolve` search; `origin/main` was fetched during closeout and had no new commits
+  relative to this branch.
 - 2026-07-02: Merged `refactor/docking-flat-motion-runtime` into local `main`. The merge keeps the
   latest native/gallery/table productization state from `origin/main` and adds the docking motion
   runtime work. Because `main` already used ADR 0013 and ADR 0014 for the native UI hybrid registry

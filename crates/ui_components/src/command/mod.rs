@@ -20,7 +20,7 @@ use open_gpui_ui_core::{
 };
 
 use crate::a11y::UiA11yElementExt;
-use crate::focus::focus_ring_shadow;
+use crate::focus::focus_ring_shadow_with_theme;
 use crate::overlay::{
     emit_overlay_open_change, gpui_full_window_overlay_layer, gpui_overlay_state,
     resolve_overlay_open_state, set_overlay_open,
@@ -494,6 +494,7 @@ impl Sizable for Command {
 
 impl RenderOnce for Command {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = ThemeResolver::current(cx);
         let initial_query = self
             .query
             .clone()
@@ -606,6 +607,7 @@ impl RenderOnce for Command {
         let on_select = self.on_select;
         let on_selected_values_change = self.on_selected_values_change;
         let tokens = self.tokens;
+        let trigger_focus_shadow = focus_ring_shadow_with_theme(focus_ring, &theme);
 
         div()
             .id(id)
@@ -634,16 +636,16 @@ impl RenderOnce for Command {
                         .py(gpui_px_from_ui(state.size().button_py()))
                         .rounded(gpui_px_from_ui(metrics.radius()))
                         .border_1()
-                        .border_color(ThemeResolver::resolve(colors.border()))
-                        .bg(ThemeResolver::resolve(colors.surface()))
-                        .text_color(ThemeResolver::resolve(colors.foreground()))
+                        .border_color(theme.resolve(colors.border()))
+                        .bg(theme.resolve(colors.surface()))
+                        .text_color(theme.resolve(colors.foreground()))
                         .focusable()
                         .tab_stop(!disabled)
                         .ui_role(Role::Button)
                         .aria_label(trigger_label.clone())
                         .aria_expanded(state.open())
                         .aria_disabled(disabled)
-                        .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                        .focus_visible(move |style| style.shadow(trigger_focus_shadow.clone()))
                         .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                         .when(!disabled, |this| {
                             this.cursor_pointer().on_click(
@@ -681,6 +683,7 @@ impl RenderOnce for Command {
                     on_select.clone(),
                     on_selected_values_change.clone(),
                     tokens,
+                    &theme,
                 ))
             })
             .when_some(dialog_open, |this, dialog_state| {
@@ -704,6 +707,7 @@ impl RenderOnce for Command {
                         on_select,
                         on_selected_values_change,
                         tokens,
+                        &theme,
                     ),
                 ))
             })
