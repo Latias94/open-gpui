@@ -4053,8 +4053,10 @@ mod tests {
             assert_product_interaction_characterization_report_contract, product_fixture_catalog,
         },
     };
+    use open_gpui::{MouseMoveEvent, MouseUpEvent};
     use open_gpui_canvas::{
-        CanvasConnectionEndpointRole, CanvasGeometryFacts, CanvasRuntime, connection_hit_options,
+        CanvasConnectionEndpointRole, CanvasEditorInputMapper, CanvasGeometryFacts, CanvasRuntime,
+        connection_hit_options,
     };
 
     #[test]
@@ -4230,6 +4232,141 @@ mod tests {
                 },
             })
         );
+    }
+
+    #[test]
+    fn product_surface_drag_sequence_moves_shader_node_and_commits_outside_canvas_bounds() {
+        assert!(
+            product_surface_drag_sequence_probe(ProductSurfaceDragProbeEnd::CommitOutsideCanvas),
+            "product node overlay drag should move the shader node and commit on pointer-up outside canvas bounds"
+        );
+    }
+
+    #[test]
+    fn product_surface_drag_sequence_cancel_restores_shader_node() {
+        assert!(
+            product_surface_drag_sequence_probe(ProductSurfaceDragProbeEnd::Cancel),
+            "product node overlay drag should restore the shader node when the gesture is cancelled"
+        );
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum ProductSurfaceDragProbeEnd {
+        CommitOutsideCanvas,
+        Cancel,
+    }
+
+    fn product_surface_drag_sequence_probe(end: ProductSurfaceDragProbeEnd) -> bool {
+        let Ok((_store, document, _projection)) =
+            project_kit_fixture("shader.blueprint", "shader.material_mix")
+        else {
+            return false;
+        };
+        let Ok(mut editor) = editor_for_document(document) else {
+            return false;
+        };
+        let Some(shader_node_id) = editor
+            .document()
+            .nodes()
+            .find(|node| node.kind == "shader-card")
+            .map(|node| node.id.clone())
+        else {
+            return false;
+        };
+        let Some(initial_node) = editor.document().node(&shader_node_id).cloned() else {
+            return false;
+        };
+        let canvas_bounds = Bounds::new(point(px(24.0), px(46.0)), default_canvas_view_size());
+        let node_view_bounds = editor
+            .viewport()
+            .document_bounds_to_view(initial_node.bounds());
+        let down_local = point(
+            node_view_bounds.origin.x + node_view_bounds.size.width * 0.5,
+            node_view_bounds.origin.y + px(24.0),
+        );
+        if !Bounds::new(point(px(0.0), px(0.0)), canvas_bounds.size).contains(&down_local) {
+            return false;
+        }
+        let down_position = canvas_bounds.origin + down_local;
+        let down_event = MouseDownEvent {
+            button: MouseButton::Left,
+            position: down_position,
+            ..MouseDownEvent::default()
+        };
+        let Some(down) = canvas_drag_start_event_from_bounds(canvas_bounds, &down_event) else {
+            return false;
+        };
+        if editor.handle_event(down).is_err() || editor.is_tool_state_idle() {
+            return false;
+        }
+
+        let drag_delta = point(px(46.0), px(22.0));
+        let move_event = MouseMoveEvent {
+            position: down_position + drag_delta,
+            ..MouseMoveEvent::default()
+        };
+        let mapper = CanvasEditorInputMapper::new(canvas_bounds)
+            .with_pointer_interacting(!editor.is_tool_state_idle());
+        let Some(move_event) = mapper.mouse_move(&move_event) else {
+            return false;
+        };
+        if editor.handle_event(move_event).is_err() {
+            return false;
+        }
+        let Some(moved_position) = editor
+            .document()
+            .node(&shader_node_id)
+            .map(|node| node.position)
+        else {
+            return false;
+        };
+        if moved_position == initial_node.position {
+            return false;
+        }
+
+        match end {
+            ProductSurfaceDragProbeEnd::CommitOutsideCanvas => {
+                let up_event = MouseUpEvent {
+                    button: MouseButton::Left,
+                    position: point(canvas_bounds.origin.x - px(32.0), canvas_bounds.origin.y),
+                    ..MouseUpEvent::default()
+                };
+                let mapper = CanvasEditorInputMapper::new(canvas_bounds)
+                    .with_pointer_interacting(!editor.is_tool_state_idle());
+                let Some(CanvasEvent::PointerUp { position, .. }) = mapper.mouse_up(&up_event)
+                else {
+                    return false;
+                };
+                if position.x >= px(0.0) {
+                    return false;
+                }
+                if editor
+                    .handle_event(CanvasEvent::PointerUp {
+                        position,
+                        button: PointerButton::Primary,
+                        modifiers: CanvasKeyModifiers::default(),
+                    })
+                    .is_err()
+                    || !editor.is_tool_state_idle()
+                {
+                    return false;
+                }
+                editor
+                    .document()
+                    .node(&shader_node_id)
+                    .is_some_and(|node| node.position == moved_position)
+            }
+            ProductSurfaceDragProbeEnd::Cancel => {
+                if editor.handle_event(CanvasEvent::Cancel).is_err() || !editor.is_tool_state_idle()
+                {
+                    return false;
+                }
+                editor
+                    .document()
+                    .node(&shader_node_id)
+                    .is_some_and(|node| node.position == initial_node.position)
+            }
+        }
     }
 
     #[test]
@@ -5383,9 +5520,10 @@ mod tests {
         assert!(report.hidden_repeatable_overflow_count > 0, "{report:?}");
         assert!(report.repeatable_overflow_indicator_count > 0, "{report:?}");
         assert!(
-            report.gaps.contains(
+            !report.gaps.contains(
                 &OpenGpuiHostProductInteractionGap::DragSurfaceMissingFullPointerSequence
-            )
+            ),
+            "{report:?}"
         );
         assert!(
             report
@@ -5494,9 +5632,12 @@ mod tests {
         let augmented_hidden_repeatables = augmented_shader_repeatable_overflow_probe();
         hidden_repeatable_overflow += augmented_hidden_repeatables;
         repeatable_overflow_indicators += usize::from(augmented_hidden_repeatables > 0);
+        let drag_sequence_checked =
+            product_surface_drag_sequence_probe(ProductSurfaceDragProbeEnd::CommitOutsideCanvas)
+                && product_surface_drag_sequence_probe(ProductSurfaceDragProbeEnd::Cancel);
 
         let mut report = OpenGpuiHostProductInteractionReport::default();
-        report.mark_drag_surface_coverage(product_drag_surfaces, false);
+        report.mark_drag_surface_coverage(product_drag_surfaces, drag_sequence_checked);
         report.mark_control_event_shielding_checked(true);
         report.mark_port_hotspot_path_checked(false);
         report.mark_tool_switcher_visible(false);
