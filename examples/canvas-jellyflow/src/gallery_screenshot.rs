@@ -383,26 +383,12 @@ fn screenshot_rect_from_bounds(
     image_width: u32,
     image_height: u32,
 ) -> Option<OpenGpuiScreenshotRegionRect> {
-    let left = bounds
-        .origin
-        .x
-        .as_f32()
-        .floor()
-        .clamp(0.0, image_width as f32) as u32;
-    let top = bounds
-        .origin
-        .y
-        .as_f32()
-        .floor()
-        .clamp(0.0, image_height as f32) as u32;
-    let right = (bounds.origin.x + bounds.size.width)
-        .as_f32()
-        .ceil()
-        .clamp(0.0, image_width as f32) as u32;
-    let bottom = (bounds.origin.y + bounds.size.height)
-        .as_f32()
-        .ceil()
-        .clamp(0.0, image_height as f32) as u32;
+    let scale_x = image_width as f32 / CANVAS_WIDTH.max(1.0);
+    let scale_y = image_height as f32 / CANVAS_HEIGHT.max(1.0);
+    let left = scaled_floor(bounds.origin.x, scale_x, image_width);
+    let top = scaled_floor(bounds.origin.y, scale_y, image_height);
+    let right = scaled_ceil(bounds.origin.x + bounds.size.width, scale_x, image_width);
+    let bottom = scaled_ceil(bounds.origin.y + bounds.size.height, scale_y, image_height);
     let width = right.saturating_sub(left);
     let height = bottom.saturating_sub(top);
     (width > 0 && height > 0).then_some(OpenGpuiScreenshotRegionRect {
@@ -411,6 +397,14 @@ fn screenshot_rect_from_bounds(
         width,
         height,
     })
+}
+
+fn scaled_floor(value: Pixels, scale: f32, max: u32) -> u32 {
+    (value.as_f32() * scale).floor().clamp(0.0, max as f32) as u32
+}
+
+fn scaled_ceil(value: Pixels, scale: f32, max: u32) -> u32 {
+    (value.as_f32() * scale).ceil().clamp(0.0, max as f32) as u32
 }
 
 fn screenshot_file_stem(fixture_id: &str) -> String {
