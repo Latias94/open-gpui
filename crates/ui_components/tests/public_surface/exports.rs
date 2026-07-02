@@ -75,10 +75,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_select_option = root::TableSelectOption::new("ready", "Ready");
     let root_combobox = root::Combobox::new("combobox", "Search");
     let root_command = root::Command::new("command", "Commands");
+    let root_core_command = root::CommandDescriptor::new("root.open", "Open").shortcut("Ctrl+O");
     let root_command_items = vec![root::CommandItem::new("open", "Open")];
     let root_command_snapshot = root::CommandIndexSnapshot::new("root-v1")
         .mode(root::CommandIndexSnapshotMode::PreRankedFilter)
-        .item(root::CommandItemDescriptor::new("open", "Open"));
+        .item(root::CommandItemDescriptor::from_command_descriptor(
+            &root_core_command,
+        ));
     let root_command_snapshot: root::CommandBehaviorSnapshot =
         root::Command::new("root-command-plan", "Commands")
             .items(root_command_items)
@@ -162,10 +165,14 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_select_option = prelude::TableSelectOption::new("blocked", "Blocked");
     let prelude_combobox = prelude::Combobox::new("combobox", "Search");
     let prelude_command = prelude::Command::new("command", "Commands");
+    let prelude_core_command =
+        prelude::CommandDescriptor::new("prelude.open", "Open").shortcut("Ctrl+O");
     let prelude_command_items = vec![prelude::CommandItem::new("open", "Open")];
     let prelude_command_snapshot = prelude::CommandIndexSnapshot::new("prelude-v1")
         .mode(prelude::CommandIndexSnapshotMode::PreFiltered)
-        .item(prelude::CommandItemDescriptor::new("open", "Open"));
+        .item(prelude::CommandItemDescriptor::from_command_descriptor(
+            &prelude_core_command,
+        ));
     let prelude_command_snapshot: prelude::CommandBehaviorSnapshot =
         prelude::Command::new("prelude-command-plan", "Commands")
             .items(prelude_command_items)

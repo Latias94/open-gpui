@@ -15,8 +15,8 @@ use open_gpui::{
     StatefulInteractiveElement, Styled, Window, div, point, px,
 };
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, Role, Sizable,
-    Size, ThemeTokens, UiPx,
+    CommandDescriptor, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+    Role, Sizable, Size, ThemeTokens, UiPx,
 };
 
 use crate::a11y::UiA11yElementExt;
@@ -725,6 +725,13 @@ impl CommandItem {
         }
     }
 
+    /// Creates a command item from shared app-command metadata.
+    pub fn from_command_descriptor(descriptor: &CommandDescriptor) -> Self {
+        Self {
+            descriptor: CommandItemDescriptor::from_command_descriptor(descriptor),
+        }
+    }
+
     /// Adds one filtering keyword.
     pub fn keyword(mut self, keyword: impl Into<String>) -> Self {
         self.descriptor = self.descriptor.keyword(keyword);
@@ -740,6 +747,12 @@ impl CommandItem {
     /// Marks the command as disabled.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.descriptor = self.descriptor.disabled(disabled);
+        self
+    }
+
+    /// Applies caller-owned availability metadata without evaluating it.
+    pub fn when(mut self, when: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.when(when);
         self
     }
 

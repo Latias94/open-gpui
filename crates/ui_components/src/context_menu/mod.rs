@@ -530,6 +530,7 @@ fn context_menu_item_elements(
                 let focus_restore = focus_restore.clone();
                 let item_value = item_state.value().to_owned();
                 let item_label = item_state.label().to_owned();
+                let shortcut = item_state.shortcut().map(str::to_owned);
                 let item_path_key = item_state.path_key();
                 let left_padding =
                     metrics.item_padding_x() + metrics.submenu_indent() * item_state.depth() as f32;
@@ -620,7 +621,20 @@ fn context_menu_item_elements(
                                 );
                             })
                     })
-                    .child(item_label)
+                    .child(div().flex_1().child(item_label))
+                    .when_some(shortcut, |this, shortcut| {
+                        this.child(
+                            div()
+                                .ml_4()
+                                .text_xs()
+                                .text_color(ThemeResolver::resolve(if disabled {
+                                    colors.item_disabled_foreground()
+                                } else {
+                                    colors.foreground()
+                                }))
+                                .child(shortcut),
+                        )
+                    })
                     .when_some(toggled, |this, toggled| {
                         let marker = if toggled == open_gpui_ui_core::Toggled::True {
                             "checked"

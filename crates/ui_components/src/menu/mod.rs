@@ -16,7 +16,7 @@ use open_gpui::{
     RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
+    CommandDescriptor, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
     OverlayAnchorInput, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
     Rect, Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_point, ui_px, ui_size,
 };
@@ -78,6 +78,7 @@ fn menu_item_element(
             let item_handler = item.on_select.clone();
             let global_handler = on_select.clone();
             let item_label = item_state.label().to_owned();
+            let shortcut = item_state.shortcut().map(str::to_owned);
             let item_path_key = item_state.path_key();
             let left_padding = metrics.item_padding_x();
             let focused = item_state.focused();
@@ -186,7 +187,20 @@ fn menu_item_element(
                             );
                         })
                 })
-                .child(item_label)
+                .child(div().flex_1().child(item_label))
+                .when_some(shortcut, |this, shortcut| {
+                    this.child(
+                        div()
+                            .ml_4()
+                            .text_xs()
+                            .text_color(ThemeResolver::resolve(if disabled {
+                                colors.item_disabled_foreground()
+                            } else {
+                                colors.foreground()
+                            }))
+                            .child(shortcut),
+                    )
+                })
                 .when_some(toggled, |this, toggled| {
                     let marker = if toggled == Toggled::True {
                         "checked"
@@ -223,6 +237,11 @@ impl MenuItem {
             children,
             on_select: None,
         }
+    }
+
+    /// Creates an action menu item from shared app-command metadata.
+    pub fn from_command_descriptor(descriptor: &CommandDescriptor) -> Self {
+        Self::from_descriptor(MenuItemDescriptor::from_command_descriptor(descriptor))
     }
 
     /// Creates an action menu item.
@@ -299,6 +318,18 @@ impl MenuItem {
         self
     }
 
+    /// Applies a display shortcut label.
+    pub fn shortcut(mut self, shortcut: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.shortcut(shortcut);
+        self
+    }
+
+    /// Applies caller-owned availability metadata without evaluating it.
+    pub fn when(mut self, when: impl Into<String>) -> Self {
+        self.descriptor = self.descriptor.when(when);
+        self
+    }
+
     /// Adds one submenu child.
     pub fn child(mut self, child: MenuItem) -> Self {
         if self.descriptor.kind() == MenuItemKind::Submenu {
@@ -333,12 +364,19 @@ impl MenuItem {
     /// Returns a pure descriptor for this item.
     pub fn descriptor(&self) -> MenuItemDescriptor {
         if self.descriptor.kind() == MenuItemKind::Submenu {
-            return MenuItemDescriptor::submenu(
+            let mut descriptor = MenuItemDescriptor::submenu(
                 self.descriptor.value(),
                 self.descriptor.label(),
                 self.children.iter().map(MenuItem::descriptor),
             )
             .disabled(self.descriptor.disabled_state());
+            if let Some(shortcut) = self.descriptor.shortcut_ref() {
+                descriptor = descriptor.shortcut(shortcut);
+            }
+            if let Some(when) = self.descriptor.when_ref() {
+                descriptor = descriptor.when(when);
+            }
+            return descriptor;
         }
 
         self.descriptor.clone()

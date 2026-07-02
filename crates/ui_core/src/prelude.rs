@@ -9,6 +9,7 @@ pub use crate::{
         device_adaptive_class, device_adaptive_snapshot, device_shell_mode, panel_adaptive_class,
     },
     collection::CollectionPosition,
+    command::CommandDescriptor,
     controllable_state::ControllableState,
     focus::FocusTargetId,
     geometry::{

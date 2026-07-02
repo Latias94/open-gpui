@@ -51,6 +51,11 @@ impl CommandRowBehaviorSnapshot {
         self.item.shortcut()
     }
 
+    /// Returns caller-owned availability metadata.
+    pub fn when_ref(&self) -> Option<&str> {
+        self.item.when_ref()
+    }
+
     /// Returns the render key used by element ids and virtualizer measurements.
     pub fn render_key(&self) -> &str {
         &self.render_key

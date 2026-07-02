@@ -3,7 +3,7 @@
 use crate::choice::{self, ChoiceItemProjection, ChoiceSelectionMode};
 use crate::listbox::ListboxOptionDescriptor;
 use crate::overlay::OverlayDisclosureOpenMode;
-use open_gpui_ui_core::Role;
+use open_gpui_ui_core::{CommandDescriptor, Role};
 
 /// Command dialog open-state ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -151,6 +151,7 @@ pub struct CommandItemDescriptor {
     pub(super) keywords: Vec<String>,
     pub(super) shortcut: Option<String>,
     pub(super) disabled: bool,
+    pub(super) when: Option<String>,
 }
 
 impl CommandItemDescriptor {
@@ -162,7 +163,22 @@ impl CommandItemDescriptor {
             keywords: Vec::new(),
             shortcut: None,
             disabled: false,
+            when: None,
         }
+    }
+
+    /// Creates a selectable command item descriptor from shared app-command metadata.
+    pub fn from_command_descriptor(descriptor: &CommandDescriptor) -> Self {
+        let mut item = Self::new(descriptor.id(), descriptor.label())
+            .keywords(descriptor.keywords_ref().iter().cloned())
+            .disabled(descriptor.disabled_state());
+        if let Some(shortcut) = descriptor.shortcut_ref() {
+            item = item.shortcut(shortcut);
+        }
+        if let Some(when) = descriptor.when_ref() {
+            item = item.when(when);
+        }
+        item
     }
 
     /// Adds one filtering keyword.
@@ -189,6 +205,12 @@ impl CommandItemDescriptor {
         self
     }
 
+    /// Applies caller-owned availability metadata without evaluating it.
+    pub fn when(mut self, when: impl Into<String>) -> Self {
+        self.when = Some(when.into());
+        self
+    }
+
     /// Returns stable item value.
     pub fn value(&self) -> &str {
         &self.value
@@ -212,6 +234,11 @@ impl CommandItemDescriptor {
     /// Returns whether the item is disabled.
     pub const fn disabled_state(&self) -> bool {
         self.disabled
+    }
+
+    /// Returns caller-owned availability metadata.
+    pub fn when_ref(&self) -> Option<&str> {
+        self.when.as_deref()
     }
 
     fn match_rank(&self, normalized_query: &str) -> Option<CommandMatchRank> {
@@ -400,6 +427,37 @@ impl CommandIndexSnapshot {
     /// Adds one standalone command item descriptor.
     pub fn item(mut self, item: CommandItemDescriptor) -> Self {
         self.items.push(item);
+        self
+    }
+
+    /// Adds one shared app-command descriptor, preserving its optional group metadata.
+    pub fn command_descriptor(mut self, descriptor: &CommandDescriptor) -> Self {
+        let item = CommandItemDescriptor::from_command_descriptor(descriptor);
+        if let Some(group) = descriptor.group_ref() {
+            if let Some(existing) = self
+                .groups
+                .iter_mut()
+                .find(|candidate| candidate.value() == group)
+            {
+                existing.items.push(item);
+            } else {
+                self.groups
+                    .push(CommandGroupDescriptor::new(group, group).item(item));
+            }
+        } else {
+            self.items.push(item);
+        }
+        self
+    }
+
+    /// Adds many shared app-command descriptors.
+    pub fn command_descriptors<'a>(
+        mut self,
+        descriptors: impl IntoIterator<Item = &'a CommandDescriptor>,
+    ) -> Self {
+        for descriptor in descriptors {
+            self = self.command_descriptor(descriptor);
+        }
         self
     }
 
