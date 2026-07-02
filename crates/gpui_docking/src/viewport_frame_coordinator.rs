@@ -1,6 +1,6 @@
 use crate::{
     DockNodeId, DockSpaceId, DockViewportWindowFacts,
-    drop_runtime::DockHostDropSceneFact,
+    drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     geometry::DockDropGuideStyle,
     viewport_drop_scene::{
         DockViewportHostSceneFrame, DockViewportHostSceneRegistration,
@@ -87,6 +87,15 @@ impl DockViewportFrameCoordinator {
     ) -> Option<Bounds<Pixels>> {
         self.host_scenes
             .tab_label_bounds_for_tabs(space, window_id, tabs, target_index)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scene_for_window(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<DockHostDropScene> {
+        self.host_scenes.scene_for_window(space, window_id)
     }
 
     #[cfg(test)]

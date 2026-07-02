@@ -27,7 +27,7 @@ use crate::{
     DockViewportWindowEffects, DockViewportWindowFacts, DockViewportWindowOwnership,
     DockViewportWindowRetirement,
     drag::{DockDragPayload, DockDragTearOffGeometry},
-    drop_runtime::DockHostDropSceneFact,
+    drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     extend_unique_windows,
     interaction::DockRuntimeDragSession,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
@@ -953,6 +953,15 @@ impl DockViewportRuntime {
     ) -> Option<Bounds<Pixels>> {
         self.frame_coordinator
             .tab_label_bounds_for_tabs(space, window_id, tabs, target_index)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rendered_host_drop_scene_for_window(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<DockHostDropScene> {
+        self.frame_coordinator.scene_for_window(space, window_id)
     }
 
     pub(crate) fn routed_drop_preview_for(

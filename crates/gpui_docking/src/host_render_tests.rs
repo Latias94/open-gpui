@@ -62,6 +62,58 @@ fn single_tabs_render_selected_panel_and_all_tab_labels(cx: &mut TestAppContext)
 }
 
 #[open_gpui::test]
+fn render_measured_tab_label_fact_overrides_scene_equal_slot_estimate(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph_with_selected(&["short", "long"], "short");
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[
+            ("short", "S", "Short"),
+            ("long", "A very long measured tab label", "Long"),
+        ],
+        size(px(480.0), px(200.0)),
+    );
+    let window_id = window.window_id();
+
+    let short_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("short"),
+        },
+    )
+    .expect("short tab selector should be emitted");
+    let rendered_short_bounds = debug_bounds(&mut visual, &short_tab);
+    let (scene_label_bounds, runtime_label_bounds) = host.update(cx, |host, cx| {
+        let scene = host.presentation_scene_for_test(floating_bounds(0.0, 0.0, 480.0, 200.0), cx);
+        let scene_label_bounds = scene
+            .tab_labels
+            .iter()
+            .find(|label| label.tabs == root && label.index == 0)
+            .expect("scene label should exist")
+            .bounds;
+        let runtime_label_bounds = host
+            .viewport_runtime()
+            .rendered_tab_label_bounds_for_tabs(host.space(), Some(window_id), root, 0)
+            .expect("runtime should keep render-measured tab label fact");
+        (scene_label_bounds, runtime_label_bounds)
+    });
+
+    assert_bounds_close(
+        runtime_label_bounds,
+        rendered_short_bounds,
+        "render-measured tab label fact",
+    );
+    assert!(
+        (f32::from(runtime_label_bounds.size.width) - f32::from(scene_label_bounds.size.width))
+            .abs()
+            > 1.0,
+        "tab label probe should preserve intrinsic render width when it differs from scene equal slots: runtime={runtime_label_bounds:?} scene={scene_label_bounds:?}"
+    );
+}
+
+#[open_gpui::test]
 fn drop_guides_render_while_tab_drag_is_active(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a", "b"]);
     let (window, host, mut visual) = open_host(
@@ -180,6 +232,93 @@ fn rendered_scene_frame_is_published_for_event_receiver_local_routing(cx: &mut T
     assert!(
         resolution.delivery().is_some(),
         "local route should resolve a concrete dock target from the rendered scene"
+    );
+}
+
+#[open_gpui::test]
+fn rendered_scene_route_resolves_nested_leaf_edge_from_scene_seeded_frame(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let upper_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("upper")],
+        selected: Some(item("upper")),
+    });
+    let lower_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("lower")],
+        selected: Some(item("lower")),
+    });
+    let nested = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![upper_tabs, lower_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![source_tabs, nested],
+        fractions: vec![0.35, 0.65],
+    });
+    graph.set_root(space(), root);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("upper", "Upper", "Upper"),
+            ("lower", "Lower", "Lower"),
+        ],
+        size(px(600.0), px(300.0)),
+    );
+
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: lower_tabs })
+        .expect("lower nested tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let host_position = inner_edge_drop_position(target_bounds, crate::DropZone::Left);
+    let any_window: AnyWindowHandle = window.into();
+    let payload = DockDragPayload::new_item(space(), source_tabs, item("a"), "Panel A".to_string());
+    let (runtime, scene_proof) = cx.update_entity(&host, |host, cx| {
+        host.begin_payload_drag_from_render(&payload, cx);
+        (
+            host.viewport_runtime().clone(),
+            host.interaction().viewport_host_scene_frame().cloned(),
+        )
+    });
+    let scene_proof =
+        scene_proof.expect("rendered host scene frame should be published for routing");
+
+    let request = DockViewportDropRouteRequest::from_platform_signals(
+        space(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        host_position,
+        None,
+        DockViewportPlatformSignals::from_target_context(
+            DockViewportTargetContext::new().with_trusted_hovered_window_known_empty(),
+        )
+        .with_event_receiver_window(any_window)
+        .with_global_window_bounds(false),
+    )
+    .with_event_receiver_local_scene_proof(Some(scene_proof));
+    let resolution =
+        cx.update(|app| runtime.resolve_payload_drop_delivery_for_request(&request, app));
+    let target = resolution
+        .delivery()
+        .and_then(|delivery| delivery.workspace_target())
+        .expect("rendered scene route should resolve a workspace target");
+
+    assert!(
+        matches!(
+            &target.target().kind,
+            crate::drop_target::DockResolvedDropTargetKind::InnerEdge {
+                target_tabs,
+                zone: crate::DropZone::Left,
+                ..
+            } if *target_tabs == lower_tabs
+        ),
+        "scene-seeded frame should target the nested lower leaf left edge, got {:?}",
+        target.target()
     );
 }
 

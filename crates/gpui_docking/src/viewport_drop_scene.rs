@@ -285,6 +285,19 @@ impl DockViewportHostSceneRegistry {
     }
 
     #[cfg(test)]
+    pub(crate) fn scene_for_window(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<DockHostDropScene> {
+        let snapshot = self.scenes.get(space)?;
+        if !snapshot.identity().matches(space, window_id) {
+            return None;
+        }
+        Some(snapshot.scene.clone())
+    }
+
+    #[cfg(test)]
     fn current_frame(
         &self,
         space: &DockSpaceId,

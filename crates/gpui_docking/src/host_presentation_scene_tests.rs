@@ -218,6 +218,132 @@ fn presentation_scene_exports_viewport_drop_facts(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn rendered_host_scene_frame_seeds_deterministic_facts_from_presentation_scene(
+    cx: &mut TestAppContext,
+) {
+    let (graph, root, floating) = floating_overlay_graph();
+    let (window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(500.0), px(300.0)),
+    );
+
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(host_bounds(500.0, 300.0), cx)
+    });
+    let drop_scene = host
+        .update(cx, |host, _| {
+            host.viewport_runtime()
+                .borrow()
+                .rendered_host_drop_scene_for_window(host.space(), window.window_id())
+        })
+        .expect("rendered host drop scene should be registered");
+
+    let root_target = drop_scene
+        .root
+        .expect("rendered scene should include scene-owned root fact");
+    assert_eq!(root_target.root, root);
+    assert_eq!(root_target.bounds, scene.bounds);
+
+    for pane in scene
+        .panes
+        .iter()
+        .filter(|pane| pane.kind == DockPresentationPaneKind::Tabs)
+    {
+        let target_tabs = pane.node.expect("tabs pane should have node id");
+        let leaf = drop_scene
+            .leaves
+            .iter()
+            .find(|leaf| leaf.target_tabs == target_tabs)
+            .unwrap_or_else(|| panic!("leaf fact for {target_tabs:?} should be scene-owned"));
+        assert_eq!(leaf.bounds, pane.bounds);
+        assert_eq!(leaf.is_central, pane.is_central);
+    }
+
+    for tab_bar in &scene.tab_bars {
+        let tab_bar_fact = drop_scene
+            .tab_bars
+            .iter()
+            .find(|target| target.target_tabs == tab_bar.tabs)
+            .unwrap_or_else(|| panic!("tab-bar fact for {:?} should be scene-owned", tab_bar.tabs));
+        assert_eq!(tab_bar_fact.bounds, tab_bar.bounds);
+        assert_eq!(tab_bar_fact.is_central, tab_bar.is_central);
+    }
+
+    let floating_container = scene
+        .floating_containers
+        .iter()
+        .find(|container| container.node == floating)
+        .expect("floating container should be in presentation scene");
+    let floating_fact = drop_scene
+        .floating_title_bars
+        .iter()
+        .find(|target| target.floating == floating)
+        .expect("floating title fact should be scene-owned");
+    assert_eq!(
+        floating_fact.title_bounds,
+        floating_container.title_bar_bounds
+    );
+    assert_eq!(floating_fact.preview_bounds, floating_container.bounds);
+}
+
+#[open_gpui::test]
+fn rendered_empty_central_frame_seeds_scene_owned_empty_space_fact(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    graph.set_central_region(space(), DockCentralRegion::empty());
+    let (window, host, _visual) = open_host(cx, graph, &[], size(px(320.0), px(180.0)));
+
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(host_bounds(320.0, 180.0), cx)
+    });
+    let drop_scene = host
+        .update(cx, |host, _| {
+            host.viewport_runtime()
+                .borrow()
+                .rendered_host_drop_scene_for_window(host.space(), window.window_id())
+        })
+        .expect("rendered host drop scene should be registered");
+
+    assert!(drop_scene.root.is_none());
+    assert!(drop_scene.leaves.is_empty());
+    assert!(drop_scene.tab_bars.is_empty());
+    assert!(drop_scene.floating_title_bars.is_empty());
+    let empty = drop_scene
+        .empty_spaces
+        .first()
+        .expect("empty central fact should be scene-owned");
+    assert_eq!(empty.bounds, scene.bounds);
+    assert!(empty.is_central);
+}
+
+#[open_gpui::test]
+fn rendered_empty_root_frame_seeds_non_central_empty_space_fact(cx: &mut TestAppContext) {
+    let graph = DockGraph::new();
+    let (window, host, _visual) = open_host(cx, graph, &[], size(px(320.0), px(180.0)));
+
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(host_bounds(320.0, 180.0), cx)
+    });
+    let drop_scene = host
+        .update(cx, |host, _| {
+            host.viewport_runtime()
+                .borrow()
+                .rendered_host_drop_scene_for_window(host.space(), window.window_id())
+        })
+        .expect("rendered host drop scene should be registered");
+
+    assert!(scene.panes.is_empty());
+    assert!(drop_scene.root.is_none());
+    let empty = drop_scene
+        .empty_spaces
+        .first()
+        .expect("empty root fact should be scene-owned");
+    assert_eq!(empty.bounds, scene.bounds);
+    assert!(!empty.is_central);
+}
+
+#[open_gpui::test]
 fn presentation_scene_resolves_empty_central_region(cx: &mut TestAppContext) {
     let mut graph = DockGraph::new();
     graph.set_central_region(space(), DockCentralRegion::empty());
