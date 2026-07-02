@@ -6,6 +6,15 @@ status: active
 
 # Log
 
+- 2026-07-02: Created
+  `docs/plans/2026-07-02-002-refactor-docking-flat-motion-runtime-plan.md` as the next docking
+  UI/UX runtime-quality plan. It supersedes the June 30 descriptor/runtime plans for the animation
+  execution layer while preserving ADR 0010/0011/0012 as accepted boundaries. The plan focuses on
+  flat presentation-scene render authority, real pane-content reveal instead of placeholder
+  transition rectangles, interruptible transition retargeting, shared motion curve/reduced-motion
+  vocabulary, root-level overlay stability, programmatic splitter motion, and zoom/focus polish.
+  Added engineering memory at
+  `docs/knowledge/engineering/progress/2026-07-02-docking-flat-motion-runtime-plan.md`.
 - 2026-07-01: Completed U11 from
   `docs/plans/2026-06-30-004-refactor-docking-runtime-capability-alignment-plan.md` in the working
   tree. Added ADR 0012 for the docking runtime capability boundary, deleted the unused overlay
