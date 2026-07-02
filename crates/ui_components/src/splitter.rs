@@ -7,7 +7,7 @@ use open_gpui::{
     IntoElement, ParentElement, Pixels, Point, Render, RenderOnce, Styled, Window, div, px,
     relative, rgb,
 };
-use open_gpui_ui_core::{MotionPreference, MotionSpec, Orientation, Sizable, Size};
+use open_gpui_ui_core::{MotionPreference, MotionSpec, MotionTimeline, Orientation, Sizable, Size};
 use std::time::Instant;
 
 const EPSILON: f32 = 0.000_1;
@@ -35,6 +35,14 @@ impl SplitterRuntime {
     }
 
     fn sync_at(&mut self, state: &SplitterState, now: Instant) -> bool {
+        self.sync_at_with_spec(
+            state,
+            now,
+            MotionSpec::committed_layout(MotionPreference::Animated),
+        )
+    }
+
+    fn sync_at_with_spec(&mut self, state: &SplitterState, now: Instant, spec: MotionSpec) -> bool {
         let panel_ids = state
             .panels()
             .iter()
@@ -78,14 +86,19 @@ impl SplitterRuntime {
             self.transition = None;
             return false;
         }
+        if spec.is_immediate() {
+            self.state_fractions = target_fractions.clone();
+            self.panel_fractions = target_fractions;
+            self.transition = None;
+            return false;
+        }
         self.panel_fractions = from_fractions.clone();
         self.state_fractions = target_fractions.clone();
         self.transition = Some(SplitterRuntimeTransition {
             panel_ids,
             from_fractions,
             to_fractions: target_fractions,
-            started_at: now,
-            spec: MotionSpec::committed_layout(MotionPreference::Animated),
+            timeline: MotionTimeline::new(spec, now),
         });
         true
     }
@@ -122,15 +135,13 @@ impl SplitterRuntime {
         let Some(transition) = self.transition.as_ref() else {
             return true;
         };
-        let progress = transition
-            .spec
-            .progress_at(now.saturating_duration_since(transition.started_at));
+        let sample = transition.timeline.sample(now);
         self.panel_fractions = lerp_fractions(
             &transition.from_fractions,
             &transition.to_fractions,
-            progress,
+            sample.progress(),
         );
-        let complete = progress >= 1.0;
+        let complete = sample.reached_final_state();
         if complete {
             self.panel_fractions = transition.to_fractions.clone();
             self.transition = None;
@@ -142,9 +153,7 @@ impl SplitterRuntime {
         let Some(transition) = self.transition.as_ref() else {
             return self.panel_fractions.clone();
         };
-        let progress = transition
-            .spec
-            .progress_at(now.saturating_duration_since(transition.started_at));
+        let progress = transition.timeline.sample(now).progress();
         lerp_fractions(
             &transition.from_fractions,
             &transition.to_fractions,
@@ -158,8 +167,7 @@ struct SplitterRuntimeTransition {
     panel_ids: Vec<String>,
     from_fractions: Vec<f32>,
     to_fractions: Vec<f32>,
-    started_at: Instant,
-    spec: MotionSpec,
+    timeline: MotionTimeline,
 }
 
 fn fractions_equal(left: &[f32], right: &[f32]) -> bool {
@@ -565,5 +573,24 @@ mod tests {
         let mut empty_runtime = SplitterRuntime::default();
         empty_runtime.sync_drag_state(&from);
         assert!(fractions_equal(&empty_runtime.panel_fractions, &[0.3, 0.7]));
+    }
+
+    #[test]
+    fn runtime_reduced_motion_completes_without_transition() {
+        let start = Instant::now();
+        let from = state(0.3, 0.7);
+        let to = state(0.6, 0.4);
+        let mut runtime = SplitterRuntime::default();
+
+        runtime.sync_at(&from, start);
+        assert!(!runtime.sync_at_with_spec(
+            &to,
+            start,
+            MotionSpec::committed_layout(MotionPreference::Reduced)
+        ));
+
+        assert!(fractions_equal(&runtime.state_fractions, &[0.6, 0.4]));
+        assert!(fractions_equal(&runtime.panel_fractions, &[0.6, 0.4]));
+        assert!(runtime.transition.is_none());
     }
 }
