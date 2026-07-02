@@ -33,6 +33,11 @@ pub(crate) enum DockDebugRegion {
         /// Runtime tabs node id.
         node: DockNodeId,
     },
+    /// The tab-strip chrome inside a tabs container.
+    TabBar {
+        /// Runtime tabs node id.
+        node: DockNodeId,
+    },
     /// The active drag/drop preview overlay for the host.
     DropPreview,
     /// Visible guide for one local dock drop zone during a drag.

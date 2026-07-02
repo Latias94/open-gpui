@@ -1,9 +1,9 @@
 use crate::{
     DockNodeId, DockSpaceId,
+    chrome_geometry::dock_presentation_tab_label_bounds,
     presentation_scene::{
         DockPresentationFocusRegion, DockPresentationOverlayAnchor,
         DockPresentationOverlayAnchorKind, DockPresentationPane, DockPresentationScene,
-        dock_presentation_tab_label_bounds,
     },
     transition_geometry::{DockMotionPreference, DockTransitionEdge, preferred_transition_edge},
 };

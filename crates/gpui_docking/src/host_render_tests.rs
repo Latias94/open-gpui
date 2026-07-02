@@ -114,6 +114,47 @@ fn render_measured_tab_label_fact_overrides_scene_equal_slot_estimate(cx: &mut T
 }
 
 #[open_gpui::test]
+fn render_tab_bar_bounds_match_presentation_scene_tab_bar(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph_with_selected(&["short", "long"], "short");
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[
+            ("short", "S", "Short"),
+            ("long", "A very long measured tab label", "Long"),
+        ],
+        size(px(480.0), px(200.0)),
+    );
+    let tab_bar = selector_for(&visual, &host, DockDebugRegion::TabBar { node: root })
+        .expect("tab bar selector should be emitted");
+    let rendered_tab_bar_bounds = debug_bounds(&mut visual, &tab_bar);
+    let window_id = window.window_id();
+    let (scene_tab_bar_bounds, runtime_tab_bar_bounds) = host.update(cx, |host, cx| {
+        let scene = host.presentation_scene_for_test(floating_bounds(0.0, 0.0, 480.0, 200.0), cx);
+        let scene_tab_bar_bounds = scene
+            .tab_bar_for_node(root)
+            .expect("scene tab bar should exist")
+            .bounds;
+        let runtime_tab_bar_bounds = host
+            .viewport_runtime()
+            .rendered_tab_bar_bounds_for_tabs(host.space(), Some(window_id), root)
+            .expect("runtime should keep scene-seeded tab bar fact");
+        (scene_tab_bar_bounds, runtime_tab_bar_bounds)
+    });
+
+    assert_bounds_close(
+        rendered_tab_bar_bounds,
+        scene_tab_bar_bounds,
+        "rendered tab bar",
+    );
+    assert_bounds_close(
+        runtime_tab_bar_bounds,
+        scene_tab_bar_bounds,
+        "scene-seeded tab bar fact",
+    );
+}
+
+#[open_gpui::test]
 fn drop_guides_render_while_tab_drag_is_active(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a", "b"]);
     let (window, host, mut visual) = open_host(
@@ -3411,6 +3452,40 @@ fn render_floating_bounds_match_presentation_scene_container(cx: &mut TestAppCon
             node: floating_tabs,
         },
         "floating tabs content",
+    );
+}
+
+#[open_gpui::test]
+fn render_tiny_floating_handle_clamps_to_presentation_title_bar(cx: &mut TestAppContext) {
+    let (mut graph, _root, floating) = floating_overlay_graph();
+    graph
+        .floating_containers_mut(space())
+        .iter_mut()
+        .find(|container| container.node == floating)
+        .expect("floating container should exist")
+        .bounds = floating_bounds(10.0, 20.0, 220.0, 12.0);
+    let (_window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(320.0), px(220.0)),
+    );
+    let scene = host.update(cx, |host, cx| {
+        host.presentation_scene_for_test(floating_bounds(0.0, 0.0, 320.0, 220.0), cx)
+    });
+    let container = scene
+        .floating_containers
+        .iter()
+        .find(|container| container.node == floating)
+        .expect("floating container should be in presentation scene");
+
+    assert_close(f32::from(container.title_bar_bounds.size.height), 12.0);
+    assert_render_region_matches_bounds(
+        &mut visual,
+        &host,
+        DockDebugRegion::FloatingHandle { node: floating },
+        container.title_bar_bounds,
+        "tiny floating handle",
     );
 }
 

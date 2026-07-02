@@ -126,9 +126,14 @@ impl DockHost {
             }
         }
         let tab_hit_targets_for_bar = tab_hit_targets.clone();
+        let tab_bar_selector = self.record_debug_selector(
+            DockDebugRegion::TabBar { node },
+            format!("{}:tabs:{}:bar", session.selector_prefix(), node.as_u64()),
+        );
         let tab_bar_a11y = DockAccessibilityScene::tab_list_element_for_render(node, tab_count);
         let mut tab_bar = div()
             .id(tab_bar_a11y.id_str().to_string())
+            .debug_selector(move || tab_bar_selector)
             .flex()
             .flex_row()
             .flex_none()

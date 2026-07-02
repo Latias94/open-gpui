@@ -1,5 +1,6 @@
 use crate::{
     DockFloatingContainer, DockHost, DockNodeId,
+    chrome_geometry::dock_floating_chrome_bounds,
     debug::DockDebugRegion,
     drag::{DockDragPayload, DockDragPayloadKind, DockDragTearOffGeometry},
     drop_scene_fact,
@@ -8,7 +9,7 @@ use crate::{
 };
 use open_gpui::{
     AnyElement, AppContext, Bounds, Context, DragMoveEvent, Empty, InteractiveElement, IntoElement,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
     StatefulInteractiveElement, Styled, Window, canvas, div, px, rgb, rgba, white,
 };
 
@@ -57,6 +58,7 @@ impl DockHost {
         );
         let child = session.floating_child(container.node);
         let bounds = container.bounds;
+        let chrome_bounds = dock_floating_chrome_bounds(bounds);
         let content = child
             .map(|child| self.render_node(child, session, viewport_host_scene_frame, window, cx))
             .unwrap_or_else(|| self.render_missing_node(container.node, session));
@@ -81,6 +83,7 @@ impl DockHost {
             .shadow_md()
             .child(self.render_floating_handle(
                 container,
+                chrome_bounds.title_bar_bounds,
                 title,
                 session,
                 viewport_host_scene_frame,
@@ -100,6 +103,7 @@ impl DockHost {
     fn render_floating_handle(
         &mut self,
         container: DockFloatingContainer,
+        handle_bounds: Bounds<Pixels>,
         title: String,
         session: &DockHostRenderSession,
         _viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
@@ -127,7 +131,7 @@ impl DockHost {
             .relative()
             .flex()
             .flex_none()
-            .h(px(24.0))
+            .h(handle_bounds.size.height)
             .items_center()
             .px_2()
             .bg(rgb(0xe7ebf0))

@@ -82,6 +82,7 @@
 mod accessibility_scene;
 mod action;
 mod builder;
+mod chrome_geometry;
 mod controller;
 #[cfg(test)]
 mod controller_builder_tests;
