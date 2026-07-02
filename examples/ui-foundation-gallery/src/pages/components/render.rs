@@ -11,6 +11,8 @@ use open_gpui_ui_core::{Orientation, Sizable, Size, ThemeTokens, UiPx};
 mod families;
 #[path = "render/focus.rs"]
 mod focus;
+#[path = "render/metadata.rs"]
+mod metadata;
 #[path = "render/readouts.rs"]
 mod readouts;
 #[path = "render/sections.rs"]
@@ -20,6 +22,7 @@ mod support;
 
 use families::*;
 use focus::*;
+use metadata::*;
 use readouts::*;
 use sections::*;
 use support::*;

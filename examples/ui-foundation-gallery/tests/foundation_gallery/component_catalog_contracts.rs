@@ -1244,6 +1244,7 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     let render_source = include_str!("../../src/pages/components/render.rs");
     let render_families_source = include_str!("../../src/pages/components/render/families.rs");
     let render_focus_source = include_str!("../../src/pages/components/render/focus.rs");
+    let render_metadata_source = include_str!("../../src/pages/components/render/metadata.rs");
     let render_readouts_source = include_str!("../../src/pages/components/render/readouts.rs");
     let render_sections_source = include_str!("../../src/pages/components/render/sections.rs");
     let render_support_source = include_str!("../../src/pages/components/render/support.rs");
@@ -1332,6 +1333,7 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     for module_path in [
         "#[path = \"render/families.rs\"]",
         "#[path = \"render/focus.rs\"]",
+        "#[path = \"render/metadata.rs\"]",
         "#[path = \"render/readouts.rs\"]",
         "#[path = \"render/sections.rs\"]",
         "#[path = \"render/support.rs\"]",
@@ -1343,6 +1345,8 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     }
     assert!(render_families_source.contains("fn component_tree_samples_section"));
     assert!(render_focus_source.contains("fn render_component_focus_mode"));
+    assert!(render_metadata_source.contains("fn render_component_catalog_section"));
+    assert!(render_metadata_source.contains("fn render_component_gates_section"));
     assert!(render_readouts_source.contains("fn component_table_state_row"));
     assert!(render_sections_source.contains("fn render_components_section"));
     assert!(render_support_source.contains("fn component_gallery_card_shell"));
@@ -1354,8 +1358,11 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(!components_source.contains("pub struct TableSampleRuntimeLog"));
     assert!(!render_source.contains("pub const COMPONENT_CATALOG"));
     assert!(!render_sections_source.contains("pub const COMPONENT_CATALOG"));
+    assert!(!render_metadata_source.contains("pub const COMPONENT_CATALOG"));
+    assert!(!render_sections_source.contains("pages::components::COMPONENT_CATALOG"));
     assert!(
-        render_sections_source.contains("pages::components::COMPONENT_CATALOG"),
+        render_metadata_source.contains("pages::components::COMPONENT_CATALOG")
+            && render_metadata_source.contains("pages::components::COMPONENT_CONFORMANCE_GATES"),
         "rendering should consume catalog metadata instead of owning it"
     );
 }
