@@ -4,6 +4,8 @@ use std::{
     path::Path,
 };
 
+use crate::theme_schema::theme_schema_failures;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RegistryEntry {
     name: String,
@@ -108,6 +110,7 @@ fn ui_contract_failures(root: &Path) -> Vec<String> {
         |name| removed_primitive_module_exists(&source_dir, name),
     ));
     failures.extend(audit_gallery_contracts(&conformance_source));
+    failures.extend(theme_schema_failures(root));
 
     failures
 }

@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     import_boundary::scan_import_boundary, theme_drift::scan_theme_drift,
-    ui_contract::scan_ui_contract,
+    theme_schema::scan_theme_schema, ui_contract::scan_ui_contract,
 };
 
 pub fn run_from_env() -> ExitCode {
@@ -21,6 +21,7 @@ pub fn run_from_env() -> ExitCode {
         "verify" => verify(&root),
         "renderer-smoke" => renderer_smoke(&root),
         "scan-theme-drift" => scan_theme_drift(&root),
+        "scan-theme-schema" => scan_theme_schema(&root),
         "scan-import-boundary" => scan_import_boundary(&root),
         "scan-ui-contract" => scan_ui_contract(&root),
         _ => {
@@ -43,6 +44,7 @@ fn print_usage() {
     eprintln!("  verify                run the local Open GPUI gate");
     eprintln!("  renderer-smoke        run the native wgpu renderer smoke test");
     eprintln!("  scan-theme-drift      scan theme token and recipe drift");
+    eprintln!("  scan-theme-schema     scan theme JSON schema artifact drift");
     eprintln!("  scan-import-boundary  scan for disallowed import residue");
     eprintln!("  scan-ui-contract      scan UI component contract drift");
 }
