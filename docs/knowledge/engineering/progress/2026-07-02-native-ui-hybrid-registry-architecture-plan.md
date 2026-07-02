@@ -3,8 +3,9 @@ type: "Work Progress"
 title: "Native UI hybrid registry architecture planning"
 description: "Implementation-ready plan for the Cargo-first metadata registry and scaffold recipe MVP."
 timestamp: 2026-07-02T08:08:24Z
-tags: ["open-gpui", "ui", "registry", "plan", "component-library"]
-status: "active"
+tags: ["open-gpui", "ui", "registry", "plan", "component-library", "superseded"]
+status: "superseded"
+superseded_by: "docs/adr/0014-remove-native-ui-hybrid-registry.md"
 related_plan: "docs/plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md"
 git_branch: "main"
 git_commit: "22e86ce722486bbecb9edd111a8cc1cf23c0196e"
@@ -12,6 +13,9 @@ verified_by: "rg heading/frontmatter/path scan"
 ---
 
 # Summary
+
+Superseded by ADR 0014. This note is retained as historical planning context for the removed
+hybrid registry experiment.
 
 Created the implementation-ready plan for the native UI hybrid registry architecture MVP.
 

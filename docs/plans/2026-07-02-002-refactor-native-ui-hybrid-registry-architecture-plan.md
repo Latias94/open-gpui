@@ -4,6 +4,8 @@ type: refactor
 date: 2026-07-02
 artifact_contract: ce-unified-plan/v1
 artifact_readiness: implementation-ready
+status: superseded
+superseded_by: docs/adr/0014-remove-native-ui-hybrid-registry.md
 product_contract_source: ce-plan-bootstrap
 execution: code
 owner: open-gpui-ui
@@ -33,6 +35,11 @@ scope:
 ---
 
 # Native UI Hybrid Registry Architecture - Plan
+
+## Superseded
+
+This plan is historical. ADR 0014 supersedes the hybrid registry direction and removes the
+generated registry manifest, scaffold recipe metadata, registry artifacts, and `scan-ui-registry`.
 
 ## Goal Capsule
 

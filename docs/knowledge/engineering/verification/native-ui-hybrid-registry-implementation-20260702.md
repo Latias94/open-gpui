@@ -3,8 +3,9 @@ type: "Verification Evidence"
 title: "Native UI hybrid registry implementation verification"
 description: "Evidence for the Cargo-first component registry manifest, scaffold recipe metadata, committed artifacts, gallery evidence, docs, ADR, and xtask registry scan."
 timestamp: 2026-07-02T18:30:37+08:00
-tags: ["open-gpui", "ui", "registry", "verification", "ce-work"]
-status: "verified"
+tags: ["open-gpui", "ui", "registry", "verification", "ce-work", "superseded"]
+status: "superseded"
+superseded_by: "docs/adr/0014-remove-native-ui-hybrid-registry.md"
 related_plan: "docs/plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md"
 source_session: "019f1607-d836-7223-9fbd-137a63a04f7c"
 git_branch: "refactor/native-ui-hybrid-registry"
@@ -24,6 +25,9 @@ verified_by:
 ---
 
 # Summary
+
+Superseded by ADR 0014. This evidence is retained as historical verification context for the
+removed hybrid registry experiment.
 
 The native UI hybrid registry MVP is implemented and locally verified on
 `refactor/native-ui-hybrid-registry`.
