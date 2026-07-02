@@ -1242,6 +1242,7 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     let component_evidence_source =
         include_str!("../../../../crates/ui_components/src/component_contract/evidence.rs");
     let render_source = include_str!("../../src/pages/components/render.rs");
+    let render_choice_source = include_str!("../../src/pages/components/render/choice.rs");
     let render_families_source = include_str!("../../src/pages/components/render/families.rs");
     let render_focus_source = include_str!("../../src/pages/components/render/focus.rs");
     let render_metadata_source = include_str!("../../src/pages/components/render/metadata.rs");
@@ -1331,6 +1332,7 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(!samples_source.contains("pub struct ButtonSample"));
     assert!(!samples_source.contains("static TABLE_SAMPLES"));
     for module_path in [
+        "#[path = \"render/choice.rs\"]",
         "#[path = \"render/families.rs\"]",
         "#[path = \"render/focus.rs\"]",
         "#[path = \"render/metadata.rs\"]",
@@ -1343,6 +1345,11 @@ fn components_catalog_metadata_is_separate_from_rendering() {
             "render facade should declare owner module `{module_path}`"
         );
     }
+    assert!(render_choice_source.contains("fn render_component_choice_sections"));
+    assert!(render_choice_source.contains("fn render_switch_section"));
+    assert!(render_choice_source.contains("fn render_checkbox_section"));
+    assert!(render_choice_source.contains("fn render_radio_group_section"));
+    assert!(render_choice_source.contains("fn render_toggle_section"));
     assert!(render_families_source.contains("fn component_tree_samples_section"));
     assert!(render_focus_source.contains("fn render_component_focus_mode"));
     assert!(render_metadata_source.contains("fn render_component_catalog_section"));
@@ -1351,6 +1358,8 @@ fn components_catalog_metadata_is_separate_from_rendering() {
     assert!(render_sections_source.contains("fn render_components_section"));
     assert!(render_support_source.contains("fn component_gallery_card_shell"));
     assert!(!render_source.contains("fn component_tree_samples_section"));
+    assert!(!render_sections_source.contains("fn render_switch_section"));
+    assert!(!render_sections_source.contains("pages::components::switch_samples"));
     assert!(!render_source.contains("fn component_table_state_row"));
     assert!(!render_source.contains("fn render_components_section"));
     assert!(!render_source.contains("fn component_gallery_card_shell"));
