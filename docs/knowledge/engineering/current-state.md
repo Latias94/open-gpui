@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-02T20:56:14+08:00
+timestamp: 2026-07-02T23:45:00+08:00
 git_branch: main
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
@@ -12,13 +12,19 @@ related_plan:
   - docs/plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md
   - docs/plans/2026-07-02-001-refactor-ui-contract-tooling-plan.md
   - docs/plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md
+  - docs/plans/2026-07-02-002-refactor-docking-flat-motion-runtime-plan.md
+  - docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md
 related_research:
   - native-ui-framework-design-research/report.md
 related_adr:
   - docs/adr/0006-open-gpui-ui-headless-extraction-checkpoint.md
   - docs/adr/0008-open-gpui-ui-component-productization-roadmap.md
+  - docs/adr/0010-docking-presentation-scene-motion-model.md
+  - docs/adr/0011-docking-split-motion-primitive-boundary.md
+  - docs/adr/0012-docking-runtime-capability-alignment.md
   - docs/adr/0013-open-gpui-native-ui-hybrid-registry.md
   - docs/adr/0014-remove-native-ui-hybrid-registry.md
+  - docs/adr/0015-ui-motion-runtime-foundation.md
 related_decision:
   - docs/knowledge/engineering/decisions/open-gpui-native-ui-framework-distribution-strategy.md
 verified_by:
@@ -47,6 +53,10 @@ verified_by:
   - cargo nextest run -p open-gpui-ui-components table --no-fail-fast
   - cargo nextest run -p open-gpui-ui-components --no-fail-fast
   - cargo nextest run -p open-gpui-ui-foundation-gallery --no-fail-fast
+  - cargo nextest run -p open-gpui-docking transition_plan_from_overlay_scene_uses_current_bounds_for_matching_layers transition_plan_keeps_preview_layers_at_current_target_bounds overlay_replacement_keeps_preview_layers_at_current_target_bounds --no-fail-fast
+  - cargo nextest run -p open-gpui-docking transition_executor_samples_timeline_and_reveal_geometry transition_executor_replaces_active_execution_and_completes_reduced_motion_immediately transition_sample_overlay_renders_from_executor source_hover_over_known_viewport_renders_target_drop_preview routed_preview_replacement_clears_old_target_overlay_without_stale_payload --no-fail-fast
+  - cargo check -p open-gpui-docking
+  - cargo check -p open-gpui-docking-native
   - git diff --check
   - python native-ui-framework-design-research/generate_report.py
   - python -m py_compile native-ui-framework-design-research/generate_report.py
@@ -56,7 +66,7 @@ verified_by:
 
 # Current State
 
-- Branch: `main`; `origin/main` was at `09d39c09` before the hybrid registry removal pass.
+- Branch: `main`; `origin/main` was at `f3a7de9` before the docking flat motion runtime merge.
 - Done: Public-surface tests now consume the component contract rows instead of gallery/test
   helper maps. The contract table owns official components, state contracts, adapter-only helpers,
   internal anatomy, removed targets, source mappings, docs tokens, gallery status, and default
@@ -99,14 +109,26 @@ verified_by:
 - Done: the hybrid registry work was merged to `main` and pushed as `e257d52f`; the remote feature
   branch `origin/refactor/native-ui-hybrid-registry` was deleted after merge. The local merged branch
   still exists as a historical pointer and should not be deleted unless requested.
+- Done: `refactor/docking-flat-motion-runtime` merged the docking motion runtime pass into `main`.
+  Docking now uses real final-size pane content reveal, sampled pane/divider/zoom retargeting,
+  presentation-scene-seeded drop facts, programmatic Splitter motion, and a shared
+  `open_gpui_ui_core::MotionTimeline` runtime primitive.
+- Done: Dock overlay/drop-preview geometry now follows Dear ImGui's current-target model: preview
+  rectangles stay pinned to the current semantic target instead of interpolating from previous
+  preview bounds. Overlay motion remains lifecycle/opacity-only; pane, divider, zoom, and
+  programmatic Splitter interpolation remain because they represent real layout motion.
+- Done: ADR 0015 records the generalized UI motion runtime boundary after native registry ADRs
+  occupied ADR 0013 and ADR 0014.
 - Current docs direction: component ecosystem changes start with
   `cargo run -p xtask -- scan-ui-contract`, followed by public-surface, a11y, theme, or gallery
-  focused nextest gates for behavior proof.
+  focused nextest gates for behavior proof. Docking preview follow-up should start from the native
+  example dogfood paths and focused docking nextest gates listed here.
 - Not current roadmap work: broad splitting of every remaining 1k+ component file and
   `open-gpui-ui-headless` extraction.
 - Blocked: None.
-- Next action: continue the fearless refactor sequence with the remaining large gallery render
-  owners, especially `examples/ui-foundation-gallery/src/pages/components/render/sections.rs`.
+- Next action: push merged `main`, then continue the fearless refactor sequence with the remaining
+  large gallery render owners, especially
+  `examples/ui-foundation-gallery/src/pages/components/render/sections.rs`.
 
 # Citations
 
@@ -117,9 +139,14 @@ verified_by:
 - [UI contract/a11y/theme plan](../../plans/2026-07-01-005-refactor-ui-contract-a11y-theme-plan.md)
 - [UI contract tooling plan](../../plans/2026-07-02-001-refactor-ui-contract-tooling-plan.md)
 - [Native UI hybrid registry architecture plan](../../plans/2026-07-02-002-refactor-native-ui-hybrid-registry-architecture-plan.md)
+- [Docking flat motion runtime plan](../../plans/2026-07-02-002-refactor-docking-flat-motion-runtime-plan.md)
+- [UI motion runtime foundation plan](../../plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md)
 - [Native UI framework design research report](../../../native-ui-framework-design-research/report.md)
 - [Native UI framework distribution strategy decision](decisions/open-gpui-native-ui-framework-distribution-strategy.md)
 - [Native UI framework strategy architecture page](../../architecture/native-ui-framework-strategy.md)
 - [ADR 0013: Open GPUI Native UI Hybrid Registry](../../adr/0013-open-gpui-native-ui-hybrid-registry.md)
 - [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](../../adr/0014-remove-native-ui-hybrid-registry.md)
+- [ADR 0015: UI Motion Runtime Foundation](../../adr/0015-ui-motion-runtime-foundation.md)
 - [Native UI framework research handoff](sessions/2026-07-02-native-ui-framework-design-research-handoff.md)
+- [Docking flat motion runtime progress](progress/2026-07-02-docking-flat-motion-runtime-plan.md)
+- [UI motion runtime foundation progress](progress/2026-07-02-ui-motion-runtime-foundation.md)

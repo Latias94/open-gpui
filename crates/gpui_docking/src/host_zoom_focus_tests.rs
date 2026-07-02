@@ -348,6 +348,67 @@ fn host_unzoom_command_samples_restored_scene_without_graph_mutation(cx: &mut Te
 }
 
 #[open_gpui::test]
+fn host_unzoom_command_retargets_from_active_zoom_sample(cx: &mut TestAppContext) {
+    let (graph, _root, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(220.0)),
+    );
+    let bounds = host_bounds(400.0, 220.0);
+    let base = host.update(cx, |host, cx| host.presentation_scene_for_test(bounds, cx));
+    let spec = MotionSpec::new(
+        MotionPreference::Animated,
+        MotionDuration::Custom(Duration::from_millis(100)),
+        MotionEasing::Linear,
+    );
+
+    host.update(cx, |host, cx| {
+        assert!(host.zoom_pane_with_scene(right_tabs, base.clone(), spec, None, cx));
+        let zoom_midpoint = host
+            .sample_transition_for_test(Duration::from_millis(50))
+            .expect("zoom should be active at midpoint");
+        let sampled_left = zoom_midpoint
+            .pane_bounds
+            .iter()
+            .find(|pane| pane.node == left_tabs)
+            .expect("zoom midpoint should include the egressing left pane")
+            .bounds;
+        let sampled_right = zoom_midpoint
+            .pane_bounds
+            .iter()
+            .find(|pane| pane.node == right_tabs)
+            .expect("zoom midpoint should include the zooming right pane")
+            .bounds;
+        let zoomed = zoom_midpoint.final_scene.clone();
+
+        assert!(host.unzoom_with_scene(zoomed, base.clone(), spec, None, cx));
+        let unzoom_start = host
+            .sample_transition_for_test(Duration::from_millis(50))
+            .expect("unzoom should start from the active zoom sample");
+        assert_eq!(
+            unzoom_start
+                .pane_bounds
+                .iter()
+                .find(|pane| pane.node == left_tabs)
+                .map(|pane| pane.bounds),
+            Some(sampled_left),
+            "unzoom should retarget the restored pane from the current zoom egress geometry"
+        );
+        assert_eq!(
+            unzoom_start
+                .pane_bounds
+                .iter()
+                .find(|pane| pane.node == right_tabs)
+                .map(|pane| pane.bounds),
+            Some(sampled_right),
+            "unzoom should retarget the zoomed pane from the current zoom geometry"
+        );
+    });
+}
+
+#[open_gpui::test]
 fn host_focus_command_targets_selected_item_for_pane(cx: &mut TestAppContext) {
     let (graph, _root, _left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let (_window, host, _visual) = open_host(

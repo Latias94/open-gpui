@@ -22,3 +22,4 @@ platform strategy, or ecosystem compatibility.
 - [ADR 0012: Docking Runtime Capability Alignment](0012-docking-runtime-capability-alignment.md)
 - [ADR 0013: Open GPUI Native UI Hybrid Registry](0013-open-gpui-native-ui-hybrid-registry.md)
 - [ADR 0014: Remove Open GPUI Native UI Hybrid Registry](0014-remove-native-ui-hybrid-registry.md)
+- [ADR 0015: UI Motion Runtime Foundation](0015-ui-motion-runtime-foundation.md)

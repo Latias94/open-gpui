@@ -1,6 +1,7 @@
 //! Renderer-neutral split layout primitives.
 
-use crate::{Orientation, Size, UiPx, UiRect, ui_point, ui_px, ui_rect, ui_size};
+use crate::{MotionSpec, Orientation, Size, UiPx, UiRect, ui_point, ui_px, ui_rect, ui_size};
+use std::collections::HashMap;
 
 const EPSILON: f32 = 0.000_1;
 
@@ -843,6 +844,220 @@ impl SplitterLayoutScene {
     }
 }
 
+/// Programmatic split layout transition intent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitterTransitionIntent {
+    /// A panel or nested split is inserted.
+    Insert,
+    /// A panel or nested split is removed.
+    Remove,
+    /// One or more panels collapse.
+    Collapse,
+    /// One or more panels expand.
+    Expand,
+    /// Existing panel fractions or bounds change.
+    Resize,
+    /// The adapter cannot classify the semantic reason more narrowly.
+    Replace,
+}
+
+/// Transition classification for one split panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitterPanelTransitionKind {
+    /// Panel remains visually unchanged.
+    Unchanged,
+    /// Panel enters the scene.
+    Entering,
+    /// Panel leaves the scene.
+    Leaving,
+    /// Panel moves without resizing.
+    Moving,
+    /// Panel changes size.
+    Resizing,
+    /// Panel transitions into its collapsed state.
+    Collapsing,
+    /// Panel transitions out of its collapsed state.
+    Expanding,
+}
+
+/// Transition descriptor for one split panel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitterPanelTransition {
+    id: String,
+    kind: SplitterPanelTransitionKind,
+    from: Option<UiRect>,
+    to: Option<UiRect>,
+    collapsed_from: bool,
+    collapsed_to: bool,
+}
+
+impl SplitterPanelTransition {
+    /// Returns the stable panel id.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Returns this panel's transition kind.
+    pub const fn kind(&self) -> SplitterPanelTransitionKind {
+        self.kind
+    }
+
+    /// Returns the previous visual bounds, when the panel existed before the transition.
+    pub const fn from(&self) -> Option<UiRect> {
+        self.from
+    }
+
+    /// Returns the final visual bounds, when the panel exists after the transition.
+    pub const fn to(&self) -> Option<UiRect> {
+        self.to
+    }
+
+    /// Returns whether the panel was collapsed before the transition.
+    pub const fn collapsed_from(&self) -> bool {
+        self.collapsed_from
+    }
+
+    /// Returns whether the panel is collapsed after the transition.
+    pub const fn collapsed_to(&self) -> bool {
+        self.collapsed_to
+    }
+}
+
+/// Transition classification for one split handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitterHandleTransitionKind {
+    /// Handle remains visually unchanged.
+    Unchanged,
+    /// Handle enters the scene.
+    Entering,
+    /// Handle leaves the scene.
+    Leaving,
+    /// Handle moves or changes disabled state.
+    Moving,
+}
+
+/// Transition descriptor for one split handle.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitterHandleTransition {
+    group_id: String,
+    index: usize,
+    kind: SplitterHandleTransitionKind,
+    from: Option<UiRect>,
+    to: Option<UiRect>,
+    disabled_from: bool,
+    disabled_to: bool,
+}
+
+impl SplitterHandleTransition {
+    /// Returns the split group id.
+    pub fn group_id(&self) -> &str {
+        &self.group_id
+    }
+
+    /// Returns the handle index within the split group.
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Returns this handle's transition kind.
+    pub const fn kind(&self) -> SplitterHandleTransitionKind {
+        self.kind
+    }
+
+    /// Returns previous handle bounds, when the handle existed before the transition.
+    pub const fn from(&self) -> Option<UiRect> {
+        self.from
+    }
+
+    /// Returns final handle bounds, when the handle exists after the transition.
+    pub const fn to(&self) -> Option<UiRect> {
+        self.to
+    }
+
+    /// Returns whether the handle was disabled before the transition.
+    pub const fn disabled_from(&self) -> bool {
+        self.disabled_from
+    }
+
+    /// Returns whether the handle is disabled after the transition.
+    pub const fn disabled_to(&self) -> bool {
+        self.disabled_to
+    }
+}
+
+/// Renderer-neutral transition descriptor between two resolved split layout scenes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitterLayoutTransition {
+    intent: SplitterTransitionIntent,
+    from: SplitterLayoutScene,
+    to: SplitterLayoutScene,
+    spec: MotionSpec,
+    panels: Vec<SplitterPanelTransition>,
+    handles: Vec<SplitterHandleTransition>,
+}
+
+impl SplitterLayoutTransition {
+    /// Resolves a transition between two flat split layout scenes.
+    pub fn between(
+        intent: SplitterTransitionIntent,
+        from: SplitterLayoutScene,
+        to: SplitterLayoutScene,
+        spec: MotionSpec,
+    ) -> Self {
+        let panels = split_panel_transitions(&from, &to);
+        let handles = split_handle_transitions(&from, &to);
+
+        Self {
+            intent,
+            from,
+            to,
+            spec,
+            panels,
+            handles,
+        }
+    }
+
+    /// Returns the semantic transition intent supplied by the adapter.
+    pub const fn intent(&self) -> SplitterTransitionIntent {
+        self.intent
+    }
+
+    /// Returns the previous resolved scene.
+    pub const fn from_scene(&self) -> &SplitterLayoutScene {
+        &self.from
+    }
+
+    /// Returns the final resolved scene.
+    pub const fn to_scene(&self) -> &SplitterLayoutScene {
+        &self.to
+    }
+
+    /// Returns the motion spec adapters should use to sample this transition.
+    pub const fn spec(&self) -> MotionSpec {
+        self.spec
+    }
+
+    /// Returns whether the transition completes immediately.
+    pub const fn is_immediate(&self) -> bool {
+        self.spec.is_immediate()
+    }
+
+    /// Returns panel transition descriptors.
+    pub fn panels(&self) -> &[SplitterPanelTransition] {
+        &self.panels
+    }
+
+    /// Returns handle transition descriptors.
+    pub fn handles(&self) -> &[SplitterHandleTransition] {
+        &self.handles
+    }
+
+    /// Returns the transition descriptor for a panel id.
+    pub fn panel(&self, id: &str) -> Option<&SplitterPanelTransition> {
+        self.panels.iter().find(|panel| panel.id == id)
+    }
+}
+
 /// Resolved layout for one split leaf panel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SplitterPanelLayout {
@@ -1039,6 +1254,153 @@ impl SplitterHitMap {
             SplitterHitTarget::Handle(handle) => contains_point(handle.bounds(), point),
             SplitterHitTarget::Junction(junction) => contains_point(junction.bounds(), point),
         })
+    }
+}
+
+fn split_panel_transitions(
+    from: &SplitterLayoutScene,
+    to: &SplitterLayoutScene,
+) -> Vec<SplitterPanelTransition> {
+    let previous = from
+        .panels()
+        .iter()
+        .map(|panel| (panel.id().to_owned(), panel))
+        .collect::<HashMap<_, _>>();
+    let next = to
+        .panels()
+        .iter()
+        .map(|panel| (panel.id().to_owned(), panel))
+        .collect::<HashMap<_, _>>();
+    let mut transitions = Vec::new();
+
+    for panel in to.panels() {
+        let previous_panel = previous.get(panel.id()).copied();
+        transitions.push(match previous_panel {
+            Some(previous_panel) => SplitterPanelTransition {
+                id: panel.id().to_owned(),
+                kind: split_panel_transition_kind(previous_panel, panel),
+                from: Some(previous_panel.bounds()),
+                to: Some(panel.bounds()),
+                collapsed_from: previous_panel.collapsed(),
+                collapsed_to: panel.collapsed(),
+            },
+            None => SplitterPanelTransition {
+                id: panel.id().to_owned(),
+                kind: SplitterPanelTransitionKind::Entering,
+                from: None,
+                to: Some(panel.bounds()),
+                collapsed_from: false,
+                collapsed_to: panel.collapsed(),
+            },
+        });
+    }
+
+    for panel in from.panels() {
+        if next.contains_key(panel.id()) {
+            continue;
+        }
+        transitions.push(SplitterPanelTransition {
+            id: panel.id().to_owned(),
+            kind: SplitterPanelTransitionKind::Leaving,
+            from: Some(panel.bounds()),
+            to: None,
+            collapsed_from: panel.collapsed(),
+            collapsed_to: false,
+        });
+    }
+
+    transitions
+}
+
+fn split_panel_transition_kind(
+    from: &SplitterPanelLayout,
+    to: &SplitterPanelLayout,
+) -> SplitterPanelTransitionKind {
+    if !from.collapsed() && to.collapsed() {
+        return SplitterPanelTransitionKind::Collapsing;
+    }
+    if from.collapsed() && !to.collapsed() {
+        return SplitterPanelTransitionKind::Expanding;
+    }
+    if from.bounds() == to.bounds() {
+        SplitterPanelTransitionKind::Unchanged
+    } else if from.bounds().size != to.bounds().size {
+        SplitterPanelTransitionKind::Resizing
+    } else {
+        SplitterPanelTransitionKind::Moving
+    }
+}
+
+fn split_handle_transitions(
+    from: &SplitterLayoutScene,
+    to: &SplitterLayoutScene,
+) -> Vec<SplitterHandleTransition> {
+    let previous = from
+        .handles()
+        .iter()
+        .map(|handle| (split_handle_key(handle), handle))
+        .collect::<HashMap<_, _>>();
+    let next = to
+        .handles()
+        .iter()
+        .map(|handle| (split_handle_key(handle), handle))
+        .collect::<HashMap<_, _>>();
+    let mut transitions = Vec::new();
+
+    for handle in to.handles() {
+        let previous_handle = previous.get(&split_handle_key(handle)).copied();
+        transitions.push(match previous_handle {
+            Some(previous_handle) => SplitterHandleTransition {
+                group_id: handle.group_id().to_owned(),
+                index: handle.index(),
+                kind: split_handle_transition_kind(previous_handle, handle),
+                from: Some(previous_handle.bounds()),
+                to: Some(handle.bounds()),
+                disabled_from: previous_handle.disabled(),
+                disabled_to: handle.disabled(),
+            },
+            None => SplitterHandleTransition {
+                group_id: handle.group_id().to_owned(),
+                index: handle.index(),
+                kind: SplitterHandleTransitionKind::Entering,
+                from: None,
+                to: Some(handle.bounds()),
+                disabled_from: false,
+                disabled_to: handle.disabled(),
+            },
+        });
+    }
+
+    for handle in from.handles() {
+        if next.contains_key(&split_handle_key(handle)) {
+            continue;
+        }
+        transitions.push(SplitterHandleTransition {
+            group_id: handle.group_id().to_owned(),
+            index: handle.index(),
+            kind: SplitterHandleTransitionKind::Leaving,
+            from: Some(handle.bounds()),
+            to: None,
+            disabled_from: handle.disabled(),
+            disabled_to: false,
+        });
+    }
+
+    transitions
+}
+
+fn split_handle_key(handle: &SplitterHandleLayout) -> (String, usize) {
+    (handle.group_id().to_owned(), handle.index())
+}
+
+fn split_handle_transition_kind(
+    from: &SplitterHandleLayout,
+    to: &SplitterHandleLayout,
+) -> SplitterHandleTransitionKind {
+    if from.bounds() == to.bounds() && from.disabled() == to.disabled() {
+        SplitterHandleTransitionKind::Unchanged
+    } else {
+        SplitterHandleTransitionKind::Moving
     }
 }
 
@@ -1343,6 +1705,7 @@ fn overlap_or_touching_span(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MotionPreference;
 
     fn rect(width: f32, height: f32) -> UiRect {
         at_rect(0.0, 0.0, width, height)
@@ -1676,5 +2039,162 @@ mod tests {
             hit_map.hit(ui_point(ui_px(100.0), ui_px(100.0))),
             Some(SplitterHitTarget::Junction(_))
         ));
+    }
+
+    #[test]
+    fn split_layout_transition_describes_insert_remove_and_resize() {
+        let from_state = SplitterState::resolve(
+            "workspace",
+            Orientation::Horizontal,
+            Size::Medium,
+            false,
+            [
+                SplitterPanelDescriptor::new("left", 0.5).min_fraction(0.0),
+                SplitterPanelDescriptor::new("right", 0.5).min_fraction(0.0),
+            ],
+        );
+        let to_state = SplitterState::resolve(
+            "workspace",
+            Orientation::Horizontal,
+            Size::Medium,
+            false,
+            [
+                SplitterPanelDescriptor::new("left", 0.25).min_fraction(0.0),
+                SplitterPanelDescriptor::new("center", 0.25).min_fraction(0.0),
+                SplitterPanelDescriptor::new("right", 0.5).min_fraction(0.0),
+            ],
+        );
+        let from_scene = SplitterLayoutScene::from_state(&from_state, rect(424.0, 200.0));
+        let to_scene = SplitterLayoutScene::from_state(&to_state, rect(436.0, 200.0));
+
+        let insert = SplitterLayoutTransition::between(
+            SplitterTransitionIntent::Insert,
+            from_scene.clone(),
+            to_scene.clone(),
+            MotionSpec::committed_layout(MotionPreference::Animated),
+        );
+
+        assert_eq!(insert.intent(), SplitterTransitionIntent::Insert);
+        assert!(!insert.is_immediate());
+        assert_eq!(
+            insert.panel("center").map(SplitterPanelTransition::kind),
+            Some(SplitterPanelTransitionKind::Entering)
+        );
+        assert_eq!(
+            insert.panel("left").map(SplitterPanelTransition::kind),
+            Some(SplitterPanelTransitionKind::Resizing)
+        );
+        assert!(
+            insert
+                .handles()
+                .iter()
+                .any(|handle| handle.kind() == SplitterHandleTransitionKind::Entering)
+        );
+
+        let remove = SplitterLayoutTransition::between(
+            SplitterTransitionIntent::Remove,
+            to_scene,
+            from_scene,
+            MotionSpec::committed_layout(MotionPreference::Animated),
+        );
+        assert_eq!(
+            remove.panel("center").map(SplitterPanelTransition::kind),
+            Some(SplitterPanelTransitionKind::Leaving)
+        );
+    }
+
+    #[test]
+    fn split_layout_transition_describes_collapse_and_expand() {
+        let expanded = SplitterState::resolve(
+            "workspace",
+            Orientation::Horizontal,
+            Size::Medium,
+            false,
+            [
+                SplitterPanelDescriptor::new("nav", 0.3)
+                    .collapsible(true)
+                    .collapsed_fraction(0.05)
+                    .min_fraction(0.0),
+                SplitterPanelDescriptor::new("main", 0.7).min_fraction(0.0),
+            ],
+        );
+        let collapsed = SplitterState::resolve(
+            "workspace",
+            Orientation::Horizontal,
+            Size::Medium,
+            false,
+            [
+                SplitterPanelDescriptor::new("nav", 0.3)
+                    .collapsible(true)
+                    .collapsed(true)
+                    .collapsed_fraction(0.05)
+                    .min_fraction(0.0),
+                SplitterPanelDescriptor::new("main", 0.7).min_fraction(0.0),
+            ],
+        );
+        let expanded_scene = SplitterLayoutScene::from_state(&expanded, rect(412.0, 200.0));
+        let collapsed_scene = SplitterLayoutScene::from_state(&collapsed, rect(412.0, 200.0));
+
+        let collapse = SplitterLayoutTransition::between(
+            SplitterTransitionIntent::Collapse,
+            expanded_scene.clone(),
+            collapsed_scene.clone(),
+            MotionSpec::committed_layout(MotionPreference::Animated),
+        );
+        let nav_collapse = collapse.panel("nav").expect("nav transition should exist");
+        assert_eq!(nav_collapse.kind(), SplitterPanelTransitionKind::Collapsing);
+        assert!(!nav_collapse.collapsed_from());
+        assert!(nav_collapse.collapsed_to());
+
+        let expand = SplitterLayoutTransition::between(
+            SplitterTransitionIntent::Expand,
+            collapsed_scene,
+            expanded_scene,
+            MotionSpec::committed_layout(MotionPreference::Animated),
+        );
+        let nav_expand = expand.panel("nav").expect("nav transition should exist");
+        assert_eq!(nav_expand.kind(), SplitterPanelTransitionKind::Expanding);
+        assert!(nav_expand.collapsed_from());
+        assert!(!nav_expand.collapsed_to());
+    }
+
+    #[test]
+    fn split_layout_transition_reduced_motion_preserves_final_scene() {
+        let from_state = SplitterState::resolve(
+            "workspace",
+            Orientation::Horizontal,
+            Size::Medium,
+            false,
+            [
+                SplitterPanelDescriptor::new("left", 0.5).min_fraction(0.0),
+                SplitterPanelDescriptor::new("right", 0.5).min_fraction(0.0),
+            ],
+        );
+        let to_state = SplitterState::resolve(
+            "workspace",
+            Orientation::Horizontal,
+            Size::Medium,
+            false,
+            [
+                SplitterPanelDescriptor::new("left", 0.25).min_fraction(0.0),
+                SplitterPanelDescriptor::new("right", 0.75).min_fraction(0.0),
+            ],
+        );
+        let from_scene = SplitterLayoutScene::from_state(&from_state, rect(400.0, 200.0));
+        let to_scene = SplitterLayoutScene::from_state(&to_state, rect(400.0, 200.0));
+
+        let transition = SplitterLayoutTransition::between(
+            SplitterTransitionIntent::Resize,
+            from_scene,
+            to_scene.clone(),
+            MotionSpec::committed_layout(MotionPreference::Reduced),
+        );
+
+        assert!(transition.is_immediate());
+        assert_eq!(transition.to_scene(), &to_scene);
+        assert_eq!(
+            transition.panel("left").map(SplitterPanelTransition::kind),
+            Some(SplitterPanelTransitionKind::Resizing)
+        );
     }
 }

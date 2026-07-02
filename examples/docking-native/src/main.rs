@@ -201,6 +201,7 @@ impl Render for RuntimeStatusPanel {
                     platform_sync_summary(status.last_platform_sync.as_ref())
                 ),
                 format!("preview proof: {}", preview_proof_summary()),
+                format!("motion proof: {}", motion_runtime_proof_summary()),
                 format!(
                     "placement restore: {}",
                     placement_restore_summary(status.placement_restore.as_ref())
@@ -620,7 +621,11 @@ fn platform_sync_summary(sync: Option<&DockViewportPlatformSyncRecord>) -> Strin
 }
 
 fn preview_proof_summary() -> &'static str {
-    "presentation-scene+overlay-layers+tab-insertion+motion+zoom+divider-hit-map+corner-drag+a11y+route-cleanup+reduced-motion"
+    "presentation-scene+real-content-reveal+overlay-motion+tab-insertion+retargeting+splitter-motion+zoom-focus+divider-hit-map+corner-drag+a11y+route-cleanup+reduced-motion"
+}
+
+fn motion_runtime_proof_summary() -> &'static str {
+    "shared-runtime+timeline-state+sampled-progress+retargeted-identity+reduced-motion-final-state"
 }
 
 fn tear_off_placement_summary(source: Option<&DockViewportTearOffPlacementRecord>) -> &'static str {
@@ -2346,7 +2351,11 @@ mod tests {
         );
         assert_eq!(
             preview_proof_summary(),
-            "presentation-scene+overlay-layers+tab-insertion+motion+zoom+divider-hit-map+corner-drag+a11y+route-cleanup+reduced-motion"
+            "presentation-scene+real-content-reveal+overlay-motion+tab-insertion+retargeting+splitter-motion+zoom-focus+divider-hit-map+corner-drag+a11y+route-cleanup+reduced-motion"
+        );
+        assert_eq!(
+            motion_runtime_proof_summary(),
+            "shared-runtime+timeline-state+sampled-progress+retargeted-identity+reduced-motion-final-state"
         );
         assert_eq!(
             placement_restore_summary(Some(&DockViewportRestoreReadinessRecord {

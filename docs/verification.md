@@ -85,7 +85,7 @@ the gates aligned to the shared primitive boundary:
 
 ```sh
 cargo fmt --all -- --check
-cargo nextest run -p open-gpui-ui-core --no-fail-fast
+cargo nextest run -p open-gpui-ui-core motion split --no-fail-fast
 cargo nextest run -p open-gpui-ui-components splitter component_api_inventory --no-fail-fast
 cargo nextest run -p open-gpui-docking host_presentation_scene_tests host_viewport_preview_visual_tests host_transition_tests host_zoom_focus_tests host_divider_hit_map_tests host_accessibility_tests --no-fail-fast
 cargo check -p open-gpui-docking-native
@@ -100,6 +100,7 @@ cargo nextest run -p open-gpui-ui-components splitter gpui_adapter_maps_splitter
 cargo nextest run -p open-gpui-docking geometry host_accessibility_tests host_divider_hit_map_tests workspace_resize_policy_tests graph_split_tests interaction --no-fail-fast
 cargo nextest run -p open-gpui-docking spatial_navigation_tests host_zoom_focus_tests::host_focus_neighbor_command_uses_spatial_navigation host_accessibility_tests::accessibility_splitter_actions_resize_through_transaction_path host_accessibility_tests::accessibility_vertical_splitter_actions_target_vertical_axis host_divider_hit_map_tests host_interaction_tests::horizontal_splitter_drag_updates_width_fractions host_interaction_tests::vertical_splitter_drag_updates_height_fractions host_interaction_tests::splitter_drag_clamps_to_minimum_pane_size host_interaction_tests::corner_splitter_drag_updates_both_axes_through_rendered_events interaction::tests::corner_splitter_drag_produces_two_axis_resize_request interaction::tests::corner_splitter_drag_clamps_one_axis_without_corrupting_other_axis render::tests::divider_affordance_states_have_distinct_feedback_colors --no-fail-fast
 cargo nextest run -p open-gpui-docking transition_plan_from_route_overlay_describes_source_marker source_hover_over_known_viewport_renders_target_drop_preview routed_preview_replacement_clears_old_target_overlay_without_stale_payload escape_clears_routed_marker_target_overlay_and_active_drag viewport_runtime_begin_payload_drag_clears_previous_routed_preview viewport_runtime_revalidates_routed_preview_release_against_current_policy --no-fail-fast
+cargo nextest run -p open-gpui-docking transition_pane_clip_mounts_real_pane_content host_unzoom_command_retargets_from_active_zoom_sample dragging_tab_to_other_stack_center_moves_panel transition_plan_from_overlay_scene_uses_current_bounds_for_matching_layers transition_plan_keeps_preview_layers_at_current_target_bounds overlay_replacement_keeps_preview_layers_at_current_target_bounds --no-fail-fast
 ```
 
 These checks prove capability alignment instead of pixel parity: tab insertion previews remain tab
@@ -107,6 +108,21 @@ previews, nested edge targets stay scoped to the pane that owns the guide, cross
 markers stay separate from target previews, zoom/focus produce deterministic descriptors, divider
 and corner hits derive from the shared split hit map, and accessibility descriptors expose roles,
 bounds, orientation, selected state, disabled state, and actions.
+
+The shared motion runtime checks additionally prove that `open_gpui_ui_core` owns deterministic
+timeline sampling, terminal state, reduced-motion completion, and stable-identity retarget
+matching. `ui_components::Splitter` uses that runtime for programmatic fraction changes while
+keeping pointer drags immediate. Docking uses the same runtime for transition progress and
+retarget scaffolding while keeping pane, divider, overlay, zoom, focus, tab, route, and viewport
+semantics local. Transition pane clips mount real final-size pane content behind an occlusion mask
+rather than generic placeholder rectangles, overlay preview feedback runs through an
+adapter-owned transition executor with short affordance motion, repeated overlay changes retarget
+from previous overlay bounds, and interrupted zoom/unzoom starts from the current sampled
+geometry. The native runtime panel exposes this as
+`motion proof: shared-runtime+timeline-state+sampled-progress+retargeted-identity+reduced-motion-final-state`.
+The remaining render-measured drop-scene probe is intentionally limited to tab-label facts whose
+bounds depend on text shaping; presentation-scene facts own root, pane, tab bar, empty, and
+floating-title targets.
 
 Cross-window preview cleanup is part of the same semantic contract. A routed hover may leave a
 source-window route marker and a target-window preview at the same time, but those are distinct
@@ -1041,9 +1057,12 @@ Current docking multi-viewport capability states:
   allowed/rejected decision, active layer, active zone, tab insertion descriptor, payload tab
   previews, and route-preview marker shape, while debug selectors continue to anchor rendered
   dogfood checks. Presentation, overlay, transition, zoom/focus, divider hit map, and accessibility
-  descriptors are covered by focused tests. The native runtime panel exposes this as
-  `preview proof: presentation-scene+overlay-layers+tab-insertion+motion+zoom+divider-hit-map+corner-drag+a11y+route-cleanup+reduced-motion`.
-  The transition executor currently productizes sampled pane, divider, zoom, and focus motion.
+  descriptors are covered by focused tests. The native runtime panel exposes preview capability as
+  `preview proof: presentation-scene+real-content-reveal+overlay-motion+tab-insertion+retargeting+splitter-motion+zoom-focus+divider-hit-map+corner-drag+a11y+route-cleanup+reduced-motion`
+  and motion runtime capability as
+  `motion proof: shared-runtime+timeline-state+sampled-progress+retargeted-identity+reduced-motion-final-state`.
+  The transition executor currently productizes sampled pane, divider, overlay, zoom, and focus
+  motion on top of the shared timeline primitive.
   Overlay-scene-to-transition conversion for tab insertion, payload ghosts, route markers, and
   rejected state is descriptor proof, not an every-frame drag-preview animation guarantee.
   Automated owners: `host_presentation_scene_tests`, `host_viewport_preview_visual_tests`,

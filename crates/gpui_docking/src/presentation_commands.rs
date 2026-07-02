@@ -225,6 +225,30 @@ impl DockHost {
         self.transition_executor_mut().sample(window)
     }
 
+    pub(crate) fn execute_overlay_transition_plan(
+        &mut self,
+        plan: DockTransitionPlan,
+        spec: MotionSpec,
+        window: Option<&Window>,
+    ) -> DockTransitionExecutionState {
+        self.overlay_transition_executor_mut()
+            .execute(plan, spec, window)
+            .state
+    }
+
+    pub(crate) fn sample_overlay_transition_for_render(
+        &mut self,
+        window: Option<&Window>,
+    ) -> Option<DockTransitionSample> {
+        self.overlay_transition_executor_mut().sample(window)
+    }
+
+    pub(crate) fn clear_overlay_transition_for_render(&mut self) -> bool {
+        let scene_cleared = self.clear_last_overlay_scene();
+        let execution_cleared = self.overlay_transition_executor_mut().clear().is_some();
+        scene_cleared || execution_cleared
+    }
+
     #[cfg(test)]
     pub(crate) fn clear_transition_execution_for_test(
         &mut self,
@@ -238,6 +262,14 @@ impl DockHost {
         now: std::time::Duration,
     ) -> Option<DockTransitionSample> {
         self.transition_executor_mut().sample_for_test(now)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sample_overlay_transition_for_test(
+        &mut self,
+        now: std::time::Duration,
+    ) -> Option<DockTransitionSample> {
+        self.overlay_transition_executor_mut().sample_for_test(now)
     }
 
     #[cfg(test)]

@@ -41,14 +41,38 @@ impl DockViewportRuntimeHandle {
         host_position: Point<Pixels>,
         drop_guide_style: crate::DockDropGuideStyle,
     ) -> Option<DockViewportHostSceneRegistration> {
-        self.runtime.borrow_mut().begin_viewport_host_scene_frame(
+        self.begin_viewport_host_scene_frame_with_facts(
             space,
             window_id,
             window_facts,
             host_bounds,
             host_position,
             drop_guide_style,
+            Vec::new(),
         )
+    }
+
+    pub(crate) fn begin_viewport_host_scene_frame_with_facts(
+        &self,
+        space: impl Into<DockSpaceId>,
+        window_id: WindowId,
+        window_facts: DockViewportWindowFacts,
+        host_bounds: Bounds<Pixels>,
+        host_position: Point<Pixels>,
+        drop_guide_style: crate::DockDropGuideStyle,
+        initial_facts: Vec<DockHostDropSceneFact>,
+    ) -> Option<DockViewportHostSceneRegistration> {
+        self.runtime
+            .borrow_mut()
+            .begin_viewport_host_scene_frame_with_facts(
+                space,
+                window_id,
+                window_facts,
+                host_bounds,
+                host_position,
+                drop_guide_style,
+                initial_facts,
+            )
     }
 
     pub(crate) fn prepare_rendered_viewport_host_scene_frame(
@@ -60,6 +84,7 @@ impl DockViewportRuntimeHandle {
         host_position: Point<Pixels>,
         drop_guide_style: crate::DockDropGuideStyle,
         passthrough_pointer_input: bool,
+        initial_facts: Vec<DockHostDropSceneFact>,
     ) -> DockViewportRenderedHostScenePreparation {
         let window_id = window.window_handle().window_id();
         let backend_focus_changed = self.reconcile_backend_window_focus(cx);
@@ -73,13 +98,14 @@ impl DockViewportRuntimeHandle {
         let registration_update = self
             .register_rendered_host_viewport_with_cleanup(space.clone(), window.window_handle());
         let registration_changed = refresh_runtime_update(registration_update, cx);
-        let registration = self.begin_viewport_host_scene_frame(
+        let registration = self.begin_viewport_host_scene_frame_with_facts(
             space.clone(),
             window_id,
             DockViewportWindowFacts::from_window(window, cx),
             host_bounds,
             host_position,
             drop_guide_style,
+            initial_facts,
         );
         let (host_scene_changed, frame) = registration
             .map(|registration| (registration.changed, Some(registration.frame)))

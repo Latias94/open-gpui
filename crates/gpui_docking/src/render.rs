@@ -20,7 +20,10 @@ use crate::{
     },
     presentation_scene::DockPresentationScene,
     render_split::DockRenderSplitInput,
-    transition_executor::{DockDividerSample, DockOverlaySample, DockPaneClipSample},
+    transition_executor::{
+        DockDividerSample, DockOverlaySample, DockPaneClipSample, DockTransitionSample,
+    },
+    transition_geometry::{DockMotionPreference, DockTransitionPlan},
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{
@@ -29,6 +32,7 @@ use open_gpui::{
     MouseUpEvent, ParentElement, Pixels, Render, Rgba, SharedString, Styled, Window, black, canvas,
     div, point, px, quad, rgb, rgba,
 };
+use open_gpui_ui_core::MotionSpec;
 use std::{cell::RefCell, rc::Rc};
 
 pub(crate) type DockViewportHostSceneFrameSlot = Rc<RefCell<Option<DockViewportHostSceneFrame>>>;
@@ -216,7 +220,13 @@ impl Render for DockHost {
         }
 
         if let Some(sample) = transition_sample.as_ref() {
-            host = host.child(self.render_transition_sample_layer(&session, sample));
+            host = host.child(self.render_transition_sample_layer(
+                &session,
+                &viewport_host_scene_frame,
+                sample,
+                window,
+                cx,
+            ));
         }
 
         if let Some(preview) = self.render_host_drop_preview(&session, window, cx) {
@@ -468,11 +478,6 @@ impl DockHost {
                     );
                 },
             ));
-        root_container = root_container.child(self.render_viewport_drop_scene_fact_probe(
-            viewport_host_scene_frame,
-            move |bounds| drop_scene_fact::root(root, bounds),
-            cx,
-        ));
         root_container = root_container.child(root_child);
         root_container.into_any_element()
     }
@@ -629,7 +634,10 @@ impl DockHost {
     fn render_transition_sample_layer(
         &mut self,
         session: &DockHostRenderSession,
+        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         sample: &crate::transition_executor::DockTransitionSample,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
             DockDebugRegion::TransitionLayer,
@@ -645,7 +653,16 @@ impl DockHost {
             .overflow_hidden();
 
         for clip in &sample.pane_clips {
-            layer = layer.child(self.render_transition_pane_clip(session, clip));
+            layer = layer.child(self.render_transition_pane_occlusion(session, clip));
+        }
+        for clip in &sample.pane_clips {
+            layer = layer.child(self.render_transition_pane_clip(
+                session,
+                viewport_host_scene_frame,
+                clip,
+                window,
+                cx,
+            ));
         }
         for divider in &sample.dividers {
             layer = layer.child(self.render_transition_divider(session, divider));
@@ -657,10 +674,43 @@ impl DockHost {
         layer.into_any_element()
     }
 
-    fn render_transition_pane_clip(
+    fn render_transition_pane_occlusion(
         &mut self,
         session: &DockHostRenderSession,
         clip: &DockPaneClipSample,
+    ) -> AnyElement {
+        let selector = self.record_debug_selector(
+            DockDebugRegion::TransitionPaneOcclusion { node: clip.node },
+            format!(
+                "{}:transition:pane-occlusion:{}",
+                session.selector_prefix(),
+                clip.node.as_u64()
+            ),
+        );
+        let background = if session.empty_central_passthrough() {
+            rgba(0x00000000)
+        } else {
+            rgba(0xf7f8faff)
+        };
+        div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .absolute()
+            .left(clip.occlusion_bounds.origin.x)
+            .top(clip.occlusion_bounds.origin.y)
+            .w(clip.occlusion_bounds.size.width)
+            .h(clip.occlusion_bounds.size.height)
+            .bg(background)
+            .into_any_element()
+    }
+
+    fn render_transition_pane_clip(
+        &mut self,
+        session: &DockHostRenderSession,
+        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        clip: &DockPaneClipSample,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
             DockDebugRegion::TransitionPaneClip { node: clip.node },
@@ -670,6 +720,21 @@ impl DockHost {
                 clip.node.as_u64()
             ),
         );
+        let content_offset = point(
+            clip.content_bounds.origin.x - clip.visible_bounds.origin.x,
+            clip.content_bounds.origin.y - clip.visible_bounds.origin.y,
+        );
+        let content_selector = self.record_debug_selector(
+            DockDebugRegion::TransitionPaneContent { node: clip.node },
+            format!(
+                "{}:transition:pane-content:{}",
+                session.selector_prefix(),
+                clip.node.as_u64()
+            ),
+        );
+        let content = self.with_debug_selector_recording_suppressed(|host| {
+            host.render_node(clip.node, session, viewport_host_scene_frame, window, cx)
+        });
         div()
             .id(selector.clone())
             .debug_selector(move || selector)
@@ -678,7 +743,18 @@ impl DockHost {
             .top(clip.visible_bounds.origin.y)
             .w(clip.visible_bounds.size.width)
             .h(clip.visible_bounds.size.height)
-            .bg(rgba(0xffffff66))
+            .overflow_hidden()
+            .child(
+                div()
+                    .id(content_selector.clone())
+                    .debug_selector(move || content_selector)
+                    .absolute()
+                    .left(content_offset.x)
+                    .top(content_offset.y)
+                    .w(clip.content_bounds.size.width)
+                    .h(clip.content_bounds.size.height)
+                    .child(content),
+            )
             .into_any_element()
     }
 
@@ -740,7 +816,7 @@ impl DockHost {
     fn render_empty_space(
         &mut self,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        _viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -748,7 +824,6 @@ impl DockHost {
             DockDebugRegion::EmptySpace,
             format!("{}:empty", session.selector_prefix()),
         );
-        let space = session.space().clone();
         let mut empty = div()
             .id(selector.clone())
             .debug_selector(move || selector)
@@ -776,11 +851,6 @@ impl DockHost {
                     );
                 },
             ));
-        empty = empty.child(self.render_viewport_drop_scene_fact_probe(
-            viewport_host_scene_frame,
-            move |bounds| drop_scene_fact::empty_space(space, bounds),
-            cx,
-        ));
         empty = empty.child(session.empty_message().to_string());
         empty.into_any_element()
     }
@@ -788,7 +858,7 @@ impl DockHost {
     fn render_passthrough_empty_central_space(
         &mut self,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        _viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -796,8 +866,7 @@ impl DockHost {
             DockDebugRegion::EmptySpace,
             format!("{}:empty-central", session.selector_prefix()),
         );
-        let space = session.space().clone();
-        let mut empty = div()
+        let empty = div()
             .id(selector.clone())
             .debug_selector(move || selector)
             .relative()
@@ -820,11 +889,6 @@ impl DockHost {
                     );
                 },
             ));
-        empty = empty.child(self.render_viewport_drop_scene_fact_probe(
-            viewport_host_scene_frame,
-            move |bounds| drop_scene_fact::empty_central_space(space, bounds),
-            cx,
-        ));
         empty.into_any_element()
     }
 
@@ -880,7 +944,12 @@ impl DockHost {
             return Some(self.render_target_drop_preview(session, routed_preview.preview, window));
         }
 
-        route_preview.map(|preview| self.render_route_drop_preview(session, preview))
+        if let Some(preview) = route_preview {
+            return Some(self.render_route_drop_preview(session, preview, window));
+        }
+
+        self.clear_overlay_transition_for_render();
+        None
     }
 
     fn render_target_drop_preview(
@@ -908,6 +977,12 @@ impl DockHost {
         if let Some(layout) = payload_tab_layout.as_ref() {
             overlay_scene.apply_payload_tab_layout(layout);
         }
+        let overlay_sample =
+            self.sync_overlay_transition_for_render(session, &overlay_scene, bounds, window);
+        let overlay_opacity = overlay_sample
+            .as_ref()
+            .map(|sample| preview_transition_opacity(sample.progress))
+            .unwrap_or(1.0);
         let selector = self.record_debug_selector(
             DockDebugRegion::DropPreview,
             format!("{}:drop-preview", session.selector_prefix()),
@@ -922,7 +997,8 @@ impl DockHost {
             .top(bounds.origin.y)
             .w(bounds.size.width)
             .h(bounds.size.height)
-            .overflow_hidden();
+            .overflow_hidden()
+            .opacity(overlay_opacity);
 
         if overlay_scene.has_payload_tab_preview() && payload_tab_layout.is_some() {
             let body_layer = overlay_scene
@@ -1060,6 +1136,7 @@ impl DockHost {
         &mut self,
         session: &DockHostRenderSession,
         preview: DockDropRoutePreview,
+        window: &Window,
     ) -> AnyElement {
         let overlay_scene = DockOverlayScene::from_route_preview(&preview);
         let bounds = overlay_scene
@@ -1067,6 +1144,12 @@ impl DockHost {
             .first()
             .map(|layer| layer.bounds)
             .unwrap_or(preview.bounds);
+        let overlay_sample =
+            self.sync_overlay_transition_for_render(session, &overlay_scene, bounds, window);
+        let overlay_opacity = overlay_sample
+            .as_ref()
+            .map(|sample| preview_transition_opacity(sample.progress))
+            .unwrap_or(1.0);
         let selector = self.record_debug_selector(
             DockDebugRegion::DropRoutePreview { kind: preview.kind },
             format!("{}:drop-route-preview", session.selector_prefix()),
@@ -1085,7 +1168,35 @@ impl DockHost {
             .border_1()
             .border_color(palette.border)
             .bg(palette.background)
+            .opacity(overlay_opacity)
             .into_any_element()
+    }
+
+    fn sync_overlay_transition_for_render(
+        &mut self,
+        session: &DockHostRenderSession,
+        overlay_scene: &DockOverlayScene,
+        fallback_bounds: Bounds<Pixels>,
+        window: &Window,
+    ) -> Option<DockTransitionSample> {
+        if self.last_overlay_scene() != Some(overlay_scene) {
+            let final_scene = self.last_presentation_scene().cloned().unwrap_or_else(|| {
+                DockPresentationScene::from_render_session(session, fallback_bounds)
+            });
+            let plan = DockTransitionPlan::from_overlay_scene(
+                &final_scene,
+                overlay_scene,
+                DockMotionPreference::Animated,
+            );
+            self.set_last_overlay_scene(overlay_scene.clone());
+            self.execute_overlay_transition_plan(
+                plan,
+                MotionSpec::affordance(DockMotionPreference::Animated),
+                Some(window),
+            );
+        }
+
+        self.sample_overlay_transition_for_render(Some(window))
     }
 
     fn render_scene_drop_guide(
@@ -1149,7 +1260,7 @@ impl DockHost {
         let frame_slot = frame_slot.clone();
         canvas(
             move |bounds, window, app| {
-                entity.update(app, |host, _| {
+                let initial_facts = entity.update(app, |host, _| {
                     let base = DockPresentationScene::from_render_session(&session, bounds);
                     let space = session.space().clone();
                     host.zoom_state_mut().clear_missing_target(&space, &base);
@@ -1162,6 +1273,10 @@ impl DockHost {
                         .map(|zoom| zoom.scene)
                         .unwrap_or(base);
                     host.set_last_presentation_scene(scene);
+                    let scene = host
+                        .last_presentation_scene()
+                        .expect("scene should be stored");
+                    drop_scene_fact::presentation_scene_drop_facts(scene, &session)
                 });
                 let mouse_position = window.mouse_position();
                 let host_position = point(
@@ -1176,6 +1291,7 @@ impl DockHost {
                     host_position,
                     drop_guide_style,
                     passthrough_pointer_input,
+                    initial_facts,
                 );
                 let interaction_frame_changed = entity.update(app, |host, _| {
                     host.publish_rendered_viewport_host_scene_frame_from_render(
@@ -1197,7 +1313,7 @@ impl DockHost {
         .into_any_element()
     }
 
-    /// Publishes target bounds during prepaint for runtime-routed drops.
+    /// Publishes render-measured target bounds for regions whose size depends on text shaping.
     pub(crate) fn render_viewport_drop_scene_fact_probe(
         &self,
         frame_slot: &DockViewportHostSceneFrameSlot,
@@ -1246,6 +1362,10 @@ fn payload_tab_from_overlay_layer(layer: &DockOverlayLayer) -> Option<DockDropPr
         index: layer.payload_index?,
         title: layer.payload_title.clone().unwrap_or_default(),
     })
+}
+
+fn preview_transition_opacity(progress: f32) -> f32 {
+    0.68 + (0.32 * progress.clamp(0.0, 1.0))
 }
 
 fn cursor_for_divider_target(target: &DockDividerHitTarget) -> CursorStyle {

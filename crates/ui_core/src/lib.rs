@@ -15,6 +15,7 @@ pub mod focus;
 pub mod geometry;
 pub mod grid_viewport;
 pub mod motion;
+pub mod motion_runtime;
 pub mod overlay;
 pub mod prelude;
 pub mod sizing;
@@ -38,6 +39,10 @@ pub use geometry::{
 };
 pub use grid_viewport::{GridViewport2D, resolve_grid_viewport_2d};
 pub use motion::{MotionDuration, MotionEasing, MotionPreference, MotionSpec};
+pub use motion_runtime::{
+    MotionRetargetItem, MotionRetargetSet, MotionSnapshot, MotionTimeline, MotionTimelineSample,
+    MotionTimelineState, retarget_motion_snapshots,
+};
 pub use overlay::{
     DismissReason, EscapeKeyPolicy, EscapeKeyResolution, FocusRestoreIntent,
     FocusRestoreResolution, InitialFocusIntent, OutsidePressOutcome, OutsidePressPolicy,
@@ -51,10 +56,12 @@ pub use overlay::{
 pub use sizing::{Density, Sizable, Size};
 pub use split::{
     SplitTreeChild, SplitTreeNode, SplitterHandleLayout, SplitterHandlePlacement,
-    SplitterHandleState, SplitterHitMap, SplitterHitTarget, SplitterJunctionHitRegion,
-    SplitterLayoutScene, SplitterMetrics, SplitterPanelDescriptor, SplitterPanelLayout,
-    SplitterPanelState, SplitterResizeOutcome, SplitterResizeResult, SplitterState,
-    normalize_split_fractions, resize_split_fractions_by_pixels, resolve_split_fractions,
+    SplitterHandleState, SplitterHandleTransition, SplitterHandleTransitionKind, SplitterHitMap,
+    SplitterHitTarget, SplitterJunctionHitRegion, SplitterLayoutScene, SplitterLayoutTransition,
+    SplitterMetrics, SplitterPanelDescriptor, SplitterPanelLayout, SplitterPanelState,
+    SplitterPanelTransition, SplitterPanelTransitionKind, SplitterResizeOutcome,
+    SplitterResizeResult, SplitterState, SplitterTransitionIntent, normalize_split_fractions,
+    resize_split_fractions_by_pixels, resolve_split_fractions,
     resolve_split_fractions_with_fill_child,
 };
 pub use table::{

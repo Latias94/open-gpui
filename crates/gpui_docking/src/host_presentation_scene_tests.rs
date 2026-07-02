@@ -1,5 +1,7 @@
 use crate::{
     DockCentralRegion, DockGraph, DockNode, SplitAxis,
+    drop_runtime::DockHostDropSceneFact,
+    drop_scene_fact::presentation_scene_drop_facts,
     host_test_support::{
         assert_close, floating_bounds, floating_overlay_graph, item, open_host, open_workspace,
         space, split_graph, tabs_graph_with_selected, workspace_with_panels,
@@ -149,6 +151,70 @@ fn presentation_scene_resolves_floating_container_separately(cx: &mut TestAppCon
     assert!(scene.overlay_anchors.iter().any(|anchor| anchor.kind
         == DockPresentationOverlayAnchorKind::FloatingTitleBar
         && anchor.node == Some(floating)));
+}
+
+#[open_gpui::test]
+fn presentation_scene_exports_viewport_drop_facts(cx: &mut TestAppContext) {
+    let (graph, root, floating) = floating_overlay_graph();
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(500.0), px(300.0)),
+    );
+
+    let bounds = host_bounds(500.0, 300.0);
+    let (scene, facts) = host.update(cx, |host, cx| {
+        let session = host.render_session(cx);
+        let scene = host.presentation_scene_for_test(bounds, cx);
+        let facts = presentation_scene_drop_facts(&scene, &session);
+        (scene, facts)
+    });
+
+    assert!(
+        facts
+            .iter()
+            .any(|fact| matches!(fact, DockHostDropSceneFact::Root(target)
+                if target.root == root && target.bounds == bounds)),
+        "root fact should come from the scene bounds"
+    );
+    for pane in scene
+        .panes
+        .iter()
+        .filter_map(|pane| pane.node.map(|node| (node, pane)))
+    {
+        assert!(
+            facts
+                .iter()
+                .any(|fact| matches!(fact, DockHostDropSceneFact::Leaf(target)
+                    if target.target_tabs == pane.0 && target.bounds == pane.1.bounds)),
+            "leaf fact for pane {:?} should use scene pane bounds",
+            pane.0
+        );
+    }
+    for tab_bar in &scene.tab_bars {
+        assert!(
+            facts
+                .iter()
+                .any(|fact| matches!(fact, DockHostDropSceneFact::TabBar(target)
+                    if target.target_tabs == tab_bar.tabs && target.bounds == tab_bar.bounds)),
+            "tab bar fact for {:?} should use scene tab bar bounds",
+            tab_bar.tabs
+        );
+    }
+    assert!(
+        facts.iter().any(
+            |fact| matches!(fact, DockHostDropSceneFact::FloatingTitleBar(target)
+                if target.floating == floating
+                    && scene
+                        .floating_containers
+                        .iter()
+                        .any(|container| container.node == floating
+                            && target.title_bounds == container.title_bar_bounds
+                            && target.preview_bounds == container.bounds))
+        ),
+        "floating title fact should use scene floating bounds"
+    );
 }
 
 #[open_gpui::test]

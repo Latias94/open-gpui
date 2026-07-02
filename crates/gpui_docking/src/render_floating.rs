@@ -102,7 +102,7 @@ impl DockHost {
         container: DockFloatingContainer,
         title: String,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
+        _viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -121,7 +121,7 @@ impl DockHost {
         let entity = cx.entity();
         let chrome_target = session.floating_chrome_target(floating);
 
-        let mut handle = div()
+        let handle = div()
             .id(selector.clone())
             .debug_selector(move || selector)
             .relative()
@@ -138,13 +138,6 @@ impl DockHost {
             .cursor_pointer();
 
         if let Some(DockFloatingChromeTarget::SingleTabs(target_tabs)) = chrome_target {
-            handle = handle.child(self.render_viewport_drop_scene_fact_probe(
-                viewport_host_scene_frame,
-                move |title_bounds| {
-                    drop_scene_fact::floating_title_bar(floating, target_tabs, title_bounds, bounds)
-                },
-                cx,
-            ));
             let mut payload = DockDragPayload::new_floating(space.clone(), floating, title.clone());
             if let Some(preview_titles) = session.multi_preview_tab_titles_for_node(floating) {
                 payload = payload.with_preview_tabs(preview_titles);
