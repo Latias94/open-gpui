@@ -231,7 +231,7 @@ features = [
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)", "cfg(nightly_coverage)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)", "cfg(nightly_coverage)", "cfg(feature, values(\"cargo-clippy\"))"] }
 
 [workspace.lints.clippy]
 dbg_macro = "deny"
