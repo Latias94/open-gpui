@@ -3,8 +3,8 @@ use jellyflow::runtime::runtime::measurement::MeasuredSurfaceAnchor;
 use jellyflow_open_gpui::{
     OpenGpuiSizeEvidence,
     testing::{
-        OpenGpuiHostRendererSource, OpenGpuiHostVisualInteractionReport,
-        OpenGpuiHostVisualSurfaceRow, product_fixture_catalog,
+        OpenGpuiComponentFitEvidence, OpenGpuiHostRendererSource,
+        OpenGpuiHostVisualInteractionReport, OpenGpuiHostVisualSurfaceRow, product_fixture_catalog,
     },
 };
 use open_gpui_canvas::{
@@ -135,6 +135,13 @@ fn visual_surface_report_row(
     .with_stale_measured_regions(stale_regions)
     .with_repeatable_anchor_coverage(repeatable_rows, repeatable_rows_with_anchors)
     .with_repeatable_overflow(hidden_repeatable_overflow, repeatable_overflow_indicators)
+    .with_component_fit_evidence(component_fit_evidence(
+        surface,
+        canvas_node,
+        projected_controls,
+        hidden_repeatable_overflow,
+        repeatable_overflow_indicators,
+    ))
 }
 
 fn projected_control_count(surface: &NodeSurfaceSummary) -> usize {
@@ -162,6 +169,79 @@ fn repeatable_overflow_indicator_count(surface: &NodeSurfaceSummary, hidden_coun
                 .overflow_indicator
                 .is_some(),
     )
+}
+
+fn component_fit_evidence(
+    surface: &NodeSurfaceSummary,
+    canvas_node: &CanvasNode,
+    projected_controls: usize,
+    hidden_repeatable_overflow: usize,
+    repeatable_overflow_indicators: usize,
+) -> OpenGpuiComponentFitEvidence {
+    let available_width = (canvas_node.size.width.as_f32() - 20.0).max(1.0);
+    let text_values = component_fit_text_values(surface);
+    let mut compact_regions = 0;
+    let mut shell_regions = 0;
+    let mut overflow_indicators = repeatable_overflow_indicators;
+
+    for text in &text_values {
+        let plan = node_component_kit::adaptive_text_plan(text, available_width, 34.0, 2, 1);
+        match plan.mode {
+            node_component_kit::AdaptiveNodeLayoutMode::Full => {}
+            node_component_kit::AdaptiveNodeLayoutMode::Compact => compact_regions += 1,
+            node_component_kit::AdaptiveNodeLayoutMode::Shell => shell_regions += 1,
+        }
+        overflow_indicators += usize::from(plan.overflow_indicator_required);
+    }
+
+    let control_regions_checked = projected_controls.max(1);
+    let control_plan = node_component_kit::adaptive_control_row_plan(
+        available_width,
+        34.0,
+        surface.title.as_str(),
+        surface.summary.as_str(),
+    );
+    match control_plan.mode {
+        node_component_kit::AdaptiveNodeLayoutMode::Full => {}
+        node_component_kit::AdaptiveNodeLayoutMode::Compact => {
+            compact_regions += projected_controls
+        }
+        node_component_kit::AdaptiveNodeLayoutMode::Shell => shell_regions += projected_controls,
+    }
+
+    OpenGpuiComponentFitEvidence {
+        text_regions_checked: text_values.len().max(1),
+        control_regions_checked,
+        repeatable_regions_checked: surface.repeatable_items.len(),
+        compact_regions,
+        shell_regions,
+        overflow_indicator_count: overflow_indicators,
+        clipped_text_regions: 0,
+        clipped_control_regions: usize::from(control_plan.clipped),
+        hidden_repeatable_regions_without_indicator: usize::from(
+            hidden_repeatable_overflow > 0 && repeatable_overflow_indicators == 0,
+        ),
+    }
+}
+
+fn component_fit_text_values(surface: &NodeSurfaceSummary) -> Vec<String> {
+    let mut values = Vec::new();
+    values.push(surface.title.clone());
+    values.push(surface.summary.clone());
+    values.extend(surface.slots.iter().flat_map(|slot| {
+        [slot.label.clone(), slot.value.clone()]
+            .into_iter()
+            .filter(|value| !value.trim().is_empty())
+    }));
+    values.extend(
+        surface
+            .repeatable_items
+            .iter()
+            .map(|item| item.label.clone())
+            .filter(|value| !value.trim().is_empty()),
+    );
+    values.retain(|value| !value.trim().is_empty());
+    values
 }
 
 fn host_renderer_source(

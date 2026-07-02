@@ -123,6 +123,25 @@ pub struct AdaptiveRepeatableLayoutPlan {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct AdaptiveTextPlan {
+    pub mode: AdaptiveNodeLayoutMode,
+    pub estimated_lines: usize,
+    pub visible_lines: usize,
+    pub hidden_lines: usize,
+    pub overflow_indicator_required: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AdaptiveControlRowPlan {
+    pub mode: AdaptiveNodeLayoutMode,
+    pub label_width: f32,
+    pub control_width: f32,
+    pub label_overflow: bool,
+    pub value_overflow: bool,
+    pub clipped: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct AdaptiveNodeLayoutStack {
     cursor_y: f32,
     bottom_y: f32,
@@ -267,6 +286,100 @@ pub fn adaptive_repeatable_list_plan(
             row_gap,
             overflow_indicator_height,
         )
+}
+
+pub fn adaptive_text_plan(
+    text: &str,
+    available_width: f32,
+    available_height: f32,
+    full_line_budget: usize,
+    compact_line_budget: usize,
+) -> AdaptiveTextPlan {
+    let estimated_lines = estimated_text_lines(text, available_width);
+    let height_line_capacity = (available_height / 16.0).floor().max(0.0) as usize;
+    let visible_capacity = height_line_capacity.min(full_line_budget.max(1));
+    let mode = if visible_capacity == 0 {
+        AdaptiveNodeLayoutMode::Shell
+    } else if estimated_lines <= visible_capacity && visible_capacity >= full_line_budget {
+        AdaptiveNodeLayoutMode::Full
+    } else if visible_capacity >= compact_line_budget.max(1) {
+        AdaptiveNodeLayoutMode::Compact
+    } else {
+        AdaptiveNodeLayoutMode::Shell
+    };
+    let visible_lines = match mode {
+        AdaptiveNodeLayoutMode::Full => estimated_lines.min(full_line_budget.max(1)),
+        AdaptiveNodeLayoutMode::Compact => {
+            estimated_lines.min(visible_capacity.max(1).min(compact_line_budget.max(1)))
+        }
+        AdaptiveNodeLayoutMode::Shell => {
+            usize::from(!text.trim().is_empty() && visible_capacity > 0)
+        }
+    };
+    let hidden_lines = estimated_lines.saturating_sub(visible_lines);
+
+    AdaptiveTextPlan {
+        mode,
+        estimated_lines,
+        visible_lines,
+        hidden_lines,
+        overflow_indicator_required: hidden_lines > 0,
+    }
+}
+
+pub fn adaptive_control_row_plan(
+    available_width: f32,
+    available_height: f32,
+    label: &str,
+    value: &str,
+) -> AdaptiveControlRowPlan {
+    let mode = if available_height >= 38.0 && available_width >= 260.0 {
+        AdaptiveNodeLayoutMode::Full
+    } else if available_height >= 28.0 && available_width >= 176.0 {
+        AdaptiveNodeLayoutMode::Compact
+    } else {
+        AdaptiveNodeLayoutMode::Shell
+    };
+    let (label_width, control_width) = match mode {
+        AdaptiveNodeLayoutMode::Full => {
+            let control_width = (available_width * 0.58).clamp(156.0, 210.0);
+            (
+                (available_width - control_width - 12.0).max(72.0),
+                control_width,
+            )
+        }
+        AdaptiveNodeLayoutMode::Compact => {
+            let control_width = (available_width * 0.62).clamp(112.0, 168.0);
+            (
+                (available_width - control_width - 8.0).max(48.0),
+                control_width,
+            )
+        }
+        AdaptiveNodeLayoutMode::Shell => (available_width.max(0.0), 0.0),
+    };
+    let label_overflow = text_needs_more_width(label, label_width, 7.0);
+    let value_overflow =
+        mode != AdaptiveNodeLayoutMode::Shell && text_needs_more_width(value, control_width, 7.0);
+
+    AdaptiveControlRowPlan {
+        mode,
+        label_width,
+        control_width,
+        label_overflow,
+        value_overflow,
+        clipped: matches!(mode, AdaptiveNodeLayoutMode::Shell) && available_height < 18.0,
+    }
+}
+
+fn estimated_text_lines(text: &str, available_width: f32) -> usize {
+    let chars_per_line = (available_width / 7.0).floor().max(8.0) as usize;
+    let char_count = text.chars().filter(|ch| !ch.is_control()).count().max(1);
+    char_count.div_ceil(chars_per_line).max(1)
+}
+
+fn text_needs_more_width(text: &str, available_width: f32, average_char_width: f32) -> bool {
+    let available_chars = (available_width / average_char_width).floor().max(1.0) as usize;
+    text.chars().filter(|ch| !ch.is_control()).count() > available_chars
 }
 
 fn repeatable_visible_items_for_height(
@@ -794,5 +907,46 @@ mod tests {
         assert_eq!(plan.visible_items, 0);
         assert_eq!(plan.hidden_items, 3);
         assert_eq!(plan.region.mode, AdaptiveNodeLayoutMode::Shell);
+    }
+
+    #[test]
+    fn adaptive_text_plan_clamps_long_text_with_overflow_evidence() {
+        let plan = adaptive_text_plan(
+            "A long prompt that needs more than one rendered line in a compact product node",
+            120.0,
+            32.0,
+            3,
+            1,
+        );
+
+        assert_eq!(plan.mode, AdaptiveNodeLayoutMode::Compact);
+        assert_eq!(plan.visible_lines, 1);
+        assert!(plan.hidden_lines > 0);
+        assert!(plan.overflow_indicator_required);
+    }
+
+    #[test]
+    fn adaptive_text_plan_shells_when_no_line_can_fit() {
+        let plan = adaptive_text_plan("source preview", 160.0, 8.0, 2, 1);
+
+        assert_eq!(plan.mode, AdaptiveNodeLayoutMode::Shell);
+        assert_eq!(plan.visible_lines, 0);
+        assert!(plan.overflow_indicator_required);
+    }
+
+    #[test]
+    fn adaptive_control_row_plan_allocates_compact_widths_without_clipping() {
+        let plan = adaptive_control_row_plan(
+            210.0,
+            30.0,
+            "Very long field label",
+            "very-long-selected-model-name",
+        );
+
+        assert_eq!(plan.mode, AdaptiveNodeLayoutMode::Compact);
+        assert!(plan.label_width >= 48.0);
+        assert!(plan.control_width >= 112.0);
+        assert!(!plan.clipped);
+        assert!(plan.label_overflow || plan.value_overflow);
     }
 }

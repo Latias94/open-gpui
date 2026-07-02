@@ -40,6 +40,7 @@ const ANCHOR_TOP: f32 = BODY_TOP + SECTION_GAP;
 struct ProductLayoutRegion {
     top: Pixels,
     height: Pixels,
+    mode: node_component_kit::AdaptiveNodeLayoutMode,
 }
 
 impl ProductLayoutRegion {
@@ -47,7 +48,20 @@ impl ProductLayoutRegion {
         Self {
             top: px(region.top),
             height: px(region.height),
+            mode: region.mode,
         }
+    }
+}
+
+fn adaptive_mode_min(
+    left: node_component_kit::AdaptiveNodeLayoutMode,
+    right: node_component_kit::AdaptiveNodeLayoutMode,
+) -> node_component_kit::AdaptiveNodeLayoutMode {
+    use node_component_kit::AdaptiveNodeLayoutMode::{Compact, Full, Shell};
+    match (left, right) {
+        (Shell, _) | (_, Shell) => Shell,
+        (Compact, _) | (_, Compact) => Compact,
+        (Full, Full) => Full,
     }
 }
 
@@ -232,6 +246,14 @@ fn render_decision_card(
     let temperature_control = context.control("control.temperature");
     let stream_control = context.control("control.stream");
     let layout = decision_card_layout(context.node_size);
+    let summary = context.summary.clone().unwrap_or_default();
+    let summary_lines = text_line_clamp_for_region(
+        &summary,
+        context.node_size.width - CARD_PAD * 2.0,
+        layout.preview,
+        2,
+        1,
+    );
     let primary_action = context
         .toolbar_menu
         .actions
@@ -271,10 +293,10 @@ fn render_decision_card(
                 div()
                     .text_xs()
                     .line_height(px(14.0))
-                    .line_clamp(2)
+                    .line_clamp(summary_lines)
                     .overflow_hidden()
                     .text_color(rgb(0x475569))
-                    .child(context.summary.clone().unwrap_or_default()),
+                    .child(summary),
             ),
     ))
     .child(measured_anchor(
@@ -296,6 +318,7 @@ fn render_decision_card(
         0,
         layout.prompt_control.top,
         layout.prompt_control.height,
+        layout.prompt_control.mode,
         collector.clone(),
         &actions,
     ))
@@ -306,6 +329,7 @@ fn render_decision_card(
         1,
         layout.model_control.top,
         layout.model_control.height,
+        layout.model_control.mode,
         collector.clone(),
         &actions,
     ))
@@ -525,6 +549,7 @@ fn render_table_card(
         0,
         layout.primary_control.top,
         layout.primary_control.height,
+        layout.primary_control.mode,
         collector.clone(),
         &actions,
     ))
@@ -629,6 +654,7 @@ fn render_topic_card(
         0,
         layout.title_control.top,
         layout.title_control.height,
+        layout.title_control.mode,
         collector.clone(),
         &actions,
     ))
@@ -639,6 +665,7 @@ fn render_topic_card(
         1,
         layout.summary_control.top,
         layout.summary_control.height,
+        layout.summary_control.mode,
         collector.clone(),
         &actions,
     ))
@@ -655,6 +682,15 @@ fn render_source_card(
     let title_control = context.control("control.source.title");
     let asset_control = context.control("control.source.asset");
     let layout = source_card_layout(context.node_size);
+    let preview = json_path_label(&context.node_data, &["preview"])
+        .unwrap_or_else(|| "No preview".to_owned());
+    let preview_lines = text_line_clamp_for_region(
+        &preview,
+        context.node_size.width - CARD_PAD * 2.0,
+        layout.preview,
+        2,
+        1,
+    );
 
     product_card(
         context,
@@ -688,13 +724,10 @@ fn render_source_card(
                 div()
                     .text_xs()
                     .line_height(px(14.0))
-                    .line_clamp(2)
+                    .line_clamp(preview_lines)
                     .overflow_hidden()
                     .text_color(rgb(0x475569))
-                    .child(
-                        json_path_label(&context.node_data, &["preview"])
-                            .unwrap_or_else(|| "No preview".to_owned()),
-                    ),
+                    .child(preview),
             ),
     ))
     .child(render_control_row_with_height_at(
@@ -704,6 +737,7 @@ fn render_source_card(
         0,
         layout.title_control.top,
         layout.title_control.height,
+        layout.title_control.mode,
         collector.clone(),
         &actions,
     ))
@@ -714,6 +748,7 @@ fn render_source_card(
         1,
         layout.asset_control.top,
         layout.asset_control.height,
+        layout.asset_control.mode,
         collector.clone(),
         &actions,
     ))
@@ -859,12 +894,30 @@ fn render_control_row_with_height_at(
     index: usize,
     top: Pixels,
     height: Pixels,
+    region_mode: node_component_kit::AdaptiveNodeLayoutMode,
     collector: OpenGpuiBoundsCollector,
     actions: &NodeComponentKitActions,
 ) -> AnyElement {
     let Some(control) = control else {
         return div().into_any_element();
     };
+    let available_width = (context.node_size.width - CARD_PAD * 2.0).max(1.0);
+    let value = control
+        .value
+        .as_ref()
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let row_plan = node_component_kit::adaptive_control_row_plan(
+        available_width,
+        height.as_f32(),
+        &control.label,
+        &value,
+    );
+    let row_mode = adaptive_mode_min(region_mode, row_plan.mode);
+    let show_shell = row_mode == node_component_kit::AdaptiveNodeLayoutMode::Shell;
+    let label_width = row_plan.label_width.max(0.0);
+    let control_width = row_plan.control_width.max(0.0);
+
     node_component_kit::render_measured_region(
         context.control_measurement_id(slot_key, control.key.clone()),
         collector,
@@ -886,16 +939,32 @@ fn render_control_row_with_height_at(
             .overflow_hidden()
             .child(
                 div()
+                    .w(px(label_width))
                     .text_xs()
                     .truncate()
                     .min_w(px(0.0))
                     .text_color(rgb(0x334155))
                     .child(control.label.clone()),
             )
-            .child(
+            .child(if show_shell {
+                Badge::new(
+                    format!(
+                        "jellyflow-control-shell:{}:{slot_key}:{index}",
+                        context.node_id.0
+                    ),
+                    if row_plan.label_overflow || row_plan.value_overflow {
+                        "more"
+                    } else {
+                        "set"
+                    },
+                )
+                .variant(BadgeVariant::Outline)
+                .with_size(Size::XSmall)
+                .into_any_element()
+            } else {
                 div()
-                    .w(px(190.0))
-                    .min_w(px(156.0))
+                    .w(px(control_width))
+                    .min_w(px(control_width.min(112.0)))
                     .flex_shrink_0()
                     .overflow_hidden()
                     .child(node_component_kit::render_control_plan(
@@ -904,8 +973,9 @@ fn render_control_row_with_height_at(
                         control,
                         index,
                         actions,
-                    )),
-            ),
+                    ))
+                    .into_any_element()
+            }),
     )
 }
 
@@ -985,11 +1055,12 @@ fn render_shader_inputs(
     collector: OpenGpuiBoundsCollector,
     actions: &NodeComponentKitActions,
 ) -> AnyElement {
-    let visible_limit = if height.as_f32() >= REPEATABLE_CHIP_HEIGHT {
-        context.surface_preset.repeatable_visible_items_or(3)
-    } else {
-        0
-    };
+    let visible_limit = shader_visible_repeatable_limit_for_bounds(
+        context.node_size.width,
+        height.as_f32(),
+        items.len(),
+        context.surface_preset.repeatable_visible_items_or(3),
+    );
     let hidden_count = items.len().saturating_sub(visible_limit);
 
     div()
@@ -1014,6 +1085,27 @@ fn render_shader_inputs(
             hidden_count,
         ))
         .into_any_element()
+}
+
+fn shader_visible_repeatable_limit_for_bounds(
+    node_width: f32,
+    available_height: f32,
+    item_count: usize,
+    budget_limit: usize,
+) -> usize {
+    let width_budget = (node_width - CARD_PAD * 2.0).max(1.0);
+    let max_by_width = (width_budget / 104.0).floor().max(1.0) as usize;
+    node_component_kit::adaptive_repeatable_list_plan(
+        "shader.inputs",
+        available_height,
+        item_count,
+        budget_limit.min(max_by_width),
+        REPEATABLE_CHIP_HEIGHT,
+        4.0,
+        CONTROL_CHIP_HEIGHT,
+    )
+    .visible_items
+    .min(max_by_width)
 }
 
 fn render_table_columns(
@@ -1221,8 +1313,22 @@ fn render_repeatable_item_row(
                         .variant(BadgeVariant::Outline)
                         .with_size(Size::XSmall),
                     )
-                    .child(text_line(label, rgb(0x334155), false)),
+                    .child(text_line(label.clone(), rgb(0x334155), false)),
             )
+            .child(if repeatable_label_needs_overflow_badge(&label) {
+                Badge::new(
+                    format!(
+                        "jellyflow-repeatable-text-overflow:{}:{}",
+                        context.node_id.0, item_id
+                    ),
+                    "more",
+                )
+                .variant(BadgeVariant::Outline)
+                .with_size(Size::XSmall)
+                .into_any_element()
+            } else {
+                div().w(px(0.0)).h(px(0.0)).into_any_element()
+            })
             .child(
                 div()
                     .flex()
@@ -1271,6 +1377,10 @@ fn render_repeatable_item_row(
             )
             .child(hidden_anchor_measurement(context, anchor, collector)),
     )
+}
+
+fn repeatable_label_needs_overflow_badge(label: &str) -> bool {
+    label.chars().count() > 28
 }
 
 fn repeatable_port_policy_badge(
@@ -1381,6 +1491,24 @@ fn text_line(label: String, color: open_gpui::Rgba, strong: bool) -> AnyElement 
         .text_color(color)
         .child(label)
         .into_any_element()
+}
+
+fn text_line_clamp_for_region(
+    text: &str,
+    available_width: f32,
+    region: ProductLayoutRegion,
+    full_line_budget: usize,
+    compact_line_budget: usize,
+) -> usize {
+    node_component_kit::adaptive_text_plan(
+        text,
+        available_width,
+        region.height.as_f32(),
+        full_line_budget,
+        compact_line_budget,
+    )
+    .visible_lines
+    .max(1)
 }
 
 fn repeatable_item_label(item_data: &Value, fallback: &str) -> String {
@@ -1529,6 +1657,39 @@ mod tests {
                 4,
             ),
             4
+        );
+    }
+
+    #[test]
+    fn shader_repeatable_limit_accounts_for_width_and_height() {
+        assert_eq!(
+            shader_visible_repeatable_limit_for_bounds(220.0, 154.0, 4, 4),
+            1
+        );
+        assert_eq!(
+            shader_visible_repeatable_limit_for_bounds(420.0, 154.0, 4, 4),
+            3
+        );
+        assert_eq!(
+            shader_visible_repeatable_limit_for_bounds(420.0, 16.0, 4, 4),
+            0
+        );
+    }
+
+    #[test]
+    fn product_layout_regions_preserve_compact_and_shell_modes() {
+        let decision = decision_card_layout(CanvasSize {
+            width: 320.0,
+            height: 112.0,
+        });
+
+        assert_eq!(
+            decision.preview.mode,
+            node_component_kit::AdaptiveNodeLayoutMode::Compact
+        );
+        assert_eq!(
+            decision.model_control.mode,
+            node_component_kit::AdaptiveNodeLayoutMode::Shell
         );
     }
 
