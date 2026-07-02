@@ -389,6 +389,101 @@ fn overlay_scene_suppresses_tab_insertion_for_edge_and_adds_rejected_state() {
 }
 
 #[test]
+fn overlay_scene_preserves_passive_inner_guides_when_outer_root_edge_is_active() {
+    let root = DockNodeId::null();
+    let leaf_tabs = DockNodeId::null();
+    let preview = DockDropPreview::from_resolved_target(
+        &resolved_target(
+            DockResolvedDropTargetKind::RootEdge {
+                root,
+                leaf_tabs: Some(leaf_tabs),
+                zone: DropZone::Right,
+            },
+            Some(drop_box(DockDropBoxKind::OuterEdge(DropZone::Right))),
+        ),
+        DockDropGuideStyle::default(),
+    )
+    .expect("root edge target should produce preview");
+
+    let overlay = DockOverlayScene::from_preview(&preview.scene);
+    let guide_boxes = overlay.guide_drop_boxes().collect::<Vec<_>>();
+    let inner_guides = guide_boxes
+        .iter()
+        .filter(|drop_box| drop_box.layer == DockPreviewLayerKind::Inner)
+        .collect::<Vec<_>>();
+    let outer_guides = guide_boxes
+        .iter()
+        .filter(|drop_box| drop_box.layer == DockPreviewLayerKind::Outer)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        inner_guides.len(),
+        4,
+        "outer root-edge hover should keep the leaf's passive side guides inspectable"
+    );
+    assert!(
+        inner_guides.iter().all(|drop_box| {
+            matches!(drop_box.kind, DockDropBoxKind::InnerEdge(_))
+                && drop_box.debug_node == Some(leaf_tabs)
+                && !drop_box.active
+        }),
+        "inner guides should remain passive and associated with the nested leaf"
+    );
+    assert_eq!(outer_guides.len(), 4);
+    assert_eq!(
+        outer_guides
+            .iter()
+            .filter(|drop_box| drop_box.active)
+            .map(|drop_box| (drop_box.kind, drop_box.zone))
+            .collect::<Vec<_>>(),
+        vec![(DockDropBoxKind::OuterEdge(DropZone::Right), DropZone::Right,)],
+        "outer layer should own the active release affordance"
+    );
+    assert!(
+        overlay
+            .layers
+            .iter()
+            .any(|layer| layer.kind == DockOverlayLayerKind::GuideBox
+                && layer.preview_layer == Some(DockPreviewLayerKind::Inner)
+                && !layer.active
+                && layer.target_node == Some(leaf_tabs)),
+        "overlay layers should preserve passive inner guide metadata for the future affordance scene"
+    );
+}
+
+#[test]
+fn tab_bar_preview_descriptor_reports_explicit_insert_index() {
+    let tabs = DockNodeId::null();
+    let preview = DockDropPreview::from_resolved_target(
+        &resolved_target(
+            DockResolvedDropTargetKind::TabBar {
+                target_tabs: tabs,
+                insert_index: 1,
+            },
+            Some(drop_box(DockDropBoxKind::Center)),
+        ),
+        DockDropGuideStyle::default(),
+    )
+    .expect("tab bar target should produce preview");
+
+    let descriptor = preview.visual_descriptor();
+
+    assert_eq!(descriptor.active_layer, Some(DockPreviewLayerKind::Inner));
+    assert_eq!(descriptor.active_zone, Some(DropZone::Center));
+    assert_eq!(
+        descriptor.tab_insertion,
+        Some(DockPreviewTabInsertionVisualDescriptor {
+            target_tabs: Some(tabs),
+            index: DockPreviewTabInsertionIndex::At(1),
+            has_slot_bounds: false,
+            slot_bounds: None,
+            clipping_bounds: bounds(0.0, 0.0, 320.0, 200.0),
+        }),
+        "explicit tab-bar targets should preserve the insertion index for tab preview rendering"
+    );
+}
+
+#[test]
 fn route_preview_descriptor_distinguishes_known_and_rejected_markers() {
     let known = DockDropRoutePreview::from_route(
         &DockViewportDropRoute::KnownViewport {
@@ -421,5 +516,48 @@ fn route_preview_descriptor_distinguishes_known_and_rejected_markers() {
             kind: DockDropRoutePreviewKind::Rejected,
             rejected: true,
         }
+    );
+}
+
+#[test]
+fn route_overlay_scene_marks_known_and_rejected_marker_state() {
+    let known = DockDropRoutePreview::from_route(
+        &DockViewportDropRoute::KnownViewport {
+            target: DockViewportTargetHit::new(
+                space("target"),
+                handle(7),
+                point(px(300.0), px(20.0)),
+            ),
+            source: DockViewportRouteSelectionSource::TrustedHoveredWindow,
+        },
+        point(px(40.0), px(50.0)),
+    )
+    .expect("known viewport route should produce a marker");
+    let rejected = DockDropRoutePreview::from_route(
+        &DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled),
+        point(px(12.0), px(34.0)),
+    )
+    .expect("rejected route should produce a marker");
+
+    let known_overlay = DockOverlayScene::from_route_preview(&known);
+    let rejected_overlay = DockOverlayScene::from_route_preview(&rejected);
+
+    assert_eq!(known_overlay.layers.len(), 1);
+    assert_eq!(
+        known_overlay.layers[0].kind,
+        DockOverlayLayerKind::RouteMarker
+    );
+    assert!(
+        known_overlay.layers[0].active,
+        "known viewport route markers should be active source-window affordances"
+    );
+    assert_eq!(rejected_overlay.layers.len(), 1);
+    assert_eq!(
+        rejected_overlay.layers[0].kind,
+        DockOverlayLayerKind::RouteMarker
+    );
+    assert!(
+        !rejected_overlay.layers[0].active,
+        "rejected route markers should remain visible but inactive for diagnostics and accessibility"
     );
 }
