@@ -436,6 +436,18 @@ selected, disabled, read-only, invalid, required, placeholder, message, focus-vi
 and modal-overlay states. A pressed state is intentionally absent until the resolver grows a real
 `ColorState` for it.
 
+Schema vocabulary audit target:
+
+- Top-level fields: `schema_version`, `id`, `label`, `mode`, `revision`, `fallback_mode`, `colors`.
+- Color entry fields: `token`, `state`, `rgb`.
+- Modes: `light`, `dark`, `high-contrast`.
+- Tokens: `semantic.surface`, `semantic.surface_muted`, `semantic.border`, `semantic.text`,
+  `semantic.text_muted`, `semantic.accent`, `semantic.accent_foreground`, `semantic.focus_ring`,
+  `semantic.destructive`, `semantic.destructive_foreground`, `semantic.overlay`,
+  `semantic.modal_overlay`.
+- States: `default`, `hover`, `selected`, `disabled`, `read-only`, `invalid`, `required`,
+  `placeholder`, `message`, `focus-visible`, `overlay`, `modal-overlay`.
+
 Theme module ownership is intentionally split: `theme/snapshot.rs` owns immutable snapshot data,
 `theme/registry.rs` owns explicit registration and fallback diagnostics, `theme/resolver.rs` owns
 intent-to-color resolution, `theme/schema.rs` owns the JSON schema and loader facade,

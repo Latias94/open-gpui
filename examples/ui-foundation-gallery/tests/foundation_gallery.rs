@@ -666,7 +666,7 @@ fn productization_checkpoint_keeps_extraction_deferred_and_boundary_refs_availab
         "Do not create a standalone `open-gpui-ui-headless` crate in the active roadmap."
     ));
     assert!(productization.contains("This ADR does not invalidate either document."));
-    assert!(adr.contains("Do **not** create `open-gpui-ui-headless` yet."));
+    assert!(adr.contains("Do **not** create `open-gpui-ui-headless` yet"));
     assert!(adr.contains("The strict UI-core boundary is clean"));
     assert!(adr.contains("ListboxState"));
     assert!(adr.contains("ComboboxState"));

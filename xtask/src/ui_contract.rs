@@ -9,6 +9,8 @@ use crate::theme_schema::theme_schema_failures;
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RegistryEntry {
     name: String,
+    owner: String,
+    gallery_status: String,
     docs_status: DocsStatus,
     docs_token: Option<String>,
     default_export: bool,
@@ -144,6 +146,8 @@ fn audit_registry_entries(
             ));
         }
 
+        audit_gallery_status(entry, &mut failures);
+
         if entry.default_export {
             if !root_exports.contains(&entry.name) {
                 failures.push(format!(
@@ -207,6 +211,7 @@ fn audit_docs_token(
         }
         DocsStatus::Verification => {
             if !docs.verification.contains(token)
+                && entry.source_home == "removed"
                 && !docs
                     .verification
                     .contains("primitive_deletion_target_inventory")
@@ -215,8 +220,50 @@ fn audit_docs_token(
                     "docs/verification.md: missing docs token `{token}` for registry row `{}`",
                     entry.name
                 ));
+            } else if !docs.verification.contains(token) && entry.source_home != "removed" {
+                failures.push(format!(
+                    "docs/verification.md: missing docs token `{token}` for registry row `{}`",
+                    entry.name
+                ));
             }
         }
+    }
+}
+
+fn audit_gallery_status(entry: &RegistryEntry, failures: &mut Vec<String>) {
+    let valid_status = match entry.owner.as_str() {
+        "OfficialComponent" => matches!(
+            entry.gallery_status.as_str(),
+            "OfficialComponent" | "OfficialOverlay"
+        ),
+        "OfficialComponentRecipe" => entry.gallery_status == "NotInGallery",
+        "RendererNeutralStateContract" => {
+            matches!(
+                entry.gallery_status.as_str(),
+                "StateContract" | "NotInGallery"
+            )
+        }
+        "GpuiAdapterHelper" => {
+            matches!(
+                entry.gallery_status.as_str(),
+                "AdapterOnly" | "NotInGallery"
+            )
+        }
+        "InternalImplementationDetail" => {
+            matches!(
+                entry.gallery_status.as_str(),
+                "InternalAnatomy" | "NotInGallery"
+            )
+        }
+        "DeprecatedRemovalTarget" | "DiagnosticSurface" => entry.gallery_status == "NotInGallery",
+        _ => false,
+    };
+
+    if !valid_status {
+        failures.push(format!(
+            "crates/ui_components/src/component_contract/rows.rs: registry row `{}` owner `{}` is incompatible with gallery_status `{}`; align the row with SurfaceGalleryStatus ownership rules",
+            entry.name, entry.owner, entry.gallery_status
+        ));
     }
 }
 
@@ -269,6 +316,10 @@ fn registry_entries_from_source(source: &str) -> (Vec<RegistryEntry>, Vec<String
 
 fn registry_entry_from_block(block: &str) -> Result<RegistryEntry, String> {
     let name = string_field(block, "name").ok_or("registry row missing `name`")?;
+    let owner = enum_variant_field(block, "owner")
+        .ok_or_else(|| format!("registry row `{name}` missing or has unknown `owner`"))?;
+    let gallery_status = enum_variant_field(block, "gallery_status")
+        .ok_or_else(|| format!("registry row `{name}` missing or has unknown `gallery_status`"))?;
     let docs_status = docs_status_field(block)
         .ok_or_else(|| format!("registry row `{name}` missing or has unknown `docs_status`"))?;
     let docs_token = optional_string_field(block, "docs_token");
@@ -279,6 +330,8 @@ fn registry_entry_from_block(block: &str) -> Result<RegistryEntry, String> {
 
     Ok(RegistryEntry {
         name,
+        owner,
+        gallery_status,
         docs_status,
         docs_token,
         default_export,
@@ -435,122 +488,184 @@ fn audit_a11y_claims(claims: &[A11yClaim]) -> Vec<String> {
         }
     }
 
-    for required in [
-        "Button",
-        "IconButton",
-        "Checkbox",
-        "Slider",
-        "NumberInput",
-        "Progress",
-        "Listbox option",
-        "Tree item",
-        "Table",
-        "VirtualizedList row",
-        "Splitter handle",
-    ] {
-        if !by_component.contains_key(required) {
+    for expected in EXPECTED_A11Y_CLAIMS {
+        if !by_component.contains_key(expected.component) {
             failures.push(format!(
-                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: COMPONENT_A11Y_CLAIMS is missing representative claim `{required}`"
+                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: COMPONENT_A11Y_CLAIMS is missing representative claim `{}`",
+                expected.component
             ));
         }
+        audit_claim_fact(&by_component, expected, &mut failures);
     }
-
-    audit_claim_fact(
-        &by_component,
-        "IconButton",
-        "Button",
-        Some("ExplicitLabel"),
-        None,
-        None,
-        &["Click"],
-        &mut failures,
-    );
-    audit_claim_fact(
-        &by_component,
-        "Slider",
-        "Slider",
-        Some("VisibleText"),
-        Some("Percent"),
-        Some("Horizontal"),
-        &["Increment", "Decrement", "SetValue"],
-        &mut failures,
-    );
-    audit_claim_fact(
-        &by_component,
-        "NumberInput",
-        "SpinButton",
-        Some("VisibleText"),
-        Some("Number"),
-        None,
-        &["Increment", "Decrement", "SetValue"],
-        &mut failures,
-    );
-    audit_claim_fact(
-        &by_component,
-        "Table",
-        "Table",
-        Some("VisibleText"),
-        Some("Count"),
-        None,
-        &[],
-        &mut failures,
-    );
-    audit_claim_fact(
-        &by_component,
-        "Splitter handle",
-        "Splitter",
-        Some("Generated"),
-        None,
-        Some("Vertical"),
-        &["Increment", "Decrement"],
-        &mut failures,
-    );
 
     failures
 }
 
+struct ExpectedA11yClaim {
+    component: &'static str,
+    selector_prefix: &'static str,
+    role: &'static str,
+    label_source: &'static str,
+    value_kind: Option<&'static str>,
+    orientation: Option<&'static str>,
+    actions: &'static [&'static str],
+}
+
+const EXPECTED_A11Y_CLAIMS: &[ExpectedA11yClaim] = &[
+    ExpectedA11yClaim {
+        component: "Button",
+        selector_prefix: "gallery:component-button-sample",
+        role: "Button",
+        label_source: "VisibleText",
+        value_kind: None,
+        orientation: None,
+        actions: &["Click"],
+    },
+    ExpectedA11yClaim {
+        component: "IconButton",
+        selector_prefix: "gallery:component-icon-button-sample",
+        role: "Button",
+        label_source: "ExplicitLabel",
+        value_kind: None,
+        orientation: None,
+        actions: &["Click"],
+    },
+    ExpectedA11yClaim {
+        component: "Checkbox",
+        selector_prefix: "gallery:component-checkbox-sample",
+        role: "CheckBox",
+        label_source: "VisibleText",
+        value_kind: None,
+        orientation: None,
+        actions: &["Click"],
+    },
+    ExpectedA11yClaim {
+        component: "Slider",
+        selector_prefix: "gallery:component-slider-sample",
+        role: "Slider",
+        label_source: "VisibleText",
+        value_kind: Some("Percent"),
+        orientation: Some("Horizontal"),
+        actions: &["Increment", "Decrement", "SetValue"],
+    },
+    ExpectedA11yClaim {
+        component: "NumberInput",
+        selector_prefix: "gallery:component-number-input-sample",
+        role: "SpinButton",
+        label_source: "VisibleText",
+        value_kind: Some("Number"),
+        orientation: None,
+        actions: &["Increment", "Decrement", "SetValue"],
+    },
+    ExpectedA11yClaim {
+        component: "Progress",
+        selector_prefix: "gallery:component-progress-sample",
+        role: "ProgressIndicator",
+        label_source: "VisibleText",
+        value_kind: Some("Percent"),
+        orientation: None,
+        actions: &[],
+    },
+    ExpectedA11yClaim {
+        component: "Listbox option",
+        selector_prefix: "gallery:component-listbox-sample",
+        role: "ListBoxOption",
+        label_source: "VisibleText",
+        value_kind: Some("Selection"),
+        orientation: None,
+        actions: &["Click"],
+    },
+    ExpectedA11yClaim {
+        component: "Tree item",
+        selector_prefix: "gallery:component-tree-sample",
+        role: "TreeItem",
+        label_source: "VisibleText",
+        value_kind: None,
+        orientation: None,
+        actions: &["Click", "Focus"],
+    },
+    ExpectedA11yClaim {
+        component: "Table",
+        selector_prefix: "gallery:component-table-sample",
+        role: "Table",
+        label_source: "VisibleText",
+        value_kind: Some("Count"),
+        orientation: None,
+        actions: &[],
+    },
+    ExpectedA11yClaim {
+        component: "VirtualizedList row",
+        selector_prefix: "gallery:component-virtualized-list-sample",
+        role: "ListBoxOption",
+        label_source: "VisibleText",
+        value_kind: Some("Count"),
+        orientation: None,
+        actions: &["Click", "Focus"],
+    },
+    ExpectedA11yClaim {
+        component: "Splitter handle",
+        selector_prefix: "gallery:component-splitter-sample",
+        role: "Splitter",
+        label_source: "Generated",
+        value_kind: None,
+        orientation: Some("Vertical"),
+        actions: &["Increment", "Decrement"],
+    },
+];
+
 fn audit_claim_fact(
     by_component: &BTreeMap<&str, &A11yClaim>,
-    component: &str,
-    expected_role: &str,
-    expected_label_source: Option<&str>,
-    expected_value_kind: Option<&str>,
-    expected_orientation: Option<&str>,
-    expected_actions: &[&str],
+    expected: &ExpectedA11yClaim,
     failures: &mut Vec<String>,
 ) {
+    let component = expected.component;
     let Some(claim) = by_component.get(component) else {
         return;
     };
 
-    if claim.role != expected_role {
+    if claim.selector_prefix != expected.selector_prefix {
         failures.push(format!(
-            "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` role `{}` should be `{expected_role}`",
-            claim.role
+            "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` selector_prefix `{}` should be `{}`",
+            claim.selector_prefix, expected.selector_prefix
         ));
     }
-    if expected_label_source.is_some_and(|expected| claim.label_source != expected) {
+    if claim.role != expected.role {
         failures.push(format!(
-            "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` label_source `{}` is not the documented representative source",
-            claim.label_source
+            "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` role `{}` should be `{}`",
+            claim.role, expected.role
         ));
     }
-    if claim.value_kind.as_deref() != expected_value_kind {
+    if claim.label_source != expected.label_source {
+        failures.push(format!(
+            "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` label_source `{}` should be `{}`",
+            claim.label_source, expected.label_source
+        ));
+    }
+    if claim.value_kind.as_deref() != expected.value_kind {
         failures.push(format!(
             "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` value_kind `{:?}` should be `{:?}`",
-            claim.value_kind, expected_value_kind
+            claim.value_kind, expected.value_kind
         ));
     }
-    if claim.orientation.as_deref() != expected_orientation {
+    if claim.orientation.as_deref() != expected.orientation {
         failures.push(format!(
             "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` orientation `{:?}` should be `{:?}`",
-            claim.orientation, expected_orientation
+            claim.orientation, expected.orientation
         ));
     }
-    for action in expected_actions {
+
+    let expected_actions = expected.actions.iter().copied().collect::<BTreeSet<_>>();
+    for action in expected.actions {
         if !claim.actions.contains(*action) {
             failures.push(format!(
                 "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` is missing action `{action}`"
+            ));
+        }
+    }
+    for action in &claim.actions {
+        if !expected_actions.contains(action.as_str()) {
+            failures.push(format!(
+                "examples/ui-foundation-gallery/src/pages/components/conformance.rs: a11y claim `{component}` has unexpected action `{action}`"
             ));
         }
     }
@@ -632,7 +747,9 @@ fn audit_conformance_gate_evidence(gates: &[ConformanceGate]) -> Vec<String> {
         ("a11y", "crates/ui_components/tests/a11y.rs"),
         ("theme", "crates/ui_components/src/theme/schema.rs"),
         ("theme", "crates/ui_components/tests/theme.rs"),
+        ("theme", "docs/schemas/open-gpui-theme-v1.schema.json"),
         ("theme", "cargo run -p xtask -- scan-theme-drift"),
+        ("theme", "cargo run -p xtask -- scan-theme-schema"),
     ] {
         if !all_evidence.contains(token) {
             failures.push(format!(
@@ -904,6 +1021,8 @@ mod tests {
 
     fn entry(
         name: &str,
+        owner: &str,
+        gallery_status: &str,
         docs_status: DocsStatus,
         docs_token: Option<&str>,
         default_export: bool,
@@ -911,6 +1030,8 @@ mod tests {
     ) -> RegistryEntry {
         RegistryEntry {
             name: name.to_string(),
+            owner: owner.to_string(),
+            gallery_status: gallery_status.to_string(),
             docs_status,
             docs_token: docs_token.map(str::to_string),
             default_export,
@@ -952,6 +1073,8 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
         assert!(failures.is_empty(), "{failures:?}");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "Button");
+        assert_eq!(entries[0].owner, "OfficialComponent");
+        assert_eq!(entries[0].gallery_status, "OfficialComponent");
         assert_eq!(entries[0].docs_status, DocsStatus::ComponentContract);
         assert_eq!(entries[0].docs_token.as_deref(), Some("Button contract"));
         assert!(entries[0].default_export);
@@ -962,6 +1085,8 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
     fn audit_reports_missing_default_export() {
         let entries = [entry(
             "Button",
+            "OfficialComponent",
+            "OfficialComponent",
             DocsStatus::ComponentCatalog,
             Some("Button"),
             true,
@@ -987,6 +1112,8 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
     fn audit_reports_missing_docs_token() {
         let entries = [entry(
             "Tooltip",
+            "OfficialComponent",
+            "OfficialOverlay",
             DocsStatus::ComponentContract,
             Some("Tooltip contract"),
             false,
@@ -1010,6 +1137,8 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
     fn audit_reports_missing_source_home() {
         let entries = [entry(
             "Dialog",
+            "OfficialComponent",
+            "OfficialOverlay",
             DocsStatus::ComponentCatalog,
             Some("Dialog"),
             false,
@@ -1033,6 +1162,8 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
     fn audit_reports_removed_primitive_reappearance() {
         let entries = [entry(
             "primitives::overlay",
+            "DeprecatedRemovalTarget",
+            "NotInGallery",
             DocsStatus::Verification,
             Some("primitives::overlay"),
             false,
@@ -1052,6 +1183,54 @@ pub const COMPONENT_CONTRACT_REGISTRY: &[ComponentContractEntry] = &[
             &failures,
             "removed primitive `primitives::overlay`"
         ));
+    }
+
+    #[test]
+    fn audit_reports_incompatible_registry_gallery_status() {
+        let entries = [entry(
+            "ButtonState",
+            "RendererNeutralStateContract",
+            "OfficialComponent",
+            DocsStatus::ComponentContract,
+            Some("ButtonState"),
+            false,
+            "button.rs",
+        )];
+
+        let failures = audit_registry_entries(
+            &entries,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &docs("ButtonState", ""),
+            |entry| entry.source_home == "button.rs",
+            |_| false,
+        );
+
+        assert!(has_failure(&failures, "gallery_status `OfficialComponent`"));
+    }
+
+    #[test]
+    fn verification_docs_inventory_fallback_is_removed_only() {
+        let entries = [entry(
+            "VerificationOnly",
+            "RendererNeutralStateContract",
+            "NotInGallery",
+            DocsStatus::Verification,
+            Some("missing-verification-token"),
+            false,
+            "verification.rs",
+        )];
+
+        let failures = audit_registry_entries(
+            &entries,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &docs("", "primitive_deletion_target_inventory"),
+            |entry| entry.source_home == "verification.rs",
+            |_| false,
+        );
+
+        assert!(has_failure(&failures, "missing-verification-token"));
     }
 
     #[test]
@@ -1100,6 +1279,23 @@ pub use crate::field::Field as FormField;
         let failures = audit_a11y_claims(&claims);
 
         assert!(has_failure(&failures, "SetValue"));
+    }
+
+    #[test]
+    fn audit_reports_unexpected_a11y_action() {
+        let claims = [A11yClaim {
+            component: "Progress".to_string(),
+            selector_prefix: "gallery:component-progress-sample".to_string(),
+            role: "ProgressIndicator".to_string(),
+            label_source: "VisibleText".to_string(),
+            value_kind: Some("Percent".to_string()),
+            orientation: None,
+            actions: BTreeSet::from(["Click".to_string()]),
+        }];
+
+        let failures = audit_a11y_claims(&claims);
+
+        assert!(has_failure(&failures, "unexpected action `Click`"));
     }
 
     #[test]

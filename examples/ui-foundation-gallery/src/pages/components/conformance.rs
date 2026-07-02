@@ -324,8 +324,10 @@ pub const COMPONENT_CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
             "crates/ui_components/src/theme/schema.rs",
             "crates/ui_components/src/theme/recipes.rs",
             "crates/ui_components/tests/theme.rs",
+            "docs/schemas/open-gpui-theme-v1.schema.json",
             "theme_json_schema_exposes_portable_theme_contract",
             "cargo run -p xtask -- scan-theme-drift",
+            "cargo run -p xtask -- scan-theme-schema",
         ],
     },
 ];
