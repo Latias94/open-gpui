@@ -653,6 +653,9 @@ impl DockHost {
             .overflow_hidden();
 
         for clip in &sample.pane_clips {
+            layer = layer.child(self.render_transition_pane_occlusion(session, clip));
+        }
+        for clip in &sample.pane_clips {
             layer = layer.child(self.render_transition_pane_clip(
                 session,
                 viewport_host_scene_frame,
@@ -669,6 +672,36 @@ impl DockHost {
         }
 
         layer.into_any_element()
+    }
+
+    fn render_transition_pane_occlusion(
+        &mut self,
+        session: &DockHostRenderSession,
+        clip: &DockPaneClipSample,
+    ) -> AnyElement {
+        let selector = self.record_debug_selector(
+            DockDebugRegion::TransitionPaneOcclusion { node: clip.node },
+            format!(
+                "{}:transition:pane-occlusion:{}",
+                session.selector_prefix(),
+                clip.node.as_u64()
+            ),
+        );
+        let background = if session.empty_central_passthrough() {
+            rgba(0x00000000)
+        } else {
+            rgba(0xf7f8faff)
+        };
+        div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .absolute()
+            .left(clip.content_bounds.origin.x)
+            .top(clip.content_bounds.origin.y)
+            .w(clip.content_bounds.size.width)
+            .h(clip.content_bounds.size.height)
+            .bg(background)
+            .into_any_element()
     }
 
     fn render_transition_pane_clip(

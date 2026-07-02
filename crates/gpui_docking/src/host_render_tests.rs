@@ -480,11 +480,22 @@ fn transition_pane_clip_mounts_real_pane_content(cx: &mut TestAppContext) {
         DockDebugRegion::TransitionPaneContent { node: right_tabs },
     )
     .expect("transition pane content selector should be emitted");
+    let occlusion = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TransitionPaneOcclusion { node: right_tabs },
+    )
+    .expect("transition pane occlusion selector should be emitted");
 
     assert_bounds_close(
         debug_bounds(&mut visual, &clip),
         final_right_bounds,
         "transition pane clip",
+    );
+    assert_bounds_close(
+        debug_bounds(&mut visual, &occlusion),
+        final_right_bounds,
+        "transition pane occlusion",
     );
     assert_bounds_close(
         debug_bounds(&mut visual, &content),
