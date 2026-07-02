@@ -6,6 +6,14 @@ status: active
 
 # Log
 
+- 2026-07-03: Closed the `refactor/docking-render-authority-convergence` review tail after
+  U1-U5. Code review found and fixed three runtime/maintainability follow-ups: tab-label render
+  probes no longer churn viewport host-scene generations for identical measured facts; divider
+  event hit maps now use the same zoom-resolved scene as viewport host-scene facts; and
+  `split_geometry` exposes iterator-backed panel/handle resolution instead of materializing
+  docking-side Vecs. The render/scene parity tests were moved into
+  `host_render_geometry_parity_tests.rs`, with shared assertion helpers promoted to
+  `host_test_support`.
 - 2026-07-03: Implemented U1-U5 of
   `docs/plans/2026-07-02-004-refactor-docking-render-authority-convergence-plan.md` on
   `refactor/docking-render-authority-convergence`. The branch now has scene/render parity tests,

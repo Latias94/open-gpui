@@ -196,6 +196,8 @@ mod host_panel_tests;
 #[cfg(test)]
 mod host_presentation_scene_tests;
 #[cfg(test)]
+mod host_render_geometry_parity_tests;
+#[cfg(test)]
 mod host_render_tests;
 #[cfg(test)]
 mod host_test_support;

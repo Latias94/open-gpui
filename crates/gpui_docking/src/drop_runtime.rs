@@ -97,20 +97,65 @@ impl DockHostDropScene {
         self.drop_guide_style
     }
 
-    pub(crate) fn push_fact(&mut self, fact: DockHostDropSceneFact) {
+    pub(crate) fn push_fact(&mut self, fact: DockHostDropSceneFact) -> bool {
         if self.fact_is_excluded(&fact) {
-            return;
+            return false;
         }
 
         match fact {
-            DockHostDropSceneFact::TabLabel(target) => self.tab_labels.push(target),
-            DockHostDropSceneFact::TabBar(target) => self.tab_bars.push(target),
-            DockHostDropSceneFact::Leaf(target) => self.leaves.push(target),
-            DockHostDropSceneFact::Root(target) => self.root = Some(target),
+            DockHostDropSceneFact::TabLabel(target) => {
+                if let Some(existing) = self.tab_labels.iter_mut().find(|label| {
+                    label.target_tabs == target.target_tabs
+                        && label.target_index == target.target_index
+                }) {
+                    if *existing == target {
+                        false
+                    } else {
+                        *existing = target;
+                        true
+                    }
+                } else {
+                    self.tab_labels.push(target);
+                    true
+                }
+            }
+            DockHostDropSceneFact::TabBar(target) => {
+                self.tab_bars.push(target);
+                true
+            }
+            DockHostDropSceneFact::Leaf(target) => {
+                self.leaves.push(target);
+                true
+            }
+            DockHostDropSceneFact::Root(target) => {
+                if self.root == Some(target) {
+                    false
+                } else {
+                    self.root = Some(target);
+                    true
+                }
+            }
             DockHostDropSceneFact::FloatingTitleBar(target) => {
                 self.floating_title_bars.push(target);
+                true
             }
-            DockHostDropSceneFact::EmptySpace(target) => self.empty_spaces.push(target),
+            DockHostDropSceneFact::EmptySpace(target) => {
+                self.empty_spaces.push(target);
+                true
+            }
+        }
+    }
+
+    pub(crate) fn preserve_measured_tab_labels_from(&mut self, previous: &Self) {
+        for label in previous.tab_labels.iter().copied() {
+            let should_preserve = self.tab_bars.iter().any(|tab_bar| {
+                tab_bar.target_tabs == label.target_tabs
+                    && label.target_index < tab_bar.insert_index
+                    && tab_bar.is_central == label.is_central
+            });
+            if should_preserve {
+                self.push_fact(DockHostDropSceneFact::TabLabel(label));
+            }
         }
     }
 

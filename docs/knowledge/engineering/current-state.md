@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI UI productization state
 status: active
-timestamp: 2026-07-03T01:42:37+08:00
+timestamp: 2026-07-03T02:36:53+08:00
 git_branch: refactor/docking-render-authority-convergence
 related_plan:
   - docs/plans/2026-07-01-001-refactor-ui-contract-test-modules-plan.md
@@ -131,6 +131,12 @@ verified_by:
   viewport facts are scene-seeded; split geometry uses `split_geometry`; tab/floating chrome uses
   `chrome_geometry`; and the only remaining render-measured probe is the tab-label helper whose
   bounds depend on GPUI text shaping and close-button layout.
+- Done in the render-authority review tail: duplicate tab-label facts now no-op instead of
+  advancing viewport host-scene generation, stable measured labels are preserved across equivalent
+  base-scene registrations, stale measured labels are dropped when tab slots disappear, divider hit
+  testing now uses the same zoom-resolved render scene as viewport host-scene facts, split layout
+  resolution no longer materializes docking-side panel/handle Vecs, and render-geometry parity
+  tests live in `host_render_geometry_parity_tests.rs`.
 - Current docs direction: component ecosystem changes start with
   `cargo run -p xtask -- scan-ui-contract`, followed by public-surface, a11y, theme, or gallery
   focused nextest gates for behavior proof. Docking preview follow-up should start from the native

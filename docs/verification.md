@@ -97,7 +97,7 @@ For docking render-authority convergence work, prove deterministic geometry thro
 
 ```sh
 cargo fmt --all -- --check
-cargo nextest run -p open-gpui-docking host_render_tests host_presentation_scene_tests --no-fail-fast
+cargo nextest run -p open-gpui-docking host_render_tests host_render_geometry_parity_tests host_presentation_scene_tests --no-fail-fast
 cargo nextest run -p open-gpui-docking host_viewport_preview_tests host_viewport_preview_visual_tests host_viewport_route_tests --no-fail-fast
 cargo nextest run -p open-gpui-docking host_divider_hit_map_tests host_accessibility_tests --no-fail-fast
 cargo nextest run -p open-gpui-docking host_interaction_tests --no-fail-fast

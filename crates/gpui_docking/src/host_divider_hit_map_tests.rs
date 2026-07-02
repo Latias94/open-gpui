@@ -137,6 +137,32 @@ fn divider_hit_map_targets_match_scene_after_fraction_update(cx: &mut TestAppCon
 }
 
 #[open_gpui::test]
+fn divider_event_scene_uses_zoom_resolved_splitters(cx: &mut TestAppContext) {
+    let (graph, _root, _left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.25, 0.75);
+    let (_window, host, _visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+
+    assert!(host.update(cx, |host, cx| host.zoom_pane(right_tabs, cx)));
+    cx.run_until_parked();
+
+    let scene = host.update(cx, |host, cx| {
+        host.divider_event_scene_for_test(host_bounds(400.0, 240.0), cx)
+    });
+    assert!(
+        scene.splitters.is_empty(),
+        "zoomed divider event scene must not expose hidden base splitters"
+    );
+    assert!(
+        DockDividerHitMap::from_scene(&scene).targets().is_empty(),
+        "zoomed divider hit map must not resolve hidden base splitters"
+    );
+}
+
+#[open_gpui::test]
 fn divider_hit_map_prefers_corner_when_splitter_hits_intersect(cx: &mut TestAppContext) {
     let mut graph = DockGraph::new();
     let left = graph.insert_node(DockNode::Tabs {

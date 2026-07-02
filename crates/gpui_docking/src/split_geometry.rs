@@ -6,11 +6,13 @@ use open_gpui_ui_core::{
     resolve_split_fractions_with_fill_child, ui_point, ui_px, ui_rect, ui_size,
 };
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockResolvedSplitLayout {
+#[derive(Debug, PartialEq)]
+pub(crate) struct DockResolvedSplitLayout<'a> {
     shares: Vec<f32>,
-    panels: Vec<DockResolvedSplitPanel>,
-    handles: Vec<DockResolvedSplitHandle>,
+    children: &'a [DockNodeId],
+    axis: SplitAxis,
+    extent: Pixels,
+    scene: SplitterLayoutScene,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -29,17 +31,34 @@ pub(crate) struct DockResolvedSplitHandle {
     pub(crate) extent: Pixels,
 }
 
-impl DockResolvedSplitLayout {
+impl<'a> DockResolvedSplitLayout<'a> {
     pub(crate) fn shares(&self) -> &[f32] {
         &self.shares
     }
 
-    pub(crate) fn panels(&self) -> &[DockResolvedSplitPanel] {
-        &self.panels
+    pub(crate) fn panels(&self) -> impl Iterator<Item = DockResolvedSplitPanel> + '_ {
+        self.children
+            .iter()
+            .copied()
+            .zip(self.scene.panels())
+            .map(|(child, panel)| DockResolvedSplitPanel {
+                child,
+                bounds: bounds_from_ui_rect(panel.bounds()),
+            })
     }
 
-    pub(crate) fn handles(&self) -> &[DockResolvedSplitHandle] {
-        &self.handles
+    pub(crate) fn handles(&self) -> impl Iterator<Item = DockResolvedSplitHandle> + '_ {
+        self.scene.handles().iter().filter_map(|handle| {
+            let index = handle.index();
+            Some(DockResolvedSplitHandle {
+                index,
+                before: *self.children.get(index)?,
+                after: *self.children.get(index + 1)?,
+                axis: self.axis,
+                bounds: bounds_from_ui_rect(handle.bounds()),
+                extent: self.extent,
+            })
+        })
     }
 }
 
@@ -61,49 +80,25 @@ pub(crate) fn dock_split_handle_center_shares(shares: &[f32]) -> impl Iterator<I
         })
 }
 
-pub(crate) fn resolve_dock_split_layout(
+pub(crate) fn resolve_dock_split_layout<'a>(
     split: DockNodeId,
     axis: SplitAxis,
-    children: &[DockNodeId],
+    children: &'a [DockNodeId],
     fractions: &[f32],
     central_child_index: Option<usize>,
     bounds: Bounds<Pixels>,
     handle_size: Pixels,
-) -> DockResolvedSplitLayout {
+) -> DockResolvedSplitLayout<'a> {
     let shares = resolve_dock_split_shares(children.len(), fractions, central_child_index);
     let scene = split_layout_scene(split, axis, children, &shares, bounds, handle_size);
     let extent = split_extent(axis, bounds);
 
-    let panels = children
-        .iter()
-        .copied()
-        .zip(scene.panels())
-        .map(|(child, panel)| DockResolvedSplitPanel {
-            child,
-            bounds: bounds_from_ui_rect(panel.bounds()),
-        })
-        .collect();
-
-    let handles = scene
-        .handles()
-        .iter()
-        .filter_map(|handle| {
-            let index = handle.index();
-            Some(DockResolvedSplitHandle {
-                index,
-                before: *children.get(index)?,
-                after: *children.get(index + 1)?,
-                axis,
-                bounds: bounds_from_ui_rect(handle.bounds()),
-                extent,
-            })
-        })
-        .collect();
-
     DockResolvedSplitLayout {
         shares,
-        panels,
-        handles,
+        children,
+        axis,
+        extent,
+        scene,
     }
 }
 

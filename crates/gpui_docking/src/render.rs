@@ -492,7 +492,9 @@ impl DockHost {
         canvas(
             |_, _, _| (),
             move |bounds, _, window, app| {
-                let scene = DockPresentationScene::from_render_session(&session, bounds);
+                let scene = entity.update(app, |host, _| {
+                    host.resolved_render_presentation_scene(&session, bounds)
+                });
                 let hit_map = DockDividerHitMap::from_scene(&scene);
                 let hover_position = Some(window.mouse_position());
                 let corner_dragging = entity.read(app).interaction().corner_splitter_drag_active();
@@ -558,6 +560,30 @@ impl DockHost {
         .left(px(0.0))
         .size_full()
         .into_any_element()
+    }
+
+    fn resolved_render_presentation_scene(
+        &mut self,
+        session: &DockHostRenderSession,
+        bounds: Bounds<Pixels>,
+    ) -> DockPresentationScene {
+        let base = DockPresentationScene::from_render_session(session, bounds);
+        let space = session.space().clone();
+        self.zoom_state_mut().clear_missing_target(&space, &base);
+        self.zoom_state()
+            .resolve(&base, DockMotionPreference::Animated)
+            .map(|zoom| zoom.scene)
+            .unwrap_or(base)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn divider_event_scene_for_test(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        cx: &Context<Self>,
+    ) -> DockPresentationScene {
+        let session = self.render_session(cx);
+        self.resolved_render_presentation_scene(&session, bounds)
     }
 
     fn render_payload_drag_event_layer(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -1260,17 +1286,7 @@ impl DockHost {
         canvas(
             move |bounds, window, app| {
                 let initial_facts = entity.update(app, |host, _| {
-                    let base = DockPresentationScene::from_render_session(&session, bounds);
-                    let space = session.space().clone();
-                    host.zoom_state_mut().clear_missing_target(&space, &base);
-                    let scene = host
-                        .zoom_state()
-                        .resolve(
-                            &base,
-                            crate::transition_geometry::DockMotionPreference::Animated,
-                        )
-                        .map(|zoom| zoom.scene)
-                        .unwrap_or(base);
+                    let scene = host.resolved_render_presentation_scene(&session, bounds);
                     host.set_last_presentation_scene(scene);
                     let scene = host
                         .last_presentation_scene()
