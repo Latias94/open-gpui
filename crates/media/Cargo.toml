@@ -25,7 +25,8 @@ core-foundation.workspace = true
 ctor.workspace = true
 foreign-types = "0.5"
 metal.workspace = true
-core-video.workspace = true
+objc2-core-foundation.workspace = true
+objc2-core-video.workspace = true
 objc.workspace = true
 
 [build-dependencies]

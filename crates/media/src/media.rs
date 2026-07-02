@@ -20,7 +20,9 @@ pub mod core_media {
         impl_CFTypeDescription, impl_TCFType,
         string::CFString,
     };
-    use core_video::image_buffer::{CVImageBuffer, CVImageBufferRef};
+    use objc2_core_foundation::CFRetained;
+    use objc2_core_video::CVImageBuffer;
+    use std::ptr::NonNull;
     use std::{ffi::c_void, ptr};
 
     #[repr(C)]
@@ -46,14 +48,11 @@ pub mod core_media {
             }
         }
 
-        pub fn image_buffer(&self) -> Option<CVImageBuffer> {
+        pub fn image_buffer(&self) -> Option<CFRetained<CVImageBuffer>> {
             unsafe {
                 let ptr = CMSampleBufferGetImageBuffer(self.as_concrete_TypeRef());
-                if ptr.is_null() {
-                    None
-                } else {
-                    Some(CVImageBuffer::wrap_under_get_rule(ptr))
-                }
+                let ptr = NonNull::new(ptr.cast_mut())?;
+                Some(CFRetained::retain(ptr))
             }
         }
 
@@ -101,7 +100,7 @@ pub mod core_media {
             buffer: CMSampleBufferRef,
             create_if_necessary: bool,
         ) -> CFArrayRef;
-        fn CMSampleBufferGetImageBuffer(buffer: CMSampleBufferRef) -> CVImageBufferRef;
+        fn CMSampleBufferGetImageBuffer(buffer: CMSampleBufferRef) -> *const CVImageBuffer;
         fn CMSampleBufferGetSampleTimingInfo(
             buffer: CMSampleBufferRef,
             index: CMItemIndex,
@@ -222,18 +221,18 @@ pub mod core_video {
     #[cfg(target_os = "macos")]
     use std::ffi::c_void;
 
-    use crate::bindings::{CVReturn, kCVReturnSuccess};
-    pub use crate::bindings::{
-        kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8Planar,
-    };
     use anyhow::Result;
     use core_foundation::{
         base::kCFAllocatorDefault, dictionary::CFDictionaryRef, mach_port::CFAllocatorRef,
     };
     use foreign_types::ForeignTypeRef;
+    pub use objc2_core_video::{
+        kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8Planar,
+    };
 
     use metal::{MTLDevice, MTLPixelFormat};
+    use objc2_core_video::{CVImageBuffer, CVReturn, kCVReturnSuccess};
     use std::ptr;
 
     #[repr(C)]
@@ -275,7 +274,7 @@ pub mod core_video {
         /// The arguments to this function must be valid according to CVMetalTextureCacheCreateTextureFromImage
         pub unsafe fn create_texture_from_image(
             &self,
-            source: ::core_video::image_buffer::CVImageBufferRef,
+            source: &CVImageBuffer,
             texture_attributes: CFDictionaryRef,
             pixel_format: MTLPixelFormat,
             width: usize,
@@ -287,7 +286,7 @@ pub mod core_video {
                 CVMetalTextureCacheCreateTextureFromImage(
                     kCFAllocatorDefault,
                     self.as_concrete_TypeRef(),
-                    source,
+                    source as *const CVImageBuffer,
                     texture_attributes,
                     pixel_format,
                     width,
@@ -317,7 +316,7 @@ pub mod core_video {
         fn CVMetalTextureCacheCreateTextureFromImage(
             allocator: CFAllocatorRef,
             texture_cache: CVMetalTextureCacheRef,
-            source_image: ::core_video::image_buffer::CVImageBufferRef,
+            source_image: *const CVImageBuffer,
             texture_attributes: CFDictionaryRef,
             pixel_format: MTLPixelFormat,
             width: usize,
