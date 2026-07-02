@@ -78,7 +78,6 @@ pub(crate) enum DockDividerTransitionKind {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockOverlayTransition {
     pub(crate) kind: DockOverlayTransitionKind,
-    pub(crate) from_bounds: Option<Bounds<Pixels>>,
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) target_node: Option<DockNodeId>,
     pub(crate) zone: Option<DropZone>,
@@ -110,13 +109,6 @@ impl DockOverlayTransitionKind {
             DockOverlayLayerKind::RejectedState => Self::RejectedNoop,
         }
     }
-
-    pub(crate) fn animates_from_previous_bounds(self) -> bool {
-        !matches!(
-            self,
-            Self::TabInsertion | Self::PayloadTab | Self::PayloadGhost
-        )
-    }
 }
 
 impl DockTransitionPlan {
@@ -139,35 +131,6 @@ impl DockTransitionPlan {
         overlay_scene: &DockOverlayScene,
         preference: DockMotionPreference,
     ) -> Self {
-        Self::overlay_scene_change(final_scene, None, overlay_scene, preference)
-    }
-
-    pub(crate) fn between_overlay_scenes(
-        final_scene: &DockPresentationScene,
-        previous_overlay_scene: &DockOverlayScene,
-        overlay_scene: &DockOverlayScene,
-        preference: DockMotionPreference,
-    ) -> Self {
-        Self::overlay_scene_change(
-            final_scene,
-            Some(previous_overlay_scene),
-            overlay_scene,
-            preference,
-        )
-    }
-
-    fn overlay_scene_change(
-        final_scene: &DockPresentationScene,
-        previous_overlay_scene: Option<&DockOverlayScene>,
-        overlay_scene: &DockOverlayScene,
-        preference: DockMotionPreference,
-    ) -> Self {
-        let previous_bounds = previous_overlay_scene
-            .into_iter()
-            .flat_map(|scene| scene.layers.iter())
-            .map(|layer| (overlay_layer_transition_key(layer), layer.bounds))
-            .collect::<HashMap<_, _>>();
-
         Self {
             preference,
             final_scene: final_scene.clone(),
@@ -176,25 +139,13 @@ impl DockTransitionPlan {
             overlay_transitions: overlay_scene
                 .layers
                 .iter()
-                .map(|layer| {
-                    let kind = DockOverlayTransitionKind::from_layer_kind(layer.kind);
-                    DockOverlayTransition {
-                        kind,
-                        from_bounds: previous_bounds
-                            .get(&overlay_transition_key(
-                                kind,
-                                layer.target_node,
-                                layer.zone,
-                                layer.payload_index,
-                            ))
-                            .copied()
-                            .filter(|_| kind.animates_from_previous_bounds()),
-                        bounds: layer.bounds,
-                        target_node: layer.target_node,
-                        zone: layer.zone,
-                        payload_index: layer.payload_index,
-                        immediate: preference.is_immediate(),
-                    }
+                .map(|layer| DockOverlayTransition {
+                    kind: DockOverlayTransitionKind::from_layer_kind(layer.kind),
+                    bounds: layer.bounds,
+                    target_node: layer.target_node,
+                    zone: layer.zone,
+                    payload_index: layer.payload_index,
+                    immediate: preference.is_immediate(),
                 })
                 .collect(),
         }
@@ -252,43 +203,12 @@ impl DockTransitionPlan {
     }
 }
 
-fn overlay_layer_transition_key(
-    layer: &crate::overlay_scene::DockOverlayLayer,
-) -> (
-    DockOverlayTransitionKind,
-    Option<DockNodeId>,
-    Option<DropZone>,
-    Option<usize>,
-) {
-    overlay_transition_key(
-        DockOverlayTransitionKind::from_layer_kind(layer.kind),
-        layer.target_node,
-        layer.zone,
-        layer.payload_index,
-    )
-}
-
-fn overlay_transition_key(
-    kind: DockOverlayTransitionKind,
-    target_node: Option<DockNodeId>,
-    zone: Option<DropZone>,
-    payload_index: Option<usize>,
-) -> (
-    DockOverlayTransitionKind,
-    Option<DockNodeId>,
-    Option<DropZone>,
-    Option<usize>,
-) {
-    (kind, target_node, zone, payload_index)
-}
-
 fn focus_ring_transition(
     focus: &DockPresentationFocusRegion,
     preference: DockMotionPreference,
 ) -> DockOverlayTransition {
     DockOverlayTransition {
         kind: DockOverlayTransitionKind::FocusRing,
-        from_bounds: None,
         bounds: focus.bounds,
         target_node: Some(focus.tabs),
         zone: None,

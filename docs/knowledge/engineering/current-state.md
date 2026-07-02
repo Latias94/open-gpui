@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI UI motion runtime foundation state
 status: complete
-timestamp: 2026-07-02T23:13:30+08:00
+timestamp: 2026-07-02T23:31:00+08:00
 git_branch: refactor/docking-flat-motion-runtime
 related_plan: docs/plans/2026-07-02-003-refactor-ui-motion-runtime-foundation-plan.md
 related_adr:
@@ -19,7 +19,7 @@ verified_by:
   - cargo test -p open-gpui-ui-components runtime_retargets_from_sampled_fraction_and_drag_syncs_immediately --lib -- --nocapture
   - cargo test -p open-gpui-ui-components runtime_reduced_motion_completes_without_transition --lib -- --nocapture
   - cargo test -p open-gpui-ui-components --test public_surface component_api_inventory_tracks_public_method_surface -- --nocapture
-  - cargo nextest run -p open-gpui-docking transition_executor_samples_timeline_and_reveal_geometry transition_executor_replaces_active_execution_and_completes_reduced_motion_immediately overlay_retarget_keeps_tab_preview_layers_at_current_target_bounds host_unzoom_command_retargets_from_active_zoom_sample public_focus_command_uses_immediate_overlay_only_feedback --no-fail-fast
+  - cargo nextest run -p open-gpui-docking transition_executor_samples_timeline_and_reveal_geometry transition_executor_replaces_active_execution_and_completes_reduced_motion_immediately overlay_replacement_keeps_preview_layers_at_current_target_bounds host_unzoom_command_retargets_from_active_zoom_sample public_focus_command_uses_immediate_overlay_only_feedback --no-fail-fast
   - cargo nextest run -p open-gpui-docking --no-fail-fast
   - cargo check -p open-gpui-docking-native
   - cargo nextest run -p open-gpui-docking-native runtime_status_panel_formats_platform_capabilities --no-fail-fast
@@ -38,15 +38,17 @@ verified_by:
 - Done: `gpui_docking::DockTransitionExecutor` consumes `MotionTimeline` and
   `retarget_motion_snapshots` while keeping pane, divider, overlay, zoom, focus, tab, route,
   viewport, and release semantics local.
+- Done: Dock overlay/drop-preview geometry now follows Dear ImGui's current-target model: overlay
+  transitions no longer interpolate from previous preview bounds. The overlay timeline only drives
+  opacity/lifecycle; pane, divider, zoom, and programmatic Splitter layout motion keep sampled
+  retarget interpolation.
 - Done: Native dogfood status panel exposes a separate `motion proof` line for shared runtime,
   sampled progress, retarget identity, and reduced-motion final state.
 - Done: ADR 0013 records the generalized shared motion runtime boundary.
 - In progress: None.
 - Blocked: None.
-- Next action: optional follow-up plan for ImGui-aligned drop-preview geometry. ImGui computes dock
-  preview rectangles from the current hovered target each frame; it does not animate preview bounds
-  from the previous hovered target. Open GPUI can likely delete overlay `from_bounds` interpolation
-  and keep drop preview geometry immediate while preserving pane/divider/zoom retarget motion.
+- Next action: optional manual dogfood of the ImGui-aligned preview geometry after merge, focusing
+  on center tab insertion, edge guide hover, and cross-window routed previews.
 
 # Citations
 

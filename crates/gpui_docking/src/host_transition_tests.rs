@@ -467,23 +467,9 @@ fn transition_plan_from_overlay_scene_describes_tab_insertion_and_payload_tabs()
 }
 
 #[test]
-fn transition_plan_between_overlay_scenes_keeps_previous_bounds_for_matching_layers() {
+fn transition_plan_from_overlay_scene_uses_current_bounds_for_matching_layers() {
     let tabs = crate::DockNodeId::null();
     let scene = single_pane_scene(tabs, host_bounds(320.0, 200.0));
-    let previous = DockOverlayScene {
-        layers: vec![DockOverlayLayer {
-            kind: DockOverlayLayerKind::GuideBox,
-            bounds: floating_bounds(12.0, 12.0, 60.0, 40.0),
-            target_node: Some(tabs),
-            zone: Some(DropZone::Left),
-            preview_layer: None,
-            active: true,
-            payload_index: None,
-            payload_title: None,
-            drop_box: None,
-            tab_insertion: None,
-        }],
-    };
     let next = DockOverlayScene {
         layers: vec![DockOverlayLayer {
             kind: DockOverlayLayerKind::GuideBox,
@@ -499,32 +485,24 @@ fn transition_plan_between_overlay_scenes_keeps_previous_bounds_for_matching_lay
         }],
     };
 
-    let plan = DockTransitionPlan::between_overlay_scenes(
-        &scene,
-        &previous,
-        &next,
-        DockMotionPreference::Animated,
-    );
+    let plan =
+        DockTransitionPlan::from_overlay_scene(&scene, &next, DockMotionPreference::Animated);
 
     assert_eq!(plan.overlay_transitions.len(), 1);
-    assert_eq!(
-        plan.overlay_transitions[0].from_bounds,
-        Some(previous.layers[0].bounds)
-    );
     assert_eq!(plan.overlay_transitions[0].bounds, next.layers[0].bounds);
 }
 
 #[test]
-fn transition_plan_keeps_tab_insertion_layers_at_current_target_bounds() {
+fn transition_plan_keeps_preview_layers_at_current_target_bounds() {
     let tabs = crate::DockNodeId::null();
     let scene = single_pane_scene(tabs, host_bounds(320.0, 200.0));
-    let previous = DockOverlayScene {
+    let next = DockOverlayScene {
         layers: vec![
             DockOverlayLayer {
-                kind: DockOverlayLayerKind::TabInsertion,
-                bounds: floating_bounds(12.0, 0.0, 3.0, 26.0),
+                kind: DockOverlayLayerKind::TargetBody,
+                bounds: floating_bounds(80.0, 26.0, 180.0, 120.0),
                 target_node: Some(tabs),
-                zone: Some(DropZone::Center),
+                zone: None,
                 preview_layer: None,
                 active: true,
                 payload_index: None,
@@ -532,34 +510,6 @@ fn transition_plan_keeps_tab_insertion_layers_at_current_target_bounds() {
                 drop_box: None,
                 tab_insertion: None,
             },
-            DockOverlayLayer {
-                kind: DockOverlayLayerKind::PayloadTab,
-                bounds: floating_bounds(16.0, 0.0, 80.0, 26.0),
-                target_node: Some(tabs),
-                zone: Some(DropZone::Center),
-                preview_layer: None,
-                active: true,
-                payload_index: Some(0),
-                payload_title: Some("Preview".to_string()),
-                drop_box: None,
-                tab_insertion: None,
-            },
-            DockOverlayLayer {
-                kind: DockOverlayLayerKind::PayloadGhost,
-                bounds: floating_bounds(16.0, 0.0, 80.0, 26.0),
-                target_node: Some(tabs),
-                zone: Some(DropZone::Center),
-                preview_layer: None,
-                active: true,
-                payload_index: Some(0),
-                payload_title: Some("Preview".to_string()),
-                drop_box: None,
-                tab_insertion: None,
-            },
-        ],
-    };
-    let next = DockOverlayScene {
-        layers: vec![
             DockOverlayLayer {
                 kind: DockOverlayLayerKind::TabInsertion,
                 bounds: floating_bounds(120.0, 0.0, 3.0, 26.0),
@@ -599,24 +549,17 @@ fn transition_plan_keeps_tab_insertion_layers_at_current_target_bounds() {
         ],
     };
 
-    let plan = DockTransitionPlan::between_overlay_scenes(
-        &scene,
-        &previous,
-        &next,
-        DockMotionPreference::Animated,
-    );
+    let plan =
+        DockTransitionPlan::from_overlay_scene(&scene, &next, DockMotionPreference::Animated);
 
-    assert_eq!(plan.overlay_transitions.len(), 3);
-    for transition in &plan.overlay_transitions {
-        assert_eq!(
-            transition.from_bounds, None,
-            "tab insertion preview layers should not lag behind the current pointer target"
-        );
+    assert_eq!(plan.overlay_transitions.len(), next.layers.len());
+    for (transition, layer) in plan.overlay_transitions.iter().zip(&next.layers) {
+        assert_eq!(transition.bounds, layer.bounds);
     }
 }
 
 #[open_gpui::test]
-fn overlay_retarget_keeps_tab_preview_layers_at_current_target_bounds(cx: &mut TestAppContext) {
+fn overlay_replacement_keeps_preview_layers_at_current_target_bounds(cx: &mut TestAppContext) {
     let (graph, _root, tabs, _right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let (_window, host, _visual) = open_host(
         cx,
@@ -661,12 +604,8 @@ fn overlay_retarget_keeps_tab_preview_layers_at_current_target_bounds(cx: &mut T
     let next = tab_preview_scene(next_body, next_insertion, next_payload);
     let first_plan =
         DockTransitionPlan::from_overlay_scene(&scene, &previous, DockMotionPreference::Animated);
-    let replacement_plan = DockTransitionPlan::between_overlay_scenes(
-        &scene,
-        &previous,
-        &next,
-        DockMotionPreference::Animated,
-    );
+    let replacement_plan =
+        DockTransitionPlan::from_overlay_scene(&scene, &next, DockMotionPreference::Animated);
     let spec = MotionSpec::new(
         MotionPreference::Animated,
         MotionDuration::Custom(Duration::from_millis(400)),
@@ -706,8 +645,8 @@ fn overlay_retarget_keeps_tab_preview_layers_at_current_target_bounds(cx: &mut T
         };
         assert_eq!(
             overlay_bounds(DockOverlayTransitionKind::TargetBody, None),
-            previous_body,
-            "target body can retarget from the active sampled position"
+            next_body,
+            "target body should stay pinned to the current hover target"
         );
         assert_eq!(
             overlay_bounds(DockOverlayTransitionKind::TabInsertion, None),
